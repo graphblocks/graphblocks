@@ -4,9 +4,11 @@ import graphblocks
 import pytest
 
 from graphblocks.admission import (
+    AdmissionError,
     AdmissionIdempotencyConflictError,
     AdmissionQueueFullError,
     AdmissionStaleFencingTokenError,
+    AdmissionTicketNotFoundError,
     AdmissionTicketStateError,
     AdmissionTicketQueue,
 )
@@ -207,6 +209,218 @@ def test_submission_is_idempotent_without_double_charging_capacity() -> None:
     assert queued.ticket.state == "queued"
     with pytest.raises(AdmissionIdempotencyConflictError):
         queue.submit("run-other", "request-1", "user-1", now_ms=100)
+
+
+def test_failed_request_can_be_resubmitted_with_a_fresh_ticket() -> None:
+    queue = AdmissionTicketQueue(
+        "resubmission",
+        max_concurrent=1,
+        rate_limit=10,
+        window_ms=1_000,
+        max_pending=10,
+        ticket_ttl_ms=100,
+    )
+    first = queue.submit("run-1", "request-1", "user-1", now_ms=0).ticket
+    queue.complete(
+        first.ticket_id,
+        first.fencing_token or 0,
+        "failed",
+        now_ms=1,
+    )
+
+    resubmitted = queue.submit("run-1", "request-1", "user-1", now_ms=2)
+
+    assert resubmitted.duplicate is False
+    assert resubmitted.ticket.ticket_id != first.ticket_id
+    assert resubmitted.ticket.run_id == "run-1"
+    assert resubmitted.ticket.state == "admitted"
+    with pytest.raises(AdmissionTicketNotFoundError):
+        queue.get(first.ticket_id)
+
+
+@pytest.mark.parametrize("terminal_state", ("completed", "cancelled"))
+def test_completed_and_cancelled_requests_remain_idempotent_during_retention(
+    terminal_state: str,
+) -> None:
+    queue = AdmissionTicketQueue(
+        "terminal-idempotency",
+        max_concurrent=1,
+        rate_limit=10,
+        window_ms=1_000,
+        max_pending=10,
+        ticket_ttl_ms=100,
+    )
+    first = queue.submit("run-1", "request-1", "user-1", now_ms=0).ticket
+    if terminal_state == "completed":
+        terminal, _ = queue.complete(
+            first.ticket_id,
+            first.fencing_token or 0,
+            "completed",
+            now_ms=1,
+        )
+    else:
+        terminal, _ = queue.cancel(first.ticket_id, now_ms=1)
+
+    duplicate = queue.submit("run-1", "request-1", "user-1", now_ms=2)
+
+    assert duplicate.duplicate is True
+    assert duplicate.ticket == terminal
+    assert queue.get(first.ticket_id) == terminal
+
+
+def test_expired_request_can_be_resubmitted_and_old_terminal_tickets_are_pruned() -> None:
+    queue = AdmissionTicketQueue(
+        "expiring-resubmission",
+        max_concurrent=1,
+        rate_limit=10,
+        window_ms=1_000,
+        max_pending=10,
+        ticket_ttl_ms=100,
+    )
+    expired = queue.submit("run-1", "request-1", "user-1", now_ms=0).ticket
+
+    resubmitted = queue.submit("run-1", "request-1", "user-1", now_ms=100)
+
+    assert resubmitted.duplicate is False
+    assert resubmitted.ticket.ticket_id != expired.ticket_id
+    assert resubmitted.ticket.state == "admitted"
+    with pytest.raises(AdmissionTicketNotFoundError):
+        queue.get(expired.ticket_id)
+
+    completed, _ = queue.complete(
+        resubmitted.ticket.ticket_id,
+        resubmitted.ticket.fencing_token or 0,
+        "completed",
+        now_ms=101,
+    )
+    queue.submit("run-3", "request-3", "user-3", now_ms=201)
+    with pytest.raises(AdmissionTicketNotFoundError):
+        queue.get(completed.ticket_id)
+
+
+@pytest.mark.parametrize("terminal_state", ("failed", "expired"))
+def test_divergent_terminal_request_reuse_conflicts_before_retry_eviction(
+    terminal_state: str,
+) -> None:
+    queue = AdmissionTicketQueue(
+        "terminal-conflict",
+        max_concurrent=1,
+        rate_limit=10,
+        window_ms=1_000,
+        max_pending=10,
+        ticket_ttl_ms=100,
+    )
+    first = queue.submit("run-1", "request-1", "user-1", now_ms=0).ticket
+    if terminal_state == "failed":
+        queue.complete(
+            first.ticket_id,
+            first.fencing_token or 0,
+            "failed",
+            now_ms=1,
+        )
+        retry_at_ms = 2
+    else:
+        queue.expire(now_ms=100)
+        retry_at_ms = 100
+
+    with pytest.raises(AdmissionIdempotencyConflictError):
+        queue.submit("run-other", "request-1", "user-1", now_ms=retry_at_ms)
+    with pytest.raises(AdmissionIdempotencyConflictError):
+        queue.submit(
+            "run-1",
+            "request-1",
+            "user-1",
+            now_ms=retry_at_ms,
+            units=2,
+        )
+
+    resubmitted = queue.submit(
+        "run-1",
+        "request-1",
+        "user-1",
+        now_ms=retry_at_ms,
+    )
+    assert resubmitted.duplicate is False
+    assert resubmitted.ticket.ticket_id != first.ticket_id
+
+
+def test_terminal_retention_has_a_deterministic_hard_bound() -> None:
+    queue = AdmissionTicketQueue(
+        "bounded-terminals",
+        max_concurrent=1,
+        rate_limit=100,
+        window_ms=1_000,
+        max_pending=10,
+        ticket_ttl_ms=10_000,
+        max_terminal_tickets=3,
+    )
+    terminal_ids: list[str] = []
+    for index in range(10):
+        ticket = queue.submit(
+            f"run-{index}",
+            f"request-{index}",
+            "user-1",
+            now_ms=0,
+        ).ticket
+        terminal, _ = queue.cancel(ticket.ticket_id, now_ms=0)
+        terminal_ids.append(terminal.ticket_id)
+
+    assert len(queue._tickets) == 3
+    assert len(queue._request_tickets) == 3
+    for ticket_id in terminal_ids[:-3]:
+        with pytest.raises(AdmissionTicketNotFoundError):
+            queue.get(ticket_id)
+    assert [queue.get(ticket_id).sequence for ticket_id in terminal_ids[-3:]] == [8, 9, 10]
+
+
+def test_expiry_prunes_terminal_bound_before_mark_running_state_error() -> None:
+    queue = AdmissionTicketQueue(
+        "bounded-expiry",
+        max_concurrent=1,
+        rate_limit=10,
+        window_ms=1_000,
+        max_pending=10,
+        ticket_ttl_ms=100,
+        max_terminal_tickets=1,
+    )
+    first = queue.submit("run-1", "request-1", "user-1", now_ms=0).ticket
+    second = queue.submit("run-2", "request-2", "user-2", now_ms=0).ticket
+    _, promoted = queue.complete(
+        first.ticket_id,
+        first.fencing_token or 0,
+        "completed",
+        now_ms=1,
+    )
+    assert promoted[0].ticket_id == second.ticket_id
+
+    with pytest.raises(AdmissionTicketStateError, match="expired"):
+        queue.mark_running(
+            second.ticket_id,
+            promoted[0].fencing_token or 0,
+            now_ms=100,
+        )
+
+    assert len(queue._tickets) == 1
+    assert len(queue._request_tickets) == 1
+    with pytest.raises(AdmissionTicketNotFoundError):
+        queue.get(first.ticket_id)
+    assert queue.get(second.ticket_id).state == "expired"
+
+
+def test_terminal_retention_bound_must_be_positive() -> None:
+    with pytest.raises(
+        AdmissionError,
+        match="admission queue max_terminal_tickets must be positive",
+    ):
+        AdmissionTicketQueue(
+            "invalid-terminal-bound",
+            max_concurrent=1,
+            rate_limit=1,
+            window_ms=1_000,
+            max_pending=1,
+            ticket_ttl_ms=100,
+            max_terminal_tickets=0,
+        )
 
 
 def test_queue_limit_expiry_cancellation_and_fencing_fail_closed() -> None:

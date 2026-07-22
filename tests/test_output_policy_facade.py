@@ -1257,6 +1257,82 @@ def test_output_delivery_gate_rejects_already_delivered_redaction_target() -> No
     assert str(error.value) == "redaction target 1 is already delivered through 1"
 
 
+def test_output_delivery_gate_rejects_already_delivered_replacement_target() -> None:
+    gate = OutputDeliveryGate("stream-1", "response-1")
+    for sequence in range(1, 4):
+        gate.record_chunk(
+            GenerationChunk.text(
+                "stream-1",
+                "response-1",
+                sequence,
+                f"chunk {sequence}",
+            )
+        )
+    gate.apply_decision(
+        OutputPolicyDecision.allow(
+            "decision-allow",
+            accepted_through_sequence=3,
+            input_digest="sha256:allow",
+        ),
+        occurred_at="2026-06-23T00:00:00Z",
+    )
+
+    with pytest.raises(OutputGateError) as error:
+        gate.apply_decision(
+            OutputPolicyDecision.replace(
+                "decision-replace",
+                accepted_through_sequence=2,
+                replacement_parts=(ContentPart(kind="text", text="replacement"),),
+                input_digest="sha256:replace",
+            ),
+            occurred_at="2026-06-23T00:00:01Z",
+        )
+
+    assert str(error.value) == "replacement target 2 is already delivered through 3"
+    assert gate.pending_chunks() == ()
+    assert gate.last_generated_sequence == 3
+    assert gate.last_policy_accepted_sequence == 3
+    assert gate.last_client_delivered_sequence == 3
+
+
+def test_output_delivery_gate_rejects_already_delivered_redact_replacement_target() -> None:
+    gate = OutputDeliveryGate("stream-1", "response-1")
+    for sequence in range(1, 4):
+        gate.record_chunk(
+            GenerationChunk.text(
+                "stream-1",
+                "response-1",
+                sequence,
+                f"chunk {sequence}",
+            )
+        )
+    gate.apply_decision(
+        OutputPolicyDecision.allow(
+            "decision-allow",
+            accepted_through_sequence=3,
+            input_digest="sha256:allow",
+        ),
+        occurred_at="2026-06-23T00:00:00Z",
+    )
+
+    with pytest.raises(OutputGateError) as error:
+        gate.apply_decision(
+            OutputPolicyDecision.redact(
+                "decision-redact",
+                accepted_through_sequence=2,
+                replacement_parts=(ContentPart(kind="text", text="replacement"),),
+                input_digest="sha256:redact",
+            ),
+            occurred_at="2026-06-23T00:00:01Z",
+        )
+
+    assert str(error.value) == "replacement target 2 is already delivered through 3"
+    assert gate.pending_chunks() == ()
+    assert gate.last_generated_sequence == 3
+    assert gate.last_policy_accepted_sequence == 3
+    assert gate.last_client_delivered_sequence == 3
+
+
 def test_output_delivery_gate_rejects_future_redaction_target() -> None:
     gate = OutputDeliveryGate("stream-1", "response-1")
     gate.record_chunk(GenerationChunk.text("stream-1", "response-1", 1, "hello secret world"))

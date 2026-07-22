@@ -79,6 +79,7 @@ from .blob_store import (
 from .callbacks import CallbackDelivery, CallbackSubscription, EventFilter
 from .budget import (
     BudgetAccount,
+    BudgetAccountStateError,
     BudgetBalance,
     BudgetCompletionReserveConflictError,
     BudgetCompletionReserveNotFoundError,
@@ -680,6 +681,7 @@ __all__ = [
     "BlobNotFoundError",
     "BlobStoreError",
     "BudgetAccount",
+    "BudgetAccountStateError",
     "BudgetBalance",
     "BudgetCompletionReserveConflictError",
     "BudgetCompletionReserveNotFoundError",

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from decimal import Decimal
 
 import pytest
@@ -7,6 +8,7 @@ import pytest
 import graphblocks
 from graphblocks.budget import (
     BudgetAccount,
+    BudgetAccountStateError,
     BudgetCompletionReserveStateError,
     BudgetCompletionReserveUnauthorizedError,
     BudgetExceededError,
@@ -28,6 +30,14 @@ from graphblocks.policy import ResourceRef
 
 def _tokens(value: str) -> UsageAmount:
     return UsageAmount(kind="model_total_tokens", amount=Decimal(value), unit="tokens")
+
+
+def _set_budget_status(
+    ledger: InMemoryBudgetLedger,
+    budget_id: str,
+    status: graphblocks.BudgetStatus,
+) -> None:
+    ledger._accounts[budget_id] = replace(ledger._accounts[budget_id], status=status)
 
 
 def test_root_facade_exports_budget_literal_contract() -> None:
@@ -236,6 +246,94 @@ def test_budget_ledger_rejects_reservation_above_available_balance() -> None:
 
     with pytest.raises(BudgetExceededError):
         ledger.reserve("budget-1", ResourceRef("run:2"), [_tokens("30")], purpose="provider_call", expires_at="later")
+
+
+@pytest.mark.parametrize("status", ("exhausted", "paused", "closed"))
+def test_non_active_budget_rejects_new_reservations_and_completion_reserves(
+    status: graphblocks.BudgetStatus,
+) -> None:
+    ledger = InMemoryBudgetLedger()
+    ledger.allocate("budget-1", ResourceRef("tenant:acme"), [_tokens("100")], policy_ref="policy-1")
+    _set_budget_status(ledger, "budget-1", status)
+
+    with pytest.raises(BudgetAccountStateError) as reservation_error:
+        ledger.reserve(
+            "budget-1",
+            ResourceRef("run:1"),
+            [_tokens("10")],
+            purpose="provider_call",
+            expires_at="later",
+        )
+    with pytest.raises(BudgetAccountStateError):
+        ledger.create_completion_reserve(
+            "completion-1",
+            "budget-1",
+            purpose="finalization",
+            amounts=[_tokens("10")],
+            spendable_by=("agent.finalize",),
+        )
+
+    assert reservation_error.value.budget_id == "budget-1"
+    assert reservation_error.value.status == status
+    assert ledger.balance("budget-1").reserved == []
+
+
+def test_non_active_budget_rejects_commit_and_completion_reserve_spend() -> None:
+    ledger = InMemoryBudgetLedger()
+    ledger.allocate("budget-1", ResourceRef("tenant:acme"), [_tokens("100")], policy_ref="policy-1")
+    reservation = ledger.reserve(
+        "budget-1",
+        ResourceRef("run:1"),
+        [_tokens("20")],
+        purpose="provider_call",
+        expires_at="later",
+    )
+    ledger.create_completion_reserve(
+        "completion-1",
+        "budget-1",
+        purpose="finalization",
+        amounts=[_tokens("10")],
+        spendable_by=("agent.finalize",),
+    )
+    _set_budget_status(ledger, "budget-1", "paused")
+
+    with pytest.raises(BudgetAccountStateError):
+        ledger.commit(reservation.reservation_id, [_tokens("15")])
+    with pytest.raises(BudgetAccountStateError):
+        ledger.spend_completion_reserve(
+            "completion-1",
+            "agent.finalize",
+            expires_at="later",
+        )
+
+    assert ledger.balance("budget-1").reserved == [_tokens("30")]
+    assert ledger.balance("budget-1").committed == []
+    assert ledger.completion_reserve("completion-1").status == "available"
+
+
+def test_child_budget_operations_require_active_parent_chain() -> None:
+    ledger = InMemoryBudgetLedger()
+    ledger.allocate("parent", ResourceRef("tenant:acme"), [_tokens("100")], policy_ref="policy-1")
+    ledger.allocate(
+        "child",
+        ResourceRef("project:alpha"),
+        [_tokens("50")],
+        policy_ref="policy-1",
+        parent_budget_id="parent",
+    )
+    _set_budget_status(ledger, "parent", "paused")
+
+    with pytest.raises(BudgetAccountStateError) as error:
+        ledger.reserve(
+            "child",
+            ResourceRef("run:1"),
+            [_tokens("10")],
+            purpose="provider_call",
+            expires_at="later",
+        )
+
+    assert error.value.budget_id == "parent"
+    assert error.value.status == "paused"
 
 
 def test_budget_ledger_commit_releases_unused_reservation() -> None:

@@ -702,8 +702,10 @@ class PolicyEnforcer:
             status: PolicyEnforcementStatus = "failed" if missing_obligation_ids else "enforced"
         elif decision.effect == "defer":
             status = "deferred"
+            actual_obligation_ids = ()
         else:
             status = "blocked"
+            actual_obligation_ids = ()
 
         metadata: dict[str, object] = {}
         if missing_obligation_ids:

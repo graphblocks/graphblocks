@@ -1907,6 +1907,60 @@ def test_runtime_allows_retry_attempt_limit() -> None:
     assert attempts["count"] == 100
 
 
+def test_runtime_isolates_upstream_outputs_from_mutating_consumers_and_retries() -> None:
+    attempts: list[list[str]] = []
+    registry = RuntimeRegistry(allow_untyped=True)
+
+    registry.register(
+        "test.producer@1",
+        lambda inputs, config, context: {"document": {"items": ["original"]}},
+    )
+
+    def mutate_then_retry(inputs, config, context):
+        items = inputs["document"]["items"]
+        attempts.append(list(items))
+        items.append("mutated")
+        if context["attempt"] == 1:
+            raise RuntimeError("retry after mutation")
+        return {"count": len(items)}
+
+    registry.register("test.mutator@1", mutate_then_retry)
+    registry.register(
+        "test.observer@1",
+        lambda inputs, config, context: {"document": inputs["document"]},
+    )
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "isolated-runtime-inputs"},
+        "spec": {
+            "nodes": {
+                "producer": {"block": "test.producer@1"},
+                "mutator": {
+                    "block": "test.mutator@1",
+                    "flow": {"retry": {"maxAttempts": 2}},
+                },
+                "observer": {"block": "test.observer@1"},
+            },
+            "edges": [
+                {"from": "producer.document", "to": "mutator.document"},
+                {"from": "producer.document", "to": "observer.document"},
+                {"from": "producer.document", "to": "$output.source"},
+                {"from": "observer.document", "to": "$output.observed"},
+            ],
+        },
+    }
+
+    result = InProcessRuntime(registry).run(graph, {})
+
+    assert result.status == "succeeded"
+    assert attempts == [["original"], ["original"]]
+    assert result.outputs == {
+        "source": {"items": ["original"]},
+        "observed": {"items": ["original"]},
+    }
+
+
 @pytest.mark.parametrize("max_attempts", (101, 10**100))
 def test_runtime_rejects_retry_attempts_above_limit_before_loop(
     max_attempts: int,

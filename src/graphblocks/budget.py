@@ -53,6 +53,13 @@ class BudgetReservationStateError(BudgetError):
     pass
 
 
+class BudgetAccountStateError(BudgetError):
+    def __init__(self, budget_id: str, status: BudgetStatus) -> None:
+        super().__init__(f"budget {budget_id!r} is {status}")
+        self.budget_id = budget_id
+        self.status = status
+
+
 class BudgetPermitNotFoundError(BudgetError):
     pass
 
@@ -635,6 +642,7 @@ class InMemoryBudgetLedger:
             raise BudgetNotFoundError(f"budget {budget_id!r} does not exist")
         requested = _amounts_to_dict(amounts)
         held_budget_ids = self._budget_chain(budget_id)
+        self._ensure_accounts_active(held_budget_ids)
         for held_budget_id in held_budget_ids:
             available = _amounts_to_dict(self.balance(held_budget_id).available)
             for key, amount in requested.items():
@@ -681,6 +689,7 @@ class InMemoryBudgetLedger:
             raise BudgetReservationStateError(f"reservation {reservation_id!r} is {reservation.status}")
         budget_id = reservation.budget_id
         held_budget_ids = self._reservation_holds.get(reservation_id, (budget_id,))
+        self._ensure_accounts_active(held_budget_ids)
         reserved = _amounts_to_dict(reservation.amounts)
         actual = _amounts_to_dict(actual_amounts)
         if max_overdraft is not None:
@@ -908,6 +917,7 @@ class InMemoryBudgetLedger:
             raise BudgetNotFoundError(f"budget {budget_id!r} does not exist")
         requested = _amounts_to_dict(amounts)
         held_budget_ids = self._budget_chain(budget_id)
+        self._ensure_accounts_active(held_budget_ids)
         for held_budget_id in held_budget_ids:
             available = _amounts_to_dict(self.balance(held_budget_id).available)
             for key, amount in requested.items():
@@ -954,6 +964,8 @@ class InMemoryBudgetLedger:
             raise BudgetCompletionReserveNotFoundError(f"completion reserve {reserve_id!r} does not exist")
         if reserve.status != "available":
             raise BudgetCompletionReserveStateError(f"completion reserve {reserve_id!r} is {reserve.status}")
+        held_budget_ids = self._completion_reserve_holds.get(reserve_id, (reserve.budget_id,))
+        self._ensure_accounts_active(held_budget_ids)
         if spender not in reserve.spendable_by:
             raise BudgetCompletionReserveUnauthorizedError(reserve_id, spender)
 
@@ -971,7 +983,7 @@ class InMemoryBudgetLedger:
             fencing_token=reserve.fencing_token,
         )
         self._reservations[reservation_id] = _copy_budget_record(reservation)
-        self._reservation_holds[reservation_id] = self._completion_reserve_holds.get(reserve_id, (reserve.budget_id,))
+        self._reservation_holds[reservation_id] = held_budget_ids
         self._completion_reserves[reserve_id] = replace(
             reserve,
             status="spent",
@@ -1049,6 +1061,14 @@ class InMemoryBudgetLedger:
             seen.add(current_id)
             current_id = account.parent_budget_id
         return tuple(chain)
+
+    def _ensure_accounts_active(self, budget_ids: tuple[str, ...]) -> None:
+        for budget_id in budget_ids:
+            account = self._accounts.get(budget_id)
+            if account is None:
+                raise BudgetNotFoundError(f"budget {budget_id!r} does not exist")
+            if account.status != "active":
+                raise BudgetAccountStateError(budget_id, account.status)
 
     def _permit_for_reservation(self, permit_id: str, reservation_id: str) -> BudgetPermit:
         permit = self._permits.get(permit_id)
@@ -1655,6 +1675,7 @@ __all__ = [
     "AdmissionDecision",
     "AfterUnitPolicy",
     "BudgetAccount",
+    "BudgetAccountStateError",
     "BudgetBalance",
     "BudgetCompletionReserveConflictError",
     "BudgetCompletionReserveNotFoundError",

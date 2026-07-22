@@ -211,6 +211,7 @@ class AdmissionTicketQueue:
     window_ms: int
     max_pending: int
     ticket_ttl_ms: int
+    max_terminal_tickets: int = 1_024
     _tickets: dict[str, AdmissionTicket] = field(default_factory=dict, init=False, repr=False)
     _request_tickets: dict[tuple[str, str], str] = field(default_factory=dict, init=False, repr=False)
     _pending: deque[str] = field(default_factory=deque, init=False, repr=False)
@@ -232,6 +233,7 @@ class AdmissionTicketQueue:
             "window_ms",
             "max_pending",
             "ticket_ttl_ms",
+            "max_terminal_tickets",
         ):
             setattr(
                 self,
@@ -257,14 +259,24 @@ class AdmissionTicketQueue:
             raise AdmissionError("admission request units must not exceed rate_limit")
 
         with self._lock:
-            self._expire_locked(now_ms)
-            self._promote_locked(now_ms)
-            existing_id = self._request_tickets.get((owner_id, request_id))
+            request_key = (owner_id, request_id)
+            existing_id = self._request_tickets.get(request_key)
             if existing_id is not None:
                 existing = self._tickets[existing_id]
                 if existing.run_id != run_id or existing.units != units:
                     raise AdmissionIdempotencyConflictError(owner_id, request_id)
-                return AdmissionSubmission(existing, duplicate=True)
+            self._expire_locked(now_ms)
+            self._promote_locked(now_ms)
+            existing_id = self._request_tickets.get(request_key)
+            if existing_id is not None:
+                existing = self._tickets[existing_id]
+                if existing.state in {"expired", "failed"}:
+                    self._evict_terminal_locked(existing_id)
+                elif self._terminal_retention_expired(existing, now_ms):
+                    self._evict_terminal_locked(existing_id)
+                else:
+                    return AdmissionSubmission(existing, duplicate=True)
+            self._prune_terminal_locked(now_ms)
 
             self._refresh_window_locked(now_ms)
             can_admit = (
@@ -333,7 +345,9 @@ class AdmissionTicketQueue:
         now_ms = _non_negative_integer("admission queue", "now_ms", now_ms)
         with self._lock:
             self._expire_locked(now_ms)
-            return self._promote_locked(now_ms)
+            promoted = self._promote_locked(now_ms)
+            self._prune_terminal_locked(now_ms)
+            return promoted
 
     def mark_running(
         self,
@@ -362,6 +376,7 @@ class AdmissionTicketQueue:
                 started_at_ms=now_ms,
             )
             self._tickets[ticket_id] = running
+            self._prune_terminal_locked(now_ms)
             return running
 
     def complete(
@@ -393,6 +408,7 @@ class AdmissionTicketQueue:
             self._tickets[ticket_id] = terminal
             self._active.discard(ticket_id)
             promoted = self._promote_locked(now_ms)
+            self._prune_terminal_locked(now_ms)
             return terminal, promoted
 
     def cancel(
@@ -416,6 +432,7 @@ class AdmissionTicketQueue:
         with self._lock:
             ticket = self.get(ticket_id)
             if ticket.state in TERMINAL_ADMISSION_TICKET_STATES:
+                self._prune_terminal_locked(now_ms)
                 return ticket, ()
             if ticket.state == "running":
                 if fencing_token is None:
@@ -440,12 +457,15 @@ class AdmissionTicketQueue:
             self._tickets[ticket_id] = cancelled
             self._reindex_locked(now_ms)
             promoted = self._promote_locked(now_ms)
+            self._prune_terminal_locked(now_ms)
             return cancelled, promoted
 
     def expire(self, *, now_ms: int) -> tuple[AdmissionTicket, ...]:
         now_ms = _non_negative_integer("admission queue", "now_ms", now_ms)
         with self._lock:
-            return self._expire_locked(now_ms)
+            expired = self._expire_locked(now_ms)
+            self._prune_terminal_locked(now_ms)
+            return expired
 
     def pending_ticket_ids(self) -> tuple[str, ...]:
         with self._lock:
@@ -517,7 +537,50 @@ class AdmissionTicketQueue:
             self._tickets[ticket_id] = terminal
             expired.append(terminal)
         self._reindex_locked(now_ms)
+        self._prune_terminal_locked(now_ms)
         return tuple(sorted(expired, key=lambda ticket: ticket.sequence))
+
+    def _prune_terminal_locked(self, now_ms: int) -> None:
+        terminal_tickets = sorted(
+            (
+                ticket
+                for ticket in self._tickets.values()
+                if ticket.state in TERMINAL_ADMISSION_TICKET_STATES
+            ),
+            key=lambda ticket: (ticket.completed_at_ms or 0, ticket.sequence),
+        )
+        for ticket in terminal_tickets:
+            if self._terminal_retention_expired(ticket, now_ms):
+                self._evict_terminal_locked(ticket.ticket_id)
+
+        retained_terminal_tickets = [
+            ticket
+            for ticket in terminal_tickets
+            if ticket.ticket_id in self._tickets
+        ]
+        overflow = len(retained_terminal_tickets) - self.max_terminal_tickets
+        for ticket in retained_terminal_tickets[: max(overflow, 0)]:
+            self._evict_terminal_locked(ticket.ticket_id)
+
+    def _terminal_retention_expired(
+        self,
+        ticket: AdmissionTicket,
+        now_ms: int,
+    ) -> bool:
+        return (
+            ticket.state in TERMINAL_ADMISSION_TICKET_STATES
+            and ticket.completed_at_ms is not None
+            and ticket.completed_at_ms <= now_ms - self.ticket_ttl_ms
+        )
+
+    def _evict_terminal_locked(self, ticket_id: str) -> None:
+        ticket = self._tickets.get(ticket_id)
+        if ticket is None or ticket.state not in TERMINAL_ADMISSION_TICKET_STATES:
+            return
+        self._tickets.pop(ticket_id, None)
+        request_key = (ticket.owner_id, ticket.request_id)
+        if self._request_tickets.get(request_key) == ticket_id:
+            self._request_tickets.pop(request_key, None)
 
     def _reindex_locked(self, now_ms: int) -> None:
         self._refresh_window_locked(now_ms)

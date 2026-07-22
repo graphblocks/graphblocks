@@ -690,6 +690,49 @@ def test_policy_enforcer_records_decision_and_enforcement_status() -> None:
     assert failed.record.metadata["missing_obligation_ids"] == ("obl-1",)
 
 
+def test_policy_enforcer_discards_reported_obligations_for_denied_decisions() -> None:
+    evaluator = StaticPolicyEvaluator(
+        rules=[
+            PolicyRule(
+                "deny-tool",
+                "deny",
+                actions=("tool.run",),
+                resource_selectors=("tool",),
+            )
+        ]
+    )
+    request = PolicyRequest(
+        request_id="req-denied",
+        enforcement_point="before_tool_or_effect",
+        action="tool.run",
+        resource=ResourceRef("tool:search", resource_kind="tool"),
+        occurred_at="2026-06-23T00:00:00Z",
+    )
+
+    enforcement = PolicyEnforcer(evaluator).enforce(
+        request,
+        evaluated_at="2026-06-23T00:00:01Z",
+        enforced_obligation_ids=("caller-reported-obligation",),
+    )
+    report = run_policy_tests(
+        evaluator,
+        [
+            PolicyTestCase(
+                "denied-with-reported-obligations",
+                request,
+                PolicyTestExpectation(effect="deny", enforcement_status="blocked"),
+                evaluated_at="2026-06-23T00:00:01Z",
+                enforced_obligation_ids=("caller-reported-obligation",),
+            )
+        ],
+    )
+
+    assert enforcement.record.status == "blocked"
+    assert enforcement.record.enforced_obligation_ids == ()
+    assert report.passed is True
+    assert report.results[0].record.enforced_obligation_ids == ()
+
+
 def test_policy_test_dsl_reports_expectation_failures() -> None:
     evaluator = StaticPolicyEvaluator(
         rules=[PolicyRule("allow-model", "allow", actions=("model.generate",), resource_selectors=("model",))]

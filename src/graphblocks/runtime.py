@@ -1505,7 +1505,14 @@ class InProcessRuntime:
                     journal.append("node_started", started_payload)
                     try:
                         block = self.registry.resolve(block_id)
-                        merged_inputs = {**node_inputs[node_name], **resolved_inputs}
+                        merged_inputs = canonical_loads(
+                            _dumps_strict_json(
+                                f"{block_id} input",
+                                {**node_inputs[node_name], **resolved_inputs},
+                            )
+                        )
+                        if not isinstance(merged_inputs, dict):
+                            raise TypeError("block received non-mapping input")
                         started_at = time.perf_counter()
                         deadline = None if timeout_seconds is None else started_at + timeout_seconds
                         timeout_reason = f"node {node_name!r} exceeded timeout {flow.get('timeout')}"

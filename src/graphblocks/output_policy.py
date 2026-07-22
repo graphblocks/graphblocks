@@ -1109,6 +1109,19 @@ class OutputDeliveryGate:
                     )
                 )
                 replacement_end_sequence = sequence
+            replacement_targets = [sequence for sequence, _ in replacement_chunks]
+            if (
+                decision.disposition == "replace"
+                and not replacement_targets
+                and accepted_through_sequence is not None
+            ):
+                replacement_targets.append(accepted_through_sequence)
+            for sequence in replacement_targets:
+                if sequence <= self.last_client_delivered_sequence:
+                    raise OutputGateError(
+                        f"replacement target {sequence} is already delivered through "
+                        f"{self.last_client_delivered_sequence}"
+                    )
             if accepted_through_sequence is not None:
                 self.last_policy_accepted_sequence = max(
                     self.last_policy_accepted_sequence,
