@@ -133,6 +133,7 @@ pub struct WorkerAdmissionDecision {
 pub enum WorkerProtocolError {
     IncompatibleVersion { expected: u16, actual: u16 },
     IncompatiblePackageLock { expected: String, actual: String },
+    NotReady { state: WorkerState },
     EmptyWorkerId,
     EmptyTargetId,
     EmptyPackageLockHash,
@@ -226,8 +227,10 @@ impl WorkerProtocolMessagePayload {
 
     pub fn validate(&self) -> Result<(), WorkerProtocolMessageError> {
         match self {
-            Self::Advertisement(advertisement) => admit_worker(advertisement)
-                .map_err(|source| WorkerProtocolMessageError::InvalidAdvertisement { source }),
+            Self::Advertisement(advertisement) => {
+                validate_worker_advertisement(&WorkerAdmissionPolicy::current(), advertisement)
+                    .map_err(|source| WorkerProtocolMessageError::InvalidAdvertisement { source })
+            }
             Self::AdmissionDecision(decision) => validate_worker_admission_decision(decision),
             Self::InvokeRequest(request) => request
                 .validate()
@@ -630,6 +633,34 @@ pub fn admit_worker_with_policy(
             actual: advertisement.protocol_version,
         });
     }
+    if !matches!(
+        advertisement.state,
+        WorkerState::Ready | WorkerState::Saturated
+    ) {
+        return Err(WorkerProtocolError::NotReady {
+            state: advertisement.state,
+        });
+    }
+    validate_worker_advertisement_fields(policy, advertisement)
+}
+
+fn validate_worker_advertisement(
+    policy: &WorkerAdmissionPolicy,
+    advertisement: &WorkerAdvertisement,
+) -> Result<(), WorkerProtocolError> {
+    if advertisement.protocol_version != policy.protocol_version {
+        return Err(WorkerProtocolError::IncompatibleVersion {
+            expected: policy.protocol_version,
+            actual: advertisement.protocol_version,
+        });
+    }
+    validate_worker_advertisement_fields(policy, advertisement)
+}
+
+fn validate_worker_advertisement_fields(
+    policy: &WorkerAdmissionPolicy,
+    advertisement: &WorkerAdvertisement,
+) -> Result<(), WorkerProtocolError> {
     if advertisement.worker_id.trim().is_empty() {
         return Err(WorkerProtocolError::EmptyWorkerId);
     }

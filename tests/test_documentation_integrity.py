@@ -51,6 +51,9 @@ def test_rust_packages_declare_publishable_path_versions_and_bundle_local_fixtur
 
     fixture_mirrors = {
         "crates/graphblocks-compiler/tests/fixtures/compiler-cases.json": "tck/compiler/cases.json",
+        "crates/graphblocks-protocol/tests/fixtures/worker-admission.json": (
+            "tck/worker/admission.json"
+        ),
         "crates/graphblocks-python/src/fixtures/compiler-cases.json": "tck/compiler/cases.json",
         "crates/graphblocks-python/src/fixtures/runtime-cases.json": "tck/runtime/cases.json",
         "crates/graphblocks-runtime-core/tests/fixtures/builtin-plugin.yaml": (

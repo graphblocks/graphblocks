@@ -277,6 +277,10 @@ fn validate_worker_advertisement_json(
                     "expected": expected,
                     "actual": actual,
                 }),
+                WorkerProtocolError::NotReady { state } => json!({
+                    "code": "worker.not_ready",
+                    "state": state,
+                }),
                 WorkerProtocolError::EmptyWorkerId => json!({"code": "worker.empty_worker_id"}),
                 WorkerProtocolError::EmptyTargetId => json!({"code": "worker.empty_target_id"}),
                 WorkerProtocolError::EmptyPackageLockHash => {

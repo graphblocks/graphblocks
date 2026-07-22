@@ -721,7 +721,7 @@ def admit_worker_with_policy(policy: WorkerAdmissionPolicy, advertisement: Worke
         raise WorkerProtocolError("worker admission advertisement must be WorkerAdvertisement")
     if advertisement.protocol_version != policy.protocol_version:
         raise WorkerIncompatibleVersionError(policy.protocol_version, advertisement.protocol_version)
-    if advertisement.state != "ready":
+    if advertisement.state not in {"ready", "saturated"}:
         raise WorkerProtocolError(f"worker is not ready for admission: state is {advertisement.state!r}")
     if advertisement.worker_id == "":
         raise WorkerEmptyWorkerIdError("worker_id must not be empty")
@@ -770,7 +770,7 @@ def evaluate_worker_admission(
         reason_codes.append("worker.incompatible_package_lock")
     if not advertisement.supported_blocks:
         reason_codes.append("worker.empty_supported_blocks")
-    if advertisement.state != "ready":
+    if advertisement.state not in {"ready", "saturated"}:
         reason_codes.append("worker.not_ready")
     if policy.required_block is not None and policy.required_block not in {
         capability.block for capability in advertisement.supported_blocks

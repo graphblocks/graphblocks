@@ -1,0 +1,28 @@
+[
+  {
+    "name": "ready_worker_is_admitted",
+    "state": "ready",
+    "expected": {
+      "admitted": true,
+      "reasonCodes": []
+    }
+  },
+  {
+    "name": "saturated_worker_remains_registered",
+    "state": "saturated",
+    "expected": {
+      "admitted": true,
+      "reasonCodes": []
+    }
+  },
+  {
+    "name": "draining_worker_is_rejected",
+    "state": "draining",
+    "expected": {
+      "admitted": false,
+      "reasonCodes": [
+        "worker.not_ready"
+      ]
+    }
+  }
+]

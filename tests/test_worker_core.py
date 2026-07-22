@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import pytest
 
 import graphblocks
@@ -304,6 +307,32 @@ def test_worker_admission_decision_allows_ready_matching_worker() -> None:
 
     assert decision.admitted is True
     assert decision.reason_codes == ()
+
+
+def test_shared_worker_admission_tck_matches_python_contract() -> None:
+    fixture_path = Path(__file__).parents[1] / "tck" / "worker" / "admission.json"
+    cases = json.loads(fixture_path.read_text(encoding="utf-8"))
+
+    for case in cases:
+        advertisement = WorkerAdvertisement.new(
+            f"worker-{case['name']}",
+            "model-cpu",
+            "sha256:package-lock",
+            "sha256:image",
+            [BlockCapability("model.generate@1")],
+        ).with_state(case["state"])
+        policy = WorkerAdmissionPolicy.current().require_block("model.generate@1")
+        decision = evaluate_worker_admission(policy, advertisement)
+        try:
+            admit_worker_with_policy(policy, advertisement)
+        except WorkerProtocolError:
+            direct_admitted = False
+        else:
+            direct_admitted = True
+
+        assert decision.admitted is case["expected"]["admitted"], case["name"]
+        assert list(decision.reason_codes) == case["expected"]["reasonCodes"], case["name"]
+        assert direct_admitted is decision.admitted, case["name"]
 
 
 def test_top_level_package_exports_worker_admission_decision_api() -> None:

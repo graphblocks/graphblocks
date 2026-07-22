@@ -205,9 +205,67 @@ fn worker_admission_allows_saturated_workers_to_remain_registered() {
 
     let decision = evaluate_worker_admission(&WorkerAdmissionPolicy::current(), &advertisement);
 
+    assert_eq!(admit_worker(&advertisement), Ok(()));
     assert!(decision.admitted);
     assert_eq!(decision.state, WorkerState::Saturated);
     assert!(decision.reason_codes.is_empty());
+}
+
+#[test]
+fn shared_worker_admission_tck_matches_rust_contract() {
+    let cases: Value = serde_json::from_str(include_str!("fixtures/worker-admission.json"))
+        .expect("worker admission TCK fixture is valid JSON");
+
+    for case in cases.as_array().expect("worker admission TCK is an array") {
+        let state = serde_json::from_value::<WorkerState>(case["state"].clone())
+            .expect("worker state is valid");
+        let advertisement = WorkerAdvertisement::new(
+            format!("worker-{}", case["name"].as_str().expect("case has a name")),
+            "model-cpu",
+            "sha256:package-lock",
+            "sha256:image",
+            [BlockCapability::new("model.generate@1")],
+        )
+        .with_state(state);
+        let policy = WorkerAdmissionPolicy::current().require_block("model.generate@1");
+        let decision = evaluate_worker_admission(&policy, &advertisement);
+        let direct_admitted = admit_worker_with_policy(&policy, &advertisement).is_ok();
+        let expected_admitted = case["expected"]["admitted"]
+            .as_bool()
+            .expect("expected admitted is a boolean");
+
+        assert_eq!(decision.admitted, expected_admitted, "{}", case["name"],);
+        assert_eq!(direct_admitted, expected_admitted, "{}", case["name"]);
+        assert_eq!(
+            decision.reason_codes,
+            serde_json::from_value::<Vec<String>>(case["expected"]["reasonCodes"].clone())
+                .expect("expected reason codes are strings"),
+            "{}",
+            case["name"],
+        );
+    }
+}
+
+#[test]
+fn lifecycle_advertisement_messages_remain_valid_when_direct_admission_is_closed() {
+    let advertisement = WorkerAdvertisement::new(
+        "worker-draining",
+        "model-cpu",
+        "sha256:package-lock",
+        "sha256:image",
+        [BlockCapability::new("model.generate@1")],
+    )
+    .with_state(WorkerState::Draining);
+    let message =
+        WorkerProtocolMessage::advertisement("message-draining", 1, advertisement.clone());
+
+    assert_eq!(
+        admit_worker(&advertisement),
+        Err(WorkerProtocolError::NotReady {
+            state: WorkerState::Draining,
+        }),
+    );
+    assert_eq!(message.validate(), Ok(()));
 }
 
 #[test]
