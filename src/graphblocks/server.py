@@ -2137,6 +2137,11 @@ class GraphBlocksServerApp:
         init=False,
         repr=False,
     )
+    _subscription_registration_condition: Condition = field(
+        default_factory=Condition,
+        init=False,
+        repr=False,
+    )
     _acks_by_subscription: dict[tuple[str, str], tuple[dict[str, object], ...]] = field(
         default_factory=dict,
         init=False,
@@ -2144,6 +2149,13 @@ class GraphBlocksServerApp:
     )
     _callback_registrations: dict[str, ServerCallbackRegistration] = field(
         default_factory=dict,
+        init=False,
+        repr=False,
+    )
+    _pending_callback_registration_ids: set[str] = field(default_factory=set, init=False, repr=False)
+    _incomplete_callback_registration_ids: set[str] = field(default_factory=set, init=False, repr=False)
+    _callback_registration_condition: Condition = field(
+        default_factory=Condition,
         init=False,
         repr=False,
     )
@@ -2423,35 +2435,40 @@ class GraphBlocksServerApp:
                             "error": f"run event stream not found for subscription run {run_id!r}",
                         },
                     )
-                existing = self._subscriptions_by_run_id.get(run_id, ())
-                subscription = ServerEventSubscription.from_request(
-                    run_id=run_id,
-                    request=request,
-                    ordinal=len(existing) + 1,
-                    owner=auth_decision.principal,
-                )
-                subscription = replace(
-                    subscription,
-                    event_filter=_constrain_event_filter_visibility(subscription.event_filter, auth_decision.principal),
-                )
-                existing_subscription = self._subscription_for(run_id, subscription.subscription_id)
-                if existing_subscription is not None:
-                    return ServerResponse.json(
-                        409,
-                        {
-                            "ok": False,
-                            "runId": run_id,
-                            "subscriptionId": subscription.subscription_id,
-                            "state": existing_subscription.status,
-                            "error": (
-                                f"subscription {subscription.subscription_id!r} already exists for run {run_id!r}"
-                            ),
-                        },
+                with self._subscription_registration_condition:
+                    existing = self._subscriptions_by_run_id.get(run_id, ())
+                    subscription = ServerEventSubscription.from_request(
+                        run_id=run_id,
+                        request=request,
+                        ordinal=len(existing) + 1,
+                        owner=auth_decision.principal,
                     )
-                replay = self._subscription_replay(subscription, events)
-                if isinstance(replay, ServerResponse):
-                    return replay
-                self._subscriptions_by_run_id[run_id] = (*existing, subscription)
+                    subscription = replace(
+                        subscription,
+                        event_filter=_constrain_event_filter_visibility(
+                            subscription.event_filter,
+                            auth_decision.principal,
+                        ),
+                    )
+                    existing_subscription = self._subscription_for(run_id, subscription.subscription_id)
+                    if existing_subscription is not None:
+                        return ServerResponse.json(
+                            409,
+                            {
+                                "ok": False,
+                                "runId": run_id,
+                                "subscriptionId": subscription.subscription_id,
+                                "state": existing_subscription.status,
+                                "error": (
+                                    f"subscription {subscription.subscription_id!r} "
+                                    f"already exists for run {run_id!r}"
+                                ),
+                            },
+                        )
+                    replay = self._subscription_replay(subscription, events)
+                    if isinstance(replay, ServerResponse):
+                        return replay
+                    self._subscriptions_by_run_id[run_id] = (*existing, subscription)
                 return ServerResponse.json(
                     201,
                     subscription.response_payload(replay, f"{run_id}:{self._last_event_sequence(events)}"),
@@ -2467,64 +2484,65 @@ class GraphBlocksServerApp:
         if route.operation == "unsubscribe_events":
             run_id = route_match.path_params.get("run_id", "")
             subscription_id = route_match.path_params.get("subscription_id", "")
-            subscriptions = self._subscriptions_by_run_id.get(run_id)
-            if subscriptions is None:
-                return ServerResponse.json(
-                    404,
-                    {
-                        "ok": False,
-                        "error": f"run subscriptions not found for run {run_id!r}",
-                    },
-            )
-            for index, subscription in enumerate(subscriptions):
-                if subscription.subscription_id == subscription_id:
-                    if subscription.owner is not None and not _principal_matches_owner(
-                        auth_decision.principal,
-                        subscription.owner,
-                    ):
-                        return ServerResponse.json(
-                            403,
-                            {
-                                "ok": False,
-                                "error": (
-                                    f"subscription {subscription_id!r} for run {run_id!r} "
-                                    "belongs to a different principal"
-                                ),
-                            },
+            with self._subscription_registration_condition:
+                subscriptions = self._subscriptions_by_run_id.get(run_id)
+                if subscriptions is None:
+                    return ServerResponse.json(
+                        404,
+                        {
+                            "ok": False,
+                            "error": f"run subscriptions not found for run {run_id!r}",
+                        },
+                    )
+                for index, subscription in enumerate(subscriptions):
+                    if subscription.subscription_id == subscription_id:
+                        if subscription.owner is not None and not _principal_matches_owner(
+                            auth_decision.principal,
+                            subscription.owner,
+                        ):
+                            return ServerResponse.json(
+                                403,
+                                {
+                                    "ok": False,
+                                    "error": (
+                                        f"subscription {subscription_id!r} for run {run_id!r} "
+                                        "belongs to a different principal"
+                                    ),
+                                },
+                            )
+                        if subscription.status == "revoked":
+                            return ServerResponse.json(
+                                200,
+                                {
+                                    "ok": True,
+                                    "runId": run_id,
+                                    "subscriptionId": subscription_id,
+                                    "status": "revoked",
+                                    "duplicate": True,
+                                },
+                            )
+                        revoked = replace(subscription, status="revoked")
+                        self._subscriptions_by_run_id[run_id] = (
+                            *subscriptions[:index],
+                            revoked,
+                            *subscriptions[index + 1 :],
                         )
-                    if subscription.status == "revoked":
                         return ServerResponse.json(
-                            200,
+                            202,
                             {
                                 "ok": True,
                                 "runId": run_id,
                                 "subscriptionId": subscription_id,
                                 "status": "revoked",
-                                "duplicate": True,
                             },
                         )
-                    revoked = replace(subscription, status="revoked")
-                    self._subscriptions_by_run_id[run_id] = (
-                        *subscriptions[:index],
-                        revoked,
-                        *subscriptions[index + 1 :],
-                    )
-                    return ServerResponse.json(
-                        202,
-                        {
-                            "ok": True,
-                            "runId": run_id,
-                            "subscriptionId": subscription_id,
-                            "status": "revoked",
-                        },
-                    )
-            return ServerResponse.json(
-                404,
-                {
-                    "ok": False,
-                    "error": f"subscription {subscription_id!r} not found for run {run_id!r}",
-                },
-            )
+                return ServerResponse.json(
+                    404,
+                    {
+                        "ok": False,
+                        "error": f"subscription {subscription_id!r} not found for run {run_id!r}",
+                    },
+                )
         if route.operation == "ack_event":
             try:
                 run_id = route_match.path_params.get("run_id", "")
@@ -2593,88 +2611,163 @@ class GraphBlocksServerApp:
                 )
         if route.operation == "register_callback":
             try:
-                registration = ServerCallbackRegistration.from_request(
-                    request=request,
-                    ordinal=len(self._callback_registrations) + 1,
-                    owner=auth_decision.principal,
-                )
-                registration = replace(
-                    registration,
-                    event_filter=_constrain_event_filter_visibility(registration.event_filter, auth_decision.principal),
-                )
-                if (
-                    auth_decision.principal is not None
-                    and auth_decision.principal.tenant_id is not None
-                    and registration.scope == "tenant"
-                    and registration.scope_id != auth_decision.principal.tenant_id
-                ):
-                    return ServerResponse.json(
-                        403,
-                        {
-                            "ok": False,
-                            "error": (
-                                f"callback registration tenant scope {registration.scope_id!r} "
-                                f"is not allowed for principal tenant {auth_decision.principal.tenant_id!r}"
-                            ),
-                        },
+                with self._callback_registration_condition:
+                    registration = ServerCallbackRegistration.from_request(
+                        request=request,
+                        ordinal=len(
+                            set(self._callback_registrations).union(
+                                self._pending_callback_registration_ids
+                            )
+                        )
+                        + 1,
+                        owner=auth_decision.principal,
                     )
-                existing = self._callback_registrations.get(registration.subscription_id)
-                if existing is not None:
-                    return ServerResponse.json(
-                        409,
-                        {
-                            "ok": False,
-                            "subscriptionId": registration.subscription_id,
-                            "state": existing.status,
-                            "error": f"callback registration {registration.subscription_id!r} already exists",
-                        },
+                    registration = replace(
+                        registration,
+                        event_filter=_constrain_event_filter_visibility(
+                            registration.event_filter,
+                            auth_decision.principal,
+                        ),
                     )
-                replay = self._callback_registration_replay(registration)
-                if isinstance(replay, ServerResponse):
-                    return replay
-                replayed_events, last_cursor = replay
+                    if (
+                        auth_decision.principal is not None
+                        and auth_decision.principal.tenant_id is not None
+                        and registration.scope == "tenant"
+                        and registration.scope_id != auth_decision.principal.tenant_id
+                    ):
+                        return ServerResponse.json(
+                            403,
+                            {
+                                "ok": False,
+                                "error": (
+                                    f"callback registration tenant scope {registration.scope_id!r} "
+                                    "is not allowed for principal tenant "
+                                    f"{auth_decision.principal.tenant_id!r}"
+                                ),
+                            },
+                        )
+                    if registration.subscription_id in self._pending_callback_registration_ids:
+                        return ServerResponse.json(
+                            409,
+                            {
+                                "ok": False,
+                                "subscriptionId": registration.subscription_id,
+                                "state": "pending",
+                                "error": f"callback registration {registration.subscription_id!r} already exists",
+                            },
+                        )
+                    existing = self._callback_registrations.get(registration.subscription_id)
+                    resuming_incomplete_registration = False
+                    if existing is not None:
+                        retry_registration = replace(registration, created_at=existing.created_at)
+                        if (
+                            registration.subscription_id
+                            not in self._incomplete_callback_registration_ids
+                            or retry_registration != existing
+                        ):
+                            return ServerResponse.json(
+                                409,
+                                {
+                                    "ok": False,
+                                    "subscriptionId": registration.subscription_id,
+                                    "state": existing.status,
+                                    "error": (
+                                        f"callback registration {registration.subscription_id!r} already exists"
+                                    ),
+                                },
+                            )
+                        registration = existing
+                        resuming_incomplete_registration = True
+                    self._pending_callback_registration_ids.add(registration.subscription_id)
+
+                replay_ready = False
+                try:
+                    replay = self._callback_registration_replay(registration)
+                    if isinstance(replay, ServerResponse):
+                        return replay
+                    replayed_events, last_cursor = replay
+                    replay_ready = True
+                finally:
+                    if not replay_ready:
+                        with self._callback_registration_condition:
+                            self._pending_callback_registration_ids.discard(registration.subscription_id)
+
+                with self._callback_registration_condition:
+                    if not resuming_incomplete_registration:
+                        self._callback_registrations[registration.subscription_id] = registration
+
                 delivery_results: tuple[ServerCallbackDeliveryResult, ...] = ()
                 if self.callback_delivery_hook is not None and registration.delivery.get("kind") == "webhook":
-                    delivered: list[ServerCallbackDeliveryResult] = []
-                    for event in replayed_events:
-                        try:
-                            delivery_result = self.callback_delivery_hook.deliver(registration, event)
-                        except Exception:
-                            return ServerResponse.json(
-                                502,
-                                {
-                                    "ok": False,
-                                    "subscriptionId": registration.subscription_id,
-                                    "error": "callback delivery hook failed closed",
-                                },
+                    with self._callback_registration_condition:
+                        self._incomplete_callback_registration_ids.add(registration.subscription_id)
+                        delivered = list(
+                            self._callback_delivery_results_by_subscription_id.get(
+                                registration.subscription_id,
+                                (),
                             )
-                        if not isinstance(delivery_result, ServerCallbackDeliveryResult):
-                            return ServerResponse.json(
-                                502,
-                                {
-                                    "ok": False,
-                                    "subscriptionId": registration.subscription_id,
-                                    "error": "callback delivery hook returned an invalid result",
-                                },
-                            )
-                        if delivery_result.subscription_id != registration.subscription_id:
-                            return ServerResponse.json(
-                                502,
-                                {
-                                    "ok": False,
-                                    "subscriptionId": registration.subscription_id,
-                                    "error": "callback delivery hook returned a mismatched subscription",
-                                },
-                            )
-                        delivered.append(delivery_result)
-                    delivery_results = tuple(delivered)
-                self._callback_registrations[registration.subscription_id] = registration
-                if delivery_results:
-                    self._callback_delivery_results_by_subscription_id[registration.subscription_id] = (
-                        delivery_results
-                    )
+                        )
+                    completed_event_ids = {result.event_id for result in delivered}
+                    try:
+                        for event in replayed_events:
+                            metadata = event.get("metadata")
+                            event_id = metadata.get("eventId") if isinstance(metadata, Mapping) else None
+                            if isinstance(event_id, str) and event_id in completed_event_ids:
+                                continue
+                            try:
+                                delivery_result = self.callback_delivery_hook.deliver(registration, event)
+                            except Exception:
+                                return ServerResponse.json(
+                                    502,
+                                    {
+                                        "ok": False,
+                                        "subscriptionId": registration.subscription_id,
+                                        "error": "callback delivery hook failed closed",
+                                    },
+                                )
+                            if not isinstance(delivery_result, ServerCallbackDeliveryResult):
+                                return ServerResponse.json(
+                                    502,
+                                    {
+                                        "ok": False,
+                                        "subscriptionId": registration.subscription_id,
+                                        "error": "callback delivery hook returned an invalid result",
+                                    },
+                                )
+                            if delivery_result.subscription_id != registration.subscription_id:
+                                return ServerResponse.json(
+                                    502,
+                                    {
+                                        "ok": False,
+                                        "subscriptionId": registration.subscription_id,
+                                        "error": "callback delivery hook returned a mismatched subscription",
+                                    },
+                                )
+                            if isinstance(event_id, str) and delivery_result.event_id != event_id:
+                                return ServerResponse.json(
+                                    502,
+                                    {
+                                        "ok": False,
+                                        "subscriptionId": registration.subscription_id,
+                                        "error": "callback delivery hook returned a mismatched event",
+                                    },
+                                )
+                            delivered.append(delivery_result)
+                            completed_event_ids.add(delivery_result.event_id)
+                            with self._callback_registration_condition:
+                                self._callback_delivery_results_by_subscription_id[
+                                    registration.subscription_id
+                                ] = tuple(delivered)
+                        delivery_results = tuple(delivered)
+                        with self._callback_registration_condition:
+                            self._incomplete_callback_registration_ids.discard(registration.subscription_id)
+                    finally:
+                        with self._callback_registration_condition:
+                            self._pending_callback_registration_ids.discard(registration.subscription_id)
+                else:
+                    with self._callback_registration_condition:
+                        self._pending_callback_registration_ids.discard(registration.subscription_id)
                 return ServerResponse.json(
-                    201,
+                    200 if resuming_incomplete_registration else 201,
                     registration.response_payload(replayed_events, last_cursor, delivery_results),
                 )
             except (TypeError, ValueError, json.JSONDecodeError) as error:
@@ -2687,46 +2780,47 @@ class GraphBlocksServerApp:
                 )
         if route.operation == "revoke_callback":
             subscription_id = route_match.path_params.get("subscription_id", "")
-            registration = self._callback_registrations.get(subscription_id)
-            if registration is None:
+            with self._callback_registration_condition:
+                registration = self._callback_registrations.get(subscription_id)
+                if registration is None:
+                    return ServerResponse.json(
+                        404,
+                        {
+                            "ok": False,
+                            "error": f"callback registration {subscription_id!r} not found",
+                        },
+                    )
+                if registration.owner is not None and not _principal_matches_owner(
+                    auth_decision.principal,
+                    registration.owner,
+                ):
+                    return ServerResponse.json(
+                        403,
+                        {
+                            "ok": False,
+                            "error": f"callback registration {subscription_id!r} belongs to a different principal",
+                        },
+                    )
+                if registration.status == "revoked":
+                    return ServerResponse.json(
+                        200,
+                        {
+                            "ok": True,
+                            "subscriptionId": subscription_id,
+                            "status": "revoked",
+                            "duplicate": True,
+                        },
+                    )
+                revoked = replace(registration, status="revoked")
+                self._callback_registrations[subscription_id] = revoked
                 return ServerResponse.json(
-                    404,
-                    {
-                        "ok": False,
-                        "error": f"callback registration {subscription_id!r} not found",
-                    },
-                )
-            if registration.owner is not None and not _principal_matches_owner(
-                auth_decision.principal,
-                registration.owner,
-            ):
-                return ServerResponse.json(
-                    403,
-                    {
-                        "ok": False,
-                        "error": f"callback registration {subscription_id!r} belongs to a different principal",
-                    },
-                )
-            if registration.status == "revoked":
-                return ServerResponse.json(
-                    200,
+                    202,
                     {
                         "ok": True,
                         "subscriptionId": subscription_id,
                         "status": "revoked",
-                        "duplicate": True,
                     },
                 )
-            revoked = replace(registration, status="revoked")
-            self._callback_registrations[subscription_id] = revoked
-            return ServerResponse.json(
-                202,
-                {
-                    "ok": True,
-                    "subscriptionId": subscription_id,
-                    "status": "revoked",
-                },
-            )
         if route.operation in {"redrive_callback_delivery", "move_callback_to_dead_letter"}:
             try:
                 delivery_id = route_match.path_params.get("delivery_id", "")
@@ -5093,7 +5187,8 @@ class GraphBlocksServerApp:
 
     def subscriptions(self, run_id: str) -> tuple[ServerEventSubscription, ...]:
         run_id = _validate_exact_non_empty_string("server event subscription", "run_id", run_id)
-        return self._subscriptions_by_run_id.get(run_id, ())
+        with self._subscription_registration_condition:
+            return self._subscriptions_by_run_id.get(run_id, ())
 
     def event_acks(self, run_id: str, subscription_id: str) -> tuple[dict[str, object], ...]:
         run_id = _validate_exact_non_empty_string("server event ack", "run_id", run_id)
@@ -5105,7 +5200,8 @@ class GraphBlocksServerApp:
         return self._acks_by_subscription.get((run_id, subscription_id), ())
 
     def callback_registrations(self) -> tuple[ServerCallbackRegistration, ...]:
-        return tuple(self._callback_registrations[key] for key in sorted(self._callback_registrations))
+        with self._callback_registration_condition:
+            return tuple(self._callback_registrations[key] for key in sorted(self._callback_registrations))
 
     def callback_delivery_results(self, subscription_id: str) -> tuple[dict[str, object], ...]:
         subscription_id = _validate_exact_non_empty_string(
@@ -5113,10 +5209,11 @@ class GraphBlocksServerApp:
             "subscription_id",
             subscription_id,
         )
-        return tuple(
-            result.protocol_value()
-            for result in self._callback_delivery_results_by_subscription_id.get(subscription_id, ())
-        )
+        with self._callback_registration_condition:
+            return tuple(
+                result.protocol_value()
+                for result in self._callback_delivery_results_by_subscription_id.get(subscription_id, ())
+            )
 
     def callback_delivery_redrives(self, delivery_id: str) -> tuple[dict[str, object], ...]:
         delivery_id = _validate_exact_non_empty_string(
@@ -6292,8 +6389,12 @@ class GraphBlocksServerApp:
         )
         if not isinstance(include_terminal_events, bool):
             raise ValueError("server event subscription event_filter.include_terminal_events must be a boolean")
-        if isinstance(event_kind, str) and event_kind in SERVER_TERMINAL_EVENT_KINDS:
-            return include_terminal_events
+        if (
+            isinstance(event_kind, str)
+            and event_kind in SERVER_TERMINAL_EVENT_KINDS
+            and not include_terminal_events
+        ):
+            return False
         types = event_filter.get("types")
         if types is None:
             return True
@@ -6301,9 +6402,10 @@ class GraphBlocksServerApp:
         return isinstance(event_kind, str) and event_kind in allowed_types
 
     def _subscription_for(self, run_id: str, subscription_id: str) -> ServerEventSubscription | None:
-        for subscription in self._subscriptions_by_run_id.get(run_id, ()):
-            if subscription.subscription_id == subscription_id:
-                return subscription
+        with self._subscription_registration_condition:
+            for subscription in self._subscriptions_by_run_id.get(run_id, ()):
+                if subscription.subscription_id == subscription_id:
+                    return subscription
         return None
 
     def _ack_event_response(

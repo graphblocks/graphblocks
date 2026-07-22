@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 import json
 import sys
 from pathlib import Path
+from threading import Event
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -13,6 +15,7 @@ if str(ROOT / "src") not in sys.path:
 from graphblocks.policy import PrincipalRef  # noqa: E402
 from graphblocks.server import (  # noqa: E402
     GraphBlocksServerApp,
+    ServerCallbackDeliveryResult,
     ServerRequest,
     StaticBearerAuthHook,
 )
@@ -103,7 +106,12 @@ def _app_with_terminal_event(
     return app
 
 
-def _register_request(secret_ref: str) -> ServerRequest:
+def _register_request(
+    secret_ref: str,
+    *,
+    event_types: tuple[str, ...] = ("RunSucceeded",),
+    replay_from_cursor: str = "run-delivery-1:1",
+) -> ServerRequest:
     return ServerRequest(
         method="POST",
         path="/callbacks/register",
@@ -115,7 +123,7 @@ def _register_request(secret_ref: str) -> ServerRequest:
                 "subscriptionId": "callback-sub-delivery-1",
                 "scope": "run",
                 "scopeId": "run-delivery-1",
-                "eventFilter": {"types": ["RunSucceeded"]},
+                "eventFilter": {"types": list(event_types)},
                 "delivery": {
                     "kind": "webhook",
                     "url": "https://relay.example/events",
@@ -125,7 +133,7 @@ def _register_request(secret_ref: str) -> ServerRequest:
                         "key_id": "relay-key-1",
                     },
                 },
-                "replayFromCursor": "run-delivery-1:1",
+                "replayFromCursor": replay_from_cursor,
                 "failurePolicy": "retry_then_dead_letter",
                 "deadLetterPolicy": "webhook-standard",
             }
@@ -195,6 +203,101 @@ def test_server_registration_delivers_replayed_event_with_resolved_hmac_secret()
     assert secret.decode("utf-8") not in serialized_evidence
     assert secret not in request["body"]
     assert all(secret.decode("utf-8") not in value for value in headers.values())
+
+
+def test_server_registration_exact_retry_resumes_after_partial_delivery_failure() -> None:
+    class FailSecondDeliveryOnce:
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+            self.failed = False
+
+        def deliver(self, registration, event) -> ServerCallbackDeliveryResult:
+            metadata = event["metadata"]
+            event_id = metadata["eventId"]
+            self.calls.append(event_id)
+            if event_id == "event/succeeded_1" and not self.failed:
+                self.failed = True
+                raise RuntimeError("delivery transport unavailable")
+            return ServerCallbackDeliveryResult(
+                delivery_id=f"delivery-{event_id}",
+                subscription_id=registration.subscription_id,
+                event_id=event_id,
+                run_id=metadata["runId"],
+                sequence=metadata["sequence"],
+                cursor=metadata["cursor"],
+                attempt=1,
+                idempotency_key=f"{registration.subscription_id}:{event_id}",
+                status="delivered",
+                status_code=202,
+                delivered_at="2026-07-10T01:00:00Z",
+            )
+
+    resolver = RecordingSecretResolver({})
+    transport = RecordingWebhookTransport()
+    app = _app_with_terminal_event(resolver, transport)
+    delivery_hook = FailSecondDeliveryOnce()
+    app.callback_delivery_hook = delivery_hook
+    request = _register_request(
+        "secret://callbacks/ide-relay",
+        event_types=("RunStarted", "RunSucceeded"),
+        replay_from_cursor="run-delivery-1:0",
+    )
+
+    first = app.handle(request)
+    retried = app.handle(request)
+
+    assert first.status_code == 502
+    assert retried.status_code == 200
+    assert delivery_hook.calls == ["event-started-1", "event/succeeded_1", "event/succeeded_1"]
+    assert [
+        result["eventId"]
+        for result in app.callback_delivery_results("callback-sub-delivery-1")
+    ] == ["event-started-1", "event/succeeded_1"]
+    assert len(app.callback_registrations()) == 1
+
+
+def test_server_registration_claim_does_not_hold_lock_during_webhook_delivery() -> None:
+    class BlockingDelivery:
+        def __init__(self) -> None:
+            self.entered = Event()
+            self.release = Event()
+            self.calls = 0
+
+        def deliver(self, registration, event) -> ServerCallbackDeliveryResult:
+            self.calls += 1
+            self.entered.set()
+            assert self.release.wait(timeout=2)
+            metadata = event["metadata"]
+            return ServerCallbackDeliveryResult(
+                delivery_id="delivery-terminal",
+                subscription_id=registration.subscription_id,
+                event_id=metadata["eventId"],
+                run_id=metadata["runId"],
+                sequence=metadata["sequence"],
+                cursor=metadata["cursor"],
+                attempt=1,
+                idempotency_key="callback-sub-delivery-1:event-terminal",
+                status="delivered",
+                status_code=202,
+                delivered_at="2026-07-10T01:00:00Z",
+            )
+
+    app = _app_with_terminal_event(RecordingSecretResolver({}), RecordingWebhookTransport())
+    delivery_hook = BlockingDelivery()
+    app.callback_delivery_hook = delivery_hook
+    request = _register_request("secret://callbacks/ide-relay")
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        first_future = executor.submit(app.handle, request)
+        assert delivery_hook.entered.wait(timeout=2)
+        duplicate = executor.submit(app.handle, request).result(timeout=1)
+        delivery_hook.release.set()
+        first = first_future.result(timeout=2)
+
+    assert first.status_code == 201
+    assert duplicate.status_code == 409
+    assert json.loads(duplicate.body)["state"] == "pending"
+    assert delivery_hook.calls == 1
 
 
 def test_server_registration_rejects_webhook_hostname_resolving_to_private_address() -> None:

@@ -6,7 +6,7 @@ from itertools import permutations
 import json
 import math
 from threading import Barrier, Event, Lock, Thread
-from time import monotonic
+from time import monotonic, sleep
 
 import graphblocks
 import pytest
@@ -8103,6 +8103,139 @@ def test_server_app_rejects_duplicate_subscription_id_without_overwrite() -> Non
     )
 
 
+def test_server_app_serializes_conflicting_event_subscription_registration() -> None:
+    class SlowReplayServerApp(GraphBlocksServerApp):
+        def _subscription_replay(
+            self,
+            subscription: ServerEventSubscription,
+            events: tuple[dict[str, object], ...],
+        ) -> list[dict[str, object]] | ServerResponse:
+            sleep(0.05)
+            return super()._subscription_replay(subscription, events)
+
+    app = SlowReplayServerApp(
+        auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")})
+    )
+    app._events_by_run_id["run-subscribe-race-1"] = ()
+    request = ServerRequest(
+        method="POST",
+        path="/runs/run-subscribe-race-1/subscriptions",
+        headers={"Authorization": "Bearer token-1"},
+        query={},
+        cookies={},
+        body=json.dumps(
+            {
+                "subscriptionId": "sub-race-1",
+                "eventFilter": {"types": ["RunSucceeded"]},
+                "delivery": {"kind": "local_callback", "callback_name": "ide"},
+            }
+        ).encode("utf-8"),
+        requested_at="2026-07-03T00:00:00Z",
+    )
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        responses = tuple(executor.map(app.handle, (request, request)))
+
+    assert sorted(response.status_code for response in responses) == [201, 409]
+    assert len(app.subscriptions("run-subscribe-race-1")) == 1
+
+
+def test_server_app_serializes_subscription_creation_with_revocation() -> None:
+    class BlockingReplayServerApp(GraphBlocksServerApp):
+        blocked_subscription_id: str | None = None
+
+        def __init__(self, **kwargs: object) -> None:
+            super().__init__(**kwargs)  # type: ignore[arg-type]
+            self.replay_entered = Event()
+            self.replay_release = Event()
+
+        def _subscription_replay(
+            self,
+            subscription: ServerEventSubscription,
+            events: tuple[dict[str, object], ...],
+        ) -> list[dict[str, object]] | ServerResponse:
+            if subscription.subscription_id == self.blocked_subscription_id:
+                self.replay_entered.set()
+                assert self.replay_release.wait(timeout=2)
+            return super()._subscription_replay(subscription, events)
+
+    app = BlockingReplayServerApp(
+        auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")})
+    )
+    run_id = "run-subscribe-revoke-race-1"
+    app._events_by_run_id[run_id] = ()
+
+    def registration_request(subscription_id: str, requested_at: str) -> ServerRequest:
+        return ServerRequest(
+            method="POST",
+            path=f"/runs/{run_id}/subscriptions",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "subscriptionId": subscription_id,
+                    "eventFilter": {"types": ["RunSucceeded"]},
+                    "delivery": {"kind": "local_callback", "callback_name": "ide"},
+                }
+            ).encode("utf-8"),
+            requested_at=requested_at,
+        )
+
+    first = app.handle(registration_request("sub-existing", "2026-07-03T00:00:00Z"))
+    app.blocked_subscription_id = "sub-new"
+    revoke_request = ServerRequest(
+        method="DELETE",
+        path=f"/runs/{run_id}/subscriptions/sub-existing",
+        headers={"Authorization": "Bearer token-1"},
+        query={},
+        cookies={},
+    )
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        create_future = executor.submit(
+            app.handle,
+            registration_request("sub-new", "2026-07-03T00:00:01Z"),
+        )
+        assert app.replay_entered.wait(timeout=2)
+        revoke_future = executor.submit(app.handle, revoke_request)
+        sleep(0.05)
+        assert not revoke_future.done()
+        app.replay_release.set()
+        created = create_future.result(timeout=2)
+        revoked = revoke_future.result(timeout=2)
+
+    assert first.status_code == 201
+    assert created.status_code == 201
+    assert revoked.status_code == 202
+    assert [(item.subscription_id, item.status) for item in app.subscriptions(run_id)] == [
+        ("sub-existing", "revoked"),
+        ("sub-new", "active"),
+    ]
+
+
+def test_server_terminal_event_filter_still_honors_requested_types() -> None:
+    app = GraphBlocksServerApp()
+    event = {
+        "kind": "RunSucceeded",
+        "metadata": {"sequence": 1, "visibility": "client"},
+        "payload": {"outputs": {}},
+    }
+
+    assert not app._event_matches_subscription_filter(
+        event,
+        {"types": ("RunFailed",), "include_terminal_events": True},
+    )
+    assert app._event_matches_subscription_filter(
+        event,
+        {"types": ("RunSucceeded",), "include_terminal_events": True},
+    )
+    assert not app._event_matches_subscription_filter(
+        event,
+        {"types": ("RunSucceeded",), "include_terminal_events": False},
+    )
+
+
 def test_server_app_rejects_impossible_ordered_event_subscription_delivery() -> None:
     app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
     app._events_by_run_id["run-subscribe-ordering-1"] = (
@@ -8414,7 +8547,7 @@ def test_server_app_subscription_replay_rejects_malformed_visibility_as_hidden()
     assert [event["metadata"]["eventId"] for event in payload["events"]] == ["event-client"]
 
 
-def test_server_app_subscription_replay_includes_terminal_events_by_default() -> None:
+def test_server_app_subscription_replay_applies_type_filter_to_terminal_events() -> None:
     app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
     app._events_by_run_id["run-subscribe-terminal-1"] = (
         {
@@ -8466,10 +8599,7 @@ def test_server_app_subscription_replay_includes_terminal_events_by_default() ->
     opt_out_payload = json.loads(opt_out_response.body.decode("utf-8"))
 
     assert default_response.status_code == 201
-    assert [event["metadata"]["eventId"] for event in default_payload["events"]] == [
-        "event-progress",
-        "event-terminal",
-    ]
+    assert [event["metadata"]["eventId"] for event in default_payload["events"]] == ["event-progress"]
     assert opt_out_response.status_code == 201
     assert [event["metadata"]["eventId"] for event in opt_out_payload["events"]] == [
         "event-progress"
