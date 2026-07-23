@@ -18,6 +18,7 @@ pub struct PortEnvelope {
 #[derive(Clone, Debug, PartialEq)]
 pub enum PortChannelError {
     Sequence(SequenceError),
+    ItemSequenceOverflow,
 }
 
 impl From<SequenceError> for PortChannelError {
@@ -30,7 +31,7 @@ impl From<SequenceError> for PortChannelError {
 pub struct PortSender {
     port: PortRef,
     sender: SequenceSender<PortEnvelope>,
-    next_item_sequence: Arc<Mutex<u64>>,
+    next_item_sequence: Arc<Mutex<Option<u64>>>,
 }
 
 #[derive(Clone, Debug)]
@@ -47,7 +48,7 @@ pub fn typed_port_channel(
         PortSender {
             port,
             sender,
-            next_item_sequence: Arc::new(Mutex::new(1)),
+            next_item_sequence: Arc::new(Mutex::new(Some(1))),
         },
         PortReceiver { receiver },
     ))
@@ -63,13 +64,13 @@ impl PortSender {
             .next_item_sequence
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
-        let item_sequence = *next_item_sequence;
+        let item_sequence = (*next_item_sequence).ok_or(PortChannelError::ItemSequenceOverflow)?;
         self.sender.try_send(PortEnvelope {
             port: self.port.clone(),
             item_sequence,
             value,
         })?;
-        *next_item_sequence = next_item_sequence.saturating_add(1);
+        *next_item_sequence = item_sequence.checked_add(1);
         Ok(item_sequence)
     }
 
@@ -96,5 +97,47 @@ impl PortReceiver {
 
     pub fn state(&self) -> SequenceState {
         self.receiver.state()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use graphblocks_runtime_core::readiness::PortRef;
+    use graphblocks_runtime_core::typed_value::{TypedValue, ValueEncoding};
+
+    use super::{PortChannelError, typed_port_channel};
+
+    fn value() -> TypedValue {
+        TypedValue::new(
+            "graphblocks.ai/Message",
+            1,
+            ValueEncoding::Json,
+            br#"{"text":"value"}"#.to_vec(),
+        )
+    }
+
+    #[test]
+    fn maximum_item_sequence_is_emitted_once_then_exhausted() {
+        let (sender, receiver) =
+            typed_port_channel(PortRef::new("model", "response"), 2).expect("channel is valid");
+        *sender
+            .next_item_sequence
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(u64::MAX);
+
+        assert_eq!(
+            sender.try_send(value()),
+            Ok(u64::MAX),
+            "the last representable sequence remains usable"
+        );
+        assert_eq!(
+            sender.try_send(value()),
+            Err(PortChannelError::ItemSequenceOverflow)
+        );
+        assert_eq!(
+            receiver.try_recv().map(|envelope| envelope.item_sequence),
+            Some(u64::MAX)
+        );
+        assert_eq!(receiver.try_recv(), None);
     }
 }

@@ -4,6 +4,7 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 pub enum RateLimitError {
     InvalidLimit,
     InvalidWindow,
+    InvalidIdentity { field: &'static str },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -35,9 +36,11 @@ impl LocalRateLimiter {
         if window_ms == 0 {
             return Err(RateLimitError::InvalidWindow);
         }
+        let id = id.into();
+        validate_identity("id", &id)?;
         Ok(Self {
             inner: Arc::new(Mutex::new(Inner {
-                id: id.into(),
+                id,
                 limit,
                 window_ms,
                 window_start_ms: 0,
@@ -64,12 +67,13 @@ impl LocalRateLimiter {
         inner.limit - inner.used
     }
 
-    pub fn check_at(
-        &self,
-        _owner: impl Into<String>,
-        now_ms: u64,
-        units: u64,
-    ) -> RateLimitDecision {
+    pub fn check_at(&self, owner: impl Into<String>, now_ms: u64, units: u64) -> RateLimitDecision {
+        let owner = owner.into();
+        if validate_identity("owner", &owner).is_err() {
+            return RateLimitDecision::Rejected {
+                reason: "invalid_owner",
+            };
+        }
         if units == 0 {
             return RateLimitDecision::Rejected {
                 reason: "invalid_units",
@@ -116,4 +120,11 @@ impl LocalRateLimiter {
     fn lock(&self) -> MutexGuard<'_, Inner> {
         self.inner.lock().unwrap_or_else(PoisonError::into_inner)
     }
+}
+
+fn validate_identity(field: &'static str, value: &str) -> Result<(), RateLimitError> {
+    if value.trim().is_empty() || value != value.trim() {
+        return Err(RateLimitError::InvalidIdentity { field });
+    }
+    Ok(())
 }

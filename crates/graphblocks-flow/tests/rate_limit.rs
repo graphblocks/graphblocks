@@ -115,3 +115,20 @@ fn rate_limiter_does_not_refill_repeatedly_at_maximum_timestamp() -> Result<(), 
     );
     Ok(())
 }
+
+#[test]
+fn rate_limiter_rejects_noncanonical_identities_without_consuming_budget() {
+    assert!(matches!(
+        LocalRateLimiter::new(" limiter ", 1, 1_000),
+        Err(RateLimitError::InvalidIdentity { field: "id" })
+    ));
+
+    let limiter = LocalRateLimiter::new("limiter", 1, 1_000).expect("valid limiter");
+    assert_eq!(
+        limiter.check_at(" owner ", 0, 1),
+        RateLimitDecision::Rejected {
+            reason: "invalid_owner"
+        }
+    );
+    assert_eq!(limiter.available_at(0), 1);
+}

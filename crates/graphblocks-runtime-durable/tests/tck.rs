@@ -4956,6 +4956,13 @@ fn checkpoint_error_name(error: &CheckpointBarrierError) -> &'static str {
         CheckpointBarrierError::MissingPlanHash => "missing_plan_hash",
         CheckpointBarrierError::InvalidCheckpointSchema => "invalid_checkpoint_schema",
         CheckpointBarrierError::MissingSchemaVersions => "missing_schema_versions",
+        CheckpointBarrierError::InvalidCompletedNodes => "invalid_completed_nodes",
+        CheckpointBarrierError::InvalidPendingNodes => "invalid_pending_nodes",
+        CheckpointBarrierError::OverlappingNodeStates => "overlapping_node_states",
+        CheckpointBarrierError::InvalidSourceCursors => "invalid_source_cursors",
+        CheckpointBarrierError::InvalidOperatorState => "invalid_operator_state",
+        CheckpointBarrierError::InvalidSinkCommitMetadata => "invalid_sink_commit_metadata",
+        CheckpointBarrierError::InvalidSchemaVersions => "invalid_schema_versions",
     }
 }
 

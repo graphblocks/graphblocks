@@ -4,6 +4,7 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 #[derive(Debug, Eq, PartialEq)]
 pub enum SemaphoreError {
     InvalidLimit,
+    InvalidIdentity { field: &'static str },
     CapacityExhausted { semaphore_id: String },
 }
 
@@ -31,12 +32,10 @@ impl LocalSemaphore {
         if limit == 0 {
             return Err(SemaphoreError::InvalidLimit);
         }
+        let id = id.into();
+        validate_identity("id", &id)?;
         Ok(Self {
-            inner: Arc::new(Mutex::new(Inner {
-                id: id.into(),
-                limit,
-                used: 0,
-            })),
+            inner: Arc::new(Mutex::new(Inner { id, limit, used: 0 })),
         })
     }
 
@@ -54,8 +53,10 @@ impl LocalSemaphore {
     }
 
     pub fn try_acquire(&self, owner: impl Into<String>) -> Result<SemaphorePermit, SemaphoreError> {
+        let owner = owner.into();
+        validate_identity("owner", &owner)?;
         let mut inner = self.lock();
-        if inner.used == inner.limit {
+        if inner.used >= inner.limit {
             return Err(SemaphoreError::CapacityExhausted {
                 semaphore_id: inner.id.clone(),
             });
@@ -64,13 +65,20 @@ impl LocalSemaphore {
         Ok(SemaphorePermit {
             inner: Arc::clone(&self.inner),
             released: AtomicBool::new(false),
-            owner: owner.into(),
+            owner,
         })
     }
 
     fn lock(&self) -> MutexGuard<'_, Inner> {
         self.inner.lock().unwrap_or_else(PoisonError::into_inner)
     }
+}
+
+fn validate_identity(field: &'static str, value: &str) -> Result<(), SemaphoreError> {
+    if value.trim().is_empty() || value != value.trim() {
+        return Err(SemaphoreError::InvalidIdentity { field });
+    }
+    Ok(())
 }
 
 impl SemaphorePermit {

@@ -44,3 +44,18 @@ fn explicit_release_is_idempotent() -> Result<(), SemaphoreError> {
     assert_eq!(semaphore.available(), 1);
     Ok(())
 }
+
+#[test]
+fn semaphore_rejects_noncanonical_identities() {
+    assert!(matches!(
+        LocalSemaphore::new(" semaphore ", 1),
+        Err(SemaphoreError::InvalidIdentity { field: "id" })
+    ));
+
+    let semaphore = LocalSemaphore::new("semaphore", 1).expect("valid semaphore");
+    assert!(matches!(
+        semaphore.try_acquire("\t"),
+        Err(SemaphoreError::InvalidIdentity { field: "owner" })
+    ));
+    assert_eq!(semaphore.available(), 1);
+}

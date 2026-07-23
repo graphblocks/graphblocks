@@ -4,6 +4,40 @@ use graphblocks_runtime_durable::{
 use serde_json::json;
 
 #[test]
+fn default_sink_starts_commit_sequences_at_one() {
+    let mut sink = InMemoryDurableSink::default();
+    let result = sink
+        .commit(SinkCommitRequest::new(
+            "run",
+            "node",
+            "attempt",
+            "key",
+            json!(null),
+        ))
+        .expect("default sink should commit");
+
+    assert_eq!(result.sequence, 1);
+    assert_eq!(result.sink_id, "default");
+}
+
+#[test]
+fn sink_commit_rejects_noncanonical_sink_identity() {
+    let mut sink = InMemoryDurableSink::new(" sink ");
+
+    assert_eq!(
+        sink.commit(SinkCommitRequest::new(
+            "run",
+            "node",
+            "attempt",
+            "key",
+            json!(null),
+        )),
+        Err(SinkCommitError::MissingSinkId)
+    );
+    assert_eq!(sink.committed_count(), 0);
+}
+
+#[test]
 fn sink_commit_records_metadata_and_replays_duplicate_idempotency_key() {
     let mut sink = InMemoryDurableSink::new("warehouse");
     let request = SinkCommitRequest::new(
@@ -167,7 +201,7 @@ fn sink_commit_rejects_whitespace_identity_fields() {
 
     assert_eq!(
         sink.commit(SinkCommitRequest::new(
-            " ",
+            " run ",
             "load",
             "attempt",
             "tx",
@@ -178,7 +212,7 @@ fn sink_commit_rejects_whitespace_identity_fields() {
     assert_eq!(
         sink.commit(SinkCommitRequest::new(
             "run",
-            "\t",
+            " load ",
             "attempt",
             "tx",
             json!({})
@@ -186,7 +220,13 @@ fn sink_commit_rejects_whitespace_identity_fields() {
         Err(SinkCommitError::MissingNodeId),
     );
     assert_eq!(
-        sink.commit(SinkCommitRequest::new("run", "load", "\n", "tx", json!({}))),
+        sink.commit(SinkCommitRequest::new(
+            "run",
+            "load",
+            " attempt ",
+            "tx",
+            json!({})
+        )),
         Err(SinkCommitError::MissingNodeAttemptId),
     );
     assert_eq!(
@@ -194,7 +234,7 @@ fn sink_commit_rejects_whitespace_identity_fields() {
             "run",
             "load",
             "attempt",
-            " ",
+            " tx ",
             json!({})
         )),
         Err(SinkCommitError::MissingIdempotencyKey),

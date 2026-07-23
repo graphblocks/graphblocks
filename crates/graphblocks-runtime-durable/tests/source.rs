@@ -100,6 +100,18 @@ fn in_memory_source_rejects_conflicting_offset_reuse() {
 }
 
 #[test]
+fn in_memory_source_rejects_exact_duplicate_offsets() {
+    let event = order_event(10);
+    let cursor = event.cursor.clone();
+    let source = InMemoryDurableSource::new(DeliveryGuarantee::AtLeastOnce, [event.clone(), event]);
+
+    assert_eq!(
+        source.poll(None, 2),
+        Err(DurableError::ConflictingSourceOffset { cursor })
+    );
+}
+
+#[test]
 fn in_memory_source_watermark_never_regresses_between_polls() {
     let source = InMemoryDurableSource::new(
         DeliveryGuarantee::AtLeastOnce,
@@ -306,7 +318,7 @@ fn empty_in_memory_source_rejects_explicit_cursor() {
 #[test]
 fn in_memory_source_rejects_empty_cursor_stream() {
     let mut source = InMemoryDurableSource::new(DeliveryGuarantee::AtLeastOnce, [order_event(10)]);
-    let empty_cursor = SourceCursor::new(" ", 0, 10);
+    let empty_cursor = SourceCursor::new(" orders ", 0, 10);
 
     assert_eq!(
         source.commit(empty_cursor.clone()),

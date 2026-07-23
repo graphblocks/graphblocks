@@ -8,7 +8,15 @@ use graphblocks_runtime_durable::{
     SourceCursor, SourceCursorCommitPlan, SqliteCheckpointStore,
 };
 use rusqlite::{Connection, params};
-use serde_json::json;
+use serde_json::{Value, json};
+
+fn nested_json(depth: usize) -> Value {
+    let mut value = Value::Null;
+    for _ in 0..depth {
+        value = Value::Array(vec![value]);
+    }
+    value
+}
 
 fn sqlite_checkpoint_path(label: &str) -> PathBuf {
     let unique = SystemTime::now()
@@ -70,7 +78,7 @@ fn checkpoint_barrier_requires_plan_hash_and_schema_versions() {
 
 #[test]
 fn checkpoint_barrier_rejects_whitespace_identity_fields() {
-    let mut barrier = checkpoint(" ", 1, "sha256:plan");
+    let mut barrier = checkpoint(" checkpoint-000001 ", 1, "sha256:plan");
 
     assert_eq!(
         barrier.validate(),
@@ -78,37 +86,147 @@ fn checkpoint_barrier_rejects_whitespace_identity_fields() {
     );
 
     barrier = checkpoint("checkpoint-000001", 1, "sha256:plan");
-    barrier.run_id = "\t".to_owned();
+    barrier.run_id = " run-000001 ".to_owned();
     assert_eq!(
         barrier.validate(),
         Err(CheckpointBarrierError::MissingRunId)
     );
 
     barrier = checkpoint("checkpoint-000001", 1, "sha256:plan");
-    barrier.release_id = "\n".to_owned();
+    barrier.release_id = " release-2026-06-23 ".to_owned();
     assert_eq!(
         barrier.validate(),
         Err(CheckpointBarrierError::MissingReleaseId),
     );
 
     barrier = checkpoint("checkpoint-000001", 1, "sha256:plan");
-    barrier.deployment_revision_id = " ".to_owned();
+    barrier.deployment_revision_id = " deployment-rev-1 ".to_owned();
     assert_eq!(
         barrier.validate(),
         Err(CheckpointBarrierError::MissingDeploymentRevisionId),
     );
 
-    barrier = checkpoint("checkpoint-000001", 1, " ");
+    barrier = checkpoint("checkpoint-000001", 1, " sha256:plan ");
     assert_eq!(
         barrier.validate(),
         Err(CheckpointBarrierError::MissingPlanHash),
     );
 
     barrier = checkpoint("checkpoint-000001", 1, "sha256:plan");
-    barrier.checkpoint_schema = SchemaRef::new(" ", 1);
+    barrier.checkpoint_schema = SchemaRef::new(" graphblocks.ai/Checkpoint ", 1);
     assert_eq!(
         barrier.validate(),
         Err(CheckpointBarrierError::InvalidCheckpointSchema),
+    );
+}
+
+#[test]
+fn checkpoint_barrier_rejects_contradictory_node_and_nested_mapping_state() {
+    let mut barrier = checkpoint("checkpoint-000001", 1, "sha256:plan");
+    barrier.completed_nodes.push("extract".to_owned());
+    assert_eq!(
+        barrier.validate(),
+        Err(CheckpointBarrierError::InvalidCompletedNodes)
+    );
+
+    let mut barrier = checkpoint("checkpoint-000001", 1, "sha256:plan");
+    barrier.pending_nodes.push("load".to_owned());
+    assert_eq!(
+        barrier.validate(),
+        Err(CheckpointBarrierError::InvalidPendingNodes)
+    );
+
+    let mut barrier = checkpoint("checkpoint-000001", 1, "sha256:plan");
+    barrier.pending_nodes.push("extract".to_owned());
+    assert_eq!(
+        barrier.validate(),
+        Err(CheckpointBarrierError::OverlappingNodeStates)
+    );
+
+    let mut barrier = checkpoint("checkpoint-000001", 1, "sha256:plan");
+    barrier
+        .source_cursors
+        .insert(" orders ".to_owned(), SourceCursor::new("orders", 0, 42));
+    assert_eq!(
+        barrier.validate(),
+        Err(CheckpointBarrierError::InvalidSourceCursors)
+    );
+
+    let mut barrier = checkpoint("checkpoint-000001", 1, "sha256:plan");
+    barrier
+        .source_cursors
+        .insert("payments".to_owned(), SourceCursor::new(" payments ", 0, 1));
+    assert_eq!(
+        barrier.validate(),
+        Err(CheckpointBarrierError::InvalidSourceCursors)
+    );
+
+    let mut barrier = checkpoint("checkpoint-000001", 1, "sha256:plan");
+    barrier
+        .operator_state
+        .insert(" operator ".to_owned(), json!(null));
+    assert_eq!(
+        barrier.validate(),
+        Err(CheckpointBarrierError::InvalidOperatorState)
+    );
+
+    let mut barrier = checkpoint("checkpoint-000001", 1, "sha256:plan");
+    barrier
+        .sink_commit_metadata
+        .insert("\t".to_owned(), json!(null));
+    assert_eq!(
+        barrier.validate(),
+        Err(CheckpointBarrierError::InvalidSinkCommitMetadata)
+    );
+
+    let mut barrier = checkpoint("checkpoint-000001", 1, "sha256:plan");
+    barrier.schema_versions.insert("operator".to_owned(), 0);
+    assert_eq!(
+        barrier.validate(),
+        Err(CheckpointBarrierError::InvalidSchemaVersions)
+    );
+}
+
+#[test]
+fn checkpoint_barrier_bounds_nested_operator_and_sink_json() {
+    let mut barrier = checkpoint("checkpoint-000001", 1, "sha256:plan");
+    barrier
+        .operator_state
+        .insert("operator".to_owned(), nested_json(64));
+    barrier
+        .sink_commit_metadata
+        .insert("sink".to_owned(), nested_json(64));
+    assert_eq!(barrier.validate(), Ok(()));
+
+    barrier
+        .operator_state
+        .insert("operator".to_owned(), nested_json(65));
+    assert_eq!(
+        barrier.validate(),
+        Err(CheckpointBarrierError::InvalidOperatorState)
+    );
+
+    barrier
+        .operator_state
+        .insert("operator".to_owned(), nested_json(64));
+    barrier
+        .sink_commit_metadata
+        .insert("sink".to_owned(), nested_json(65));
+    assert_eq!(
+        barrier.validate(),
+        Err(CheckpointBarrierError::InvalidSinkCommitMetadata)
+    );
+
+    barrier
+        .sink_commit_metadata
+        .insert("sink".to_owned(), json!(null));
+    barrier.operator_state.insert(
+        "operator".to_owned(),
+        Value::Array(vec![Value::Null; 100_000]),
+    );
+    assert_eq!(
+        barrier.validate(),
+        Err(CheckpointBarrierError::InvalidOperatorState)
     );
 }
 
@@ -872,4 +990,89 @@ fn sqlite_checkpoint_store_rejects_claim_renewal_before_activation_after_reopen(
     reopened
         .complete_claim(&claim, 1_500)
         .expect("rejected early renewal leaves the persisted claim active");
+}
+
+#[test]
+fn sqlite_checkpoint_store_rejects_zero_or_exhausted_fencing_epoch() {
+    let path = sqlite_checkpoint_path("claim-fencing-exhaustion");
+    let mut store = SqliteCheckpointStore::open(&path).expect("sqlite checkpoint store opens");
+    store
+        .put(checkpoint("checkpoint-000001", 1, "sha256:plan"))
+        .expect("checkpoint should persist");
+    let connection = Connection::open(&path).expect("checkpoint database opens");
+    connection
+        .execute(
+            "INSERT INTO checkpoint_recovery_epochs (run_id, next_fencing_epoch) VALUES (?1, ?2)",
+            params!["run-000001", 0_i64],
+        )
+        .expect("invalid epoch fixture should persist");
+    drop(connection);
+
+    assert_eq!(
+        store.claim_latest_compatible(
+            "run-000001",
+            "release-2026-06-23",
+            "deployment-rev-1",
+            "sha256:plan",
+            "worker-a",
+            "lease-a",
+            1_000,
+            2_000,
+        ),
+        Err(CheckpointStoreError::InvalidRecoveryClaim {
+            field: "fencing_epoch"
+        })
+    );
+
+    let connection = Connection::open(&path).expect("checkpoint database reopens");
+    connection
+        .execute(
+            "UPDATE checkpoint_recovery_epochs SET next_fencing_epoch = ?2 WHERE run_id = ?1",
+            params!["run-000001", i64::MAX],
+        )
+        .expect("exhausted epoch fixture should persist");
+    drop(connection);
+
+    assert_eq!(
+        store.claim_latest_compatible(
+            "run-000001",
+            "release-2026-06-23",
+            "deployment-rev-1",
+            "sha256:plan",
+            "worker-a",
+            "lease-a",
+            1_000,
+            2_000,
+        ),
+        Err(CheckpointStoreError::FencingEpochOverflow {
+            run_id: "run-000001".to_owned()
+        })
+    );
+
+    let connection = Connection::open(&path).expect("checkpoint database reopens");
+    connection
+        .execute(
+            "UPDATE checkpoint_recovery_epochs SET next_fencing_epoch = ?2 WHERE run_id = ?1",
+            params!["run-000001", 1_i64],
+        )
+        .expect("valid epoch fixture should persist");
+    drop(connection);
+
+    assert_eq!(
+        store
+            .claim_latest_compatible(
+                "run-000001",
+                "release-2026-06-23",
+                "deployment-rev-1",
+                "sha256:plan",
+                "worker-a",
+                "lease-a",
+                1_000,
+                2_000,
+            )
+            .expect("failed claims must not leave an active claim")
+            .claim
+            .fencing_epoch,
+        1
+    );
 }

@@ -322,3 +322,18 @@ fn lease_pool_rejects_renewal_of_unbounded_lease() -> Result<(), LeaseError> {
     assert_eq!(lease.fencing_token(), fencing_token);
     Ok(())
 }
+
+#[test]
+fn lease_pool_rejects_noncanonical_identities_without_reserving_capacity() {
+    assert!(matches!(
+        LeasePool::new(" pool ", 1),
+        Err(LeaseError::InvalidIdentity { field: "id" })
+    ));
+
+    let pool = LeasePool::new("pool", 1).expect("valid pool");
+    assert!(matches!(
+        pool.try_acquire(LeaseRequest::new("\n", 1)),
+        Err(LeaseError::InvalidIdentity { field: "owner" })
+    ));
+    assert_eq!(pool.available_units(), 1);
+}

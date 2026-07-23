@@ -154,6 +154,16 @@ fn incomplete_tool_record() -> DurableToolTerminalRecord {
 }
 
 #[test]
+fn default_tool_terminal_store_starts_commit_sequences_at_one() {
+    let mut store = InMemoryDurableToolTerminalStore::default();
+    let committed = store
+        .record_tool_terminal(completed_tool_record())
+        .expect("default terminal store should commit");
+
+    assert_eq!(committed.sequence, 1);
+}
+
+#[test]
 fn tool_terminal_store_replays_matching_terminal_record() {
     let mut store = InMemoryDurableToolTerminalStore::new();
     let record = completed_tool_record();
@@ -458,7 +468,7 @@ fn tool_terminal_record_rejects_whitespace_identity_and_digest_fields() {
 
     assert_eq!(
         store.record_tool_terminal(DurableToolTerminalRecord::new(
-            " ",
+            " run-000001 ",
             "response-1",
             "call-1",
             1,
@@ -471,7 +481,7 @@ fn tool_terminal_record_rejects_whitespace_identity_and_digest_fields() {
     assert_eq!(
         store.record_tool_terminal(DurableToolTerminalRecord::new(
             "run-000001",
-            "\t",
+            " response-1 ",
             "call-1",
             1,
             DurableToolTerminalState::Completed,
@@ -484,7 +494,7 @@ fn tool_terminal_record_rejects_whitespace_identity_and_digest_fields() {
         store.record_tool_terminal(DurableToolTerminalRecord::new(
             "run-000001",
             "response-1",
-            "\n",
+            " call-1 ",
             1,
             DurableToolTerminalState::Completed,
             "sha256:arguments",
@@ -499,17 +509,17 @@ fn tool_terminal_record_rejects_whitespace_identity_and_digest_fields() {
             "call-1",
             1,
             DurableToolTerminalState::Completed,
-            " ",
+            " sha256:arguments ",
             1_820_000_000_000,
         )),
         Err(ToolTerminalStoreError::MissingArgumentsDigest),
     );
     assert_eq!(
-        store.record_tool_terminal(completed_tool_record().with_output_digest(" ")),
+        store.record_tool_terminal(completed_tool_record().with_output_digest(" sha256:output "),),
         Err(ToolTerminalStoreError::MissingOutputDigest),
     );
     assert_eq!(
-        store.record_tool_terminal(incomplete_tool_record().with_idempotency_key(" ")),
+        store.record_tool_terminal(incomplete_tool_record().with_idempotency_key(" key ")),
         Err(ToolTerminalStoreError::MissingIdempotencyKey),
     );
 }
@@ -519,24 +529,24 @@ fn policy_stop_barrier_rejects_whitespace_identity_fields() {
     let mut store = InMemoryDurableToolTerminalStore::new();
 
     assert_eq!(
-        store.record_response_policy_stopped(" ", "decision-1", 7, 1_820_000_000_000),
+        store.record_response_policy_stopped(" response-1 ", "decision-1", 7, 1_820_000_000_000,),
         Err(ToolTerminalStoreError::MissingResponseId),
     );
     assert_eq!(
-        store.record_response_policy_stopped("response-1", "\t", 7, 1_820_000_000_000),
+        store.record_response_policy_stopped("response-1", " decision-1 ", 7, 1_820_000_000_000,),
         Err(ToolTerminalStoreError::MissingPolicyDecisionId),
     );
     assert_eq!(
         store.record_response_policy_stop(
             DurableResponsePolicyStopRecord::new("response-1", "decision-1", 7, 1_820_000_000_000,)
-                .with_stream_id(" "),
+                .with_stream_id(" stream-1 "),
         ),
         Err(ToolTerminalStoreError::MissingStreamId),
     );
     assert_eq!(
         store.record_response_policy_stop(
             DurableResponsePolicyStopRecord::new("response-1", "decision-1", 7, 1_820_000_000_000,)
-                .with_turn_id("\n"),
+                .with_turn_id(" turn-1 "),
         ),
         Err(ToolTerminalStoreError::MissingTurnId),
     );

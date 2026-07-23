@@ -76,10 +76,38 @@ impl SourceCursor {
 }
 
 fn validate_source_cursor(cursor: &SourceCursor) -> Result<(), DurableError> {
-    if cursor.stream.trim().is_empty() {
+    if invalid_identity(&cursor.stream) {
         return Err(DurableError::InvalidSourceCursor { field: "stream" });
     }
     Ok(())
+}
+
+fn invalid_identity(value: &str) -> bool {
+    value.trim().is_empty() || value != value.trim()
+}
+
+const MAX_CHECKPOINT_JSON_DEPTH: usize = 64;
+const MAX_CHECKPOINT_JSON_NODES: usize = 100_000;
+
+fn invalid_checkpoint_json(value: &Value) -> bool {
+    let mut stack = vec![(value, 0_usize)];
+    let mut visited_nodes = 0_usize;
+    while let Some((current, depth)) = stack.pop() {
+        visited_nodes += 1;
+        if visited_nodes > MAX_CHECKPOINT_JSON_NODES || depth > MAX_CHECKPOINT_JSON_DEPTH {
+            return true;
+        }
+        match current {
+            Value::Array(values) => {
+                stack.extend(values.iter().map(|item| (item, depth + 1)));
+            }
+            Value::Object(values) => {
+                stack.extend(values.values().map(|item| (item, depth + 1)));
+            }
+            _ => {}
+        }
+    }
+    false
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -188,9 +216,9 @@ impl InMemoryDurableSource {
     {
         let mut events = events.into_iter().collect::<Vec<_>>();
         events.sort_by(|left, right| left.cursor.cmp(&right.cursor));
-        let conflicting_cursor = events.windows(2).find_map(|pair| {
-            (pair[0].cursor == pair[1].cursor && pair[0] != pair[1]).then(|| pair[0].cursor.clone())
-        });
+        let conflicting_cursor = events
+            .windows(2)
+            .find_map(|pair| (pair[0].cursor == pair[1].cursor).then(|| pair[0].cursor.clone()));
         let known_streams = events
             .iter()
             .map(|event| event.cursor.stream.clone())
@@ -528,10 +556,12 @@ pub struct SinkCommitResult {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum SinkCommitError {
+    MissingSinkId,
     MissingRunId,
     MissingNodeId,
     MissingNodeAttemptId,
     MissingIdempotencyKey,
+    SequenceOverflow,
     IdempotencyConflict { idempotency_key: String },
 }
 
@@ -540,10 +570,9 @@ struct SinkCommitRecord {
     result: SinkCommitResult,
 }
 
-#[derive(Default)]
 pub struct InMemoryDurableSink {
     sink_id: String,
-    next_sequence: u64,
+    next_sequence: Option<u64>,
     commits_by_idempotency_key: BTreeMap<String, SinkCommitRecord>,
 }
 
@@ -551,7 +580,7 @@ impl InMemoryDurableSink {
     pub fn new(sink_id: impl Into<String>) -> Self {
         Self {
             sink_id: sink_id.into(),
-            next_sequence: 1,
+            next_sequence: Some(1),
             commits_by_idempotency_key: BTreeMap::new(),
         }
     }
@@ -560,16 +589,19 @@ impl InMemoryDurableSink {
         &mut self,
         request: SinkCommitRequest,
     ) -> Result<SinkCommitResult, SinkCommitError> {
-        if request.run_id.trim().is_empty() {
+        if invalid_identity(&self.sink_id) {
+            return Err(SinkCommitError::MissingSinkId);
+        }
+        if invalid_identity(&request.run_id) {
             return Err(SinkCommitError::MissingRunId);
         }
-        if request.node_id.trim().is_empty() {
+        if invalid_identity(&request.node_id) {
             return Err(SinkCommitError::MissingNodeId);
         }
-        if request.node_attempt_id.trim().is_empty() {
+        if invalid_identity(&request.node_attempt_id) {
             return Err(SinkCommitError::MissingNodeAttemptId);
         }
-        if request.idempotency_key.trim().is_empty() {
+        if invalid_identity(&request.idempotency_key) {
             return Err(SinkCommitError::MissingIdempotencyKey);
         }
         if let Some(record) = self
@@ -586,15 +618,16 @@ impl InMemoryDurableSink {
             return Ok(result);
         }
 
+        let sequence = take_next_sequence(&mut self.next_sequence)
+            .map_err(|()| SinkCommitError::SequenceOverflow)?;
         let result = SinkCommitResult {
             sink_id: self.sink_id.clone(),
             idempotency_key: request.idempotency_key.clone(),
             precondition_digest: request.precondition_digest.clone(),
-            sequence: self.next_sequence,
+            sequence,
             metadata: request.payload.clone(),
             replayed: false,
         };
-        self.next_sequence = self.next_sequence.saturating_add(1);
         self.commits_by_idempotency_key.insert(
             request.idempotency_key.clone(),
             SinkCommitRecord {
@@ -607,6 +640,12 @@ impl InMemoryDurableSink {
 
     pub fn committed_count(&self) -> usize {
         self.commits_by_idempotency_key.len()
+    }
+}
+
+impl Default for InMemoryDurableSink {
+    fn default() -> Self {
+        Self::new("default")
     }
 }
 
@@ -866,20 +905,16 @@ impl DurableResponsePolicyStopRecord {
 fn validate_response_policy_stop_record(
     record: &DurableResponsePolicyStopRecord,
 ) -> Result<(), ToolTerminalStoreError> {
-    if record.response_id.trim().is_empty() {
+    if invalid_identity(&record.response_id) {
         return Err(ToolTerminalStoreError::MissingResponseId);
     }
-    if record.stream_id.trim().is_empty() {
+    if invalid_identity(&record.stream_id) {
         return Err(ToolTerminalStoreError::MissingStreamId);
     }
-    if record
-        .turn_id
-        .as_deref()
-        .is_some_and(|turn_id| turn_id.trim().is_empty())
-    {
+    if record.turn_id.as_deref().is_some_and(invalid_identity) {
         return Err(ToolTerminalStoreError::MissingTurnId);
     }
-    if record.policy_decision_id.trim().is_empty() {
+    if invalid_identity(&record.policy_decision_id) {
         return Err(ToolTerminalStoreError::MissingPolicyDecisionId);
     }
     if record.last_policy_accepted_sequence > record.last_generated_sequence {
@@ -934,6 +969,7 @@ pub enum ToolTerminalStoreError {
     MissingTurnId,
     InvalidRevision,
     InvalidCompletedAt,
+    SequenceOverflow,
     DeniedEffectCommitted {
         response_id: String,
         tool_call_id: String,
@@ -972,9 +1008,8 @@ pub enum ToolTerminalStoreError {
     },
 }
 
-#[derive(Default)]
 pub struct InMemoryDurableToolTerminalStore {
-    next_sequence: u64,
+    next_sequence: Option<u64>,
     terminal_records: BTreeMap<(String, String, u32), DurableToolTerminalCommit>,
     policy_stopped_responses: BTreeMap<String, DurableResponsePolicyStopCommit>,
 }
@@ -982,7 +1017,7 @@ pub struct InMemoryDurableToolTerminalStore {
 impl InMemoryDurableToolTerminalStore {
     pub fn new() -> Self {
         Self {
-            next_sequence: 1,
+            next_sequence: Some(1),
             terminal_records: BTreeMap::new(),
             policy_stopped_responses: BTreeMap::new(),
         }
@@ -992,32 +1027,32 @@ impl InMemoryDurableToolTerminalStore {
         &mut self,
         record: DurableToolTerminalRecord,
     ) -> Result<DurableToolTerminalCommit, ToolTerminalStoreError> {
-        if record.run_id.trim().is_empty() {
+        if invalid_identity(&record.run_id) {
             return Err(ToolTerminalStoreError::MissingRunId);
         }
-        if record.response_id.trim().is_empty() {
+        if invalid_identity(&record.response_id) {
             return Err(ToolTerminalStoreError::MissingResponseId);
         }
-        if record.tool_call_id.trim().is_empty() {
+        if invalid_identity(&record.tool_call_id) {
             return Err(ToolTerminalStoreError::MissingToolCallId);
         }
         if record.revision == 0 {
             return Err(ToolTerminalStoreError::InvalidRevision);
         }
-        if record.arguments_digest.trim().is_empty() {
+        if invalid_identity(&record.arguments_digest) {
             return Err(ToolTerminalStoreError::MissingArgumentsDigest);
         }
         if record
             .output_digest
             .as_deref()
-            .is_some_and(|output_digest| output_digest.trim().is_empty())
+            .is_some_and(invalid_identity)
         {
             return Err(ToolTerminalStoreError::MissingOutputDigest);
         }
         if record
             .idempotency_key
             .as_deref()
-            .is_some_and(|idempotency_key| idempotency_key.trim().is_empty())
+            .is_some_and(invalid_identity)
         {
             return Err(ToolTerminalStoreError::MissingIdempotencyKey);
         }
@@ -1067,12 +1102,13 @@ impl InMemoryDurableToolTerminalStore {
             });
         }
 
+        let sequence = take_next_sequence(&mut self.next_sequence)
+            .map_err(|()| ToolTerminalStoreError::SequenceOverflow)?;
         let committed = DurableToolTerminalCommit {
-            sequence: self.next_sequence,
+            sequence,
             record,
             replayed: false,
         };
-        self.next_sequence = self.next_sequence.saturating_add(1);
         self.terminal_records.insert(key, committed.clone());
         Ok(committed)
     }
@@ -1117,12 +1153,13 @@ impl InMemoryDurableToolTerminalStore {
             });
         }
 
+        let sequence = take_next_sequence(&mut self.next_sequence)
+            .map_err(|()| ToolTerminalStoreError::SequenceOverflow)?;
         let committed = DurableResponsePolicyStopCommit {
-            sequence: self.next_sequence,
+            sequence,
             record,
             replayed: false,
         };
-        self.next_sequence = self.next_sequence.saturating_add(1);
         self.policy_stopped_responses
             .insert(committed.record.response_id.clone(), committed.clone());
         Ok(committed)
@@ -1130,6 +1167,89 @@ impl InMemoryDurableToolTerminalStore {
 
     pub fn tool_terminal_count(&self) -> usize {
         self.terminal_records.len()
+    }
+}
+
+impl Default for InMemoryDurableToolTerminalStore {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+fn take_next_sequence(next_sequence: &mut Option<u64>) -> Result<u64, ()> {
+    let sequence = (*next_sequence).ok_or(())?;
+    *next_sequence = sequence.checked_add(1);
+    Ok(sequence)
+}
+
+#[cfg(test)]
+mod sequence_tests {
+    use serde_json::json;
+
+    use super::{
+        DurableToolTerminalRecord, DurableToolTerminalState, InMemoryDurableSink,
+        InMemoryDurableToolTerminalStore, SinkCommitError, SinkCommitRequest,
+        ToolTerminalStoreError,
+    };
+
+    #[test]
+    fn sink_emits_maximum_sequence_once_then_rejects_without_committing() {
+        let mut sink = InMemoryDurableSink::new("sink");
+        sink.next_sequence = Some(u64::MAX);
+
+        assert_eq!(
+            sink.commit(SinkCommitRequest::new(
+                "run",
+                "node",
+                "attempt",
+                "key-1",
+                json!(null),
+            ))
+            .expect("last sequence is representable")
+            .sequence,
+            u64::MAX
+        );
+        assert_eq!(
+            sink.commit(SinkCommitRequest::new(
+                "run",
+                "node",
+                "attempt",
+                "key-2",
+                json!(null),
+            )),
+            Err(SinkCommitError::SequenceOverflow)
+        );
+        assert_eq!(sink.committed_count(), 1);
+    }
+
+    #[test]
+    fn terminal_store_emits_maximum_sequence_once_then_rejects_without_committing() {
+        let mut store = InMemoryDurableToolTerminalStore::new();
+        store.next_sequence = Some(u64::MAX);
+        let record = |tool_call_id: &str| {
+            DurableToolTerminalRecord::new(
+                "run",
+                "response",
+                tool_call_id,
+                1,
+                DurableToolTerminalState::Completed,
+                "sha256:arguments",
+                1,
+            )
+        };
+
+        assert_eq!(
+            store
+                .record_tool_terminal(record("call-1"))
+                .expect("last sequence is representable")
+                .sequence,
+            u64::MAX
+        );
+        assert_eq!(
+            store.record_tool_terminal(record("call-2")),
+            Err(ToolTerminalStoreError::SequenceOverflow)
+        );
+        assert_eq!(store.tool_terminal_count(), 1);
     }
 }
 
@@ -1168,28 +1288,69 @@ pub struct CheckpointBarrier {
 
 impl CheckpointBarrier {
     pub fn validate(&self) -> Result<(), CheckpointBarrierError> {
-        if self.checkpoint_id.trim().is_empty() {
+        if invalid_identity(&self.checkpoint_id) {
             return Err(CheckpointBarrierError::MissingCheckpointId);
         }
-        if self.run_id.trim().is_empty() {
+        if invalid_identity(&self.run_id) {
             return Err(CheckpointBarrierError::MissingRunId);
         }
-        if self.release_id.trim().is_empty() {
+        if invalid_identity(&self.release_id) {
             return Err(CheckpointBarrierError::MissingReleaseId);
         }
-        if self.deployment_revision_id.trim().is_empty() {
+        if invalid_identity(&self.deployment_revision_id) {
             return Err(CheckpointBarrierError::MissingDeploymentRevisionId);
         }
-        if self.plan_hash.trim().is_empty() {
+        if invalid_identity(&self.plan_hash) {
             return Err(CheckpointBarrierError::MissingPlanHash);
         }
-        if self.checkpoint_schema.schema_id.trim().is_empty()
+        if invalid_identity(&self.checkpoint_schema.schema_id)
             || self.checkpoint_schema.schema_version == 0
         {
             return Err(CheckpointBarrierError::InvalidCheckpointSchema);
         }
         if self.schema_versions.is_empty() {
             return Err(CheckpointBarrierError::MissingSchemaVersions);
+        }
+        let mut completed_nodes = BTreeSet::new();
+        for node_id in &self.completed_nodes {
+            if invalid_identity(node_id) || !completed_nodes.insert(node_id) {
+                return Err(CheckpointBarrierError::InvalidCompletedNodes);
+            }
+        }
+        let mut pending_nodes = BTreeSet::new();
+        for node_id in &self.pending_nodes {
+            if invalid_identity(node_id) || !pending_nodes.insert(node_id) {
+                return Err(CheckpointBarrierError::InvalidPendingNodes);
+            }
+            if completed_nodes.contains(node_id) {
+                return Err(CheckpointBarrierError::OverlappingNodeStates);
+            }
+        }
+        if self.source_cursors.iter().any(|(source_id, cursor)| {
+            invalid_identity(source_id) || validate_source_cursor(cursor).is_err()
+        }) {
+            return Err(CheckpointBarrierError::InvalidSourceCursors);
+        }
+        if self
+            .operator_state
+            .iter()
+            .any(|(key, value)| invalid_identity(key) || invalid_checkpoint_json(value))
+        {
+            return Err(CheckpointBarrierError::InvalidOperatorState);
+        }
+        if self
+            .sink_commit_metadata
+            .iter()
+            .any(|(key, value)| invalid_identity(key) || invalid_checkpoint_json(value))
+        {
+            return Err(CheckpointBarrierError::InvalidSinkCommitMetadata);
+        }
+        if self
+            .schema_versions
+            .iter()
+            .any(|(key, version)| invalid_identity(key) || *version == 0)
+        {
+            return Err(CheckpointBarrierError::InvalidSchemaVersions);
         }
         Ok(())
     }
@@ -1214,6 +1375,13 @@ pub enum CheckpointBarrierError {
     MissingPlanHash,
     InvalidCheckpointSchema,
     MissingSchemaVersions,
+    InvalidCompletedNodes,
+    InvalidPendingNodes,
+    OverlappingNodeStates,
+    InvalidSourceCursors,
+    InvalidOperatorState,
+    InvalidSinkCommitMetadata,
+    InvalidSchemaVersions,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1331,10 +1499,10 @@ impl InMemoryCheckpointStore {
         now_unix_ms: u64,
         expires_at_unix_ms: u64,
     ) -> Result<CheckpointRecovery, CheckpointStoreError> {
-        if worker_id.trim().is_empty() {
+        if invalid_identity(worker_id) {
             return Err(CheckpointStoreError::InvalidRecoveryClaim { field: "worker_id" });
         }
-        if lease_id.trim().is_empty() {
+        if invalid_identity(lease_id) {
             return Err(CheckpointStoreError::InvalidRecoveryClaim { field: "lease_id" });
         }
         if expires_at_unix_ms <= now_unix_ms {
@@ -1365,16 +1533,18 @@ impl InMemoryCheckpointStore {
             .next_fencing_epoch_by_run
             .entry(run_id.to_owned())
             .or_insert(1);
+        let fencing_epoch = *next_fencing_epoch;
+        let following_fencing_epoch = advance_fencing_epoch(fencing_epoch, u64::MAX, run_id)?;
         let claim = CheckpointRecoveryClaim {
             run_id: run_id.to_owned(),
             checkpoint_id: checkpoint.checkpoint_id.clone(),
             worker_id: worker_id.to_owned(),
             lease_id: lease_id.to_owned(),
-            fencing_epoch: *next_fencing_epoch,
+            fencing_epoch,
             claimed_at_unix_ms: now_unix_ms,
             expires_at_unix_ms,
         };
-        *next_fencing_epoch = next_fencing_epoch.saturating_add(1);
+        *next_fencing_epoch = following_fencing_epoch;
         self.active_claims_by_run
             .insert(run_id.to_owned(), claim.clone());
         Ok(CheckpointRecovery { checkpoint, claim })
@@ -1640,10 +1810,10 @@ impl SqliteCheckpointStore {
         now_unix_ms: u64,
         expires_at_unix_ms: u64,
     ) -> Result<CheckpointRecovery, CheckpointStoreError> {
-        if worker_id.trim().is_empty() {
+        if invalid_identity(worker_id) {
             return Err(CheckpointStoreError::InvalidRecoveryClaim { field: "worker_id" });
         }
-        if lease_id.trim().is_empty() {
+        if invalid_identity(lease_id) {
             return Err(CheckpointStoreError::InvalidRecoveryClaim { field: "lease_id" });
         }
         if expires_at_unix_ms <= now_unix_ms {
@@ -1750,6 +1920,8 @@ impl SqliteCheckpointStore {
             .optional()
             .map_err(checkpoint_storage_error)?
             .unwrap_or(1);
+        let following_fencing_epoch =
+            advance_fencing_epoch(next_fencing_epoch, i64::MAX as u64, run_id)?;
         let claim = CheckpointRecoveryClaim {
             run_id: run_id.to_owned(),
             checkpoint_id: checkpoint.checkpoint_id.clone(),
@@ -1802,7 +1974,7 @@ impl SqliteCheckpointStore {
                 ",
                 params![
                     run_id,
-                    sqlite_u64_to_i64(next_fencing_epoch.saturating_add(1), "next_fencing_epoch")?,
+                    sqlite_u64_to_i64(following_fencing_epoch, "next_fencing_epoch")?,
                 ],
             )
             .map_err(checkpoint_storage_error)?;
@@ -2008,6 +2180,9 @@ pub enum CheckpointStoreError {
     InvalidRecoveryClaim {
         field: &'static str,
     },
+    FencingEpochOverflow {
+        run_id: String,
+    },
     ActiveRecoveryClaim {
         run_id: String,
         worker_id: String,
@@ -2037,6 +2212,24 @@ pub enum CheckpointStoreError {
     Storage {
         message: String,
     },
+}
+
+fn advance_fencing_epoch(
+    current: u64,
+    maximum: u64,
+    run_id: &str,
+) -> Result<u64, CheckpointStoreError> {
+    if current == 0 {
+        return Err(CheckpointStoreError::InvalidRecoveryClaim {
+            field: "fencing_epoch",
+        });
+    }
+    current
+        .checked_add(1)
+        .filter(|next| *next <= maximum)
+        .ok_or_else(|| CheckpointStoreError::FencingEpochOverflow {
+            run_id: run_id.to_owned(),
+        })
 }
 
 #[allow(clippy::too_many_arguments)]

@@ -10,6 +10,10 @@ pub enum LeaseError {
     InvalidCapacity,
     InvalidUnits,
     InvalidExpiration,
+    InvalidIdentity {
+        field: &'static str,
+    },
+    IdentifierOverflow,
     CapacityExhausted {
         pool_id: String,
         requested_units: u64,
@@ -97,9 +101,11 @@ impl LeasePool {
         if capacity_units == 0 {
             return Err(LeaseError::InvalidCapacity);
         }
+        let id = id.into();
+        validate_identity("id", &id)?;
         Ok(Self {
             inner: Arc::new(Mutex::new(Inner {
-                id: id.into(),
+                id,
                 capacity_units,
                 used_units: 0,
                 next_lease_number: 1,
@@ -134,6 +140,7 @@ impl LeasePool {
         if request.units == 0 {
             return Err(LeaseError::InvalidUnits);
         }
+        validate_identity("owner", &request.owner)?;
         if request
             .expires_at
             .is_some_and(|expires_at| expires_at <= acquired_at)
@@ -153,10 +160,22 @@ impl LeasePool {
         }
 
         let lease_id = format!("{}-{}", inner.id, inner.next_lease_number);
-        inner.next_lease_number += 1;
+        let next_lease_number = inner
+            .next_lease_number
+            .checked_add(1)
+            .ok_or(LeaseError::IdentifierOverflow)?;
         let fencing_token = inner.next_fencing_token;
-        inner.next_fencing_token += 1;
-        inner.used_units += request.units;
+        let next_fencing_token = inner
+            .next_fencing_token
+            .checked_add(1)
+            .ok_or(LeaseError::IdentifierOverflow)?;
+        let used_units = inner
+            .used_units
+            .checked_add(request.units)
+            .ok_or(LeaseError::IdentifierOverflow)?;
+        inner.next_lease_number = next_lease_number;
+        inner.next_fencing_token = next_fencing_token;
+        inner.used_units = used_units;
         inner.active.insert(
             lease_id.clone(),
             ActiveLease {
@@ -236,7 +255,10 @@ impl LeasePool {
         }
 
         let renewed_token = inner.next_fencing_token;
-        inner.next_fencing_token += 1;
+        inner.next_fencing_token = inner
+            .next_fencing_token
+            .checked_add(1)
+            .ok_or(LeaseError::IdentifierOverflow)?;
         if let Some(active) = inner.active.get_mut(lease_id) {
             active.fencing_token = renewed_token;
             active.expires_at = Some(expires_at);
@@ -309,6 +331,13 @@ impl LeasePool {
     }
 }
 
+fn validate_identity(field: &'static str, value: &str) -> Result<(), LeaseError> {
+    if value.trim().is_empty() || value != value.trim() {
+        return Err(LeaseError::InvalidIdentity { field });
+    }
+    Ok(())
+}
+
 impl ResourceLease {
     pub fn lease_id(&self) -> &str {
         &self.lease_id
@@ -365,5 +394,55 @@ impl ResourceLease {
 impl Drop for ResourceLease {
     fn drop(&mut self) {
         self.release();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{LeaseError, LeasePool, LeaseRequest};
+
+    #[test]
+    fn acquisition_rejects_identifier_counter_overflow_without_reserving_capacity() {
+        let pool = LeasePool::new("pool", 1).expect("pool is valid");
+        {
+            let mut inner = pool.lock();
+            inner.next_fencing_token = u64::MAX;
+        }
+
+        assert!(matches!(
+            pool.try_acquire(LeaseRequest::new("owner", 1)),
+            Err(LeaseError::IdentifierOverflow)
+        ));
+        assert_eq!(pool.available_units(), 1);
+    }
+
+    #[test]
+    fn renewal_rejects_fencing_counter_overflow_without_mutating_lease() {
+        let pool = LeasePool::new("pool", 1).expect("pool is valid");
+        let acquired_at = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(10);
+        let lease = pool
+            .try_acquire_at(
+                LeaseRequest::new("owner", 1).with_expires_at(
+                    std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(20),
+                ),
+                acquired_at,
+            )
+            .expect("lease is valid");
+        let original_token = lease.fencing_token();
+        {
+            let mut inner = pool.lock();
+            inner.next_fencing_token = u64::MAX;
+        }
+
+        assert_eq!(
+            pool.renew_at(
+                lease.lease_id(),
+                original_token,
+                std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(30),
+                acquired_at + std::time::Duration::from_secs(1),
+            ),
+            Err(LeaseError::IdentifierOverflow)
+        );
+        assert_eq!(lease.fencing_token(), original_token);
     }
 }
