@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt;
 
-use graphblocks_compiler::canonical::canonical_hash;
+use graphblocks_compiler::canonical::try_canonical_hash;
 use serde_json::{Value, json};
 
 #[derive(Clone, Debug, PartialEq)]
@@ -178,6 +178,10 @@ pub enum RecordStoreError {
         collection: String,
         key: String,
     },
+    InvalidRecordJson {
+        collection: String,
+        key: String,
+    },
     InvalidLimit,
     InvalidCursor {
         collection: String,
@@ -208,6 +212,10 @@ impl fmt::Display for RecordStoreError {
             Self::RevisionOverflow { collection, key } => write!(
                 formatter,
                 "record {collection:?}/{key:?} revision is exhausted"
+            ),
+            Self::InvalidRecordJson { collection, key } => write!(
+                formatter,
+                "record {collection:?}/{key:?} exceeds canonical JSON limits"
             ),
             Self::InvalidLimit => write!(formatter, "record query limit must be at least 1"),
             Self::InvalidCursor { collection, cursor } => {
@@ -294,13 +302,17 @@ impl InMemoryRecordStore {
         let mut stored = record;
         stored.collection = collection.to_owned();
         stored.revision = revision;
-        stored.etag = canonical_hash(&json!({
+        stored.etag = try_canonical_hash(&json!({
             "collection": stored.collection,
             "key": stored.key,
             "value": stored.value,
             "revision": stored.revision,
             "metadata": stored.metadata,
-        }));
+        }))
+        .map_err(|_| RecordStoreError::InvalidRecordJson {
+            collection: collection.to_owned(),
+            key: stored.key.clone(),
+        })?;
         self.last_revisions.insert(storage_key.clone(), revision);
         self.records.insert(storage_key, stored.clone());
         Ok(stored)

@@ -2,7 +2,16 @@ use graphblocks_runtime_core::record_store::{
     DeleteOptions, InMemoryRecordStore, Record, RecordFilter, RecordQuery, RecordStoreError,
     WriteOptions,
 };
-use serde_json::json;
+use graphblocks_schema::MAX_CANONICAL_JSON_DEPTH;
+use serde_json::{Map, Value, json};
+
+fn nested_object(depth: usize) -> Value {
+    let mut value = Value::Null;
+    for _ in 0..depth {
+        value = Value::Object(Map::from_iter([("next".to_owned(), value)]));
+    }
+    value
+}
 
 #[test]
 fn record_store_put_get_assigns_monotonic_revision_and_etag() -> Result<(), RecordStoreError> {
@@ -242,4 +251,57 @@ fn record_store_rejects_blank_collection_and_key() {
         store.delete("tickets", "   ", DeleteOptions::new()),
         Err(RecordStoreError::InvalidKey)
     );
+}
+
+#[test]
+fn record_store_rejects_overdeep_values_without_consuming_a_revision()
+-> Result<(), RecordStoreError> {
+    let mut store = InMemoryRecordStore::new();
+
+    assert_eq!(
+        store.put(
+            "tickets",
+            Record::new("ticket-1", nested_object(MAX_CANONICAL_JSON_DEPTH)),
+            WriteOptions::new(),
+        ),
+        Err(RecordStoreError::InvalidRecordJson {
+            collection: "tickets".to_owned(),
+            key: "ticket-1".to_owned(),
+        })
+    );
+    assert_eq!(store.get("tickets", "ticket-1")?, None);
+
+    let created = store.put(
+        "tickets",
+        Record::new("ticket-1", json!({"status": "open"})),
+        WriteOptions::new(),
+    )?;
+    assert_eq!(created.revision, 1);
+    Ok(())
+}
+
+#[test]
+fn record_store_rejects_overdeep_metadata_without_replacing_the_record()
+-> Result<(), RecordStoreError> {
+    let mut store = InMemoryRecordStore::new();
+    let created = store.put(
+        "tickets",
+        Record::new("ticket-1", json!({"status": "open"})),
+        WriteOptions::new(),
+    )?;
+
+    assert_eq!(
+        store.put(
+            "tickets",
+            Record::new("ticket-1", json!({"status": "closed"}))
+                .with_metadata("nested", nested_object(MAX_CANONICAL_JSON_DEPTH)),
+            WriteOptions::new().with_expected_revision(created.revision),
+        ),
+        Err(RecordStoreError::InvalidRecordJson {
+            collection: "tickets".to_owned(),
+            key: "ticket-1".to_owned(),
+        })
+    );
+    assert_eq!(store.get("tickets", "ticket-1")?, Some(created));
+    Ok(())
 }
