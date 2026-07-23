@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
 
 GRAPH_API_VERSION = "graphblocks.ai/v1"
@@ -75,7 +76,7 @@ def _migrate_document(
     *,
     require_valid_target: bool,
 ) -> dict[str, Any]:
-    if not isinstance(document, dict):
+    if not isinstance(document, Mapping):
         raise TypeError("migration document must be a mapping")
     # Import lazily to avoid the canonical/migration module cycle. The
     # round-trip gives all later migration steps one bounded, trusted snapshot

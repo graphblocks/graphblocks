@@ -16,12 +16,13 @@ from jsonschema.exceptions import SchemaError, ValidationError
 
 from .canonical import (
     _MANUAL_INTEGER_BIT_LENGTH,
+    _canonical_dumps,
     _has_unicode_surrogate,
     canonical_dumps,
     canonical_hash,
     canonical_loads,
 )
-from .documents import _freeze_value
+from .documents import FrozenList, _freeze_value
 
 
 SCHEMA_MANIFEST_VERSION = 1
@@ -177,7 +178,7 @@ class TypedValue:
             raise TypeError("typed value schema_id must be a SchemaId")
         try:
             canonical_value = canonical_loads(
-                canonical_dumps(self.value, _reject_tuples=True)
+                _canonical_dumps(self.value, reject_tuples=True)
             )
         except (TypeError, ValueError) as error:
             raise ValueError("typed value value must be canonical JSON") from error
@@ -578,7 +579,7 @@ def resource_schema_errors(
                     reverse=True,
                 )
             )
-        elif isinstance(value, list):
+        elif isinstance(value, (list, FrozenList)):
             if id(value) in active_containers:
                 return (
                     ResourceSchemaViolation(

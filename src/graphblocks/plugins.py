@@ -479,7 +479,7 @@ def _parse_output_requiredness_predicate(
         raise ValueError(
             f"requiredWhen nesting must not exceed {_MAX_OUTPUT_REQUIREDNESS_DEPTH} levels"
         )
-    if not isinstance(value, dict):
+    if not isinstance(value, Mapping):
         raise ValueError("requiredWhen must be a mapping")
     if len(value) != 1:
         raise ValueError("requiredWhen must contain exactly one predicate operator")
@@ -489,7 +489,7 @@ def _parse_output_requiredness_predicate(
     operand = value[operator]
 
     if operator == "configEquals":
-        if not isinstance(operand, dict) or set(operand) != {"pointer", "value"}:
+        if not isinstance(operand, Mapping) or set(operand) != {"pointer", "value"}:
             raise ValueError("configEquals must contain exactly pointer and value")
         pointer = _validate_json_pointer(operand["pointer"])
         expected_json = _canonical_json(operand["value"])
@@ -505,7 +505,7 @@ def _parse_output_requiredness_predicate(
         return OutputRequirednessPredicate(operator="phase", phase=str(operand))
 
     if operator in {"all", "any"}:
-        if not isinstance(operand, list) or not operand:
+        if not isinstance(operand, (list, tuple)) or not operand:
             raise ValueError(f"{operator} must be a non-empty list")
         if len(operand) > _MAX_OUTPUT_REQUIREDNESS_OPERANDS:
             raise ValueError(
@@ -536,7 +536,7 @@ def _resolve_json_pointer(document: object, pointer: str) -> tuple[bool, object]
                 return False, None
             current = current[token]
             continue
-        if isinstance(current, list):
+        if isinstance(current, (list, tuple)):
             if (
                 not token.isascii()
                 or not token.isdecimal()
@@ -871,10 +871,10 @@ class BlockCatalog:
             inputs: list[PortDescriptor] = []
             input_names: set[str] = set()
             raw_inputs = block.get("inputs", [])
-            if not isinstance(raw_inputs, list):
+            if not isinstance(raw_inputs, (list, tuple)):
                 raise ValueError(f"block catalog entry {block_index} inputs must be a list")
             for port_index, port in enumerate(raw_inputs):
-                if not isinstance(port, dict) or not isinstance(port.get("name"), str) or not port["name"]:
+                if not isinstance(port, Mapping) or not isinstance(port.get("name"), str) or not port["name"]:
                     raise ValueError(
                         f"block catalog entry {block_index} input {port_index} requires a non-empty name"
                     )
@@ -907,10 +907,10 @@ class BlockCatalog:
             outputs: list[PortDescriptor] = []
             output_names: set[str] = set()
             raw_outputs = block.get("outputs", [])
-            if not isinstance(raw_outputs, list):
+            if not isinstance(raw_outputs, (list, tuple)):
                 raise ValueError(f"block catalog entry {block_index} outputs must be a list")
             for port_index, port in enumerate(raw_outputs):
-                if not isinstance(port, dict) or not isinstance(port.get("name"), str) or not port["name"]:
+                if not isinstance(port, Mapping) or not isinstance(port.get("name"), str) or not port["name"]:
                     raise ValueError(
                         f"block catalog entry {block_index} output {port_index} requires a non-empty name"
                     )
@@ -950,10 +950,10 @@ class BlockCatalog:
             resource_slots: list[ResourceSlotDescriptor] = []
             resource_slot_names: set[str] = set()
             raw_slots = block.get("resourceSlots", [])
-            if isinstance(raw_slots, dict):
+            if isinstance(raw_slots, Mapping):
                 normalized_slots: list[dict[str, Any]] = []
                 for name, slot in raw_slots.items():
-                    if not isinstance(slot, dict):
+                    if not isinstance(slot, Mapping):
                         raise ValueError(
                             f"block catalog entry {block_index} resource slot {name!r} must be a mapping"
                         )
@@ -964,12 +964,12 @@ class BlockCatalog:
                         )
                     normalized_slots.append({**slot, "name": name})
                 raw_slots = normalized_slots
-            elif not isinstance(raw_slots, list):
+            elif not isinstance(raw_slots, (list, tuple)):
                 raise ValueError(
                     f"block catalog entry {block_index} resourceSlots must be a list or mapping"
                 )
             for slot_index, slot in enumerate(raw_slots):
-                if not isinstance(slot, dict) or not isinstance(slot.get("name"), str) or not slot["name"]:
+                if not isinstance(slot, Mapping) or not isinstance(slot.get("name"), str) or not slot["name"]:
                     raise ValueError(
                         f"block catalog entry {block_index} resource slot {slot_index} requires a non-empty name"
                     )

@@ -1,13 +1,19 @@
 from __future__ import annotations
 
+from copy import copy, deepcopy
+import pickle
+
 import pytest
 
+from graphblocks import canonical_dumps, compile_graph
 from graphblocks.documents import (
     ArtifactRef,
     AssetRevision,
     DocumentChunk,
     DocumentElement,
     DocumentSpan,
+    FrozenDict,
+    FrozenList,
     ParsedDocument,
     SourceAsset,
     SourceLocation,
@@ -264,6 +270,90 @@ def test_document_payload_records_validate_nested_types_and_copy_collections() -
         DocumentSpan("asset-1", "rev-1", "doc-1", char_start=5, char_end=1)
     with pytest.raises(ValueError, match="document chunk source_refs must be SourceRef"):
         DocumentChunk("chunk-1", "doc-1", "asset-1", "rev-1", "hello", ("el-1",), (object(),), {})  # type: ignore[arg-type]
+
+
+def test_document_json_snapshots_resist_builtin_base_descriptor_mutation() -> None:
+    document = ParsedDocument(
+        "doc-1",
+        "asset-1",
+        "rev-1",
+        {"processor_id": "plain-text"},
+        metadata={"labels": ["safe"]},
+    )
+
+    assert isinstance(document.metadata, FrozenDict)
+    assert isinstance(document.metadata["labels"], FrozenList)
+    with pytest.raises(TypeError):
+        dict.__setitem__(document.metadata, "forged", True)
+    with pytest.raises(TypeError):
+        list.__setitem__(document.metadata["labels"], 0, "forged")
+
+    assert document.metadata == {"labels": ["safe"]}
+    assert {"labels": ["safe"]} == document.metadata
+    assert not document.metadata != {"labels": ["safe"]}
+    assert not document.metadata["labels"] != ["safe"]
+    assert canonical_dumps(document.metadata) == '{"labels":["safe"]}'
+
+
+def test_frozen_document_json_deepcopy_is_recursively_mutable_and_compilable() -> None:
+    frozen_graph = FrozenDict(
+        {
+            "apiVersion": "graphblocks.ai/v1",
+            "kind": "Graph",
+            "metadata": FrozenDict({"name": "deepcopy-graph"}),
+            "spec": FrozenDict(
+                {
+                    "nodes": FrozenDict(
+                        {
+                            "example": FrozenDict(
+                                {
+                                    "block": "example.test@1",
+                                    "inputs": FrozenDict(
+                                        {
+                                            "items": FrozenList(
+                                                [FrozenDict({"value": "safe"})]
+                                            )
+                                        }
+                                    ),
+                                }
+                            )
+                        }
+                    )
+                }
+            ),
+        }
+    )
+
+    copied = deepcopy(frozen_graph)
+    copied["spec"]["nodes"]["example"]["inputs"]["items"][0].pop("value")
+
+    plan = compile_graph(copied, allow_unknown_blocks=True)
+
+    assert plan.normalized["metadata"]["name"] == "deepcopy-graph"
+    assert plan.normalized["spec"]["nodes"]["example"]["block"] == "example.test@1"
+
+
+def test_frozen_document_json_is_shallow_copy_and_pickle_safe() -> None:
+    document = ParsedDocument(
+        "doc-1",
+        "asset-1",
+        "rev-1",
+        {"processor_id": "plain-text"},
+        metadata={"labels": ["safe"]},
+    )
+
+    assert copy(document.metadata) is document.metadata
+    assert copy(document.metadata["labels"]) is document.metadata["labels"]
+
+    restored = pickle.loads(pickle.dumps(document))
+
+    assert restored == document
+    assert isinstance(restored.metadata, FrozenDict)
+    assert isinstance(restored.metadata["labels"], FrozenList)
+    with pytest.raises(TypeError):
+        dict.__setitem__(restored.metadata, "forged", True)
+    with pytest.raises(TypeError):
+        list.__setitem__(restored.metadata["labels"], 0, "forged")
 
 
 def test_document_json_fields_reject_recursive_and_noncanonical_values() -> None:

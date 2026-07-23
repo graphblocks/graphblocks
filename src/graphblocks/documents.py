@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass, field
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
+from copy import deepcopy
+from types import MappingProxyType
 from typing import Any, Literal
 
 from .canonical import canonical_dumps
@@ -15,11 +17,40 @@ SOURCE_TRUST_LEVELS = frozenset(
 )
 
 
-class FrozenDict(dict[str, Any]):
-    def __setitem__(self, key: str, value: Any) -> None:
+class FrozenDict(Mapping[Any, Any]):
+    """A read-only mapping whose deep copies are mutable JSON snapshots."""
+
+    __slots__ = ("__values",)
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        object.__setattr__(
+            self,
+            "_FrozenDict__values",
+            MappingProxyType(dict(*args, **kwargs)),
+        )
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        raise TypeError("frozen mapping does not support attribute assignment")
+
+    def __getitem__(self, key: Any) -> Any:
+        return self.__values[key]
+
+    def __iter__(self) -> Iterator[Any]:
+        return iter(self.__values)
+
+    def __len__(self) -> int:
+        return len(self.__values)
+
+    def __repr__(self) -> str:
+        return repr(dict(self.__values))
+
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, Mapping) and dict(self.__values) == dict(other)
+
+    def __setitem__(self, key: Any, value: Any) -> None:
         raise TypeError("frozen mapping does not support item assignment")
 
-    def __delitem__(self, key: str) -> None:
+    def __delitem__(self, key: Any) -> None:
         raise TypeError("frozen mapping does not support item deletion")
 
     def clear(self) -> None:
@@ -28,7 +59,7 @@ class FrozenDict(dict[str, Any]):
     def pop(self, *args: Any) -> Any:
         raise TypeError("frozen mapping does not support mutation")
 
-    def popitem(self) -> tuple[str, Any]:
+    def popitem(self) -> tuple[Any, Any]:
         raise TypeError("frozen mapping does not support mutation")
 
     def setdefault(self, *args: Any) -> Any:
@@ -40,11 +71,61 @@ class FrozenDict(dict[str, Any]):
     def __ior__(self, other: object) -> FrozenDict:
         raise TypeError("frozen mapping does not support mutation")
 
-    def __deepcopy__(self, memo: dict[int, Any]) -> dict[str, Any]:
-        return dict(self)
+    def __or__(self, other: object) -> dict[Any, Any]:
+        if not isinstance(other, Mapping):
+            return NotImplemented
+        return dict(self.__values) | dict(other)
+
+    def __ror__(self, other: object) -> dict[Any, Any]:
+        if not isinstance(other, Mapping):
+            return NotImplemented
+        return dict(other) | dict(self.__values)
+
+    def copy(self) -> dict[Any, Any]:
+        return dict(self.__values)
+
+    def __copy__(self) -> FrozenDict:
+        return self
+
+    def __deepcopy__(self, memo: dict[int, Any]) -> dict[Any, Any]:
+        copied: dict[Any, Any] = {}
+        memo[id(self)] = copied
+        for key, value in self.__values.items():
+            copied[deepcopy(key, memo)] = deepcopy(value, memo)
+        return copied
+
+    def __reduce_ex__(
+        self,
+        protocol: int,
+    ) -> tuple[type[FrozenDict], tuple[dict[Any, Any]]]:
+        del protocol
+        return type(self), (dict(self.__values),)
 
 
-class FrozenList(list[Any]):
+class FrozenList(tuple[Any, ...]):
+    """A tuple-backed JSON array that retains list-compatible equality."""
+
+    __slots__ = ()
+    __hash__ = None
+
+    def __new__(cls, values: Any = ()) -> FrozenList:
+        return super().__new__(cls, values)
+
+    def __repr__(self) -> str:
+        return repr(list(self))
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, (list, tuple)):
+            return False
+        return tuple(self) == tuple(other)
+
+    def __ne__(self, other: object) -> bool:
+        return not self == other
+
+    def __getitem__(self, key: int | slice) -> Any:
+        value = super().__getitem__(key)
+        return list(value) if isinstance(key, slice) else value
+
     def __setitem__(self, key: Any, value: Any) -> None:
         raise TypeError("frozen list does not support item assignment")
 
@@ -81,8 +162,40 @@ class FrozenList(list[Any]):
     def __imul__(self, item: Any) -> FrozenList:
         raise TypeError("frozen list does not support mutation")
 
-    def __deepcopy__(self, memo: dict[int, Any]) -> list[Any]:
+    def __add__(self, other: object) -> list[Any]:
+        if not isinstance(other, (list, FrozenList)):
+            return NotImplemented
+        return [*self, *other]
+
+    def __radd__(self, other: object) -> list[Any]:
+        if not isinstance(other, list):
+            return NotImplemented
+        return [*other, *self]
+
+    def __mul__(self, item: Any) -> list[Any]:
+        return list(self) * item
+
+    def __rmul__(self, item: Any) -> list[Any]:
+        return item * list(self)
+
+    def copy(self) -> list[Any]:
         return list(self)
+
+    def __copy__(self) -> FrozenList:
+        return self
+
+    def __deepcopy__(self, memo: dict[int, Any]) -> list[Any]:
+        copied: list[Any] = []
+        memo[id(self)] = copied
+        copied.extend(deepcopy(value, memo) for value in self)
+        return copied
+
+    def __reduce_ex__(
+        self,
+        protocol: int,
+    ) -> tuple[type[FrozenList], tuple[tuple[Any, ...]]]:
+        del protocol
+        return type(self), (tuple(self),)
 
 
 def _validate_non_empty_string(owner: str, field_name: str, value: object) -> str:
