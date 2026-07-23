@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Iterator, Mapping
+
 import pytest
 
 from graphblocks.compiler import compile_graph
@@ -48,6 +50,118 @@ def test_compile_uses_closed_builtin_catalog_by_default() -> None:
 
 def test_compile_allows_unknown_blocks_only_with_explicit_discovery_opt_in() -> None:
     assert compile_graph(_unknown_block_graph(), allow_unknown_blocks=True).ok
+
+
+def test_compile_normalizes_hostile_mapping_traversal_errors() -> None:
+    class ExplodingMapping(Mapping[str, object]):
+        def __getitem__(self, key: str) -> object:
+            raise RuntimeError("hostile lookup")
+
+        def __iter__(self) -> Iterator[str]:
+            return iter(("apiVersion",))
+
+        def __len__(self) -> int:
+            return 1
+
+    with pytest.raises(
+        ValueError,
+        match="graph document must contain stable canonical JSON values",
+    ) as captured:
+        compile_graph(ExplodingMapping())  # type: ignore[arg-type]
+
+    assert isinstance(captured.value.__cause__, RuntimeError)
+
+
+@pytest.mark.parametrize(
+    ("camel_case", "snake_case"),
+    (
+        ("eventStream", "event_stream"),
+        ("asyncOperations", "async_operations"),
+        ("callbackSubscriptions", "callback_subscriptions"),
+        ("outputPolicy", "output_policy"),
+        ("toolExecution", "tool_execution"),
+    ),
+)
+def test_compile_rejects_conflicting_graph_spec_aliases(
+    camel_case: str,
+    snake_case: str,
+) -> None:
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "conflicting-aliases"},
+        "spec": {
+            "nodes": {},
+            camel_case: {},
+            snake_case: {"conflicting": True},
+        },
+    }
+
+    assert (
+        "GB0014",
+        f"configuration must not contain both {camel_case!r} and {snake_case!r} aliases",
+        f"$.spec.{snake_case}",
+    ) in _error_diagnostics(graph)
+
+
+def test_compile_rejects_conflicting_nested_control_aliases() -> None:
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "nested-conflicting-aliases"},
+        "spec": {
+            "nodes": {},
+            "asyncOperations": {
+                "upload": {
+                    "expiresAtUnixMs": 1,
+                    "expires_at_unix_ms": 2,
+                }
+            },
+            "callbackSubscriptions": {
+                "events": {
+                    "failurePolicy": "ignore",
+                    "failure_policy": "retry_then_dead_letter",
+                    "delivery": {"kind": "local_callback"},
+                }
+            },
+        },
+    }
+
+    diagnostics = _error_diagnostics(graph)
+
+    assert (
+        "GB0014",
+        "configuration must not contain both 'expiresAtUnixMs' "
+        "and 'expires_at_unix_ms' aliases",
+        "$.spec.asyncOperations.upload.expires_at_unix_ms",
+    ) in diagnostics
+    assert (
+        "GB0014",
+        "configuration must not contain both 'failurePolicy' "
+        "and 'failure_policy' aliases",
+        "$.spec.callbackSubscriptions.events.failure_policy",
+    ) in diagnostics
+
+
+def test_plan_dictionary_projection_does_not_mutate_the_compiled_plan() -> None:
+    plan = compile_graph(
+        {
+            "apiVersion": "graphblocks.ai/v1",
+            "kind": "Graph",
+            "metadata": {"name": "detached-plan"},
+            "spec": {"nodes": {}},
+        }
+    )
+    projection = plan.to_dict()
+    projected_graph = projection["graph"]
+    assert isinstance(projected_graph, dict)
+    projected_metadata = projected_graph["metadata"]
+    assert isinstance(projected_metadata, dict)
+
+    projected_metadata["name"] = "mutated"
+
+    assert plan.normalized["metadata"]["name"] == "detached-plan"
+    assert plan.to_dict()["graph"]["metadata"]["name"] == "detached-plan"
 
 
 def test_compile_reports_oversized_schema_version_as_diagnostic() -> None:
@@ -479,6 +593,90 @@ def test_compile_reports_arbitrary_size_numeric_constraint_values_safely() -> No
             "$.spec.nodes.configured.config.count",
         )
     ]
+
+
+def test_compile_bounds_config_validation_message_size() -> None:
+    catalog = BlockCatalog.from_blocks(
+        [
+            {
+                "typeId": "test.pattern",
+                "version": 1,
+                "configSchema": {
+                    "type": "object",
+                    "properties": {
+                        "value": {"type": "string", "pattern": "^allowed$"},
+                    },
+                    "required": ["value"],
+                    "additionalProperties": False,
+                },
+            }
+        ]
+    )
+    graph = {
+        "apiVersion": "graphblocks.ai/v1",
+        "kind": "Graph",
+        "metadata": {"name": "bounded-config-message"},
+        "spec": {
+            "nodes": {
+                "configured": {
+                    "block": "test.pattern@1",
+                    "config": {"value": "x" * 100_000},
+                }
+            }
+        },
+    }
+
+    diagnostics = _error_diagnostics(graph, block_catalog=catalog)
+
+    assert len(diagnostics) == 1
+    assert len(diagnostics[0][1]) < 1_200
+    assert diagnostics[0][1].endswith("...")
+
+
+def test_compile_bounds_retained_config_validation_errors() -> None:
+    property_count = 105
+    catalog = BlockCatalog.from_blocks(
+        [
+            {
+                "typeId": "test.many_errors",
+                "version": 1,
+                "configSchema": {
+                    "type": "object",
+                    "properties": {
+                        f"field_{index}": {"type": "integer"}
+                        for index in range(property_count)
+                    },
+                    "additionalProperties": False,
+                },
+            }
+        ]
+    )
+    graph = {
+        "apiVersion": "graphblocks.ai/v1",
+        "kind": "Graph",
+        "metadata": {"name": "bounded-config-errors"},
+        "spec": {
+            "nodes": {
+                "configured": {
+                    "block": "test.many_errors@1",
+                    "config": {
+                        f"field_{index}": "invalid"
+                        for index in range(property_count)
+                    },
+                }
+            }
+        },
+    }
+
+    diagnostics = _error_diagnostics(graph, block_catalog=catalog)
+
+    assert len(diagnostics) == 101
+    assert diagnostics[-1] == (
+        "GB2019",
+        "node config does not satisfy test.many_errors@1 configSchema: "
+        "5 additional violations were omitted after the first 100",
+        "$.spec.nodes.configured.config",
+    )
 
 
 @pytest.mark.parametrize(

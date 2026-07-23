@@ -73,6 +73,8 @@ VALID_CALLBACK_DELIVERY_KINDS = frozenset({
 })
 ORDER_CAPABLE_CALLBACK_TARGETS = frozenset({"webhook", "websocket", "sse"})
 DEFAULT_CALLBACK_MAX_PAYLOAD_BYTES = 262_144
+MAX_CONFIG_VALIDATION_ERRORS = 100
+MAX_CONFIG_VALIDATION_ERROR_MESSAGE_CHARS = 1_024
 
 
 def _diagnostic_value(value: object) -> str:
@@ -133,6 +135,11 @@ def _config_error_message(error: ValidationError) -> str:
         return "value must match at least one allowed schema"
     if error.validator == "not":
         return "value matches a forbidden schema"
+    if len(error.message) > MAX_CONFIG_VALIDATION_ERROR_MESSAGE_CHARS:
+        return (
+            error.message[: MAX_CONFIG_VALIDATION_ERROR_MESSAGE_CHARS - 3]
+            + "..."
+        )
     return error.message
 
 
@@ -147,11 +154,14 @@ class Plan:
         return self.diagnostics.ok
 
     def to_dict(self) -> dict[str, Any]:
+        graph = canonical_loads(canonical_dumps(self.normalized))
+        if not isinstance(graph, dict):
+            raise TypeError("normalized graph must be a canonical JSON object")
         return {
             "hash": self.graph_hash,
             "ok": self.ok,
             "diagnostics": self.diagnostics.to_list(),
-            "graph": self.normalized,
+            "graph": graph,
         }
 
 
@@ -248,6 +258,26 @@ def _duration_milliseconds(value: object) -> int | None:
     return parse_duration_milliseconds(value)
 
 
+def _diagnose_alias_conflicts(
+    diagnostics: list[Diagnostic],
+    value: dict[str, Any],
+    path: str,
+    aliases: tuple[tuple[str, str], ...],
+) -> None:
+    for camel_case, snake_case in aliases:
+        if camel_case in value and snake_case in value:
+            diagnostics.append(
+                Diagnostic(
+                    "GB0014",
+                    (
+                        f"configuration must not contain both {camel_case!r} "
+                        f"and {snake_case!r} aliases"
+                    ),
+                    f"{path}.{snake_case}",
+                )
+            )
+
+
 def _callback_schema_required(config: dict[str, Any]) -> bool:
     callback = config.get("callback")
     if isinstance(callback, dict):
@@ -334,8 +364,70 @@ def _diagnose_async_operation_config(
     *,
     require_callback_schema: bool = False,
 ) -> None:
+    _diagnose_alias_conflicts(
+        diagnostics,
+        config,
+        path,
+        (
+            ("timeoutMs", "timeout_ms"),
+            ("expiresAtUnixMs", "expires_at_unix_ms"),
+            ("infiniteWait", "infinite_wait"),
+            ("infiniteWaitPolicy", "infinite_wait_policy"),
+            ("idempotencyKey", "idempotency_key"),
+            ("callbackSchema", "callback_schema"),
+            ("callbackRef", "callback_ref"),
+            ("pollingRef", "polling_ref"),
+            ("resumeTokenHash", "resume_token_hash"),
+            ("onTimeout", "on_timeout"),
+            ("intervalMs", "interval_ms"),
+            ("maxInterval", "max_interval"),
+            ("maxIntervalMs", "max_interval_ms"),
+            ("expectedPayloadBytes", "expected_payload_bytes"),
+            ("expectedMaxPayloadBytes", "expected_max_payload_bytes"),
+            ("maxPayloadBytes", "max_payload_bytes"),
+            ("attemptFencing", "attempt_fencing"),
+            ("fencingTokenRequired", "fencing_token_required"),
+            ("ownershipFence", "ownership_fence"),
+            ("runOwnershipLease", "run_ownership_lease"),
+            ("requirePolicyReevaluation", "require_policy_reevaluation"),
+            ("requireBudgetReservation", "require_budget_reservation"),
+            ("requireReleaseCompatibility", "require_release_compatibility"),
+        ),
+    )
     callback = config.get("callback")
     callback_config = callback if isinstance(callback, dict) else {}
+    _diagnose_alias_conflicts(
+        diagnostics,
+        callback_config,
+        f"{path}.callback",
+        (
+            ("acceptedSchema", "accepted_schema"),
+            ("expectedSchema", "expected_schema"),
+            ("expectedPayloadBytes", "expected_payload_bytes"),
+            ("expectedMaxPayloadBytes", "expected_max_payload_bytes"),
+            ("maxPayloadBytes", "max_payload_bytes"),
+            ("attemptFencing", "attempt_fencing"),
+            ("fencingTokenRequired", "fencing_token_required"),
+        ),
+    )
+    resume = config.get("resume")
+    if isinstance(resume, dict):
+        _diagnose_alias_conflicts(
+            diagnostics,
+            resume,
+            f"{path}.resume",
+            (
+                ("requirePolicyReevaluation", "require_policy_reevaluation"),
+                ("policyReevaluation", "policy_reevaluation"),
+                ("requireBudgetReservation", "require_budget_reservation"),
+                ("budgetReservation", "budget_reservation"),
+                ("requireReleaseCompatibility", "require_release_compatibility"),
+                ("releaseCompatibility", "release_compatibility"),
+                ("requireOwnershipFence", "require_ownership_fence"),
+                ("ownershipFence", "ownership_fence"),
+                ("runOwnershipLease", "run_ownership_lease"),
+            ),
+        )
     if _has_async_callback_completion_ref(config) and _has_async_polling_completion_ref(config):
         diagnostics.append(
             Diagnostic(
@@ -544,6 +636,40 @@ def _diagnose_background_execution_config(
     execution: dict[str, Any],
     event_stream: dict[str, Any] | None,
 ) -> None:
+    _diagnose_alias_conflicts(
+        diagnostics,
+        execution,
+        "$.spec.execution",
+        (
+            ("runLifetime", "run_lifetime"),
+            ("invocationMode", "invocation_mode"),
+            ("responseMode", "response_mode"),
+            ("clientConnectionRequired", "client_connection_required"),
+            ("websocketRequired", "websocket_required"),
+            ("processBound", "process_bound"),
+        ),
+    )
+    detach = execution.get("detach")
+    if isinstance(detach, dict):
+        _diagnose_alias_conflicts(
+            diagnostics,
+            detach,
+            "$.spec.execution.detach",
+            (("onClientDisconnect", "on_client_disconnect"),),
+        )
+    if event_stream is not None:
+        _diagnose_alias_conflicts(
+            diagnostics,
+            event_stream,
+            "$.spec.eventStream",
+            (
+                ("cursorReplay", "cursor_replay"),
+                ("eventRetention", "event_retention"),
+                ("retentionDuration", "retention_duration"),
+                ("reconnectReplayGuarantee", "reconnect_replay_guarantee"),
+                ("replayGuarantee", "replay_guarantee"),
+            ),
+        )
     if not _is_background_run(execution):
         return
     if not _event_stream_is_replayable(event_stream):
@@ -638,6 +764,21 @@ def _diagnose_callback_subscription_config(
     config: dict[str, Any],
     path: str,
 ) -> None:
+    _diagnose_alias_conflicts(
+        diagnostics,
+        config,
+        path,
+        (
+            ("authoritativeFor", "authoritative_for"),
+            ("sourceOfTruth", "source_of_truth"),
+            ("failurePolicy", "failure_policy"),
+            ("retryPolicyRef", "retry_policy_ref"),
+            ("deadLetterPolicy", "dead_letter_policy"),
+            ("deadLetterRef", "dead_letter_ref"),
+            ("fallbackPolicy", "fallback_policy"),
+            ("fallbackRef", "fallback_ref"),
+        ),
+    )
     delivery = config.get("delivery")
     delivery_is_mapping = isinstance(delivery, dict)
     if not delivery_is_mapping:
@@ -649,6 +790,26 @@ def _diagnose_callback_subscription_config(
             )
         )
         delivery = {}
+    _diagnose_alias_conflicts(
+        diagnostics,
+        delivery,
+        f"{path}.delivery",
+        (
+            ("retryPolicyRef", "retry_policy_ref"),
+            ("deadLetterPolicy", "dead_letter_policy"),
+            ("deadLetterRef", "dead_letter_ref"),
+            ("fallbackPolicy", "fallback_policy"),
+            ("fallbackRef", "fallback_ref"),
+        ),
+    )
+    signing = delivery.get("signing")
+    if isinstance(signing, dict):
+        _diagnose_alias_conflicts(
+            diagnostics,
+            signing,
+            f"{path}.delivery.signing",
+            (("secretRef", "secret_ref"),),
+        )
     scope = config.get("scope")
     if scope not in VALID_CALLBACK_SUBSCRIPTION_SCOPES:
         diagnostics.append(
@@ -768,30 +929,26 @@ def compile_graph(
         raise TypeError("block_catalog must be a BlockCatalog")
     if not isinstance(allow_unknown_blocks, bool):
         raise TypeError("allow_unknown_blocks must be a boolean")
-    api_version = document.get("apiVersion")
-    if block_catalog is None:
-        profile = "stable" if api_version == GRAPH_API_VERSION else "preview"
-        block_catalog = builtin_block_catalog(profile=profile)
-    if allow_unknown_blocks and not block_catalog.allow_unknown_blocks:
-        block_catalog = BlockCatalog(
-            block_catalog.descriptors,
-            allow_unknown_blocks=True,
-        )
 
     diagnostics: list[Diagnostic] = []
-    domain_violations = tuple(
-        violation
-        for violation in resource_schema_errors(document)
-        if violation.keyword
-        in {
-            "finiteNumber",
-            "jsonObjectKey",
-            "jsonValue",
-            "maxDepth",
-            "recursive",
-            "unicodeScalar",
-        }
-    )
+    try:
+        domain_violations = tuple(
+            violation
+            for violation in resource_schema_errors(document)
+            if violation.keyword
+            in {
+                "finiteNumber",
+                "jsonObjectKey",
+                "jsonValue",
+                "maxDepth",
+                "recursive",
+                "unicodeScalar",
+            }
+        )
+    except (TypeError, ValueError, RuntimeError, LookupError) as error:
+        raise ValueError(
+            "graph document must contain stable canonical JSON values"
+        ) from error
     if domain_violations:
         invalid_resource_identity = {
             "invalidResource": [
@@ -817,6 +974,24 @@ def compile_graph(
                     for violation in domain_violations
                 )
             ),
+        )
+    try:
+        snapshot = canonical_loads(canonical_dumps(document))
+    except (TypeError, ValueError, RuntimeError, LookupError) as error:
+        raise ValueError(
+            "graph document must contain stable canonical JSON values"
+        ) from error
+    if not isinstance(snapshot, dict):
+        raise ValueError("graph document must contain a canonical JSON object")
+    document = snapshot
+    api_version = document.get("apiVersion")
+    if block_catalog is None:
+        profile = "stable" if api_version == GRAPH_API_VERSION else "preview"
+        block_catalog = builtin_block_catalog(profile=profile)
+    if allow_unknown_blocks and not block_catalog.allow_unknown_blocks:
+        block_catalog = BlockCatalog(
+            block_catalog.descriptors,
+            allow_unknown_blocks=True,
         )
     try:
         migrated = migrate_document(document)
@@ -862,6 +1037,19 @@ def compile_graph(
             canonical_hash(normalized),
             DiagnosticSet(tuple([*schema_diagnostics, *diagnostics])),
         )
+
+    _diagnose_alias_conflicts(
+        diagnostics,
+        spec,
+        "$.spec",
+        (
+            ("eventStream", "event_stream"),
+            ("asyncOperations", "async_operations"),
+            ("callbackSubscriptions", "callback_subscriptions"),
+            ("outputPolicy", "output_policy"),
+            ("toolExecution", "tool_execution"),
+        ),
+    )
 
     nodes = spec.get("nodes", {})
     if nodes is None:
@@ -2191,12 +2379,16 @@ def compile_graph(
                 validation_schema = validation_values["schema"]
                 validation_schemas[descriptor.block_id] = validation_schema
             validation_config = validation_values["config"]
+            omitted_config_error_count = 0
+            config_errors: list[ValidationError] = []
             try:
-                config_errors = list(
-                    Draft202012Validator(validation_schema).iter_errors(
-                        validation_config
-                    )
-                )
+                for config_error in Draft202012Validator(
+                    validation_schema
+                ).iter_errors(validation_config):
+                    if len(config_errors) < MAX_CONFIG_VALIDATION_ERRORS:
+                        config_errors.append(config_error)
+                    else:
+                        omitted_config_error_count += 1
             except (RecursionError, Unresolvable):
                 diagnostics.append(
                     Diagnostic(
@@ -2210,6 +2402,7 @@ def compile_graph(
                     )
                 )
                 config_errors = []
+                omitted_config_error_count = 0
             for error in sorted(
                 config_errors,
                 key=lambda item: (
@@ -2227,6 +2420,19 @@ def compile_graph(
                             f"configSchema: {_config_error_message(error)}"
                         ),
                         _config_error_path(config_path, error),
+                    )
+                )
+            if omitted_config_error_count:
+                diagnostics.append(
+                    Diagnostic(
+                        "GB2019",
+                        (
+                            f"node config does not satisfy {descriptor.block_id} "
+                            f"configSchema: {omitted_config_error_count} additional "
+                            "violations were omitted after the first "
+                            f"{MAX_CONFIG_VALIDATION_ERRORS}"
+                        ),
+                        config_path,
                     )
                 )
             if descriptor.resource_slots:
