@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from copy import copy, deepcopy
 import pickle
 
@@ -272,6 +273,37 @@ def test_document_payload_records_validate_nested_types_and_copy_collections() -
         DocumentChunk("chunk-1", "doc-1", "asset-1", "rev-1", "hello", ("el-1",), (object(),), {})  # type: ignore[arg-type]
 
 
+@pytest.mark.parametrize(
+    "constructor",
+    (
+        lambda: ArtifactRef(
+            "artifact-1",
+            "file:///tmp/example.txt",
+            metadata=None,  # type: ignore[arg-type]
+        ),
+        lambda: ParsedDocument(
+            "doc-1",
+            "asset-1",
+            "rev-1",
+            None,  # type: ignore[arg-type]
+        ),
+        lambda: DocumentChunk(
+            "chunk-1",
+            "doc-1",
+            "asset-1",
+            "rev-1",
+            "text",
+            [],
+            [],
+            None,  # type: ignore[arg-type]
+        ),
+    ),
+)
+def test_required_document_mappings_reject_none(constructor: object) -> None:
+    with pytest.raises(ValueError, match="must be a mapping"):
+        constructor()
+
+
 def test_document_records_reject_ambiguous_duplicate_element_identities() -> None:
     first = DocumentElement("el-1", "paragraph", 0, "alpha", SourceLocation())
     duplicate_id = DocumentElement(
@@ -315,6 +347,94 @@ def test_document_records_reject_ambiguous_duplicate_element_identities() -> Non
             ["el-1", "el-1"],
             [],
             {},
+        )
+
+    source_ref = SourceRef("source-1", "document_chunk")
+    with pytest.raises(ValueError, match="source_refs must not contain duplicate source_id"):
+        DocumentChunk(
+            "chunk-1",
+            "doc-1",
+            "asset-1",
+            "rev-1",
+            "alpha",
+            [],
+            [source_ref, source_ref],
+            {},
+        )
+
+
+@pytest.mark.parametrize(
+    "constructor",
+    (
+        lambda: ArtifactRef("artifact-1", "file:///tmp/example.txt", size_bytes=1 << 64),
+        lambda: SourceLocation(page=1 << 64),
+        lambda: SourceLocation(char_end=1 << 64),
+        lambda: DocumentElement("el-1", "paragraph", 1 << 64, "hello", SourceLocation()),
+        lambda: DocumentSpan("asset-1", "rev-1", "doc-1", slide=1 << 64),
+        lambda: DocumentChunk(
+            "chunk-1",
+            "doc-1",
+            "asset-1",
+            "rev-1",
+            "hello",
+            [],
+            [],
+            {},
+            token_count=1 << 64,
+        ),
+    ),
+)
+def test_document_wire_integers_reject_u64_overflow(constructor: object) -> None:
+    with pytest.raises(ValueError, match="18446744073709551615"):
+        constructor()
+
+
+@pytest.mark.parametrize(
+    "constructor",
+    (
+        lambda: ArtifactRef("\ud800", "file:///tmp/example.txt"),
+        lambda: DocumentElement("el-1", "paragraph", 0, "\ud800", SourceLocation()),
+        lambda: ParsedDocument(
+            "doc-1",
+            "asset-1",
+            "rev-1",
+            {"processor_id": "plain-text"},
+            plain_text="\ud800",
+        ),
+        lambda: DocumentChunk(
+            "chunk-1",
+            "doc-1",
+            "asset-1",
+            "rev-1",
+            "\ud800",
+            [],
+            [],
+            {},
+        ),
+    ),
+)
+def test_document_wire_strings_reject_unicode_surrogates(constructor: object) -> None:
+    with pytest.raises(ValueError, match="Unicode scalar"):
+        constructor()
+
+
+def test_parsed_document_rejects_element_offsets_beyond_plain_text() -> None:
+    with pytest.raises(ValueError, match="char_end must not exceed plain_text length"):
+        ParsedDocument(
+            "doc-1",
+            "asset-1",
+            "rev-1",
+            {"processor_id": "plain-text"},
+            elements=[
+                DocumentElement(
+                    "el-1",
+                    "paragraph",
+                    0,
+                    "hello",
+                    SourceLocation(char_start=0, char_end=6),
+                )
+            ],
+            plain_text="hello",
         )
 
 
@@ -421,3 +541,31 @@ def test_document_json_fields_reject_recursive_and_noncanonical_values() -> None
             "document_chunk",
             metadata={"invalid_unicode": "\ud800"},
         )
+
+
+def test_document_records_normalize_exploding_external_collections() -> None:
+    class ExplodingMapping(Mapping[str, object]):
+        def __getitem__(self, key: str) -> object:
+            raise KeyError(key)
+
+        def __iter__(self) -> object:
+            return iter(())
+
+        def __len__(self) -> int:
+            return 0
+
+        def items(self) -> object:
+            raise RuntimeError("external mapping failed")
+
+    class ExplodingIterable:
+        def __iter__(self) -> object:
+            raise RuntimeError("external iterable failed")
+
+    with pytest.raises(ValueError, match="metadata must be a readable mapping"):
+        SourceRef(
+            "source-1",
+            "document_chunk",
+            metadata=ExplodingMapping(),  # type: ignore[arg-type]
+        )
+    with pytest.raises(ValueError, match="section_path must be a collection"):
+        SourceLocation(section_path=ExplodingIterable())  # type: ignore[arg-type]

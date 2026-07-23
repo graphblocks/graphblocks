@@ -6,6 +6,7 @@ from graphblocks.document_parsers import (
     DocumentParserError,
     DocumentParserNotFoundError,
     DocumentParserRegistry,
+    ParserCandidateParseResult,
     ParserDescriptor,
     ParserSelectionLock,
     plain_text_parser_descriptor,
@@ -307,6 +308,91 @@ def test_parser_registry_parse_locked_rejects_mismatched_asset_lineage() -> None
 
     with pytest.raises(DocumentParserError, match="asset_id must match"):
         registry.parse_locked(asset, revision, b"Alpha\n", lock)
+
+
+@pytest.mark.parametrize(
+    ("document", "error_match"),
+    (
+        (
+            ParsedDocument(
+                "doc-1",
+                "wrong-asset",
+                "rev-1",
+                {"processor_id": "parser", "version": "1"},
+            ),
+            "returned document asset_id",
+        ),
+        (
+            ParsedDocument(
+                "doc-1",
+                "asset-1",
+                "wrong-revision",
+                {"processor_id": "parser", "version": "1"},
+            ),
+            "returned document revision_id",
+        ),
+        (
+            ParsedDocument(
+                "doc-1",
+                "asset-1",
+                "rev-1",
+                {"processor_id": "other", "version": "1"},
+            ),
+            "returned document parser identity",
+        ),
+    ),
+)
+def test_parser_registry_rejects_returned_document_contract_mismatches(
+    document: ParsedDocument,
+    error_match: str,
+) -> None:
+    registry = DocumentParserRegistry()
+    registry.register(ParserDescriptor("parser", "1", parse=lambda *_: document))
+    asset = SourceAsset("asset-1", "file:///tmp/source.txt", "local")
+    revision = AssetRevision(
+        "rev-1",
+        "asset-1",
+        "sha256:content",
+        "2026-07-23T00:00:00Z",
+        ArtifactRef("artifact-1", "file:///tmp/source.txt"),
+    )
+
+    with pytest.raises(DocumentParserError, match=error_match):
+        registry.parse_locked(
+            asset,
+            revision,
+            b"content",
+            ParserSelectionLock("parser", "1", "test"),
+        )
+
+
+def test_parser_registry_validates_public_boundary_types() -> None:
+    registry = DocumentParserRegistry()
+
+    with pytest.raises(ValueError, match="artifact must be an ArtifactRef"):
+        registry.select(object())  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="allow_ocr_fallback must be a boolean"):
+        registry.select(
+            ArtifactRef("artifact-1", "file:///tmp/source.txt"),
+            allow_ocr_fallback="yes",  # type: ignore[arg-type]
+        )
+    with pytest.raises(ValueError, match="lock must be a ParserSelectionLock"):
+        registry.resolve_locked(object())  # type: ignore[arg-type]
+
+
+def test_parser_records_normalize_exploding_iterables() -> None:
+    class ExplodingIterable:
+        def __iter__(self) -> object:
+            raise RuntimeError("external iterator failed")
+
+    with pytest.raises(ValueError, match="media_types must be a collection"):
+        ParserDescriptor("parser", "1", media_types=ExplodingIterable())  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="failed_locks must be a collection"):
+        ParserCandidateParseResult(
+            ParsedDocument("doc-1", "asset-1", "rev-1", {}),
+            ParserSelectionLock("parser", "1", "test"),
+            failed_locks=ExplodingIterable(),  # type: ignore[arg-type]
+        )
 
 
 def test_parser_registry_falls_back_through_ordered_candidate_chain() -> None:

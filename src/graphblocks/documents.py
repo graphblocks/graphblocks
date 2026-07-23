@@ -11,6 +11,7 @@ from .canonical import canonical_dumps
 
 
 JsonObject = dict[str, Any]
+_MAX_U64 = (1 << 64) - 1
 SOURCE_KINDS = frozenset(("upload", "local", "http", "s3", "gcs", "sharepoint", "drive", "email", "record_store", "generated"))
 SOURCE_TRUST_LEVELS = frozenset(
     ("authoritative", "verified", "application", "user_supplied", "retrieved_untrusted", "generated", "unknown")
@@ -198,9 +199,20 @@ class FrozenList(tuple[Any, ...]):
         return type(self), (tuple(self),)
 
 
-def _validate_non_empty_string(owner: str, field_name: str, value: object) -> str:
+def _validate_string(owner: str, field_name: str, value: object) -> str:
     if not isinstance(value, str):
         raise ValueError(f"{owner} {field_name} must be a string")
+    try:
+        value.encode("utf-8")
+    except UnicodeEncodeError as error:
+        raise ValueError(
+            f"{owner} {field_name} must contain only Unicode scalar values"
+        ) from error
+    return value
+
+
+def _validate_non_empty_string(owner: str, field_name: str, value: object) -> str:
+    value = _validate_string(owner, field_name, value)
     if not value.strip():
         raise ValueError(f"{owner} {field_name} must not be empty")
     if value != value.strip():
@@ -217,9 +229,7 @@ def _validate_optional_non_empty_string(owner: str, field_name: str, value: obje
 def _validate_optional_string(owner: str, field_name: str, value: object | None) -> str | None:
     if value is None:
         return None
-    if not isinstance(value, str):
-        raise ValueError(f"{owner} {field_name} must be a string")
-    return value
+    return _validate_string(owner, field_name, value)
 
 
 def _validate_non_negative_int(owner: str, field_name: str, value: object | None) -> int | None:
@@ -229,6 +239,8 @@ def _validate_non_negative_int(owner: str, field_name: str, value: object | None
         raise ValueError(f"{owner} {field_name} must be an integer")
     if value < 0:
         raise ValueError(f"{owner} {field_name} must be non-negative")
+    if value > _MAX_U64:
+        raise ValueError(f"{owner} {field_name} must be at most {_MAX_U64}")
     return value
 
 
@@ -239,13 +251,26 @@ def _validate_positive_int(owner: str, field_name: str, value: object | None) ->
     return value
 
 
-def _freeze_mapping(owner: str, field_name: str, value: object | None, *, string_values: bool = False) -> Mapping[str, Any] | None:
+def _freeze_mapping(
+    owner: str,
+    field_name: str,
+    value: object | None,
+    *,
+    string_values: bool = False,
+    allow_none: bool = False,
+) -> Mapping[str, Any] | None:
     if value is None:
-        return None
+        if allow_none:
+            return None
+        raise ValueError(f"{owner} {field_name} must be a mapping")
     if not isinstance(value, Mapping):
         raise ValueError(f"{owner} {field_name} must be a mapping")
+    try:
+        items = tuple(value.items())
+    except Exception as error:
+        raise ValueError(f"{owner} {field_name} must be a readable mapping") from error
     snapshot: dict[str, Any] = {}
-    for key, item in value.items():
+    for key, item in items:
         key_text = _validate_non_empty_string(owner, f"{field_name} key", key)
         if string_values and not isinstance(item, str):
             raise ValueError(f"{owner} {field_name} values must be strings")
@@ -274,7 +299,7 @@ def _validate_string_tuple(owner: str, field_name: str, value: object) -> tuple[
         raise ValueError(f"{owner} {field_name} must be a collection of strings")
     try:
         items = tuple(value)  # type: ignore[arg-type]
-    except TypeError as error:
+    except Exception as error:
         raise ValueError(f"{owner} {field_name} must be a collection of strings") from error
     for item in items:
         _validate_non_empty_string(owner, f"{field_name} item", item)
@@ -358,7 +383,7 @@ class AssetRevision:
             raise ValueError("asset revision artifact must be ArtifactRef")
         object.__setattr__(self, "modified_at", _validate_optional_non_empty_string("asset revision", "modified_at", self.modified_at))
         object.__setattr__(self, "source_metadata", _freeze_mapping("asset revision", "source_metadata", self.source_metadata))
-        object.__setattr__(self, "acl", _freeze_mapping("asset revision", "acl", self.acl))
+        object.__setattr__(self, "acl", _freeze_mapping("asset revision", "acl", self.acl, allow_none=True))
 
 
 @dataclass(frozen=True, slots=True)
@@ -377,7 +402,7 @@ class SourceLocation:
             object.__setattr__(self, field_name, _validate_positive_int("source location", field_name, getattr(self, field_name)) if field_name in {"page", "slide"} else _validate_non_negative_int("source location", field_name, getattr(self, field_name)))
         if self.char_start is not None and self.char_end is not None and self.char_end < self.char_start:
             raise ValueError("source location char_end must be greater than or equal to char_start")
-        object.__setattr__(self, "bbox", _freeze_mapping("source location", "bbox", self.bbox))
+        object.__setattr__(self, "bbox", _freeze_mapping("source location", "bbox", self.bbox, allow_none=True))
         object.__setattr__(self, "section_path", _validate_string_tuple("source location", "section_path", self.section_path))
         object.__setattr__(self, "sheet", _validate_optional_non_empty_string("source location", "sheet", self.sheet))
         object.__setattr__(self, "cell_range", _validate_optional_non_empty_string("source location", "cell_range", self.cell_range))
@@ -400,8 +425,13 @@ class DocumentElement:
             raise ValueError("document element order must be an integer")
         if self.order < 0:
             raise ValueError("document element order must be non-negative")
-        if not isinstance(self.content, str):
-            raise ValueError("document element content must be a string")
+        if self.order > _MAX_U64:
+            raise ValueError(f"document element order must be at most {_MAX_U64}")
+        object.__setattr__(
+            self,
+            "content",
+            _validate_string("document element", "content", self.content),
+        )
         if not isinstance(self.location, SourceLocation):
             raise ValueError("document element location must be SourceLocation")
         object.__setattr__(self, "parent_id", _validate_optional_non_empty_string("document element", "parent_id", self.parent_id))
@@ -424,7 +454,12 @@ class ParsedDocument:
         for field_name in ("document_id", "asset_id", "revision_id"):
             object.__setattr__(self, field_name, _validate_non_empty_string("parsed document", field_name, getattr(self, field_name)))
         object.__setattr__(self, "parser", _freeze_mapping("parsed document", "parser", self.parser))
-        elements = tuple(self.elements)
+        try:
+            elements = tuple(self.elements)
+        except Exception as error:
+            raise ValueError(
+                "parsed document elements must be a collection"
+            ) from error
         if any(not isinstance(element, DocumentElement) for element in elements):
             raise ValueError("parsed document elements must be DocumentElement")
         element_ids = [element.element_id for element in elements]
@@ -434,7 +469,26 @@ class ParsedDocument:
         if len(element_orders) != len(set(element_orders)):
             raise ValueError("parsed document element order values must be unique")
         object.__setattr__(self, "elements", elements)
-        object.__setattr__(self, "plain_text", _validate_optional_string("parsed document", "plain_text", self.plain_text))
+        plain_text = _validate_optional_string(
+            "parsed document", "plain_text", self.plain_text
+        )
+        if plain_text is not None:
+            for element in elements:
+                if (
+                    element.location.char_start is not None
+                    and element.location.char_start > len(plain_text)
+                ):
+                    raise ValueError(
+                        "parsed document element char_start must not exceed plain_text length"
+                    )
+                if (
+                    element.location.char_end is not None
+                    and element.location.char_end > len(plain_text)
+                ):
+                    raise ValueError(
+                        "parsed document element char_end must not exceed plain_text length"
+                    )
+        object.__setattr__(self, "plain_text", plain_text)
         for field_name in ("language", "title"):
             object.__setattr__(
                 self,
@@ -474,7 +528,7 @@ class DocumentSpan:
         object.__setattr__(self, "char_end", _validate_non_negative_int("document span", "char_end", self.char_end))
         if self.char_start is not None and self.char_end is not None and self.char_end < self.char_start:
             raise ValueError("document span char_end must be greater than or equal to char_start")
-        object.__setattr__(self, "bbox", _freeze_mapping("document span", "bbox", self.bbox))
+        object.__setattr__(self, "bbox", _freeze_mapping("document span", "bbox", self.bbox, allow_none=True))
 
 
 @dataclass(frozen=True, slots=True)
@@ -511,7 +565,7 @@ class SourceRef:
             raise ValueError("source ref locator must be DocumentSpan")
         if self.trust not in SOURCE_TRUST_LEVELS:
             raise ValueError(f"invalid source ref trust {self.trust}")
-        object.__setattr__(self, "access_policy", _freeze_mapping("source ref", "access_policy", self.access_policy))
+        object.__setattr__(self, "access_policy", _freeze_mapping("source ref", "access_policy", self.access_policy, allow_none=True))
         object.__setattr__(self, "metadata", _freeze_mapping("source ref", "metadata", self.metadata))
 
 
@@ -532,8 +586,11 @@ class DocumentChunk:
     def __post_init__(self) -> None:
         for field_name in ("chunk_id", "document_id", "asset_id", "revision_id"):
             object.__setattr__(self, field_name, _validate_non_empty_string("document chunk", field_name, getattr(self, field_name)))
-        if not isinstance(self.text, str):
-            raise ValueError("document chunk text must be a string")
+        object.__setattr__(
+            self,
+            "text",
+            _validate_string("document chunk", "text", self.text),
+        )
         element_ids = _validate_string_tuple(
             "document chunk",
             "element_ids",
@@ -544,14 +601,24 @@ class DocumentChunk:
                 "document chunk element_ids must not contain duplicates"
             )
         object.__setattr__(self, "element_ids", element_ids)
-        source_refs = tuple(self.source_refs)
+        try:
+            source_refs = tuple(self.source_refs)
+        except Exception as error:
+            raise ValueError(
+                "document chunk source_refs must be a collection"
+            ) from error
         if any(not isinstance(source_ref, SourceRef) for source_ref in source_refs):
             raise ValueError("document chunk source_refs must be SourceRef")
+        source_ids = [source_ref.source_id for source_ref in source_refs]
+        if len(source_ids) != len(set(source_ids)):
+            raise ValueError(
+                "document chunk source_refs must not contain duplicate source_id values"
+            )
         object.__setattr__(self, "source_refs", source_refs)
         object.__setattr__(self, "chunker", _freeze_mapping("document chunk", "chunker", self.chunker))
         object.__setattr__(self, "token_count", _validate_non_negative_int("document chunk", "token_count", self.token_count))
         object.__setattr__(self, "metadata", _freeze_mapping("document chunk", "metadata", self.metadata))
-        object.__setattr__(self, "acl", _freeze_mapping("document chunk", "acl", self.acl))
+        object.__setattr__(self, "acl", _freeze_mapping("document chunk", "acl", self.acl, allow_none=True))
 
 
 def sha256_digest_bytes(data: bytes) -> str:
@@ -565,8 +632,7 @@ def create_local_text_revision(
     filename: str | None = None,
 ) -> tuple[SourceAsset, AssetRevision]:
     source_uri = _validate_non_empty_string("local text revision", "source_uri", source_uri)
-    if not isinstance(text, str):
-        raise ValueError("local text revision text must be a string")
+    text = _validate_string("local text revision", "text", text)
     observed_at = _validate_non_empty_string("local text revision", "observed_at", observed_at)
     filename = _validate_optional_non_empty_string("local text revision", "filename", filename)
     encoded = text.encode("utf-8")
@@ -604,8 +670,7 @@ def parse_plain_text_document(asset: SourceAsset, revision: AssetRevision, text:
         raise ValueError("plain text parser revision must be an AssetRevision")
     if revision.asset_id != asset.asset_id:
         raise ValueError("plain text parser revision asset_id must match source asset asset_id")
-    if not isinstance(text, str):
-        raise ValueError("plain text parser text must be a string")
+    text = _validate_string("plain text parser", "text", text)
     elements: list[DocumentElement] = []
     offset = 0
     order = 0
@@ -657,6 +722,8 @@ def chunk_document_by_lines(
         raise ValueError("line chunker document revision_id must match revision revision_id")
     if not isinstance(max_elements, int) or isinstance(max_elements, bool) or max_elements < 1:
         raise ValueError("max_elements must be a positive integer")
+    if max_elements > _MAX_U64:
+        raise ValueError(f"max_elements must be at most {_MAX_U64}")
     chunks: list[DocumentChunk] = []
     for chunk_index, start in enumerate(range(0, len(document.elements), max_elements)):
         grouped = document.elements[start : start + max_elements]

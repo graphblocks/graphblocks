@@ -100,3 +100,21 @@ def test_document_processing_rejects_mismatched_lineage_and_boolean_chunk_size()
         chunk_document_by_lines(document, second_revision)
     with pytest.raises(ValueError, match="positive integer"):
         chunk_document_by_lines(document, first_revision, max_elements=True)  # type: ignore[arg-type]
+
+
+def test_local_text_processing_rejects_non_scalar_unicode_and_chunk_size_overflow() -> None:
+    with pytest.raises(ValueError, match="Unicode scalar"):
+        create_local_text_revision(
+            "file:///tmp/surrogate.txt",
+            "\ud800",
+            observed_at="2026-06-22T00:00:00Z",
+        )
+
+    asset, revision = create_local_text_revision(
+        "file:///tmp/notes.txt",
+        "line\n",
+        observed_at="2026-06-22T00:00:00Z",
+    )
+    document = parse_plain_text_document(asset, revision, "line\n")
+    with pytest.raises(ValueError, match="18446744073709551615"):
+        chunk_document_by_lines(document, revision, max_elements=1 << 64)

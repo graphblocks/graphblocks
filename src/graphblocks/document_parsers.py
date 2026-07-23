@@ -24,6 +24,12 @@ class DocumentParserNotFoundError(DocumentParserError):
 def _validate_non_empty_string(owner: str, field_name: str, value: object) -> str:
     if not isinstance(value, str):
         raise ValueError(f"{owner} {field_name} must be a string")
+    try:
+        value.encode("utf-8")
+    except UnicodeEncodeError as error:
+        raise ValueError(
+            f"{owner} {field_name} must contain only Unicode scalar values"
+        ) from error
     if not value.strip():
         raise ValueError(f"{owner} {field_name} must not be empty")
     return value
@@ -45,8 +51,12 @@ def _validate_optional_non_empty_string(owner: str, field_name: str, value: obje
 def _freeze_metadata(owner: str, metadata: object) -> Mapping[str, object]:
     if not isinstance(metadata, Mapping):
         raise ValueError(f"{owner} metadata must be a mapping")
+    try:
+        items = tuple(metadata.items())
+    except Exception as error:
+        raise ValueError(f"{owner} metadata must be a readable mapping") from error
     snapshot: dict[str, object] = {}
-    for key, value in metadata.items():
+    for key, value in items:
         key_text = _validate_exact_non_empty_string(owner, "metadata key", key)
         snapshot[key_text] = value
     try:
@@ -75,10 +85,10 @@ def _normalize_media_types(owner: str, media_types: object) -> tuple[str, ...]:
         raise ValueError(f"{owner} media_types must be a collection of strings")
     normalized: list[str] = []
     try:
-        iterator = iter(media_types)  # type: ignore[arg-type]
-    except TypeError as error:
+        items = tuple(media_types)  # type: ignore[arg-type]
+    except Exception as error:
         raise ValueError(f"{owner} media_types must be a collection of strings") from error
-    for media_type in iterator:
+    for media_type in items:
         normalized_media_type = _validate_non_empty_string(owner, "media_types item", media_type).strip().lower()
         if normalized_media_type not in normalized:
             normalized.append(normalized_media_type)
@@ -90,10 +100,10 @@ def _normalize_extensions(owner: str, extensions: object) -> tuple[str, ...]:
         raise ValueError(f"{owner} extensions must be a collection of strings")
     normalized: list[str] = []
     try:
-        iterator = iter(extensions)  # type: ignore[arg-type]
-    except TypeError as error:
+        items = tuple(extensions)  # type: ignore[arg-type]
+    except Exception as error:
         raise ValueError(f"{owner} extensions must be a collection of strings") from error
-    for extension in iterator:
+    for extension in items:
         normalized_extension = _validate_non_empty_string(owner, "extensions item", extension).strip().lower()
         if not normalized_extension.startswith("."):
             normalized_extension = f".{normalized_extension}"
@@ -195,7 +205,12 @@ class ParserCandidateParseResult:
             raise ValueError("parser candidate result document must be a ParsedDocument")
         if not isinstance(self.selected_lock, ParserSelectionLock):
             raise ValueError("parser candidate result selected_lock must be a ParserSelectionLock")
-        failed_locks = tuple(self.failed_locks)
+        try:
+            failed_locks = tuple(self.failed_locks)
+        except Exception as error:
+            raise ValueError(
+                "parser candidate result failed_locks must be a collection"
+            ) from error
         if any(not isinstance(lock, ParserSelectionLock) for lock in failed_locks):
             raise ValueError("parser candidate result failed_locks must be ParserSelectionLock records")
         selected_identity = (
@@ -220,9 +235,14 @@ class DocumentParserRegistry:
     def __post_init__(self) -> None:
         if not isinstance(self._descriptors, Mapping):
             raise ValueError("parser registry descriptors must be a mapping")
-        restored = self._descriptors
+        try:
+            restored = tuple(self._descriptors.items())
+        except Exception as error:
+            raise ValueError(
+                "parser registry descriptors must be a readable mapping"
+            ) from error
         self._descriptors = {}
-        for key, descriptor in restored.items():
+        for key, descriptor in restored:
             if not isinstance(key, tuple) or len(key) != 2:
                 raise ValueError(
                     "parser registry descriptor keys must contain processor_id and version"
@@ -266,6 +286,10 @@ class DocumentParserRegistry:
         )
 
     def select(self, artifact: ArtifactRef, *, allow_ocr_fallback: bool = False) -> ParserSelectionLock:
+        if not isinstance(artifact, ArtifactRef):
+            raise ValueError("parser selection artifact must be an ArtifactRef")
+        if not isinstance(allow_ocr_fallback, bool):
+            raise ValueError("parser selection allow_ocr_fallback must be a boolean")
         media_type = artifact.media_type.strip().lower() if artifact.media_type else None
         filename = (
             artifact.filename.strip()
@@ -300,6 +324,8 @@ class DocumentParserRegistry:
         )
 
     def resolve_locked(self, lock: ParserSelectionLock) -> ParserDescriptor:
+        if not isinstance(lock, ParserSelectionLock):
+            raise ValueError("locked parser lock must be a ParserSelectionLock")
         descriptor = self._descriptors.get((lock.processor_id, lock.processor_version))
         if descriptor is None:
             raise DocumentParserNotFoundError(
@@ -339,13 +365,37 @@ class DocumentParserRegistry:
                 f"locked parser {lock.processor_id!r}@{lock.processor_version!r} has no local implementation"
             )
         try:
-            return descriptor.parse(asset, revision, body)
+            document = descriptor.parse(asset, revision, body)
         except DocumentParserError:
             raise
         except Exception as error:
             raise DocumentParserError(
                 f"locked parser {lock.processor_id!r}@{lock.processor_version!r} failed"
             ) from error
+        if not isinstance(document, ParsedDocument):
+            raise DocumentParserError(
+                f"locked parser {lock.processor_id!r}@{lock.processor_version!r} "
+                "must return a ParsedDocument"
+            )
+        if document.asset_id != asset.asset_id:
+            raise DocumentParserError(
+                f"locked parser {lock.processor_id!r}@{lock.processor_version!r} "
+                "returned document asset_id that does not match the source asset"
+            )
+        if document.revision_id != revision.revision_id:
+            raise DocumentParserError(
+                f"locked parser {lock.processor_id!r}@{lock.processor_version!r} "
+                "returned document revision_id that does not match the asset revision"
+            )
+        if (
+            document.parser.get("processor_id") != lock.processor_id
+            or document.parser.get("version") != lock.processor_version
+        ):
+            raise DocumentParserError(
+                f"locked parser {lock.processor_id!r}@{lock.processor_version!r} "
+                "returned document parser identity that does not match the lock"
+            )
+        return document
 
     def parse_with_candidates(
         self,
@@ -358,7 +408,7 @@ class DocumentParserRegistry:
             raise ValueError("parser candidate chain must be a collection")
         try:
             candidate_records = tuple(candidates)  # type: ignore[arg-type]
-        except TypeError as error:
+        except Exception as error:
             raise ValueError("parser candidate chain must be a collection") from error
         if not candidate_records:
             raise ValueError("parser candidate chain must not be empty")
@@ -368,7 +418,7 @@ class DocumentParserRegistry:
                 raise ValueError("parser candidate must contain processor_id and version")
             try:
                 processor_id, version = candidate
-            except (TypeError, ValueError) as error:
+            except Exception as error:
                 raise ValueError("parser candidate must contain processor_id and version") from error
             identity = (
                 _validate_exact_non_empty_string("parser candidate", "processor_id", processor_id),
