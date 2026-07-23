@@ -487,6 +487,33 @@ def test_server_request_auth_and_response_validate_contracts() -> None:
         ServerRequest(method="GET", path="/health", headers={}, query={}, cookies={"session": object()})  # type: ignore[arg-type]
     with pytest.raises(ValueError, match="server request body must be bytes"):
         ServerRequest(method="GET", path="/health", headers={}, query={}, cookies={}, body=1)  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="server request content-length must use ASCII decimal digits"):
+        ServerRequest(
+            method="POST",
+            path="/runs",
+            headers={"content-length": "١"},
+            query={},
+            cookies={},
+            body=b"x",
+        )
+    with pytest.raises(ValueError, match="server request content-length must match body length"):
+        ServerRequest(
+            method="POST",
+            path="/runs",
+            headers={"content-length": "2"},
+            query={},
+            cookies={},
+            body=b"x",
+        )
+    with pytest.raises(ValueError, match="server request must not combine content-length and transfer-encoding"):
+        ServerRequest(
+            method="POST",
+            path="/runs",
+            headers={"content-length": "1", "transfer-encoding": "chunked"},
+            query={},
+            cookies={},
+            body=b"x",
+        )
     with pytest.raises(ValueError, match="server request requested_at must not be empty"):
         ServerRequest(method="GET", path="/health", headers={}, query={}, cookies={}, requested_at=" ")
 
@@ -517,6 +544,14 @@ def test_server_request_auth_and_response_validate_contracts() -> None:
         ServerResponse(status_code=200, headers={"x-value": "safe\0trailer"}, body=b"")
     with pytest.raises(ValueError, match="server response body must be bytes"):
         ServerResponse(status_code=200, headers={}, body=object())  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="server response content-length must match body length"):
+        ServerResponse(status_code=200, headers={"content-length": "2"}, body=b"x")
+    with pytest.raises(ValueError, match="server response must not combine content-length and transfer-encoding"):
+        ServerResponse(
+            status_code=200,
+            headers={"content-length": "1", "transfer-encoding": "chunked"},
+            body=b"x",
+        )
     with pytest.raises(ValueError, match="server response JSON payload must be a mapping"):
         ServerResponse.json(200, object())  # type: ignore[arg-type]
     with pytest.raises(ValueError, match="server response JSON payload must be a mapping"):
@@ -7185,6 +7220,56 @@ def test_server_app_rejects_malformed_stored_event_cursor_query() -> None:
         "ok": False,
         "error": "application events cursor must use '<run_id>:<sequence>' with a non-negative integer sequence",
     }
+
+
+@pytest.mark.parametrize(
+    ("sequence", "message"),
+    (
+        (
+            "١",
+            "application events cursor must use '<run_id>:<sequence>' "
+            "with a non-negative integer sequence",
+        ),
+        (
+            str(1 << 64),
+            f"application events cursor sequence must be at most {(1 << 64) - 1}",
+        ),
+    ),
+)
+def test_server_app_rejects_out_of_domain_stored_event_cursor_query(
+    sequence: str,
+    message: str,
+) -> None:
+    run_id = "run-events-cursor-domain-1"
+    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+    app._events_by_run_id[run_id] = ()
+
+    response = app.handle(
+        ServerRequest(
+            method="GET",
+            path=f"/runs/{run_id}/events",
+            headers={"Authorization": "Bearer token-1"},
+            query={"cursor": f"{run_id}:{sequence}"},
+            cookies={},
+        )
+    )
+
+    assert response.status_code == 400
+    assert json.loads(response.body.decode("utf-8")) == {
+        "ok": False,
+        "error": message,
+    }
+
+
+@pytest.mark.parametrize(
+    "timeout",
+    (True, -1, math.nan, math.inf, 1e300, 10**1_000, "1"),
+)
+def test_server_wait_for_accepted_run_rejects_invalid_timeout(timeout: object) -> None:
+    app = GraphBlocksServerApp()
+
+    with pytest.raises(ValueError, match="server accepted run worker timeout"):
+        app.wait_for_accepted_run("run-1", timeout=timeout)
 
 
 def test_server_app_rejects_stored_event_replay_with_malformed_sequence() -> None:

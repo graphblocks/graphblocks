@@ -796,6 +796,88 @@ def test_callback_retry_policy_caps_hostile_attempt_without_large_integer_growth
     assert policy.delay_ms(delivery_id="del_001", attempt=10**9) == 1_000
 
 
+def test_callback_records_reject_counters_outside_wire_domain() -> None:
+    _assert_raises_value_error(
+        "max_attempts must be at most 4294967295",
+        lambda: CallbackRetryPolicy(max_attempts=1 << 32),
+    )
+    for field_name in ("initial_delay_ms", "max_delay_ms", "jitter_ms"):
+        _assert_raises_value_error(
+            f"{field_name} must be at most 18446744073709551615",
+            lambda field_name=field_name: CallbackRetryPolicy(
+                **{field_name: 1 << 64}
+            ),
+        )
+
+    delivery = {
+        "delivery_id": "del_domain",
+        "subscription_id": "sub_001",
+        "event_id": "evt_domain",
+        "run_id": "run_domain",
+        "sequence": 7,
+        "cursor": "run_domain:7",
+        "attempt": 1,
+        "idempotency_key": "sub_001:evt_domain",
+        "status": "pending",
+    }
+    _assert_raises_value_error(
+        "sequence must be at most 18446744073709551615",
+        lambda: CallbackDeliveryProjection(**{**delivery, "sequence": 1 << 64}),
+    )
+    _assert_raises_value_error(
+        "attempt must be at most 4294967295",
+        lambda: CallbackDeliveryProjection(**{**delivery, "attempt": 1 << 32}),
+    )
+
+    envelope = {
+        "delivery_id": "del_domain",
+        "subscription_id": "sub_001",
+        "event_id": "evt_domain",
+        "run_id": "run_domain",
+        "sequence": 7,
+        "cursor": "run_domain:7",
+        "type": "RunStarted",
+        "payload": {},
+        "idempotency_key": "sub_001:evt_domain",
+        "occurred_at": "2026-07-02T00:00:00Z",
+        "delivered_at": "2026-07-02T00:00:01Z",
+    }
+    _assert_raises_value_error(
+        "sequence must be at most 18446744073709551615",
+        lambda: CallbackEnvelope(**{**envelope, "sequence": 1 << 64}),
+    )
+
+
+def test_callback_retry_schedule_normalizes_datetime_overflow() -> None:
+    policy = CallbackRetryPolicy(
+        max_attempts=2,
+        initial_delay_ms=1 << 63,
+        max_delay_ms=1 << 63,
+        jitter_ms=0,
+    )
+    delivery = CallbackDeliveryProjection(
+        delivery_id="del_datetime_domain",
+        subscription_id="sub_001",
+        event_id="evt_datetime_domain",
+        run_id="run_datetime_domain",
+        sequence=1,
+        cursor="run_datetime_domain:1",
+        attempt=1,
+        idempotency_key="sub_001:evt_datetime_domain",
+        status="failed",
+        last_error="receiver unavailable",
+    )
+
+    _assert_raises_value_error(
+        "callback retry delay exceeds the supported datetime range",
+        lambda: delivery.schedule_retry(
+            policy,
+            failed_at="2026-07-02T00:00:00Z",
+            error="receiver unavailable",
+        ),
+    )
+
+
 def test_callback_delivery_schedule_retry_validates_policy_type() -> None:
     delivery = CallbackDeliveryProjection(
         delivery_id="del_001",

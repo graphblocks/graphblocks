@@ -71,6 +71,8 @@ TERMINAL_CALLBACK_DELIVERY_STATUSES = frozenset({
     "cancelled",
     "expired",
 })
+MAX_CALLBACK_SEQUENCE = (1 << 64) - 1
+MAX_CALLBACK_ATTEMPT = (1 << 32) - 1
 
 
 def _validate_non_empty_string(owner: str, field_name: str, value: object) -> str:
@@ -83,15 +85,31 @@ def _validate_non_empty_string(owner: str, field_name: str, value: object) -> st
     return value
 
 
-def _validate_non_negative_int(owner: str, field_name: str, value: object) -> int:
+def _validate_non_negative_int(
+    owner: str,
+    field_name: str,
+    value: object,
+    *,
+    maximum: int | None = None,
+) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or value < 0:
         raise ValueError(f"{owner} {field_name} must be a non-negative integer")
+    if maximum is not None and value > maximum:
+        raise ValueError(f"{owner} {field_name} must be at most {maximum}")
     return value
 
 
-def _validate_positive_int(owner: str, field_name: str, value: object) -> int:
+def _validate_positive_int(
+    owner: str,
+    field_name: str,
+    value: object,
+    *,
+    maximum: int | None = None,
+) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
         raise ValueError(f"{owner} {field_name} must be a positive integer")
+    if maximum is not None and value > maximum:
+        raise ValueError(f"{owner} {field_name} must be at most {maximum}")
     return value
 
 
@@ -360,8 +378,26 @@ class CallbackDelivery:
                 field_name,
                 _validate_non_empty_string("callback delivery", field_name, getattr(self, field_name)),
             )
-        object.__setattr__(self, "sequence", _validate_non_negative_int("callback delivery", "sequence", self.sequence))
-        object.__setattr__(self, "attempt", _validate_positive_int("callback delivery", "attempt", self.attempt))
+        object.__setattr__(
+            self,
+            "sequence",
+            _validate_non_negative_int(
+                "callback delivery",
+                "sequence",
+                self.sequence,
+                maximum=MAX_CALLBACK_SEQUENCE,
+            ),
+        )
+        object.__setattr__(
+            self,
+            "attempt",
+            _validate_positive_int(
+                "callback delivery",
+                "attempt",
+                self.attempt,
+                maximum=MAX_CALLBACK_ATTEMPT,
+            ),
+        )
         status = _validate_non_empty_string("callback delivery", "status", self.status)
         if status not in VALID_CALLBACK_DELIVERY_STATUSES:
             raise ValueError("callback delivery status must be a valid callback delivery status")

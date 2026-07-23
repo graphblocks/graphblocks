@@ -170,6 +170,19 @@ def _parse_utc_timestamp(value: str) -> datetime:
     return parsed.astimezone(timezone.utc)
 
 
+def _add_milliseconds(
+    field_name: str,
+    timestamp: datetime,
+    delay_ms: int,
+) -> datetime:
+    try:
+        return timestamp + timedelta(milliseconds=delay_ms)
+    except OverflowError:
+        raise ValueError(
+            f"{field_name} exceeds the supported datetime range"
+        ) from None
+
+
 def _parse_field_timestamp(field_name: str, value: str) -> datetime:
     _require_non_empty_string(field_name, value)
     try:
@@ -205,15 +218,34 @@ def _require_sha256_digest(field_name: str, value: str) -> None:
         raise ValueError(f"{field_name} must be a sha256 digest")
 
 
-def _non_negative_int(field_name: str, value: object) -> int:
+MAX_CALLBACK_SEQUENCE = (1 << 64) - 1
+MAX_CALLBACK_ATTEMPT = (1 << 32) - 1
+MAX_CALLBACK_DELAY_MS = (1 << 64) - 1
+
+
+def _non_negative_int(
+    field_name: str,
+    value: object,
+    *,
+    maximum: int | None = None,
+) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or value < 0:
         raise ValueError(f"{field_name} must be a non-negative integer")
+    if maximum is not None and value > maximum:
+        raise ValueError(f"{field_name} must be at most {maximum}")
     return value
 
 
-def _positive_int(field_name: str, value: object) -> int:
+def _positive_int(
+    field_name: str,
+    value: object,
+    *,
+    maximum: int | None = None,
+) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
         raise ValueError(f"{field_name} must be a positive integer")
+    if maximum is not None and value > maximum:
+        raise ValueError(f"{field_name} must be at most {maximum}")
     return value
 
 
@@ -613,24 +645,58 @@ class CallbackRetryPolicy:
     jitter_ms: int = 250
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "max_attempts", _positive_int("max_attempts", self.max_attempts))
+        object.__setattr__(
+            self,
+            "max_attempts",
+            _positive_int(
+                "max_attempts",
+                self.max_attempts,
+                maximum=MAX_CALLBACK_ATTEMPT,
+            ),
+        )
         object.__setattr__(
             self,
             "initial_delay_ms",
-            max(1, _non_negative_int("initial_delay_ms", self.initial_delay_ms)),
+            max(
+                1,
+                _non_negative_int(
+                    "initial_delay_ms",
+                    self.initial_delay_ms,
+                    maximum=MAX_CALLBACK_DELAY_MS,
+                ),
+            ),
         )
         object.__setattr__(
             self,
             "max_delay_ms",
-            max(1, _non_negative_int("max_delay_ms", self.max_delay_ms)),
+            max(
+                1,
+                _non_negative_int(
+                    "max_delay_ms",
+                    self.max_delay_ms,
+                    maximum=MAX_CALLBACK_DELAY_MS,
+                ),
+            ),
         )
-        object.__setattr__(self, "jitter_ms", _non_negative_int("jitter_ms", self.jitter_ms))
+        object.__setattr__(
+            self,
+            "jitter_ms",
+            _non_negative_int(
+                "jitter_ms",
+                self.jitter_ms,
+                maximum=MAX_CALLBACK_DELAY_MS,
+            ),
+        )
         if self.initial_delay_ms > self.max_delay_ms:
             object.__setattr__(self, "max_delay_ms", self.initial_delay_ms)
 
     def delay_ms(self, *, delivery_id: str, attempt: int) -> int:
         _require_stable_string("delivery_id", delivery_id)
-        attempt = _positive_int("attempt", attempt)
+        attempt = _positive_int(
+            "attempt",
+            attempt,
+            maximum=MAX_CALLBACK_ATTEMPT,
+        )
         exponent = attempt - 1
         if exponent >= self.max_delay_ms.bit_length():
             base = self.max_delay_ms
@@ -659,8 +725,24 @@ class CallbackDeliveryProjection:
     def __post_init__(self) -> None:
         for field_name in ("delivery_id", "subscription_id", "event_id", "run_id", "cursor", "idempotency_key"):
             _require_stable_string(field_name, getattr(self, field_name))
-        object.__setattr__(self, "sequence", _non_negative_int("sequence", self.sequence))
-        object.__setattr__(self, "attempt", _positive_int("attempt", self.attempt))
+        object.__setattr__(
+            self,
+            "sequence",
+            _non_negative_int(
+                "sequence",
+                self.sequence,
+                maximum=MAX_CALLBACK_SEQUENCE,
+            ),
+        )
+        object.__setattr__(
+            self,
+            "attempt",
+            _positive_int(
+                "attempt",
+                self.attempt,
+                maximum=MAX_CALLBACK_ATTEMPT,
+            ),
+        )
         _require_non_empty_string("status", self.status)
         if self.status not in VALID_DELIVERY_STATUSES:
             raise ValueError("status must be a valid callback delivery status")
@@ -724,8 +806,13 @@ class CallbackDeliveryProjection:
             return self
         _require_non_empty_string("error", error)
         retry_attempt = self.attempt + 1
-        retry_at = _parse_utc_timestamp(failed_at) + timedelta(
-            milliseconds=policy.delay_ms(delivery_id=self.delivery_id, attempt=retry_attempt)
+        retry_at = _add_milliseconds(
+            "callback retry delay",
+            _parse_utc_timestamp(failed_at),
+            policy.delay_ms(
+                delivery_id=self.delivery_id,
+                attempt=retry_attempt,
+            ),
         )
         return CallbackDeliveryProjection(
             delivery_id=self.delivery_id,
@@ -821,7 +908,11 @@ class CallbackDeliveryProjection:
                 received = _parse_utc_timestamp(received_at)
                 retry_after = _parse_utc_timestamp(decision.retry_after)
                 if retry_after > received:
-                    retry_cap = received + timedelta(milliseconds=policy.max_delay_ms)
+                    retry_cap = _add_milliseconds(
+                        "callback retry cap",
+                        received,
+                        policy.max_delay_ms,
+                    )
                     if retry_after > retry_cap:
                         retry_after = retry_cap
                     return CallbackDeliveryProjection(
@@ -983,11 +1074,26 @@ class CallbackRedriveRecord:
                 _require_non_empty_string(field_name, getattr(self, field_name))
             else:
                 _require_stable_string(field_name, getattr(self, field_name))
-        object.__setattr__(self, "sequence", _non_negative_int("sequence", self.sequence))
+        object.__setattr__(
+            self,
+            "sequence",
+            _non_negative_int(
+                "sequence",
+                self.sequence,
+                maximum=MAX_CALLBACK_SEQUENCE,
+            ),
+        )
         object.__setattr__(
             self,
             "attempt_history",
-            tuple(_positive_int("attempt_history item", item) for item in self.attempt_history),
+            tuple(
+                _positive_int(
+                    "attempt_history item",
+                    item,
+                    maximum=MAX_CALLBACK_ATTEMPT,
+                )
+                for item in self.attempt_history
+            ),
         )
 
 
@@ -1006,7 +1112,14 @@ class CallbackDeadLetterRecord:
         object.__setattr__(
             self,
             "attempt_history",
-            tuple(_positive_int("attempt_history item", item) for item in self.attempt_history),
+            tuple(
+                _positive_int(
+                    "attempt_history item",
+                    item,
+                    maximum=MAX_CALLBACK_ATTEMPT,
+                )
+                for item in self.attempt_history
+            ),
         )
         if self.attempt_history != tuple(range(1, len(self.attempt_history) + 1)):
             raise ValueError("dead-letter record attempt_history must be consecutive from attempt 1")
@@ -1335,8 +1448,15 @@ class CallbackEnvelope:
             _require_stable_string("tenant_id", self.tenant_id)
         if self.operation_id is not None:
             _require_stable_string("operation_id", self.operation_id)
-        if isinstance(self.sequence, bool) or not isinstance(self.sequence, int) or self.sequence < 0:
-            raise ValueError("sequence must be a non-negative integer")
+        object.__setattr__(
+            self,
+            "sequence",
+            _non_negative_int(
+                "sequence",
+                self.sequence,
+                maximum=MAX_CALLBACK_SEQUENCE,
+            ),
+        )
         occurred_at = _parse_field_timestamp("occurred_at", self.occurred_at)
         delivered_at = _parse_field_timestamp("delivered_at", self.delivered_at)
         if delivered_at < occurred_at:
@@ -1469,8 +1589,11 @@ class RegisteredSecretWebhookDispatcher:
             if not isinstance(value, str):
                 raise ValueError(f"callback delivery {field_name} must be a string")
             _require_stable_string(field_name, value)
-        if isinstance(sequence, bool) or not isinstance(sequence, int) or sequence < 0:
-            raise ValueError("callback delivery sequence must be a non-negative integer")
+        sequence = _non_negative_int(
+            "callback delivery sequence",
+            sequence,
+            maximum=MAX_CALLBACK_SEQUENCE,
+        )
 
         encoded_subscription_id = ""
         for byte in registration.subscription_id.encode("utf-8"):

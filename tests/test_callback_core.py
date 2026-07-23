@@ -562,6 +562,25 @@ def test_callback_delivery_rejects_non_rfc3339_timestamps() -> None:
         )
 
 
+def test_callback_delivery_rejects_counters_outside_wire_domain() -> None:
+    delivery = {
+        "delivery_id": "del-domain-1",
+        "subscription_id": "sub-1",
+        "event_id": "evt-domain-1",
+        "run_id": "run-1",
+        "sequence": 7,
+        "cursor": "run-1:7",
+        "attempt": 1,
+        "idempotency_key": "sub-1:evt-domain-1",
+        "status": "pending",
+    }
+
+    with raises_value_error("callback delivery sequence must be at most 18446744073709551615"):
+        graphblocks.CallbackDelivery(**{**delivery, "sequence": 1 << 64})
+    with raises_value_error("callback delivery attempt must be at most 4294967295"):
+        graphblocks.CallbackDelivery(**{**delivery, "attempt": 1 << 32})
+
+
 def test_callback_delivery_rejects_whitespace_wrapped_identifiers_and_status() -> None:
     delivery_base = {
         "delivery_id": "del-1",

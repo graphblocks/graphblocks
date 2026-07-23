@@ -6,7 +6,7 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 import json
 import math
-from threading import Condition, get_ident
+from threading import Condition, get_ident, TIMEOUT_MAX
 from time import monotonic, time
 from types import MappingProxyType
 from typing import Literal, Protocol
@@ -114,6 +114,7 @@ SERVER_TERMINAL_EVENT_KINDS = frozenset({
     "RunExpired",
 })
 MAX_SERVER_REQUEST_JSON_DEPTH = 64
+MAX_RUN_CURSOR_SEQUENCE = (1 << 64) - 1
 
 
 def _utc_now_iso() -> str:
@@ -192,10 +193,14 @@ def _validate_run_cursor(owner: str, field_name: str, run_id: str, value: object
     if not cursor.startswith(prefix):
         raise ValueError(f"{owner} {field_name} must belong to run {run_id!r}")
     sequence_text = cursor[len(prefix) :]
-    if not sequence_text.isdecimal():
+    if not sequence_text.isascii() or not sequence_text.isdecimal():
         raise ValueError(
             f"{owner} {field_name} must use '<run_id>:<sequence>' with a non-negative integer sequence"
-    )
+        )
+    if int(sequence_text) > MAX_RUN_CURSOR_SEQUENCE:
+        raise ValueError(
+            f"{owner} {field_name} sequence must be at most {MAX_RUN_CURSOR_SEQUENCE}"
+        )
     return cursor
 
 
@@ -437,6 +442,24 @@ def _validate_http_headers(owner: str, value: object) -> MappingProxyType[str, s
         ):
             raise ValueError(f"{owner} headers values must not contain control characters")
     return headers
+
+
+def _validate_http_message_framing(
+    owner: str,
+    headers: Mapping[str, str],
+    body: bytes,
+) -> None:
+    content_length = headers.get("content-length")
+    if content_length is not None and "transfer-encoding" in headers:
+        raise ValueError(
+            f"{owner} must not combine content-length and transfer-encoding"
+        )
+    if content_length is None:
+        return
+    if not content_length.isascii() or not content_length.isdecimal():
+        raise ValueError(f"{owner} content-length must use ASCII decimal digits")
+    if int(content_length) != len(body):
+        raise ValueError(f"{owner} content-length must match body length")
 
 
 def _validate_string_sequence(owner: str, field_name: str, value: object) -> tuple[str, ...]:
@@ -964,6 +987,7 @@ class ServerRequest:
         if not isinstance(self.body, (bytes, bytearray, memoryview)):
             raise ValueError("server request body must be bytes")
         object.__setattr__(self, "body", bytes(self.body))
+        _validate_http_message_framing("server request", self.headers, self.body)
         object.__setattr__(
             self,
             "requested_at",
@@ -992,6 +1016,7 @@ class ServerResponse:
         if not isinstance(self.body, (bytes, bytearray, memoryview)):
             raise ValueError("server response body must be bytes")
         object.__setattr__(self, "body", bytes(self.body))
+        _validate_http_message_framing("server response", self.headers, self.body)
 
     def read(self) -> bytes:
         return self.body
@@ -4674,7 +4699,27 @@ class GraphBlocksServerApp:
             "run_id",
             run_id,
         )
-        deadline = None if timeout is None else monotonic() + timeout
+        timeout_seconds: float | None = None
+        if timeout is not None:
+            if isinstance(timeout, bool) or not isinstance(timeout, (int, float)):
+                raise ValueError(
+                    "server accepted run worker timeout must be a finite non-negative number"
+                )
+            try:
+                timeout_seconds = float(timeout)
+            except OverflowError:
+                raise ValueError(
+                    "server accepted run worker timeout must be a finite non-negative number"
+                ) from None
+            if (
+                not math.isfinite(timeout_seconds)
+                or timeout_seconds < 0
+                or timeout_seconds > TIMEOUT_MAX
+            ):
+                raise ValueError(
+                    "server accepted run worker timeout must be a finite non-negative number"
+                )
+        deadline = None if timeout_seconds is None else monotonic() + timeout_seconds
         with self._accepted_run_condition:
             while True:
                 stored_result = self._accepted_run_results_by_run_id.get(run_id)
