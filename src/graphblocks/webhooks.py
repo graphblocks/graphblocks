@@ -9,6 +9,7 @@ import hmac
 import json
 import math
 import socket
+from threading import RLock
 from typing import Protocol
 from urllib.parse import urlparse
 
@@ -287,9 +288,16 @@ def _retry_after_timestamp(headers: Mapping[str, str] | None, received_at: str |
         return None
     retry_after = retry_after.strip()
     if retry_after.isdecimal():
-        seconds = _non_negative_int("Retry-After", int(retry_after))
+        try:
+            seconds = int(retry_after)
+        except ValueError:
+            return None
         received = _parse_utc_timestamp(_utc_now_iso() if received_at is None else received_at)
-        return _format_utc_timestamp(received + timedelta(seconds=seconds))
+        try:
+            retry_at = received + timedelta(seconds=seconds)
+        except OverflowError:
+            return None
+        return _format_utc_timestamp(retry_at)
     try:
         retry_at = _parse_utc_timestamp(retry_after)
     except ValueError:
@@ -993,6 +1001,7 @@ class CallbackReplayDecision:
 
 class CallbackReplayGuard:
     def __init__(self, records: Mapping[str, CallbackReplayRecord] | None = None) -> None:
+        self._lock = RLock()
         self._records_by_delivery_id: dict[str, CallbackReplayRecord] = {}
         self._records_by_subscription_event: dict[tuple[str, str], CallbackReplayRecord] = {}
         if records is None:
@@ -1023,49 +1032,51 @@ class CallbackReplayGuard:
         if not isinstance(envelope, CallbackEnvelope):
             raise ValueError("envelope must be a CallbackEnvelope")
         digest = envelope.payload_digest()
-        existing = (
-            self._records.get(envelope.idempotency_key)
-            or self._records_by_delivery_id.get(envelope.delivery_id)
-            or self._records_by_subscription_event.get((envelope.subscription_id, envelope.event_id))
-        )
-        if existing is None:
-            record = CallbackReplayRecord(
-                delivery_id=envelope.delivery_id,
-                subscription_id=envelope.subscription_id,
-                event_id=envelope.event_id,
-                run_id=envelope.run_id,
-                cursor=envelope.cursor,
-                idempotency_key=envelope.idempotency_key,
-                envelope_digest=digest,
+        with self._lock:
+            existing = (
+                self._records.get(envelope.idempotency_key)
+                or self._records_by_delivery_id.get(envelope.delivery_id)
+                or self._records_by_subscription_event.get((envelope.subscription_id, envelope.event_id))
             )
-            self._records[envelope.idempotency_key] = record
-            self._records_by_delivery_id[envelope.delivery_id] = record
-            self._records_by_subscription_event[(envelope.subscription_id, envelope.event_id)] = record
+            if existing is None:
+                record = CallbackReplayRecord(
+                    delivery_id=envelope.delivery_id,
+                    subscription_id=envelope.subscription_id,
+                    event_id=envelope.event_id,
+                    run_id=envelope.run_id,
+                    cursor=envelope.cursor,
+                    idempotency_key=envelope.idempotency_key,
+                    envelope_digest=digest,
+                )
+                self._records[envelope.idempotency_key] = record
+                self._records_by_delivery_id[envelope.delivery_id] = record
+                self._records_by_subscription_event[(envelope.subscription_id, envelope.event_id)] = record
+                return CallbackReplayDecision(
+                    status="accepted",
+                    replay_record=record,
+                    incoming_digest=digest,
+                    duplicate=False,
+                    conflict=False,
+                )
+            if existing.envelope_digest == digest and existing.idempotency_key == envelope.idempotency_key:
+                return CallbackReplayDecision(
+                    status="duplicate",
+                    replay_record=existing,
+                    incoming_digest=digest,
+                    duplicate=True,
+                    conflict=False,
+                )
             return CallbackReplayDecision(
-                status="accepted",
-                replay_record=record,
-                incoming_digest=digest,
-                duplicate=False,
-                conflict=False,
-            )
-        if existing.envelope_digest == digest and existing.idempotency_key == envelope.idempotency_key:
-            return CallbackReplayDecision(
-                status="duplicate",
+                status="conflict",
                 replay_record=existing,
                 incoming_digest=digest,
-                duplicate=True,
-                conflict=False,
+                duplicate=False,
+                conflict=True,
             )
-        return CallbackReplayDecision(
-            status="conflict",
-            replay_record=existing,
-            incoming_digest=digest,
-            duplicate=False,
-            conflict=True,
-        )
 
     def records(self) -> tuple[CallbackReplayRecord, ...]:
-        return tuple(self._records[key] for key in sorted(self._records))
+        with self._lock:
+            return tuple(self._records[key] for key in sorted(self._records))
 
 
 @dataclass(frozen=True, slots=True)

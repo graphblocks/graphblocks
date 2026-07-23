@@ -4,7 +4,9 @@ import math
 import random
 import sys
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from threading import Event, Lock
 
 import pytest
 
@@ -1509,6 +1511,17 @@ def test_webhook_response_classification_ignores_past_retry_after() -> None:
     assert decision.retry_after is None
 
 
+def test_webhook_response_classification_ignores_overflowing_retry_after() -> None:
+    decision = classify_webhook_response(
+        429,
+        headers={"Retry-After": "9" * 5_000},
+        received_at="2026-07-02T00:00:00Z",
+    )
+
+    assert decision.status == "retry"
+    assert decision.retry_after is None
+
+
 def test_webhook_response_classification_rejects_invalid_status_codes_and_headers() -> None:
     _assert_raises_value_error(
         "status_code must be a valid HTTP status",
@@ -1841,6 +1854,49 @@ def test_callback_replay_guard_accepts_first_delivery_and_marks_exact_replay_dup
     assert duplicate.status == "duplicate"
     assert duplicate.duplicate is True
     assert duplicate.replay_record == first.replay_record
+
+
+def test_callback_replay_guard_serializes_concurrent_first_delivery() -> None:
+    envelope = CallbackEnvelope(
+        delivery_id="del_concurrent",
+        subscription_id="sub_001",
+        event_id="evt_concurrent",
+        run_id="run_coding_001",
+        sequence=1042,
+        cursor="evt_concurrent",
+        type="ReviewRequested",
+        payload={"subject": "changeset_abc"},
+        idempotency_key="sub_001:evt_concurrent",
+        occurred_at="2026-07-02T00:00:00Z",
+        delivered_at="2026-07-02T00:00:01Z",
+    )
+    guard = CallbackReplayGuard()
+
+    class CoordinatedLookup(dict):
+        def __init__(self) -> None:
+            super().__init__()
+            self._arrived = 0
+            self._arrived_lock = Lock()
+            self._second_arrived = Event()
+
+        def get(self, key, default=None):
+            result = super().get(key, default)
+            with self._arrived_lock:
+                self._arrived += 1
+                if self._arrived == 2:
+                    self._second_arrived.set()
+            self._second_arrived.wait(timeout=0.1)
+            return result
+
+    guard._records = CoordinatedLookup()
+    guard._records_by_delivery_id = CoordinatedLookup()
+    guard._records_by_subscription_event = CoordinatedLookup()
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        decisions = tuple(executor.map(guard.record, (envelope, envelope)))
+
+    assert sorted(decision.status for decision in decisions) == ["accepted", "duplicate"]
+    assert len(guard.records()) == 1
 
 
 def test_callback_replay_decision_rejects_contradictory_status_flags() -> None:
