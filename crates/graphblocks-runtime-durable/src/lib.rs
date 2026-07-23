@@ -169,6 +169,7 @@ pub struct InMemoryDurableSource {
     events: Vec<SourceEvent>,
     known_streams: BTreeSet<String>,
     known_partitions: BTreeSet<(String, u32)>,
+    known_cursors: BTreeSet<SourceCursor>,
     committed_cursors: BTreeMap<(String, u32), SourceCursor>,
     conflicting_cursor: Option<SourceCursor>,
     emitted_watermark_unix_ms: Cell<Option<u64>>,
@@ -193,11 +194,16 @@ impl InMemoryDurableSource {
             .iter()
             .map(|event| (event.cursor.stream.clone(), event.cursor.partition))
             .collect::<BTreeSet<_>>();
+        let known_cursors = events
+            .iter()
+            .map(|event| event.cursor.clone())
+            .collect::<BTreeSet<_>>();
         Self {
             guarantee,
             events,
             known_streams,
             known_partitions,
+            known_cursors,
             committed_cursors: BTreeMap::new(),
             conflicting_cursor,
             emitted_watermark_unix_ms: Cell::new(None),
@@ -258,7 +264,12 @@ impl InMemoryDurableSource {
     }
 
     pub fn commit(&mut self, cursor: SourceCursor) -> Result<(), DurableError> {
-        self.validate_cursor(&cursor)?;
+        if let Some(conflicting_cursor) = &self.conflicting_cursor {
+            return Err(DurableError::ConflictingSourceOffset {
+                cursor: conflicting_cursor.clone(),
+            });
+        }
+        self.validate_cursor_partition(&cursor)?;
         let partition_key = (cursor.stream.clone(), cursor.partition);
         if let Some(current) = self.committed_cursors.get(&partition_key)
             && cursor < *current
@@ -268,6 +279,7 @@ impl InMemoryDurableSource {
                 attempted: cursor,
             });
         }
+        self.validate_cursor(&cursor)?;
         self.committed_cursors.insert(partition_key, cursor);
         Ok(())
     }
@@ -281,16 +293,25 @@ impl InMemoryDurableSource {
     }
 
     fn validate_cursor(&self, cursor: &SourceCursor) -> Result<(), DurableError> {
-        validate_source_cursor(cursor)?;
-        if !self.known_streams.is_empty() && !self.known_streams.contains(&cursor.stream) {
+        self.validate_cursor_partition(cursor)?;
+        if !self.known_cursors.contains(cursor) {
             return Err(DurableError::UnknownSourceCursor {
                 cursor: cursor.clone(),
             });
         }
-        if !self.known_partitions.is_empty()
-            && !self
-                .known_partitions
-                .contains(&(cursor.stream.clone(), cursor.partition))
+        Ok(())
+    }
+
+    fn validate_cursor_partition(&self, cursor: &SourceCursor) -> Result<(), DurableError> {
+        validate_source_cursor(cursor)?;
+        if !self.known_streams.contains(&cursor.stream) {
+            return Err(DurableError::UnknownSourceCursor {
+                cursor: cursor.clone(),
+            });
+        }
+        if !self
+            .known_partitions
+            .contains(&(cursor.stream.clone(), cursor.partition))
         {
             return Err(DurableError::UnknownSourceCursor {
                 cursor: cursor.clone(),

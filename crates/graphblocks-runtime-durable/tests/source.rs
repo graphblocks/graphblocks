@@ -79,7 +79,7 @@ fn in_memory_source_replays_from_committed_or_explicit_cursor() {
 #[test]
 fn in_memory_source_rejects_conflicting_offset_reuse() {
     let cursor = SourceCursor::new("orders", 0, 10);
-    let source = InMemoryDurableSource::new(
+    let mut source = InMemoryDurableSource::new(
         DeliveryGuarantee::AtLeastOnce,
         [
             SourceEvent::new(cursor.clone(), json!({"orderId": "ord-a"}), Some(100)),
@@ -89,6 +89,12 @@ fn in_memory_source_rejects_conflicting_offset_reuse() {
 
     assert_eq!(
         source.poll(None, 1),
+        Err(DurableError::ConflictingSourceOffset {
+            cursor: cursor.clone(),
+        })
+    );
+    assert_eq!(
+        source.commit(cursor.clone()),
         Err(DurableError::ConflictingSourceOffset { cursor })
     );
 }
@@ -252,6 +258,47 @@ fn in_memory_source_rejects_unknown_cursor_partition() {
         source.poll(Some(unknown_cursor.clone()), 1),
         Err(DurableError::UnknownSourceCursor {
             cursor: unknown_cursor,
+        }),
+    );
+}
+
+#[test]
+fn in_memory_source_rejects_forged_offset_in_known_partition() {
+    let mut source = InMemoryDurableSource::new(
+        DeliveryGuarantee::AtLeastOnce,
+        [order_event(10), order_event(12)],
+    );
+    let forged_cursor = SourceCursor::new("orders", 0, 11);
+
+    assert_eq!(
+        source.commit(forged_cursor.clone()),
+        Err(DurableError::UnknownSourceCursor {
+            cursor: forged_cursor.clone(),
+        }),
+    );
+    assert_eq!(
+        source.poll(Some(forged_cursor.clone()), 1),
+        Err(DurableError::UnknownSourceCursor {
+            cursor: forged_cursor,
+        }),
+    );
+}
+
+#[test]
+fn empty_in_memory_source_rejects_explicit_cursor() {
+    let mut source = InMemoryDurableSource::new(DeliveryGuarantee::AtLeastOnce, []);
+    let forged_cursor = SourceCursor::new("orders", 0, 1);
+
+    assert_eq!(
+        source.commit(forged_cursor.clone()),
+        Err(DurableError::UnknownSourceCursor {
+            cursor: forged_cursor.clone(),
+        }),
+    );
+    assert_eq!(
+        source.poll(Some(forged_cursor.clone()), 1),
+        Err(DurableError::UnknownSourceCursor {
+            cursor: forged_cursor,
         }),
     );
 }
