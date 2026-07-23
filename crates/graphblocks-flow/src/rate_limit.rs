@@ -60,10 +60,7 @@ impl LocalRateLimiter {
 
     pub fn available_at(&self, now_ms: u64) -> u64 {
         let mut inner = self.lock();
-        if now_ms >= inner.window_start_ms.saturating_add(inner.window_ms) {
-            inner.window_start_ms = now_ms;
-            inner.used = 0;
-        }
+        Self::refresh_window(&mut inner, now_ms);
         inner.limit - inner.used
     }
 
@@ -80,34 +77,40 @@ impl LocalRateLimiter {
         }
 
         let mut inner = self.lock();
-        if now_ms >= inner.window_start_ms.saturating_add(inner.window_ms) {
-            inner.window_start_ms = now_ms;
-            inner.used = 0;
-        }
+        Self::refresh_window(&mut inner, now_ms);
         if units > inner.limit {
             return RateLimitDecision::Rejected {
                 reason: "units_exceed_limit",
             };
         }
-        let Some(next_used) = inner.used.checked_add(units) else {
-            return RateLimitDecision::Limited {
-                retry_after_ms: inner
+        let retry_after_ms = now_ms.checked_sub(inner.window_start_ms).map_or_else(
+            || {
+                inner
                     .window_start_ms
+                    .saturating_sub(now_ms)
                     .saturating_add(inner.window_ms)
-                    .saturating_sub(now_ms),
-            };
+            },
+            |elapsed| inner.window_ms.saturating_sub(elapsed),
+        );
+        let Some(next_used) = inner.used.checked_add(units) else {
+            return RateLimitDecision::Limited { retry_after_ms };
         };
         if next_used > inner.limit {
-            return RateLimitDecision::Limited {
-                retry_after_ms: inner
-                    .window_start_ms
-                    .saturating_add(inner.window_ms)
-                    .saturating_sub(now_ms),
-            };
+            return RateLimitDecision::Limited { retry_after_ms };
         }
 
         inner.used = next_used;
         RateLimitDecision::Allowed
+    }
+
+    fn refresh_window(inner: &mut Inner, now_ms: u64) {
+        if now_ms
+            .checked_sub(inner.window_start_ms)
+            .is_some_and(|elapsed| elapsed >= inner.window_ms)
+        {
+            inner.window_start_ms = now_ms;
+            inner.used = 0;
+        }
     }
 
     fn lock(&self) -> MutexGuard<'_, Inner> {

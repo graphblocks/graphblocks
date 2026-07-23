@@ -97,3 +97,21 @@ fn rate_limiter_handles_maximum_usage_without_overflow() -> Result<(), RateLimit
     assert_eq!(limiter.available_at(0), 0);
     Ok(())
 }
+
+#[test]
+fn rate_limiter_does_not_refill_repeatedly_at_maximum_timestamp() -> Result<(), RateLimitError> {
+    let limiter = LocalRateLimiter::new("embedding-api", 1, 1_000)?;
+
+    assert_eq!(
+        limiter.check_at("run-1", u64::MAX, 1),
+        RateLimitDecision::Allowed
+    );
+    assert_eq!(limiter.available_at(u64::MAX), 0);
+    assert_eq!(
+        limiter.check_at("run-2", u64::MAX, 1),
+        RateLimitDecision::Limited {
+            retry_after_ms: 1_000,
+        }
+    );
+    Ok(())
+}

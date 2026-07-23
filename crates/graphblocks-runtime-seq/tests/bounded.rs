@@ -79,3 +79,14 @@ fn bounded_sequence_rejects_zero_capacity() {
         Err(SequenceError::InvalidCapacity),
     ));
 }
+
+#[test]
+fn bounded_sequence_accepts_maximum_logical_capacity_without_eager_allocation()
+-> Result<(), SequenceError> {
+    let (sender, receiver) = bounded_sequence(usize::MAX)?;
+
+    assert_eq!(sender.capacity(), usize::MAX);
+    sender.try_send(1)?;
+    assert_eq!(receiver.try_recv(), Some(1));
+    Ok(())
+}

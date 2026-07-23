@@ -23,6 +23,12 @@ pub enum LeaseError {
         pool_id: String,
         lease_id: String,
     },
+    NotYetActive {
+        pool_id: String,
+        lease_id: String,
+        acquired_at: SystemTime,
+        attempted_at: SystemTime,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -198,21 +204,35 @@ impl LeasePool {
         let mut inner = self.lock();
         Self::reap_expired_locked(&mut inner, renewed_at);
         let pool_id = inner.id.clone();
-        let Some(current_token) = inner
+        let Some((current_token, acquired_at, current_expiration)) = inner
             .active
             .get(lease_id)
-            .map(|active| active.fencing_token)
+            .map(|active| (active.fencing_token, active.acquired_at, active.expires_at))
         else {
             return Err(LeaseError::UnknownLease {
                 pool_id,
                 lease_id: lease_id.to_owned(),
             });
         };
+        if renewed_at < acquired_at {
+            return Err(LeaseError::NotYetActive {
+                pool_id,
+                lease_id: lease_id.to_owned(),
+                acquired_at,
+                attempted_at: renewed_at,
+            });
+        }
         if current_token != fencing_token {
             return Err(LeaseError::StaleFencingToken {
                 pool_id,
                 lease_id: lease_id.to_owned(),
             });
+        }
+        let Some(current_expiration) = current_expiration else {
+            return Err(LeaseError::InvalidExpiration);
+        };
+        if expires_at <= current_expiration {
+            return Err(LeaseError::InvalidExpiration);
         }
 
         let renewed_token = inner.next_fencing_token;
@@ -246,6 +266,14 @@ impl LeasePool {
                 lease_id: lease_id.to_owned(),
             });
         };
+        if validated_at < active.acquired_at {
+            return Err(LeaseError::NotYetActive {
+                pool_id: inner.id.clone(),
+                lease_id: lease_id.to_owned(),
+                acquired_at: active.acquired_at,
+                attempted_at: validated_at,
+            });
+        }
         if active.fencing_token != fencing_token {
             return Err(LeaseError::StaleFencingToken {
                 pool_id: inner.id.clone(),

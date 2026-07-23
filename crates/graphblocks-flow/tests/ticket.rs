@@ -638,3 +638,97 @@ fn running_ticket_cannot_complete_before_issuance() {
         AdmissionTicketState::Completed,
     );
 }
+
+#[test]
+fn future_admitted_ticket_does_not_block_eligible_claim_after_clock_regression() {
+    let queue = AdmissionTicketQueue::new_at(config(3, 100, 60, 3, 300), time(0));
+    let future = queue
+        .admit_at("request-future", "tenant-a", time(100))
+        .expect("future ticket admitted")
+        .into_ticket();
+    let eligible = queue
+        .admit_at("request-eligible", "tenant-a", time(50))
+        .expect("eligible ticket admitted")
+        .into_ticket();
+    let later_future = queue
+        .admit_at("request-later-future", "tenant-a", time(100))
+        .expect("later future ticket admitted")
+        .into_ticket();
+
+    let claim = queue
+        .claim_next_at(time(50))
+        .expect("an eligible ticket must not be blocked")
+        .expect("eligible ticket is claimable");
+
+    assert_eq!(claim.ticket_id(), eligible.ticket_id());
+    assert_eq!(
+        queue
+            .claim_next_at(time(100))
+            .expect("first future ticket becomes eligible")
+            .expect("first future ticket is claimable")
+            .ticket_id(),
+        future.ticket_id()
+    );
+    assert_eq!(
+        queue
+            .claim_next_at(time(100))
+            .expect("later future ticket becomes eligible")
+            .expect("later future ticket is claimable")
+            .ticket_id(),
+        later_future.ticket_id()
+    );
+}
+
+#[test]
+fn future_queued_ticket_does_not_block_eligible_promotion_after_clock_regression() {
+    let queue = AdmissionTicketQueue::new_at(config(1, 100, 60, 3, 300), time(0));
+    let active = queue
+        .admit_at("request-active", "tenant-a", time(0))
+        .expect("active ticket admitted")
+        .into_ticket();
+    let active_claim = queue
+        .claim_next_at(time(0))
+        .expect("active ticket claim succeeds")
+        .expect("active ticket is claimable");
+    let future = queue
+        .admit_at("request-future", "tenant-a", time(100))
+        .expect("future ticket queues")
+        .into_ticket();
+    let eligible = queue
+        .admit_at("request-eligible", "tenant-a", time(50))
+        .expect("eligible ticket queues")
+        .into_ticket();
+    let later_future = queue
+        .admit_at("request-later-future", "tenant-a", time(100))
+        .expect("later future ticket queues")
+        .into_ticket();
+
+    queue
+        .complete_at(active.ticket_id(), active_claim.fencing_token(), time(50))
+        .expect("active ticket completes");
+    let claim = queue
+        .claim_next_at(time(50))
+        .expect("an eligible ticket must be promoted")
+        .expect("eligible ticket is claimable");
+
+    assert_eq!(claim.ticket_id(), eligible.ticket_id());
+    queue
+        .complete_at(eligible.ticket_id(), claim.fencing_token(), time(100))
+        .expect("eligible ticket completes");
+    let future_claim = queue
+        .claim_next_at(time(100))
+        .expect("future ticket becomes eligible")
+        .expect("future ticket is promoted");
+    assert_eq!(future_claim.ticket_id(), future.ticket_id());
+    queue
+        .complete_at(future.ticket_id(), future_claim.fencing_token(), time(100))
+        .expect("first future ticket completes");
+    assert_eq!(
+        queue
+            .claim_next_at(time(100))
+            .expect("later future ticket becomes eligible")
+            .expect("later future ticket is promoted")
+            .ticket_id(),
+        later_future.ticket_id()
+    );
+}

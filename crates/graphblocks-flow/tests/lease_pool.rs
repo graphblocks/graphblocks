@@ -241,3 +241,84 @@ fn lease_pool_rejects_expiration_not_after_acquisition() -> Result<(), LeaseErro
     ));
     Ok(())
 }
+
+#[test]
+fn lease_pool_rejects_authority_checks_before_lease_acquisition() -> Result<(), LeaseError> {
+    let pool = LeasePool::new("licensed-tool", 1)?;
+    let acquired_at = SystemTime::UNIX_EPOCH + Duration::from_secs(10);
+    let attempted_at = acquired_at - Duration::from_millis(1);
+    let expires_at = acquired_at + Duration::from_secs(10);
+    let lease = pool.try_acquire_at(
+        LeaseRequest::new("run-1", 1).with_expires_at(expires_at),
+        acquired_at,
+    )?;
+    let expected = || LeaseError::NotYetActive {
+        pool_id: "licensed-tool".to_owned(),
+        lease_id: lease.lease_id().to_owned(),
+        acquired_at,
+        attempted_at,
+    };
+
+    assert_eq!(
+        pool.validate_fencing_token_at(lease.lease_id(), lease.fencing_token(), attempted_at),
+        Err(expected())
+    );
+    assert_eq!(
+        pool.renew_at(
+            lease.lease_id(),
+            lease.fencing_token(),
+            expires_at + Duration::from_secs(10),
+            attempted_at,
+        ),
+        Err(expected())
+    );
+    Ok(())
+}
+
+#[test]
+fn lease_pool_rejects_renewal_that_does_not_extend_expiration() -> Result<(), LeaseError> {
+    let pool = LeasePool::new("licensed-tool", 1)?;
+    let acquired_at = SystemTime::UNIX_EPOCH + Duration::from_secs(10);
+    let expires_at = acquired_at + Duration::from_secs(20);
+    let lease = pool.try_acquire_at(
+        LeaseRequest::new("run-1", 1).with_expires_at(expires_at),
+        acquired_at,
+    )?;
+    let fencing_token = lease.fencing_token();
+
+    for shortened_expiration in [expires_at, expires_at - Duration::from_millis(1)] {
+        assert_eq!(
+            pool.renew_at(
+                lease.lease_id(),
+                fencing_token,
+                shortened_expiration,
+                acquired_at + Duration::from_secs(1),
+            ),
+            Err(LeaseError::InvalidExpiration)
+        );
+    }
+    assert_eq!(lease.expires_at(), Some(expires_at));
+    assert_eq!(lease.fencing_token(), fencing_token);
+    Ok(())
+}
+
+#[test]
+fn lease_pool_rejects_renewal_of_unbounded_lease() -> Result<(), LeaseError> {
+    let pool = LeasePool::new("licensed-tool", 1)?;
+    let acquired_at = SystemTime::UNIX_EPOCH + Duration::from_secs(10);
+    let lease = pool.try_acquire_at(LeaseRequest::new("run-1", 1), acquired_at)?;
+    let fencing_token = lease.fencing_token();
+
+    assert_eq!(
+        pool.renew_at(
+            lease.lease_id(),
+            fencing_token,
+            acquired_at + Duration::from_secs(20),
+            acquired_at + Duration::from_secs(1),
+        ),
+        Err(LeaseError::InvalidExpiration)
+    );
+    assert_eq!(lease.expires_at(), None);
+    assert_eq!(lease.fencing_token(), fencing_token);
+    Ok(())
+}

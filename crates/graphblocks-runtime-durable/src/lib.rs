@@ -47,6 +47,11 @@ pub enum DurableError {
         watermark_unix_ms: u64,
         allowed_lateness_ms: u64,
     },
+    WindowBoundaryOverflow {
+        event_time_unix_ms: u64,
+        size_ms: u64,
+        allowed_lateness_ms: u64,
+    },
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Ord, PartialOrd, Serialize)]
@@ -387,9 +392,21 @@ impl WindowAccumulator {
             });
         };
         let start_unix_ms = event_time_unix_ms - (event_time_unix_ms % self.policy.size_ms);
-        let deadline_unix_ms = start_unix_ms
-            .saturating_add(self.policy.size_ms)
-            .saturating_add(self.policy.allowed_lateness_ms);
+        let Some(end_unix_ms) = start_unix_ms.checked_add(self.policy.size_ms) else {
+            return Err(DurableError::WindowBoundaryOverflow {
+                event_time_unix_ms,
+                size_ms: self.policy.size_ms,
+                allowed_lateness_ms: self.policy.allowed_lateness_ms,
+            });
+        };
+        let Some(deadline_unix_ms) = end_unix_ms.checked_add(self.policy.allowed_lateness_ms)
+        else {
+            return Err(DurableError::WindowBoundaryOverflow {
+                event_time_unix_ms,
+                size_ms: self.policy.size_ms,
+                allowed_lateness_ms: self.policy.allowed_lateness_ms,
+            });
+        };
         if let Some(watermark) = self.watermark
             && deadline_unix_ms <= watermark.unix_ms
         {
@@ -419,13 +436,20 @@ impl WindowAccumulator {
             .keys()
             .copied()
             .filter(|start_unix_ms| {
-                start_unix_ms.saturating_add(self.policy.size_ms) <= watermark.unix_ms
+                start_unix_ms
+                    .checked_add(self.policy.size_ms)
+                    .expect("accepted window has a representable end")
+                    <= watermark.unix_ms
             })
             .collect::<Vec<_>>();
         let mut emitted = Vec::new();
         for start_unix_ms in triggerable {
-            let end_unix_ms = start_unix_ms.saturating_add(self.policy.size_ms);
-            let deadline_unix_ms = end_unix_ms.saturating_add(self.policy.allowed_lateness_ms);
+            let end_unix_ms = start_unix_ms
+                .checked_add(self.policy.size_ms)
+                .expect("accepted window has a representable end");
+            let deadline_unix_ms = end_unix_ms
+                .checked_add(self.policy.allowed_lateness_ms)
+                .expect("accepted window has a representable lateness deadline");
             if deadline_unix_ms <= watermark.unix_ms {
                 if let Some(mut events) = self.windows.remove(&start_unix_ms) {
                     events.sort_by(|left, right| left.cursor.cmp(&right.cursor));

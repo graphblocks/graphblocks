@@ -258,3 +258,32 @@ fn discarding_window_keeps_single_final_snapshot_and_deadline_admission() {
     assert_eq!(panes[0].revision, 0);
     assert!(panes[0].is_final);
 }
+
+#[test]
+fn event_time_window_rejects_unrepresentable_half_open_bounds() {
+    for (size_ms, allowed_lateness_ms, event_time_unix_ms) in
+        [(10, 0, u64::MAX), (10, 10, u64::MAX - 15)]
+    {
+        let policy = WindowPolicy::tumbling_event_time(
+            size_ms,
+            allowed_lateness_ms,
+            AccumulationMode::Discarding,
+        )
+        .expect("policy should be valid");
+        let mut windows = WindowAccumulator::new(policy);
+
+        assert_eq!(
+            windows.ingest(event(1, event_time_unix_ms)),
+            Err(DurableError::WindowBoundaryOverflow {
+                event_time_unix_ms,
+                size_ms,
+                allowed_lateness_ms,
+            })
+        );
+        assert!(
+            windows
+                .advance_watermark(Watermark::event_time(u64::MAX))
+                .is_empty()
+        );
+    }
+}

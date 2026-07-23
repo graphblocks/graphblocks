@@ -52,7 +52,7 @@ pub fn bounded_sequence<T>(
     let inner = Arc::new(Mutex::new(Inner {
         capacity,
         state: SequenceState::Open,
-        items: VecDeque::with_capacity(capacity),
+        items: VecDeque::new(),
     }));
     Ok((
         SequenceSender {

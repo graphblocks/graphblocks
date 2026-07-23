@@ -442,7 +442,13 @@ impl AdmissionTicketQueue {
     ) -> Result<Option<AdmissionTicketClaim>, AdmissionTicketError> {
         let mut inner = self.lock();
         inner.maintain_at(now);
-        while let Some(ticket_id) = inner.admitted.pop_front() {
+        let candidates = inner.admitted.len();
+        let mut not_yet_issued = None;
+        let mut deferred_count = 0;
+        for _ in 0..candidates {
+            let Some(ticket_id) = inner.admitted.pop_front() else {
+                break;
+            };
             let Some(ticket) = inner.tickets.get(&ticket_id) else {
                 continue;
             };
@@ -450,14 +456,18 @@ impl AdmissionTicketQueue {
                 continue;
             }
             if let Err(error) = ensure_ticket_issued(ticket, now) {
-                inner.admitted.push_front(ticket_id);
-                return Err(error);
+                inner.admitted.push_back(ticket_id);
+                deferred_count += 1;
+                not_yet_issued.get_or_insert(error);
+                continue;
             }
             let fencing_token = inner.next_fencing_token;
-            inner.next_fencing_token = inner
-                .next_fencing_token
-                .checked_add(1)
-                .ok_or(AdmissionTicketError::IdentifierOverflow)?;
+            let Some(next_fencing_token) = inner.next_fencing_token.checked_add(1) else {
+                inner.admitted.push_front(ticket_id);
+                restore_deferred_front(&mut inner.admitted, deferred_count);
+                return Err(AdmissionTicketError::IdentifierOverflow);
+            };
+            inner.next_fencing_token = next_fencing_token;
             let ticket = inner
                 .tickets
                 .get_mut(&ticket_id)
@@ -465,14 +475,20 @@ impl AdmissionTicketQueue {
             ticket.state = AdmissionTicketState::Running;
             ticket.running_at = Some(now);
             ticket.fencing_token = Some(fencing_token);
-            return Ok(Some(AdmissionTicketClaim {
+            let claim = AdmissionTicketClaim {
                 ticket_id: ticket.ticket_id.clone(),
                 request_id: ticket.request_id.clone(),
                 owner: ticket.owner.clone(),
                 fencing_token,
                 claimed_at: now,
                 expires_at: ticket.expires_at,
-            }));
+            };
+            restore_deferred_front(&mut inner.admitted, deferred_count);
+            return Ok(Some(claim));
+        }
+        restore_deferred_front(&mut inner.admitted, deferred_count);
+        if let Some(error) = not_yet_issued {
+            return Err(error);
         }
         Ok(None)
     }
@@ -709,9 +725,14 @@ impl Inner {
 
     fn promote_at(&mut self, now: SystemTime) -> usize {
         let mut promoted = 0;
-        while self.concurrent < self.config.max_concurrent
-            && self.rate_window_used < self.config.rate_limit
-        {
+        let candidates = self.queued.len();
+        let mut deferred_count = 0;
+        for _ in 0..candidates {
+            if self.concurrent >= self.config.max_concurrent
+                || self.rate_window_used >= self.config.rate_limit
+            {
+                break;
+            }
             let Some(ticket_id) = self.queued.pop_front() else {
                 break;
             };
@@ -722,8 +743,9 @@ impl Inner {
                 continue;
             }
             if ticket.created_at > now {
-                self.queued.push_front(ticket_id);
-                break;
+                self.queued.push_back(ticket_id);
+                deferred_count += 1;
+                continue;
             }
             if ticket.expires_at <= now {
                 ticket.state = AdmissionTicketState::Expired;
@@ -737,6 +759,7 @@ impl Inner {
             self.admitted.push_back(ticket_id);
             promoted += 1;
         }
+        restore_deferred_front(&mut self.queued, deferred_count);
         promoted
     }
 
@@ -790,6 +813,12 @@ impl Inner {
             }
         }
         counts
+    }
+}
+
+fn restore_deferred_front(queue: &mut VecDeque<String>, deferred_count: usize) {
+    if deferred_count > 0 {
+        queue.rotate_right(deferred_count);
     }
 }
 
