@@ -9,10 +9,10 @@ import json
 from pathlib import Path
 import sqlite3
 from threading import RLock
-from types import MappingProxyType
 from typing import Literal, ParamSpec, TypeVar, cast, get_args
 
 from .canonical import canonical_dumps
+from .documents import FrozenDict
 from .policy import ResourceRef
 
 
@@ -139,6 +139,12 @@ class BudgetCompletionReserveStateError(BudgetError):
 def _validate_non_empty_string(owner: str, field_name: str, value: object) -> str:
     if not isinstance(value, str):
         raise ValueError(f"{owner} {field_name} must be a string")
+    try:
+        value.encode("utf-8")
+    except UnicodeEncodeError as error:
+        raise ValueError(
+            f"{owner} {field_name} must contain only Unicode scalar values"
+        ) from error
     if not value.strip():
         raise ValueError(f"{owner} {field_name} must not be empty")
     if value != value.strip():
@@ -215,7 +221,7 @@ def _validate_usage_amounts(owner: str, field_name: str, values: object) -> _Fro
         raise ValueError(f"{owner} {field_name} must be a collection of UsageAmount")
     try:
         amounts = list(values)  # type: ignore[arg-type]
-    except TypeError as error:
+    except Exception as error:
         raise ValueError(f"{owner} {field_name} must be a collection of UsageAmount") from error
     if any(not isinstance(amount, UsageAmount) for amount in amounts):
         raise ValueError(f"{owner} {field_name} must contain UsageAmount records")
@@ -253,17 +259,10 @@ def _validate_string_tuple(owner: str, field_name: str, values: object) -> tuple
         raise ValueError(f"{owner} {field_name} must be a collection of strings")
     try:
         normalized = tuple(values)  # type: ignore[arg-type]
-    except TypeError as error:
+    except Exception as error:
         raise ValueError(f"{owner} {field_name} must be a collection of strings") from error
     for item in normalized:
-        if not isinstance(item, str):
-            raise ValueError(f"{owner} {field_name} items must be strings")
-        if not item.strip():
-            raise ValueError(f"{owner} {field_name} item must not be empty")
-        if item != item.strip():
-            raise ValueError(
-                f"{owner} {field_name} item must not contain surrounding whitespace"
-            )
+        _validate_non_empty_string(owner, f"{field_name} item", item)
     return normalized
 
 
@@ -279,17 +278,30 @@ class UsageAmount:
         _validate_non_empty_string("usage amount", "unit", self.unit)
         if not isinstance(self.dimensions, Mapping):
             raise ValueError("usage amount dimensions must be a mapping")
-        dimensions = dict(self.dimensions)
-        if any(
-            not isinstance(key, str)
-            or not key.strip()
-            or key != key.strip()
-            or not isinstance(value, str)
-            or not value.strip()
-            or value != value.strip()
-            for key, value in dimensions.items()
-        ):
-            raise ValueError("usage amount dimensions must be string keys and values")
+        try:
+            dimension_items = tuple(self.dimensions.items())
+        except Exception as error:
+            raise ValueError(
+                "usage amount dimensions must be a readable mapping"
+            ) from error
+        dimensions: dict[str, str] = {}
+        for key, value in dimension_items:
+            if (
+                not isinstance(key, str)
+                or not key.strip()
+                or key != key.strip()
+                or not isinstance(value, str)
+                or not value.strip()
+                or value != value.strip()
+            ):
+                raise ValueError(
+                    "usage amount dimensions must be string keys and values"
+                )
+            if key in dimensions:
+                raise ValueError(
+                    f"usage amount dimensions contains duplicate key {key!r}"
+                )
+            dimensions[key] = value
         for key, value in dimensions.items():
             _validate_non_empty_string("usage amount", "dimension key", key)
             _validate_non_empty_string("usage amount", "dimension value", value)
@@ -304,7 +316,7 @@ class UsageAmount:
             raise ValueError("usage amount must be finite")
         if amount < 0:
             raise ValueError("usage amount must be non-negative")
-        object.__setattr__(self, "dimensions", MappingProxyType(dimensions))
+        object.__setattr__(self, "dimensions", FrozenDict(dimensions))
 
 
 @dataclass(frozen=True, slots=True)
@@ -326,7 +338,7 @@ class BudgetAccount:
             _validate_usage_amounts("budget account", "allocated", self.allocated),
         )
         _validate_optional_non_empty_string("budget account", "parent_budget_id", self.parent_budget_id)
-        if self.status not in VALID_BUDGET_STATUSES:
+        if not isinstance(self.status, str) or self.status not in VALID_BUDGET_STATUSES:
             raise ValueError(f"unknown budget status {self.status!r}")
         if not isinstance(self.policy_ref, str):
             raise ValueError("budget account policy_ref must be a string")
@@ -359,11 +371,17 @@ class BudgetReservation:
             "amounts",
             _validate_usage_amounts("budget reservation", "amounts", self.amounts),
         )
-        if self.purpose not in VALID_RESERVATION_PURPOSES:
+        if (
+            not isinstance(self.purpose, str)
+            or self.purpose not in VALID_RESERVATION_PURPOSES
+        ):
             raise ValueError(f"unknown reservation purpose {self.purpose!r}")
         _validate_non_empty_string("budget reservation", "expires_at", self.expires_at)
         _validate_non_negative_integer("budget reservation", "fencing_token", self.fencing_token)
-        if self.status not in VALID_RESERVATION_STATUSES:
+        if (
+            not isinstance(self.status, str)
+            or self.status not in VALID_RESERVATION_STATUSES
+        ):
             raise ValueError(f"unknown reservation status {self.status!r}")
 
 
@@ -410,7 +428,10 @@ class BudgetSettlement:
                 field_name,
                 _validate_usage_amounts("budget settlement", field_name, getattr(self, field_name)),
             )
-        if self.status not in VALID_RESERVATION_STATUSES:
+        if (
+            not isinstance(self.status, str)
+            or self.status not in VALID_RESERVATION_STATUSES
+        ):
             raise ValueError(f"unknown reservation status {self.status!r}")
         _validate_non_negative_integer("budget settlement", "revision", self.revision)
 
@@ -466,14 +487,26 @@ class BudgetPermit:
             )
         if not isinstance(self.fencing_tokens, Mapping):
             raise ValueError("budget permit fencing_tokens must be a mapping")
-        fencing_tokens = dict(self.fencing_tokens)
-        if not fencing_tokens:
-            raise ValueError("budget permit fencing_tokens must not be empty")
-        for reference, token in fencing_tokens.items():
+        try:
+            fencing_token_items = tuple(self.fencing_tokens.items())
+        except Exception as error:
+            raise ValueError(
+                "budget permit fencing_tokens must be a readable mapping"
+            ) from error
+        fencing_tokens: dict[str, int] = {}
+        for reference, token in fencing_token_items:
             if not isinstance(reference, str) or not reference.strip():
                 raise ValueError(
                     "budget permit fencing token references must be non-empty strings"
                 )
+            if reference in fencing_tokens:
+                raise ValueError(
+                    f"budget permit fencing_tokens contains duplicate key {reference!r}"
+                )
+            fencing_tokens[reference] = token
+        if not fencing_tokens:
+            raise ValueError("budget permit fencing_tokens must not be empty")
+        for reference, token in fencing_tokens.items():
             _validate_non_empty_string(
                 "budget permit",
                 "fencing token reference",
@@ -485,7 +518,7 @@ class BudgetPermit:
                 raise ValueError(
                     "budget permit fencing token values exceed the supported range"
                 )
-        object.__setattr__(self, "fencing_tokens", MappingProxyType(fencing_tokens))
+        object.__setattr__(self, "fencing_tokens", FrozenDict(fencing_tokens))
 
     def allows(self, amounts: list[UsageAmount]) -> bool:
         authorized = _amounts_to_dict(self.authorized_amounts)
@@ -517,7 +550,10 @@ class CompletionReserve:
     def __post_init__(self) -> None:
         _validate_non_empty_string("completion reserve", "reserve_id", self.reserve_id)
         _validate_non_empty_string("completion reserve", "budget_id", self.budget_id)
-        if self.purpose not in VALID_COMPLETION_RESERVE_PURPOSES:
+        if (
+            not isinstance(self.purpose, str)
+            or self.purpose not in VALID_COMPLETION_RESERVE_PURPOSES
+        ):
             raise ValueError(f"unknown completion reserve purpose {self.purpose!r}")
         object.__setattr__(
             self,
@@ -532,7 +568,10 @@ class CompletionReserve:
         if not self.spendable_by:
             raise ValueError("completion reserve spendable_by must not be empty")
         _validate_optional_non_empty_string("completion reserve", "expires_at", self.expires_at)
-        if self.status not in VALID_COMPLETION_RESERVE_STATUSES:
+        if (
+            not isinstance(self.status, str)
+            or self.status not in VALID_COMPLETION_RESERVE_STATUSES
+        ):
             raise ValueError(f"unknown completion reserve status {self.status!r}")
         _validate_optional_non_empty_string("completion reserve", "reservation_id", self.reservation_id)
         _validate_non_negative_integer("completion reserve", "fencing_token", self.fencing_token)
@@ -757,7 +796,10 @@ class InMemoryBudgetLedger:
             "amounts",
             amounts,
         )
-        if purpose not in VALID_RESERVATION_PURPOSES:
+        if (
+            not isinstance(purpose, str)
+            or purpose not in VALID_RESERVATION_PURPOSES
+        ):
             raise ValueError(f"unknown reservation purpose {purpose!r}")
         expires_at = _validate_non_empty_string(
             "budget reservation",

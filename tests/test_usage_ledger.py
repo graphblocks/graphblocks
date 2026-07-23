@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
+from collections.abc import Iterator, Mapping
 from decimal import Decimal
 import json
 import math
+import pickle
 import sqlite3
 from threading import Barrier, Event, Lock
 
@@ -21,6 +23,27 @@ from graphblocks.usage import (
 
 def _tokens(value: str) -> UsageAmount:
     return UsageAmount(kind="model_output_tokens", amount=Decimal(value), unit="tokens")
+
+
+class _DuplicateMetadataMapping(Mapping[str, object]):
+    def __getitem__(self, key: str) -> object:
+        if key != "phase":
+            raise KeyError(key)
+        return "generation"
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(("phase", "phase"))
+
+    def __len__(self) -> int:
+        return 2
+
+    def items(self) -> Iterator[tuple[str, object]]:
+        return iter((("phase", "first"), ("phase", "second")))
+
+
+class _ExplodingUsageAmounts:
+    def __iter__(self) -> Iterator[UsageAmount]:
+        raise RuntimeError("usage amounts exploded")
 
 
 def test_usage_ledger_seals_restored_state_and_validates_record_boundaries() -> None:
@@ -144,6 +167,57 @@ def test_usage_record_deep_copies_mutable_amounts_and_metadata() -> None:
             amounts=[_tokens("12")],
             occurred_at="2026-06-22T00:00:00Z",
             metadata=recursive_metadata,
+        )
+
+
+def test_usage_record_is_pickle_safe_and_rejects_ambiguous_external_inputs() -> None:
+    record = UsageRecord(
+        record_id="usage-1",
+        source="runtime_measured",
+        confidence="estimated",
+        amounts=[_tokens("12")],
+        occurred_at="2026-06-22T00:00:00Z",
+        metadata={"context": {"tags": ["initial"]}},
+    )
+
+    restored = pickle.loads(pickle.dumps(record))
+
+    assert restored == record
+    assert restored.metadata == {"context": {"tags": ["initial"]}}
+    with pytest.raises(TypeError):
+        restored.metadata["context"]["tags"] += ("mutated",)  # type: ignore[index,operator]
+    with pytest.raises(ValueError, match="Unicode scalar"):
+        UsageRecord(
+            record_id="\ud800",
+            source="runtime_measured",
+            confidence="estimated",
+            amounts=[_tokens("1")],
+            occurred_at="2026-06-22T00:00:00Z",
+        )
+    with pytest.raises(ValueError, match="invalid usage source"):
+        UsageRecord(
+            record_id="usage-invalid-source",
+            source=[],  # type: ignore[arg-type]
+            confidence="estimated",
+            amounts=[_tokens("1")],
+            occurred_at="2026-06-22T00:00:00Z",
+        )
+    with pytest.raises(ValueError, match="usage amounts must be UsageAmount"):
+        UsageRecord(
+            record_id="usage-exploding-amounts",
+            source="runtime_measured",
+            confidence="estimated",
+            amounts=_ExplodingUsageAmounts(),  # type: ignore[arg-type]
+            occurred_at="2026-06-22T00:00:00Z",
+        )
+    with pytest.raises(ValueError, match="usage metadata must be valid strict JSON"):
+        UsageRecord(
+            record_id="usage-duplicate-metadata",
+            source="runtime_measured",
+            confidence="estimated",
+            amounts=[_tokens("1")],
+            occurred_at="2026-06-22T00:00:00Z",
+            metadata=_DuplicateMetadataMapping(),  # type: ignore[arg-type]
         )
 
 
@@ -1038,6 +1112,29 @@ def test_sqlite_usage_ledger_rejects_invalid_json_shapes_on_replay(
 
     with pytest.raises(ValueError, match=message):
         ledger.get("usage-1")
+    ledger.close()
+
+
+def test_sqlite_usage_ledger_rejects_non_string_record_identity_on_replay() -> None:
+    ledger = SQLiteUsageLedger.in_memory()
+    ledger.append(
+        UsageRecord(
+            record_id="usage-1",
+            source="runtime_measured",
+            confidence="estimated",
+            amounts=[_tokens("12")],
+            occurred_at="2026-06-22T00:00:00Z",
+            run_id="run-1",
+        )
+    )
+    ledger._connection.execute(
+        "UPDATE usage_records SET record_id = ? WHERE record_id = ?",
+        (sqlite3.Binary(b"usage-forged"), "usage-1"),
+    )
+    ledger._connection.commit()
+
+    with pytest.raises(ValueError, match="usage record_id must be a string"):
+        ledger.records_for_run("run-1")
     ledger.close()
 
 

@@ -4,6 +4,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from decimal import Decimal
 import json
+import pickle
 from threading import Barrier, BrokenBarrierError, Lock
 
 import pytest
@@ -214,6 +215,24 @@ def test_usage_amount_rejects_negative_amounts_and_freezes_dimensions() -> None:
         UsageAmount("model_total_tokens", Decimal("1"), "tokens", dimensions={"model": object()})  # type: ignore[dict-item]
 
 
+def test_usage_amount_is_pickle_safe_and_rejects_non_scalar_identities() -> None:
+    amount = UsageAmount(
+        "model_total_tokens",
+        Decimal("5"),
+        "tokens",
+        {"model": "support"},
+    )
+
+    restored = pickle.loads(pickle.dumps(amount))
+
+    assert restored == amount
+    assert restored.dimensions == {"model": "support"}
+    with pytest.raises(TypeError):
+        restored.dimensions["model"] = "mutated"
+    with pytest.raises(ValueError, match="Unicode scalar"):
+        UsageAmount("\ud800", Decimal("1"), "tokens")
+
+
 @pytest.mark.parametrize(
     ("factory", "message"),
     (
@@ -245,6 +264,13 @@ def test_budget_records_reject_whitespace_wrapped_identities(factory, message: s
 def test_budget_models_reject_unknown_typed_values() -> None:
     with pytest.raises(ValueError, match="unknown budget status"):
         BudgetAccount("budget-1", ResourceRef("tenant:acme"), [_tokens("1")], status="maybe")
+    with pytest.raises(ValueError, match="unknown budget status"):
+        BudgetAccount(
+            "budget-1",
+            ResourceRef("tenant:acme"),
+            [_tokens("1")],
+            status=[],  # type: ignore[arg-type]
+        )
     with pytest.raises(ValueError, match="unknown reservation purpose"):
         BudgetReservation(
             "reservation-1",
@@ -278,6 +304,14 @@ def test_budget_models_reject_unknown_typed_values() -> None:
             amounts=[_tokens("1")],
             spendable_by=frozenset({"agent.finalize"}),
             status="maybe",
+        )
+    with pytest.raises(ValueError, match="unknown reservation purpose"):
+        InMemoryBudgetLedger().reserve(
+            "budget-1",
+            ResourceRef("run:1"),
+            [_tokens("1")],
+            purpose=[],  # type: ignore[arg-type]
+            expires_at="later",
         )
 
 

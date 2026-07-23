@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor
 import math
 from threading import Barrier, BrokenBarrierError
@@ -552,3 +553,101 @@ def test_lease_pool_capacity_snapshot_is_read_only() -> None:
     assert pool.available("model") == 1
     with pytest.raises(TypeError):
         pool.capacities["model"] = 10  # type: ignore[index]
+
+
+def test_lease_pool_normalizes_hostile_mapping_failures() -> None:
+    class ExplodingMapping(Mapping[str, object]):
+        def __getitem__(self, key: str) -> object:
+            raise RuntimeError("mapping changed during snapshot")
+
+        def __iter__(self):
+            raise RuntimeError("mapping changed during snapshot")
+
+        def __len__(self) -> int:
+            return 1
+
+    class DuplicateMapping(dict[str, object]):
+        def items(self):
+            return (("model", 1), ("model", 2))
+
+    with pytest.raises(InvalidLeaseRequestError, match="lease capacities could not be copied"):
+        InMemoryLeasePool(ExplodingMapping())  # type: ignore[arg-type]
+    pool = InMemoryLeasePool({"model": 1})
+    with pytest.raises(InvalidLeaseRequestError, match="lease attributes could not be traversed"):
+        pool.acquire("model", owner="run-1", attributes=ExplodingMapping())  # type: ignore[arg-type]
+    with pytest.raises(
+        InvalidLeaseRequestError,
+        match="lease capacity resource names must be unique",
+    ):
+        InMemoryLeasePool(DuplicateMapping())  # type: ignore[arg-type]
+    with pytest.raises(
+        InvalidLeaseRequestError,
+        match="lease attribute keys must be unique",
+    ):
+        pool.acquire(
+            "model",
+            owner="run-1",
+            attributes=DuplicateMapping(),
+        )
+
+
+def test_lease_attributes_reject_cycles_overdepth_and_non_unicode_strings() -> None:
+    pool = InMemoryLeasePool({"model": 1})
+    cyclic: dict[str, object] = {}
+    cyclic["self"] = cyclic
+    with pytest.raises(InvalidLeaseRequestError, match="lease attributes must not contain cyclic values"):
+        pool.acquire("model", owner="run-1", attributes=cyclic)
+
+    deeply_nested: dict[str, object] = {}
+    cursor = deeply_nested
+    for _ in range(66):
+        child: dict[str, object] = {}
+        cursor["nested"] = child
+        cursor = child
+    with pytest.raises(InvalidLeaseRequestError, match="lease attributes exceed maximum JSON depth 64"):
+        pool.acquire("model", owner="run-1", attributes=deeply_nested)
+    with pytest.raises(InvalidLeaseRequestError, match="lease attribute keys must contain only Unicode scalar values"):
+        pool.acquire("model", owner="run-1", attributes={"\ud800": "value"})
+    with pytest.raises(InvalidLeaseRequestError, match="lease attribute values must contain only Unicode scalar values"):
+        pool.acquire("model", owner="run-1", attributes={"key": "\ud800"})
+    with pytest.raises(InvalidLeaseRequestError, match="lease owner must contain only Unicode scalar values"):
+        pool.acquire("model", owner="run-\ud800")
+    for value in (-(1 << 63) - 1, 1 << 64):
+        with pytest.raises(InvalidLeaseRequestError, match="lease attribute integer values must fit the JSON wire domain"):
+            pool.acquire("model", owner="run-1", attributes={"value": value})
+
+
+def test_lease_pool_rejects_values_outside_unsigned_wire_domain() -> None:
+    maximum = (1 << 64) - 1
+    with pytest.raises(InvalidLeaseRequestError, match=f"lease capacity for model must be at most {maximum}"):
+        InMemoryLeasePool({"model": 1 << 64})
+    with pytest.raises(InvalidLeaseRequestError, match=f"lease next_id must be at most {maximum}"):
+        InMemoryLeasePool({"model": 1}, next_id=1 << 64)
+    with pytest.raises(InvalidLeaseRequestError, match=f"lease fencing_token must be at most {maximum}"):
+        ActiveLease("model", "run-1", 1, 1 << 64, {}, 1)
+
+
+def test_lease_pool_fails_closed_without_mutation_when_counters_are_exhausted() -> None:
+    maximum = (1 << 64) - 1
+    id_exhausted = InMemoryLeasePool({"model": 1}, next_id=maximum)
+    with pytest.raises(InvalidLeaseRequestError, match="lease identifier counter is exhausted"):
+        id_exhausted.acquire("model", owner="run-1")
+    assert (id_exhausted.next_id, id_exhausted.next_fencing_token, id_exhausted.active) == (
+        maximum, 1, {},
+    )
+
+    fencing_exhausted = InMemoryLeasePool({"model": 1}, next_fencing_token=maximum)
+    with pytest.raises(InvalidLeaseRequestError, match="lease fencing token counter is exhausted"):
+        fencing_exhausted.acquire("model", owner="run-1")
+    assert (fencing_exhausted.next_id, fencing_exhausted.next_fencing_token, fencing_exhausted.active) == (
+        1, maximum, {},
+    )
+
+
+def test_lease_renewal_rejects_boolean_fencing_authority() -> None:
+    pool = InMemoryLeasePool({"model": 1})
+    lease = pool.acquire("model", owner="run-1", acquired_at=1, expires_at=2)
+    with pytest.raises(InvalidLeaseRequestError, match="lease fencing_token must be a non-negative integer"):
+        pool.renew(lease.lease_id, True, renewed_at=1, expires_at=3)  # type: ignore[arg-type]
+    assert pool.active[lease.lease_id].fencing_token == lease.fencing_token
+    assert pool.active[lease.lease_id].expires_at == 2

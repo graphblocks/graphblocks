@@ -8,11 +8,11 @@ import json
 from pathlib import Path
 import sqlite3
 from threading import RLock
-from types import MappingProxyType
 from typing import Literal
 
 from .budget import UsageAmount
 from .canonical import MAX_CANONICAL_JSON_DEPTH, canonical_dumps
+from .documents import FrozenDict
 
 
 UsageSource = Literal[
@@ -50,6 +50,12 @@ class UsageRecordConflictError(UsageLedgerError):
 def _validate_usage_identity(field_name: str, value: object) -> str:
     if not isinstance(value, str):
         raise ValueError(f"usage {field_name} must be a string")
+    try:
+        value.encode("utf-8")
+    except UnicodeEncodeError as error:
+        raise ValueError(
+            f"usage {field_name} must contain only Unicode scalar values"
+        ) from error
     if not value.strip():
         raise ValueError(f"usage {field_name} must not be empty")
     if value != value.strip():
@@ -70,7 +76,7 @@ class _FrozenUsageMetadataList(tuple[object, ...]):
 
 def _freeze_usage_metadata(value: object) -> object:
     if isinstance(value, Mapping):
-        return MappingProxyType(
+        return FrozenDict(
             {key: _freeze_usage_metadata(item) for key, item in value.items()}
         )
     if isinstance(value, (list, tuple)):
@@ -96,14 +102,24 @@ def _mutable_usage_metadata(
             raise ValueError("usage metadata must not be recursive")
         active_containers.add(identity)
         try:
-            return {
-                key: _mutable_usage_metadata(
+            try:
+                items = tuple(value.items())
+            except Exception as error:
+                raise ValueError(
+                    "usage metadata must be a readable mapping"
+                ) from error
+            snapshot: dict[str, object] = {}
+            for key, item in items:
+                if not isinstance(key, str):
+                    raise TypeError("usage metadata keys must be strings")
+                if key in snapshot:
+                    raise ValueError(f"duplicate metadata key {key!r}")
+                snapshot[key] = _mutable_usage_metadata(
                     item,
                     _active_containers=active_containers,
                     _depth=_depth + 1,
                 )
-                for key, item in value.items()
-            }
+            return snapshot
         finally:
             active_containers.remove(identity)
     if isinstance(value, (list, tuple)):
@@ -263,9 +279,15 @@ class UsageRecord:
 
     def __post_init__(self) -> None:
         _validate_usage_identity("record_id", self.record_id)
-        if self.source not in VALID_USAGE_SOURCES:
+        if (
+            not isinstance(self.source, str)
+            or self.source not in VALID_USAGE_SOURCES
+        ):
             raise ValueError(f"invalid usage source {self.source}")
-        if self.confidence not in VALID_USAGE_CONFIDENCES:
+        if (
+            not isinstance(self.confidence, str)
+            or self.confidence not in VALID_USAGE_CONFIDENCES
+        ):
             raise ValueError(f"invalid usage confidence {self.confidence}")
         _parse_datetime("usage", "occurred_at", self.occurred_at)
         for field_name in (
@@ -292,7 +314,7 @@ class UsageRecord:
             raise ValueError("usage reconciliation_of requires reconciled source")
         try:
             raw_amounts = tuple(self.amounts)
-        except TypeError as error:
+        except Exception as error:
             raise ValueError("usage amounts must be UsageAmount") from error
         if not raw_amounts:
             raise ValueError("usage amounts must not be empty")
@@ -303,23 +325,23 @@ class UsageRecord:
                 kind=amount.kind,
                 amount=amount.amount,
                 unit=amount.unit,
-                dimensions=MappingProxyType(dict(amount.dimensions)),
+                dimensions=dict(amount.dimensions),
             )
             for amount in raw_amounts
         )
         object.__setattr__(self, "amounts", amounts)
         if not isinstance(self.metadata, Mapping):
             raise ValueError("usage metadata must be a mapping")
-        if any(not isinstance(key, str) or not key.strip() for key in self.metadata):
-            raise ValueError("usage metadata keys must be non-empty strings")
-        for key in self.metadata:
-            _validate_usage_identity("metadata key", key)
         try:
             metadata = _mutable_usage_metadata(self.metadata)
             canonical_dumps(metadata)
         except (TypeError, ValueError) as error:
             raise ValueError("usage metadata must be valid strict JSON") from error
         assert isinstance(metadata, dict)
+        if any(not isinstance(key, str) or not key.strip() for key in metadata):
+            raise ValueError("usage metadata keys must be non-empty strings")
+        for key in metadata:
+            _validate_usage_identity("metadata key", key)
         object.__setattr__(self, "metadata", _freeze_usage_metadata(metadata))
 
 
@@ -734,11 +756,11 @@ class SQLiteUsageLedger:
         if not isinstance(metadata, Mapping):
             raise ValueError("usage ledger metadata_json must be an object")
         return UsageRecord(
-            record_id=str(row["record_id"]),
+            record_id=row["record_id"],
             source=row["source"],
             confidence=row["confidence"],
             amounts=amounts,
-            occurred_at=str(row["occurred_at"]),
+            occurred_at=row["occurred_at"],
             run_id=row["run_id"],
             attempt_id=row["attempt_id"],
             provider_response_id=row["provider_response_id"],

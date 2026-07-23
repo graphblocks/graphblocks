@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import replace
 from decimal import Decimal
+from collections.abc import Iterator
+import pickle
 
 import pytest
 
@@ -35,6 +37,11 @@ def _permit() -> BudgetPermit:
         expires_at="2026-06-22T01:00:00Z",
         fencing_tokens={"budget-1": 1},
     )
+
+
+class _ExplodingRequestedUsage:
+    def __iter__(self) -> Iterator[UsageAmount]:
+        raise RuntimeError("requested usage exploded")
 
 
 def test_finish_current_turn_requires_bounded_continuation() -> None:
@@ -73,6 +80,51 @@ def test_finish_current_turn_allows_only_declared_continuation_work() -> None:
     assert second_finalization.allowed is False
     assert second_finalization.reason == "max_additional_steps_exceeded"
     assert current_epoch_cleanup.allowed is True
+
+
+def test_exhaustion_boundaries_reject_ambiguous_inputs_and_are_pickle_safe() -> None:
+    policy = ExhaustionPolicy.from_preset(
+        "finish_current_turn",
+        unit="turn",
+        continuation=ContinuationEnvelope(
+            max_additional_usage=[_tokens("100")],
+            max_additional_steps=1,
+        ),
+    )
+    controller = ExhaustionController(
+        policy,
+        atomic_unit_id="turn:1",
+        admission_epoch=7,
+        continuation_permit=_permit(),
+    )
+
+    assert pickle.loads(pickle.dumps(_permit())) == _permit()
+    with pytest.raises(ValueError, match="requested_usage"):
+        controller.admit(
+            "declared_finalization",
+            work_epoch=8,
+            requested_usage=0,  # type: ignore[arg-type]
+        )
+    with pytest.raises(ValueError, match="requested_usage"):
+        controller.admit(
+            "declared_finalization",
+            work_epoch=8,
+            requested_usage=_ExplodingRequestedUsage(),  # type: ignore[arg-type]
+        )
+    with pytest.raises(ValueError, match="supported integer range"):
+        ExhaustionController(
+            policy,
+            atomic_unit_id="turn:1",
+            admission_epoch=1 << 64,
+        )
+    with pytest.raises(ValueError, match="Unicode scalar"):
+        ExhaustionController(
+            policy,
+            atomic_unit_id="\ud800",
+            admission_epoch=7,
+        )
+    with pytest.raises(ValueError, match="policy must be an ExhaustionPolicy"):
+        validate_exhaustion_policy(object())  # type: ignore[arg-type]
 
 
 def test_hard_stop_blocks_new_work_and_late_output_delivery() -> None:

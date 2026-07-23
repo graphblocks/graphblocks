@@ -298,6 +298,59 @@ def test_async_operation_result_rejects_cyclic_and_excessively_deep_json_values(
         graphblocks.AsyncOperationResult.completed("op-1", output=deeply_nested)
 
 
+def test_async_operation_records_normalize_hostile_container_failures() -> None:
+    class ExplodingIterable:
+        def __iter__(self):
+            raise RuntimeError("iterator changed during snapshot")
+
+    class ExplodingMapping(dict[str, object]):
+        def items(self):
+            raise RuntimeError("mapping changed during snapshot")
+
+    class DuplicateMapping(dict[str, object]):
+        def items(self):
+            return (("value", 1), ("value", 2))
+
+    with raises_value_error("async operation result metrics must be a sequence"):
+        graphblocks.AsyncOperationResult.completed("op-1").with_projections(
+            metrics=ExplodingIterable(),
+        )
+    with raises_value_error("async operation result output could not be traversed"):
+        graphblocks.AsyncOperationResult.completed(
+            "op-1",
+            output=ExplodingMapping({"value": 1}),
+        )
+    with raises_value_error("async operation result output keys must be unique"):
+        graphblocks.AsyncOperationResult.completed(
+            "op-1",
+            output=DuplicateMapping(),
+        )
+    with raises_value_error("external callback received artifacts must be a sequence"):
+        graphblocks.ExternalCallbackReceived(
+            callback_id="cb-1",
+            operation_id="op-ci-1",
+            run_id="run-1",
+            node_id="startCI",
+            attempt_id="attempt-1",
+            idempotency_key="idem-callback-1",
+            payload={"status": "completed"},
+            payload_digest=graphblocks.canonical_hash({"status": "completed"}),
+            received_at="2026-07-02T00:10:00Z",
+            verified_by="hmac-sha256:callback-endpoint-1",
+            policy_snapshot_id="policy-1",
+            artifacts=ExplodingIterable(),  # type: ignore[arg-type]
+        )
+
+
+def test_async_operation_records_reject_non_unicode_wire_strings() -> None:
+    with raises_value_error("async operation result operation_id must contain only Unicode scalar values"):
+        graphblocks.AsyncOperationResult.completed("op-\ud800")
+    with raises_value_error("async operation result output must contain only Unicode scalar values"):
+        graphblocks.AsyncOperationResult.completed("op-1", output={"value": "\ud800"})
+    with raises_value_error("async operation result output keys must contain only Unicode scalar values"):
+        graphblocks.AsyncOperationResult.completed("op-1", output={"\ud800": "value"})
+
+
 def test_async_operation_result_projects_from_terminal_operation_state() -> None:
     completed_operation = graphblocks.AsyncOperation.created(
         operation_id="op-ci-1",
@@ -807,6 +860,30 @@ def test_external_callback_received_rejects_invalid_identity_digest_and_json() -
                 policy_snapshot_id="policy-1",
                 artifacts=[artifact],
             )
+
+    with raises_value_error(
+        "external callback received artifacts size_bytes must be at most 18446744073709551615"
+    ):
+        graphblocks.ExternalCallbackReceived(
+            callback_id="cb-1",
+            operation_id="op-ci-1",
+            run_id="run-1",
+            node_id="startCI",
+            attempt_id="attempt-1",
+            idempotency_key="idem-callback-1",
+            payload={"status": "completed"},
+            payload_digest=graphblocks.canonical_hash({"status": "completed"}),
+            received_at="2026-07-02T00:10:00Z",
+            verified_by="hmac-sha256:callback-endpoint-1",
+            policy_snapshot_id="policy-1",
+            artifacts=[
+                {
+                    "artifact_id": "artifact-ci-log",
+                    "uri": "blob://ci/log",
+                    "size_bytes": 1 << 64,
+                }
+            ],
+        )
 
     with raises_value_error("external callback received artifacts must not contain duplicate artifact_id"):
         graphblocks.ExternalCallbackReceived(

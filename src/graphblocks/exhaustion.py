@@ -118,6 +118,7 @@ VALID_EFFECT_POLICIES = frozenset(
     }
 )
 VALID_AFTER_UNIT_POLICIES = frozenset({"reject", "pause", "fallback", "close"})
+_MAX_U64 = (1 << 64) - 1
 
 
 class ExhaustionPolicyError(RuntimeError):
@@ -133,6 +134,10 @@ def _validate_non_negative_integer(owner: str, field_name: str, value: object) -
         raise ValueError(f"{owner} {field_name} must be an integer")
     if value < 0:
         raise ValueError(f"{owner} {field_name} must be non-negative")
+    if value > _MAX_U64:
+        raise ValueError(
+            f"{owner} {field_name} exceeds the supported integer range"
+        )
     return value
 
 
@@ -143,6 +148,12 @@ def _validate_exact_non_empty_string(
 ) -> str:
     if not isinstance(value, str):
         raise ValueError(f"{owner} {field_name} must be a string")
+    try:
+        value.encode("utf-8")
+    except UnicodeEncodeError as error:
+        raise ValueError(
+            f"{owner} {field_name} must contain only Unicode scalar values"
+        ) from error
     if not value.strip():
         raise ValueError(f"{owner} {field_name} must not be empty")
     if value != value.strip():
@@ -183,7 +194,7 @@ class ContinuationEnvelope:
                 )
             try:
                 normalized = frozenset(values)
-            except TypeError as error:
+            except Exception as error:
                 raise ValueError(
                     f"continuation envelope {field_name} must be a collection"
                 ) from error
@@ -202,7 +213,7 @@ class ContinuationEnvelope:
             )
         try:
             max_additional_usage = tuple(self.max_additional_usage)
-        except TypeError as error:
+        except Exception as error:
             raise ValueError(
                 "continuation envelope max_additional_usage must contain UsageAmount values"
             ) from error
@@ -302,7 +313,7 @@ class ExhaustionPolicy:
             )
         try:
             max_overdraft = tuple(self.max_overdraft)
-        except TypeError as error:
+        except Exception as error:
             raise ValueError(
                 "exhaustion max_overdraft must contain UsageAmount values"
             ) from error
@@ -519,7 +530,7 @@ class ExhaustionController:
             )
         try:
             used_additional_usage = tuple(self.used_additional_usage)
-        except TypeError as error:
+        except Exception as error:
             raise ValueError(
                 "exhaustion used_additional_usage must contain UsageAmount values"
             ) from error
@@ -554,8 +565,10 @@ class ExhaustionController:
             raise ValueError("exhaustion permit must be a BudgetPermit")
         envelope = self.policy.continuation
         try:
-            requested_usage_list = list(requested_usage or [])
-        except TypeError as error:
+            requested_usage_list = (
+                [] if requested_usage is None else list(requested_usage)
+            )
+        except Exception as error:
             raise ValueError(
                 "exhaustion requested_usage must contain UsageAmount values"
             ) from error
@@ -652,6 +665,10 @@ class ExhaustionController:
 
 
 def validate_exhaustion_policy(policy: ExhaustionPolicy, *, production: bool = False) -> list[str]:
+    if not isinstance(policy, ExhaustionPolicy):
+        raise ValueError("policy must be an ExhaustionPolicy")
+    if not isinstance(production, bool):
+        raise ValueError("production must be a boolean")
     issues: list[str] = []
     if policy.preset is None:
         issues.append("missing_preset")

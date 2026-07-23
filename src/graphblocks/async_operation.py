@@ -88,6 +88,7 @@ VALID_ASYNC_OPERATION_KINDS = frozenset({
     "custom",
 })
 _MAX_ASYNC_JSON_DEPTH = 64
+_MAX_U64 = (1 << 64) - 1
 
 
 class _FrozenJsonArray(tuple[object, ...]):
@@ -101,6 +102,10 @@ def _validate_exact_non_empty_string(owner: str, field_name: str, value: object)
         raise ValueError(f"{owner} {field_name} must not be empty")
     if value != value.strip():
         raise ValueError(f"{owner} {field_name} must not contain surrounding whitespace")
+    try:
+        value.encode("utf-8")
+    except UnicodeEncodeError:
+        raise ValueError(f"{owner} {field_name} must contain only Unicode scalar values") from None
     return value
 
 
@@ -166,7 +171,13 @@ def _freeze_json_value(
         )
     if active_containers is None:
         active_containers = set()
-    if value is None or isinstance(value, str) or isinstance(value, bool):
+    if value is None or isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        try:
+            value.encode("utf-8")
+        except UnicodeEncodeError:
+            raise ValueError(f"{owner} {field_name} must contain only Unicode scalar values") from None
         return value
     if isinstance(value, int) and not isinstance(value, bool):
         return value
@@ -221,12 +232,26 @@ def _freeze_json_value(
         active_containers.add(container_id)
         key_label = field_name if key_field_name is None else key_field_name
         try:
+            try:
+                items = tuple(value.items())
+            except (TypeError, ValueError, RuntimeError):
+                raise ValueError(f"{owner} {field_name} could not be traversed") from None
             frozen: dict[str, object] = {}
-            for key, item in value.items():
+            for key, item in items:
                 if not isinstance(key, str) or not key.strip():
                     raise ValueError(f"{owner} {key_label} keys must be non-empty strings")
                 if key != key.strip():
                     raise ValueError(f"{owner} {key_label} keys must not contain surrounding whitespace")
+                try:
+                    key.encode("utf-8")
+                except UnicodeEncodeError:
+                    raise ValueError(
+                        f"{owner} {key_label} keys must contain only Unicode scalar values"
+                    ) from None
+                if key in frozen:
+                    raise ValueError(
+                        f"{owner} {key_label} keys must be unique"
+                    )
                 frozen[key] = _freeze_json_value(
                     owner,
                     field_name,
@@ -286,7 +311,7 @@ def _projection_sequence(field_name: str, value: object) -> tuple[object, ...]:
         raise ValueError(f"async operation result {field_name} must be a sequence")
     try:
         items = tuple(value)  # type: ignore[arg-type]
-    except TypeError:
+    except (TypeError, ValueError, RuntimeError):
         raise ValueError(f"async operation result {field_name} must be a sequence") from None
     if any(not isinstance(item, Mapping) for item in items):
         raise ValueError(f"async operation result {field_name} entries must be JSON objects")
@@ -298,7 +323,7 @@ def _external_effect_sequence(value: object) -> tuple[object, ...]:
         raise ValueError("async operation result external_effects must be a sequence")
     try:
         return tuple(value)  # type: ignore[arg-type]
-    except TypeError:
+    except (TypeError, ValueError, RuntimeError):
         raise ValueError("async operation result external_effects must be a sequence") from None
 
 
@@ -307,7 +332,7 @@ def _external_callback_artifact_sequence(value: object) -> tuple[object, ...]:
         raise ValueError("external callback received artifacts must be a sequence")
     try:
         return tuple(value)  # type: ignore[arg-type]
-    except TypeError:
+    except (TypeError, ValueError, RuntimeError):
         raise ValueError("external callback received artifacts must be a sequence") from None
 
 
@@ -318,6 +343,12 @@ def _validate_external_callback_artifact_string(field_name: str, value: object) 
         raise ValueError(
             f"external callback received artifacts {field_name} must not contain surrounding whitespace"
         )
+    try:
+        value.encode("utf-8")
+    except UnicodeEncodeError:
+        raise ValueError(
+            f"external callback received artifacts {field_name} must contain only Unicode scalar values"
+        ) from None
     return value
 
 
@@ -790,9 +821,9 @@ class ExternalCallbackReceived:
             raise ValueError("external callback received payload_digest must match payload")
         artifact_refs = []
         for artifact in _external_callback_artifact_sequence(self.artifacts):
-            artifact_value = artifact
-            if isinstance(artifact, Mapping):
-                artifact_value = dict(artifact)
+            artifact_value = _freeze_json_value("external callback received", "artifacts", artifact)
+            if isinstance(artifact_value, Mapping):
+                artifact_value = dict(artifact_value)
                 for source_key, target_key in (
                     ("artifactId", "artifact_id"),
                     ("mediaType", "media_type"),
@@ -822,6 +853,10 @@ class ExternalCallbackReceived:
             ):
                 raise ValueError(
                     "external callback received artifacts size_bytes must be a non-negative integer"
+                )
+            if isinstance(size_bytes, int) and not isinstance(size_bytes, bool) and size_bytes > _MAX_U64:
+                raise ValueError(
+                    f"external callback received artifacts size_bytes must be at most {_MAX_U64}"
                 )
             if artifact_id in artifact_ids:
                 raise ValueError("external callback received artifacts must not contain duplicate artifact_id")

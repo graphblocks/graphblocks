@@ -10,6 +10,9 @@ from typing import ParamSpec, TypeAlias, TypeVar, cast
 
 
 LeaseTime: TypeAlias = int | float
+_MAX_U64 = (1 << 64) - 1
+_MIN_JSON_INTEGER = -(1 << 63)
+_MAX_LEASE_JSON_DEPTH = 64
 _P = ParamSpec("_P")
 _R = TypeVar("_R")
 
@@ -49,6 +52,12 @@ def _validate_non_empty_string(field_name: str, value: object) -> str:
         raise InvalidLeaseRequestError(
             f"lease {field_name} must not contain surrounding whitespace"
         )
+    try:
+        value.encode("utf-8")
+    except UnicodeEncodeError:
+        raise InvalidLeaseRequestError(
+            f"lease {field_name} must contain only Unicode scalar values"
+        ) from None
     return value
 
 
@@ -57,6 +66,8 @@ def _validate_positive_integer(field_name: str, value: object) -> int:
         raise InvalidLeaseRequestError(f"lease {field_name} must be a positive integer")
     if value <= 0:
         raise InvalidLeaseRequestError(f"lease {field_name} must be a positive integer")
+    if value > _MAX_U64:
+        raise InvalidLeaseRequestError(f"lease {field_name} must be at most {_MAX_U64}")
     return value
 
 
@@ -65,6 +76,8 @@ def _validate_non_negative_integer(field_name: str, value: object) -> int:
         raise InvalidLeaseRequestError(f"lease {field_name} must be a non-negative integer")
     if value < 0:
         raise InvalidLeaseRequestError(f"lease {field_name} must be a non-negative integer")
+    if value > _MAX_U64:
+        raise InvalidLeaseRequestError(f"lease {field_name} must be at most {_MAX_U64}")
     return value
 
 
@@ -84,34 +97,119 @@ def _validate_optional_time(field_name: str, value: object | None) -> LeaseTime 
     return _validate_time(field_name, value)
 
 
-def _freeze_attributes(value: object) -> MappingProxyType[str, object]:
+def _freeze_attributes(
+    value: object,
+    *,
+    active_containers: set[int] | None = None,
+    depth: int = 0,
+) -> MappingProxyType[str, object]:
+    if depth > _MAX_LEASE_JSON_DEPTH:
+        raise InvalidLeaseRequestError(
+            f"lease attributes exceed maximum JSON depth {_MAX_LEASE_JSON_DEPTH}"
+        )
     if not isinstance(value, Mapping):
         raise InvalidLeaseRequestError("lease attributes must be a mapping")
-    attributes: dict[str, object] = {}
-    for key, item in value.items():
-        if not isinstance(key, str):
-            raise InvalidLeaseRequestError("lease attribute keys must be strings")
-        if not key.strip():
-            raise InvalidLeaseRequestError("lease attribute keys must not be empty")
-        if key != key.strip():
+    if active_containers is None:
+        active_containers = set()
+    container_id = id(value)
+    if container_id in active_containers:
+        raise InvalidLeaseRequestError("lease attributes must not contain cyclic values")
+    active_containers.add(container_id)
+    try:
+        try:
+            items = tuple(value.items())
+        except (TypeError, ValueError, RuntimeError):
             raise InvalidLeaseRequestError(
-                "lease attribute keys must not contain surrounding whitespace"
+                "lease attributes could not be traversed"
+            ) from None
+        attributes: dict[str, object] = {}
+        for key, item in items:
+            if not isinstance(key, str):
+                raise InvalidLeaseRequestError("lease attribute keys must be strings")
+            if not key.strip():
+                raise InvalidLeaseRequestError("lease attribute keys must not be empty")
+            if key != key.strip():
+                raise InvalidLeaseRequestError(
+                    "lease attribute keys must not contain surrounding whitespace"
+                )
+            try:
+                key.encode("utf-8")
+            except UnicodeEncodeError:
+                raise InvalidLeaseRequestError(
+                    "lease attribute keys must contain only Unicode scalar values"
+                ) from None
+            if key in attributes:
+                raise InvalidLeaseRequestError(
+                    "lease attribute keys must be unique"
+                )
+            attributes[key] = _freeze_attribute_value(
+                item,
+                active_containers=active_containers,
+                depth=depth + 1,
             )
-        attributes[key] = _freeze_attribute_value(item)
-    return MappingProxyType(attributes)
+        return MappingProxyType(attributes)
+    finally:
+        active_containers.remove(container_id)
 
 
-def _freeze_attribute_value(value: object) -> object:
-    if value is None or isinstance(value, (str, bool, int)):
+def _freeze_attribute_value(
+    value: object,
+    *,
+    active_containers: set[int],
+    depth: int,
+) -> object:
+    if depth > _MAX_LEASE_JSON_DEPTH:
+        raise InvalidLeaseRequestError(
+            f"lease attributes exceed maximum JSON depth {_MAX_LEASE_JSON_DEPTH}"
+        )
+    if value is None or isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        try:
+            value.encode("utf-8")
+        except UnicodeEncodeError:
+            raise InvalidLeaseRequestError(
+                "lease attribute values must contain only Unicode scalar values"
+            ) from None
+        return value
+    if isinstance(value, int):
+        if value < _MIN_JSON_INTEGER or value > _MAX_U64:
+            raise InvalidLeaseRequestError(
+                "lease attribute integer values must fit the JSON wire domain"
+            )
         return value
     if isinstance(value, float):
         if not math.isfinite(value):
             raise InvalidLeaseRequestError("lease attribute values must be JSON-compatible")
         return value
     if isinstance(value, Mapping):
-        return _freeze_attributes(value)
+        return _freeze_attributes(
+            value,
+            active_containers=active_containers,
+            depth=depth,
+        )
     if isinstance(value, (list, tuple)):
-        return tuple(_freeze_attribute_value(item) for item in value)
+        container_id = id(value)
+        if container_id in active_containers:
+            raise InvalidLeaseRequestError("lease attributes must not contain cyclic values")
+        active_containers.add(container_id)
+        try:
+            try:
+                items = tuple(value)
+            except (TypeError, ValueError, RuntimeError):
+                raise InvalidLeaseRequestError(
+                    "lease attributes could not be traversed"
+                ) from None
+            return tuple(
+                _freeze_attribute_value(
+                    item,
+                    active_containers=active_containers,
+                    depth=depth + 1,
+                )
+                for item in items
+            )
+        finally:
+            active_containers.remove(container_id)
     raise InvalidLeaseRequestError("lease attribute values must be JSON-compatible")
 
 
@@ -203,23 +301,39 @@ class InMemoryLeasePool:
     def __post_init__(self) -> None:
         if not isinstance(self.capacities, Mapping):
             raise InvalidLeaseRequestError("lease capacities must be a mapping")
-        capacities = dict(self.capacities)
-        for resource, capacity in capacities.items():
+        try:
+            capacity_items = tuple(self.capacities.items())
+        except (TypeError, ValueError, RuntimeError):
+            raise InvalidLeaseRequestError("lease capacities could not be copied") from None
+        capacities: dict[str, int] = {}
+        for resource, capacity in capacity_items:
             _validate_non_empty_string("resource name", resource)
-            if not isinstance(capacity, int) or isinstance(capacity, bool) or capacity <= 0:
+            if resource in capacities:
                 raise InvalidLeaseRequestError(
-                    f"lease capacity for {resource} must be a positive integer"
+                    "lease capacity resource names must be unique"
                 )
+            _validate_positive_integer(f"capacity for {resource}", capacity)
+            capacities[resource] = capacity
         if not isinstance(self.active, Mapping):
             raise InvalidLeaseRequestError("lease active records must be a mapping")
-        active_leases = dict(self.active)
+        try:
+            active_items = tuple(self.active.items())
+        except (TypeError, ValueError, RuntimeError):
+            raise InvalidLeaseRequestError("lease active records could not be copied") from None
+        active_leases: dict[str, ActiveLease] = {}
+        for lease_id, active in active_items:
+            Lease._validate_lease_id(lease_id)
+            if lease_id in active_leases:
+                raise InvalidLeaseRequestError(
+                    "lease active record identifiers must be unique"
+                )
+            active_leases[lease_id] = active
         self.capacities = MappingProxyType(capacities)
         max_restored_id = 0
         max_restored_fencing_token = 0
         restored_units: dict[str, int] = {}
         restored_fencing_tokens: set[int] = set()
         for lease_id, active in active_leases.items():
-            Lease._validate_lease_id(lease_id)
             if not isinstance(active, ActiveLease):
                 raise InvalidLeaseRequestError("lease active records must be ActiveLease")
             if active.resource not in capacities:
@@ -248,7 +362,12 @@ class InMemoryLeasePool:
                 and suffix.isascii()
                 and suffix.isdecimal()
             ):
-                max_restored_id = max(max_restored_id, int(suffix))
+                restored_id = int(suffix)
+                if restored_id > _MAX_U64:
+                    raise InvalidLeaseRequestError(
+                        "active lease numeric identifiers must fit an unsigned 64-bit integer"
+                    )
+                max_restored_id = max(max_restored_id, restored_id)
             max_restored_fencing_token = max(
                 max_restored_fencing_token,
                 active.fencing_token,
@@ -256,14 +375,14 @@ class InMemoryLeasePool:
         self.active = active_leases
         self.next_id = max(
             _validate_positive_integer("next_id", self.next_id),
-            max_restored_id + 1,
+            min(max_restored_id + 1, _MAX_U64),
         )
         self.next_fencing_token = max(
             _validate_positive_integer(
                 "next_fencing_token",
                 self.next_fencing_token,
             ),
-            max_restored_fencing_token + 1,
+            min(max_restored_fencing_token + 1, _MAX_U64),
         )
 
     @_with_lease_pool_lock
@@ -310,6 +429,21 @@ class InMemoryLeasePool:
                 f"available {available}"
             )
 
+        lease_number = self.next_id
+        while lease_number < _MAX_U64 and f"lease-{lease_number:06d}" in self.active:
+            lease_number += 1
+        if lease_number >= _MAX_U64:
+            raise InvalidLeaseRequestError("lease identifier counter is exhausted")
+        fencing_candidate = self.next_fencing_token
+        if self.active:
+            max_active_fencing_token = max(
+                active.fencing_token for active in self.active.values()
+            )
+            if max_active_fencing_token >= _MAX_U64:
+                raise InvalidLeaseRequestError("lease fencing token counter is exhausted")
+            fencing_candidate = max(fencing_candidate, max_active_fencing_token + 1)
+        if fencing_candidate >= _MAX_U64:
+            raise InvalidLeaseRequestError("lease fencing token counter is exhausted")
         lease_id = self._allocate_lease_id()
         fencing_token = self._allocate_fencing_token()
         active = ActiveLease(
@@ -342,6 +476,7 @@ class InMemoryLeasePool:
     ) -> int:
         renewed_at = _validate_time("renewed_at", renewed_at)
         expires_at = _validate_time("expires_at", expires_at)
+        fencing_token = _validate_non_negative_integer("fencing_token", fencing_token)
         if expires_at <= renewed_at:
             raise InvalidLeaseRequestError("lease expires_at must be after renewal")
         self.reap_expired(renewed_at)
@@ -437,21 +572,28 @@ class InMemoryLeasePool:
             raise LeaseUnavailableError(f"unknown lease resource {resource}") from error
 
     def _allocate_lease_id(self) -> str:
-        lease_id = f"lease-{self.next_id:06d}"
+        lease_number = self.next_id
+        lease_id = f"lease-{lease_number:06d}"
         while lease_id in self.active:
-            self.next_id += 1
-            lease_id = f"lease-{self.next_id:06d}"
-        self.next_id += 1
+            if lease_number >= _MAX_U64:
+                raise InvalidLeaseRequestError("lease identifier counter is exhausted")
+            lease_number += 1
+            lease_id = f"lease-{lease_number:06d}"
+        if lease_number >= _MAX_U64:
+            raise InvalidLeaseRequestError("lease identifier counter is exhausted")
+        self.next_id = lease_number + 1
         return lease_id
 
     def _allocate_fencing_token(self) -> int:
+        fencing_token = self.next_fencing_token
         if self.active:
-            self.next_fencing_token = max(
-                self.next_fencing_token,
+            fencing_token = max(
+                fencing_token,
                 max(active.fencing_token for active in self.active.values()) + 1,
             )
-        fencing_token = self.next_fencing_token
-        self.next_fencing_token += 1
+        if fencing_token >= _MAX_U64:
+            raise InvalidLeaseRequestError("lease fencing token counter is exhausted")
+        self.next_fencing_token = fencing_token + 1
         return fencing_token
 
     def _active_lease(self, lease_id: str) -> ActiveLease:
