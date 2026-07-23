@@ -89,7 +89,7 @@ def _validate_string_list(owner: str, field_name: str, values: object) -> list[s
         raise ValueError(f"{owner} {field_name} must be a collection of strings")
     try:
         normalized = list(values)  # type: ignore[arg-type]
-    except TypeError as error:
+    except (TypeError, RuntimeError) as error:
         raise ValueError(f"{owner} {field_name} must be a collection of strings") from error
     for item in normalized:
         if not isinstance(item, str):
@@ -112,7 +112,7 @@ def _validate_record_list(owner: str, field_name: str, values: object, item_type
         raise ValueError(f"{owner} {field_name} must be a collection")
     try:
         normalized = list(values)  # type: ignore[arg-type]
-    except TypeError as error:
+    except (TypeError, RuntimeError) as error:
         raise ValueError(f"{owner} {field_name} must be a collection") from error
     for item in normalized:
         if not isinstance(item, item_type):
@@ -123,7 +123,12 @@ def _validate_record_list(owner: str, field_name: str, values: object, item_type
 def _copy_mapping(owner: str, field_name: str, value: object) -> dict[str, object]:
     if not isinstance(value, Mapping):
         raise ValueError(f"{owner} {field_name} must be a mapping")
-    mapping = deepcopy(dict(value))
+    try:
+        mapping = deepcopy(dict(value))
+    except (RecursionError, TypeError, ValueError, RuntimeError) as error:
+        raise ValueError(
+            f"{owner} {field_name} must be a stable mapping"
+        ) from error
     for key in mapping:
         if not isinstance(key, str):
             raise ValueError(f"{owner} {field_name} keys must be strings")
@@ -143,7 +148,10 @@ def _copy_mapping(owner: str, field_name: str, value: object) -> dict[str, objec
 def _finite_float(owner: str, field_name: str, value: object) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float, Decimal)):
         raise ValueError(f"{owner} {field_name} must be numeric")
-    numeric = float(value)
+    try:
+        numeric = float(value)
+    except (OverflowError, ValueError) as error:
+        raise ValueError(f"{owner} {field_name} must be finite") from error
     if not math.isfinite(numeric):
         raise ValueError(f"{owner} {field_name} must be finite")
     return numeric
@@ -544,6 +552,8 @@ class SloObjective:
         return replace(self, unit=unit)
 
     def evaluate(self, measurement: SloMeasurement) -> SloReport:
+        if not isinstance(measurement, SloMeasurement):
+            raise ValueError("SLO objective measurement must be a SloMeasurement")
         for reason, mismatched in (
             ("indicator_mismatch", self.indicator != measurement.indicator),
             ("window_mismatch", self.window != measurement.window),
@@ -851,10 +861,16 @@ def evaluate_gate(
     constraints: list[GateConstraint] | None = None,
     policy_ref: str | None = None,
 ) -> GateResult:
-    check_list = list(checks or [])
-    metric_list = list(metrics or [])
     if not isinstance(subject, ResourceSnapshotRef):
         raise ValueError("gate subject must be a ResourceSnapshotRef")
+    try:
+        check_list = list(checks) if checks is not None else []
+    except (TypeError, RuntimeError) as error:
+        raise ValueError("gate checks must be a collection") from error
+    try:
+        metric_list = list(metrics) if metrics is not None else []
+    except (TypeError, RuntimeError) as error:
+        raise ValueError("gate metrics must be a collection") from error
     if any(not isinstance(check, CheckResult) for check in check_list):
         raise ValueError("gate checks must contain CheckResult records")
     if any(
@@ -870,7 +886,10 @@ def evaluate_gate(
         for metric in metric_list
     ):
         raise ValueError("gate metrics must target the gate subject")
-    constraint_list = list(constraints or [])
+    try:
+        constraint_list = list(constraints) if constraints is not None else []
+    except (TypeError, RuntimeError) as error:
+        raise ValueError("gate constraints must be a collection") from error
     if any(
         not isinstance(constraint, GateConstraint)
         for constraint in constraint_list

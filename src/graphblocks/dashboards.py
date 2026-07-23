@@ -7,7 +7,8 @@ from decimal import Decimal
 import hashlib
 import json
 import math
-from types import MappingProxyType
+
+from graphblocks.documents import FrozenDict
 
 
 class DashboardAssetError(ValueError):
@@ -46,7 +47,7 @@ def _sorted_str_mapping(values: object) -> Mapping[str, str]:
     if not isinstance(values, Mapping):
         raise DashboardAssetError("dashboard template metadata must be a mapping")
     normalized: dict[str, str] = {}
-    for key, value in values.items():
+    for key, value in tuple(values.items()):
         normalized_key = _stable_string("dashboard template", "metadata key", key)
         normalized_value = _stable_string(
             "dashboard template",
@@ -54,8 +55,12 @@ def _sorted_str_mapping(values: object) -> Mapping[str, str]:
             value,
             allow_empty=True,
         )
+        if normalized_key in normalized:
+            raise DashboardAssetError(
+                f"dashboard template has duplicate metadata key {normalized_key!r}"
+            )
         normalized[normalized_key] = normalized_value
-    return MappingProxyType(dict(sorted(normalized.items())))
+    return FrozenDict(dict(sorted(normalized.items())))
 
 
 def _content_digest(value: object) -> str:

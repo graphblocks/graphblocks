@@ -582,6 +582,16 @@ def test_devtools_graph_rejects_ambiguous_and_dangling_nodes(monkeypatch) -> Non
         match="nodes must contain DevGraphNode",
     ):
         graphblocks_devtools.DevGraph("graph", nodes=(object(),))
+    edge = graphblocks_devtools.DevGraphEdge("begin", "begin")
+    with pytest.raises(
+        graphblocks_devtools.DevtoolsContractError,
+        match="edges must be unique",
+    ):
+        graphblocks_devtools.DevGraph(
+            "graph",
+            nodes=(node,),
+            edges=(edge, edge),
+        )
 
 
 def test_devtools_profile_values_are_strict_immutable_snapshots(monkeypatch) -> None:
@@ -623,6 +633,41 @@ def test_devtools_profile_values_are_strict_immutable_snapshots(monkeypatch) -> 
             "profile",
             {"agent": 2**64 - 1, "tools": 1},
         )
+
+
+def test_devtools_normalizes_hostile_collection_failures(monkeypatch) -> None:
+    graphblocks_devtools = importlib.import_module("graphblocks.devtools")
+
+    class ExplodingValues:
+        def __iter__(self):
+            raise RuntimeError("source changed during iteration")
+
+    class ExplodingTotals(dict):
+        def items(self):
+            raise RuntimeError("source changed during iteration")
+
+    class DuplicateTotals(dict):
+        def items(self):
+            return (("agent", 1), ("agent", 2))
+
+    with pytest.raises(
+        graphblocks_devtools.DevtoolsContractError,
+        match="nodes and edges must be collections",
+    ):
+        graphblocks_devtools.DevGraph(
+            "graph",
+            nodes=ExplodingValues(),  # type: ignore[arg-type]
+        )
+    with pytest.raises(
+        graphblocks_devtools.DevtoolsContractError,
+        match="node_totals_ms must be a stable mapping",
+    ):
+        graphblocks_devtools.ProfilingSummary("profile", ExplodingTotals())
+    with pytest.raises(
+        graphblocks_devtools.DevtoolsContractError,
+        match="node_totals_ms keys must be unique",
+    ):
+        graphblocks_devtools.ProfilingSummary("profile", DuplicateTotals())
 
 
 @pytest.mark.parametrize(

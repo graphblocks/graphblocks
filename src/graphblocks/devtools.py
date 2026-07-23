@@ -51,7 +51,15 @@ def _content_digest(content: str) -> str:
 
 
 def _canonical_content_digest(content: object) -> str:
-    return _content_digest(json.dumps(content, sort_keys=True, separators=(",", ":"), ensure_ascii=False))
+    return _content_digest(
+        json.dumps(
+            content,
+            allow_nan=False,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+    )
 
 
 def _dot_quote(value: str) -> str:
@@ -114,7 +122,7 @@ class DevGraph:
         try:
             nodes = tuple(self.nodes)
             edges = tuple(self.edges)
-        except TypeError as error:
+        except (TypeError, RuntimeError) as error:
             raise DevtoolsContractError(
                 "developer graph nodes and edges must be collections"
             ) from error
@@ -129,6 +137,8 @@ class DevGraph:
         node_ids = [node.node_id for node in nodes]
         if len(set(node_ids)) != len(node_ids):
             raise DevtoolsContractError("developer graph node_id values must be unique")
+        if len(set(edges)) != len(edges):
+            raise DevtoolsContractError("developer graph edges must be unique")
         known_node_ids = set(node_ids)
         if any(
             edge.source not in known_node_ids or edge.target not in known_node_ids
@@ -170,7 +180,7 @@ class MigrationPlan:
         _stable_string("migration plan", "plan_id", self.plan_id)
         try:
             steps = tuple(self.steps)
-        except TypeError as error:
+        except (TypeError, RuntimeError) as error:
             raise DevtoolsContractError("migration plan steps must be a collection") from error
         if any(not isinstance(step, MigrationStep) for step in steps):
             raise DevtoolsContractError(
@@ -213,14 +223,24 @@ class ProfilingSummary:
             raise DevtoolsContractError(
                 "profiling summary node_totals_ms must be a mapping"
             )
+        try:
+            items = tuple(self.node_totals_ms.items())
+        except (TypeError, RuntimeError) as error:
+            raise DevtoolsContractError(
+                "profiling summary node_totals_ms must be a stable mapping"
+            ) from error
         normalized: dict[str, int] = {}
-        for node_id, elapsed_ms in self.node_totals_ms.items():
+        for node_id, elapsed_ms in items:
             normalized_node_id = _stable_string(
                 "profiling summary",
                 "node_totals_ms key",
                 node_id,
             )
             assert normalized_node_id is not None
+            if normalized_node_id in normalized:
+                raise DevtoolsContractError(
+                    "profiling summary node_totals_ms keys must be unique"
+                )
             if not isinstance(elapsed_ms, int) or isinstance(elapsed_ms, bool):
                 raise DevtoolsContractError(
                     "profiling summary node totals must be integers"
@@ -248,7 +268,7 @@ class ProfilingSummary:
     def from_samples(cls, *, profile_id: str, samples: tuple[ProfileSample, ...]) -> ProfilingSummary:
         try:
             normalized_samples = tuple(samples)
-        except TypeError as error:
+        except (TypeError, RuntimeError) as error:
             raise DevtoolsContractError("profile samples must be a collection") from error
         if any(not isinstance(sample, ProfileSample) for sample in normalized_samples):
             raise DevtoolsContractError(
@@ -325,7 +345,7 @@ class DiagnosticBundleSection:
         )
         try:
             diagnostics = tuple(raw_diagnostics)
-        except TypeError as error:
+        except (TypeError, RuntimeError) as error:
             raise DevtoolsContractError(
                 "diagnostic bundle section diagnostics must be a collection"
             ) from error
@@ -369,7 +389,7 @@ class DiagnosticBundle:
         _stable_string("diagnostic bundle", "bundle_id", self.bundle_id)
         try:
             sections = tuple(self.sections)
-        except TypeError as error:
+        except (TypeError, RuntimeError) as error:
             raise DevtoolsContractError(
                 "diagnostic bundle sections must be a collection"
             ) from error

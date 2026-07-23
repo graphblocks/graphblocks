@@ -129,6 +129,31 @@ def test_deployment_target_profile_mapping_rejects_non_collection_capabilities()
         )
 
 
+def test_deployment_target_profile_mapping_rejects_conflicting_aliases() -> None:
+    with pytest.raises(GraphDeploymentError, match="conflicting aliases"):
+        DeploymentTargetProfile.from_mapping(
+            {
+                "id": "control",
+                "targetId": "worker",
+                "imageRole": "control",
+                "kind": "service",
+                "executionHost": "rust",
+            }
+        )
+
+    with pytest.raises(GraphDeploymentError, match="conflicting aliases"):
+        DeploymentTargetProfile.from_mapping(
+            {
+                "id": "control",
+                "imageRole": "control",
+                "kind": "service",
+                "executionHost": "rust",
+                "defaultReplicas": 1,
+                "default_replicas": 2,
+            }
+        )
+
+
 @pytest.mark.parametrize("default_replicas", [True, False])
 def test_deployment_target_profile_rejects_boolean_default_replicas(
     default_replicas: bool,

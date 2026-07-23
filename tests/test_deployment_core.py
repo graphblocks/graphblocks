@@ -70,6 +70,37 @@ def test_deployment_revision_digest_is_stable_without_record_identity() -> None:
     assert left.content_digest() == right.content_digest()
 
 
+@pytest.mark.parametrize(
+    "field_name,value",
+    (
+        ("revision_id", ""),
+        ("release_digest", " sha256:release"),
+        ("deployment_spec_hash", object()),
+        ("physical_plan_hash", ""),
+        ("resolved_binding_hash", "sha256:binding "),
+        ("target_capability_hash", None),
+        ("created_at", ""),
+    ),
+)
+def test_deployment_revision_rejects_unstable_boundary_fields(
+    field_name: str,
+    value: object,
+) -> None:
+    values: dict[str, object] = {
+        "revision_id": "rev-1",
+        "release_digest": "sha256:release",
+        "deployment_spec_hash": "sha256:deployment",
+        "physical_plan_hash": "sha256:physical",
+        "resolved_binding_hash": "sha256:binding",
+        "target_capability_hash": "sha256:target",
+        "created_at": "2026-06-23T00:00:00Z",
+    }
+    values[field_name] = value
+
+    with pytest.raises(GraphDeploymentError, match=field_name):
+        DeploymentRevision(**values)  # type: ignore[arg-type]
+
+
 def test_graph_release_digest_is_stable_for_artifact_order() -> None:
     left = (
         GraphRelease(name="enterprise-rag", version="2026.06.23.1")
@@ -642,6 +673,33 @@ def test_deployment_target_maps_reject_mismatched_record_identity() -> None:
             "sha256:graph",
             targets={"alias": target},
         )
+
+
+def test_deployment_plan_records_reject_malformed_identity_and_members() -> None:
+    release = GraphRelease("support-agent", "2026.06.23.1")
+
+    with pytest.raises(GraphDeploymentError, match="placement rule rule_id"):
+        PlacementRule("", PlacementSelector.nodes(["generate"]), "control")
+    with pytest.raises(GraphDeploymentError, match="placement rule selector"):
+        PlacementRule("generate", object(), "control")  # type: ignore[arg-type]
+    with pytest.raises(GraphDeploymentError, match="placement rule target_id"):
+        PlacementRule("generate", PlacementSelector.nodes(["generate"]), " control")
+    with pytest.raises(GraphDeploymentError, match="placements"):
+        PhysicalExecutionPlan(
+            "sha256:release",
+            "rev-1",
+            "sha256:graph",
+            placements=(object(),),  # type: ignore[arg-type]
+        )
+    with pytest.raises(GraphDeploymentError, match="release must be a GraphRelease"):
+        GraphDeployment(
+            "support-prod",
+            object(),  # type: ignore[arg-type]
+            "turn",
+            "rev-1",
+        )
+    with pytest.raises(GraphDeploymentError, match="graph_name"):
+        GraphDeployment("support-prod", release, " turn", "rev-1")
 
 
 def test_placement_resolution_rejects_same_priority_conflicts() -> None:

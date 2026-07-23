@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+import pickle
 from pathlib import Path
 
 import pytest
@@ -191,6 +192,52 @@ def test_dashboard_metadata_is_immutable_and_slo_numbers_are_strict(monkeypatch)
                 "sum(up)",
                 "30d",
             )
+
+
+def test_dashboard_metadata_rejects_duplicate_mapping_items(monkeypatch) -> None:
+    graphblocks_dashboards = _import_dashboards(monkeypatch)
+
+    class DuplicateItemsDict(dict):
+        def items(self):
+            return (("team", "runtime"), ("team", "platform"))
+
+    with pytest.raises(
+        graphblocks_dashboards.DashboardAssetError,
+        match="duplicate metadata key",
+    ):
+        graphblocks_dashboards.DashboardTemplate(
+            "tokens",
+            "Tokens",
+            panels=(
+                graphblocks_dashboards.DashboardPanel(
+                    "Token Usage",
+                    "sum(tokens)",
+                ),
+            ),
+            metadata=DuplicateItemsDict(),
+        )
+
+
+def test_dashboard_template_round_trips_immutable_metadata(monkeypatch) -> None:
+    graphblocks_dashboards = _import_dashboards(monkeypatch)
+    template = graphblocks_dashboards.DashboardTemplate(
+        "tokens",
+        "Tokens",
+        panels=(
+            graphblocks_dashboards.DashboardPanel(
+                "Token Usage",
+                "sum(tokens)",
+            ),
+        ),
+        metadata={"team": "runtime"},
+    )
+
+    restored = pickle.loads(pickle.dumps(template))
+
+    assert restored == template
+    assert restored.content_digest() == template.content_digest()
+    with pytest.raises(TypeError):
+        restored.metadata["team"] = "mutated"
 
 
 def test_runbook_rejects_scalar_empty_and_coerced_steps(monkeypatch) -> None:

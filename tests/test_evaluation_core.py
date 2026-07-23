@@ -76,6 +76,34 @@ def test_evaluate_gate_preserves_explicit_empty_required_checks() -> None:
     assert gate.violated_constraints == []
 
 
+@pytest.mark.parametrize(
+    ("field_name", "value", "expected_error"),
+    (
+        ("checks", 0, "gate checks must be a collection"),
+        ("metrics", 0, "gate metrics must be a collection"),
+        ("constraints", 0, "gate constraints must be a collection"),
+        (
+            "required_check_ids",
+            0,
+            "gate required_check_ids must be a collection of strings",
+        ),
+    ),
+)
+def test_evaluate_gate_rejects_falsey_non_collections(
+    field_name: str,
+    value: object,
+    expected_error: str,
+) -> None:
+    subject = ResourceSnapshotRef("candidate-1", "sha256:candidate")
+
+    with pytest.raises(ValueError, match=expected_error):
+        evaluate_gate(
+            "quality",
+            subject,
+            **{field_name: value},
+        )
+
+
 @pytest.mark.parametrize("status", ("error", "timeout", "inconclusive"))
 def test_evaluate_gate_preserves_required_inconclusive_outcomes(status: str) -> None:
     subject = ResourceSnapshotRef("candidate-1", "sha256:candidate")
@@ -497,6 +525,20 @@ def test_metric_observation_validates_identity_direction_and_copies_evaluator() 
     with pytest.raises(ValueError, match="metric observation evaluator must be a mapping"):
         MetricObservation("latency_ms", Decimal("1"), evaluator=object())  # type: ignore[arg-type]
 
+    class BrokenSnapshot:
+        def __deepcopy__(self, memo: dict[int, object]) -> object:
+            raise RuntimeError("snapshot changed while copying")
+
+    with pytest.raises(
+        ValueError,
+        match="resource snapshot metadata must be a stable mapping",
+    ):
+        ResourceSnapshotRef(
+            "candidate-1",
+            "sha256:candidate",
+            metadata={"broken": BrokenSnapshot()},
+        )
+
 
 def test_gate_constraint_and_result_validate_literals_and_copy_lists() -> None:
     subject = ResourceSnapshotRef("candidate-1", "sha256:candidate")
@@ -530,6 +572,31 @@ def test_gate_constraint_and_result_validate_literals_and_copy_lists() -> None:
         GateResult("quality", subject, "fail", violated_constraints=[" "])
     with pytest.raises(ValueError, match="gate result metrics items must be MetricObservation"):
         GateResult("quality", subject, "pass", metrics=[object()])  # type: ignore[list-item]
+
+    class BrokenCollection:
+        def __iter__(self):
+            raise RuntimeError("collection changed during iteration")
+
+    with pytest.raises(
+        ValueError,
+        match="gate result check_ids must be a collection of strings",
+    ):
+        GateResult(
+            "quality",
+            subject,
+            "pass",
+            check_ids=BrokenCollection(),  # type: ignore[arg-type]
+        )
+    with pytest.raises(
+        ValueError,
+        match="gate result metrics must be a collection",
+    ):
+        GateResult(
+            "quality",
+            subject,
+            "pass",
+            metrics=BrokenCollection(),  # type: ignore[arg-type]
+        )
     with pytest.raises(ValueError, match="non-failing gate result must not contain"):
         GateResult(
             "quality",
@@ -672,6 +739,12 @@ def test_slo_records_validate_identity_literals_and_finite_values() -> None:
         SloObjective("slo-1", "latency", "at_most", True, "30d")  # type: ignore[arg-type]
     with pytest.raises(ValueError, match="SLO objective objective must be finite"):
         SloObjective("slo-1", "latency", "at_most", float("inf"), "30d")
+    with pytest.raises(ValueError, match="SLO objective objective must be finite"):
+        SloObjective("slo-1", "latency", "at_most", 10**1000, "30d")
+    with pytest.raises(ValueError, match="measurement must be a SloMeasurement"):
+        SloObjective("slo-1", "latency", "at_most", 1, "30d").evaluate(
+            object(),  # type: ignore[arg-type]
+        )
 
     with pytest.raises(ValueError, match="SLO measurement indicator must not be empty"):
         SloMeasurement(" ", 1.0, "30d")

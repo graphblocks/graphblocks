@@ -691,6 +691,21 @@ class DeploymentRevision:
     target_capability_hash: str
     created_at: str
 
+    def __post_init__(self) -> None:
+        for field_name in (
+            "revision_id",
+            "release_digest",
+            "deployment_spec_hash",
+            "physical_plan_hash",
+            "resolved_binding_hash",
+            "target_capability_hash",
+            "created_at",
+        ):
+            _require_stable_deployment_string(
+                getattr(self, field_name),
+                f"deployment revision {field_name}",
+            )
+
     def content_digest(self) -> str:
         return canonical_hash(
             {
@@ -1832,10 +1847,29 @@ class DeploymentTargetProfile:
 
     @classmethod
     def from_mapping(cls, mapping: Mapping[str, object]) -> DeploymentTargetProfile:
-        target_id = mapping.get("id", mapping.get("targetId", mapping.get("target_id")))
-        image_role = mapping.get("imageRole", mapping.get("image_role"))
-        kind = mapping.get("kind")
-        execution_host = mapping.get("executionHost", mapping.get("execution_host"))
+        aliases = {
+            "target_id": ("id", "targetId", "target_id"),
+            "image_role": ("imageRole", "image_role"),
+            "kind": ("kind",),
+            "execution_host": ("executionHost", "execution_host"),
+            "package_lock": ("packageLock", "package_lock"),
+            "default_replicas": ("defaultReplicas", "default_replicas"),
+        }
+        resolved: dict[str, object] = {}
+        for field_name, field_aliases in aliases.items():
+            present = [(alias, mapping[alias]) for alias in field_aliases if alias in mapping]
+            if len(present) > 1 and any(value != present[0][1] for _, value in present[1:]):
+                names = ", ".join(alias for alias, _ in present)
+                raise GraphDeploymentError(
+                    f"deployment target profile {field_name} has conflicting aliases: {names}"
+                )
+            if present:
+                resolved[field_name] = present[0][1]
+
+        target_id = resolved.get("target_id")
+        image_role = resolved.get("image_role")
+        kind = resolved.get("kind")
+        execution_host = resolved.get("execution_host")
         for field_name, value in (
             ("id", target_id),
             ("imageRole", image_role),
@@ -1854,8 +1888,8 @@ class DeploymentTargetProfile:
             "effects",
             mapping.get("effects", ()),
         )
-        package_lock = mapping.get("packageLock", mapping.get("package_lock"))
-        default_replicas = mapping.get("defaultReplicas", mapping.get("default_replicas", 1))
+        package_lock = resolved.get("package_lock")
+        default_replicas = resolved.get("default_replicas", 1)
         if package_lock is not None and not isinstance(package_lock, str):
             raise GraphDeploymentError("deployment target profile packageLock must be a string")
         if isinstance(default_replicas, bool) or not isinstance(default_replicas, int):
@@ -2079,6 +2113,20 @@ class PlacementRule:
     selector: PlacementSelector
     target_id: str
 
+    def __post_init__(self) -> None:
+        _require_stable_deployment_string(
+            self.rule_id,
+            "placement rule rule_id",
+        )
+        if not isinstance(self.selector, PlacementSelector):
+            raise GraphDeploymentError(
+                "placement rule selector must be a PlacementSelector"
+            )
+        _require_stable_deployment_string(
+            self.target_id,
+            "placement rule target_id",
+        )
+
     def canonical_value(self) -> dict[str, object]:
         return {
             "rule_id": self.rule_id,
@@ -2149,8 +2197,37 @@ class PhysicalExecutionPlan:
     default_target: str | None = None
 
     def __post_init__(self) -> None:
+        for field_name in (
+            "release_digest",
+            "deployment_revision_id",
+            "graph_hash",
+        ):
+            _require_stable_deployment_string(
+                getattr(self, field_name),
+                f"physical execution plan {field_name}",
+            )
+        if self.package_lock_hash is not None:
+            _require_stable_deployment_string(
+                self.package_lock_hash,
+                "physical execution plan package_lock_hash",
+            )
+        if self.default_target is not None:
+            _require_stable_deployment_string(
+                self.default_target,
+                "physical execution plan default_target",
+            )
         object.__setattr__(self, "targets", _freeze_execution_targets(self.targets))
-        object.__setattr__(self, "placements", tuple(self.placements))
+        try:
+            placements = tuple(self.placements)
+        except TypeError as error:
+            raise GraphDeploymentError(
+                "physical execution plan placements must contain PlacementRule records"
+            ) from error
+        if any(not isinstance(placement, PlacementRule) for placement in placements):
+            raise GraphDeploymentError(
+                "physical execution plan placements must contain PlacementRule records"
+            )
+        object.__setattr__(self, "placements", placements)
 
     def with_package_lock_hash(self, package_lock_hash: str) -> PhysicalExecutionPlan:
         return replace(self, package_lock_hash=package_lock_hash)
@@ -2257,8 +2334,36 @@ class GraphDeployment:
     default_target: str | None = None
 
     def __post_init__(self) -> None:
+        _require_stable_deployment_string(
+            self.deployment_id,
+            "graph deployment deployment_id",
+        )
+        if not isinstance(self.release, GraphRelease):
+            raise GraphDeploymentError(
+                "graph deployment release must be a GraphRelease"
+            )
+        for field_name in ("graph_name", "deployment_revision_id", "environment"):
+            _require_stable_deployment_string(
+                getattr(self, field_name),
+                f"graph deployment {field_name}",
+            )
+        if self.default_target is not None:
+            _require_stable_deployment_string(
+                self.default_target,
+                "graph deployment default_target",
+            )
         object.__setattr__(self, "targets", _freeze_execution_targets(self.targets))
-        object.__setattr__(self, "placements", tuple(self.placements))
+        try:
+            placements = tuple(self.placements)
+        except TypeError as error:
+            raise GraphDeploymentError(
+                "graph deployment placements must contain PlacementRule records"
+            ) from error
+        if any(not isinstance(placement, PlacementRule) for placement in placements):
+            raise GraphDeploymentError(
+                "graph deployment placements must contain PlacementRule records"
+            )
+        object.__setattr__(self, "placements", placements)
 
     def with_target(self, target: ExecutionTarget) -> GraphDeployment:
         targets = dict(self.targets)
