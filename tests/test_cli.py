@@ -1825,6 +1825,66 @@ def test_deploy_plan_cli_builds_physical_execution_plan(tmp_path, capsys) -> Non
     ]
 
 
+def test_deploy_plan_cli_rejects_non_boolean_default_selector(tmp_path, capsys) -> None:
+    release = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "GraphRelease",
+        "metadata": {"name": "support-agent", "version": "2026.06.24.1"},
+        "spec": {
+            "bundle": {
+                "digest": "sha256:bundle",
+                "mediaType": "application/vnd.graphblocks.release.v1",
+            },
+            "graphs": {
+                "turn": {
+                    "graphHash": "sha256:graph-turn",
+                    "normalizedPlanHash": "sha256:plan-turn",
+                }
+            },
+        },
+    }
+    deployment = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "GraphDeployment",
+        "metadata": {"name": "support-production"},
+        "spec": {
+            "releaseRef": {"name": "support-agent"},
+            "targets": {
+                "control": {
+                    "kind": "service",
+                    "executionHost": "rust",
+                }
+            },
+            "placements": [
+                {
+                    "select": {"default": "false"},
+                    "target": "control",
+                }
+            ],
+        },
+    }
+    path = tmp_path / "deployment.yaml"
+    path.write_text(yaml.safe_dump_all([release, deployment]), encoding="utf-8")
+
+    assert main(
+        [
+            "deploy",
+            "plan",
+            str(path),
+            "--revision",
+            "rev-1",
+            "--created-at",
+            "2026-06-24T00:00:00Z",
+            "--json",
+        ]
+    ) == 1
+
+    assert json.loads(capsys.readouterr().out) == {
+        "ok": False,
+        "error": "GraphDeployment placement 0 default must be a boolean",
+    }
+
+
 def test_deploy_render_cli_renders_kubernetes_manifest_set(tmp_path, capsys) -> None:
     plan = _render_plan_payload()
     path = tmp_path / "plan.json"

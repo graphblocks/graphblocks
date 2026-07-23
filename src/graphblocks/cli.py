@@ -1893,7 +1893,16 @@ def _main(argv: list[str] | None = None) -> int:
                         raise ValueError(
                             f"GraphDeployment placement {index} requires target"
                         )
-                    if bool(_field(selector_data, "default", default=False)):
+                    default_selector = _field(
+                        selector_data,
+                        "default",
+                        default=False,
+                    )
+                    if not isinstance(default_selector, bool):
+                        raise ValueError(
+                            f"GraphDeployment placement {index} default must be a boolean"
+                        )
+                    if default_selector:
                         if default_target is not None and default_target != target_id:
                             raise ValueError(
                                 "GraphDeployment declares conflicting default targets "

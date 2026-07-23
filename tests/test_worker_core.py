@@ -1129,6 +1129,25 @@ def test_worker_wire_serializers_reject_non_finite_numbers() -> None:
         message.content_digest()
 
 
+def test_remote_inline_payload_rejects_ambiguous_or_overdeep_json() -> None:
+    overdeep: object = None
+    for _ in range(70):
+        overdeep = [overdeep]
+
+    for value in ({1: "coerced-key"}, overdeep):
+        with pytest.raises(RemotePayloadInlineJsonEncodingError):
+            validate_remote_payload(
+                {"mode": "inline", "value": value},
+                RemotePayloadLimits(max_inline_bytes=100_000),
+            )
+        with pytest.raises(RemotePayloadInlineJsonEncodingError):
+            RemoteEdgePayload.inline(
+                "graphblocks.ai/Value@1",
+                value,
+                RemotePayloadLimits(max_inline_bytes=100_000),
+            )
+
+
 def test_remote_payload_validator_allows_artifact_reference_payload() -> None:
     payload = {
         "mode": "artifact_ref",

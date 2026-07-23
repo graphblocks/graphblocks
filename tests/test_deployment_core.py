@@ -17,6 +17,7 @@ from graphblocks.deployment import (
     GraphDeployment,
     GraphDeploymentError,
     GraphRelease,
+    GraphReleaseError,
     GraphReleaseGraph,
     GraphReleaseMutableReferencesError,
     ImageRef,
@@ -121,6 +122,26 @@ def test_release_evidence_maps_cannot_be_mutated_after_construction() -> None:
 
     assert release.content_digest() == release_digest
     assert bundle.content_digest() == bundle_digest
+
+
+def test_release_bundle_rejects_coerced_or_unstable_evidence_identity() -> None:
+    release = GraphRelease("support-agent", "2026.06.23.1")
+
+    with pytest.raises(GraphReleaseError, match="bundle_id"):
+        ReleaseBundle(" ", release)
+    with pytest.raises(GraphReleaseError, match="release must be a GraphRelease"):
+        ReleaseBundle("bundle-1", object())  # type: ignore[arg-type]
+    for field_name, evidence in (
+        ("artifacts", {1: "sha256:first", "1": "sha256:second"}),
+        ("artifacts", {"sbom": object()}),
+        ("signatures", {" ": "sha256:signature"}),
+    ):
+        with pytest.raises(GraphReleaseError, match=field_name):
+            ReleaseBundle(
+                "bundle-1",
+                release,
+                **{field_name: evidence},
+            )
 
 
 def test_graph_release_validation_rejects_mutable_production_references() -> None:
@@ -537,6 +558,53 @@ def test_physical_plan_hash_and_resolution_are_stable() -> None:
     assert left.resolve_target("other", None, "value.const", [], [], None).target_id == "control"
 
 
+def test_deployment_target_maps_are_immutable_identity_snapshots() -> None:
+    target = ExecutionTarget("control", "service", "rust")
+    supplied_targets = {"control": target}
+    release = GraphRelease("support-agent", "2026.06.23.1").with_graph(
+        "turn",
+        GraphReleaseGraph("sha256:graph-turn", "sha256:plan-turn"),
+    )
+    deployment = GraphDeployment(
+        deployment_id="support-prod",
+        release=release,
+        graph_name="turn",
+        deployment_revision_id="rev-1",
+        targets=supplied_targets,
+    )
+    plan = PhysicalExecutionPlan(
+        "sha256:release",
+        "rev-1",
+        "sha256:graph",
+        targets=supplied_targets,
+    )
+    deployment_digest = deployment.deployment_spec_hash()
+    plan_digest = plan.plan_hash()
+
+    supplied_targets.clear()
+
+    assert tuple(deployment.targets) == ("control",)
+    assert tuple(plan.targets) == ("control",)
+    with pytest.raises(TypeError):
+        deployment.targets["worker"] = target
+    with pytest.raises(TypeError):
+        plan.targets["worker"] = target
+    assert deployment.deployment_spec_hash() == deployment_digest
+    assert plan.plan_hash() == plan_digest
+
+
+def test_deployment_target_maps_reject_mismatched_record_identity() -> None:
+    target = ExecutionTarget("control", "service", "rust")
+
+    with pytest.raises(GraphDeploymentError, match="target key must match target_id"):
+        PhysicalExecutionPlan(
+            "sha256:release",
+            "rev-1",
+            "sha256:graph",
+            targets={"alias": target},
+        )
+
+
 def test_placement_resolution_rejects_same_priority_conflicts() -> None:
     plan = (
         PhysicalExecutionPlan("sha256:release", "rev-1", "sha256:graph")
@@ -568,6 +636,27 @@ def test_placement_resolution_rejects_same_priority_conflicts() -> None:
 def test_placement_selector_rejects_empty_values(selector) -> None:
     with pytest.raises(GraphDeploymentError, match="placement selector values must not be empty"):
         selector([])
+
+
+def test_placement_selector_rejects_unknown_kind_and_unstable_values() -> None:
+    with pytest.raises(GraphDeploymentError, match="placement selector kind"):
+        PlacementSelector("unknown", ("generate",))
+    for values in ((" ",), (object(),), "generate"):
+        with pytest.raises(GraphDeploymentError, match="placement selector values"):
+            PlacementSelector("nodes", values)  # type: ignore[arg-type]
+
+
+def test_execution_target_rejects_unknown_kind_and_unstable_capabilities() -> None:
+    with pytest.raises(GraphDeploymentError, match="execution target kind"):
+        ExecutionTarget("control", "unknown", "rust")  # type: ignore[arg-type]
+    for capabilities in ((" ",), (object(),), "graph.coordinator"):
+        with pytest.raises(GraphDeploymentError, match="capabilities"):
+            ExecutionTarget(
+                "control",
+                "service",
+                "rust",
+                capabilities=capabilities,  # type: ignore[arg-type]
+            )
 
 
 def test_deployment_event_exports_release_revision_and_cohort_attributes() -> None:

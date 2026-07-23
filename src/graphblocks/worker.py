@@ -6,6 +6,8 @@ import hashlib
 import json
 from typing import Literal
 
+from .canonical import canonical_dumps
+
 
 WORKER_PROTOCOL_VERSION = 1
 
@@ -946,6 +948,22 @@ class RemotePayloadInvalidModeError(RemotePayloadError):
         super().__init__(f"invalid remote payload mode {mode!r}")
 
 
+def _encode_remote_inline_json(value: object) -> str:
+    try:
+        canonical_dumps(value)
+        return json.dumps(
+            value,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+            allow_nan=False,
+        )
+    except (RecursionError, TypeError, ValueError) as error:
+        raise RemotePayloadInlineJsonEncodingError(
+            "remote inline payload is not strict JSON"
+        ) from error
+
+
 def validate_remote_payload(payload: Mapping[str, object], limits: RemotePayloadLimits) -> None:
     if not isinstance(payload, Mapping):
         raise RemotePayloadInvalidModeError("payload")
@@ -953,18 +971,9 @@ def validate_remote_payload(payload: Mapping[str, object], limits: RemotePayload
         raise RemotePayloadInvalidLimitError("limits must be RemotePayloadLimits")
     mode = payload.get("mode")
     if mode == "inline":
-        try:
-            actual_inline_bytes = len(
-                json.dumps(
-                    payload.get("value"),
-                    sort_keys=True,
-                    separators=(",", ":"),
-                    ensure_ascii=False,
-                    allow_nan=False,
-                ).encode("utf-8")
-            )
-        except (TypeError, ValueError) as error:
-            raise RemotePayloadInlineJsonEncodingError("remote inline payload is not JSON serializable") from error
+        actual_inline_bytes = len(
+            _encode_remote_inline_json(payload.get("value")).encode("utf-8")
+        )
         if actual_inline_bytes > limits.max_inline_bytes:
             raise RemotePayloadOversizedInlineError(limits.max_inline_bytes, actual_inline_bytes)
         return
@@ -996,16 +1005,7 @@ class RemoteEdgePayload:
         if self.mode == "inline":
             if self.value_digest is not None and not isinstance(self.value_digest, str):
                 raise RemotePayloadInvalidModeError("value_digest")
-            try:
-                encoded = json.dumps(
-                    self.value,
-                    sort_keys=True,
-                    separators=(",", ":"),
-                    ensure_ascii=False,
-                    allow_nan=False,
-                )
-            except (TypeError, ValueError) as error:
-                raise RemotePayloadInlineJsonEncodingError("remote inline payload is not JSON serializable") from error
+            encoded = _encode_remote_inline_json(self.value)
             computed_digest = "sha256:" + hashlib.sha256(encoded.encode("utf-8")).hexdigest()
             if self.value_digest is not None and self.value_digest != computed_digest:
                 raise RemotePayloadInvalidModeError("value_digest_mismatch")

@@ -89,6 +89,45 @@ def test_deployment_target_profile_rejects_invalid_string_fields() -> None:
             execution_host=object(),  # type: ignore[arg-type]
         )
 
+    with pytest.raises(GraphDeploymentError, match="deployment target kind"):
+        DeploymentTargetProfile(
+            target_id="control",
+            image_role="control-plane",
+            kind="unknown",  # type: ignore[arg-type]
+            execution_host="rust",
+        )
+
+
+def test_deployment_target_profile_rejects_unstable_capability_sets() -> None:
+    for field_name, value in (
+        ("capabilities", "graph.coordinator"),
+        ("capabilities", (" ",)),
+        ("capabilities", (object(),)),
+        ("effects", "network"),
+        ("effects", (" ",)),
+    ):
+        with pytest.raises(GraphDeploymentError, match=field_name):
+            DeploymentTargetProfile(
+                target_id="control",
+                image_role="control-plane",
+                kind="service",
+                execution_host="rust",
+                **{field_name: value},
+            )
+
+
+def test_deployment_target_profile_mapping_rejects_non_collection_capabilities() -> None:
+    with pytest.raises(GraphDeploymentError, match="capabilities must be a collection"):
+        DeploymentTargetProfile.from_mapping(
+            {
+                "id": "control",
+                "imageRole": "control-plane",
+                "kind": "service",
+                "executionHost": "rust",
+                "capabilities": 7,
+            }
+        )
+
 
 @pytest.mark.parametrize("default_replicas", [True, False])
 def test_deployment_target_profile_rejects_boolean_default_replicas(

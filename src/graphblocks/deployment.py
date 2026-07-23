@@ -20,6 +20,26 @@ ExecutionTargetKind = Literal[
     "stateful_service",
     "external",
 ]
+_EXECUTION_TARGET_KINDS = frozenset(
+    {
+        "service",
+        "worker_pool",
+        "job_pool",
+        "sandbox_pool",
+        "stateful_service",
+        "external",
+    }
+)
+_PLACEMENT_SELECTOR_KINDS = frozenset(
+    {
+        "nodes",
+        "execution_groups",
+        "blocks",
+        "capabilities",
+        "effects",
+        "execution_classes",
+    }
+)
 WorkloadKind = Literal[
     "new_request",
     "existing_request",
@@ -144,6 +164,42 @@ def _require_non_empty_string(
     if not value.strip():
         raise error_class(empty_message)
     return value
+
+
+def _require_stable_deployment_string(
+    value: object,
+    field_name: str,
+    error_class: type[ValueError] = GraphDeploymentError,
+) -> str:
+    normalized = _require_non_empty_string(
+        value,
+        field_name,
+        f"{field_name} must not be empty",
+        error_class,
+    )
+    if normalized != normalized.strip():
+        raise error_class(f"{field_name} must not contain surrounding whitespace")
+    return normalized
+
+
+def _deployment_string_collection(
+    owner: str,
+    field_name: str,
+    values: object,
+) -> tuple[str, ...]:
+    if (
+        isinstance(values, (str, bytes, bytearray, Mapping))
+        or not isinstance(values, Iterable)
+    ):
+        raise GraphDeploymentError(f"{owner} {field_name} must be a collection")
+    normalized: set[str] = set()
+    for value in values:
+        if not isinstance(value, str) or not value.strip() or value != value.strip():
+            raise GraphDeploymentError(
+                f"{owner} {field_name} must contain stable non-empty strings"
+            )
+        normalized.add(value)
+    return tuple(sorted(normalized))
 
 
 @dataclass(frozen=True, slots=True)
@@ -291,16 +347,37 @@ class ReleaseBundle:
     signatures: dict[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        object.__setattr__(
-            self,
-            "artifacts",
-            MappingProxyType({str(key): str(value) for key, value in self.artifacts.items()}),
+        _require_stable_deployment_string(
+            self.bundle_id,
+            "release bundle bundle_id",
+            GraphReleaseError,
         )
-        object.__setattr__(
-            self,
-            "signatures",
-            MappingProxyType({str(key): str(value) for key, value in self.signatures.items()}),
-        )
+        if not isinstance(self.release, GraphRelease):
+            raise GraphReleaseError("release bundle release must be a GraphRelease")
+        for field_name in ("artifacts", "signatures"):
+            evidence = getattr(self, field_name)
+            if not isinstance(evidence, Mapping):
+                raise GraphReleaseError(
+                    f"release bundle {field_name} must be a mapping"
+                )
+            normalized: dict[str, str] = {}
+            for key, value in evidence.items():
+                normalized_key = _require_stable_deployment_string(
+                    key,
+                    f"release bundle {field_name} key",
+                    GraphReleaseError,
+                )
+                normalized_value = _require_stable_deployment_string(
+                    value,
+                    f"release bundle {field_name} value",
+                    GraphReleaseError,
+                )
+                normalized[normalized_key] = normalized_value
+            object.__setattr__(
+                self,
+                field_name,
+                MappingProxyType(dict(sorted(normalized.items()))),
+            )
 
     def bundle_manifest(self) -> dict[str, object]:
         return {
@@ -1278,8 +1355,38 @@ class ExecutionTarget:
     image: str | None = None
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "capabilities", tuple(sorted(set(self.capabilities))))
-        object.__setattr__(self, "effects", tuple(sorted(set(self.effects))))
+        _require_stable_deployment_string(self.target_id, "execution target target_id")
+        if self.kind not in _EXECUTION_TARGET_KINDS:
+            raise GraphDeploymentError(f"invalid execution target kind {self.kind!r}")
+        _require_stable_deployment_string(
+            self.execution_host,
+            "execution target execution_host",
+        )
+        if self.package_lock is not None:
+            _require_stable_deployment_string(
+                self.package_lock,
+                "execution target package_lock",
+            )
+        if self.image is not None:
+            _require_stable_deployment_string(self.image, "execution target image")
+        object.__setattr__(
+            self,
+            "capabilities",
+            _deployment_string_collection(
+                "execution target",
+                "capabilities",
+                self.capabilities,
+            ),
+        )
+        object.__setattr__(
+            self,
+            "effects",
+            _deployment_string_collection(
+                "execution target",
+                "effects",
+                self.effects,
+            ),
+        )
 
     def with_capabilities(self, capabilities: list[str] | tuple[str, ...]) -> ExecutionTarget:
         return replace(self, capabilities=tuple(capabilities))
@@ -1335,12 +1442,35 @@ class DeploymentTargetProfile:
             "deployment target execution_host must not be empty",
             GraphDeploymentError,
         )
+        if self.kind not in _EXECUTION_TARGET_KINDS:
+            raise GraphDeploymentError(f"invalid deployment target kind {self.kind!r}")
+        if self.package_lock is not None:
+            _require_stable_deployment_string(
+                self.package_lock,
+                "deployment target package_lock",
+            )
         if isinstance(self.default_replicas, bool) or not isinstance(self.default_replicas, int):
             raise GraphDeploymentError("deployment target default_replicas must be an integer")
         if self.default_replicas <= 0:
             raise GraphDeploymentError("deployment target default_replicas must be positive")
-        object.__setattr__(self, "capabilities", tuple(sorted({str(item) for item in self.capabilities})))
-        object.__setattr__(self, "effects", tuple(sorted({str(item) for item in self.effects})))
+        object.__setattr__(
+            self,
+            "capabilities",
+            _deployment_string_collection(
+                "deployment target",
+                "capabilities",
+                self.capabilities,
+            ),
+        )
+        object.__setattr__(
+            self,
+            "effects",
+            _deployment_string_collection(
+                "deployment target",
+                "effects",
+                self.effects,
+            ),
+        )
 
     @classmethod
     def from_mapping(cls, mapping: Mapping[str, object]) -> DeploymentTargetProfile:
@@ -1356,16 +1486,16 @@ class DeploymentTargetProfile:
         ):
             if not isinstance(value, str):
                 raise GraphDeploymentError(f"deployment target profile {field_name} must be a string")
-        raw_capabilities = mapping.get("capabilities", ())
-        if isinstance(raw_capabilities, str):
-            capabilities = (raw_capabilities,)
-        else:
-            capabilities = tuple(str(item) for item in raw_capabilities or ())
-        raw_effects = mapping.get("effects", ())
-        if isinstance(raw_effects, str):
-            effects = (raw_effects,)
-        else:
-            effects = tuple(str(item) for item in raw_effects or ())
+        capabilities = _deployment_string_collection(
+            "deployment target profile",
+            "capabilities",
+            mapping.get("capabilities", ()),
+        )
+        effects = _deployment_string_collection(
+            "deployment target profile",
+            "effects",
+            mapping.get("effects", ()),
+        )
         package_lock = mapping.get("packageLock", mapping.get("package_lock"))
         default_replicas = mapping.get("defaultReplicas", mapping.get("default_replicas", 1))
         if package_lock is not None and not isinstance(package_lock, str):
@@ -1519,7 +1649,17 @@ class PlacementSelector:
     values: tuple[str, ...]
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "values", tuple(sorted(set(self.values))))
+        if self.kind not in _PLACEMENT_SELECTOR_KINDS:
+            raise GraphDeploymentError(f"invalid placement selector kind {self.kind!r}")
+        object.__setattr__(
+            self,
+            "values",
+            _deployment_string_collection(
+                "placement selector",
+                "values",
+                self.values,
+            ),
+        )
         if not self.values:
             raise GraphDeploymentError("placement selector values must not be empty")
 
@@ -1620,6 +1760,26 @@ class ResolvedPlacement:
     rule_ids: tuple[str, ...] = field(default_factory=tuple)
 
 
+def _freeze_execution_targets(
+    targets: object,
+) -> MappingProxyType[str, ExecutionTarget]:
+    if not isinstance(targets, Mapping):
+        raise GraphDeploymentError("deployment targets must be a mapping")
+    normalized: dict[str, ExecutionTarget] = {}
+    for target_key, target in targets.items():
+        _require_stable_deployment_string(target_key, "deployment target key")
+        if not isinstance(target, ExecutionTarget):
+            raise GraphDeploymentError(
+                "deployment target values must be ExecutionTarget records"
+            )
+        if target_key != target.target_id:
+            raise GraphDeploymentError(
+                "deployment target key must match target_id"
+            )
+        normalized[target_key] = target
+    return MappingProxyType(dict(sorted(normalized.items())))
+
+
 @dataclass(frozen=True, slots=True)
 class PhysicalExecutionPlan:
     release_digest: str
@@ -1631,7 +1791,7 @@ class PhysicalExecutionPlan:
     default_target: str | None = None
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "targets", dict(self.targets))
+        object.__setattr__(self, "targets", _freeze_execution_targets(self.targets))
         object.__setattr__(self, "placements", tuple(self.placements))
 
     def with_package_lock_hash(self, package_lock_hash: str) -> PhysicalExecutionPlan:
@@ -1739,7 +1899,7 @@ class GraphDeployment:
     default_target: str | None = None
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "targets", dict(self.targets))
+        object.__setattr__(self, "targets", _freeze_execution_targets(self.targets))
         object.__setattr__(self, "placements", tuple(self.placements))
 
     def with_target(self, target: ExecutionTarget) -> GraphDeployment:
