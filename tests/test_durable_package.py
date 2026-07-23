@@ -309,6 +309,20 @@ def test_durable_source_snapshots_event_sequence_and_validates_restored_shape(
         graphblocks_durable.SourceEvent(object(), {})
 
 
+def test_durable_source_deduplicates_identical_restored_offsets(monkeypatch) -> None:
+    graphblocks_durable = _import_durable(monkeypatch)
+    event = _order_event(graphblocks_durable, 10)
+    source = graphblocks_durable.InMemoryDurableSource(
+        "at_least_once",
+        [event, event],
+    )
+
+    batch = source.poll(None, demand=10)
+
+    assert [item.cursor for item in batch.events] == [event.cursor]
+    assert source.events == (event,)
+
+
 def test_durable_batch_and_window_snapshot_event_payloads(monkeypatch) -> None:
     graphblocks_durable = _import_durable(monkeypatch)
     event = graphblocks_durable.SourceEvent(

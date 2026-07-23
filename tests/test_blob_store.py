@@ -575,6 +575,48 @@ def test_s3_compatible_blob_store_supports_range_reads_and_pagination() -> None:
     assert client.range_headers[-1] == "bytes=1-3"
 
 
+def test_s3_compatible_blob_store_rejects_ignored_range_request() -> None:
+    class RangeIgnoringClient(_FakeS3Client):
+        def get_object(self, **kwargs: object) -> dict[str, object]:
+            kwargs.pop("Range", None)
+            return super().get_object(**kwargs)
+
+    client = RangeIgnoringClient()
+    store = S3CompatibleBlobStore(
+        bucket="kb-artifacts",
+        client=client,
+    )
+    key = BlobKey("docs/a.txt")
+    store.put(key, b"alpha", PutOptions())
+
+    with pytest.raises(
+        BlobStoreError,
+        match="must include ContentRange",
+    ):
+        store.get(key, ByteRange(offset=1, length=3))
+
+
+def test_s3_compatible_blob_store_rejects_noncanonical_content_range() -> None:
+    class NoncanonicalRangeClient(_FakeS3Client):
+        def get_object(self, **kwargs: object) -> dict[str, object]:
+            response = super().get_object(**kwargs)
+            response["ContentRange"] = "bytes 01-3/5"
+            return response
+
+    store = S3CompatibleBlobStore(
+        bucket="kb-artifacts",
+        client=NoncanonicalRangeClient(),
+    )
+    key = BlobKey("docs/a.txt")
+    store.put(key, b"alpha", PutOptions())
+
+    with pytest.raises(
+        BlobStoreError,
+        match="ContentRange must be canonical",
+    ):
+        store.get(key, ByteRange(offset=1, length=3))
+
+
 def test_s3_compatible_blob_store_maps_missing_keys_and_rejects_invalid_keys() -> None:
     store = S3CompatibleBlobStore(bucket="kb-artifacts", client=_FakeS3Client())
 
@@ -621,12 +663,17 @@ class _FakeS3Client:
             raise _FakeClientError("NoSuchKey") from error
         body = item["Body"]
         assert isinstance(body, bytes)
+        total_length = len(body)
         range_header = kwargs.get("Range")
         self.range_headers.append(range_header if range_header is None else str(range_header))
+        content_range = None
         if isinstance(range_header, str):
             start_text, end_text = range_header.removeprefix("bytes=").split("-", 1)
             start = int(start_text)
-            body = body[start:] if end_text == "" else body[start : int(end_text) + 1]
+            requested_end = total_length - 1 if end_text == "" else int(end_text)
+            end = min(requested_end, total_length - 1)
+            body = body[start : end + 1]
+            content_range = f"bytes {start}-{end}/{total_length}"
         return {
             "Body": _FakeBody(body),
             "ContentLength": (
@@ -637,6 +684,11 @@ class _FakeS3Client:
             "ContentType": item["ContentType"],
             "Metadata": dict(item["Metadata"]),
             "ETag": item["ETag"],
+            **(
+                {}
+                if content_range is None
+                else {"ContentRange": content_range}
+            ),
         }
 
     def head_object(self, **kwargs: object) -> dict[str, object]:

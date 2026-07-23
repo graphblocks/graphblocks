@@ -543,6 +543,55 @@ class S3CompatibleBlobStore:
             raise BlobStoreError(
                 f"blob {key.key!r} does not match s3 GetObject ContentLength"
             )
+        if byte_range is not None:
+            content_range = response.get("ContentRange")
+            if (
+                not isinstance(content_range, str)
+                or not content_range.startswith("bytes ")
+            ):
+                raise BlobStoreError(
+                    "s3 ranged GetObject response must include ContentRange"
+                )
+            try:
+                bounds, total_text = content_range.removeprefix("bytes ").split(
+                    "/",
+                    1,
+                )
+                start_text, end_text = bounds.split("-", 1)
+                range_fields = (start_text, end_text, total_text)
+                if any(
+                    not field.isascii()
+                    or not field.isdecimal()
+                    or (field != "0" and field.startswith("0"))
+                    for field in range_fields
+                ):
+                    raise ValueError
+                start = int(start_text)
+                end = int(end_text)
+                total = int(total_text)
+            except ValueError:
+                raise BlobStoreError(
+                    "s3 ranged GetObject ContentRange must be canonical"
+                ) from None
+            if (
+                start != byte_range.offset
+                or end < start
+                or total <= end
+                or len(data) != end - start + 1
+            ):
+                raise BlobStoreError(
+                    "s3 ranged GetObject ContentRange does not match response body"
+                )
+            expected_end = total - 1
+            if byte_range.length is not None:
+                expected_end = min(
+                    byte_range.offset + byte_range.length - 1,
+                    expected_end,
+                )
+            if end != expected_end:
+                raise BlobStoreError(
+                    "s3 ranged GetObject ContentRange does not match requested range"
+                )
         if byte_range is None:
             metadata = self._response_metadata(response.get("Metadata"))
             recorded_checksum = metadata.get(_GRAPHBLOCKS_CHECKSUM_METADATA)

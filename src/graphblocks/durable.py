@@ -355,7 +355,7 @@ class InMemoryDurableSource:
                     payload=event.payload,
                     event_time_unix_ms=event.event_time_unix_ms,
                 )
-                for event in events
+                for event in events_by_cursor.values()
             ),
             key=lambda event: event.cursor,
         ))

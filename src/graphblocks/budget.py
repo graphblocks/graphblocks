@@ -237,7 +237,7 @@ def _loads_strict_json(field_name: str, value: str) -> object:
             parse_constant=lambda constant: (_ for _ in ()).throw(ValueError(constant)),
             object_pairs_hook=reject_duplicate_keys,
         )
-    except ValueError as error:
+    except (RecursionError, TypeError, ValueError) as error:
         raise ValueError(f"budget ledger {field_name} must be valid strict JSON") from error
 
 

@@ -806,6 +806,33 @@ def test_sqlite_budget_ledger_rejects_duplicate_snapshot_json_keys_on_replay(tmp
         SQLiteBudgetLedger(path)
 
 
+def test_sqlite_budget_ledger_wraps_excessively_nested_snapshot_json(
+    tmp_path,
+) -> None:
+    path = tmp_path / "budget-deeply-nested.sqlite3"
+    ledger = SQLiteBudgetLedger(path)
+    ledger.allocate(
+        "budget-1",
+        ResourceRef("tenant:acme"),
+        [_tokens("100")],
+        policy_ref="policy-1",
+    )
+    deeply_nested = ("[" * 1_100) + "0" + ("]" * 1_100)
+    ledger._connection.execute(
+        "UPDATE budget_ledger_snapshots SET state_json = ? "
+        "WHERE snapshot_id = ?",
+        (deeply_nested, "default"),
+    )
+    ledger._connection.commit()
+    ledger.close()
+
+    with pytest.raises(
+        ValueError,
+        match="budget ledger state_json must be valid strict JSON",
+    ):
+        SQLiteBudgetLedger(path)
+
+
 @pytest.mark.parametrize(
     ("field", "invalid_value", "message"),
     (
