@@ -2,8 +2,11 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field, replace
+from functools import wraps
 import json
+from threading import RLock
 from types import MappingProxyType
+from typing import ParamSpec, TypeVar, cast
 
 from graphblocks.canonical import canonical_dumps, canonical_hash
 from graphblocks.diagnostics import Diagnostic, Severity
@@ -34,6 +37,25 @@ DEFAULT_BLOCKED_METRIC_LABELS = (
     "turn_id",
     "user_id",
 )
+_TelemetryOutboxParams = ParamSpec("_TelemetryOutboxParams")
+_TelemetryOutboxResult = TypeVar("_TelemetryOutboxResult")
+
+
+def _with_telemetry_export_outbox_lock(
+    method: Callable[_TelemetryOutboxParams, _TelemetryOutboxResult],
+) -> Callable[_TelemetryOutboxParams, _TelemetryOutboxResult]:
+    @wraps(method)
+    def locked(
+        *args: _TelemetryOutboxParams.args,
+        **kwargs: _TelemetryOutboxParams.kwargs,
+    ) -> _TelemetryOutboxResult:
+        outbox = cast("TelemetryExportOutbox", args[0])
+        with outbox._lock:
+            return method(*args, **kwargs)
+
+    return locked
+
+
 DEFAULT_SENSITIVE_TELEMETRY_ATTRIBUTE_KEYS = (
     "access_token",
     "api_key",
@@ -723,11 +745,14 @@ class TelemetryExportOutbox:
     _record_contracts: dict[str, str] = field(default_factory=dict, init=False, repr=False)
     _delivered_by_exporter: dict[str, set[str]] = field(default_factory=dict, init=False, repr=False)
     _attempts_by_exporter: dict[str, int] = field(default_factory=dict, init=False, repr=False)
+    _lock: RLock = field(default_factory=RLock, init=False, repr=False, compare=False)
 
     @property
+    @_with_telemetry_export_outbox_lock
     def accepted_record_ids(self) -> tuple[str, ...]:
         return tuple(sorted(self._records))
 
+    @_with_telemetry_export_outbox_lock
     def accept(self, records: Iterable[TelemetryRecord]) -> tuple[str, ...]:
         try:
             candidates = tuple(records)
@@ -762,11 +787,13 @@ class TelemetryExportOutbox:
         self._record_contracts.update(staged_contracts)
         return self.accepted_record_ids
 
+    @_with_telemetry_export_outbox_lock
     def pending_record_ids(self, exporter: str) -> tuple[str, ...]:
         exporter = _require_non_empty_string("telemetry export outbox", "exporter", exporter)
         delivered = self._delivered_by_exporter.get(exporter, set())
         return tuple(record_id for record_id in self.accepted_record_ids if record_id not in delivered)
 
+    @_with_telemetry_export_outbox_lock
     def attempt_export(
         self,
         exporter: str,

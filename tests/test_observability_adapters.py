@@ -4,6 +4,8 @@ from decimal import Decimal
 import importlib
 import json
 import sys
+from concurrent.futures import ThreadPoolExecutor
+from threading import Event, Lock
 from types import SimpleNamespace
 
 import pytest
@@ -700,6 +702,99 @@ def test_telemetry_export_outbox_rejects_conflicts_and_fails_closed_on_state_dri
         )
 
     assert outbox.pending_record_ids("otlp") == ("gen-1",)
+
+
+def test_telemetry_export_outbox_serializes_concurrent_conflicting_accepts(monkeypatch) -> None:
+    graphblocks_telemetry = importlib.import_module("graphblocks.telemetry")
+    original = graphblocks_telemetry.GenerationTelemetryRecord(
+        record_id="gen-concurrent",
+        run_id="run-1",
+        span_id="span-1",
+        node_id="agent",
+        provider="openai-compatible",
+        model="gpt-original",
+    )
+    conflicting = graphblocks_telemetry.GenerationTelemetryRecord(
+        record_id="gen-concurrent",
+        run_id="run-1",
+        span_id="span-1",
+        node_id="agent",
+        provider="openai-compatible",
+        model="gpt-conflicting",
+    )
+    outbox = graphblocks_telemetry.TelemetryExportOutbox()
+
+    class CoordinatedLookup(dict):
+        def __init__(self) -> None:
+            super().__init__()
+            self._arrived = 0
+            self._arrived_lock = Lock()
+            self._second_arrived = Event()
+
+        def get(self, key, default=None):
+            result = super().get(key, default)
+            with self._arrived_lock:
+                self._arrived += 1
+                if self._arrived == 2:
+                    self._second_arrived.set()
+            self._second_arrived.wait(timeout=0.1)
+            return result
+
+    outbox._record_contracts = CoordinatedLookup()
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = tuple(
+            executor.submit(outbox.accept, (record,)) for record in (original, conflicting)
+        )
+        errors = [future.exception() for future in futures]
+
+    assert sum(error is None for error in errors) == 1
+    assert sum(isinstance(error, graphblocks_telemetry.TelemetryExportConflictError) for error in errors) == 1
+    assert outbox.accepted_record_ids == ("gen-concurrent",)
+
+
+def test_telemetry_export_outbox_serializes_concurrent_export_attempts(monkeypatch) -> None:
+    graphblocks_telemetry = importlib.import_module("graphblocks.telemetry")
+    record = graphblocks_telemetry.GenerationTelemetryRecord(
+        record_id="gen-concurrent-export",
+        run_id="run-1",
+        span_id="span-1",
+        node_id="agent",
+        provider="openai-compatible",
+        model="gpt-test",
+    )
+    outbox = graphblocks_telemetry.TelemetryExportOutbox()
+    outbox.accept((record,))
+    snapshot = graphblocks_telemetry.TelemetryCorrectnessSnapshot.capture(
+        execution_journal=[],
+        audit_log=[],
+        usage_ledger=[],
+        budget_ledger={},
+    )
+    export_calls: list[tuple[str, ...]] = []
+    calls_lock = Lock()
+    second_call = Event()
+
+    def export(records) -> None:
+        with calls_lock:
+            export_calls.append(tuple(entry.record_id for entry in records))
+            if len(export_calls) == 2:
+                second_call.set()
+        second_call.wait(timeout=0.1)
+
+    def attempt():
+        return outbox.attempt_export(
+            "otlp",
+            export,
+            correctness_probe=lambda: snapshot,
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        evaluations = tuple(executor.map(lambda _: attempt(), range(2)))
+
+    assert export_calls == [("gen-concurrent-export",)]
+    assert sorted(len(evaluation.result.record_ids) for evaluation in evaluations) == [0, 1]
+    assert outbox.pending_record_ids("otlp") == ()
 
 
 def test_telemetry_diagnostic_bundle_combines_observability_health(monkeypatch) -> None:
