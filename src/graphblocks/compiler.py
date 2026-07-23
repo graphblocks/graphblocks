@@ -8,7 +8,14 @@ from jsonschema import Draft202012Validator
 from jsonschema.exceptions import ValidationError
 from referencing.exceptions import Unresolvable
 
-from .canonical import PSEUDO_NODES, _normalize_graph_unchecked, canonical_dumps, canonical_hash
+from .canonical import (
+    PSEUDO_NODES,
+    _MANUAL_INTEGER_BIT_LENGTH,
+    _normalize_graph_unchecked,
+    canonical_dumps,
+    canonical_hash,
+    canonical_loads,
+)
 from .diagnostics import Diagnostic, DiagnosticSet
 from .duration import parse_duration_milliseconds, parse_duration_seconds
 from .migration import (
@@ -77,6 +84,14 @@ def _diagnostic_value(value: object) -> str:
         return "<unprintable value>"
 
 
+class _DiagnosticInteger(int):
+    def __repr__(self) -> str:
+        return "<arbitrary-size integer>"
+
+    def __str__(self) -> str:
+        return "<arbitrary-size integer>"
+
+
 def _config_error_path(base: str, error: ValidationError) -> str:
     path = base
     for part in error.absolute_path:
@@ -118,17 +133,6 @@ def _config_error_message(error: ValidationError) -> str:
         return "value must match at least one allowed schema"
     if error.validator == "not":
         return "value matches a forbidden schema"
-    if error.validator in {
-        "minimum",
-        "maximum",
-        "exclusiveMinimum",
-        "exclusiveMaximum",
-        "multipleOf",
-    }:
-        return (
-            f"value {_diagnostic_value(error.instance)} violates "
-            f"the {error.validator} constraint"
-        )
     return error.message
 
 
@@ -758,7 +762,7 @@ def compile_graph(
     *,
     allow_unknown_blocks: bool = False,
 ) -> Plan:
-    if not isinstance(document, dict):
+    if not isinstance(document, Mapping):
         raise TypeError("graph document must be a mapping")
     if block_catalog is not None and not isinstance(block_catalog, BlockCatalog):
         raise TypeError("block_catalog must be a BlockCatalog")
@@ -2122,6 +2126,7 @@ def compile_graph(
 
     if block_catalog is not None:
         inbound_by_node: dict[str, set[str]] = {name: set() for name in normalized_nodes}
+        validation_schemas: dict[str, object] = {}
         if isinstance(edges, list):
             for edge in edges:
                 if not isinstance(edge, dict) or not isinstance(edge.get("to"), str):
@@ -2145,9 +2150,52 @@ def compile_graph(
                 continue
             config = node.get("config", {})
             config_path = f"$.spec.nodes.{node_name}.config"
+            validation_schema = validation_schemas.get(descriptor.block_id)
+            validation_sources = [("config", config)]
+            if validation_schema is None:
+                validation_sources.append(("schema", descriptor.config_schema))
+            validation_values: dict[str, object] = {}
+            for validation_name, validation_source in validation_sources:
+                validation_value = canonical_loads(canonical_dumps(validation_source))
+                if (
+                    isinstance(validation_value, int)
+                    and not isinstance(validation_value, bool)
+                    and validation_value.bit_length() > _MANUAL_INTEGER_BIT_LENGTH
+                ):
+                    validation_value = _DiagnosticInteger(validation_value)
+                pending_validation_values = [validation_value]
+                while pending_validation_values:
+                    candidate = pending_validation_values.pop()
+                    if isinstance(candidate, dict):
+                        for key, child in candidate.items():
+                            if (
+                                isinstance(child, int)
+                                and not isinstance(child, bool)
+                                and child.bit_length() > _MANUAL_INTEGER_BIT_LENGTH
+                            ):
+                                candidate[key] = _DiagnosticInteger(child)
+                            elif isinstance(child, (dict, list)):
+                                pending_validation_values.append(child)
+                    elif isinstance(candidate, list):
+                        for index, child in enumerate(candidate):
+                            if (
+                                isinstance(child, int)
+                                and not isinstance(child, bool)
+                                and child.bit_length() > _MANUAL_INTEGER_BIT_LENGTH
+                            ):
+                                candidate[index] = _DiagnosticInteger(child)
+                            elif isinstance(child, (dict, list)):
+                                pending_validation_values.append(child)
+                validation_values[validation_name] = validation_value
+            if validation_schema is None:
+                validation_schema = validation_values["schema"]
+                validation_schemas[descriptor.block_id] = validation_schema
+            validation_config = validation_values["config"]
             try:
                 config_errors = list(
-                    Draft202012Validator(descriptor.config_schema).iter_errors(config)
+                    Draft202012Validator(validation_schema).iter_errors(
+                        validation_config
+                    )
                 )
             except (RecursionError, Unresolvable):
                 diagnostics.append(

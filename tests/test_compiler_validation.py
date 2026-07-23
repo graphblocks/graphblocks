@@ -440,6 +440,190 @@ def test_compile_supports_local_config_schema_references() -> None:
     ]
 
 
+def test_compile_reports_arbitrary_size_numeric_constraint_values_safely() -> None:
+    catalog = BlockCatalog.from_blocks(
+        [
+            {
+                "typeId": "test.maximum",
+                "version": 1,
+                "configSchema": {
+                    "type": "object",
+                    "properties": {
+                        "count": {"type": "integer", "maximum": 1},
+                    },
+                    "required": ["count"],
+                    "additionalProperties": False,
+                },
+            }
+        ]
+    )
+    graph = {
+        "apiVersion": "graphblocks.ai/v1",
+        "kind": "Graph",
+        "metadata": {"name": "arbitrary-size-config-value"},
+        "spec": {
+            "nodes": {
+                "configured": {
+                    "block": "test.maximum@1",
+                    "config": {"count": 10**5_000},
+                }
+            }
+        },
+    }
+
+    assert _error_diagnostics(graph, block_catalog=catalog) == [
+        (
+            "GB2019",
+            "node config does not satisfy test.maximum@1 configSchema: "
+            "<arbitrary-size integer> is greater than the maximum of 1",
+            "$.spec.nodes.configured.config.count",
+        )
+    ]
+
+
+@pytest.mark.parametrize(
+    ("property_schema", "expected_message"),
+    [
+        (
+            {"type": "string"},
+            'value must have JSON type "string"',
+        ),
+        (
+            {"enum": [0]},
+            "value must be one of [0]",
+        ),
+    ],
+    ids=["type", "enum"],
+)
+def test_compile_reports_arbitrary_size_values_safely_for_every_keyword(
+    property_schema: dict[str, object],
+    expected_message: str,
+) -> None:
+    catalog = BlockCatalog.from_blocks(
+        [
+            {
+                "typeId": "test.arbitrary_size",
+                "version": 1,
+                "configSchema": {
+                    "type": "object",
+                    "properties": {"value": property_schema},
+                    "required": ["value"],
+                    "additionalProperties": False,
+                },
+            }
+        ]
+    )
+    graph = {
+        "apiVersion": "graphblocks.ai/v1",
+        "kind": "Graph",
+        "metadata": {"name": "arbitrary-size-config-value"},
+        "spec": {
+            "nodes": {
+                "configured": {
+                    "block": "test.arbitrary_size@1",
+                    "config": {"value": 10**5_000},
+                }
+            }
+        },
+    }
+
+    assert _error_diagnostics(graph, block_catalog=catalog) == [
+        (
+            "GB2019",
+            "node config does not satisfy test.arbitrary_size@1 configSchema: "
+            f"{expected_message}",
+            "$.spec.nodes.configured.config.value",
+        )
+    ]
+
+
+def test_compile_reports_arbitrary_size_values_safely_across_schema_dialects() -> None:
+    catalog = BlockCatalog.from_blocks(
+        [
+            {
+                "typeId": "test.dialect",
+                "version": 1,
+                "configSchema": {
+                    "$defs": {
+                        "bounded": {
+                            "$schema": "https://json-schema.org/draft/2020-12/schema",
+                            "type": "integer",
+                            "maximum": 1,
+                        }
+                    },
+                    "type": "object",
+                    "properties": {"count": {"$ref": "#/$defs/bounded"}},
+                    "required": ["count"],
+                    "additionalProperties": False,
+                },
+            }
+        ]
+    )
+    graph = {
+        "apiVersion": "graphblocks.ai/v1",
+        "kind": "Graph",
+        "metadata": {"name": "arbitrary-size-dialect-config"},
+        "spec": {
+            "nodes": {
+                "configured": {
+                    "block": "test.dialect@1",
+                    "config": {"count": 10**5_000},
+                }
+            }
+        },
+    }
+
+    assert _error_diagnostics(graph, block_catalog=catalog) == [
+        (
+            "GB2019",
+            "node config does not satisfy test.dialect@1 configSchema: "
+            "<arbitrary-size integer> is greater than the maximum of 1",
+            "$.spec.nodes.configured.config.count",
+        )
+    ]
+
+
+def test_compile_reports_arbitrary_size_numeric_constraints_safely() -> None:
+    catalog = BlockCatalog.from_blocks(
+        [
+            {
+                "typeId": "test.minimum",
+                "version": 1,
+                "configSchema": {
+                    "type": "object",
+                    "properties": {
+                        "count": {"type": "integer", "minimum": 10**5_000},
+                    },
+                    "required": ["count"],
+                    "additionalProperties": False,
+                },
+            }
+        ]
+    )
+    graph = {
+        "apiVersion": "graphblocks.ai/v1",
+        "kind": "Graph",
+        "metadata": {"name": "arbitrary-size-config-constraint"},
+        "spec": {
+            "nodes": {
+                "configured": {
+                    "block": "test.minimum@1",
+                    "config": {"count": 1},
+                }
+            }
+        },
+    }
+
+    assert _error_diagnostics(graph, block_catalog=catalog) == [
+        (
+            "GB2019",
+            "node config does not satisfy test.minimum@1 configSchema: "
+            "1 is less than the minimum of <arbitrary-size integer>",
+            "$.spec.nodes.configured.config.count",
+        )
+    ]
+
+
 @pytest.mark.parametrize(
     "config_schema",
     [
