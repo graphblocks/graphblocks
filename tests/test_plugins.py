@@ -137,6 +137,58 @@ def test_alpha_plugin_manifest_migration_completes_block_contract_defaults() -> 
     assert "configSchema" not in document["spec"]["blocks"][0]
 
 
+def test_plugin_manifest_records_do_not_alias_the_raw_document() -> None:
+    document = {
+        "apiVersion": "graphblocks.ai/v1alpha1",
+        "kind": "PluginManifest",
+        "metadata": {"name": "example.snapshots"},
+        "spec": {
+            "pluginId": "example.snapshots",
+            "version": "1.0.0",
+            "blocks": [{"typeId": "example.echo", "version": 1}],
+        },
+    }
+
+    manifest = plugin_manifest_from_document(document)
+
+    assert manifest.blocks[0]["typeId"] == "example.echo"
+    with pytest.raises(TypeError, match="frozen mapping"):
+        manifest.raw["spec"]["blocks"][0]["typeId"] = "changed.raw"
+    with pytest.raises(TypeError, match="frozen mapping"):
+        manifest.blocks[0]["typeId"] = "changed.record"
+    with pytest.raises(TypeError, match="frozen list"):
+        manifest.blocks[0]["capabilities"].append("changed")
+    assert manifest.raw["spec"]["blocks"][0]["typeId"] == "example.echo"
+    assert document["spec"]["blocks"][0]["typeId"] == "example.echo"
+
+
+def test_direct_plugin_manifest_rejects_claims_that_do_not_match_raw() -> None:
+    document = {
+        "apiVersion": "graphblocks.ai/v1alpha1",
+        "kind": "PluginManifest",
+        "metadata": {"name": "example.direct"},
+        "spec": {
+            "pluginId": "example.direct",
+            "version": "1.0.0",
+            "blocks": [],
+        },
+    }
+    valid = plugin_manifest_from_document(document)
+
+    with pytest.raises(ValueError, match="plugin_id does not match"):
+        plugins_module.PluginManifest(
+            plugin_id="example.forged",
+            version=valid.version,
+            maturity=valid.maturity,
+            capabilities=valid.capabilities,
+            blocks=valid.blocks,
+            connector_factories=valid.connector_factories,
+            adapters=valid.adapters,
+            source="<memory>",
+            raw=valid.raw,
+        )
+
+
 def test_stable_plugin_blocks_require_capabilities_and_config_schema() -> None:
     diagnostics = validate_plugin_manifest(
         {
@@ -417,6 +469,21 @@ def test_plugin_block_versions_are_bounded_to_unsigned_64_bit_range() -> None:
     assert diagnostics.ok
     assert not overflow.ok
     assert [item.code for item in overflow.diagnostics] == ["GB2016"]
+    conversion_limit = validate_plugin_manifest(
+        {
+            "apiVersion": "graphblocks.ai/v1alpha1",
+            "kind": "PluginManifest",
+            "metadata": {"name": "com.example.conversion_limit"},
+            "spec": {
+                "pluginId": "com.example.conversion_limit",
+                "version": "1.0.0",
+                "blocks": [
+                    {"typeId": "example.conversion_limit", "version": "9" * 10_000}
+                ],
+            },
+        }
+    )
+    assert [item.code for item in conversion_limit.diagnostics] == ["GB2016"]
     with pytest.raises(ValueError, match="unsigned 64-bit range"):
         plugins_module.BlockDescriptor("example.overflow", maximum + 1)
 

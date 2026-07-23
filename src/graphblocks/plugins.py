@@ -16,8 +16,14 @@ from jsonschema import Draft202012Validator
 from jsonschema.exceptions import SchemaError
 import yaml
 
-from .canonical import MAX_CANONICAL_JSON_DEPTH, _reject_duplicate_keys
+from .canonical import (
+    MAX_CANONICAL_JSON_DEPTH,
+    _reject_duplicate_keys,
+    canonical_dumps,
+    canonical_loads,
+)
 from .diagnostics import Diagnostic, DiagnosticSet
+from .documents import FrozenDict, FrozenList
 from .loader import _DuplicateKeySafeLoader
 from .migration import (
     MigrationError,
@@ -49,6 +55,7 @@ _OUTPUT_REQUIREDNESS_OPERATORS = frozenset(
 _MAX_OUTPUT_REQUIREDNESS_DEPTH = 16
 _MAX_OUTPUT_REQUIREDNESS_OPERANDS = 16
 _MAX_BLOCK_VERSION = (1 << 64) - 1
+_MAX_BLOCK_VERSION_DECIMAL = str(_MAX_BLOCK_VERSION)
 _ENDPOINT_NAME_PATTERN = re.compile(r"^[A-Za-z][A-Za-z0-9_-]*$")
 _MISSING = object()
 _STABLE_CORE_BLOCK_IDS = frozenset(
@@ -100,7 +107,22 @@ def _normalized_config_schema(value: object) -> dict[str, Any]:
 
     if not isinstance(value, Mapping):
         raise ValueError("configSchema must be a mapping")
-    pending: list[tuple[object, int, bool]] = [(value, 0, False)]
+    try:
+        normalized = canonical_loads(canonical_dumps(value))
+    except (TypeError, ValueError) as error:
+        if "canonical JSON nesting must not exceed" in str(error):
+            raise ValueError(
+                "configSchema nesting must not exceed "
+                f"{_MAX_CONFIG_SCHEMA_DEPTH} levels"
+            ) from error
+        if "canonical JSON values must not be recursive" in str(error):
+            raise ValueError(
+                "configSchema must not contain recursive values"
+            ) from error
+        raise ValueError("configSchema must contain only finite JSON values") from error
+    if not isinstance(normalized, dict):
+        raise ValueError("configSchema must be a mapping")
+    pending: list[tuple[object, int, bool]] = [(normalized, 0, False)]
     active_containers: set[int] = set()
     node_count = 0
     while pending:
@@ -136,17 +158,6 @@ def _normalized_config_schema(value: object) -> dict[str, Any]:
             pending.append((candidate, depth, True))
             pending.extend((nested, depth + 1, False) for nested in candidate)
     try:
-        encoded = json.dumps(
-            dict(value),
-            allow_nan=False,
-            ensure_ascii=False,
-            separators=(",", ":"),
-            sort_keys=True,
-        )
-        normalized = json.loads(encoded)
-    except (TypeError, ValueError) as error:
-        raise ValueError("configSchema must contain only finite JSON values") from error
-    try:
         Draft202012Validator.check_schema(normalized)
     except SchemaError as error:
         raise ValueError(
@@ -175,6 +186,19 @@ def _freeze_json(value: object) -> object:
         )
     if isinstance(value, list):
         return tuple(_freeze_json(item) for item in value)
+    return value
+
+
+def _freeze_manifest_json(value: object) -> object:
+    if isinstance(value, dict):
+        return FrozenDict(
+            {
+                key: _freeze_manifest_json(item)
+                for key, item in value.items()
+            }
+        )
+    if isinstance(value, list):
+        return FrozenList(_freeze_manifest_json(item) for item in value)
     return value
 
 
@@ -287,6 +311,13 @@ def _parse_block_version(value: Any) -> int:
             raise ValueError("block descriptor version must be a positive integer")
         if value != "0" and value.startswith("0"):
             raise ValueError("block descriptor version must not use leading zeroes")
+        if len(value) > len(_MAX_BLOCK_VERSION_DECIMAL) or (
+            len(value) == len(_MAX_BLOCK_VERSION_DECIMAL)
+            and value > _MAX_BLOCK_VERSION_DECIMAL
+        ):
+            raise ValueError(
+                "block descriptor version must not exceed unsigned 64-bit range"
+            )
         parsed = int(value)
         if parsed < 1:
             raise ValueError("block descriptor version must be a positive integer")
@@ -568,6 +599,92 @@ class PluginManifest:
     adapters: tuple[dict[str, Any], ...]
     source: str
     raw: dict[str, Any]
+
+    def __post_init__(self) -> None:
+        for field_name in ("plugin_id", "version", "maturity", "source"):
+            value = getattr(self, field_name)
+            if (
+                not isinstance(value, str)
+                or not value
+                or value != value.strip()
+            ):
+                raise ValueError(
+                    f"plugin manifest {field_name} must be an exact non-empty string"
+                )
+        capabilities = _block_capabilities(self.capabilities)
+        if not isinstance(self.raw, Mapping):
+            raise TypeError("plugin manifest raw must be a mapping")
+        try:
+            raw = canonical_loads(canonical_dumps(self.raw))
+        except (TypeError, ValueError) as error:
+            raise ValueError(
+                "plugin manifest raw must contain canonical JSON"
+            ) from error
+        if not isinstance(raw, dict):
+            raise TypeError("plugin manifest raw must be a mapping")
+        diagnostics = validate_plugin_manifest(raw)
+        if not diagnostics.ok:
+            messages = "; ".join(
+                f"{item.code} {item.path}: {item.message}"
+                for item in diagnostics.diagnostics
+            )
+            raise ValueError(f"plugin manifest raw is invalid: {messages}")
+        raw = migrate_document(raw)
+        spec = raw["spec"]
+        metadata = raw["metadata"]
+        expected_plugin_id = str(spec.get("pluginId") or metadata.get("name"))
+        expected_version = str(
+            spec.get("version") or metadata.get("version") or "0.0.0"
+        )
+        expected_maturity = str(spec.get("maturity") or "experimental")
+        expected_capabilities = tuple(
+            sorted(str(item) for item in spec.get("capabilities", []))
+        )
+        for field_name, actual, expected in (
+            ("plugin_id", self.plugin_id, expected_plugin_id),
+            ("version", self.version, expected_version),
+            ("maturity", self.maturity, expected_maturity),
+            ("capabilities", capabilities, expected_capabilities),
+        ):
+            if actual != expected:
+                raise ValueError(
+                    f"plugin manifest {field_name} does not match raw document"
+                )
+        normalized_records: dict[str, tuple[dict[str, Any], ...]] = {}
+        for field_name, supplied, raw_name in (
+            ("blocks", self.blocks, "blocks"),
+            (
+                "connector_factories",
+                self.connector_factories,
+                "connectorFactories",
+            ),
+            ("adapters", self.adapters, "adapters"),
+        ):
+            try:
+                records = canonical_loads(canonical_dumps(supplied))
+            except (TypeError, ValueError) as error:
+                raise ValueError(
+                    f"plugin manifest {field_name} must contain canonical JSON mappings"
+                ) from error
+            if not isinstance(records, list) or any(
+                not isinstance(record, dict) for record in records
+            ):
+                raise TypeError(
+                    f"plugin manifest {field_name} must contain only mappings"
+                )
+            if records != spec.get(raw_name, []):
+                raise ValueError(
+                    f"plugin manifest {field_name} does not match raw document"
+                )
+            normalized_records[field_name] = tuple(records)
+        object.__setattr__(self, "capabilities", capabilities)
+        for field_name, records in normalized_records.items():
+            object.__setattr__(
+                self,
+                field_name,
+                tuple(_freeze_manifest_json(record) for record in records),
+            )
+        object.__setattr__(self, "raw", _freeze_manifest_json(raw))
 
     def summary(self) -> dict[str, Any]:
         return {
@@ -945,16 +1062,24 @@ def plugin_manifest_from_document(document: dict[str, Any], source: str = "<memo
     document = migrate_document(document)
     spec = document.get("spec", {})
     metadata = document.get("metadata", {})
+    raw = canonical_loads(canonical_dumps(document))
+    blocks = canonical_loads(canonical_dumps(spec.get("blocks", [])))
+    connector_factories = canonical_loads(
+        canonical_dumps(spec.get("connectorFactories", []))
+    )
+    adapters = canonical_loads(canonical_dumps(spec.get("adapters", [])))
     return PluginManifest(
         plugin_id=str(spec.get("pluginId") or metadata.get("name")),
         version=str(spec.get("version") or metadata.get("version") or "0.0.0"),
         maturity=str(spec.get("maturity") or "experimental"),
         capabilities=tuple(sorted(str(item) for item in spec.get("capabilities", []))),
-        blocks=tuple(item for item in spec.get("blocks", []) if isinstance(item, dict)),
-        connector_factories=tuple(item for item in spec.get("connectorFactories", []) if isinstance(item, dict)),
-        adapters=tuple(item for item in spec.get("adapters", []) if isinstance(item, dict)),
+        blocks=tuple(item for item in blocks if isinstance(item, dict)),
+        connector_factories=tuple(
+            item for item in connector_factories if isinstance(item, dict)
+        ),
+        adapters=tuple(item for item in adapters if isinstance(item, dict)),
         source=source,
-        raw=document,
+        raw=raw,
     )
 
 
@@ -967,7 +1092,14 @@ def validate_plugin_manifest(document: Any) -> DiagnosticSet:
         violation
         for violation in resource_schema_errors(document)
         if violation.keyword
-        in {"finiteNumber", "jsonObjectKey", "jsonValue", "maxDepth", "recursive"}
+        in {
+            "finiteNumber",
+            "jsonObjectKey",
+            "jsonValue",
+            "maxDepth",
+            "recursive",
+            "unicodeScalar",
+        }
     )
     if domain_violations:
         return DiagnosticSet(

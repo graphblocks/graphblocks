@@ -12,7 +12,14 @@ import yaml
 from graphblocks.canonical import canonical_hash, normalize_graph
 from graphblocks.cli import main
 from graphblocks.compiler import compile_graph
-from graphblocks.composition import CompositionError, compose_documents
+from graphblocks.composition import (
+    CompositionError,
+    CompositionInstance,
+    CompositionReport,
+    CompositionResult,
+    CompositionSource,
+    compose_documents,
+)
 from graphblocks.plugins import BlockCatalog
 
 
@@ -382,6 +389,64 @@ def test_composition_report_is_deterministic_for_identical_sources(tmp_path: Pat
     assert first.composition_digest == second.composition_digest
     assert first.sources == second.sources
     assert first.instances == second.instances
+
+
+def test_composition_report_rejects_tampered_restored_state() -> None:
+    graph_source = CompositionSource(
+        "graph.yaml",
+        "sha256:" + "0" * 64,
+    )
+    fragment_source = CompositionSource(
+        "fragment.yaml",
+        "sha256:" + "1" * 64,
+    )
+    instance = CompositionInstance(
+        graph="graph",
+        node="prompt",
+        fragment="prompt-fragment",
+        source="fragment.yaml",
+    )
+    valid = CompositionReport.create(
+        (graph_source, fragment_source),
+        (instance,),
+    )
+
+    with pytest.raises(ValueError, match="digest does not match"):
+        CompositionReport(
+            valid.sources,
+            valid.instances,
+            "sha256:" + "f" * 64,
+        )
+    with pytest.raises(ValueError, match="source paths must be unique"):
+        CompositionReport.create((graph_source, graph_source), ())
+    with pytest.raises(TypeError, match="CompositionSource"):
+        CompositionReport.create(("bad-source",), ())  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="source is absent"):
+        CompositionReport.create((graph_source,), (instance,))
+
+
+def test_composition_result_snapshots_documents_and_validates_report() -> None:
+    report = CompositionReport.create((), ())
+    document = {"kind": "Binding", "spec": {"values": [1]}}
+    result = CompositionResult((document,), report)
+    report_digest = result.report.composition_digest
+
+    document["spec"]["values"].append(2)
+
+    assert result.documents == (
+        {"kind": "Binding", "spec": {"values": [1]}},
+    )
+    with pytest.raises(TypeError, match="frozen list"):
+        result.documents[0]["spec"]["values"].append(3)
+
+    mutable_documents = result.mutable_documents()
+    mutable_documents[0]["spec"]["values"].append(4)
+    assert result.documents == (
+        {"kind": "Binding", "spec": {"values": [1]}},
+    )
+    assert result.report.composition_digest == report_digest
+    with pytest.raises(TypeError, match="report must be a CompositionReport"):
+        CompositionResult((), object())  # type: ignore[arg-type]
 
 
 @pytest.mark.parametrize(

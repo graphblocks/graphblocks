@@ -152,7 +152,7 @@ def load_composed_documents(
 ) -> list[dict[str, Any]]:
     from .composition import compose_documents
 
-    return list(compose_documents(path, root=root).documents)
+    return list(compose_documents(path, root=root).mutable_documents())
 
 
 __all__ = ["load_composed_documents", "load_documents"]

@@ -13,7 +13,14 @@ from typing import Any
 
 import yaml
 
-from .canonical import _normalize_graph_unchecked, canonical_hash
+from .canonical import (
+    _has_unicode_surrogate,
+    _normalize_graph_unchecked,
+    canonical_dumps,
+    canonical_hash,
+    canonical_loads,
+)
+from .documents import _freeze_value
 from .migration import (
     GRAPH_API_VERSION,
     LEGACY_GRAPH_API_VERSIONS,
@@ -69,6 +76,28 @@ class CompositionSource:
     path: str
     digest: str
 
+    def __post_init__(self) -> None:
+        if not isinstance(self.path, str) or not self.path:
+            raise ValueError("composition source path must be a non-empty string")
+        pure_path = PurePosixPath(self.path)
+        if (
+            pure_path.is_absolute()
+            or pure_path.as_posix() != self.path
+            or "\\" in self.path
+            or "\x00" in self.path
+            or _has_unicode_surrogate(self.path)
+            or any(part in {"", ".", ".."} for part in self.path.split("/"))
+            or re.match(r"^[A-Za-z]:", self.path) is not None
+        ):
+            raise ValueError(
+                "composition source path must be a safe canonical relative path"
+            )
+        if (
+            not isinstance(self.digest, str)
+            or re.fullmatch(r"sha256:[0-9a-f]{64}", self.digest) is None
+        ):
+            raise ValueError("composition source digest must be a sha256 digest")
+
     def canonical_value(self) -> dict[str, str]:
         return {"path": self.path, "digest": self.digest}
 
@@ -79,6 +108,23 @@ class CompositionInstance:
     node: str
     fragment: str
     source: str
+
+    def __post_init__(self) -> None:
+        for field_name, value in (
+            ("graph", self.graph),
+            ("node", self.node),
+            ("fragment", self.fragment),
+            ("source", self.source),
+        ):
+            if (
+                not isinstance(value, str)
+                or not value
+                or value != value.strip()
+                or _has_unicode_surrogate(value)
+            ):
+                raise ValueError(
+                    f"composition instance {field_name} must be a canonical string"
+                )
 
     def canonical_value(self) -> dict[str, str]:
         return {
@@ -95,12 +141,74 @@ class CompositionReport:
     instances: tuple[CompositionInstance, ...]
     composition_digest: str
 
+    def __post_init__(self) -> None:
+        try:
+            sources = tuple(sorted(self.sources))
+            instances = tuple(sorted(self.instances))
+        except (AttributeError, TypeError) as error:
+            raise TypeError(
+                "composition report records must be sortable sequences"
+            ) from error
+        if any(not isinstance(source, CompositionSource) for source in sources):
+            raise TypeError(
+                "composition report sources must contain CompositionSource values"
+            )
+        if any(
+            not isinstance(instance, CompositionInstance)
+            for instance in instances
+        ):
+            raise TypeError(
+                "composition report instances must contain CompositionInstance values"
+            )
+        source_paths = [source.path for source in sources]
+        if len(source_paths) != len(set(source_paths)):
+            raise ValueError("composition report source paths must be unique")
+        instance_ids = [(instance.graph, instance.node) for instance in instances]
+        if len(instance_ids) != len(set(instance_ids)):
+            raise ValueError(
+                "composition report graph/node instance identities must be unique"
+            )
+        missing_instance_sources = sorted(
+            {instance.source for instance in instances} - set(source_paths)
+        )
+        if missing_instance_sources:
+            raise ValueError(
+                "composition report instance source is absent from sources: "
+                f"{missing_instance_sources[0]}"
+            )
+        expected_digest = canonical_hash(
+            {
+                "apiVersion": COMPOSITION_API_VERSION,
+                "sources": [source.canonical_value() for source in sources],
+                "instances": [
+                    instance.canonical_value() for instance in instances
+                ],
+            }
+        )
+        if self.composition_digest != expected_digest:
+            raise ValueError(
+                "composition report digest does not match its records"
+            )
+        object.__setattr__(self, "sources", sources)
+        object.__setattr__(self, "instances", instances)
+
     @classmethod
     def create(
         cls,
         sources: tuple[CompositionSource, ...],
         instances: tuple[CompositionInstance, ...],
     ) -> CompositionReport:
+        if any(not isinstance(source, CompositionSource) for source in sources):
+            raise TypeError(
+                "composition report sources must contain CompositionSource values"
+            )
+        if any(
+            not isinstance(instance, CompositionInstance)
+            for instance in instances
+        ):
+            raise TypeError(
+                "composition report instances must contain CompositionInstance values"
+            )
         ordered_sources = tuple(sorted(sources))
         ordered_instances = tuple(sorted(instances))
         digest = canonical_hash(
@@ -125,6 +233,40 @@ class CompositionReport:
 class CompositionResult:
     documents: tuple[dict[str, Any], ...]
     report: CompositionReport
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.report, CompositionReport):
+            raise TypeError("composition result report must be a CompositionReport")
+        try:
+            documents = canonical_loads(canonical_dumps(self.documents))
+        except (TypeError, ValueError) as error:
+            raise ValueError(
+                "composition result documents must contain canonical JSON"
+            ) from error
+        if not isinstance(documents, list) or any(
+            not isinstance(document, dict) for document in documents
+        ):
+            raise TypeError(
+                "composition result documents must contain only mappings"
+            )
+        object.__setattr__(
+            self,
+            "documents",
+            tuple(
+                _freeze_value("composition result", document)
+                for document in documents
+            ),
+        )
+
+    def mutable_documents(self) -> tuple[dict[str, Any], ...]:
+        documents = canonical_loads(canonical_dumps(self.documents))
+        if not isinstance(documents, list) or any(
+            not isinstance(document, dict) for document in documents
+        ):
+            raise TypeError(
+                "composition result documents must contain only mappings"
+            )
+        return tuple(documents)
 
 
 class _StrictSafeLoader(yaml.SafeLoader):

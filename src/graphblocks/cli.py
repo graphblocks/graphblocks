@@ -357,7 +357,7 @@ def _main(argv: list[str] | None = None) -> int:
     if args.command == "compose":
         result = compose_documents(args.path, root=args.root)
         rendered = yaml.safe_dump_all(
-            result.documents,
+            result.mutable_documents(),
             sort_keys=False,
             allow_unicode=True,
         )
