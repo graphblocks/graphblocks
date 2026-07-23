@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Iterator, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from threading import Barrier, BrokenBarrierError
@@ -184,6 +185,54 @@ def test_ingestion_manifest_new_rejects_mismatched_asset_lineage() -> None:
             "sha256:pipeline",
             "2026-06-22T00:00:00Z",
         )
+
+
+def test_ingestion_manifest_new_rejects_mismatched_content_checksum() -> None:
+    asset, revision = _source_revision("rev-1")
+
+    with pytest.raises(ValueError, match="artifact checksum must match revision content_hash"):
+        IngestionManifest.new(
+            "manifest-1",
+            asset,
+            replace(
+                revision,
+                artifact=replace(revision.artifact, checksum="sha256:other"),
+            ),
+            ProcessorRef("plain-text", "1"),
+            ProcessorRef("line-chunker", "1"),
+            "sha256:pipeline",
+            "2026-06-22T00:00:00Z",
+        )
+
+
+def test_ingestion_records_reject_invalid_unicode_and_duplicate_normalizers() -> None:
+    with pytest.raises(ValueError, match="Unicode scalar"):
+        ProcessorRef("plain\ud800text", "1")
+
+    normalizer = ProcessorRef("normalize", "1", config_digest="sha256:normalizer")
+    with pytest.raises(ValueError, match="normalizers must not contain duplicates"):
+        replace(
+            _manifest("manifest-1", "rev-1"),
+            normalizers=(normalizer, normalizer),
+        )
+
+
+def test_ingestion_records_normalize_hostile_collections() -> None:
+    class ExplodingMapping(Mapping[str, object]):
+        def __getitem__(self, key: str) -> object:
+            raise KeyError(key)
+
+        def __iter__(self) -> Iterator[str]:
+            raise RuntimeError("mapping exploded")
+
+        def __len__(self) -> int:
+            return 1
+
+    with pytest.raises(ValueError, match="metadata must be a readable mapping"):
+        ProcessorRef("plain-text", "1", metadata=ExplodingMapping())  # type: ignore[arg-type]
+
+    with pytest.raises(ValueError, match="manifests must be a readable mapping"):
+        InMemoryIngestionManifestStore(_manifests=ExplodingMapping())  # type: ignore[arg-type]
 
 
 @pytest.mark.parametrize(
@@ -401,6 +450,26 @@ def test_ingestion_manifest_store_materializes_one_shot_index_records() -> None:
     )
 
     assert committed.index_records == (_index_record("rev-1"),)
+
+
+def test_ingestion_manifest_store_rejects_exploding_index_records_without_mutation() -> None:
+    store = InMemoryIngestionManifestStore()
+    store.create_processing(_manifest("manifest-1", "rev-1"), "2026-06-22T00:01:00Z")
+
+    def records() -> Iterator[IndexRecordRef]:
+        yield _index_record("rev-1")
+        raise RuntimeError("records exploded")
+
+    with pytest.raises(ValueError, match="index_records must be readable"):
+        store.commit(
+            "manifest-1",
+            None,
+            None,
+            records(),  # type: ignore[arg-type]
+            "2026-06-22T00:02:00Z",
+        )
+
+    assert store.get("manifest-1").status == "processing"
 
 
 def test_ingestion_manifest_store_serializes_duplicate_concurrent_creates() -> None:

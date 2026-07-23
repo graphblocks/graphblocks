@@ -38,6 +38,12 @@ def _with_ingestion_store_lock(method: Callable[_P, _R]) -> Callable[_P, _R]:
 def _validate_non_empty_string(owner: str, field_name: str, value: object) -> str:
     if not isinstance(value, str):
         raise ValueError(f"{owner} {field_name} must be a string")
+    try:
+        value.encode("utf-8")
+    except UnicodeEncodeError:
+        raise ValueError(
+            f"{owner} {field_name} must contain only Unicode scalar values"
+        ) from None
     if not value.strip():
         raise ValueError(f"{owner} {field_name} must not be empty")
     return value
@@ -59,7 +65,10 @@ def _validate_optional_non_empty_string(owner: str, field_name: str, value: obje
 def _copy_metadata(owner: str, value: object) -> JsonObject:
     if not isinstance(value, Mapping):
         raise ValueError(f"{owner} metadata must be a mapping")
-    metadata = dict(value)
+    try:
+        metadata = dict(value)
+    except (KeyError, RecursionError, RuntimeError, TypeError, ValueError) as error:
+        raise ValueError(f"{owner} metadata must be a readable mapping") from error
     for key in metadata:
         if not isinstance(key, str):
             raise ValueError(f"{owner} metadata keys must be strings")
@@ -71,7 +80,10 @@ def _copy_metadata(owner: str, value: object) -> JsonObject:
         canonical_dumps(metadata)
     except (TypeError, ValueError) as error:
         raise ValueError(f"{owner} metadata must contain strict canonical JSON") from error
-    return deepcopy(metadata)
+    try:
+        return deepcopy(metadata)
+    except (RecursionError, RuntimeError, TypeError, ValueError) as error:
+        raise ValueError(f"{owner} metadata must be copyable") from error
 
 
 def _validate_processor_ref(owner: str, value: object) -> ProcessorRef:
@@ -137,7 +149,7 @@ class IndexRecordRef:
             raise ValueError("index record ref chunk_ids must be a collection of strings")
         try:
             chunk_ids = tuple(self.chunk_ids)
-        except TypeError as error:
+        except (RecursionError, RuntimeError, TypeError, ValueError) as error:
             raise ValueError("index record ref chunk_ids must be a collection of strings") from error
         for chunk_id in chunk_ids:
             _validate_exact_non_empty_string("index record ref", "chunk_id", chunk_id)
@@ -211,10 +223,21 @@ class IngestionManifest:
             raise ValueError("ingestion manifest normalizers must be ProcessorRef records")
         try:
             normalizers = tuple(self.normalizers)
-        except TypeError as error:
+        except (RecursionError, RuntimeError, TypeError, ValueError) as error:
             raise ValueError("ingestion manifest normalizers must be ProcessorRef records") from error
         for normalizer in normalizers:
             _validate_processor_ref("normalizer", normalizer)
+        normalizer_identities = [
+            (
+                normalizer.processor_id,
+                normalizer.version,
+                normalizer.config_digest,
+                canonical_dumps(normalizer.metadata),
+            )
+            for normalizer in normalizers
+        ]
+        if len(normalizer_identities) != len(set(normalizer_identities)):
+            raise ValueError("ingestion manifest normalizers must not contain duplicates")
         if self.parsed_document_ref is not None and not isinstance(self.parsed_document_ref, ArtifactRef):
             raise ValueError("ingestion manifest parsed_document_ref must be an ArtifactRef")
         if self.chunk_set_ref is not None and not isinstance(self.chunk_set_ref, ArtifactRef):
@@ -223,7 +246,7 @@ class IngestionManifest:
             raise ValueError("ingestion manifest index_records must be IndexRecordRef records")
         try:
             index_records = tuple(self.index_records)
-        except TypeError as error:
+        except (RecursionError, RuntimeError, TypeError, ValueError) as error:
             raise ValueError("ingestion manifest index_records must be IndexRecordRef records") from error
         for record in index_records:
             if not isinstance(record, IndexRecordRef):
@@ -276,6 +299,13 @@ class IngestionManifest:
             raise ValueError("ingestion manifest revision must be an AssetRevision")
         if revision.asset_id != asset.asset_id:
             raise ValueError("ingestion manifest revision asset_id must match source asset asset_id")
+        if (
+            revision.artifact.checksum is not None
+            and revision.artifact.checksum != revision.content_hash
+        ):
+            raise ValueError(
+                "ingestion manifest artifact checksum must match revision content_hash"
+            )
         return cls(
             manifest_id=manifest_id,
             asset_id=asset.asset_id,
@@ -297,7 +327,13 @@ class IngestionManifest:
         return replace(self, embedding=embedding)
 
     def with_normalizers(self, normalizers: tuple[ProcessorRef, ...]) -> IngestionManifest:
-        return replace(self, normalizers=tuple(normalizers))
+        try:
+            snapshot = tuple(normalizers)
+        except (RecursionError, RuntimeError, TypeError, ValueError) as error:
+            raise ValueError(
+                "ingestion manifest normalizers must be ProcessorRef records"
+            ) from error
+        return replace(self, normalizers=snapshot)
 
     def with_acl_revision(self, acl_revision: str) -> IngestionManifest:
         return replace(self, acl_revision=acl_revision)
@@ -338,7 +374,13 @@ class InMemoryIngestionManifestStore:
         if not isinstance(self._manifests, Mapping):
             raise ValueError("ingestion manifest store manifests must be a mapping")
         manifests: dict[str, IngestionManifest] = {}
-        for manifest_id, manifest in self._manifests.items():
+        try:
+            manifest_items = tuple(self._manifests.items())
+        except (KeyError, RecursionError, RuntimeError, TypeError, ValueError) as error:
+            raise ValueError(
+                "ingestion manifest store manifests must be a readable mapping"
+            ) from error
+        for manifest_id, manifest in manifest_items:
             _validate_exact_non_empty_string("ingestion manifest store", "manifest_id", manifest_id)
             if not isinstance(manifest, IngestionManifest):
                 raise ValueError(
@@ -350,7 +392,13 @@ class InMemoryIngestionManifestStore:
         if not isinstance(self._current_by_asset, Mapping):
             raise ValueError("ingestion manifest store current pointers must be a mapping")
         current_by_asset: dict[str, str] = {}
-        for asset_id, manifest_id in self._current_by_asset.items():
+        try:
+            current_items = tuple(self._current_by_asset.items())
+        except (KeyError, RecursionError, RuntimeError, TypeError, ValueError) as error:
+            raise ValueError(
+                "ingestion manifest store current pointers must be a readable mapping"
+            ) from error
+        for asset_id, manifest_id in current_items:
             _validate_exact_non_empty_string("ingestion manifest store", "asset_id", asset_id)
             _validate_exact_non_empty_string("ingestion manifest store", "manifest_id", manifest_id)
             manifest = manifests.get(manifest_id)
@@ -412,8 +460,8 @@ class InMemoryIngestionManifestStore:
         )
         try:
             index_records = tuple(index_records)
-        except TypeError as error:
-            raise ValueError("ingestion manifest index_records must be IndexRecordRef records") from error
+        except (RecursionError, RuntimeError, TypeError, ValueError) as error:
+            raise ValueError("ingestion manifest index_records must be readable") from error
         if any(not isinstance(record, IndexRecordRef) for record in index_records):
             raise ValueError("ingestion manifest index_records must be IndexRecordRef records")
         manifest = self._require_manifest(manifest_id)

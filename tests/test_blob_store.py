@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Iterator, Mapping
 from concurrent.futures import ThreadPoolExecutor
 import gc
 import json
@@ -158,6 +159,8 @@ def test_put_options_rejects_invalid_metadata() -> None:
         PutOptions(metadata={" ": "acme"})
     with pytest.raises(ValueError, match="put metadata keys and values must be strings"):
         PutOptions(metadata={"tenant": object()})  # type: ignore[dict-item]
+    with pytest.raises(ValueError, match="Unicode scalar"):
+        PutOptions(metadata={"tenant": "\ud800"})
 
 
 @pytest.mark.parametrize(
@@ -217,6 +220,40 @@ def test_local_blob_store_supports_range_reads(tmp_path) -> None:
         ByteRange(offset=-1)
     with pytest.raises(ValueError, match="byte range offset and length must be non-negative"):
         ByteRange(offset=0, length=-1)
+
+
+def test_blob_store_rejects_ranges_and_limits_outside_u64(tmp_path) -> None:
+    maximum = (1 << 64) - 1
+
+    with pytest.raises(ValueError, match="offset must be at most"):
+        ByteRange(offset=maximum + 1)
+    with pytest.raises(ValueError, match="length must be at most"):
+        ByteRange(offset=0, length=maximum + 1)
+    with pytest.raises(ValueError, match="range end must be at most"):
+        ByteRange(offset=maximum, length=2)
+
+    store = S3CompatibleBlobStore(bucket="kb-artifacts", client=_FakeS3Client())
+    with pytest.raises(ValueError, match="limit must be at most"):
+        store.list(limit=maximum + 1)
+
+    local_store = LocalBlobStore(tmp_path)
+    with pytest.raises(ValueError, match="cursor must not exceed"):
+        local_store.list(cursor=str(maximum + 1))
+    with pytest.raises(ValueError, match="cursor must not exceed"):
+        local_store.list(cursor="9" * 5000)
+
+
+def test_blob_store_rejects_non_scalar_and_null_path_identities(tmp_path) -> None:
+    with pytest.raises(InvalidBlobKeyError, match="Unicode scalar"):
+        BlobKey("docs/\ud800.txt")
+    with pytest.raises(InvalidBlobKeyError, match="null"):
+        BlobKey("docs/\x00.txt")
+
+    store = LocalBlobStore(tmp_path)
+    with pytest.raises(InvalidBlobKeyError, match="Unicode scalar"):
+        store.list("docs/\ud800")
+    with pytest.raises(InvalidBlobKeyError, match="null"):
+        store.list("docs/\x00")
 
 
 def test_local_blob_store_lists_sorted_prefix_with_cursor(tmp_path) -> None:
@@ -442,6 +479,23 @@ def test_blob_metadata_and_list_page_validate_record_types() -> None:
         ListPage(items=[], next_cursor=" ")
 
 
+def test_list_page_rejects_duplicate_entries_and_hostile_iterables() -> None:
+    key = BlobKey("docs/policy.txt")
+    metadata = BlobMetadata(key, ArtifactRef("artifact-1", "file:///tmp/policy.txt"))
+    item = BlobListItem(key, metadata)
+
+    with pytest.raises(ValueError, match="must not contain duplicate keys"):
+        ListPage(items=(item, item))
+
+    class ExplodingItems:
+        def __iter__(self) -> Iterator[BlobListItem]:
+            yield item
+            raise RuntimeError("items exploded")
+
+    with pytest.raises(ValueError, match="items must be a readable collection"):
+        ListPage(items=ExplodingItems())  # type: ignore[arg-type]
+
+
 def test_s3_compatible_blob_store_uses_injected_client_without_sdk_dependency() -> None:
     client = _FakeS3Client()
     store = S3CompatibleBlobStore(bucket="kb-artifacts", client=client)
@@ -551,6 +605,68 @@ def test_s3_compatible_blob_store_rejects_malformed_response_metadata() -> None:
     stored["Metadata"] = {"tenant": object()}
     with pytest.raises(BlobStoreError, match="keys and values must be strings"):
         store.head(key)
+
+
+def test_blob_store_normalizes_hostile_metadata_and_stream_failures() -> None:
+    class ExplodingMapping(Mapping[str, str]):
+        def __getitem__(self, key: str) -> str:
+            raise KeyError(key)
+
+        def __iter__(self) -> Iterator[str]:
+            raise RuntimeError("mapping exploded")
+
+        def __len__(self) -> int:
+            return 1
+
+    with pytest.raises(ValueError, match="put metadata must be a readable mapping"):
+        PutOptions(metadata=ExplodingMapping())  # type: ignore[arg-type]
+
+    class ExplodingBody:
+        def read(self) -> bytes:
+            raise RuntimeError("stream exploded")
+
+    class ExplodingBodyClient(_FakeS3Client):
+        def get_object(self, **kwargs: object) -> dict[str, object]:
+            response = super().get_object(**kwargs)
+            response["Body"] = ExplodingBody()
+            return response
+
+    client = ExplodingBodyClient()
+    store = S3CompatibleBlobStore(bucket="kb-artifacts", client=client)
+    key = BlobKey("docs/policy.txt")
+    store.put(key, b"alpha policy", PutOptions())
+
+    with pytest.raises(BlobStoreError, match="Body stream could not be read"):
+        store.get(key)
+
+
+def test_s3_list_rejects_duplicate_keys_and_nonadvancing_cursor() -> None:
+    class InvalidListClient(_FakeS3Client):
+        response: dict[str, object]
+
+        def list_objects_v2(self, **kwargs: object) -> dict[str, object]:
+            del kwargs
+            return self.response
+
+    client = InvalidListClient()
+    store = S3CompatibleBlobStore(bucket="kb-artifacts", client=client)
+    key = BlobKey("docs/policy.txt")
+    store.put(key, b"alpha policy", PutOptions())
+    client.response = {
+        "Contents": [{"Key": key.key}, {"Key": key.key}],
+        "IsTruncated": False,
+    }
+
+    with pytest.raises(BlobStoreError, match="duplicate keys"):
+        store.list("docs/")
+
+    client.response = {
+        "Contents": [{"Key": key.key}],
+        "NextContinuationToken": "cursor-1",
+        "IsTruncated": True,
+    }
+    with pytest.raises(BlobStoreError, match="must advance"):
+        store.list("docs/", cursor="cursor-1")
 
 
 def test_s3_compatible_blob_store_supports_range_reads_and_pagination() -> None:

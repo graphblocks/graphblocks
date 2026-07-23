@@ -25,10 +25,17 @@ class InvalidBlobKeyError(BlobStoreError):
     pass
 
 
+_MAX_U64 = (1 << 64) - 1
+
+
 def _validate_exact_non_empty_string(owner: str, field_name: str, value: object) -> str:
     label = f"{owner} {field_name}" if owner else field_name
     if not isinstance(value, str):
         raise ValueError(f"{label} must be a string")
+    try:
+        value.encode("utf-8")
+    except UnicodeEncodeError:
+        raise ValueError(f"{label} must contain only Unicode scalar values") from None
     if not value.strip():
         raise ValueError(f"{label} must not be empty")
     if value != value.strip():
@@ -41,6 +48,8 @@ def _validate_list_limit(value: object) -> int:
         raise ValueError("limit must be an integer")
     if value < 1:
         raise ValueError("limit must be at least 1")
+    if value > _MAX_U64:
+        raise ValueError(f"limit must be at most {_MAX_U64}")
     return value
 
 
@@ -85,6 +94,16 @@ class ByteRange:
             raise ValueError("byte range offset and length must be integers")
         if self.offset < 0 or (self.length is not None and self.length < 0):
             raise ValueError("byte range offset and length must be non-negative")
+        if self.offset > _MAX_U64:
+            raise ValueError(f"byte range offset must be at most {_MAX_U64}")
+        if self.length is not None and self.length > _MAX_U64:
+            raise ValueError(f"byte range length must be at most {_MAX_U64}")
+        if (
+            self.length is not None
+            and self.length > 0
+            and self.offset > _MAX_U64 - (self.length - 1)
+        ):
+            raise ValueError(f"byte range end must be at most {_MAX_U64}")
 
 
 @dataclass(frozen=True, slots=True)
@@ -100,10 +119,20 @@ class PutOptions:
                 _validate_exact_non_empty_string("put", field_name, value)
         if not isinstance(self.metadata, Mapping):
             raise ValueError("put metadata must be a mapping")
-        metadata = dict(self.metadata)
+        try:
+            metadata = dict(self.metadata)
+        except (KeyError, RecursionError, RuntimeError, TypeError, ValueError) as error:
+            raise ValueError("put metadata must be a readable mapping") from error
         for name, value in metadata.items():
             if not isinstance(name, str) or not name.strip() or not isinstance(value, str) or not value.strip():
                 raise ValueError("put metadata keys and values must be strings")
+            try:
+                name.encode("utf-8")
+                value.encode("utf-8")
+            except UnicodeEncodeError:
+                raise ValueError(
+                    "put metadata keys and values must contain only Unicode scalar values"
+                ) from None
             if name != name.strip():
                 raise ValueError("put metadata keys must not contain surrounding whitespace")
             if value != value.strip():
@@ -150,15 +179,28 @@ class ListPage:
     next_cursor: str | None = None
 
     def __post_init__(self) -> None:
-        items = tuple(self.items)
+        try:
+            items = tuple(self.items)
+        except (RecursionError, RuntimeError, TypeError, ValueError) as error:
+            raise ValueError("list page items must be a readable collection") from error
         if any(not isinstance(item, BlobListItem) for item in items):
             raise ValueError("list page items must be BlobListItem")
+        item_keys = [item.key for item in items]
+        if len(item_keys) != len(set(item_keys)):
+            raise ValueError("list page items must not contain duplicate keys")
         if self.next_cursor is not None and not isinstance(self.next_cursor, str):
             raise ValueError("list page next_cursor must be a string")
         if self.next_cursor is not None and not self.next_cursor.strip():
             raise ValueError("list page next_cursor must not be empty")
         if self.next_cursor is not None and self.next_cursor != self.next_cursor.strip():
             raise ValueError("list page next_cursor must not contain surrounding whitespace")
+        if self.next_cursor is not None:
+            try:
+                self.next_cursor.encode("utf-8")
+            except UnicodeEncodeError:
+                raise ValueError(
+                    "list page next_cursor must contain only Unicode scalar values"
+                ) from None
         object.__setattr__(self, "items", items)
 
 
@@ -176,6 +218,14 @@ _RESERVED_METADATA_KEYS = {
 def _validate_blob_key(key: BlobKey) -> None:
     if not isinstance(key, BlobKey):
         raise InvalidBlobKeyError("blob key must be a BlobKey")
+    try:
+        key.key.encode("utf-8")
+    except UnicodeEncodeError:
+        raise InvalidBlobKeyError(
+            "blob key must contain only Unicode scalar values"
+        ) from None
+    if "\x00" in key.key:
+        raise InvalidBlobKeyError("blob key must not contain null characters")
     parts = key.key.split("/")
     parsed = PurePosixPath(key.key)
     if (
@@ -192,6 +242,14 @@ def _validate_blob_prefix(prefix: str) -> None:
         raise InvalidBlobKeyError("blob prefix must be a string")
     if prefix == "":
         return
+    try:
+        prefix.encode("utf-8")
+    except UnicodeEncodeError:
+        raise InvalidBlobKeyError(
+            "blob prefix must contain only Unicode scalar values"
+        ) from None
+    if "\x00" in prefix:
+        raise InvalidBlobKeyError("blob prefix must not contain null characters")
     if prefix.startswith("/") or "\\" in prefix:
         raise InvalidBlobKeyError(f"invalid blob prefix {prefix!r}")
     normalized = prefix[:-1] if prefix.endswith("/") else prefix
@@ -452,6 +510,17 @@ class LocalBlobStore:
                 or (cursor != "0" and cursor.startswith("0"))
             ):
                 raise ValueError("cursor must be a canonical non-negative integer")
+            maximum_cursor = str(_MAX_U64)
+            if (
+                len(cursor) > len(maximum_cursor)
+                or (
+                    len(cursor) == len(maximum_cursor)
+                    and cursor > maximum_cursor
+                )
+            ):
+                raise ValueError(
+                    f"cursor must not exceed {_MAX_U64}"
+                )
             start = int(cursor)
         with self._root_lock:
             keys: list[str] = []
@@ -662,6 +731,7 @@ class S3CompatibleBlobStore:
         if not isinstance(contents, list | tuple):
             raise BlobStoreError("s3 list_objects_v2 Contents must be a sequence")
         items: list[BlobListItem] = []
+        seen_keys: set[BlobKey] = set()
         for index, item in enumerate(contents):
             if not isinstance(item, Mapping) or not isinstance(item.get("Key"), str):
                 raise BlobStoreError(f"s3 list_objects_v2 Contents[{index}] must include string Key")
@@ -670,6 +740,11 @@ class S3CompatibleBlobStore:
                 raise BlobStoreError(
                     "s3 list_objects_v2 returned a key outside the requested prefix"
                 )
+            if item_key in seen_keys:
+                raise BlobStoreError(
+                    "s3 list_objects_v2 returned duplicate keys"
+                )
+            seen_keys.add(item_key)
             items.append(BlobListItem(key=item_key, metadata=self.head(item_key)))
         next_cursor = response.get("NextContinuationToken")
         if next_cursor is not None:
@@ -689,6 +764,8 @@ class S3CompatibleBlobStore:
             raise BlobStoreError(
                 "non-truncated s3 list response must not include a next cursor"
             )
+        if is_truncated is True and next_cursor == cursor:
+            raise BlobStoreError("truncated s3 list response cursor must advance")
         return ListPage(
             items=items,
             next_cursor=next_cursor,
@@ -750,6 +827,8 @@ class S3CompatibleBlobStore:
             raise BlobStoreError("s3 ContentLength must be an integer")
         if value < 0:
             raise BlobStoreError("s3 ContentLength must be non-negative")
+        if value > _MAX_U64:
+            raise BlobStoreError(f"s3 ContentLength must be at most {_MAX_U64}")
         return value
 
     def _range_header(self, byte_range: ByteRange) -> str:
@@ -765,7 +844,12 @@ class S3CompatibleBlobStore:
             return bytes(body)
         read = getattr(body, "read", None)
         if callable(read):
-            data = read()
+            try:
+                data = read()
+            except Exception as error:
+                raise BlobStoreError(
+                    "s3 response Body stream could not be read"
+                ) from error
             if isinstance(data, bytes):
                 return data
             if isinstance(data, bytearray):
