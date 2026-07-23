@@ -188,6 +188,124 @@ fn sqlite_journal_rejects_invalid_record_metadata_on_replay() -> Result<(), Stri
 }
 
 #[test]
+fn sqlite_journal_rejects_sequence_gaps_on_replay() -> Result<(), String> {
+    let path = std::env::temp_dir().join(format!(
+        "graphblocks-sqlite-journal-{}-sequence-gap.sqlite3",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_file(&path);
+    {
+        let mut journal = SqliteExecutionJournal::open(&path, "run-000001")
+            .map_err(|error| format!("{error:?}"))?;
+        journal
+            .append("node_started", json!({}))
+            .map_err(|error| format!("{error:?}"))?;
+        journal
+            .append("node_completed", json!({}))
+            .map_err(|error| format!("{error:?}"))?;
+    }
+    let connection = rusqlite::Connection::open(&path).map_err(|error| format!("{error:?}"))?;
+    connection
+        .execute(
+            "DELETE FROM journal_records WHERE run_id = ?1 AND run_sequence = 1",
+            params!["run-000001"],
+        )
+        .map_err(|error| format!("{error:?}"))?;
+    drop(connection);
+
+    let journal =
+        SqliteExecutionJournal::open(&path, "run-000001").map_err(|error| format!("{error:?}"))?;
+    assert_eq!(
+        journal.records(),
+        Err(JournalError::Storage {
+            message: "stored journal sequence gap: expected 1, found 2".to_owned(),
+        })
+    );
+    assert_eq!(
+        journal.terminal_kind(),
+        Err(JournalError::Storage {
+            message: "stored journal sequence gap: expected 1, found 2".to_owned(),
+        })
+    );
+
+    let _ = std::fs::remove_file(&path);
+    Ok(())
+}
+
+#[test]
+fn sqlite_journal_rejects_record_id_mismatch_on_replay() -> Result<(), String> {
+    let path = std::env::temp_dir().join(format!(
+        "graphblocks-sqlite-journal-{}-record-id.sqlite3",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_file(&path);
+    {
+        let mut journal = SqliteExecutionJournal::open(&path, "run-000001")
+            .map_err(|error| format!("{error:?}"))?;
+        journal
+            .append("node_started", json!({}))
+            .map_err(|error| format!("{error:?}"))?;
+    }
+    let connection = rusqlite::Connection::open(&path).map_err(|error| format!("{error:?}"))?;
+    connection
+        .execute(
+            "UPDATE journal_records SET record_id = ?1 WHERE run_id = ?2",
+            params!["run-other:99", "run-000001"],
+        )
+        .map_err(|error| format!("{error:?}"))?;
+    drop(connection);
+
+    let journal =
+        SqliteExecutionJournal::open(&path, "run-000001").map_err(|error| format!("{error:?}"))?;
+    assert_eq!(
+        journal.records(),
+        Err(JournalError::Storage {
+            message: "stored journal record_id \"run-other:99\" does not match \"run-000001:1\""
+                .to_owned(),
+        })
+    );
+
+    let _ = std::fs::remove_file(&path);
+    Ok(())
+}
+
+#[test]
+fn sqlite_journal_rejects_noncanonical_terminal_flag_on_replay() -> Result<(), String> {
+    let path = std::env::temp_dir().join(format!(
+        "graphblocks-sqlite-journal-{}-terminal-flag.sqlite3",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_file(&path);
+    {
+        let mut journal = SqliteExecutionJournal::open(&path, "run-000001")
+            .map_err(|error| format!("{error:?}"))?;
+        journal
+            .append("node_started", json!({}))
+            .map_err(|error| format!("{error:?}"))?;
+    }
+    let connection = rusqlite::Connection::open(&path).map_err(|error| format!("{error:?}"))?;
+    connection
+        .execute(
+            "UPDATE journal_records SET terminal = 2 WHERE run_id = ?1",
+            params!["run-000001"],
+        )
+        .map_err(|error| format!("{error:?}"))?;
+    drop(connection);
+
+    let journal =
+        SqliteExecutionJournal::open(&path, "run-000001").map_err(|error| format!("{error:?}"))?;
+    assert_eq!(
+        journal.records(),
+        Err(JournalError::Storage {
+            message: "stored journal record terminal flag must be 0 or 1, found 2".to_owned(),
+        })
+    );
+
+    let _ = std::fs::remove_file(&path);
+    Ok(())
+}
+
+#[test]
 fn sqlite_journal_rejects_late_records_after_terminal() -> Result<(), String> {
     let mut journal = SqliteExecutionJournal::open_in_memory("run-000001")
         .map_err(|error| format!("{error:?}"))?;

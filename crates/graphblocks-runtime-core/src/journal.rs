@@ -244,32 +244,54 @@ impl SqliteExecutionJournal {
                     attempt_id: row.get::<_, Option<String>>(6)?,
                     lease_epoch: row.get::<_, Option<i64>>(7)?,
                     payload: row.get::<_, Option<String>>(8)?,
-                    terminal: row.get::<_, bool>(9)?,
+                    terminal: row.get::<_, i64>(9)?,
                 })
             })
             .map_err(journal_storage_error)?;
         let mut records = Vec::new();
+        let mut expected_sequence = 1_u64;
+        let mut terminal_kind = None;
         for row in rows {
-            records.push(record_from_storage(row.map_err(journal_storage_error)?)?);
+            let record = record_from_storage(row.map_err(journal_storage_error)?)?;
+            if record.run_sequence != expected_sequence {
+                return Err(JournalError::Storage {
+                    message: format!(
+                        "stored journal sequence gap: expected {expected_sequence}, found {}",
+                        record.run_sequence
+                    ),
+                });
+            }
+            let expected_record_id = format!("{}:{}", record.run_id, record.run_sequence);
+            if record.record_id != expected_record_id {
+                return Err(JournalError::Storage {
+                    message: format!(
+                        "stored journal record_id {:?} does not match {:?}",
+                        record.record_id, expected_record_id
+                    ),
+                });
+            }
+            if let Some(terminal_kind) = &terminal_kind {
+                return Err(JournalError::Storage {
+                    message: format!(
+                        "stored journal record follows terminal record {terminal_kind:?}"
+                    ),
+                });
+            }
+            if record.terminal {
+                terminal_kind = Some(record.kind.clone());
+            }
+            expected_sequence += 1;
+            records.push(record);
         }
         Ok(records)
     }
 
     pub fn terminal_kind(&self) -> Result<Option<String>, JournalError> {
-        self.connection
-            .query_row(
-                "
-                SELECT kind
-                FROM journal_records
-                WHERE run_id = ? AND terminal = 1
-                ORDER BY run_sequence DESC
-                LIMIT 1
-                ",
-                params![&self.run_id],
-                |row| row.get::<_, String>(0),
-            )
-            .optional()
-            .map_err(journal_storage_error)
+        Ok(self
+            .records()?
+            .into_iter()
+            .find(|record| record.terminal)
+            .map(|record| record.kind))
     }
 
     pub fn append(
@@ -408,7 +430,7 @@ struct StoredJournalRecord {
     attempt_id: Option<String>,
     lease_epoch: Option<i64>,
     payload: Option<String>,
-    terminal: bool,
+    terminal: i64,
 }
 
 fn record_from_storage(stored: StoredJournalRecord) -> Result<JournalRecord, JournalError> {
@@ -434,6 +456,17 @@ fn record_from_storage(stored: StoredJournalRecord) -> Result<JournalRecord, Jou
             });
         }
     }
+    let terminal = match stored.terminal {
+        0 => false,
+        1 => true,
+        terminal => {
+            return Err(JournalError::Storage {
+                message: format!(
+                    "stored journal record terminal flag must be 0 or 1, found {terminal}"
+                ),
+            });
+        }
+    };
     Ok(JournalRecord {
         record_id: stored.record_id,
         run_id: stored.run_id,
@@ -444,7 +477,7 @@ fn record_from_storage(stored: StoredJournalRecord) -> Result<JournalRecord, Jou
         attempt_id: stored.attempt_id,
         lease_epoch: optional_journal_i64_to_u64(stored.lease_epoch, "lease epoch")?,
         payload: optional_parse_journal_json(stored.payload)?,
-        terminal: stored.terminal,
+        terminal,
     })
 }
 

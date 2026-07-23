@@ -2478,7 +2478,7 @@ fn sqlite_load_run_ownership_lease(
         .map_err(storage_error)?
         .map(
             |(run_id, lease_id, owner, fencing_epoch, acquired_at_unix_ms, expires_at_unix_ms)| {
-                Ok(RunOwnershipLease {
+                let lease = RunOwnershipLease {
                     run_id,
                     lease_id,
                     owner,
@@ -2491,10 +2491,48 @@ fn sqlite_load_run_ownership_lease(
                         expires_at_unix_ms,
                         "run ownership expires_at",
                     )?,
-                })
+                };
+                validate_stored_run_ownership_lease(&lease)?;
+                Ok(lease)
             },
         )
         .transpose()
+}
+
+fn validate_stored_run_ownership_lease(lease: &RunOwnershipLease) -> Result<(), RunStoreError> {
+    for (field, value) in [
+        ("run_id", lease.run_id.as_str()),
+        ("lease_id", lease.lease_id.as_str()),
+        ("owner", lease.owner.as_str()),
+    ] {
+        if value.is_empty() || value != value.trim() {
+            return Err(RunStoreError::Storage {
+                message: format!(
+                    "stored run ownership lease {field} must be a non-empty exact string"
+                ),
+            });
+        }
+    }
+    if lease.fencing_epoch == 0 {
+        return Err(RunStoreError::Storage {
+            message: "stored run ownership lease fencing epoch must be positive".to_owned(),
+        });
+    }
+    let expected_lease_id = format!("{}:{}", lease.run_id, lease.fencing_epoch);
+    if lease.lease_id != expected_lease_id {
+        return Err(RunStoreError::Storage {
+            message: format!(
+                "stored run ownership lease id {:?} does not match {:?}",
+                lease.lease_id, expected_lease_id
+            ),
+        });
+    }
+    if lease.expires_at_unix_ms <= lease.acquired_at_unix_ms {
+        return Err(RunStoreError::Storage {
+            message: "stored run ownership lease expiration must be after acquisition".to_owned(),
+        });
+    }
+    Ok(())
 }
 
 fn sqlite_get_run(connection: &Connection, run_id: &str) -> Result<RunRecord, RunStoreError> {

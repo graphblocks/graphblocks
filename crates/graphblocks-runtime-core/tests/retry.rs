@@ -67,6 +67,15 @@ fn retry_policy_rejects_node_attempts_above_the_limit() {
 }
 
 #[test]
+fn retry_policy_rejects_zero_max_attempts() {
+    let error = RetryPolicy::try_new(0)
+        .expect_err("retry policies must permit at least one execution attempt");
+
+    assert_eq!(error, RetryPolicyError::ZeroMaxAttempts);
+    assert_eq!(error.to_string(), "node retry attempts must be at least 1");
+}
+
+#[test]
 fn retry_policy_rejects_default_non_retry_categories() {
     let policy = RetryPolicy::default_model_read();
 
@@ -110,6 +119,22 @@ fn retry_policy_allows_partial_output_only_when_policy_allows_resume() {
         policy.decide(&request),
         RetryDecision::Retry { delay_ms: 250 },
     );
+}
+
+#[test]
+fn retry_policy_rejects_blank_or_noncanonical_resume_cursor() {
+    let policy = RetryPolicy::default_model_read()
+        .with_partial_output_policy(PartialOutputPolicy::ResumeWithCursor);
+    let request = RetryRequest::new(1, error(ErrorCategory::Timeout, true)).with_partial_output();
+
+    for cursor in ["", " ", "\t\n", " cursor-1 "] {
+        assert_eq!(
+            policy.decide(&request.clone().with_resume_cursor(cursor)),
+            RetryDecision::Stop {
+                reason: "invalid_resume_cursor",
+            },
+        );
+    }
 }
 
 #[test]

@@ -1084,6 +1084,56 @@ fn sqlite_run_store_ownership_lease_rejects_forged_owner_after_reopen() -> Resul
 }
 
 #[test]
+fn sqlite_run_store_rejects_malformed_persisted_lease_identity() -> Result<(), String> {
+    let path = std::env::temp_dir().join(format!(
+        "graphblocks-sqlite-run-lease-malformed-{}.sqlite3",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_file(&path);
+
+    {
+        let mut store = SqliteRunStore::open(&path).map_err(|error| format!("{error:?}"))?;
+        let record = store
+            .create_run_with_invocation_mode(
+                "sha256:graph",
+                json!({}),
+                RunInvocationMode::Background,
+            )
+            .map_err(|error| format!("{error:?}"))?;
+        store
+            .acquire_ownership_lease(&record.run_id, "coordinator-a", 1_000, 2_000)
+            .map_err(|error| format!("{error:?}"))?;
+    }
+    let connection = rusqlite::Connection::open(&path).map_err(|error| format!("{error:?}"))?;
+    connection
+        .execute(
+            "UPDATE run_ownership_leases SET lease_id = ' ' WHERE run_id = ?1",
+            ["run-000001"],
+        )
+        .map_err(|error| format!("{error:?}"))?;
+    drop(connection);
+
+    let store = SqliteRunStore::open(&path).map_err(|error| format!("{error:?}"))?;
+    assert_eq!(
+        store.validate_ownership_lease("run-000001", "coordinator-a", " ", 1, 1_500),
+        Err(RunStoreError::Storage {
+            message: "stored run ownership lease lease_id must be a non-empty exact string"
+                .to_owned(),
+        })
+    );
+    assert_eq!(
+        store
+            .get_run("run-000001")
+            .map_err(|error| format!("{error:?}"))?
+            .status,
+        RunStatus::Created
+    );
+
+    let _ = std::fs::remove_file(&path);
+    Ok(())
+}
+
+#[test]
 fn run_store_fenced_mutations_reject_stale_coordinator_after_failover() -> Result<(), RunStoreError>
 {
     let mut store = InMemoryRunStore::new();

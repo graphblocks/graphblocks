@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::path::Path;
-use std::sync::Mutex;
+use std::sync::{Mutex, MutexGuard};
 
 use crate::application_event::{
     ApplicationEvent, ApplicationEventKind, ApplicationProtocolEvent, ApplicationProtocolEventKind,
@@ -936,10 +936,7 @@ impl SqliteCallbackDeliveryQueue {
     }
 
     fn initialize(&self) -> Result<(), CallbackDeliveryError> {
-        let connection = self
-            .connection
-            .lock()
-            .expect("sqlite callback delivery queue lock poisoned");
+        let connection = lock_callback_connection(&self.connection);
         connection
             .execute_batch(
                 "
@@ -1021,10 +1018,7 @@ impl SqliteCallbackDeliveryQueue {
 
     pub fn upsert_delivery(&self, delivery: CallbackDelivery) -> Result<(), CallbackDeliveryError> {
         validate_callback_delivery(&delivery)?;
-        let mut connection = self
-            .connection
-            .lock()
-            .expect("sqlite callback delivery queue lock poisoned");
+        let mut connection = lock_callback_connection(&self.connection);
         let transaction = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(callback_storage_error)?;
@@ -1159,10 +1153,7 @@ impl SqliteCallbackDeliveryQueue {
         &self,
         delivery_id: &str,
     ) -> Result<Option<CallbackDelivery>, CallbackDeliveryError> {
-        let connection = self
-            .connection
-            .lock()
-            .expect("sqlite callback delivery queue lock poisoned");
+        let connection = lock_callback_connection(&self.connection);
         let mut statement = connection
             .prepare(
                 "
@@ -1204,10 +1195,7 @@ impl SqliteCallbackDeliveryQueue {
             return Ok(Vec::new());
         }
 
-        let connection = self
-            .connection
-            .lock()
-            .expect("sqlite callback delivery queue lock poisoned");
+        let connection = lock_callback_connection(&self.connection);
         let mut statement = connection
             .prepare(
                 "
@@ -1278,10 +1266,7 @@ impl SqliteCallbackDeliveryQueue {
                 }
             })?;
 
-        let mut connection = self
-            .connection
-            .lock()
-            .expect("sqlite callback delivery queue lock poisoned");
+        let mut connection = lock_callback_connection(&self.connection);
         let transaction = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(callback_storage_error)?;
@@ -1442,10 +1427,7 @@ impl SqliteCallbackDeliveryQueue {
             });
         }
 
-        let mut connection = self
-            .connection
-            .lock()
-            .expect("sqlite callback delivery queue lock poisoned");
+        let mut connection = lock_callback_connection(&self.connection);
         let transaction = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(callback_storage_error)?;
@@ -1503,10 +1485,7 @@ impl SqliteCallbackDeliveryQueue {
         &self,
         now_unix_ms: u64,
     ) -> Result<usize, CallbackDeliveryError> {
-        let mut connection = self
-            .connection
-            .lock()
-            .expect("sqlite callback delivery queue lock poisoned");
+        let mut connection = lock_callback_connection(&self.connection);
         let transaction = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(callback_storage_error)?;
@@ -1626,10 +1605,7 @@ impl SqliteCallbackDeliveryQueue {
             });
         }
 
-        let mut connection = self
-            .connection
-            .lock()
-            .expect("sqlite callback delivery queue lock poisoned");
+        let mut connection = lock_callback_connection(&self.connection);
         let transaction = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(callback_storage_error)?;
@@ -1742,10 +1718,7 @@ impl SqliteCallbackDeadLetterStore {
     }
 
     fn initialize(&self) -> Result<(), CallbackDeliveryError> {
-        let connection = self
-            .connection
-            .lock()
-            .expect("sqlite callback dead-letter store lock poisoned");
+        let connection = lock_callback_connection(&self.connection);
         connection
             .execute_batch(
                 "
@@ -1764,10 +1737,7 @@ impl SqliteCallbackDeadLetterStore {
         dead_letter: CallbackDeadLetter,
     ) -> Result<(), CallbackDeliveryError> {
         validate_callback_dead_letter(&dead_letter)?;
-        let mut connection = self
-            .connection
-            .lock()
-            .expect("sqlite callback dead-letter store lock poisoned");
+        let mut connection = lock_callback_connection(&self.connection);
         let transaction = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(callback_storage_error)?;
@@ -1824,10 +1794,7 @@ impl SqliteCallbackDeadLetterStore {
         &self,
         original_delivery_id: &str,
     ) -> Result<Option<CallbackDeadLetter>, CallbackDeliveryError> {
-        let connection = self
-            .connection
-            .lock()
-            .expect("sqlite callback dead-letter store lock poisoned");
+        let connection = lock_callback_connection(&self.connection);
         let mut statement = connection
             .prepare(
                 "
@@ -1864,10 +1831,7 @@ impl SqliteCallbackDeadLetterStore {
     ) -> Result<CallbackDelivery, CallbackDeliveryError> {
         let operator = operator.into();
         let reason = reason.into();
-        let mut connection = self
-            .connection
-            .lock()
-            .expect("sqlite callback dead-letter store lock poisoned");
+        let mut connection = lock_callback_connection(&self.connection);
         let transaction = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(callback_storage_error)?;
@@ -3744,17 +3708,35 @@ impl CallbackDeliveryScheduler {
             return;
         }
 
-        delivery.attempt += 1;
-        delivery.status = CallbackDeliveryStatus::Pending;
+        let Some(next_attempt) = delivery.attempt.checked_add(1) else {
+            delivery.status = CallbackDeliveryStatus::DeadLettered;
+            delivery.next_retry_at_unix_ms = None;
+            delivery.last_error = Some(format!("{error}; retry attempt overflow"));
+            return;
+        };
         let delay_ms = retry_after_ms
             .map(|retry_after_ms| retry_after_ms.max(1).min(self.retry_policy.max_delay_ms))
             .unwrap_or_else(|| {
                 self.retry_policy
-                    .delay_for_attempt_with_jitter(delivery.attempt - 1, &delivery.idempotency_key)
+                    .delay_for_attempt_with_jitter(next_attempt - 1, &delivery.idempotency_key)
             });
-        delivery.next_retry_at_unix_ms = Some(now_unix_ms.saturating_add(delay_ms));
+        let Some(next_retry_at_unix_ms) = now_unix_ms.checked_add(delay_ms) else {
+            delivery.status = CallbackDeliveryStatus::DeadLettered;
+            delivery.next_retry_at_unix_ms = None;
+            delivery.last_error = Some(format!("{error}; retry schedule timestamp overflow"));
+            return;
+        };
+        delivery.attempt = next_attempt;
+        delivery.status = CallbackDeliveryStatus::Pending;
+        delivery.next_retry_at_unix_ms = Some(next_retry_at_unix_ms);
         delivery.last_error = Some(error);
     }
+}
+
+fn lock_callback_connection(connection: &Mutex<Connection>) -> MutexGuard<'_, Connection> {
+    connection
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 fn callback_delivery_status_is_terminal(status: CallbackDeliveryStatus) -> bool {
@@ -3767,4 +3749,41 @@ fn callback_delivery_status_is_terminal(status: CallbackDeliveryStatus) -> bool 
             | CallbackDeliveryStatus::Cancelled
             | CallbackDeliveryStatus::Expired
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use std::panic::{AssertUnwindSafe, catch_unwind};
+
+    use super::*;
+
+    fn poison(connection: &Mutex<Connection>) {
+        let result = catch_unwind(AssertUnwindSafe(|| {
+            let _guard = connection.lock().expect("test lock starts healthy");
+            std::panic::resume_unwind(Box::new("poison test connection lock"));
+        }));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn sqlite_stores_recover_poisoned_connection_locks() {
+        let queue = SqliteCallbackDeliveryQueue::open_in_memory().expect("queue opens");
+        poison(&queue.connection);
+        assert_eq!(
+            queue
+                .get_delivery("missing-delivery")
+                .expect("queue recovers poisoned lock"),
+            None
+        );
+
+        let dead_letters =
+            SqliteCallbackDeadLetterStore::open_in_memory().expect("dead-letter store opens");
+        poison(&dead_letters.connection);
+        assert_eq!(
+            dead_letters
+                .get_dead_letter("missing-delivery")
+                .expect("dead-letter store recovers poisoned lock"),
+            None
+        );
+    }
 }

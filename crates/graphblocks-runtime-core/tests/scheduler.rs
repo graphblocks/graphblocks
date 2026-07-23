@@ -133,6 +133,73 @@ fn scheduler_rejects_duplicate_and_unknown_nodes() -> Result<(), SchedulerError>
 }
 
 #[test]
+fn scheduler_rejects_outputs_claiming_another_node_without_partial_publication()
+-> Result<(), SchedulerError> {
+    let mut scheduler = LocalScheduler::new([
+        ScheduledNode::new("source", []),
+        ScheduledNode::new(
+            "consumer",
+            [InputDependency::value(
+                "value",
+                PortRef::new("victim", "result"),
+            )],
+        ),
+        ScheduledNode::new("victim", []),
+    ])?;
+    scheduler.admit_run()?;
+    scheduler.start_node("source")?;
+
+    assert_eq!(
+        scheduler.complete_node(
+            "source",
+            [
+                (
+                    PortRef::new("source", "result"),
+                    Outcome::Value(json!("legitimate")),
+                ),
+                (
+                    PortRef::new("victim", "result"),
+                    Outcome::Value(json!("forged")),
+                ),
+            ],
+        ),
+        Err(SchedulerError::OutputOwnerMismatch {
+            node_id: "source".to_owned(),
+            output_node_id: "victim".to_owned(),
+        })
+    );
+    assert_eq!(
+        scheduler.node_state("source"),
+        Some(NodeExecutionState::Running)
+    );
+    assert_eq!(
+        scheduler.node_state("consumer"),
+        Some(NodeExecutionState::Pending)
+    );
+
+    assert_eq!(
+        scheduler.cancel_node(
+            "source",
+            [PortRef::new("victim", "result")],
+            CancelReason::new(CancelCode::UserCancel),
+        ),
+        Err(SchedulerError::OutputOwnerMismatch {
+            node_id: "source".to_owned(),
+            output_node_id: "victim".to_owned(),
+        })
+    );
+    assert_eq!(
+        scheduler.node_state("source"),
+        Some(NodeExecutionState::Running)
+    );
+    assert_eq!(
+        scheduler.node_state("consumer"),
+        Some(NodeExecutionState::Pending)
+    );
+    Ok(())
+}
+
+#[test]
 fn scheduler_uses_seeded_external_input_signals() -> Result<(), SchedulerError> {
     let mut scheduler = LocalScheduler::new([ScheduledNode::new(
         "render",

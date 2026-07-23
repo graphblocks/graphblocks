@@ -84,6 +84,10 @@ pub enum SchedulerError {
         node_id: String,
         state: NodeExecutionState,
     },
+    OutputOwnerMismatch {
+        node_id: String,
+        output_node_id: String,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -206,6 +210,13 @@ impl LocalScheduler {
             });
         }
 
+        let outputs = outputs.into_iter().collect::<Vec<_>>();
+        if let Some((port, _)) = outputs.iter().find(|(port, _)| port.node != node_id) {
+            return Err(SchedulerError::OutputOwnerMismatch {
+                node_id: node_id.to_owned(),
+                output_node_id: port.node.clone(),
+            });
+        }
         for (port, outcome) in outputs {
             self.readiness.publish(port, outcome);
         }
@@ -241,6 +252,13 @@ impl LocalScheduler {
             return Err(SchedulerError::RunNotAdmitted);
         }
 
+        let output_ports = output_ports.into_iter().collect::<Vec<_>>();
+        if let Some(port) = output_ports.iter().find(|port| port.node != node_id) {
+            return Err(SchedulerError::OutputOwnerMismatch {
+                node_id: node_id.to_owned(),
+                output_node_id: port.node.clone(),
+            });
+        }
         for port in output_ports {
             self.readiness
                 .publish(port, Outcome::Cancelled(reason.clone()));

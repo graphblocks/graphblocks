@@ -1249,6 +1249,33 @@ fn dead_letter_redrive_rejects_counter_overflow_without_panicking_or_wrapping() 
 }
 
 #[test]
+fn retry_schedule_overflow_dead_letters_without_advancing_attempt() {
+    let scheduler = CallbackDeliveryScheduler::new(CallbackRetryPolicy::new(2, 100, 1_000));
+    let subscription = subscription(
+        EventFilter::new(),
+        CallbackFailurePolicy::RetryThenDeadLetter,
+    );
+    let event = protocol_event("event-1", ApplicationProtocolEventKind::ReviewRequested, 1);
+    let delivery = scheduler
+        .schedule_event(&subscription, &event)
+        .expect("delivery schedules");
+
+    let failed = scheduler.record_response(
+        delivery,
+        CallbackDeliveryResponse::ServerError(503),
+        u64::MAX,
+    );
+
+    assert_eq!(failed.status, CallbackDeliveryStatus::DeadLettered);
+    assert_eq!(failed.attempt, 1);
+    assert_eq!(failed.next_retry_at_unix_ms, None);
+    assert_eq!(
+        failed.last_error.as_deref(),
+        Some("server_error:503; retry schedule timestamp overflow")
+    );
+}
+
+#[test]
 fn sqlite_callback_dead_letter_store_persists_dead_letter_across_reopen() {
     let scheduler = CallbackDeliveryScheduler::new(CallbackRetryPolicy::new(2, 100, 1_000));
     let subscription = subscription(

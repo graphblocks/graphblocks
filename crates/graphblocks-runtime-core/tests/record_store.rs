@@ -71,6 +71,45 @@ fn record_store_compare_and_swap_rejects_stale_revision() -> Result<(), RecordSt
 }
 
 #[test]
+fn record_store_does_not_reuse_revisions_after_delete_and_recreate() -> Result<(), RecordStoreError>
+{
+    let mut store = InMemoryRecordStore::new();
+    let original = store.put(
+        "tickets",
+        Record::new("ticket-1", json!({"generation": 1})),
+        WriteOptions::new(),
+    )?;
+    store.delete(
+        "tickets",
+        "ticket-1",
+        DeleteOptions::new().with_expected_revision(original.revision),
+    )?;
+
+    let recreated = store.put(
+        "tickets",
+        Record::new("ticket-1", json!({"generation": 2})),
+        WriteOptions::create_only(),
+    )?;
+    assert_eq!(recreated.revision, original.revision + 1);
+
+    assert_eq!(
+        store.put(
+            "tickets",
+            Record::new("ticket-1", json!({"generation": "stale-write"})),
+            WriteOptions::new().with_expected_revision(original.revision),
+        ),
+        Err(RecordStoreError::RevisionConflict {
+            collection: "tickets".to_owned(),
+            key: "ticket-1".to_owned(),
+            expected_revision: original.revision,
+            current_revision: recreated.revision,
+        })
+    );
+    assert_eq!(store.get("tickets", "ticket-1")?, Some(recreated));
+    Ok(())
+}
+
+#[test]
 fn record_store_query_filters_collection_and_paginates_by_key() -> Result<(), RecordStoreError> {
     let mut store = InMemoryRecordStore::new();
     for (key, status, priority) in [

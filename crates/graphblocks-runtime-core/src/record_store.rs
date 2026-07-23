@@ -174,6 +174,10 @@ pub enum RecordStoreError {
         expected_revision: u64,
         current_revision: u64,
     },
+    RevisionOverflow {
+        collection: String,
+        key: String,
+    },
     InvalidLimit,
     InvalidCursor {
         collection: String,
@@ -201,6 +205,10 @@ impl fmt::Display for RecordStoreError {
                 formatter,
                 "record {collection:?}/{key:?} revision conflict: expected {expected_revision}, current {current_revision}"
             ),
+            Self::RevisionOverflow { collection, key } => write!(
+                formatter,
+                "record {collection:?}/{key:?} revision is exhausted"
+            ),
             Self::InvalidLimit => write!(formatter, "record query limit must be at least 1"),
             Self::InvalidCursor { collection, cursor } => {
                 write!(
@@ -217,6 +225,7 @@ impl Error for RecordStoreError {}
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct InMemoryRecordStore {
     records: BTreeMap<(String, String), Record>,
+    last_revisions: BTreeMap<(String, String), u64>,
 }
 
 impl InMemoryRecordStore {
@@ -272,7 +281,16 @@ impl InMemoryRecordStore {
             });
         }
 
-        let revision = current_revision + 1;
+        let revision = self
+            .last_revisions
+            .get(&storage_key)
+            .copied()
+            .unwrap_or(current_revision)
+            .checked_add(1)
+            .ok_or_else(|| RecordStoreError::RevisionOverflow {
+                collection: collection.to_owned(),
+                key: record.key.clone(),
+            })?;
         let mut stored = record;
         stored.collection = collection.to_owned();
         stored.revision = revision;
@@ -283,6 +301,7 @@ impl InMemoryRecordStore {
             "revision": stored.revision,
             "metadata": stored.metadata,
         }));
+        self.last_revisions.insert(storage_key.clone(), revision);
         self.records.insert(storage_key, stored.clone());
         Ok(stored)
     }

@@ -177,12 +177,16 @@ pub struct RetryPolicy {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RetryPolicyError {
+    ZeroMaxAttempts,
     MaxAttemptsExceeded { max_attempts: u64 },
 }
 
 impl fmt::Display for RetryPolicyError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::ZeroMaxAttempts => {
+                write!(formatter, "node retry attempts must be at least 1")
+            }
             Self::MaxAttemptsExceeded { .. } => write!(
                 formatter,
                 "node retry attempts must not exceed {MAX_NODE_RETRY_ATTEMPTS}"
@@ -215,6 +219,9 @@ impl RetryPolicy {
     }
 
     pub fn validate(&self) -> Result<(), RetryPolicyError> {
+        if self.max_attempts == 0 {
+            return Err(RetryPolicyError::ZeroMaxAttempts);
+        }
         if self.max_attempts > MAX_NODE_RETRY_ATTEMPTS {
             return Err(RetryPolicyError::MaxAttemptsExceeded {
                 max_attempts: self.max_attempts,
@@ -271,13 +278,19 @@ impl RetryPolicy {
                         reason: "partial_output_not_retryable",
                     };
                 }
-                PartialOutputPolicy::ResumeWithCursor => {
-                    if request.resume_cursor.is_none() {
+                PartialOutputPolicy::ResumeWithCursor => match request.resume_cursor.as_deref() {
+                    None => {
                         return RetryDecision::Stop {
                             reason: "missing_resume_cursor",
                         };
                     }
-                }
+                    Some(cursor) if cursor.is_empty() || cursor != cursor.trim() => {
+                        return RetryDecision::Stop {
+                            reason: "invalid_resume_cursor",
+                        };
+                    }
+                    Some(_) => {}
+                },
             }
         }
         if request.effect.is_some() {
