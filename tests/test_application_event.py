@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import replace
+from copy import deepcopy
+from dataclasses import asdict, replace
 import json
 from pathlib import Path
+import pickle
 from threading import Barrier, BrokenBarrierError
 
 import pytest
@@ -542,6 +544,71 @@ def test_application_protocol_payloads_deep_copy_nested_values() -> None:
         ApplicationCommand.new("CancelRun", command.metadata, payload={"invalid": {" ": "bad"}})
 
 
+def test_application_payloads_resist_base_descriptor_mutation_and_support_deepcopy() -> None:
+    event = ApplicationEvent.new(
+        "RunStarted",
+        _metadata(),
+        payload={
+            "status": {"phase": "running"},
+            "labels": ["background"],
+        },
+    )
+
+    status = event.payload["status"]
+    labels = event.payload["labels"]
+    with pytest.raises(TypeError):
+        dict.__setitem__(status, "phase", "mutated")  # type: ignore[arg-type]
+    with pytest.raises(TypeError):
+        list.append(labels, "mutated")  # type: ignore[arg-type]
+
+    copied = deepcopy(event)
+    assert copied == event
+    assert copied.payload == {
+        "status": {"phase": "running"},
+        "labels": ["background"],
+    }
+
+
+def test_application_payloads_support_standard_serialization() -> None:
+    event = ApplicationEvent.new(
+        "RunStarted",
+        _metadata(),
+        payload={
+            "status": {"phase": "running"},
+            "labels": ["background"],
+        },
+    )
+
+    projected = asdict(event)
+    restored = pickle.loads(pickle.dumps(event))
+
+    assert json.loads(json.dumps(projected))["payload"] == {
+        "status": {"phase": "running"},
+        "labels": ["background"],
+    }
+    assert restored == event
+    with pytest.raises(TypeError):
+        restored.payload["labels"].append("mutated")
+
+
+@pytest.mark.parametrize(
+    "payload",
+    (
+        {"unsupported": object()},
+        {"non_finite": float("nan")},
+        {"values": {1, 2}},
+    ),
+)
+def test_application_payloads_reject_non_canonical_json_values(
+    payload: dict[str, object],
+) -> None:
+    with pytest.raises(
+        ApplicationEventError,
+        match="application event payload must contain only canonical JSON values",
+    ):
+        ApplicationEvent.new("RunStarted", _metadata(), payload=payload)
+
+
 def test_application_protocol_metadata_rejects_empty_required_fields() -> None:
     with pytest.raises(
         ApplicationProtocolError,
@@ -959,6 +1026,49 @@ def test_application_protocol_log_rejects_second_terminal_outcome() -> None:
         log.append(failed)
 
 
+def test_application_protocol_log_rejects_non_terminal_event_after_terminal_outcome() -> None:
+    log = ApplicationProtocolLog()
+    completed = ApplicationProtocolEvent.new(
+        "RunCompleted",
+        ApplicationProtocolEventMetadata(
+            event_id="event-completed",
+            protocol_version="graphblocks.app.v1",
+            run_id="run-1",
+            sequence=1,
+            occurred_at_unix_ms=1,
+        ),
+    )
+    progress = ApplicationProtocolEvent.new(
+        "JobProgress",
+        ApplicationProtocolEventMetadata(
+            event_id="event-progress",
+            protocol_version="graphblocks.app.v1",
+            run_id="run-1",
+            sequence=2,
+            occurred_at_unix_ms=2,
+        ),
+    )
+    late_callback = ApplicationProtocolEvent.new(
+        "LateExternalCallbackReceived",
+        ApplicationProtocolEventMetadata(
+            event_id="event-late-callback",
+            protocol_version="graphblocks.app.v1",
+            run_id="run-1",
+            sequence=3,
+            occurred_at_unix_ms=3,
+        ),
+    )
+
+    assert log.append(completed) is True
+    with pytest.raises(
+        ApplicationProtocolError,
+        match="already contains terminal event RunCompleted",
+    ):
+        log.append(progress)
+    assert log.append(late_callback) is True
+    assert log.events == (completed, late_callback)
+
+
 def test_application_stream_states_reject_second_terminal_outcome_per_run() -> None:
     protocol_state = ApplicationProtocolStreamState()
     protocol_completed = ApplicationProtocolEvent.new(
@@ -996,6 +1106,151 @@ def test_application_stream_states_reject_second_terminal_outcome_per_run() -> N
     )
     assert event_state.accept(succeeded) == succeeded
     assert event_state.accept(failed) is None
+
+
+def test_application_stream_states_reject_new_events_after_terminal_outcome() -> None:
+    protocol_state = ApplicationProtocolStreamState()
+    protocol_completed = ApplicationProtocolEvent.new(
+        "RunCompleted",
+        ApplicationProtocolEventMetadata(
+            event_id="protocol-completed",
+            protocol_version="graphblocks.app.v1",
+            run_id="run-1",
+            sequence=1,
+            occurred_at_unix_ms=1,
+        ),
+    )
+    protocol_progress = ApplicationProtocolEvent.new(
+        "JobProgress",
+        ApplicationProtocolEventMetadata(
+            event_id="protocol-progress",
+            protocol_version="graphblocks.app.v1",
+            run_id="run-1",
+            sequence=2,
+            occurred_at_unix_ms=2,
+        ),
+    )
+    protocol_late_callback = ApplicationProtocolEvent.new(
+        "LateExternalCallbackReceived",
+        ApplicationProtocolEventMetadata(
+            event_id="protocol-late-callback",
+            protocol_version="graphblocks.app.v1",
+            run_id="run-1",
+            sequence=3,
+            occurred_at_unix_ms=3,
+        ),
+    )
+    assert protocol_state.accept(protocol_completed) == protocol_completed
+    assert protocol_state.accept(protocol_progress) is None
+    assert protocol_state.accept(protocol_completed) == protocol_completed
+    assert protocol_state.accept(protocol_late_callback) == protocol_late_callback
+    assert protocol_state.accepted_events == [
+        protocol_completed,
+        protocol_late_callback,
+    ]
+
+    event_state = ApplicationEventStreamState()
+    succeeded = ApplicationEvent.new(
+        "RunSucceeded",
+        replace(_metadata(), event_id="event-succeeded", sequence=8),
+    )
+    progress = ApplicationEvent.new(
+        "AsyncOperationPolling",
+        replace(_metadata(), event_id="event-progress", sequence=9),
+    )
+    late_callback = ApplicationEvent.new(
+        "LateExternalCallbackReceived",
+        replace(_metadata(), event_id="event-late-callback", sequence=10),
+    )
+    assert event_state.accept(succeeded) == succeeded
+    assert event_state.accept(progress) is None
+    assert event_state.accept(late_callback) == late_callback
+    assert event_state.accepted_events == [succeeded, late_callback]
+
+
+def test_application_protocol_stream_state_deduplicates_ids_and_rejects_stale_sequences() -> None:
+    state = ApplicationProtocolStreamState()
+    first = ApplicationProtocolEvent.new(
+        "JobProgress",
+        ApplicationProtocolEventMetadata(
+            event_id="event-progress",
+            protocol_version="graphblocks.app.v1",
+            run_id="run-1",
+            sequence=2,
+            occurred_at_unix_ms=2,
+        ),
+        payload={"done": 1},
+    )
+    changed = ApplicationProtocolEvent.new(
+        "JobProgress",
+        first.metadata,
+        payload={"done": 2},
+    )
+    stale = ApplicationProtocolEvent.new(
+        "JobProgress",
+        replace(first.metadata, event_id="event-stale", sequence=1),
+    )
+
+    assert state.accept(first) == first
+    assert state.accept(first) == first
+    assert state.accept(changed) is None
+    assert state.accept(stale) is None
+    assert state.accepted_events == [first]
+
+
+def test_application_stream_states_rebuild_and_validate_restored_indexes() -> None:
+    protocol_event = ApplicationProtocolEvent.new(
+        "JobProgress",
+        ApplicationProtocolEventMetadata(
+            event_id="protocol-progress",
+            protocol_version="graphblocks.app.v1",
+            run_id="run-1",
+            sequence=2,
+            occurred_at_unix_ms=2,
+        ),
+        payload={"done": 1},
+    )
+    protocol_state = ApplicationProtocolStreamState(
+        accepted_events=[protocol_event],
+    )
+    assert protocol_state.accept(protocol_event) == protocol_event
+    assert (
+        protocol_state.accept(
+            replace(
+                protocol_event,
+                payload={"done": 2},
+            )
+        )
+        is None
+    )
+    assert (
+        protocol_state.accept(
+            ApplicationProtocolEvent.new(
+                "JobProgress",
+                replace(
+                    protocol_event.metadata,
+                    event_id="protocol-stale",
+                    sequence=1,
+                ),
+            )
+        )
+        is None
+    )
+
+    event = ApplicationEvent.new(
+        "RunStarted",
+        replace(_metadata(), event_id="event-started", sequence=3),
+    )
+    event_state = ApplicationEventStreamState(accepted_events=[event])
+    assert event_state.accept(event) == event
+    with pytest.raises(
+        ApplicationEventError,
+        match="sequence index do not match events",
+    ):
+        ApplicationEventStreamState(
+            accepted_events=[event],
+            last_sequence_by_run_id={"run-1": 2},
+        )
 
 
 def test_application_protocol_log_prefers_exact_numeric_cursor_over_sequence() -> None:
@@ -1264,6 +1519,78 @@ def test_application_protocol_stream_state_discards_deltas_after_cutoff() -> Non
         "AssistantIncomplete",
         "AssistantDraftDelta",
     ]
+
+
+@pytest.mark.parametrize(
+    "payload",
+    (
+        {
+            "response_id": 1,
+            "last_client_delivered_sequence": 0,
+            "terminal_reason": "policy_denied",
+            "draft_disposition": "retract",
+        },
+        {
+            "response_id": " response-1",
+            "last_client_delivered_sequence": 0,
+            "terminal_reason": "policy_denied",
+            "draft_disposition": "retract",
+        },
+        {
+            "response_id": "response-1",
+            "last_client_delivered_sequence": 0,
+            "terminal_reason": "unknown",
+            "draft_disposition": "retract",
+        },
+        {
+            "response_id": "response-1",
+            "last_client_delivered_sequence": 0,
+            "terminal_reason": "policy_denied",
+            "draft_disposition": "unknown",
+        },
+        {
+            "response_id": "response-1",
+            "last_client_delivered_sequence": 0,
+            "terminal_reason": "policy_denied",
+            "draft_disposition": "retract",
+            "policy_decision_id": " ",
+        },
+    ),
+)
+def test_application_protocol_stream_state_rejects_malformed_cutoff_identity(
+    payload: dict[str, object],
+) -> None:
+    state = ApplicationProtocolStreamState()
+    event = ApplicationProtocolEvent.new(
+        "OutputCutoff",
+        ApplicationProtocolEventMetadata(
+            event_id="event-cutoff",
+            protocol_version="graphblocks.app.v1",
+            run_id="run-1",
+            sequence=1,
+            occurred_at_unix_ms=1,
+        ),
+        payload=payload,
+    )
+
+    assert state.accept(event) is None
+    assert state.accepted_events == []
+    assert state.cutoffs == {}
+
+
+@pytest.mark.parametrize("payload_response_id", (1, "", " response-1"))
+def test_application_event_stream_state_rejects_malformed_payload_response_id(
+    payload_response_id: object,
+) -> None:
+    state = ApplicationEventStreamState()
+    event = ApplicationEvent.new(
+        "RunStarted",
+        _metadata(),
+        payload={"response_id": payload_response_id},
+    )
+
+    assert state.accept(event) is None
+    assert state.accepted_events == []
 
 
 def test_protocol_events_represent_streaming_tool_result_deltas_and_artifacts() -> None:

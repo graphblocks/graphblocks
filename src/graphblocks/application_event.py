@@ -1,13 +1,20 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import dataclass, field, replace
 from functools import wraps
 from threading import RLock
 from types import MappingProxyType
 from typing import Literal, ParamSpec, TypeVar, cast
 
-from .output_policy import GenerationChunk, OutputCutoff, OutputPolicyDecision
+from .canonical import canonical_dumps, canonical_loads
+from .output_policy import (
+    VALID_DRAFT_DISPOSITIONS,
+    VALID_TERMINAL_REASONS,
+    GenerationChunk,
+    OutputCutoff,
+    OutputPolicyDecision,
+)
 from .policy import PolicyDecision
 from .tools import (
     ContentPart,
@@ -377,6 +384,9 @@ TERMINAL_APPLICATION_EVENT_KINDS = frozenset(
         "RunExpired",
     }
 )
+POST_TERMINAL_APPLICATION_EVENT_KINDS = frozenset(
+    {"LateExternalCallbackReceived"}
+)
 
 
 class ApplicationEventError(RuntimeError):
@@ -387,7 +397,34 @@ class ApplicationProtocolError(RuntimeError):
     pass
 
 
-class _FrozenPayloadMapping(dict[str, object]):
+class _FrozenPayloadMapping(Mapping[str, object]):
+    __slots__ = ("__values",)
+
+    def __init__(self, values: Mapping[str, object]) -> None:
+        object.__setattr__(
+            self,
+            "_FrozenPayloadMapping__values",
+            MappingProxyType(dict(values)),
+        )
+
+    def __setattr__(self, name: str, value: object) -> None:
+        raise TypeError("frozen payload mapping cannot be mutated")
+
+    def __getitem__(self, key: str) -> object:
+        return self.__values[key]
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self.__values)
+
+    def __len__(self) -> int:
+        return len(self.__values)
+
+    def __repr__(self) -> str:
+        return repr(dict(self.__values))
+
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, Mapping) and self.__values == dict(other)
+
     def __setitem__(self, key: str, value: object) -> None:
         raise TypeError("frozen payload mapping cannot be mutated")
 
@@ -412,8 +449,56 @@ class _FrozenPayloadMapping(dict[str, object]):
     def __ior__(self, other: object) -> _FrozenPayloadMapping:
         raise TypeError("frozen payload mapping cannot be mutated")
 
+    def __or__(self, other: object) -> dict[str, object]:
+        if not isinstance(other, Mapping):
+            return NotImplemented
+        return dict(self.__values) | dict(other)
 
-class _FrozenPayloadList(list[object]):
+    def __ror__(self, other: object) -> dict[str, object]:
+        if not isinstance(other, Mapping):
+            return NotImplemented
+        return dict(other) | dict(self.__values)
+
+    def copy(self) -> dict[str, object]:
+        return dict(self.__values)
+
+    def __copy__(self) -> _FrozenPayloadMapping:
+        return self
+
+    def __deepcopy__(self, memo: dict[int, object]) -> dict[str, object]:
+        return {
+            key: _payload_projection(item)
+            for key, item in self.__values.items()
+        }
+
+    def __reduce_ex__(
+        self,
+        protocol: int,
+    ) -> tuple[type[_FrozenPayloadMapping], tuple[dict[str, object]]]:
+        del protocol
+        return type(self), (dict(self.__values),)
+
+
+class _FrozenPayloadList(tuple[object, ...]):
+    __slots__ = ()
+    __hash__ = None
+
+    def __new__(cls, values: Iterable[object] = ()) -> _FrozenPayloadList:
+        return super().__new__(cls, values)
+
+    def __repr__(self) -> str:
+        return repr(list(self))
+
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, (list, tuple)) and tuple(self) == tuple(other)
+
+    def __ne__(self, other: object) -> bool:
+        return not self == other
+
+    def __getitem__(self, key: int | slice) -> object:
+        value = super().__getitem__(key)
+        return list(value) if isinstance(key, slice) else value
+
     def __setitem__(self, index: object, value: object) -> None:
         raise TypeError("frozen payload list cannot be mutated")
 
@@ -449,6 +534,49 @@ class _FrozenPayloadList(list[object]):
 
     def __imul__(self, multiplier: int) -> _FrozenPayloadList:
         raise TypeError("frozen payload list cannot be mutated")
+
+    def __add__(self, other: object) -> list[object]:
+        if not isinstance(other, (list, _FrozenPayloadList)):
+            return NotImplemented
+        return [*self, *other]
+
+    def __radd__(self, other: object) -> list[object]:
+        if not isinstance(other, list):
+            return NotImplemented
+        return [*other, *self]
+
+    def __mul__(self, multiplier: int) -> list[object]:
+        return list(self) * multiplier
+
+    def __rmul__(self, multiplier: int) -> list[object]:
+        return multiplier * list(self)
+
+    def copy(self) -> list[object]:
+        return list(self)
+
+    def __copy__(self) -> _FrozenPayloadList:
+        return self
+
+    def __deepcopy__(self, memo: dict[int, object]) -> list[object]:
+        return [_payload_projection(item) for item in self]
+
+    def __reduce_ex__(
+        self,
+        protocol: int,
+    ) -> tuple[type[_FrozenPayloadList], tuple[tuple[object, ...]]]:
+        del protocol
+        return type(self), (tuple(self),)
+
+
+def _payload_projection(value: object) -> object:
+    if isinstance(value, Mapping):
+        return {
+            key: _payload_projection(item)
+            for key, item in value.items()
+        }
+    if isinstance(value, tuple):
+        return [_payload_projection(item) for item in value]
+    return value
 
 
 def _validate_non_empty_string(error_type: type[RuntimeError], label: str, value: object) -> None:
@@ -506,7 +634,7 @@ def _copy_payload_value(error_type: type[RuntimeError], label: str, value: objec
     return value
 
 
-def _freeze_payload(error_type: type[RuntimeError], label: str, payload: object) -> MappingProxyType[str, object]:
+def _freeze_payload(error_type: type[RuntimeError], label: str, payload: object) -> _FrozenPayloadMapping:
     if not isinstance(payload, Mapping):
         raise error_type(f"{label} must be a mapping")
     normalized = dict(payload)
@@ -514,10 +642,15 @@ def _freeze_payload(error_type: type[RuntimeError], label: str, payload: object)
         raise error_type(f"{label} keys must be non-empty strings")
     if any(key != key.strip() for key in normalized):
         raise error_type(f"{label} keys must not contain surrounding whitespace")
-    return MappingProxyType(
+    try:
+        snapshot = canonical_loads(canonical_dumps(normalized))
+    except (RecursionError, TypeError, ValueError) as error:
+        raise error_type(f"{label} must contain only canonical JSON values") from error
+    assert isinstance(snapshot, dict)
+    return _FrozenPayloadMapping(
         {
             key: _copy_payload_value(error_type, f"{label}.{key}", value)
-            for key, value in normalized.items()
+            for key, value in snapshot.items()
         }
     )
 
@@ -748,8 +881,8 @@ class ApplicationProtocolLog:
         if self._run_id is not None and event.metadata.run_id != self._run_id:
             raise ApplicationProtocolError("application protocol log event run_id must match first event")
         if (
-            event.kind in TERMINAL_APPLICATION_PROTOCOL_EVENT_KINDS
-            and self._terminal_event is not None
+            self._terminal_event is not None
+            and event.kind not in POST_TERMINAL_APPLICATION_EVENT_KINDS
         ):
             raise ApplicationProtocolError(
                 "application protocol log already contains terminal event "
@@ -818,17 +951,80 @@ class ApplicationProtocolLog:
 class ApplicationProtocolStreamState:
     cutoffs: dict[str, dict[str, object]] = field(default_factory=dict)
     accepted_events: list[ApplicationProtocolEvent] = field(default_factory=list)
+    accepted_events_by_id: dict[str, ApplicationProtocolEvent] = field(
+        default_factory=dict,
+        compare=False,
+        init=False,
+        repr=False,
+    )
+    last_sequence_by_run_id: dict[str, int] = field(
+        default_factory=dict,
+        compare=False,
+        init=False,
+        repr=False,
+    )
     terminal_events_by_run_id: dict[str, ApplicationProtocolEvent] = field(
         default_factory=dict,
     )
 
+    def __post_init__(self) -> None:
+        try:
+            restored_events = tuple(self.accepted_events)
+            restored_cutoffs = dict(self.cutoffs)
+            restored_terminals = dict(self.terminal_events_by_run_id)
+        except (TypeError, ValueError) as error:
+            raise ApplicationProtocolError(
+                "application protocol stream state must contain valid collections"
+            ) from error
+        self.cutoffs = {}
+        self.accepted_events = []
+        self.accepted_events_by_id = {}
+        self.last_sequence_by_run_id = {}
+        self.terminal_events_by_run_id = {}
+        for event in restored_events:
+            if not isinstance(event, ApplicationProtocolEvent):
+                raise ApplicationProtocolError(
+                    "application protocol stream state events must be "
+                    "ApplicationProtocolEvent"
+                )
+            if self.accept(event) != event:
+                raise ApplicationProtocolError(
+                    "application protocol stream state events are inconsistent"
+                )
+        if len(self.accepted_events) != len(restored_events):
+            raise ApplicationProtocolError(
+                "application protocol stream state events must be unique"
+            )
+        if restored_cutoffs and restored_cutoffs != self.cutoffs:
+            raise ApplicationProtocolError(
+                "application protocol stream state cutoffs do not match events"
+            )
+        if restored_terminals and restored_terminals != self.terminal_events_by_run_id:
+            raise ApplicationProtocolError(
+                "application protocol stream state terminal events do not match events"
+            )
+
     def accept(self, event: ApplicationProtocolEvent) -> ApplicationProtocolEvent | None:
-        if event.kind in TERMINAL_APPLICATION_PROTOCOL_EVENT_KINDS:
-            existing_terminal = self.terminal_events_by_run_id.get(event.metadata.run_id)
-            if existing_terminal is not None:
-                return existing_terminal if existing_terminal == event else None
+        existing_event = self.accepted_events_by_id.get(event.metadata.event_id)
+        if existing_event is not None:
+            return existing_event if existing_event == event else None
+        last_sequence = self.last_sequence_by_run_id.get(event.metadata.run_id)
+        if last_sequence is not None and event.metadata.sequence <= last_sequence:
+            return None
+        if (
+            event.metadata.run_id in self.terminal_events_by_run_id
+            and event.kind not in POST_TERMINAL_APPLICATION_EVENT_KINDS
+        ):
+            return None
+        payload_response_id = event.payload.get("response_id")
+        if "response_id" in event.payload and (
+            not isinstance(payload_response_id, str)
+            or not payload_response_id.strip()
+            or payload_response_id != payload_response_id.strip()
+        ):
+            return None
         if event.kind == "OutputCutoff":
-            response_id = event.payload.get("response_id")
+            response_id = payload_response_id
             last_client_delivered_sequence = event.payload.get("last_client_delivered_sequence")
             terminal_reason = event.payload.get("terminal_reason")
             draft_disposition = event.payload.get("draft_disposition")
@@ -840,10 +1036,17 @@ class ApplicationProtocolStreamState:
                 or isinstance(last_client_delivered_sequence, bool)
                 or last_client_delivered_sequence < 0
                 or not isinstance(terminal_reason, str)
-                or not terminal_reason.strip()
+                or terminal_reason not in VALID_TERMINAL_REASONS
                 or not isinstance(draft_disposition, str)
-                or not draft_disposition.strip()
-                or (policy_decision_id is not None and not isinstance(policy_decision_id, str))
+                or draft_disposition not in VALID_DRAFT_DISPOSITIONS
+                or (
+                    policy_decision_id is not None
+                    and (
+                        not isinstance(policy_decision_id, str)
+                        or not policy_decision_id.strip()
+                        or policy_decision_id != policy_decision_id.strip()
+                    )
+                )
                 or response_id in self.cutoffs
             ):
                 return None
@@ -856,7 +1059,6 @@ class ApplicationProtocolStreamState:
             self._record(event)
             return event
 
-        payload_response_id = event.payload.get("response_id")
         response_id = payload_response_id if isinstance(payload_response_id, str) else None
         if response_id is not None and response_id in self.cutoffs:
             if event.kind in {"AssistantIncomplete", "AssistantRetracted"}:
@@ -889,6 +1091,8 @@ class ApplicationProtocolStreamState:
         return event
 
     def _record(self, event: ApplicationProtocolEvent) -> None:
+        self.accepted_events_by_id[event.metadata.event_id] = event
+        self.last_sequence_by_run_id[event.metadata.run_id] = event.metadata.sequence
         if event.kind in TERMINAL_APPLICATION_PROTOCOL_EVENT_KINDS:
             self.terminal_events_by_run_id[event.metadata.run_id] = event
         self.accepted_events.append(event)
@@ -1400,6 +1604,46 @@ class ApplicationEventStreamState:
     last_sequence_by_run_id: dict[str, int] = field(default_factory=dict)
     terminal_events_by_run_id: dict[str, ApplicationEvent] = field(default_factory=dict)
 
+    def __post_init__(self) -> None:
+        try:
+            restored_events = tuple(self.accepted_events)
+            restored_cutoffs = dict(self.cutoffs)
+            restored_events_by_id = dict(self.accepted_events_by_id)
+            restored_sequences = dict(self.last_sequence_by_run_id)
+            restored_terminals = dict(self.terminal_events_by_run_id)
+        except (TypeError, ValueError) as error:
+            raise ApplicationEventError(
+                "application event stream state must contain valid collections"
+            ) from error
+        self.cutoffs = {}
+        self.accepted_events = []
+        self.accepted_events_by_id = {}
+        self.last_sequence_by_run_id = {}
+        self.terminal_events_by_run_id = {}
+        for event in restored_events:
+            if not isinstance(event, ApplicationEvent):
+                raise ApplicationEventError(
+                    "application event stream state events must be ApplicationEvent"
+                )
+            if self.accept(event) != event:
+                raise ApplicationEventError(
+                    "application event stream state events are inconsistent"
+                )
+        if len(self.accepted_events) != len(restored_events):
+            raise ApplicationEventError(
+                "application event stream state events must be unique"
+            )
+        for label, restored, derived in (
+            ("cutoffs", restored_cutoffs, self.cutoffs),
+            ("event index", restored_events_by_id, self.accepted_events_by_id),
+            ("sequence index", restored_sequences, self.last_sequence_by_run_id),
+            ("terminal events", restored_terminals, self.terminal_events_by_run_id),
+        ):
+            if restored and restored != derived:
+                raise ApplicationEventError(
+                    f"application event stream state {label} do not match events"
+                )
+
     def accept(self, event: ApplicationEvent) -> ApplicationEvent | None:
         existing_event = self.accepted_events_by_id.get(event.metadata.event_id)
         if existing_event is not None:
@@ -1410,18 +1654,20 @@ class ApplicationEventStreamState:
         if last_sequence is not None and event.metadata.sequence <= last_sequence:
             return None
         if (
-            event.kind in TERMINAL_APPLICATION_EVENT_KINDS
-            and event.metadata.run_id in self.terminal_events_by_run_id
+            event.metadata.run_id in self.terminal_events_by_run_id
+            and event.kind not in POST_TERMINAL_APPLICATION_EVENT_KINDS
+        ):
+            return None
+        payload_response_id = event.payload.get("response_id")
+        if "response_id" in event.payload and (
+            not isinstance(payload_response_id, str)
+            or not payload_response_id.strip()
+            or payload_response_id != payload_response_id.strip()
+            or payload_response_id != event.metadata.response_id
         ):
             return None
         if event.kind == "OutputCutoff":
             payload = event.payload
-            payload_response_id = payload.get("response_id")
-            if (
-                isinstance(payload_response_id, str)
-                and payload_response_id != event.metadata.response_id
-            ):
-                return None
             response_id = event.metadata.response_id
             if response_id in self.cutoffs:
                 return None
@@ -1471,12 +1717,6 @@ class ApplicationEventStreamState:
             self._record(event)
             return event
 
-        payload_response_id = event.payload.get("response_id")
-        if (
-            isinstance(payload_response_id, str)
-            and payload_response_id != event.metadata.response_id
-        ):
-            return None
         response_id = event.metadata.response_id
         cutoff = self.cutoffs.get(response_id)
         if cutoff is not None:

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Literal
@@ -152,7 +152,7 @@ def _optional_iso_datetime(owner: str, field_name: str, value: object) -> str | 
 def _string_tuple(owner: str, field_name: str, value: Iterable[str] | None) -> tuple[str, ...] | None:
     if value is None:
         return None
-    if isinstance(value, (str, bytes, bytearray, memoryview)):
+    if isinstance(value, (str, bytes, bytearray, memoryview, Mapping)):
         raise ValueError(f"{owner} {field_name} must be a sequence")
     try:
         items = tuple(value)

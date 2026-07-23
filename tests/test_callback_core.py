@@ -115,6 +115,23 @@ def test_event_filter_rejects_duplicate_constraints() -> None:
             construct()
 
 
+def test_event_filter_rejects_mappings_as_sequence_constraints() -> None:
+    for construct, message in (
+        (
+            lambda: graphblocks.EventFilter(types={"RunStarted": True}),
+            "event filter types must be a sequence",
+        ),
+        (
+            lambda: graphblocks.EventFilter().authorized_for_visibility(
+                {"client": True}
+            ),
+            "event filter authorized visibility must be a sequence",
+        ),
+    ):
+        with raises_value_error(message):
+            construct()
+
+
 def test_callback_schema_rejects_whitespace_wrapped_subscription_and_filter_values() -> None:
     filter_cases = (
         (lambda: graphblocks.EventFilter(types=[" RunStarted"]), "event filter types must not contain surrounding whitespace"),

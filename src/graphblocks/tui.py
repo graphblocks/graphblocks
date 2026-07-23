@@ -212,7 +212,7 @@ class TuiProtocolSession:
 
         if event.kind == "ArtifactReady":
             artifact = payload.get("artifact")
-            artifact_id = artifact.get("artifact_id") if isinstance(artifact, dict) else payload.get("artifact_id")
+            artifact_id = artifact.get("artifact_id") if isinstance(artifact, Mapping) else payload.get("artifact_id")
             if isinstance(artifact_id, str) and artifact_id.strip() and artifact_id not in artifacts:
                 artifacts.append(artifact_id)
 

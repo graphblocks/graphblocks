@@ -440,23 +440,19 @@ def _validate_http_headers(owner: str, value: object) -> MappingProxyType[str, s
 
 
 def _validate_string_sequence(owner: str, field_name: str, value: object) -> tuple[str, ...]:
-    if isinstance(value, str):
+    if not isinstance(value, (list, tuple)):
         raise ValueError(f"{owner} {field_name} must be a sequence")
-    try:
-        return tuple(
-            sorted(
-                {
-                    _validate_non_empty_string(
-                        owner,
-                        field_name,
-                        item,
-                    )
-                    for item in value  # type: ignore[union-attr]
-                }
-            )
+    normalized = tuple(
+        _validate_non_empty_string(
+            owner,
+            field_name,
+            item,
         )
-    except TypeError as error:
-        raise ValueError(f"{owner} {field_name} must be a sequence") from error
+        for item in value
+    )
+    if len(set(normalized)) != len(normalized):
+        raise ValueError(f"{owner} {field_name} must not contain duplicates")
+    return tuple(sorted(normalized))
 
 
 def _freeze_json_value(
@@ -2119,7 +2115,23 @@ class ServerAuthDecision:
     reason_codes: tuple[str, ...] = field(default_factory=tuple)
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "reason_codes", tuple(self.reason_codes))
+        if not isinstance(self.allowed, bool):
+            raise ValueError("server auth decision allowed must be a boolean")
+        if self.principal is not None and not isinstance(self.principal, PrincipalRef):
+            raise ValueError("server auth decision principal must be a PrincipalRef")
+        if not isinstance(self.reason_codes, (list, tuple)):
+            raise ValueError("server auth decision reason_codes must be a sequence")
+        reason_codes = tuple(
+            _validate_exact_non_empty_string(
+                "server auth decision",
+                "reason_codes",
+                reason_code,
+            )
+            for reason_code in self.reason_codes
+        )
+        if len(set(reason_codes)) != len(reason_codes):
+            raise ValueError("server auth decision reason_codes must not contain duplicates")
+        object.__setattr__(self, "reason_codes", reason_codes)
 
 
 class ServerAuthHook(Protocol):
@@ -2426,15 +2438,33 @@ class GraphBlocksServerApp:
 
         auth_decision = ServerAuthDecision(True)
         if self.auth_hook is not None:
-            auth_decision = self.auth_hook.authorize(
-                ServerAuthRequest(
-                    route=route,
-                    headers=request.headers,
-                    query=request.query,
-                    cookies=request.cookies,
-                    requested_at=request.requested_at,
+            try:
+                hook_decision = self.auth_hook.authorize(
+                    ServerAuthRequest(
+                        route=route,
+                        headers=request.headers,
+                        query=request.query,
+                        cookies=request.cookies,
+                        requested_at=request.requested_at,
+                    )
                 )
-            )
+            except Exception:
+                return ServerResponse.json(
+                    401,
+                    {
+                        "ok": False,
+                        "reasonCodes": ["auth.hook_error"],
+                    },
+                )
+            if not isinstance(hook_decision, ServerAuthDecision):
+                return ServerResponse.json(
+                    401,
+                    {
+                        "ok": False,
+                        "reasonCodes": ["auth.invalid_decision"],
+                    },
+                )
+            auth_decision = hook_decision
             if not auth_decision.allowed:
                 if route.operation == "submit_async_callback":
                     try:

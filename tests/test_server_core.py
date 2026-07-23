@@ -323,6 +323,68 @@ def test_static_bearer_auth_hook_validates_principal_map() -> None:
         StaticBearerAuthHook({"token-1": object()})  # type: ignore[arg-type]
 
 
+def test_server_auth_decision_rejects_malformed_hook_state() -> None:
+    with pytest.raises(ValueError, match="allowed must be a boolean"):
+        ServerAuthDecision(1)  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="principal must be a PrincipalRef"):
+        ServerAuthDecision(True, principal=object())  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="reason_codes must be a sequence"):
+        ServerAuthDecision(False, reason_codes="auth.denied")  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="reason_codes must not contain duplicates"):
+        ServerAuthDecision(
+            False,
+            reason_codes=("auth.denied", "auth.denied"),
+        )
+
+
+def test_server_app_fails_closed_when_auth_hook_returns_wrong_type() -> None:
+    class InvalidAuthHook:
+        def authorize(self, request: ServerAuthRequest) -> object:
+            del request
+            return object()
+
+    app = GraphBlocksServerApp(auth_hook=InvalidAuthHook())  # type: ignore[arg-type]
+    response = app.handle(
+        ServerRequest(
+            method="GET",
+            path="/runs",
+            headers={},
+            query={},
+            cookies={},
+        )
+    )
+
+    assert response.status_code == 401
+    assert json.loads(response.body.decode("utf-8")) == {
+        "ok": False,
+        "reasonCodes": ["auth.invalid_decision"],
+    }
+
+
+def test_server_app_fails_closed_when_auth_hook_raises() -> None:
+    class FailingAuthHook:
+        def authorize(self, request: ServerAuthRequest) -> ServerAuthDecision:
+            del request
+            raise RuntimeError("credential backend unavailable")
+
+    app = GraphBlocksServerApp(auth_hook=FailingAuthHook())
+    response = app.handle(
+        ServerRequest(
+            method="GET",
+            path="/runs",
+            headers={},
+            query={},
+            cookies={},
+        )
+    )
+
+    assert response.status_code == 401
+    assert json.loads(response.body.decode("utf-8")) == {
+        "ok": False,
+        "reasonCodes": ["auth.hook_error"],
+    }
+
+
 def test_server_health_aggregates_component_status() -> None:
     runtime_details = {"workers": 2}
     health = ServerHealth(
@@ -9418,6 +9480,102 @@ def test_server_app_rejects_subscription_with_whitespace_wrapped_identity_filter
             "error": expected_error,
         }
         assert app.subscriptions("run-subscribe-identity-invalid-1") == ()
+
+
+def test_server_app_rejects_object_valued_event_filter_sequences() -> None:
+    cases = (
+        (
+            {"types": {"RunSucceeded": True}},
+            "server event subscription event_filter.types must be a sequence",
+        ),
+        (
+            {"visibility": {"client": True}},
+            "server event subscription event_filter.visibility must be a sequence",
+        ),
+        (
+            {"nodeIds": {"runChecks": True}},
+            "server event subscription event_filter.node_ids must be a sequence",
+        ),
+        (
+            {"operationIds": {"op-ci-1": True}},
+            "server event subscription event_filter.operation_ids must be a sequence",
+        ),
+    )
+    for index, (event_filter, expected_error) in enumerate(cases, start=1):
+        app = GraphBlocksServerApp(
+            auth_hook=StaticBearerAuthHook(
+                {"token-1": PrincipalRef("user-1")}
+            )
+        )
+        app._events_by_run_id["run-subscribe-sequence-invalid-1"] = ()
+
+        response = app.handle(
+            ServerRequest(
+                method="POST",
+                path="/runs/run-subscribe-sequence-invalid-1/subscriptions",
+                headers={"Authorization": "Bearer token-1"},
+                query={},
+                cookies={},
+                body=json.dumps(
+                    {
+                        "subscriptionId": f"sub-sequence-invalid-{index}",
+                        "eventFilter": event_filter,
+                        "delivery": {
+                            "kind": "local_callback",
+                            "callback_name": "ide",
+                        },
+                    }
+                ).encode("utf-8"),
+            )
+        )
+
+        assert response.status_code == 400
+        assert json.loads(response.body.decode("utf-8")) == {
+            "ok": False,
+            "error": expected_error,
+        }
+        assert app.subscriptions("run-subscribe-sequence-invalid-1") == ()
+
+
+def test_server_app_rejects_duplicate_event_filter_constraints() -> None:
+    app = GraphBlocksServerApp(
+        auth_hook=StaticBearerAuthHook(
+            {"token-1": PrincipalRef("user-1")}
+        )
+    )
+    app._events_by_run_id["run-subscribe-duplicate-filter-1"] = ()
+
+    response = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs/run-subscribe-duplicate-filter-1/subscriptions",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "subscriptionId": "sub-duplicate-filter-1",
+                    "eventFilter": {
+                        "types": ["RunSucceeded", "RunSucceeded"],
+                    },
+                    "delivery": {
+                        "kind": "local_callback",
+                        "callback_name": "ide",
+                    },
+                }
+            ).encode("utf-8"),
+        )
+    )
+
+    assert response.status_code == 400
+    assert json.loads(response.body.decode("utf-8")) == {
+        "ok": False,
+        "error": (
+            "server event subscription event_filter.types "
+            "must not contain duplicates"
+        ),
+    }
+    assert app.subscriptions("run-subscribe-duplicate-filter-1") == ()
 
 
 def test_server_app_rejects_subscription_with_whitespace_wrapped_subscription_id() -> None:
