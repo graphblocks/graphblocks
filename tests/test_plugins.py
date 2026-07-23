@@ -6,6 +6,7 @@ import yaml
 import graphblocks.plugins as plugins_module
 from graphblocks import BlockCatalog, compile_graph, discover_plugins, load_plugin_manifest, validate_plugin_manifest
 from graphblocks.cli import main
+from graphblocks.documents import FrozenDict, FrozenList
 from graphblocks.plugins import builtin_block_catalog, plugin_manifest_from_document
 from graphblocks.runtime import stdlib_registry
 
@@ -115,6 +116,28 @@ def test_alpha_plugin_manifest_is_migrated_to_auditable_v1() -> None:
         manifest.raw["metadata"]["annotations"]["graphblocks.ai/migratedFrom"]
         == "graphblocks.ai/v1alpha1"
     )
+
+
+def test_plugin_manifest_consumers_accept_immutable_document_snapshots() -> None:
+    document = FrozenDict(
+        {
+            "apiVersion": "graphblocks.ai/v1alpha1",
+            "kind": "PluginManifest",
+            "metadata": FrozenDict({"name": "example.immutable"}),
+            "spec": FrozenDict(
+                {
+                    "pluginId": "example.immutable",
+                    "version": "1.0.0",
+                    "blocks": FrozenList(),
+                }
+            ),
+        }
+    )
+
+    assert validate_plugin_manifest(document).ok
+    manifest = plugin_manifest_from_document(document)
+    assert manifest.plugin_id == "example.immutable"
+    assert manifest.blocks == ()
 
 
 def test_alpha_plugin_manifest_migration_completes_block_contract_defaults() -> None:

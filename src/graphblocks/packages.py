@@ -15,7 +15,7 @@ from packaging.utils import canonicalize_name
 from packaging.version import InvalidVersion, Version
 import yaml
 
-from .canonical import canonical_hash
+from .canonical import canonical_dumps, canonical_hash, canonical_loads
 from .diagnostics import Diagnostic, DiagnosticSet
 from .loader import _DuplicateKeySafeLoader
 
@@ -354,6 +354,20 @@ class PackageManifestAuditPolicy:
         )
 
 
+def _package_catalog_snapshot(catalog: object) -> dict[str, Any]:
+    if not isinstance(catalog, Mapping):
+        raise ValueError("package catalog must be a mapping")
+    try:
+        snapshot = canonical_loads(canonical_dumps(catalog))
+    except (TypeError, ValueError) as error:
+        raise ValueError(
+            "package catalog must contain only canonical JSON values"
+        ) from error
+    if not isinstance(snapshot, dict):
+        raise ValueError("package catalog must be a mapping")
+    return snapshot
+
+
 def load_package_catalog(path: str | Path | None = None) -> dict[str, Any]:
     if path is None:
         with resources.files("graphblocks").joinpath("data/package-catalog.yaml").open("r", encoding="utf-8") as stream:
@@ -392,7 +406,8 @@ def load_package_catalog(path: str | Path | None = None) -> dict[str, Any]:
     return catalog
 
 
-def package_rows(catalog: dict[str, Any]) -> list[dict[str, Any]]:
+def package_rows(catalog: Mapping[str, Any]) -> list[dict[str, Any]]:
+    catalog = _package_catalog_snapshot(catalog)
     rows: list[dict[str, Any]] = []
     for component in catalog.get("components", []):
         if isinstance(component, dict):
@@ -467,11 +482,30 @@ def _package_dependency_closure(
 
 
 def build_package_lock(
-    catalog: dict[str, Any],
+    catalog: Mapping[str, Any],
     *,
     requested: tuple[str, ...] = (),
     include_default: bool = True,
 ) -> PackageLock:
+    catalog = _package_catalog_snapshot(catalog)
+    catalog_version = catalog.get("catalogVersion")
+    if (
+        not isinstance(catalog_version, int)
+        or isinstance(catalog_version, bool)
+        or catalog_version <= 0
+    ):
+        raise ValueError(
+            "package catalog catalogVersion must be a positive integer"
+        )
+    spec_version = catalog.get("specVersion")
+    if (
+        not isinstance(spec_version, str)
+        or not spec_version.strip()
+        or spec_version != spec_version.strip()
+    ):
+        raise ValueError(
+            "package catalog specVersion must be a non-empty string"
+        )
     artifacts_by_distribution: dict[str, dict[str, Any]] = {}
     for artifact in catalog.get("artifacts", []):
         if not isinstance(artifact, dict):
@@ -745,8 +779,8 @@ def build_package_lock(
         )
 
     return PackageLock(
-        catalog_version=int(catalog.get("catalogVersion", 0)),
-        spec_version=str(catalog.get("specVersion", "")),
+        catalog_version=catalog_version,
+        spec_version=spec_version,
         requested=tuple(normalized_requested),
         entries=tuple(entries),
         artifacts=tuple(selected_artifacts),
@@ -907,7 +941,7 @@ def build_wheel_matrix(
     root: str | Path,
     *,
     python_versions: tuple[str, ...] = ("3.11", "3.12"),
-    catalog: dict[str, Any] | None = None,
+    catalog: Mapping[str, Any] | None = None,
 ) -> WheelMatrix:
     root_path = Path(root)
     diagnostics: list[Diagnostic] = []
@@ -943,6 +977,8 @@ def build_wheel_matrix(
 
     if catalog is None:
         catalog = load_package_catalog()
+    else:
+        catalog = _package_catalog_snapshot(catalog)
     raw_artifacts = catalog.get("artifacts", [])
     artifacts = raw_artifacts if isinstance(raw_artifacts, list) else []
     manifest_owners: dict[Path, str] = {}
@@ -1511,7 +1547,12 @@ def audit_package_manifests(
     return DiagnosticSet(tuple(diagnostics))
 
 
-def doctor_package_catalog(catalog: dict[str, Any], *, root: str | Path | None = None) -> DiagnosticSet:
+def doctor_package_catalog(
+    catalog: Mapping[str, Any],
+    *,
+    root: str | Path | None = None,
+) -> DiagnosticSet:
+    catalog = _package_catalog_snapshot(catalog)
     diagnostics: list[Diagnostic] = []
 
     raw_artifacts = catalog.get("artifacts", [])

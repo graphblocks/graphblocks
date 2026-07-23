@@ -9,6 +9,7 @@ from packaging.version import Version
 import pytest
 
 import graphblocks
+from graphblocks.documents import FrozenDict, FrozenList
 from graphblocks.packages import (
     PackageLock,
     PackageLockEntry,
@@ -25,6 +26,20 @@ from graphblocks.packages import (
 
 
 ROOT = Path(__file__).parents[1]
+
+
+def _freeze_catalog_value(value: object) -> object:
+    if isinstance(value, dict):
+        return FrozenDict(
+            {
+                key: _freeze_catalog_value(item)
+                for key, item in value.items()
+            }
+        )
+    if isinstance(value, list):
+        return FrozenList(_freeze_catalog_value(item) for item in value)
+    return value
+
 
 EXPECTED_COMPONENTS = {
     "graphblocks-agents",
@@ -525,6 +540,32 @@ def test_package_lock_resolves_default_component_and_artifact_selection() -> Non
         }
         & set(entries)
     )
+
+
+def test_package_consumers_accept_immutable_catalog_snapshots() -> None:
+    catalog = load_package_catalog()
+    frozen_catalog = _freeze_catalog_value(catalog)
+    assert isinstance(frozen_catalog, FrozenDict)
+
+    assert package_rows(frozen_catalog) == package_rows(catalog)
+    assert (
+        build_package_lock(frozen_catalog).lock_payload()
+        == build_package_lock(catalog).lock_payload()
+    )
+    assert doctor_package_catalog(frozen_catalog).diagnostics == ()
+
+
+def test_package_lock_rejects_boolean_catalog_version() -> None:
+    catalog = load_package_catalog()
+    catalog["catalogVersion"] = True
+    frozen_catalog = _freeze_catalog_value(catalog)
+    assert isinstance(frozen_catalog, FrozenDict)
+
+    with pytest.raises(
+        ValueError,
+        match="catalogVersion must be a positive integer",
+    ):
+        build_package_lock(frozen_catalog)
 
 
 def test_package_lock_selects_component_closure_and_required_artifacts() -> None:

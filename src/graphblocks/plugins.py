@@ -1051,7 +1051,10 @@ def load_plugin_manifest(path: str | Path) -> PluginManifest:
     return plugin_manifest_from_document(document, str(source))
 
 
-def plugin_manifest_from_document(document: dict[str, Any], source: str = "<memory>") -> PluginManifest:
+def plugin_manifest_from_document(
+    document: Mapping[str, Any],
+    source: str = "<memory>",
+) -> PluginManifest:
     diagnostics = validate_plugin_manifest(document)
     if not diagnostics.ok:
         messages = "; ".join(
@@ -1059,7 +1062,7 @@ def plugin_manifest_from_document(document: dict[str, Any], source: str = "<memo
             for item in diagnostics.diagnostics
         )
         raise ValueError(f"{source}: invalid plugin manifest: {messages}")
-    document = migrate_document(document)
+    document = migrate_document(dict(document))
     spec = document.get("spec", {})
     metadata = document.get("metadata", {})
     raw = canonical_loads(canonical_dumps(document))
@@ -1086,7 +1089,7 @@ def plugin_manifest_from_document(document: dict[str, Any], source: str = "<memo
 def validate_plugin_manifest(document: Any) -> DiagnosticSet:
     diagnostics: list[Diagnostic] = []
     schema_violations = ()
-    if not isinstance(document, dict):
+    if not isinstance(document, Mapping):
         return DiagnosticSet((Diagnostic("GB2001", "plugin manifest must be a mapping"),))
     domain_violations = tuple(
         violation
@@ -1108,6 +1111,7 @@ def validate_plugin_manifest(document: Any) -> DiagnosticSet:
                 for violation in domain_violations
             )
         )
+    document = dict(document)
     try:
         document = _migrate_document_unchecked(document)
     except MigrationError as error:
