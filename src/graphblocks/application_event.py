@@ -1,9 +1,11 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field, replace
+from functools import wraps
+from threading import RLock
 from types import MappingProxyType
-from typing import Literal
+from typing import Literal, ParamSpec, TypeVar, cast
 
 from .output_policy import GenerationChunk, OutputCutoff, OutputPolicyDecision
 from .policy import PolicyDecision
@@ -15,6 +17,22 @@ from .tools import (
     ToolResult,
     ToolResultEvent,
 )
+
+
+_P = ParamSpec("_P")
+_R = TypeVar("_R")
+
+
+def _with_application_protocol_log_lock(
+    method: Callable[_P, _R],
+) -> Callable[_P, _R]:
+    @wraps(method)
+    def locked(*args: _P.args, **kwargs: _P.kwargs) -> _R:
+        log = cast("ApplicationProtocolLog", args[0])
+        with log._lock:
+            return method(*args, **kwargs)
+
+    return locked
 
 
 ApplicationEventKind = Literal[
@@ -677,9 +695,9 @@ class ApplicationProtocolEvent:
         return None
 
 
-@dataclass(slots=True)
+@dataclass(slots=True, init=False)
 class ApplicationProtocolLog:
-    events: list[ApplicationProtocolEvent] = field(default_factory=list)
+    _events: list[ApplicationProtocolEvent] = field(default_factory=list, init=False, repr=False)
     _event_ids: set[str] = field(default_factory=set, init=False, repr=False)
     _events_by_id: dict[str, ApplicationProtocolEvent] = field(default_factory=dict, init=False, repr=False)
     _events_by_cursor: dict[str, ApplicationProtocolEvent] = field(default_factory=dict, init=False, repr=False)
@@ -690,13 +708,32 @@ class ApplicationProtocolLog:
         init=False,
         repr=False,
     )
+    _lock: RLock = field(default_factory=RLock, init=False, repr=False, compare=False)
 
-    def __post_init__(self) -> None:
-        initial_events = tuple(self.events)
-        self.events = []
+    def __init__(self, events: Iterable[ApplicationProtocolEvent] = ()) -> None:
+        self._events = []
+        self._event_ids = set()
+        self._events_by_id = {}
+        self._events_by_cursor = {}
+        self._last_sequence = None
+        self._run_id = None
+        self._terminal_event = None
+        self._lock = RLock()
+        try:
+            initial_events = tuple(events)
+        except TypeError as error:
+            raise ApplicationProtocolError(
+                "application protocol log events must be iterable"
+            ) from error
         for event in initial_events:
             self.append(event)
 
+    @property
+    def events(self) -> tuple[ApplicationProtocolEvent, ...]:
+        with self._lock:
+            return tuple(self._events)
+
+    @_with_application_protocol_log_lock
     def append(self, event: ApplicationProtocolEvent) -> bool:
         if not isinstance(event, ApplicationProtocolEvent):
             raise ApplicationProtocolError("application protocol log event must be ApplicationProtocolEvent")
@@ -732,9 +769,10 @@ class ApplicationProtocolLog:
             self._events_by_cursor[event.metadata.cursor] = event
         if event.kind in TERMINAL_APPLICATION_PROTOCOL_EVENT_KINDS:
             self._terminal_event = event
-        self.events.append(event)
+        self._events.append(event)
         return True
 
+    @_with_application_protocol_log_lock
     def replay_after(
         self,
         cursor: str | None = None,
@@ -757,21 +795,23 @@ class ApplicationProtocolLog:
                 matched_event = next(
                     (
                         event
-                        for event in self.events
+                        for event in self._events
                         if str(event.metadata.sequence) == cursor
                     ),
                     None,
                 )
             if matched_event is None:
                 raise ApplicationProtocolError("application protocol replay cursor was not found")
-            start_index = self.events.index(matched_event) + 1
-        return tuple(self.events[start_index : start_index + limit])
+            start_index = self._events.index(matched_event) + 1
+        return tuple(self._events[start_index : start_index + limit])
 
+    @_with_application_protocol_log_lock
     def __len__(self) -> int:
-        return len(self.events)
+        return len(self._events)
 
+    @_with_application_protocol_log_lock
     def is_empty(self) -> bool:
-        return not self.events
+        return not self._events
 
 
 @dataclass(slots=True)

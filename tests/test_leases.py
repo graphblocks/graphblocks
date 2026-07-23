@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 import math
+from threading import Barrier, BrokenBarrierError
 
 import pytest
 
@@ -23,6 +25,34 @@ def test_lease_pool_rejects_acquire_past_capacity() -> None:
         pool.acquire("model", owner="run-2")
 
     lease.release()
+
+
+def test_lease_pool_serializes_concurrent_acquisitions() -> None:
+    pool = InMemoryLeasePool({"model": 1})
+    writes = Barrier(2)
+
+    class CoordinatedActive(dict[str, ActiveLease]):
+        def __setitem__(self, key: str, value: ActiveLease) -> None:
+            try:
+                writes.wait(timeout=0.2)
+            except BrokenBarrierError:
+                pass
+            super().__setitem__(key, value)
+
+    pool.active = CoordinatedActive()
+
+    def acquire(owner: str) -> str:
+        try:
+            pool.acquire("model", owner=owner)
+        except LeaseUnavailableError:
+            return "unavailable"
+        return "acquired"
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        outcomes = list(executor.map(acquire, ("run-1", "run-2")))
+
+    assert sorted(outcomes) == ["acquired", "unavailable"]
+    assert pool.available("model") == 0
 
 
 def test_lease_release_is_idempotent() -> None:
@@ -112,6 +142,61 @@ def test_lease_pool_assigns_monotonic_fencing_tokens_and_validates_current_token
     pool.validate_fencing_token(current.lease_id, current.fencing_token)
 
 
+def test_lease_pool_does_not_reuse_restored_identity_or_fencing_token() -> None:
+    restored = ActiveLease(
+        resource="model",
+        owner="run-restored",
+        units=1,
+        fencing_token=5,
+        attributes={},
+        acquired_at=1,
+    )
+    restored_active = {"lease-000042": restored}
+    pool = InMemoryLeasePool(
+        {"model": 2},
+        active=restored_active,
+        next_id=1,
+        next_fencing_token=5,
+    )
+    restored_active.clear()
+
+    acquired = pool.acquire("model", owner="run-new", acquired_at=2)
+
+    assert acquired.lease_id == "lease-000043"
+    assert acquired.fencing_token > restored.fencing_token
+    assert pool.active["lease-000042"] == restored
+    assert len(pool.active) == 2
+
+
+def test_lease_pool_uses_one_collision_proof_fencing_allocator_for_renew_and_acquire() -> None:
+    restored = ActiveLease(
+        resource="model",
+        owner="run-restored",
+        units=1,
+        fencing_token=50,
+        attributes={},
+        acquired_at=1,
+        expires_at=20,
+    )
+    pool = InMemoryLeasePool(
+        {"model": 2},
+        active={"lease-000010": restored},
+        next_fencing_token=1,
+    )
+
+    renewed_token = pool.renew(
+        "lease-000010",
+        restored.fencing_token,
+        expires_at=30,
+        renewed_at=10,
+    )
+    acquired = pool.acquire("model", owner="run-new", acquired_at=10)
+
+    assert renewed_token == 51
+    assert acquired.fencing_token == 52
+    assert len({lease.fencing_token for lease in pool.active.values()}) == 2
+
+
 def test_lease_renewal_extends_expiration_and_rotates_fencing_token() -> None:
     pool = InMemoryLeasePool({"licensed-tool": 1})
     lease = pool.acquire(
@@ -129,6 +214,42 @@ def test_lease_renewal_extends_expiration_and_rotates_fencing_token() -> None:
     assert lease.expires_at == 25
     with pytest.raises(StaleFencingTokenError):
         pool.renew(lease.lease_id, stale_token, expires_at=30, renewed_at=13)
+
+
+def test_lease_renewal_rejects_inactive_or_non_extending_authority() -> None:
+    pool = InMemoryLeasePool({"licensed-tool": 2})
+    bounded = pool.acquire(
+        "licensed-tool",
+        owner="run-bounded",
+        expires_at=20,
+        acquired_at=10,
+    )
+    unbounded = pool.acquire(
+        "licensed-tool",
+        owner="run-unbounded",
+        acquired_at=10,
+    )
+
+    for renewed_at, expires_at in ((9, 30), (11, 20), (11, 19)):
+        with pytest.raises(InvalidLeaseRequestError):
+            pool.renew(
+                bounded.lease_id,
+                bounded.fencing_token,
+                expires_at=expires_at,
+                renewed_at=renewed_at,
+            )
+    with pytest.raises(InvalidLeaseRequestError):
+        pool.renew(
+            unbounded.lease_id,
+            unbounded.fencing_token,
+            expires_at=30,
+            renewed_at=11,
+        )
+
+    assert bounded.expires_at == 20
+    assert bounded.fencing_token == pool.active[bounded.lease_id].fencing_token
+    assert unbounded.expires_at is None
+    assert unbounded.fencing_token == pool.active[unbounded.lease_id].fencing_token
 
 
 def test_expired_leases_are_reaped_without_reusing_fencing_tokens() -> None:

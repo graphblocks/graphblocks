@@ -7,6 +7,7 @@ import sys
 from types import SimpleNamespace
 
 import graphblocks
+import pytest
 from graphblocks.approval import VALID_APPROVAL_STATUSES
 
 
@@ -298,6 +299,19 @@ def test_audit_package_builds_tool_effect_precondition(monkeypatch) -> None:
     assert "ToolEffectPrecondition" in graphblocks_audit.__all__
 
 
+def test_audit_package_rejects_forged_tool_effect_precondition_digest(monkeypatch) -> None:
+    graphblocks_audit = importlib.import_module("graphblocks.audit")
+
+    with pytest.raises(
+        graphblocks_audit.ToolEffectAuditError,
+        match="digest does not match payload",
+    ):
+        graphblocks_audit.ToolEffectPrecondition(
+            payload={"tool_call_id": "call-1"},
+            digest="sha256:" + "0" * 64,
+        )
+
+
 def test_audit_package_rejects_precondition_before_admission(monkeypatch) -> None:
     graphblocks = importlib.import_module("graphblocks")
     graphblocks_audit = importlib.import_module("graphblocks.audit")
@@ -426,6 +440,60 @@ def test_audit_package_persists_outbox_records(monkeypatch, tmp_path) -> None:
     reopened.close()
 
 
+def test_audit_outbox_records_deep_freeze_payload_evidence(monkeypatch) -> None:
+    graphblocks_audit = importlib.import_module("graphblocks.audit")
+    outbox = graphblocks_audit.SQLiteAuditOutbox.in_memory()
+    payload = {"context": {"tenant": "acme", "labels": ["audit"]}}
+    record = outbox.append(
+        "application_event",
+        payload,
+        occurred_at="2026-06-23T00:00:00Z",
+        record_id="audit-1",
+    )
+    payload["context"]["tenant"] = "mutated"
+    payload["context"]["labels"].append("mutated")
+
+    assert record.payload == {"context": {"tenant": "acme", "labels": ["audit"]}}
+    try:
+        record.payload["context"]["tenant"] = "mutated"
+    except TypeError:
+        pass
+    else:
+        raise AssertionError("nested audit payload mappings must be immutable")
+    try:
+        record.payload["context"]["labels"].append("mutated")
+    except TypeError:
+        pass
+    else:
+        raise AssertionError("nested audit payload lists must be immutable")
+    outbox.close()
+
+
+def test_audit_outbox_rejects_invalid_persisted_lifecycle_state(monkeypatch, tmp_path) -> None:
+    graphblocks_audit = importlib.import_module("graphblocks.audit")
+    outbox = graphblocks_audit.SQLiteAuditOutbox(tmp_path / "audit.sqlite3")
+    outbox.append(
+        "application_event",
+        {"event_id": "event-1"},
+        occurred_at="2026-06-23T00:00:00Z",
+        record_id="audit-1",
+    )
+    outbox._connection.execute(  # noqa: SLF001
+        "UPDATE audit_outbox_records SET status = ?, attempts = ? WHERE record_id = ?",
+        ("forged", -1, "audit-1"),
+    )
+    outbox._connection.commit()  # noqa: SLF001
+
+    try:
+        outbox.get("audit-1")
+    except ValueError as error:
+        assert "audit outbox status must be pending, published, or failed" in str(error)
+    else:
+        raise AssertionError("audit outbox replay must reject invalid lifecycle state")
+    finally:
+        outbox.close()
+
+
 def test_audit_outbox_rejects_non_standard_payload_json_on_replay(monkeypatch, tmp_path) -> None:
     graphblocks_audit = importlib.import_module("graphblocks.audit")
     outbox = graphblocks_audit.SQLiteAuditOutbox(tmp_path / "audit.sqlite3")
@@ -444,6 +512,99 @@ def test_audit_outbox_rejects_non_standard_payload_json_on_replay(monkeypatch, t
         raise AssertionError("audit outbox replay should reject non-standard JSON constants")
     finally:
         outbox.close()
+
+
+@pytest.mark.parametrize(
+    "payload_json",
+    (
+        '{"value":1,"value":2}',
+        '{"value": 1}',
+    ),
+)
+def test_audit_outbox_rejects_duplicate_or_noncanonical_payload_json_on_replay(
+    monkeypatch,
+    tmp_path,
+    payload_json: str,
+) -> None:
+    graphblocks_audit = importlib.import_module("graphblocks.audit")
+    outbox = graphblocks_audit.SQLiteAuditOutbox(tmp_path / "audit.sqlite3")
+    outbox.append(
+        "application_event",
+        {"value": 1},
+        occurred_at="2026-06-23T00:00:00Z",
+        record_id="audit-1",
+    )
+    outbox._connection.execute(  # noqa: SLF001
+        "UPDATE audit_outbox_records SET payload_json = ? WHERE record_id = ?",
+        (payload_json, "audit-1"),
+    )
+    outbox._connection.commit()  # noqa: SLF001
+
+    with pytest.raises(ValueError, match="payload_json must be valid strict JSON"):
+        outbox.get("audit-1")
+    outbox.close()
+
+
+def test_audit_outbox_rejects_non_string_and_cyclic_payload_values(monkeypatch) -> None:
+    graphblocks_audit = importlib.import_module("graphblocks.audit")
+    outbox = graphblocks_audit.SQLiteAuditOutbox.in_memory()
+    cyclic: dict[str, object] = {}
+    cyclic["self"] = cyclic
+
+    with pytest.raises(ValueError, match="object keys must be strings"):
+        outbox.append(
+            "application_event",
+            {1: "event-1"},  # type: ignore[dict-item]
+            occurred_at="2026-06-23T00:00:00Z",
+        )
+    with pytest.raises(ValueError, match="cyclic"):
+        outbox.append(
+            "application_event",
+            cyclic,
+            occurred_at="2026-06-23T00:00:00Z",
+        )
+    outbox.close()
+
+
+@pytest.mark.parametrize(
+    ("updates", "message"),
+    (
+        ({"attempts": 1.5}, "attempts must be a non-negative integer"),
+        ({"attempts": 1}, "pending audit outbox record must have zero attempts"),
+        (
+            {"status": "failed", "attempts": 1},
+            "failed audit outbox record requires last_error",
+        ),
+        (
+            {"status": "published", "published_at": "2026-06-23T00:00:01Z", "last_error": "stale"},
+            "published audit outbox record must not define last_error",
+        ),
+    ),
+)
+def test_audit_outbox_rejects_inconsistent_persisted_lifecycle_fields_without_coercion(
+    monkeypatch,
+    tmp_path,
+    updates: dict[str, object],
+    message: str,
+) -> None:
+    graphblocks_audit = importlib.import_module("graphblocks.audit")
+    outbox = graphblocks_audit.SQLiteAuditOutbox(tmp_path / "audit.sqlite3")
+    outbox.append(
+        "application_event",
+        {"event_id": "event-1"},
+        occurred_at="2026-06-23T00:00:00Z",
+        record_id="audit-1",
+    )
+    assignments = ", ".join(f"{field} = ?" for field in updates)
+    outbox._connection.execute(  # noqa: SLF001
+        f"UPDATE audit_outbox_records SET {assignments} WHERE record_id = ?",
+        (*updates.values(), "audit-1"),
+    )
+    outbox._connection.commit()  # noqa: SLF001
+
+    with pytest.raises(ValueError, match=message):
+        outbox.get("audit-1")
+    outbox.close()
 
 
 def test_audit_outbox_rejects_payload_digest_drift_on_replay(monkeypatch, tmp_path) -> None:
@@ -552,4 +713,29 @@ def test_audit_outbox_treats_published_records_as_terminal(monkeypatch) -> None:
     assert outbox.get("audit-1").status == "published"
     assert outbox.get("audit-1").published_at == "2026-06-23T00:00:01Z"
     assert outbox.pending() == []
+    outbox.close()
+
+
+def test_audit_outbox_rejects_invalid_transition_details_without_mutating(monkeypatch) -> None:
+    graphblocks_audit = importlib.import_module("graphblocks.audit")
+    outbox = graphblocks_audit.SQLiteAuditOutbox.in_memory()
+    outbox.append(
+        "application_event",
+        {"event_id": "event-1"},
+        occurred_at="2026-06-23T00:00:00Z",
+        record_id="audit-1",
+    )
+
+    for transition in (
+        lambda: outbox.mark_published("audit-1", published_at=" "),
+        lambda: outbox.mark_failed("audit-1", error=" "),
+    ):
+        try:
+            transition()
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("invalid audit transition details must be rejected")
+        assert outbox.get("audit-1").status == "pending"
+
     outbox.close()

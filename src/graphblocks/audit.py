@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-import json
 from pathlib import Path
 import sqlite3
 from types import MappingProxyType
@@ -17,7 +16,7 @@ from graphblocks.application_event import (
     ApplicationEventMetadata,
 )
 from graphblocks.approval import ApprovalRecord, ApprovalRequest, ApprovalStatus, VALID_APPROVAL_STATUSES
-from graphblocks.canonical import canonical_dumps, canonical_hash
+from graphblocks.canonical import canonical_dumps, canonical_hash, canonical_loads
 from graphblocks.policy import PolicyDecision, PolicyEnforcementRecord, PrincipalRef, ResourceRef
 from graphblocks.tools import (
     ResolvedTool,
@@ -46,15 +45,148 @@ class AuditOutboxRecordNotFoundError(AuditOutboxError):
 
 
 AuditOutboxStatus = Literal["pending", "published", "failed"]
+_AUDIT_OUTBOX_STATUSES = frozenset({"pending", "published", "failed"})
 
 
-def _loads_strict_json(field_name: str, value: str) -> object:
+class _FrozenAuditList(list[object]):
+    def __setitem__(self, index: object, value: object) -> None:
+        raise TypeError("frozen audit list cannot be mutated")
+
+    def __delitem__(self, index: object) -> None:
+        raise TypeError("frozen audit list cannot be mutated")
+
+    def append(self, item: object) -> None:
+        raise TypeError("frozen audit list cannot be mutated")
+
+    def clear(self) -> None:
+        raise TypeError("frozen audit list cannot be mutated")
+
+    def extend(self, items: object) -> None:
+        raise TypeError("frozen audit list cannot be mutated")
+
+    def insert(self, index: int, item: object) -> None:
+        raise TypeError("frozen audit list cannot be mutated")
+
+    def pop(self, index: int = -1) -> object:
+        raise TypeError("frozen audit list cannot be mutated")
+
+    def remove(self, item: object) -> None:
+        raise TypeError("frozen audit list cannot be mutated")
+
+    def reverse(self) -> None:
+        raise TypeError("frozen audit list cannot be mutated")
+
+    def sort(self, *args: object, **kwargs: object) -> None:
+        raise TypeError("frozen audit list cannot be mutated")
+
+    def __iadd__(self, items: object) -> _FrozenAuditList:
+        raise TypeError("frozen audit list cannot be mutated")
+
+    def __imul__(self, multiplier: int) -> _FrozenAuditList:
+        raise TypeError("frozen audit list cannot be mutated")
+
+
+def _normalize_audit_json_value(
+    value: object,
+    *,
+    active_containers: set[int],
+) -> object:
+    if isinstance(value, Mapping):
+        container_id = id(value)
+        if container_id in active_containers:
+            raise ValueError("audit payload must not contain cyclic values")
+        active_containers.add(container_id)
+        try:
+            normalized: dict[str, object] = {}
+            for key, item in value.items():
+                if not isinstance(key, str):
+                    raise ValueError("audit payload object keys must be strings")
+                if key in normalized:
+                    raise ValueError(f"audit payload contains duplicate key {key!r}")
+                normalized[key] = _normalize_audit_json_value(
+                    item,
+                    active_containers=active_containers,
+                )
+            return normalized
+        finally:
+            active_containers.remove(container_id)
+    if isinstance(value, (list, tuple)):
+        container_id = id(value)
+        if container_id in active_containers:
+            raise ValueError("audit payload must not contain cyclic values")
+        active_containers.add(container_id)
+        try:
+            return [
+                _normalize_audit_json_value(
+                    item,
+                    active_containers=active_containers,
+                )
+                for item in value
+            ]
+        finally:
+            active_containers.remove(container_id)
+    return value
+
+
+def _snapshot_audit_payload(
+    payload: object,
+    *,
+    field_name: str = "payload",
+) -> dict[str, object]:
+    if not isinstance(payload, Mapping):
+        raise ValueError(f"audit {field_name} must be an object")
     try:
-        return json.loads(
-            value,
-            parse_constant=lambda constant: (_ for _ in ()).throw(ValueError(constant)),
+        normalized = _normalize_audit_json_value(payload, active_containers=set())
+        canonical_payload = canonical_dumps(normalized)
+        decoded = canonical_loads(canonical_payload)
+    except (RecursionError, TypeError, ValueError) as error:
+        if isinstance(error, ValueError) and str(error).startswith("audit payload"):
+            raise
+        raise ValueError(f"audit {field_name} must contain strict canonical JSON") from error
+    if not isinstance(decoded, dict):
+        raise ValueError(f"audit {field_name} must be an object")
+    return decoded
+
+
+def _freeze_audit_value(value: object) -> object:
+    if isinstance(value, dict):
+        return MappingProxyType(
+            {key: _freeze_audit_value(item) for key, item in value.items()}
         )
-    except ValueError as error:
+    if isinstance(value, list):
+        return _FrozenAuditList(_freeze_audit_value(item) for item in value)
+    return value
+
+
+def _freeze_audit_snapshot(
+    payload: dict[str, object],
+) -> MappingProxyType[str, object]:
+    return MappingProxyType(
+        {key: _freeze_audit_value(value) for key, value in payload.items()}
+    )
+
+
+def _freeze_audit_payload(payload: object) -> MappingProxyType[str, object]:
+    return _freeze_audit_snapshot(_snapshot_audit_payload(payload))
+
+
+def _validate_audit_string(field_name: str, value: object) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"audit outbox {field_name} must be a non-empty string")
+    if value != value.strip():
+        raise ValueError(f"audit outbox {field_name} must not contain surrounding whitespace")
+    return value
+
+
+def _loads_strict_json(field_name: str, value: object) -> object:
+    if not isinstance(value, str):
+        raise ValueError(f"audit outbox {field_name} must be valid strict JSON")
+    try:
+        decoded = canonical_loads(value)
+        if canonical_dumps(decoded) != value:
+            raise ValueError("non-canonical JSON encoding")
+        return decoded
+    except (TypeError, ValueError) as error:
         raise ValueError(f"audit outbox {field_name} must be valid strict JSON") from error
 
 
@@ -123,7 +255,51 @@ class AuditOutboxRecord:
     last_error: str | None = None
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "payload", MappingProxyType(dict(self.payload)))
+        record_id = _validate_audit_string("record_id", self.record_id)
+        record_type = _validate_audit_string("record_type", self.record_type)
+        payload_digest = _validate_audit_string("payload_digest", self.payload_digest)
+        occurred_at = _validate_audit_string("occurred_at", self.occurred_at)
+        if not isinstance(self.status, str) or self.status not in _AUDIT_OUTBOX_STATUSES:
+            raise ValueError("audit outbox status must be pending, published, or failed")
+        if not isinstance(self.attempts, int) or isinstance(self.attempts, bool) or self.attempts < 0:
+            raise ValueError("audit outbox attempts must be a non-negative integer")
+        published_at = (
+            None
+            if self.published_at is None
+            else _validate_audit_string("published_at", self.published_at)
+        )
+        last_error = (
+            None
+            if self.last_error is None
+            else _validate_audit_string("last_error", self.last_error)
+        )
+        payload = _snapshot_audit_payload(self.payload)
+        if canonical_hash(payload) != payload_digest:
+            raise ValueError("audit outbox payload_digest does not match payload")
+        if self.status == "pending":
+            if self.attempts != 0:
+                raise ValueError("pending audit outbox record must have zero attempts")
+            if last_error is not None:
+                raise ValueError("pending audit outbox record must not define last_error")
+        elif self.status == "failed":
+            if self.attempts == 0:
+                raise ValueError("failed audit outbox record requires a positive attempt count")
+            if last_error is None:
+                raise ValueError("failed audit outbox record requires last_error")
+        elif last_error is not None:
+            raise ValueError("published audit outbox record must not define last_error")
+        if self.status == "published":
+            if published_at is None:
+                raise ValueError("published audit outbox record requires published_at")
+        elif published_at is not None:
+            raise ValueError("unpublished audit outbox record must not define published_at")
+        object.__setattr__(self, "record_id", record_id)
+        object.__setattr__(self, "record_type", record_type)
+        object.__setattr__(self, "payload", _freeze_audit_snapshot(payload))
+        object.__setattr__(self, "payload_digest", payload_digest)
+        object.__setattr__(self, "occurred_at", occurred_at)
+        object.__setattr__(self, "published_at", published_at)
+        object.__setattr__(self, "last_error", last_error)
 
 
 @dataclass(slots=True)
@@ -167,10 +343,16 @@ class SQLiteAuditOutbox:
         occurred_at: str,
         record_id: str | None = None,
     ) -> AuditOutboxRecord:
-        payload_value = dict(payload)
+        record_type = _validate_audit_string("record_type", record_type)
+        occurred_at = _validate_audit_string("occurred_at", occurred_at)
+        payload_value = _snapshot_audit_payload(payload)
         payload_json = canonical_dumps(payload_value)
         payload_digest = canonical_hash(payload_value)
-        actual_record_id = record_id or f"audit:{payload_digest}"
+        actual_record_id = (
+            f"audit:{payload_digest}"
+            if record_id is None
+            else _validate_audit_string("record_id", record_id)
+        )
         try:
             self._connection.execute(
                 """
@@ -204,7 +386,7 @@ class SQLiteAuditOutbox:
             existing = self.get(actual_record_id)
             if (
                 existing.record_type == record_type
-                and canonical_dumps(dict(existing.payload)) == payload_json
+                and canonical_dumps(_snapshot_audit_payload(existing.payload)) == payload_json
                 and existing.payload_digest == payload_digest
                 and existing.occurred_at == occurred_at
             ):
@@ -213,6 +395,7 @@ class SQLiteAuditOutbox:
         return self.get(actual_record_id)
 
     def get(self, record_id: str) -> AuditOutboxRecord:
+        record_id = _validate_audit_string("record_id", record_id)
         row = self._connection.execute(
             "SELECT * FROM audit_outbox_records WHERE record_id = ?",
             (record_id,),
@@ -231,6 +414,8 @@ class SQLiteAuditOutbox:
         return [self._record_from_row(row) for row in rows]
 
     def mark_published(self, record_id: str, *, published_at: str) -> AuditOutboxRecord:
+        record_id = _validate_audit_string("record_id", record_id)
+        published_at = _validate_audit_string("published_at", published_at)
         if self._connection.execute(
             """
             UPDATE audit_outbox_records
@@ -248,6 +433,8 @@ class SQLiteAuditOutbox:
         return self.get(record_id)
 
     def mark_failed(self, record_id: str, *, error: str) -> AuditOutboxRecord:
+        record_id = _validate_audit_string("record_id", record_id)
+        error = _validate_audit_string("last_error", error)
         if self._connection.execute(
             """
             UPDATE audit_outbox_records
@@ -263,7 +450,7 @@ class SQLiteAuditOutbox:
         return self.get(record_id)
 
     def _record_from_row(self, row: sqlite3.Row) -> AuditOutboxRecord:
-        payload = _loads_strict_json("payload_json", str(row["payload_json"]))
+        payload = _loads_strict_json("payload_json", row["payload_json"])
         if not isinstance(payload, Mapping):
             raise ValueError("audit outbox payload_json must decode to an object")
         if canonical_hash(payload) != row["payload_digest"]:
@@ -275,7 +462,7 @@ class SQLiteAuditOutbox:
             payload_digest=row["payload_digest"],
             occurred_at=row["occurred_at"],
             status=row["status"],
-            attempts=int(row["attempts"]),
+            attempts=row["attempts"],
             published_at=row["published_at"],
             last_error=row["last_error"],
         )
@@ -287,7 +474,17 @@ class ToolEffectPrecondition:
     digest: str
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "payload", MappingProxyType(dict(self.payload)))
+        try:
+            payload = _snapshot_audit_payload(self.payload, field_name="precondition payload")
+        except ValueError as error:
+            raise ToolEffectAuditError("tool effect precondition payload must be strict JSON") from error
+        if not isinstance(self.digest, str) or not self.digest.strip():
+            raise ToolEffectAuditError("tool effect precondition digest must be a non-empty string")
+        if canonical_hash(payload) != self.digest:
+            raise ToolEffectAuditError(
+                "tool effect precondition digest does not match payload"
+            )
+        object.__setattr__(self, "payload", _freeze_audit_snapshot(payload))
 
     @classmethod
     def from_admitted_call(
@@ -341,7 +538,7 @@ class ToolEffectAuditRecord:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "reason_codes", tuple(self.reason_codes))
-        object.__setattr__(self, "payload", MappingProxyType(dict(self.payload)))
+        object.__setattr__(self, "payload", _freeze_audit_payload(self.payload))
 
     @classmethod
     def from_tool_result(

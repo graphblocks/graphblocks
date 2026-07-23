@@ -1,13 +1,27 @@
 from __future__ import annotations
 
 import math
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
+from functools import wraps
+from threading import RLock
 from types import MappingProxyType
-from typing import TypeAlias
+from typing import ParamSpec, TypeAlias, TypeVar, cast
 
 
 LeaseTime: TypeAlias = int | float
+_P = ParamSpec("_P")
+_R = TypeVar("_R")
+
+
+def _with_lease_pool_lock(method: Callable[_P, _R]) -> Callable[_P, _R]:
+    @wraps(method)
+    def locked(*args: _P.args, **kwargs: _P.kwargs) -> _R:
+        pool = cast("InMemoryLeasePool", args[0])
+        with pool._lock:
+            return method(*args, **kwargs)
+
+    return locked
 
 
 class LeaseUnavailableError(RuntimeError):
@@ -176,6 +190,7 @@ class InMemoryLeasePool:
     active: dict[str, ActiveLease] = field(default_factory=dict)
     next_id: int = 1
     next_fencing_token: int = 1
+    _lock: RLock = field(default_factory=RLock, init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         capacities = dict(self.capacities)
@@ -186,17 +201,39 @@ class InMemoryLeasePool:
                 raise InvalidLeaseRequestError(
                     f"lease capacity for {resource} must be a positive integer"
                 )
+        active_leases = dict(self.active)
         self.capacities = capacities
-        for lease_id, active in self.active.items():
+        max_restored_id = 0
+        max_restored_fencing_token = 0
+        for lease_id, active in active_leases.items():
             Lease._validate_lease_id(lease_id)
             if not isinstance(active, ActiveLease):
                 raise InvalidLeaseRequestError("lease active records must be ActiveLease")
-        self.next_id = _validate_positive_integer("next_id", self.next_id)
-        self.next_fencing_token = _validate_positive_integer(
-            "next_fencing_token",
-            self.next_fencing_token,
+            suffix = lease_id.removeprefix("lease-")
+            if (
+                lease_id.startswith("lease-")
+                and suffix.isascii()
+                and suffix.isdecimal()
+            ):
+                max_restored_id = max(max_restored_id, int(suffix))
+            max_restored_fencing_token = max(
+                max_restored_fencing_token,
+                active.fencing_token,
+            )
+        self.active = active_leases
+        self.next_id = max(
+            _validate_positive_integer("next_id", self.next_id),
+            max_restored_id + 1,
+        )
+        self.next_fencing_token = max(
+            _validate_positive_integer(
+                "next_fencing_token",
+                self.next_fencing_token,
+            ),
+            max_restored_fencing_token + 1,
         )
 
+    @_with_lease_pool_lock
     def available(
         self,
         resource: str,
@@ -209,6 +246,7 @@ class InMemoryLeasePool:
         used = sum(active.units for active in self.active.values() if active.resource == resource)
         return capacity - used
 
+    @_with_lease_pool_lock
     def acquire(
         self,
         resource: str,
@@ -238,10 +276,8 @@ class InMemoryLeasePool:
                 f"available {available}"
             )
 
-        lease_id = f"lease-{self.next_id:06d}"
-        self.next_id += 1
-        fencing_token = self.next_fencing_token
-        self.next_fencing_token += 1
+        lease_id = self._allocate_lease_id()
+        fencing_token = self._allocate_fencing_token()
         active = ActiveLease(
             resource=resource,
             owner=owner,
@@ -261,6 +297,7 @@ class InMemoryLeasePool:
             fencing_token=fencing_token,
         )
 
+    @_with_lease_pool_lock
     def renew(
         self,
         lease_id: str,
@@ -275,11 +312,18 @@ class InMemoryLeasePool:
             raise InvalidLeaseRequestError("lease expires_at must be after renewal")
         self.reap_expired(renewed_at)
         active = self._active_lease(lease_id)
+        if renewed_at < active.acquired_at:
+            raise InvalidLeaseRequestError(
+                "lease renewed_at must not precede acquisition"
+            )
         if active.fencing_token != fencing_token:
             raise StaleFencingTokenError(f"lease {lease_id} fencing token is stale")
+        if active.expires_at is None or expires_at <= active.expires_at:
+            raise InvalidLeaseRequestError(
+                "lease renewal must extend the current expiration"
+            )
 
-        renewed_token = self.next_fencing_token
-        self.next_fencing_token += 1
+        renewed_token = self._allocate_fencing_token()
         self.active[lease_id] = ActiveLease(
             resource=active.resource,
             owner=active.owner,
@@ -291,6 +335,7 @@ class InMemoryLeasePool:
         )
         return renewed_token
 
+    @_with_lease_pool_lock
     def validate_fencing_token(self, lease_id: str, fencing_token: int) -> None:
         Lease._validate_lease_id(lease_id)
         _validate_non_negative_integer("fencing_token", fencing_token)
@@ -298,12 +343,15 @@ class InMemoryLeasePool:
         if active.fencing_token != fencing_token:
             raise StaleFencingTokenError(f"lease {lease_id} fencing token is stale")
 
+    @_with_lease_pool_lock
     def attributes(self, lease_id: str) -> MappingProxyType[str, object]:
         return self._active_lease(lease_id).attributes
 
+    @_with_lease_pool_lock
     def expires_at(self, lease_id: str) -> LeaseTime | None:
         return self._active_lease(lease_id).expires_at
 
+    @_with_lease_pool_lock
     def reap_expired(self, now: LeaseTime) -> int:
         now = _validate_time("now", now)
         expired_ids = [
@@ -315,10 +363,12 @@ class InMemoryLeasePool:
             self.active.pop(lease_id, None)
         return len(expired_ids)
 
+    @_with_lease_pool_lock
     def release(self, lease_id: str) -> bool:
         Lease._validate_lease_id(lease_id)
         return self.active.pop(lease_id, None) is not None
 
+    @_with_lease_pool_lock
     def release_all(self, owner: str) -> None:
         owner = _validate_non_empty_string("owner", owner)
         for lease_id, active in list(self.active.items()):
@@ -332,6 +382,24 @@ class InMemoryLeasePool:
             return self.capacities[resource]
         except KeyError as error:
             raise LeaseUnavailableError(f"unknown lease resource {resource}") from error
+
+    def _allocate_lease_id(self) -> str:
+        lease_id = f"lease-{self.next_id:06d}"
+        while lease_id in self.active:
+            self.next_id += 1
+            lease_id = f"lease-{self.next_id:06d}"
+        self.next_id += 1
+        return lease_id
+
+    def _allocate_fencing_token(self) -> int:
+        if self.active:
+            self.next_fencing_token = max(
+                self.next_fencing_token,
+                max(active.fencing_token for active in self.active.values()) + 1,
+            )
+        fencing_token = self.next_fencing_token
+        self.next_fencing_token += 1
+        return fencing_token
 
     def _active_lease(self, lease_id: str) -> ActiveLease:
         Lease._validate_lease_id(lease_id)

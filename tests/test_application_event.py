@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 import json
 from pathlib import Path
+from threading import Barrier, BrokenBarrierError
 
 import pytest
 
@@ -866,6 +868,69 @@ def test_application_protocol_log_suppresses_duplicates_and_replays_after_cursor
         log.append(protocol_event("event-other-run", 3, "cursor-3", run_id="run-2"))
     with pytest.raises(ApplicationProtocolError, match="limit must be non-negative"):
         log.replay_after(limit=-1)
+
+
+def test_application_protocol_log_serializes_concurrent_sequence_validation() -> None:
+    reads = Barrier(2)
+
+    class CoordinatedLog(ApplicationProtocolLog):
+        def __getattribute__(self, name: str):
+            value = super().__getattribute__(name)
+            if name == "_last_sequence":
+                try:
+                    reads.wait(timeout=0.2)
+                except BrokenBarrierError:
+                    pass
+            return value
+
+    log = CoordinatedLog()
+
+    def append(event_id: str) -> str:
+        event = ApplicationProtocolEvent.new(
+            "JobProgress",
+            ApplicationProtocolEventMetadata(
+                event_id=event_id,
+                protocol_version="graphblocks.app.v1",
+                run_id="run-1",
+                sequence=1,
+                occurred_at_unix_ms=1_765_843_200_001,
+            ),
+        )
+        try:
+            log.append(event)
+        except ApplicationProtocolError:
+            return "rejected"
+        return "accepted"
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        outcomes = list(executor.map(append, ("event-1", "event-2")))
+
+    assert sorted(outcomes) == ["accepted", "rejected"]
+    assert len(log) == 1
+
+
+def test_application_protocol_log_exposes_only_immutable_event_snapshots() -> None:
+    event = ApplicationProtocolEvent.new(
+        "JobProgress",
+        ApplicationProtocolEventMetadata(
+            event_id="event-1",
+            protocol_version="graphblocks.app.v1",
+            run_id="run-1",
+            sequence=1,
+            occurred_at_unix_ms=1_765_843_200_001,
+        ),
+    )
+    initial_events = [event]
+    log = ApplicationProtocolLog(initial_events)
+
+    initial_events.clear()
+
+    assert log.events == (event,)
+    with pytest.raises(AttributeError):
+        log.events.append(event)  # type: ignore[attr-defined]
+    with pytest.raises(AttributeError):
+        setattr(log, "events", ())
+    assert log.replay_after() == (event,)
 
 
 def test_application_protocol_log_rejects_second_terminal_outcome() -> None:
