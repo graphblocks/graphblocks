@@ -221,6 +221,50 @@ def test_websocket_media_validates_and_freezes_string_maps(monkeypatch) -> None:
     assert endpoint.handshake_contract()["headers"] == {"X-Test": "trusted"}
 
 
+def test_websocket_media_rejects_unstable_wire_identifiers(monkeypatch) -> None:
+    graphblocks_websocket_media = _import_websocket_media(monkeypatch)
+
+    for field, value in (
+        ("protocol", "graphblocks voice"),
+        ("codec", "pcm\n16"),
+    ):
+        with pytest.raises(
+            graphblocks_websocket_media.WebSocketMediaAdapterError,
+            match="exact non-empty",
+        ):
+            graphblocks_websocket_media.WebSocketMediaEndpoint(
+                "wss://voice.example.com/media",
+                **{field: value},
+            )
+
+    for values in (
+        {
+            "stream_id": "mic one",
+            "sequence": 1,
+            "kind": "control",
+            "control": "stop",
+        },
+        {
+            "stream_id": "mic",
+            "sequence": 1,
+            "kind": "control",
+            "control": "stop\nnow",
+        },
+        {
+            "stream_id": "mic",
+            "sequence": 1,
+            "kind": "audio_delta",
+            "audio_ref": "blob:audio 1",
+            "duration_ms": 20,
+        },
+    ):
+        with pytest.raises(
+            graphblocks_websocket_media.WebSocketMediaAdapterError,
+            match="exact non-empty",
+        ):
+            graphblocks_websocket_media.WebSocketMediaMessage(**values)
+
+
 def test_websocket_media_package_is_cataloged_as_optional_voice_adapter(monkeypatch) -> None:
     _import_websocket_media(monkeypatch)
     rows = {row["distribution"]: row for row in package_rows(load_package_catalog())}

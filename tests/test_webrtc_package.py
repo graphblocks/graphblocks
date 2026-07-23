@@ -80,6 +80,44 @@ def test_webrtc_digest_is_stable_for_duplicate_candidate_sequences(monkeypatch) 
     assert first.content_digest() == second.content_digest()
 
 
+def test_webrtc_deduplicates_exact_candidate_replays_and_rejects_unstable_ids(
+    monkeypatch,
+) -> None:
+    graphblocks_webrtc = _import_webrtc(monkeypatch)
+    offer = graphblocks_webrtc.WebRtcSessionDescription("offer", "v=0\r\n")
+    candidate = graphblocks_webrtc.WebRtcIceCandidate(
+        "candidate:1 1 UDP 2122260223 192.0.2.1 54400 typ host",
+        sdp_mid="audio",
+        sequence=1,
+    )
+
+    session = graphblocks_webrtc.WebRtcSession(
+        "session-1",
+        "browser-1",
+        offer,
+        ice_candidates=(candidate, candidate),
+    )
+    assert session.ice_candidates == (candidate,)
+
+    for field, value in (
+        ("session_id", "session 1"),
+        ("peer_id", "browser\n1"),
+        ("codec", "op us"),
+    ):
+        values = {
+            "session_id": "session-1",
+            "peer_id": "browser-1",
+            "offer": offer,
+            "codec": "opus",
+        }
+        values[field] = value
+        with pytest.raises(
+            graphblocks_webrtc.WebRtcAdapterError,
+            match="exact non-empty",
+        ):
+            graphblocks_webrtc.WebRtcSession(**values)
+
+
 def test_webrtc_validates_descriptions_and_candidates(monkeypatch) -> None:
     graphblocks_webrtc = _import_webrtc(monkeypatch)
 

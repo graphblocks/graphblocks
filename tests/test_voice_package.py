@@ -3,6 +3,8 @@ from __future__ import annotations
 import importlib
 from pathlib import Path
 
+import pytest
+
 from graphblocks.packages import load_package_catalog, package_rows
 
 
@@ -310,6 +312,203 @@ def test_voice_contracts_reject_boolean_timing_and_sequence_fields(monkeypatch) 
         except graphblocks_voice.VoiceContractError:
             continue
         raise AssertionError("expected VoiceContractError")
+
+
+def test_voice_restored_session_state_is_consistent_and_detached(monkeypatch) -> None:
+    graphblocks_voice = _import_voice(monkeypatch)
+    transport = graphblocks_voice.VoiceTransport.websocket(
+        "wss://voice.example.com/session"
+    )
+
+    invalid_sessions = (
+        lambda: graphblocks_voice.DuplexSession("session-1", object()),
+        lambda: graphblocks_voice.DuplexSession(
+            "session-1",
+            transport,
+            state="open",
+            closed_at_ms=1,
+        ),
+        lambda: graphblocks_voice.DuplexSession(
+            "session-1",
+            transport,
+            state="interrupted",
+            interrupted_at_ms=1,
+        ),
+        lambda: graphblocks_voice.DuplexSession(
+            "session-1",
+            transport,
+            state="closed",
+        ),
+        lambda: graphblocks_voice.DuplexSession(
+            "session-1",
+            transport,
+            metadata={"attempt": 1},
+        ),
+    )
+    for factory in invalid_sessions:
+        with pytest.raises(graphblocks_voice.VoiceContractError):
+            factory()
+
+    metadata = {"tenant": "trusted"}
+    session = graphblocks_voice.DuplexSession(
+        "session-1",
+        transport,
+        metadata=metadata,
+    )
+    metadata["tenant"] = "caller-mutated"
+
+    assert session.contract()["metadata"] == {"tenant": "trusted"}
+    with pytest.raises(TypeError):
+        session.metadata["tenant"] = "consumer-mutated"
+
+
+def test_voice_decisions_and_realtime_request_reject_coercive_values(
+    monkeypatch,
+) -> None:
+    graphblocks_voice = _import_voice(monkeypatch)
+    transport = graphblocks_voice.VoiceTransport.websocket(
+        "wss://voice.example.com/session"
+    )
+    session = graphblocks_voice.DuplexSession("session-1", transport)
+
+    invalid_values = (
+        lambda: graphblocks_voice.AudioFrame("mic", 1, 0, 20, True),
+        lambda: graphblocks_voice.AudioFrame("mic", 1, 0, 20, float("nan")),
+        lambda: graphblocks_voice.VadAuthority("vad", speech_threshold=True),
+        lambda: graphblocks_voice.VadAuthority("vad").evaluate(
+            graphblocks_voice.AudioFrame("mic", 1, 0, 20, 0.5),
+            already_in_speech=1,
+        ),
+        lambda: graphblocks_voice.VadDecision("vad", "mic", True, "speech", 0.5),
+        lambda: graphblocks_voice.VadDecision("vad", "mic", 1, "unknown", 0.5),
+        lambda: graphblocks_voice.VadDecision("vad", "mic", 1, "speech", True),
+        lambda: graphblocks_voice.InterruptionDecision(
+            "classifier",
+            "session-1",
+            "continue",
+            1,
+            interrupted_playback_ids=("audio-1",),
+        ),
+        lambda: graphblocks_voice.InterruptionDecision(
+            "classifier",
+            "session-1",
+            "interrupt",
+            1,
+            interrupted_playback_ids=("audio-1", "audio-1"),
+        ),
+        lambda: graphblocks_voice.InterruptionDecision(
+            "classifier",
+            "session-1",
+            "interrupt",
+            1,
+            interrupted_playback_ids=(7,),
+        ),
+        lambda: graphblocks_voice.RealtimeSessionRequest(
+            object(),
+            "model",
+            "instructions",
+        ),
+        lambda: graphblocks_voice.RealtimeSessionRequest(
+            session,
+            "model",
+            "instructions",
+            modalities="audio",
+        ),
+        lambda: graphblocks_voice.RealtimeSessionRequest(
+            session,
+            "model",
+            "instructions",
+            modalities=("audio", "audio"),
+        ),
+        lambda: graphblocks_voice.RealtimeSessionRequest(
+            session,
+            "model",
+            "instructions",
+            modalities=("video",),
+        ),
+        lambda: graphblocks_voice.RealtimeSessionRequest(
+            session,
+            "model",
+            "instructions",
+            tools="knowledge.search",
+        ),
+        lambda: graphblocks_voice.RealtimeSessionRequest(
+            session,
+            "model",
+            "instructions",
+            tools=("",),
+        ),
+    )
+    for factory in invalid_values:
+        with pytest.raises(graphblocks_voice.VoiceContractError):
+            factory()
+
+    request = graphblocks_voice.RealtimeSessionRequest(
+        session,
+        "model",
+        "instructions",
+    ).with_tool("knowledge.search")
+    assert request.with_tool("knowledge.search") is request
+
+
+def test_voice_interruption_replay_and_provider_time_are_monotonic(monkeypatch) -> None:
+    graphblocks_voice = _import_voice(monkeypatch)
+    transport = graphblocks_voice.VoiceTransport.websocket(
+        "wss://voice.example.com/session"
+    )
+    interrupted = graphblocks_voice.DuplexSession(
+        "session-1",
+        transport,
+        started_at_ms=10,
+    ).interrupt(occurred_at_ms=20, reason="barge_in")
+
+    assert interrupted.interrupt(occurred_at_ms=20, reason="barge_in") is interrupted
+    with pytest.raises(
+        graphblocks_voice.VoiceContractError,
+        match="conflicts",
+    ):
+        interrupted.interrupt(occurred_at_ms=21, reason="different")
+
+    interrupted_turn = graphblocks_voice.DuplexSession(
+        "session-2",
+        transport,
+        started_at_ms=10,
+    ).begin_turn("turn-1").interrupt(occurred_at_ms=20, reason="barge_in")
+    with pytest.raises(
+        graphblocks_voice.VoiceContractError,
+        match="cannot replay",
+    ):
+        interrupted_turn.begin_turn("turn-1")
+    resumed = interrupted_turn.begin_turn("turn-2")
+    assert resumed.state == "open"
+    assert resumed.current_turn_id == "turn-2"
+
+    classifier = graphblocks_voice.InterruptionClassifier(
+        "barge-in",
+        provider_authority_id="provider",
+    )
+    with pytest.raises(
+        graphblocks_voice.VoiceContractError,
+        match="predates",
+    ):
+        classifier.classify(
+            session_id="session-1",
+            vad_decision=graphblocks_voice.VadDecision(
+                "vad",
+                "mic",
+                1,
+                "speech_start",
+                0.9,
+            ),
+            playback=graphblocks_voice.PlaybackLedger(),
+            occurred_at_ms=20,
+            provider_decision=graphblocks_voice.ProviderInterruptionDecision(
+                "provider",
+                "session-1",
+                "interrupt",
+                19,
+            ),
+        )
 
 
 def test_voice_package_is_cataloged_as_optional_extension(monkeypatch) -> None:

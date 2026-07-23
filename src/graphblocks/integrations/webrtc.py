@@ -16,6 +16,20 @@ def _require_non_empty(field_name: str, value: object) -> str:
     return value
 
 
+def _require_exact_non_empty(field_name: str, value: object) -> str:
+    normalized = _require_non_empty(field_name, value)
+    if normalized != normalized.strip() or any(
+        character.isspace()
+        or ord(character) < 0x20
+        or ord(character) == 0x7F
+        for character in normalized
+    ):
+        raise WebRtcAdapterError(
+            f"{field_name} must be an exact non-empty string"
+        )
+    return normalized
+
+
 def _positive_int(field_name: str, value: object) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
         raise WebRtcAdapterError(f"{field_name} must be a positive integer")
@@ -59,16 +73,26 @@ class WebRtcIceCandidate:
     sequence: int = 0
 
     def __post_init__(self) -> None:
-        _require_non_empty("candidate", self.candidate)
+        candidate = _require_non_empty("candidate", self.candidate)
+        if candidate != candidate.strip() or any(
+            ord(character) < 0x20 or ord(character) == 0x7F
+            for character in candidate
+        ):
+            raise WebRtcAdapterError(
+                "candidate must be an exact non-empty string"
+            )
         if self.sdp_mid is not None:
-            _require_non_empty("sdp_mid", self.sdp_mid)
+            _require_exact_non_empty("sdp_mid", self.sdp_mid)
         object.__setattr__(
             self,
             "sdp_mline_index",
             _optional_non_negative_int("sdp_mline_index", self.sdp_mline_index),
         )
         if self.username_fragment is not None:
-            _require_non_empty("username_fragment", self.username_fragment)
+            _require_exact_non_empty(
+                "username_fragment",
+                self.username_fragment,
+            )
         object.__setattr__(self, "sequence", _non_negative_int("sequence", self.sequence))
 
     def contract(self) -> dict[str, object]:
@@ -93,8 +117,8 @@ class WebRtcSession:
     channels: int = 1
 
     def __post_init__(self) -> None:
-        _require_non_empty("session_id", self.session_id)
-        _require_non_empty("peer_id", self.peer_id)
+        _require_exact_non_empty("session_id", self.session_id)
+        _require_exact_non_empty("peer_id", self.peer_id)
         if not isinstance(self.offer, WebRtcSessionDescription):
             raise WebRtcAdapterError("offer must be a WebRtcSessionDescription")
         if self.offer.type != "offer":
@@ -104,7 +128,7 @@ class WebRtcSession:
                 raise WebRtcAdapterError("answer must be a WebRtcSessionDescription")
             if self.answer.type not in {"answer", "pranswer"}:
                 raise WebRtcAdapterError("answer must have type 'answer' or 'pranswer'")
-        _require_non_empty("codec", self.codec)
+        _require_exact_non_empty("codec", self.codec)
         object.__setattr__(
             self,
             "sample_rate_hz",
@@ -127,7 +151,7 @@ class WebRtcSession:
             "ice_candidates",
             tuple(
                 sorted(
-                    ice_candidates,
+                    set(ice_candidates),
                     key=lambda candidate: (
                         candidate.sequence,
                         candidate.candidate,

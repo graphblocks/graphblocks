@@ -217,16 +217,106 @@ def test_openai_realtime_snapshots_event_payload(monkeypatch) -> None:
     graphblocks_openai_realtime = _import_openai_realtime(monkeypatch)
     payload = {"item": {"role": "user"}}
 
-    event = graphblocks_openai_realtime.OpenAIRealtimeEvent("conversation.item.create", payload)
+    event = graphblocks_openai_realtime.OpenAIRealtimeEvent(
+        "conversation.item.create",
+        payload,
+        "event-1",
+    )
     payload["item"]["role"] = "assistant"
 
     assert event.event_contract()["item"] == {"role": "user"}
+    with pytest.raises(TypeError):
+        event.payload["type"] = "session.delete"
+    with pytest.raises(TypeError):
+        event.payload["event_id"] = "forged"
+    with pytest.raises(TypeError):
+        event.payload["item"]["role"] = "consumer-mutated"
+
+    projected = event.event_contract()
+    projected["type"] = "session.delete"
+    projected["event_id"] = "forged"
+    projected["item"]["role"] = "projected"
+    assert event.event_contract() == {
+        "event_id": "event-1",
+        "type": "conversation.item.create",
+        "item": {"role": "user"},
+    }
 
     for malformed_payload in ({7: "coerced"}, {"score": float("nan")}, {"item": object()}):
         with pytest.raises(graphblocks_openai_realtime.OpenAIRealtimeAdapterError, match="strict JSON"):
             graphblocks_openai_realtime.OpenAIRealtimeEvent(
                 "conversation.item.create", malformed_payload
             )
+
+
+def test_openai_realtime_freezes_metadata_and_rejects_ambiguous_configuration(
+    monkeypatch,
+) -> None:
+    graphblocks_openai_realtime = _import_openai_realtime(monkeypatch)
+    metadata = {"tenant": "trusted"}
+    config = graphblocks_openai_realtime.OpenAIRealtimeSessionConfig(
+        model="gpt-realtime-2",
+        instructions="Answer using audio.",
+        metadata=metadata,
+    )
+    metadata["tenant"] = "caller-mutated"
+
+    assert config.session_payload()["metadata"] == {"tenant": "trusted"}
+    with pytest.raises(TypeError):
+        config.metadata["tenant"] = "consumer-mutated"
+
+    with pytest.raises(
+        graphblocks_openai_realtime.OpenAIRealtimeAdapterError,
+        match="duplicates",
+    ):
+        graphblocks_openai_realtime.OpenAIRealtimeSessionConfig(
+            model="gpt-realtime-2",
+            instructions="Answer using audio.",
+            modalities=("audio", "audio"),
+        )
+    text_config = graphblocks_openai_realtime.OpenAIRealtimeSessionConfig(
+        model="gpt-realtime-2",
+        instructions="Answer using text.",
+        modalities=("text",),
+    )
+    with pytest.raises(
+        graphblocks_openai_realtime.OpenAIRealtimeAdapterError,
+        match="text-only",
+    ):
+        text_config.to_voice_transport()
+    with pytest.raises(
+        graphblocks_openai_realtime.OpenAIRealtimeAdapterError,
+        match="exact non-empty",
+    ):
+        graphblocks_openai_realtime.OpenAIRealtimeSessionConfig(
+            model=" gpt-realtime-2 ",
+            instructions="Answer using audio.",
+        )
+
+
+def test_openai_realtime_websocket_rejects_duplicate_model_query(monkeypatch) -> None:
+    graphblocks_openai_realtime = _import_openai_realtime(monkeypatch)
+    config = graphblocks_openai_realtime.OpenAIRealtimeSessionConfig(
+        model="gpt-realtime-2",
+        instructions="Answer using audio.",
+    )
+
+    with pytest.raises(
+        graphblocks_openai_realtime.OpenAIRealtimeAdapterError,
+        match="must not define model",
+    ):
+        graphblocks_openai_realtime.OpenAIRealtimeWebSocketSession(
+            config,
+            base_url="wss://api.openai.com/v1/realtime?model=spoofed",
+        )
+
+    connection = graphblocks_openai_realtime.OpenAIRealtimeWebSocketSession(
+        config,
+        base_url="wss://api.openai.com/v1/realtime?api-version=2026-01-01",
+    ).connection_contract()
+    assert connection["url"].endswith(
+        "?api-version=2026-01-01&model=gpt-realtime-2"
+    )
 
 
 def test_openai_realtime_projects_g711_input_and_output_format(monkeypatch) -> None:

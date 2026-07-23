@@ -148,6 +148,44 @@ def test_silero_vad_rejects_duplicate_and_out_of_order_frames(monkeypatch) -> No
             )
 
 
+def test_silero_vad_rejects_overlaps_and_resets_pending_windows_after_gaps(
+    monkeypatch,
+) -> None:
+    graphblocks_silero_vad = _import_silero_vad(monkeypatch)
+    authority = graphblocks_silero_vad.SileroVadAuthority(
+        "silero-local",
+        min_speech_ms=64,
+    )
+
+    first = authority.evaluate(
+        graphblocks_silero_vad.SileroVadFrame("mic", 1, 0, 32, 0.9)
+    )
+    after_gap = authority.evaluate(
+        graphblocks_silero_vad.SileroVadFrame("mic", 2, 64, 32, 0.9)
+    )
+    speech_start = authority.evaluate(
+        graphblocks_silero_vad.SileroVadFrame("mic", 3, 96, 32, 0.9)
+    )
+
+    assert first.kind == "silence"
+    assert after_gap.kind == "silence"
+    assert speech_start.kind == "speech_start"
+
+    with pytest.raises(
+        graphblocks_silero_vad.SileroVadAdapterError,
+        match="must not overlap",
+    ):
+        authority.evaluate(
+            graphblocks_silero_vad.SileroVadFrame("mic", 4, 120, 32, 0.9)
+        )
+    assert (
+        authority.evaluate(
+            graphblocks_silero_vad.SileroVadFrame("mic", 4, 128, 32, 0.9)
+        ).kind
+        == "speech"
+    )
+
+
 def test_silero_vad_rejects_coercive_numeric_and_state_values(monkeypatch) -> None:
     graphblocks_silero_vad = _import_silero_vad(monkeypatch)
 

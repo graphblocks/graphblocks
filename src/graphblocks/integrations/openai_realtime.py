@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from copy import deepcopy
 from dataclasses import dataclass, field
-from urllib.parse import urlencode, urlsplit
+from types import MappingProxyType
+from urllib.parse import parse_qsl, urlencode, urlsplit
 
 from graphblocks import canonical_dumps, canonical_loads
 from graphblocks.voice import VoiceTransport
@@ -24,6 +24,20 @@ def _require_non_empty(field_name: str, value: object) -> str:
     if not isinstance(value, str) or not value.strip():
         raise OpenAIRealtimeAdapterError(f"{field_name} must not be empty")
     return value
+
+
+def _require_exact_non_empty(field_name: str, value: object) -> str:
+    normalized = _require_non_empty(field_name, value)
+    if normalized != normalized.strip() or any(
+        character.isspace()
+        or ord(character) < 0x20
+        or ord(character) == 0x7F
+        for character in normalized
+    ):
+        raise OpenAIRealtimeAdapterError(
+            f"{field_name} must be an exact non-empty string"
+        )
+    return normalized
 
 
 def _require_positive_integer(field_name: str, value: object) -> int:
@@ -54,7 +68,10 @@ def _require_base_url(field_name: str, value: object, *, schemes: set[str], quer
     return url
 
 
-def _string_mapping(field_name: str, value: object) -> dict[str, str]:
+def _string_mapping(
+    field_name: str,
+    value: object,
+) -> MappingProxyType[str, str]:
     if not isinstance(value, Mapping):
         raise OpenAIRealtimeAdapterError(f"{field_name} must be a mapping")
     normalized: dict[str, str] = {}
@@ -66,7 +83,25 @@ def _string_mapping(field_name: str, value: object) -> dict[str, str]:
         if not isinstance(item, str):
             raise OpenAIRealtimeAdapterError(f"{field_name} values must be strings")
         normalized[key] = item
-    return dict(sorted(normalized.items()))
+    return MappingProxyType(dict(sorted(normalized.items())))
+
+
+def _freeze_json_value(value: object) -> object:
+    if isinstance(value, dict):
+        return MappingProxyType(
+            {key: _freeze_json_value(item) for key, item in value.items()}
+        )
+    if isinstance(value, list):
+        return tuple(_freeze_json_value(item) for item in value)
+    return value
+
+
+def _json_projection(value: object) -> object:
+    if isinstance(value, Mapping):
+        return {key: _json_projection(item) for key, item in value.items()}
+    if isinstance(value, tuple):
+        return [_json_projection(item) for item in value]
+    return value
 
 
 @dataclass(frozen=True, slots=True)
@@ -81,10 +116,10 @@ class OpenAIRealtimeSessionConfig:
     channels: int = 1
 
     def __post_init__(self) -> None:
-        _require_non_empty("model", self.model)
+        _require_exact_non_empty("model", self.model)
         _require_non_empty("instructions", self.instructions)
-        _require_non_empty("voice", self.voice)
-        _require_non_empty("codec", self.codec)
+        _require_exact_non_empty("voice", self.voice)
+        _require_exact_non_empty("codec", self.codec)
         codec = self.codec.strip().lower()
         if codec not in _OUTPUT_AUDIO_FORMATS:
             raise OpenAIRealtimeAdapterError(
@@ -107,11 +142,13 @@ class OpenAIRealtimeSessionConfig:
             raise OpenAIRealtimeAdapterError("modalities must be a sequence of strings") from error
         if any(not isinstance(modality, str) for modality in raw_modalities):
             raise OpenAIRealtimeAdapterError("modalities must be a sequence of strings")
-        modalities = tuple(sorted(set(raw_modalities)))
+        if len(set(raw_modalities)) != len(raw_modalities):
+            raise OpenAIRealtimeAdapterError("modalities must not contain duplicates")
+        modalities = tuple(sorted(raw_modalities))
         if not modalities:
             raise OpenAIRealtimeAdapterError("modalities must not be empty")
         for modality in modalities:
-            _require_non_empty("modality", modality)
+            _require_exact_non_empty("modality", modality)
         if modalities not in {("audio",), ("text",)}:
             raise OpenAIRealtimeAdapterError(
                 "output modalities must be exactly ('audio',) or ('text',)"
@@ -142,6 +179,10 @@ class OpenAIRealtimeSessionConfig:
         return payload
 
     def to_voice_transport(self) -> VoiceTransport:
+        if self.modalities != ("audio",):
+            raise OpenAIRealtimeAdapterError(
+                "text-only session cannot be projected as a voice transport"
+            )
         return VoiceTransport(
             "provider_realtime",
             uri=f"openai-realtime:{self.model}",
@@ -168,7 +209,7 @@ class OpenAIRealtimeWebRtcCall:
             "api_base_url", self.api_base_url, schemes={"http", "https"}, query=False
         )
         if self.safety_identifier is not None:
-            _require_non_empty("safety_identifier", self.safety_identifier)
+            _require_exact_non_empty("safety_identifier", self.safety_identifier)
         object.__setattr__(self, "api_base_url", api_base_url.rstrip("/"))
 
     def request_contract(self) -> dict[str, object]:
@@ -207,7 +248,7 @@ class OpenAIRealtimeClientSecretRequest:
             "api_base_url", self.api_base_url, schemes={"http", "https"}, query=False
         )
         if self.safety_identifier is not None:
-            _require_non_empty("safety_identifier", self.safety_identifier)
+            _require_exact_non_empty("safety_identifier", self.safety_identifier)
         object.__setattr__(self, "api_base_url", api_base_url.rstrip("/"))
 
     def request_contract(self) -> dict[str, object]:
@@ -239,9 +280,17 @@ class OpenAIRealtimeWebSocketSession:
         base_url = _require_base_url(
             "base_url", self.base_url, schemes={"ws", "wss"}, query=True
         )
-        _require_non_empty("protocol", self.protocol)
+        parsed_query = parse_qsl(
+            urlsplit(base_url).query,
+            keep_blank_values=True,
+        )
+        if any(key == "model" for key, _ in parsed_query):
+            raise OpenAIRealtimeAdapterError(
+                "base_url query must not define model"
+            )
+        _require_exact_non_empty("protocol", self.protocol)
         if self.safety_identifier is not None:
-            _require_non_empty("safety_identifier", self.safety_identifier)
+            _require_exact_non_empty("safety_identifier", self.safety_identifier)
         object.__setattr__(self, "base_url", base_url.rstrip("?&"))
 
     def connection_contract(self) -> dict[str, object]:
@@ -260,13 +309,13 @@ class OpenAIRealtimeWebSocketSession:
 @dataclass(frozen=True, slots=True)
 class OpenAIRealtimeEvent:
     event_type: str
-    payload: dict[str, object] = field(default_factory=dict)
+    payload: Mapping[str, object] = field(default_factory=dict)
     event_id: str | None = None
 
     def __post_init__(self) -> None:
-        _require_non_empty("event_type", self.event_type)
+        _require_exact_non_empty("event_type", self.event_type)
         if self.event_id is not None:
-            _require_non_empty("event_id", self.event_id)
+            _require_exact_non_empty("event_id", self.event_id)
         if not isinstance(self.payload, Mapping):
             raise OpenAIRealtimeAdapterError("event payload must be a mapping")
         reserved_fields = {"type", "event_id"}.intersection(self.payload)
@@ -283,7 +332,7 @@ class OpenAIRealtimeEvent:
             ) from error
         if not isinstance(payload, dict):
             raise OpenAIRealtimeAdapterError("event payload must be a strict JSON object")
-        object.__setattr__(self, "payload", payload)
+        object.__setattr__(self, "payload", _freeze_json_value(payload))
 
     @classmethod
     def session_update(
@@ -315,11 +364,15 @@ class OpenAIRealtimeEvent:
         )
 
     def event_contract(self) -> dict[str, object]:
-        contract: dict[str, object] = {}
+        payload = _json_projection(self.payload)
+        if not isinstance(payload, dict):
+            raise OpenAIRealtimeAdapterError(
+                "event payload must be a strict JSON object"
+            )
+        contract: dict[str, object] = payload
+        contract["type"] = self.event_type
         if self.event_id is not None:
             contract["event_id"] = self.event_id
-        contract["type"] = self.event_type
-        contract.update(deepcopy(self.payload))
         return contract
 
 

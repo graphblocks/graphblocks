@@ -4,6 +4,7 @@ from collections.abc import Mapping, Sequence
 from copy import deepcopy
 from dataclasses import dataclass, field
 import math
+from types import MappingProxyType
 
 from graphblocks import (
     ContentPart,
@@ -45,7 +46,28 @@ def _non_negative_integer(field_name: str, value: object) -> int:
     return value
 
 
-def _strict_json_mapping(field_name: str, value: object) -> dict[str, object]:
+def _freeze_json_value(value: object) -> object:
+    if isinstance(value, dict):
+        return MappingProxyType(
+            {key: _freeze_json_value(item) for key, item in value.items()}
+        )
+    if isinstance(value, list):
+        return tuple(_freeze_json_value(item) for item in value)
+    return value
+
+
+def _json_projection(value: object) -> object:
+    if isinstance(value, Mapping):
+        return {key: _json_projection(item) for key, item in value.items()}
+    if isinstance(value, tuple):
+        return [_json_projection(item) for item in value]
+    return value
+
+
+def _strict_json_mapping(
+    field_name: str,
+    value: object,
+) -> MappingProxyType[str, object]:
     if not isinstance(value, Mapping):
         raise OpenAICompatibleAdapterError(f"{field_name} must be a mapping")
     try:
@@ -56,7 +78,7 @@ def _strict_json_mapping(field_name: str, value: object) -> dict[str, object]:
         ) from error
     if not isinstance(normalized, dict):
         raise OpenAICompatibleAdapterError(f"{field_name} must be a strict JSON object")
-    return normalized
+    return _freeze_json_value(normalized)  # type: ignore[return-value]
 
 
 def _validated_inline_json_schema(schema_ref: str, schema: Mapping[str, object]) -> dict[str, object]:
@@ -104,8 +126,8 @@ class OpenAIChatCompletionRequest:
     def request_contract(self) -> dict[str, object]:
         return {
             "endpoint": self.endpoint,
-            "body": deepcopy(dict(self.body)),
-            "metadata": deepcopy(dict(self.metadata)),
+            "body": _json_projection(self.body),
+            "metadata": _json_projection(self.metadata),
         }
 
 
@@ -114,7 +136,7 @@ class OpenAIChatResponse:
     response_id: str
     model: str
     parts: tuple[ContentPart, ...] = field(default_factory=tuple)
-    tool_calls: list[dict[str, object]] = field(default_factory=list)
+    tool_calls: tuple[Mapping[str, object], ...] = field(default_factory=tuple)
     finish_reason: str | None = None
     usage: Mapping[str, object] = field(default_factory=dict)
 
@@ -122,7 +144,44 @@ class OpenAIChatResponse:
         object.__setattr__(self, "response_id", _strip_required_string("response_id", self.response_id))
         object.__setattr__(self, "model", _strip_required_string("model", self.model))
         object.__setattr__(self, "parts", tuple(self.parts))
-        object.__setattr__(self, "tool_calls", [deepcopy(call) for call in self.tool_calls])
+        if (
+            not isinstance(self.tool_calls, Sequence)
+            or isinstance(self.tool_calls, (str, bytes))
+        ):
+            raise OpenAICompatibleAdapterError("tool_calls must be a sequence")
+        normalized_tool_calls: list[Mapping[str, object]] = []
+        seen_tool_call_ids: set[str] = set()
+        for call in self.tool_calls:
+            normalized_call = _strict_json_mapping("tool_call", call)
+            call_id = _strip_required_string("tool_call id", normalized_call.get("id"))
+            name = _strip_required_string("tool_call name", normalized_call.get("name"))
+            arguments = normalized_call.get("arguments", "")
+            if not isinstance(arguments, str):
+                raise OpenAICompatibleAdapterError(
+                    "tool_call arguments must be a string"
+                )
+            tool_type = _strip_required_string(
+                "tool_call type",
+                normalized_call.get("type", "function"),
+            )
+            if call_id in seen_tool_call_ids:
+                raise OpenAICompatibleAdapterError(
+                    f"duplicate provider response tool_call id {call_id!r}"
+                )
+            seen_tool_call_ids.add(call_id)
+            normalized_tool_calls.append(
+                _strict_json_mapping(
+                    "tool_call",
+                    {
+                        **_json_projection(normalized_call),  # type: ignore[arg-type]
+                        "id": call_id,
+                        "name": name,
+                        "arguments": arguments,
+                        "type": tool_type,
+                    },
+                )
+            )
+        object.__setattr__(self, "tool_calls", tuple(normalized_tool_calls))
         object.__setattr__(self, "usage", _strict_json_mapping("usage", self.usage))
 
     def response_contract(self) -> dict[str, object]:
@@ -142,8 +201,8 @@ class OpenAIChatResponse:
             "model": self.model,
             "finish_reason": self.finish_reason,
             "parts": parts,
-            "tool_calls": [deepcopy(call) for call in self.tool_calls],
-            "usage": dict(sorted(deepcopy(dict(self.usage)).items())),
+            "tool_calls": [_json_projection(call) for call in self.tool_calls],
+            "usage": dict(sorted(_json_projection(self.usage).items())),  # type: ignore[union-attr]
         }
 
 
@@ -153,7 +212,7 @@ class OpenAIChatDelta:
     sequence: int
     choice_index: int | None
     content_delta: str | None = None
-    tool_call_deltas: list[dict[str, object]] = field(default_factory=list)
+    tool_call_deltas: tuple[Mapping[str, object], ...] = field(default_factory=tuple)
     finish_reason: str | None = None
     usage_delta: Mapping[str, object] = field(default_factory=dict)
 
@@ -187,7 +246,14 @@ class OpenAIChatDelta:
                     raise OpenAICompatibleAdapterError("tool_call_delta arguments_delta must be a string")
                 normalized_delta["arguments_delta"] = arguments_delta
             normalized_tool_call_deltas.append(normalized_delta)
-        object.__setattr__(self, "tool_call_deltas", normalized_tool_call_deltas)
+        object.__setattr__(
+            self,
+            "tool_call_deltas",
+            tuple(
+                _strict_json_mapping("tool_call_delta", delta)
+                for delta in normalized_tool_call_deltas
+            ),
+        )
         object.__setattr__(
             self,
             "usage_delta",
@@ -200,9 +266,13 @@ class OpenAIChatDelta:
             "sequence": self.sequence,
             "choice_index": self.choice_index,
             "content_delta": self.content_delta,
-            "tool_call_deltas": [deepcopy(delta) for delta in self.tool_call_deltas],
+            "tool_call_deltas": [
+                _json_projection(delta) for delta in self.tool_call_deltas
+            ],
             "finish_reason": self.finish_reason,
-            "usage_delta": dict(sorted(deepcopy(dict(self.usage_delta)).items())),
+            "usage_delta": dict(
+                sorted(_json_projection(self.usage_delta).items())  # type: ignore[union-attr]
+            ),
         }
 
 
@@ -211,10 +281,196 @@ class OpenAIStreamingToolCallDraftAssembler:
     response_id: str | None = None
     _drafts_by_index: dict[int, ToolCallDraft] = field(default_factory=dict)
     _index_order: list[int] = field(default_factory=list)
+    _applied_deltas: tuple[OpenAIChatDelta, ...] = field(
+        default_factory=tuple,
+        repr=False,
+    )
+    _completed: bool = field(default=False, repr=False)
+    _applied_delta_results: dict[
+        int,
+        tuple[str, tuple[ToolCallDraft, ...]],
+    ] = field(default_factory=dict, init=False, repr=False)
+    _last_sequence: int | None = field(default=None, init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        if self.response_id is not None:
+            self.response_id = _strip_required_string(
+                "response_id",
+                self.response_id,
+            )
+        if not isinstance(self._drafts_by_index, Mapping):
+            raise OpenAICompatibleAdapterError(
+                "drafts_by_index must be a mapping"
+            )
+        drafts_by_index: dict[int, ToolCallDraft] = {}
+        for index, draft in self._drafts_by_index.items():
+            if (
+                isinstance(index, bool)
+                or not isinstance(index, int)
+                or index < 0
+            ):
+                raise OpenAICompatibleAdapterError(
+                    "drafts_by_index keys must be non-negative integers"
+                )
+            if not isinstance(draft, ToolCallDraft):
+                raise OpenAICompatibleAdapterError(
+                    "drafts_by_index values must be ToolCallDraft records"
+                )
+            if self.response_id is None or draft.response_id != self.response_id:
+                raise OpenAICompatibleAdapterError(
+                    "restored draft response_id must match assembler response_id"
+                )
+            drafts_by_index[index] = draft
+        if isinstance(self._index_order, (str, bytes, Mapping)):
+            raise OpenAICompatibleAdapterError(
+                "index_order must be a sequence of integers"
+            )
+        try:
+            index_order = list(self._index_order)
+        except TypeError as error:
+            raise OpenAICompatibleAdapterError(
+                "index_order must be a sequence of integers"
+            ) from error
+        if any(
+            isinstance(index, bool)
+            or not isinstance(index, int)
+            or index < 0
+            for index in index_order
+        ):
+            raise OpenAICompatibleAdapterError(
+                "index_order must be a sequence of non-negative integers"
+            )
+        if (
+            len(set(index_order)) != len(index_order)
+            or set(index_order) != set(drafts_by_index)
+        ):
+            raise OpenAICompatibleAdapterError(
+                "index_order must contain every draft index exactly once"
+            )
+        tool_call_ids = [
+            drafts_by_index[index].tool_call_id
+            for index in index_order
+        ]
+        if len(set(tool_call_ids)) != len(tool_call_ids):
+            raise OpenAICompatibleAdapterError(
+                "restored drafts must have unique tool call ids"
+            )
+        if not isinstance(self._completed, bool):
+            raise OpenAICompatibleAdapterError(
+                "restored completion state must be a boolean"
+            )
+        if (
+            not isinstance(self._applied_deltas, Sequence)
+            or isinstance(self._applied_deltas, (str, bytes, Mapping))
+        ):
+            raise OpenAICompatibleAdapterError(
+                "applied_deltas must be a sequence of OpenAIChatDelta records"
+            )
+        applied_deltas = tuple(self._applied_deltas)
+        if any(not isinstance(delta, OpenAIChatDelta) for delta in applied_deltas):
+            raise OpenAICompatibleAdapterError(
+                "applied_deltas must be a sequence of OpenAIChatDelta records"
+            )
+        if not applied_deltas and (drafts_by_index or index_order or self._completed):
+            raise OpenAICompatibleAdapterError(
+                "restored drafts require complete applied delta history"
+            )
+        self._drafts_by_index = drafts_by_index
+        self._index_order = index_order
+        self._applied_deltas = applied_deltas
+        if applied_deltas:
+            replay = type(self)()
+            previous_sequence: int | None = None
+            for delta in applied_deltas:
+                if (
+                    previous_sequence is not None
+                    and delta.sequence <= previous_sequence
+                ):
+                    raise OpenAICompatibleAdapterError(
+                        "restored delta history sequences must strictly increase"
+                    )
+                replay.apply_delta(delta)
+                previous_sequence = delta.sequence
+            if self._completed:
+                replay.complete_all()
+            if (
+                self.response_id != replay.response_id
+                or self._index_order != replay._index_order
+                or self._drafts_by_index != replay._drafts_by_index
+            ):
+                raise OpenAICompatibleAdapterError(
+                    "restored assembler snapshot does not match applied delta history"
+                )
+            self._applied_delta_results = dict(replay._applied_delta_results)
+            self._last_sequence = replay._last_sequence
+
+    @classmethod
+    def restore(
+        cls,
+        applied_deltas: Sequence[OpenAIChatDelta],
+        *,
+        completed: bool = False,
+    ) -> OpenAIStreamingToolCallDraftAssembler:
+        if not isinstance(completed, bool):
+            raise OpenAICompatibleAdapterError("completed must be a boolean")
+        if (
+            not isinstance(applied_deltas, Sequence)
+            or isinstance(applied_deltas, (str, bytes, Mapping))
+        ):
+            raise OpenAICompatibleAdapterError(
+                "applied_deltas must be a sequence of OpenAIChatDelta records"
+            )
+        applied_deltas = tuple(applied_deltas)
+        previous_sequence: int | None = None
+        for delta in applied_deltas:
+            if not isinstance(delta, OpenAIChatDelta):
+                raise OpenAICompatibleAdapterError(
+                    "applied_deltas must be a sequence of OpenAIChatDelta records"
+                )
+            if (
+                previous_sequence is not None
+                and delta.sequence <= previous_sequence
+            ):
+                raise OpenAICompatibleAdapterError(
+                    "restored delta history sequences must strictly increase"
+                )
+            previous_sequence = delta.sequence
+        replay = cls()
+        for delta in applied_deltas:
+            replay.apply_delta(delta)
+        if not replay._applied_deltas:
+            if completed:
+                raise OpenAICompatibleAdapterError(
+                    "completed restore requires applied delta history"
+                )
+            return replay
+        if completed:
+            replay.complete_all()
+        return cls(
+            response_id=replay.response_id,
+            _drafts_by_index=dict(replay._drafts_by_index),
+            _index_order=list(replay._index_order),
+            _applied_deltas=replay._applied_deltas,
+            _completed=completed,
+        )
 
     def apply_delta(self, delta: OpenAIChatDelta) -> tuple[ToolCallDraft, ...]:
         if not isinstance(delta, OpenAIChatDelta):
             raise OpenAICompatibleAdapterError("delta must be an OpenAIChatDelta")
+        delta_signature = canonical_dumps(delta.delta_contract())
+        prior_result = self._applied_delta_results.get(delta.sequence)
+        if prior_result is not None:
+            prior_signature, drafts = prior_result
+            if prior_signature == delta_signature:
+                return drafts
+            raise OpenAICompatibleAdapterError(
+                f"streaming delta sequence {delta.sequence} was reused "
+                "with different content"
+            )
+        if self._last_sequence is not None and delta.sequence < self._last_sequence:
+            raise OpenAICompatibleAdapterError(
+                "streaming delta sequence must increase"
+            )
         response_id = self.response_id
         if response_id is None:
             response_id = delta.response_id
@@ -241,6 +497,13 @@ class OpenAIStreamingToolCallDraftAssembler:
                     raise OpenAICompatibleAdapterError("streaming tool call delta requires an id for new index")
                 if not isinstance(name, str) or not name.strip():
                     raise OpenAICompatibleAdapterError("streaming tool call delta requires a name for new index")
+                if any(
+                    existing.tool_call_id == call_id
+                    for existing in drafts_by_index.values()
+                ):
+                    raise OpenAICompatibleAdapterError(
+                        "streaming tool call id must identify one index"
+                    )
                 draft = ToolCallDraft.proposed(delta.response_id, call_id, name)
                 drafts_by_index[index] = draft
                 index_order.append(index)
@@ -266,19 +529,32 @@ class OpenAIStreamingToolCallDraftAssembler:
         self.response_id = response_id
         self._drafts_by_index = drafts_by_index
         self._index_order = index_order
-        return tuple(updated)
+        result = tuple(updated)
+        self._applied_delta_results[delta.sequence] = (
+            delta_signature,
+            result,
+        )
+        self._last_sequence = delta.sequence
+        self._applied_deltas = (*self._applied_deltas, delta)
+        return result
 
     def drafts(self) -> tuple[ToolCallDraft, ...]:
         return tuple(self._drafts_by_index[index] for index in self._index_order)
 
+    def applied_deltas(self) -> tuple[OpenAIChatDelta, ...]:
+        return self._applied_deltas
+
     def complete_all(self) -> tuple[ToolCallDraft, ...]:
+        drafts_by_index = dict(self._drafts_by_index)
         completed: list[ToolCallDraft] = []
         for index in self._index_order:
-            draft = self._drafts_by_index[index]
+            draft = drafts_by_index[index]
             if draft.status != "arguments_complete":
                 draft = draft.complete_arguments()
-                self._drafts_by_index[index] = draft
+                drafts_by_index[index] = draft
             completed.append(draft)
+        self._drafts_by_index = drafts_by_index
+        self._completed = True
         return tuple(completed)
 
 

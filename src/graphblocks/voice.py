@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
+import math
+from types import MappingProxyType
 from typing import Literal
 
 from graphblocks.canonical import canonical_hash
@@ -17,9 +20,33 @@ class VoiceContractError(ValueError):
     """Raised when a voice contract is invalid."""
 
 
-def _require_non_empty(field_name: str, value: str) -> None:
-    if not value.strip():
+def _require_non_empty(field_name: str, value: object) -> str:
+    if not isinstance(value, str) or not value.strip():
         raise VoiceContractError(f"{field_name} must not be empty")
+    return value
+
+
+def _require_exact_non_empty(field_name: str, value: object) -> str:
+    normalized = _require_non_empty(field_name, value)
+    if normalized != normalized.strip() or any(
+        character.isspace()
+        or ord(character) < 0x20
+        or ord(character) == 0x7F
+        for character in normalized
+    ):
+        raise VoiceContractError(
+            f"{field_name} must be an exact non-empty string"
+        )
+    return normalized
+
+
+def _probability(field_name: str, value: object) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise VoiceContractError(f"{field_name} must be numeric")
+    normalized = float(value)
+    if not math.isfinite(normalized) or not 0 <= normalized <= 1:
+        raise VoiceContractError(f"{field_name} must be between 0 and 1")
+    return normalized
 
 
 def _positive_int(field_name: str, value: object) -> int:
@@ -56,8 +83,8 @@ class VoiceTransport:
         if self.kind not in {"websocket", "webrtc", "provider_realtime"}:
             raise VoiceContractError(f"unsupported voice transport kind {self.kind!r}")
         if self.uri is not None:
-            _require_non_empty("transport uri", self.uri)
-        _require_non_empty("transport codec", self.codec)
+            _require_exact_non_empty("transport uri", self.uri)
+        _require_exact_non_empty("transport codec", self.codec)
         object.__setattr__(self, "sample_rate_hz", _positive_int("sample_rate_hz", self.sample_rate_hz))
         object.__setattr__(self, "channels", _positive_int("channels", self.channels))
 
@@ -96,9 +123,13 @@ class DuplexSession:
     interrupted_at_ms: int | None = None
 
     def __post_init__(self) -> None:
-        _require_non_empty("session_id", self.session_id)
+        _require_exact_non_empty("session_id", self.session_id)
+        if not isinstance(self.transport, VoiceTransport):
+            raise VoiceContractError("transport must be a VoiceTransport")
         if self.state not in {"open", "interrupted", "closed"}:
             raise VoiceContractError(f"unsupported voice session state {self.state!r}")
+        if self.current_turn_id is not None:
+            _require_exact_non_empty("current_turn_id", self.current_turn_id)
         object.__setattr__(self, "started_at_ms", _non_negative_int("started_at_ms", self.started_at_ms))
         object.__setattr__(self, "closed_at_ms", _optional_non_negative_int("closed_at_ms", self.closed_at_ms))
         object.__setattr__(
@@ -116,16 +147,56 @@ class DuplexSession:
             and self.closed_at_ms < self.interrupted_at_ms
         ):
             raise VoiceContractError("closed_at_ms must be greater than or equal to interrupted_at_ms")
+        if self.interruption_reason is not None:
+            _require_non_empty("interruption_reason", self.interruption_reason)
+        if self.state == "open" and any(
+            value is not None
+            for value in (
+                self.closed_at_ms,
+                self.interrupted_at_ms,
+                self.interruption_reason,
+            )
+        ):
+            raise VoiceContractError(
+                "open voice session must not have terminal lifecycle fields"
+            )
+        if self.state == "interrupted" and (
+            self.interrupted_at_ms is None
+            or self.interruption_reason is None
+            or self.closed_at_ms is not None
+        ):
+            raise VoiceContractError(
+                "interrupted voice session requires interruption fields and no close time"
+            )
+        if self.state == "closed":
+            if self.closed_at_ms is None:
+                raise VoiceContractError("closed voice session requires closed_at_ms")
+            if (self.interrupted_at_ms is None) != (self.interruption_reason is None):
+                raise VoiceContractError(
+                    "closed voice session interruption fields must be both present or absent"
+                )
+        if not isinstance(self.metadata, Mapping):
+            raise VoiceContractError("session metadata must be a mapping")
+        metadata: dict[str, str] = {}
+        for key, value in self.metadata.items():
+            _require_exact_non_empty("session metadata key", key)
+            if not isinstance(value, str):
+                raise VoiceContractError("session metadata values must be strings")
+            metadata[key] = value
         object.__setattr__(
             self,
             "metadata",
-            {str(key): str(value) for key, value in sorted(dict(self.metadata).items())},
+            MappingProxyType(dict(sorted(metadata.items()))),
         )
 
     def begin_turn(self, turn_id: str) -> DuplexSession:
         if self.state == "closed":
             raise VoiceContractError("closed voice session cannot begin a turn")
-        _require_non_empty("turn_id", turn_id)
+        _require_exact_non_empty("turn_id", turn_id)
+        if self.state == "interrupted" and self.current_turn_id == turn_id:
+            raise VoiceContractError(
+                "interrupted voice session cannot replay the interrupted turn"
+            )
         return replace(
             self,
             current_turn_id=turn_id,
@@ -141,6 +212,15 @@ class DuplexSession:
         if occurred_at_ms < self.started_at_ms:
             raise VoiceContractError("interruption occurred before session start")
         _require_non_empty("interruption reason", reason)
+        if self.state == "interrupted":
+            if (
+                self.interrupted_at_ms == occurred_at_ms
+                and self.interruption_reason == reason
+            ):
+                return self
+            raise VoiceContractError(
+                "voice session interruption conflicts with the recorded interruption"
+            )
         return replace(
             self,
             state="interrupted",
@@ -181,12 +261,15 @@ class AudioFrame:
     speech_probability: float
 
     def __post_init__(self) -> None:
-        _require_non_empty("stream_id", self.stream_id)
+        _require_exact_non_empty("stream_id", self.stream_id)
         object.__setattr__(self, "sequence", _non_negative_int("sequence", self.sequence))
         object.__setattr__(self, "start_ms", _non_negative_int("start_ms", self.start_ms))
         object.__setattr__(self, "duration_ms", _positive_int("duration_ms", self.duration_ms))
-        if not 0 <= self.speech_probability <= 1:
-            raise VoiceContractError("speech_probability must be between 0 and 1")
+        object.__setattr__(
+            self,
+            "speech_probability",
+            _probability("speech_probability", self.speech_probability),
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -197,6 +280,22 @@ class VadDecision:
     kind: VadDecisionKind
     speech_probability: float
 
+    def __post_init__(self) -> None:
+        _require_exact_non_empty("authority_id", self.authority_id)
+        _require_exact_non_empty("stream_id", self.stream_id)
+        object.__setattr__(
+            self,
+            "sequence",
+            _non_negative_int("sequence", self.sequence),
+        )
+        if self.kind not in {"silence", "speech_start", "speech", "speech_end"}:
+            raise VoiceContractError(f"unsupported VAD decision kind {self.kind!r}")
+        object.__setattr__(
+            self,
+            "speech_probability",
+            _probability("speech_probability", self.speech_probability),
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class VadAuthority:
@@ -204,11 +303,16 @@ class VadAuthority:
     speech_threshold: float = 0.5
 
     def __post_init__(self) -> None:
-        _require_non_empty("authority_id", self.authority_id)
-        if not 0 <= self.speech_threshold <= 1:
-            raise VoiceContractError("speech_threshold must be between 0 and 1")
+        _require_exact_non_empty("authority_id", self.authority_id)
+        object.__setattr__(
+            self,
+            "speech_threshold",
+            _probability("speech_threshold", self.speech_threshold),
+        )
 
     def evaluate(self, frame: AudioFrame, *, already_in_speech: bool = False) -> VadDecision:
+        if not isinstance(already_in_speech, bool):
+            raise VoiceContractError("already_in_speech must be a boolean")
         if frame.speech_probability >= self.speech_threshold:
             kind: VadDecisionKind = "speech" if already_in_speech else "speech_start"
         else:
@@ -234,7 +338,7 @@ class PlaybackEntry:
     acknowledged_at_ms: int | None = None
 
     def __post_init__(self) -> None:
-        _require_non_empty("playback_id", self.playback_id)
+        _require_exact_non_empty("playback_id", self.playback_id)
         object.__setattr__(self, "sequence", _non_negative_int("playback sequence", self.sequence))
         object.__setattr__(self, "started_at_ms", _optional_non_negative_int("started_at_ms", self.started_at_ms))
         object.__setattr__(self, "completed_at_ms", _optional_non_negative_int("completed_at_ms", self.completed_at_ms))
@@ -246,7 +350,7 @@ class PlaybackEntry:
         if self.status not in {"queued", "started", "completed", "interrupted"}:
             raise VoiceContractError(f"unsupported playback status {self.status!r}")
         if self.audio_ref is not None:
-            _require_non_empty("audio_ref", self.audio_ref)
+            _require_exact_non_empty("audio_ref", self.audio_ref)
         if self.reason is not None:
             _require_non_empty("playback reason", self.reason)
         if self.status == "queued":
@@ -322,7 +426,7 @@ class PlaybackLedger:
         return replace(self, entries=(*self.entries, entry))
 
     def start(self, playback_id: str, *, occurred_at_ms: int) -> PlaybackLedger:
-        _require_non_empty("playback_id", playback_id)
+        _require_exact_non_empty("playback_id", playback_id)
         occurred_at_ms = _non_negative_int("occurred_at_ms", occurred_at_ms)
         for index, entry in enumerate(self.entries):
             if entry.playback_id != playback_id:
@@ -336,7 +440,7 @@ class PlaybackLedger:
         raise VoiceContractError(f"unknown playback_id {playback_id!r}")
 
     def complete(self, playback_id: str, *, occurred_at_ms: int) -> PlaybackLedger:
-        _require_non_empty("playback_id", playback_id)
+        _require_exact_non_empty("playback_id", playback_id)
         occurred_at_ms = _non_negative_int("occurred_at_ms", occurred_at_ms)
         for index, entry in enumerate(self.entries):
             if entry.playback_id != playback_id:
@@ -352,7 +456,7 @@ class PlaybackLedger:
         raise VoiceContractError(f"unknown playback_id {playback_id!r}")
 
     def acknowledge(self, playback_id: str, *, occurred_at_ms: int) -> PlaybackLedger:
-        _require_non_empty("playback_id", playback_id)
+        _require_exact_non_empty("playback_id", playback_id)
         occurred_at_ms = _non_negative_int("occurred_at_ms", occurred_at_ms)
         for index, entry in enumerate(self.entries):
             if entry.playback_id != playback_id:
@@ -402,12 +506,32 @@ class InterruptionDecision:
     reason: str | None = None
 
     def __post_init__(self) -> None:
-        _require_non_empty("classifier_id", self.classifier_id)
-        _require_non_empty("session_id", self.session_id)
+        _require_exact_non_empty("classifier_id", self.classifier_id)
+        _require_exact_non_empty("session_id", self.session_id)
         if self.kind not in {"continue", "interrupt"}:
             raise VoiceContractError(f"unsupported interruption kind {self.kind!r}")
         object.__setattr__(self, "occurred_at_ms", _non_negative_int("occurred_at_ms", self.occurred_at_ms))
-        object.__setattr__(self, "interrupted_playback_ids", tuple(str(item) for item in self.interrupted_playback_ids))
+        if isinstance(self.interrupted_playback_ids, (str, bytes)):
+            raise VoiceContractError(
+                "interrupted_playback_ids must be a sequence of strings"
+            )
+        try:
+            playback_ids = tuple(self.interrupted_playback_ids)
+        except TypeError as error:
+            raise VoiceContractError(
+                "interrupted_playback_ids must be a sequence of strings"
+            ) from error
+        for playback_id in playback_ids:
+            _require_exact_non_empty("interrupted playback_id", playback_id)
+        if len(set(playback_ids)) != len(playback_ids):
+            raise VoiceContractError(
+                "interrupted_playback_ids must not contain duplicates"
+            )
+        if self.kind == "continue" and playback_ids:
+            raise VoiceContractError(
+                "continue interruption decision must not identify interrupted playback"
+            )
+        object.__setattr__(self, "interrupted_playback_ids", playback_ids)
         if self.reason is not None:
             _require_non_empty("interruption reason", self.reason)
 
@@ -421,8 +545,8 @@ class ProviderInterruptionDecision:
     reason: str | None = None
 
     def __post_init__(self) -> None:
-        _require_non_empty("authority_id", self.authority_id)
-        _require_non_empty("session_id", self.session_id)
+        _require_exact_non_empty("authority_id", self.authority_id)
+        _require_exact_non_empty("session_id", self.session_id)
         if self.kind not in {"continue", "interrupt"}:
             raise VoiceContractError(f"unsupported interruption kind {self.kind!r}")
         object.__setattr__(self, "occurred_at_ms", _non_negative_int("occurred_at_ms", self.occurred_at_ms))
@@ -436,8 +560,11 @@ class InterruptionClassifier:
     provider_authority_id: str = "provider"
 
     def __post_init__(self) -> None:
-        _require_non_empty("classifier_id", self.classifier_id)
-        _require_non_empty("provider_authority_id", self.provider_authority_id)
+        _require_exact_non_empty("classifier_id", self.classifier_id)
+        _require_exact_non_empty(
+            "provider_authority_id",
+            self.provider_authority_id,
+        )
 
     def classify(
         self,
@@ -448,7 +575,7 @@ class InterruptionClassifier:
         occurred_at_ms: int,
         provider_decision: ProviderInterruptionDecision | None = None,
     ) -> InterruptionDecision:
-        _require_non_empty("session_id", session_id)
+        _require_exact_non_empty("session_id", session_id)
         occurred_at_ms = _non_negative_int("occurred_at_ms", occurred_at_ms)
         if not isinstance(vad_decision, VadDecision):
             raise VoiceContractError("vad_decision must be a VadDecision")
@@ -469,6 +596,10 @@ class InterruptionClassifier:
             raise VoiceContractError("provider interruption authority does not match the classifier authority")
         if provider_decision.session_id != session_id:
             raise VoiceContractError("provider interruption decision belongs to a different session")
+        if provider_decision.occurred_at_ms < occurred_at_ms:
+            raise VoiceContractError(
+                "provider interruption decision predates the classification request"
+            )
         if provider_decision.kind == "interrupt":
             return InterruptionDecision(
                 classifier_id=self.classifier_id,
@@ -496,13 +627,45 @@ class RealtimeSessionRequest:
     tools: tuple[str, ...] = field(default_factory=tuple)
 
     def __post_init__(self) -> None:
-        _require_non_empty("model", self.model)
+        if not isinstance(self.session, DuplexSession):
+            raise VoiceContractError("session must be a DuplexSession")
+        _require_exact_non_empty("model", self.model)
         _require_non_empty("instructions", self.instructions)
-        object.__setattr__(self, "modalities", tuple(sorted({str(item) for item in self.modalities})))
-        object.__setattr__(self, "tools", tuple(sorted({str(tool) for tool in self.tools})))
+        if isinstance(self.modalities, (str, bytes)):
+            raise VoiceContractError("modalities must be a sequence of strings")
+        try:
+            modalities = tuple(self.modalities)
+        except TypeError as error:
+            raise VoiceContractError(
+                "modalities must be a sequence of strings"
+            ) from error
+        for modality in modalities:
+            _require_exact_non_empty("modality", modality)
+            if modality not in {"audio", "text"}:
+                raise VoiceContractError(
+                    f"unsupported realtime modality {modality!r}"
+                )
+        if not modalities:
+            raise VoiceContractError("modalities must not be empty")
+        if len(set(modalities)) != len(modalities):
+            raise VoiceContractError("modalities must not contain duplicates")
+        if isinstance(self.tools, (str, bytes)):
+            raise VoiceContractError("tools must be a sequence of strings")
+        try:
+            tools = tuple(self.tools)
+        except TypeError as error:
+            raise VoiceContractError("tools must be a sequence of strings") from error
+        for tool in tools:
+            _require_exact_non_empty("tool", tool)
+        if len(set(tools)) != len(tools):
+            raise VoiceContractError("tools must not contain duplicates")
+        object.__setattr__(self, "modalities", tuple(sorted(modalities)))
+        object.__setattr__(self, "tools", tuple(sorted(tools)))
 
     def with_tool(self, tool_name: str) -> RealtimeSessionRequest:
-        _require_non_empty("tool_name", tool_name)
+        _require_exact_non_empty("tool_name", tool_name)
+        if tool_name in self.tools:
+            return self
         return replace(self, tools=(*self.tools, tool_name))
 
     def provider_contract(self) -> dict[str, object]:

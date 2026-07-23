@@ -327,14 +327,14 @@ def test_openai_response_preserves_tool_call_arguments_as_drafts(monkeypatch) ->
     )
 
     assert response.parts == ()
-    assert response.tool_calls == [
+    assert response.tool_calls == (
         {
             "arguments": '{"query":"refund"}',
             "id": "call-1",
             "name": "knowledge.search",
             "type": "function",
-        }
-    ]
+        },
+    )
     assert response.finish_reason == "tool_calls"
 
     drafts = graphblocks_openai.openai_tool_call_drafts_from_response(response)
@@ -345,6 +345,57 @@ def test_openai_response_preserves_tool_call_arguments_as_drafts(monkeypatch) ->
     assert drafts[0].tool_name == "knowledge.search"
     assert drafts[0].argument_fragments == ('{"query":"refund"}',)
     assert drafts[0].status == "arguments_complete"
+
+
+def test_openai_response_rejects_duplicate_tool_call_ids(monkeypatch) -> None:
+    graphblocks_openai = importlib.import_module("graphblocks.integrations.openai")
+    normalized_calls = [
+        {
+            "id": "call-1",
+            "type": "function",
+            "name": name,
+            "arguments": "{}",
+        }
+        for name in ("knowledge.search", "knowledge.lookup")
+    ]
+
+    with pytest.raises(
+        graphblocks_openai.OpenAICompatibleAdapterError,
+        match="duplicate.*tool_call id",
+    ):
+        graphblocks_openai.OpenAIChatResponse(
+            "response-1",
+            "gpt-test",
+            tool_calls=normalized_calls,
+        )
+    with pytest.raises(
+        graphblocks_openai.OpenAICompatibleAdapterError,
+        match="duplicate.*tool_call id",
+    ):
+        graphblocks_openai.openai_chat_response_from_provider(
+            {
+                "id": "response-1",
+                "model": "gpt-test",
+                "choices": [
+                    {
+                        "index": 0,
+                        "message": {
+                            "tool_calls": [
+                                {
+                                    "id": call["id"],
+                                    "type": call["type"],
+                                    "function": {
+                                        "name": call["name"],
+                                        "arguments": call["arguments"],
+                                    },
+                                }
+                                for call in normalized_calls
+                            ]
+                        },
+                    }
+                ],
+            }
+        )
 
 
 def test_openai_stream_chunk_normalizes_content_delta(monkeypatch) -> None:
@@ -429,24 +480,83 @@ def test_openai_stream_chunk_trims_provider_identity(monkeypatch) -> None:
 
     assert response.response_id == "chatcmpl-1"
     assert response.model == "gpt-test"
-    assert response.tool_calls == [
+    assert response.tool_calls == (
         {
             "id": "call-1",
             "type": "function",
             "name": "knowledge.search",
             "arguments": "{}",
-        }
-    ]
+        },
+    )
     assert delta.response_id == "chatcmpl-2"
-    assert delta.tool_call_deltas == [
+    assert delta.tool_call_deltas == (
         {
             "index": 0,
             "id": "call-2",
             "type": "function",
             "name": "knowledge.search",
             "arguments_delta": "{}",
-        }
-    ]
+        },
+    )
+
+
+def test_openai_wire_records_are_deeply_immutable_with_mutable_projections(
+    monkeypatch,
+) -> None:
+    graphblocks_openai = importlib.import_module("graphblocks.integrations.openai")
+    body = {"model": "gpt-test", "options": {"stops": [{"value": "done"}]}}
+    request = graphblocks_openai.OpenAIChatCompletionRequest(body=body)
+    response = graphblocks_openai.OpenAIChatResponse(
+        "response-1",
+        "gpt-test",
+        tool_calls=[
+            {
+                "id": "call-1",
+                "type": "function",
+                "name": "knowledge.search",
+                "arguments": "{}",
+                "metadata": {"attempt": 1},
+            }
+        ],
+        usage={"details": {"cached_tokens": 2}},
+    )
+    delta = graphblocks_openai.OpenAIChatDelta(
+        "response-1",
+        1,
+        0,
+        tool_call_deltas=[
+            {
+                "index": 0,
+                "id": "call-1",
+                "name": "knowledge.search",
+                "arguments_delta": "{}",
+            }
+        ],
+        usage_delta={"details": {"cached_tokens": 2}},
+    )
+    body["options"]["stops"][0]["value"] = "caller-mutated"
+
+    with pytest.raises(TypeError):
+        request.body["options"]["stops"][0]["value"] = "consumer-mutated"
+    with pytest.raises(TypeError):
+        response.tool_calls[0]["id"] = "consumer-mutated"
+    with pytest.raises(TypeError):
+        response.usage["details"]["cached_tokens"] = 9
+    with pytest.raises(TypeError):
+        delta.tool_call_deltas[0]["id"] = "consumer-mutated"
+    with pytest.raises(TypeError):
+        delta.usage_delta["details"]["cached_tokens"] = 9
+
+    request_projection = request.request_contract()
+    response_projection = response.response_contract()
+    delta_projection = delta.delta_contract()
+    request_projection["body"]["options"]["stops"][0]["value"] = "projected"
+    response_projection["tool_calls"][0]["id"] = "projected"
+    delta_projection["tool_call_deltas"][0]["id"] = "projected"
+
+    assert request.request_contract()["body"]["options"]["stops"][0]["value"] == "done"
+    assert response.response_contract()["tool_calls"][0]["id"] == "call-1"
+    assert delta.delta_contract()["tool_call_deltas"][0]["id"] == "call-1"
 
 
 def test_openai_stream_content_delta_normalizes_to_generation_chunk(monkeypatch) -> None:
@@ -971,3 +1081,198 @@ def test_openai_streaming_tool_call_assembler_rejects_delta_atomically(monkeypat
 
     assert assembler.response_id is None
     assert assembler.drafts() == ()
+
+
+def test_openai_streaming_tool_call_assembler_replays_sequences_idempotently(
+    monkeypatch,
+) -> None:
+    graphblocks_openai = importlib.import_module("graphblocks.integrations.openai")
+    assembler = graphblocks_openai.OpenAIStreamingToolCallDraftAssembler()
+    delta = graphblocks_openai.OpenAIChatDelta(
+        response_id="chatcmpl-replay",
+        sequence=2,
+        choice_index=0,
+        tool_call_deltas=[
+            {
+                "index": 0,
+                "id": "call-1",
+                "name": "knowledge.search",
+                "arguments_delta": '{"query"',
+            }
+        ],
+    )
+
+    first = assembler.apply_delta(delta)
+    replay = assembler.apply_delta(delta)
+
+    assert replay == first
+    assert assembler.drafts()[0].argument_fragments == ('{"query"',)
+
+    with pytest.raises(
+        graphblocks_openai.OpenAICompatibleAdapterError,
+        match="reused with different content",
+    ):
+        assembler.apply_delta(
+            graphblocks_openai.OpenAIChatDelta(
+                response_id="chatcmpl-replay",
+                sequence=2,
+                choice_index=0,
+                tool_call_deltas=[
+                    {
+                        "index": 0,
+                        "arguments_delta": ':"different"}',
+                    }
+                ],
+            )
+        )
+    with pytest.raises(
+        graphblocks_openai.OpenAICompatibleAdapterError,
+        match="sequence must increase",
+    ):
+        assembler.apply_delta(
+            graphblocks_openai.OpenAIChatDelta(
+                response_id="chatcmpl-replay",
+                sequence=1,
+                choice_index=0,
+            )
+        )
+
+
+def test_openai_streaming_tool_call_assembler_validates_restored_state(
+    monkeypatch,
+) -> None:
+    graphblocks_openai = importlib.import_module("graphblocks.integrations.openai")
+    delta = graphblocks_openai.OpenAIChatDelta(
+        "chatcmpl-restored",
+        1,
+        0,
+        tool_call_deltas=[
+            {
+                "index": 0,
+                "id": "call-1",
+                "name": "knowledge.search",
+                "arguments_delta": '{"query"',
+            }
+        ],
+    )
+    original = graphblocks_openai.OpenAIStreamingToolCallDraftAssembler()
+    original.apply_delta(delta)
+    assembler = graphblocks_openai.OpenAIStreamingToolCallDraftAssembler.restore(
+        original.applied_deltas()
+    )
+
+    assert assembler.drafts() == original.drafts()
+    assert assembler.apply_delta(delta) == original.apply_delta(delta)
+    assert assembler.drafts()[0].argument_fragments == ('{"query"',)
+    completed = original.complete_all()
+    completed_restore = graphblocks_openai.OpenAIStreamingToolCallDraftAssembler.restore(
+        original.applied_deltas(),
+        completed=True,
+    )
+    assert completed_restore.drafts() == completed
+    assert completed_restore.apply_delta(delta)[0].argument_fragments == ('{"query"',)
+    assert completed_restore.drafts() == completed
+    with pytest.raises(
+        graphblocks_openai.OpenAICompatibleAdapterError,
+        match="strictly increase",
+    ):
+        graphblocks_openai.OpenAIStreamingToolCallDraftAssembler.restore(
+            (delta, delta)
+        )
+
+    invalid_states = (
+        {
+            "response_id": "chatcmpl-restored",
+            "_drafts_by_index": {0: original.drafts()[0]},
+            "_index_order": [0],
+        },
+        {
+            "response_id": "chatcmpl-other",
+            "_drafts_by_index": {0: original.drafts()[0]},
+            "_index_order": [0],
+            "_applied_deltas": original.applied_deltas(),
+        },
+        {
+            "response_id": "chatcmpl-restored",
+            "_drafts_by_index": {0: original.drafts()[0]},
+            "_index_order": [0, 0],
+            "_applied_deltas": original.applied_deltas(),
+        },
+        {
+            "response_id": "chatcmpl-restored",
+            "_drafts_by_index": {0: original.drafts()[0]},
+            "_index_order": [],
+            "_applied_deltas": original.applied_deltas(),
+        },
+    )
+    for state in invalid_states:
+        with pytest.raises(graphblocks_openai.OpenAICompatibleAdapterError):
+            graphblocks_openai.OpenAIStreamingToolCallDraftAssembler(**state)
+
+
+def test_openai_streaming_tool_call_assembler_rejects_duplicate_call_ids(
+    monkeypatch,
+) -> None:
+    graphblocks_openai = importlib.import_module("graphblocks.integrations.openai")
+    assembler = graphblocks_openai.OpenAIStreamingToolCallDraftAssembler()
+    duplicate = graphblocks_openai.OpenAIChatDelta(
+        response_id="chatcmpl-duplicate",
+        sequence=1,
+        choice_index=0,
+        tool_call_deltas=[
+            {
+                "index": 0,
+                "id": "call-1",
+                "name": "knowledge.search",
+                "arguments_delta": "{}",
+            },
+            {
+                "index": 1,
+                "id": "call-1",
+                "name": "knowledge.lookup",
+                "arguments_delta": "{}",
+            },
+        ],
+    )
+
+    with pytest.raises(
+        graphblocks_openai.OpenAICompatibleAdapterError,
+        match="must identify one index",
+    ):
+        assembler.apply_delta(duplicate)
+
+    assert assembler.response_id is None
+    assert assembler.drafts() == ()
+
+
+def test_openai_streaming_tool_call_completion_is_atomic(monkeypatch) -> None:
+    graphblocks_openai = importlib.import_module("graphblocks.integrations.openai")
+    assembler = graphblocks_openai.OpenAIStreamingToolCallDraftAssembler()
+    assembler.apply_delta(
+        graphblocks_openai.OpenAIChatDelta(
+            response_id="chatcmpl-complete",
+            sequence=1,
+            choice_index=0,
+            tool_call_deltas=[
+                {
+                    "index": 0,
+                    "id": "call-1",
+                    "name": "knowledge.search",
+                    "arguments_delta": "{}",
+                },
+                {
+                    "index": 1,
+                    "id": "call-2",
+                    "name": "knowledge.lookup",
+                },
+            ],
+        )
+    )
+
+    with pytest.raises(ValueError, match="requires argument fragments"):
+        assembler.complete_all()
+
+    assert [draft.status for draft in assembler.drafts()] == [
+        "arguments_streaming",
+        "proposed",
+    ]

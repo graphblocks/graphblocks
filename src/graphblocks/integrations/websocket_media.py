@@ -23,6 +23,20 @@ def _require_non_empty(field_name: str, value: object) -> str:
     return value
 
 
+def _require_exact_non_empty(field_name: str, value: object) -> str:
+    normalized = _require_non_empty(field_name, value)
+    if normalized != normalized.strip() or any(
+        character.isspace()
+        or ord(character) < 0x20
+        or ord(character) == 0x7F
+        for character in normalized
+    ):
+        raise WebSocketMediaAdapterError(
+            f"{field_name} must be an exact non-empty string"
+        )
+    return normalized
+
+
 def _positive_int(field_name: str, value: object) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
         raise WebSocketMediaAdapterError(f"{field_name} must be a positive integer")
@@ -101,8 +115,8 @@ class WebSocketMediaEndpoint:
             )
         ):
             raise WebSocketMediaAdapterError("uri must be an absolute WebSocket URI")
-        _require_non_empty("protocol", self.protocol)
-        _require_non_empty("codec", self.codec)
+        _require_exact_non_empty("protocol", self.protocol)
+        _require_exact_non_empty("codec", self.codec)
         object.__setattr__(
             self,
             "sample_rate_hz",
@@ -142,7 +156,7 @@ class WebSocketMediaMessage:
     metadata: dict[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        _require_non_empty("stream_id", self.stream_id)
+        _require_exact_non_empty("stream_id", self.stream_id)
         object.__setattr__(
             self,
             "sequence",
@@ -151,7 +165,7 @@ class WebSocketMediaMessage:
         if self.kind not in {"audio_delta", "control", "transcript_delta"}:
             raise WebSocketMediaAdapterError(f"unsupported media message kind {self.kind!r}")
         if self.audio_ref is not None:
-            _require_non_empty("audio_ref", self.audio_ref)
+            _require_exact_non_empty("audio_ref", self.audio_ref)
         if self.duration_ms is not None:
             object.__setattr__(
                 self,
@@ -161,7 +175,7 @@ class WebSocketMediaMessage:
         if self.text is not None:
             _require_non_empty("text", self.text)
         if self.control is not None:
-            _require_non_empty("control", self.control)
+            _require_exact_non_empty("control", self.control)
         if self.kind == "audio_delta":
             if self.audio_ref is None or self.duration_ms is None:
                 raise WebSocketMediaAdapterError(
@@ -231,7 +245,7 @@ class WebSocketMediaStream:
     messages: tuple[WebSocketMediaMessage, ...] = field(default_factory=tuple)
 
     def __post_init__(self) -> None:
-        _require_non_empty("stream_id", self.stream_id)
+        _require_exact_non_empty("stream_id", self.stream_id)
         try:
             messages = tuple(self.messages)
         except TypeError as error:

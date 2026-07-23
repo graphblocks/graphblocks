@@ -47,6 +47,7 @@ class _SileroVadStreamState:
     pending_speech_ms: int = 0
     pending_silence_ms: int = 0
     last_sequence: int | None = None
+    last_end_ms: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -172,8 +173,15 @@ class SileroVadAuthority:
                 raise SileroVadAdapterError(
                     "frame sequence must increase within a Silero VAD stream"
                 )
+            elif state.last_end_ms is not None and frame.start_ms < state.last_end_ms:
+                raise SileroVadAdapterError(
+                    "frame timing must not overlap within a Silero VAD stream"
+                )
             elif already_in_speech is not None and already_in_speech != state.in_speech:
                 state.in_speech = already_in_speech
+                state.pending_speech_ms = 0
+                state.pending_silence_ms = 0
+            if state.last_end_ms is not None and frame.start_ms > state.last_end_ms:
                 state.pending_speech_ms = 0
                 state.pending_silence_ms = 0
 
@@ -206,6 +214,7 @@ class SileroVadAuthority:
                     state.pending_speech_ms = 0
                     kind = "silence"
             state.last_sequence = frame.sequence
+            state.last_end_ms = frame.start_ms + frame.duration_ms
 
         return VadDecision(
             authority_id=self.authority_id,
