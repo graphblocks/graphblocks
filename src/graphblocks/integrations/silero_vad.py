@@ -11,24 +11,58 @@ class SileroVadAdapterError(ValueError):
     """Base error for Silero VAD adapter contracts."""
 
 
-def _require_non_empty(field_name: str, value: object) -> None:
+_MAX_U32 = (1 << 32) - 1
+_MAX_U64 = (1 << 64) - 1
+
+
+def _require_non_empty(field_name: str, value: object) -> str:
     if not isinstance(value, str) or not value.strip():
         raise SileroVadAdapterError(f"{field_name} must not be empty")
+    if any("\ud800" <= character <= "\udfff" for character in value):
+        raise SileroVadAdapterError(
+            f"{field_name} must contain Unicode scalar values"
+        )
+    return value
 
 
-def _integer(field_name: str, value: object, *, positive: bool = False) -> int:
+def _require_exact_non_empty(field_name: str, value: object) -> str:
+    normalized = _require_non_empty(field_name, value)
+    if normalized != normalized.strip() or any(
+        character.isspace()
+        or ord(character) < 0x20
+        or ord(character) == 0x7F
+        for character in normalized
+    ):
+        raise SileroVadAdapterError(
+            f"{field_name} must be an exact non-empty string"
+        )
+    return normalized
+
+
+def _integer(
+    field_name: str,
+    value: object,
+    *,
+    positive: bool = False,
+    maximum: int = _MAX_U64,
+) -> int:
     if isinstance(value, bool) or not isinstance(value, int):
         raise SileroVadAdapterError(f"{field_name} must be an integer")
     if (positive and value <= 0) or (not positive and value < 0):
         requirement = "positive" if positive else "non-negative"
         raise SileroVadAdapterError(f"{field_name} must be {requirement}")
+    if value > maximum:
+        raise SileroVadAdapterError(f"{field_name} must not exceed {maximum}")
     return value
 
 
 def _probability(field_name: str, value: object) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise SileroVadAdapterError(f"{field_name} must be numeric")
-    normalized = float(value)
+    try:
+        normalized = float(value)
+    except OverflowError as error:
+        raise SileroVadAdapterError(f"{field_name} must be between 0 and 1") from error
     if not math.isfinite(normalized) or not 0 <= normalized <= 1:
         raise SileroVadAdapterError(f"{field_name} must be between 0 and 1")
     return normalized
@@ -62,7 +96,7 @@ class SileroVadFrame:
     model_ref: str = "silero-vad"
 
     def __post_init__(self) -> None:
-        _require_non_empty("stream_id", self.stream_id)
+        _require_exact_non_empty("stream_id", self.stream_id)
         object.__setattr__(self, "sequence", _integer("sequence", self.sequence))
         object.__setattr__(self, "start_ms", _integer("start_ms", self.start_ms))
         object.__setattr__(
@@ -76,20 +110,34 @@ class SileroVadFrame:
         object.__setattr__(
             self,
             "sample_rate_hz",
-            _integer("sample_rate_hz", self.sample_rate_hz, positive=True),
+            _integer(
+                "sample_rate_hz",
+                self.sample_rate_hz,
+                positive=True,
+                maximum=_MAX_U32,
+            ),
         )
         object.__setattr__(
             self,
             "window_size_samples",
-            _integer("window_size_samples", self.window_size_samples, positive=True),
+            _integer(
+                "window_size_samples",
+                self.window_size_samples,
+                positive=True,
+                maximum=_MAX_U32,
+            ),
         )
         _validate_sample_window(self.sample_rate_hz, self.window_size_samples)
+        if self.start_ms > _MAX_U64 - self.duration_ms:
+            raise SileroVadAdapterError(
+                "frame end must not exceed unsigned 64-bit range"
+            )
         expected_duration_ms = self.window_size_samples * 1_000 // self.sample_rate_hz
         if self.duration_ms != expected_duration_ms:
             raise SileroVadAdapterError(
                 f"duration_ms must be {expected_duration_ms} for the configured Silero window"
             )
-        _require_non_empty("model_ref", self.model_ref)
+        _require_exact_non_empty("model_ref", self.model_ref)
 
     def to_audio_frame(self) -> AudioFrame:
         return AudioFrame(
@@ -131,7 +179,7 @@ class SileroVadAuthority:
     _lock: RLock = field(default_factory=RLock, init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
-        _require_non_empty("authority_id", self.authority_id)
+        _require_exact_non_empty("authority_id", self.authority_id)
         object.__setattr__(
             self, "speech_threshold", _probability("speech_threshold", self.speech_threshold)
         )
@@ -147,7 +195,7 @@ class SileroVadAuthority:
                 _integer(field_name, getattr(self, field_name), positive=True),
             )
         _validate_sample_window(self.sample_rate_hz, self.window_size_samples)
-        _require_non_empty("model_ref", self.model_ref)
+        _require_exact_non_empty("model_ref", self.model_ref)
 
     def evaluate(
         self,

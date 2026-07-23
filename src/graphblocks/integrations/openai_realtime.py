@@ -23,6 +23,10 @@ _OUTPUT_AUDIO_FORMATS = {
 def _require_non_empty(field_name: str, value: object) -> str:
     if not isinstance(value, str) or not value.strip():
         raise OpenAIRealtimeAdapterError(f"{field_name} must not be empty")
+    if any("\ud800" <= character <= "\udfff" for character in value):
+        raise OpenAIRealtimeAdapterError(
+            f"{field_name} must contain Unicode scalar values"
+        )
     return value
 
 
@@ -62,10 +66,29 @@ def _require_base_url(field_name: str, value: object, *, schemes: set[str], quer
         or parsed.fragment
         or (parsed.query and not query)
         or parsed.netloc.rsplit("@", 1)[-1].endswith(":")
-        or any(character.isspace() or ord(character) < 0x20 for character in url)
+        or any(
+            character.isspace()
+            or ord(character) < 0x20
+            or ord(character) == 0x7F
+            or "\ud800" <= character <= "\udfff"
+            for character in url
+        )
     ):
         raise OpenAIRealtimeAdapterError(f"{field_name} must be an absolute URL")
     return url
+
+
+def _require_sdp(field_name: str, value: object) -> str:
+    sdp = _require_non_empty(field_name, value)
+    if any(
+        (ord(character) < 0x20 and character not in "\t\r\n")
+        or ord(character) == 0x7F
+        for character in sdp
+    ):
+        raise OpenAIRealtimeAdapterError(
+            f"{field_name} contains invalid control characters"
+        )
+    return sdp
 
 
 def _string_mapping(
@@ -76,11 +99,18 @@ def _string_mapping(
         raise OpenAIRealtimeAdapterError(f"{field_name} must be a mapping")
     normalized: dict[str, str] = {}
     for key, item in value.items():
-        if not isinstance(key, str) or not key or key != key.strip():
+        if (
+            not isinstance(key, str)
+            or not key
+            or key != key.strip()
+            or any("\ud800" <= character <= "\udfff" for character in key)
+        ):
             raise OpenAIRealtimeAdapterError(
                 f"{field_name} keys must be stable non-empty strings"
             )
-        if not isinstance(item, str):
+        if not isinstance(item, str) or any(
+            "\ud800" <= character <= "\udfff" for character in item
+        ):
             raise OpenAIRealtimeAdapterError(f"{field_name} values must be strings")
         normalized[key] = item
     return MappingProxyType(dict(sorted(normalized.items())))
@@ -204,7 +234,7 @@ class OpenAIRealtimeWebRtcCall:
             raise OpenAIRealtimeAdapterError(
                 "session_config must be an OpenAIRealtimeSessionConfig"
             )
-        _require_non_empty("offer_sdp", self.offer_sdp)
+        _require_sdp("offer_sdp", self.offer_sdp)
         api_base_url = _require_base_url(
             "api_base_url", self.api_base_url, schemes={"http", "https"}, query=False
         )
@@ -229,7 +259,7 @@ class OpenAIRealtimeWebRtcCall:
         }
 
     def answer_description(self, answer_sdp: str) -> dict[str, str]:
-        _require_non_empty("answer_sdp", answer_sdp)
+        _require_sdp("answer_sdp", answer_sdp)
         return {"type": "answer", "sdp": answer_sdp}
 
 
@@ -341,6 +371,10 @@ class OpenAIRealtimeEvent:
         *,
         event_id: str | None = None,
     ) -> OpenAIRealtimeEvent:
+        if not isinstance(session_config, OpenAIRealtimeSessionConfig):
+            raise OpenAIRealtimeAdapterError(
+                "session_config must be an OpenAIRealtimeSessionConfig"
+            )
         return cls("session.update", {"session": session_config.session_payload()}, event_id)
 
     @classmethod

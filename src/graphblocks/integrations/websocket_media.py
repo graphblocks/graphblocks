@@ -17,9 +17,18 @@ class WebSocketMediaAdapterError(ValueError):
     """Base error for WebSocket media adapter contracts."""
 
 
+_MAX_U16 = (1 << 16) - 1
+_MAX_U32 = (1 << 32) - 1
+_MAX_U64 = (1 << 64) - 1
+
+
 def _require_non_empty(field_name: str, value: object) -> str:
     if not isinstance(value, str) or not value.strip():
         raise WebSocketMediaAdapterError(f"{field_name} must not be empty")
+    if any("\ud800" <= character <= "\udfff" for character in value):
+        raise WebSocketMediaAdapterError(
+            f"{field_name} must contain Unicode scalar values"
+        )
     return value
 
 
@@ -37,15 +46,19 @@ def _require_exact_non_empty(field_name: str, value: object) -> str:
     return normalized
 
 
-def _positive_int(field_name: str, value: object) -> int:
+def _positive_int(field_name: str, value: object, *, maximum: int = _MAX_U64) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
         raise WebSocketMediaAdapterError(f"{field_name} must be a positive integer")
+    if value > maximum:
+        raise WebSocketMediaAdapterError(f"{field_name} must not exceed {maximum}")
     return value
 
 
-def _non_negative_int(field_name: str, value: object) -> int:
+def _non_negative_int(field_name: str, value: object, *, maximum: int = _MAX_U64) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or value < 0:
         raise WebSocketMediaAdapterError(f"{field_name} must be a non-negative integer")
+    if value > maximum:
+        raise WebSocketMediaAdapterError(f"{field_name} must not exceed {maximum}")
     return value
 
 
@@ -65,6 +78,7 @@ def _string_mapping(
                 character.isspace()
                 or ord(character) < 0x20
                 or ord(character) == 0x7F
+                or "\ud800" <= character <= "\udfff"
                 for character in key
             )
         ):
@@ -73,7 +87,12 @@ def _string_mapping(
             )
         if not isinstance(item, str):
             raise WebSocketMediaAdapterError(f"{field_name} values must be strings")
-        if any(ord(character) < 0x20 or ord(character) == 0x7F for character in item):
+        if any(
+            ord(character) < 0x20
+            or ord(character) == 0x7F
+            or "\ud800" <= character <= "\udfff"
+            for character in item
+        ):
             raise WebSocketMediaAdapterError(
                 f"{field_name} values must not contain control characters"
             )
@@ -111,6 +130,7 @@ class WebSocketMediaEndpoint:
                 character.isspace()
                 or ord(character) < 0x20
                 or ord(character) == 0x7F
+                or "\ud800" <= character <= "\udfff"
                 for character in self.uri
             )
         ):
@@ -120,9 +140,13 @@ class WebSocketMediaEndpoint:
         object.__setattr__(
             self,
             "sample_rate_hz",
-            _positive_int("sample_rate_hz", self.sample_rate_hz),
+            _positive_int("sample_rate_hz", self.sample_rate_hz, maximum=_MAX_U32),
         )
-        object.__setattr__(self, "channels", _positive_int("channels", self.channels))
+        object.__setattr__(
+            self,
+            "channels",
+            _positive_int("channels", self.channels, maximum=_MAX_U16),
+        )
         object.__setattr__(self, "headers", _string_mapping("headers", self.headers))
 
     def to_voice_transport(self) -> VoiceTransport:

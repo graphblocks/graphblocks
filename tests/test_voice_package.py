@@ -511,6 +511,48 @@ def test_voice_interruption_replay_and_provider_time_are_monotonic(monkeypatch) 
         )
 
 
+def test_voice_rejects_wire_overflow_and_wraps_numeric_overflow(monkeypatch) -> None:
+    graphblocks_voice = _import_voice(monkeypatch)
+
+    invalid_values = (
+        lambda: graphblocks_voice.VoiceTransport(
+            "webrtc",
+            sample_rate_hz=1 << 32,
+        ),
+        lambda: graphblocks_voice.VoiceTransport(
+            "webrtc",
+            channels=1 << 16,
+        ),
+        lambda: graphblocks_voice.AudioFrame(
+            "mic",
+            1 << 64,
+            0,
+            20,
+            0.5,
+        ),
+        lambda: graphblocks_voice.AudioFrame(
+            "mic",
+            1,
+            (1 << 64) - 1,
+            20,
+            0.5,
+        ),
+        lambda: graphblocks_voice.AudioFrame(
+            "mic",
+            1,
+            0,
+            20,
+            10**1_000,
+        ),
+    )
+    for factory in invalid_values:
+        with pytest.raises(graphblocks_voice.VoiceContractError):
+            factory()
+
+    with pytest.raises(graphblocks_voice.VoiceContractError, match="AudioFrame"):
+        graphblocks_voice.VadAuthority("vad").evaluate(object())
+
+
 def test_voice_package_is_cataloged_as_optional_extension(monkeypatch) -> None:
     _import_voice(monkeypatch)
     rows = {row["distribution"]: row for row in package_rows(load_package_catalog())}

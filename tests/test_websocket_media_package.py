@@ -265,6 +265,45 @@ def test_websocket_media_rejects_unstable_wire_identifiers(monkeypatch) -> None:
             graphblocks_websocket_media.WebSocketMediaMessage(**values)
 
 
+def test_websocket_media_rejects_wire_overflow_and_non_scalar_strings(
+    monkeypatch,
+) -> None:
+    graphblocks_websocket_media = _import_websocket_media(monkeypatch)
+
+    invalid_values = (
+        lambda: graphblocks_websocket_media.WebSocketMediaEndpoint(
+            "wss://voice.example.com/media",
+            sample_rate_hz=1 << 32,
+        ),
+        lambda: graphblocks_websocket_media.WebSocketMediaEndpoint(
+            "wss://voice.example.com/media",
+            channels=1 << 16,
+        ),
+        lambda: graphblocks_websocket_media.WebSocketMediaMessage.audio_delta(
+            "mic",
+            1 << 64,
+            audio_ref="blob:1",
+            duration_ms=20,
+        ),
+        lambda: graphblocks_websocket_media.WebSocketMediaMessage.audio_delta(
+            "mic",
+            1,
+            audio_ref="blob:1",
+            duration_ms=1 << 64,
+        ),
+        lambda: graphblocks_websocket_media.WebSocketMediaEndpoint(
+            "wss://voice.example.com/\ud800",
+        ),
+        lambda: graphblocks_websocket_media.WebSocketMediaEndpoint(
+            "wss://voice.example.com/media",
+            headers={"X-Test": "\ud800"},
+        ),
+    )
+    for factory in invalid_values:
+        with pytest.raises(graphblocks_websocket_media.WebSocketMediaAdapterError):
+            factory()
+
+
 def test_websocket_media_package_is_cataloged_as_optional_voice_adapter(monkeypatch) -> None:
     _import_websocket_media(monkeypatch)
     rows = {row["distribution"]: row for row in package_rows(load_package_catalog())}

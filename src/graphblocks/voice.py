@@ -14,6 +14,9 @@ VoiceSessionState = Literal["open", "interrupted", "closed"]
 VadDecisionKind = Literal["silence", "speech_start", "speech", "speech_end"]
 PlaybackStatus = Literal["queued", "started", "completed", "interrupted"]
 InterruptionKind = Literal["continue", "interrupt"]
+_MAX_U16 = (1 << 16) - 1
+_MAX_U32 = (1 << 32) - 1
+_MAX_U64 = (1 << 64) - 1
 
 
 class VoiceContractError(ValueError):
@@ -23,6 +26,8 @@ class VoiceContractError(ValueError):
 def _require_non_empty(field_name: str, value: object) -> str:
     if not isinstance(value, str) or not value.strip():
         raise VoiceContractError(f"{field_name} must not be empty")
+    if any("\ud800" <= character <= "\udfff" for character in value):
+        raise VoiceContractError(f"{field_name} must contain Unicode scalar values")
     return value
 
 
@@ -43,25 +48,32 @@ def _require_exact_non_empty(field_name: str, value: object) -> str:
 def _probability(field_name: str, value: object) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise VoiceContractError(f"{field_name} must be numeric")
-    normalized = float(value)
+    try:
+        normalized = float(value)
+    except OverflowError as error:
+        raise VoiceContractError(f"{field_name} must be between 0 and 1") from error
     if not math.isfinite(normalized) or not 0 <= normalized <= 1:
         raise VoiceContractError(f"{field_name} must be between 0 and 1")
     return normalized
 
 
-def _positive_int(field_name: str, value: object) -> int:
+def _positive_int(field_name: str, value: object, *, maximum: int = _MAX_U64) -> int:
     if isinstance(value, bool) or not isinstance(value, int):
         raise VoiceContractError(f"{field_name} must be an integer")
     if value <= 0:
         raise VoiceContractError(f"{field_name} must be positive")
+    if value > maximum:
+        raise VoiceContractError(f"{field_name} must not exceed {maximum}")
     return value
 
 
-def _non_negative_int(field_name: str, value: object) -> int:
+def _non_negative_int(field_name: str, value: object, *, maximum: int = _MAX_U64) -> int:
     if isinstance(value, bool) or not isinstance(value, int):
         raise VoiceContractError(f"{field_name} must be an integer")
     if value < 0:
         raise VoiceContractError(f"{field_name} must be non-negative")
+    if value > maximum:
+        raise VoiceContractError(f"{field_name} must not exceed {maximum}")
     return value
 
 
@@ -85,8 +97,16 @@ class VoiceTransport:
         if self.uri is not None:
             _require_exact_non_empty("transport uri", self.uri)
         _require_exact_non_empty("transport codec", self.codec)
-        object.__setattr__(self, "sample_rate_hz", _positive_int("sample_rate_hz", self.sample_rate_hz))
-        object.__setattr__(self, "channels", _positive_int("channels", self.channels))
+        object.__setattr__(
+            self,
+            "sample_rate_hz",
+            _positive_int("sample_rate_hz", self.sample_rate_hz, maximum=_MAX_U32),
+        )
+        object.__setattr__(
+            self,
+            "channels",
+            _positive_int("channels", self.channels, maximum=_MAX_U16),
+        )
 
     @classmethod
     def websocket(
@@ -265,6 +285,8 @@ class AudioFrame:
         object.__setattr__(self, "sequence", _non_negative_int("sequence", self.sequence))
         object.__setattr__(self, "start_ms", _non_negative_int("start_ms", self.start_ms))
         object.__setattr__(self, "duration_ms", _positive_int("duration_ms", self.duration_ms))
+        if self.start_ms > _MAX_U64 - self.duration_ms:
+            raise VoiceContractError("audio frame end must not exceed unsigned 64-bit range")
         object.__setattr__(
             self,
             "speech_probability",
@@ -311,6 +333,8 @@ class VadAuthority:
         )
 
     def evaluate(self, frame: AudioFrame, *, already_in_speech: bool = False) -> VadDecision:
+        if not isinstance(frame, AudioFrame):
+            raise VoiceContractError("frame must be an AudioFrame")
         if not isinstance(already_in_speech, bool):
             raise VoiceContractError("already_in_speech must be a boolean")
         if frame.speech_probability >= self.speech_threshold:

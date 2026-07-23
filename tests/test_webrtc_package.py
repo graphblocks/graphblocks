@@ -166,6 +166,44 @@ def test_webrtc_rejects_non_integer_transport_numbers_and_invalid_components(
         )
 
 
+def test_webrtc_rejects_sdp_controls_and_wire_integer_overflow(monkeypatch) -> None:
+    graphblocks_webrtc = _import_webrtc(monkeypatch)
+
+    for sdp in ("v=0\r\n\x00", "v=0\r\n\x7f"):
+        with pytest.raises(
+            graphblocks_webrtc.WebRtcAdapterError,
+            match="control",
+        ):
+            graphblocks_webrtc.WebRtcSessionDescription("offer", sdp)
+
+    offer = graphblocks_webrtc.WebRtcSessionDescription("offer", "v=0\r\n")
+    invalid_values = (
+        lambda: graphblocks_webrtc.WebRtcIceCandidate(
+            "candidate:1",
+            sdp_mline_index=1 << 16,
+        ),
+        lambda: graphblocks_webrtc.WebRtcIceCandidate(
+            "candidate:1",
+            sequence=1 << 64,
+        ),
+        lambda: graphblocks_webrtc.WebRtcSession(
+            "session-1",
+            "browser-1",
+            offer,
+            sample_rate_hz=1 << 32,
+        ),
+        lambda: graphblocks_webrtc.WebRtcSession(
+            "session-1",
+            "browser-1",
+            offer,
+            channels=1 << 16,
+        ),
+    )
+    for factory in invalid_values:
+        with pytest.raises(graphblocks_webrtc.WebRtcAdapterError):
+            factory()
+
+
 def test_webrtc_package_is_cataloged_as_optional_voice_adapter(monkeypatch) -> None:
     _import_webrtc(monkeypatch)
     rows = {row["distribution"]: row for row in package_rows(load_package_catalog())}

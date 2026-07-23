@@ -10,9 +10,16 @@ class WebRtcAdapterError(ValueError):
     """Base error for WebRTC voice adapter contracts."""
 
 
+_MAX_U16 = (1 << 16) - 1
+_MAX_U32 = (1 << 32) - 1
+_MAX_U64 = (1 << 64) - 1
+
+
 def _require_non_empty(field_name: str, value: object) -> str:
     if not isinstance(value, str) or not value.strip():
         raise WebRtcAdapterError(f"{field_name} must not be empty")
+    if any("\ud800" <= character <= "\udfff" for character in value):
+        raise WebRtcAdapterError(f"{field_name} must contain Unicode scalar values")
     return value
 
 
@@ -30,24 +37,39 @@ def _require_exact_non_empty(field_name: str, value: object) -> str:
     return normalized
 
 
-def _positive_int(field_name: str, value: object) -> int:
+def _positive_int(field_name: str, value: object, *, maximum: int = _MAX_U64) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
         raise WebRtcAdapterError(f"{field_name} must be a positive integer")
+    if value > maximum:
+        raise WebRtcAdapterError(f"{field_name} must not exceed {maximum}")
     return value
 
 
-def _non_negative_int(field_name: str, value: object) -> int:
+def _non_negative_int(field_name: str, value: object, *, maximum: int = _MAX_U64) -> int:
     if isinstance(value, bool) or not isinstance(value, int):
         raise WebRtcAdapterError(f"{field_name} must be an integer")
     if value < 0:
         raise WebRtcAdapterError(f"{field_name} must be non-negative")
+    if value > maximum:
+        raise WebRtcAdapterError(f"{field_name} must not exceed {maximum}")
     return value
 
 
 def _optional_non_negative_int(field_name: str, value: object | None) -> int | None:
     if value is None:
         return None
-    return _non_negative_int(field_name, value)
+    return _non_negative_int(field_name, value, maximum=_MAX_U16)
+
+
+def _require_sdp(field_name: str, value: object) -> str:
+    sdp = _require_non_empty(field_name, value)
+    if any(
+        (ord(character) < 0x20 and character not in "\t\r\n")
+        or ord(character) == 0x7F
+        for character in sdp
+    ):
+        raise WebRtcAdapterError(f"{field_name} contains invalid control characters")
+    return sdp
 
 
 @dataclass(frozen=True, slots=True)
@@ -58,7 +80,7 @@ class WebRtcSessionDescription:
     def __post_init__(self) -> None:
         if self.type not in {"offer", "answer", "pranswer"}:
             raise WebRtcAdapterError(f"unsupported session description type {self.type!r}")
-        _require_non_empty("sdp", self.sdp)
+        _require_sdp("sdp", self.sdp)
 
     def contract(self) -> dict[str, object]:
         return {"type": self.type, "sdp": self.sdp}
@@ -132,9 +154,13 @@ class WebRtcSession:
         object.__setattr__(
             self,
             "sample_rate_hz",
-            _positive_int("sample_rate_hz", self.sample_rate_hz),
+            _positive_int("sample_rate_hz", self.sample_rate_hz, maximum=_MAX_U32),
         )
-        object.__setattr__(self, "channels", _positive_int("channels", self.channels))
+        object.__setattr__(
+            self,
+            "channels",
+            _positive_int("channels", self.channels, maximum=_MAX_U16),
+        )
         try:
             ice_candidates = tuple(self.ice_candidates)
         except TypeError as error:

@@ -214,6 +214,52 @@ def test_silero_vad_rejects_coercive_numeric_and_state_values(monkeypatch) -> No
         authority.evaluate(object())  # type: ignore[arg-type]
 
 
+def test_silero_vad_rejects_overflow_and_unstable_stream_state(monkeypatch) -> None:
+    graphblocks_silero_vad = _import_silero_vad(monkeypatch)
+
+    invalid_frames = (
+        lambda: graphblocks_silero_vad.SileroVadFrame(
+            "mic",
+            1 << 64,
+            0,
+            32,
+            0.5,
+        ),
+        lambda: graphblocks_silero_vad.SileroVadFrame(
+            "mic",
+            1,
+            (1 << 64) - 1,
+            32,
+            0.5,
+        ),
+        lambda: graphblocks_silero_vad.SileroVadFrame(
+            "mic",
+            1,
+            0,
+            32,
+            10**1_000,
+        ),
+        lambda: graphblocks_silero_vad.SileroVadFrame(
+            " mic ",
+            1,
+            0,
+            32,
+            0.5,
+        ),
+    )
+    for factory in invalid_frames:
+        with pytest.raises(graphblocks_silero_vad.SileroVadAdapterError):
+            factory()
+
+    with pytest.raises(graphblocks_silero_vad.SileroVadAdapterError):
+        graphblocks_silero_vad.SileroVadAuthority(
+            "silero-local",
+            speech_threshold=10**1_000,
+        )
+    authority = graphblocks_silero_vad.SileroVadAuthority("silero-local")
+    assert authority._states == {}
+
+
 def test_silero_vad_package_is_cataloged_as_optional_voice_adapter(monkeypatch) -> None:
     _import_silero_vad(monkeypatch)
     rows = {row["distribution"]: row for row in package_rows(load_package_catalog())}

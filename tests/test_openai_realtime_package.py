@@ -337,6 +337,46 @@ def test_openai_realtime_projects_g711_input_and_output_format(monkeypatch) -> N
     }
 
 
+def test_openai_realtime_rejects_unsafe_urls_sdp_and_factory_inputs(monkeypatch) -> None:
+    graphblocks_openai_realtime = _import_openai_realtime(monkeypatch)
+    config = graphblocks_openai_realtime.OpenAIRealtimeSessionConfig(
+        model="gpt-realtime-2",
+        instructions="Answer using audio.",
+    )
+
+    for url in (
+        "https://api.openai.com\x7f",
+        "https://api.openai.com/\ud800",
+    ):
+        with pytest.raises(
+            graphblocks_openai_realtime.OpenAIRealtimeAdapterError,
+            match="api_base_url",
+        ):
+            graphblocks_openai_realtime.OpenAIRealtimeClientSecretRequest(
+                config,
+                api_base_url=url,
+            )
+    for sdp in ("v=0\r\n\x00", "v=0\r\n\x7f"):
+        with pytest.raises(
+            graphblocks_openai_realtime.OpenAIRealtimeAdapterError,
+            match="control",
+        ):
+            graphblocks_openai_realtime.OpenAIRealtimeWebRtcCall(config, sdp)
+        with pytest.raises(
+            graphblocks_openai_realtime.OpenAIRealtimeAdapterError,
+            match="control",
+        ):
+            graphblocks_openai_realtime.OpenAIRealtimeWebRtcCall(
+                config,
+                "v=0\r\n",
+            ).answer_description(sdp)
+    with pytest.raises(
+        graphblocks_openai_realtime.OpenAIRealtimeAdapterError,
+        match="session_config",
+    ):
+        graphblocks_openai_realtime.OpenAIRealtimeEvent.session_update(object())
+
+
 def test_openai_realtime_package_is_cataloged_as_optional_voice_provider_adapter(monkeypatch) -> None:
     _import_openai_realtime(monkeypatch)
     rows = {row["distribution"]: row for row in package_rows(load_package_catalog())}
