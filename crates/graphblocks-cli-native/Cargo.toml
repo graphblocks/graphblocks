@@ -9,6 +9,7 @@ rust-version.workspace = true
 [dependencies]
 graphblocks-compiler = { version = "0.1.0", path = "../graphblocks-compiler" }
 graphblocks-runtime-core = { version = "0.1.0", path = "../graphblocks-runtime-core" }
+graphblocks-schema = { version = "0.1.0", path = "../graphblocks-schema" }
 serde = "1.0"
 serde_json = { version = "1.0", features = ["arbitrary_precision"] }
 serde_yaml = "0.9"

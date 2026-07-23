@@ -2,8 +2,11 @@ use graphblocks_compiler::compiler::compile_graph_with_catalog;
 use graphblocks_compiler::diagnostics::Diagnostic;
 use graphblocks_runtime_core::stdlib_blocks::stdlib_block_catalog;
 use graphblocks_runtime_core::stdlib_runtime::run_stdlib_graph_with_options_json;
+use graphblocks_schema::{parse_canonical_json, validate_canonical_json_depth};
 use serde::Deserialize;
-use serde_json::Value;
+use serde::de::{self, MapAccess, SeqAccess, Visitor};
+use serde_json::{Map, Number, Value};
+use std::collections::BTreeSet;
 use std::error::Error;
 use std::fmt;
 
@@ -43,6 +46,124 @@ impl fmt::Display for NativeDocumentError {
 
 impl Error for NativeDocumentError {}
 
+struct StrictYamlJsonValue(Value);
+
+impl<'de> Deserialize<'de> for StrictYamlJsonValue {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        struct StrictYamlJsonValueVisitor;
+
+        impl<'de> Visitor<'de> for StrictYamlJsonValueVisitor {
+            type Value = StrictYamlJsonValue;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+                formatter.write_str("a YAML value representable as canonical JSON")
+            }
+
+            fn visit_bool<E>(self, value: bool) -> Result<Self::Value, E> {
+                Ok(StrictYamlJsonValue(Value::Bool(value)))
+            }
+
+            fn visit_i64<E>(self, value: i64) -> Result<Self::Value, E> {
+                Ok(StrictYamlJsonValue(Value::Number(value.into())))
+            }
+
+            fn visit_i128<E>(self, value: i128) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                Number::from_i128(value)
+                    .map(Value::Number)
+                    .map(StrictYamlJsonValue)
+                    .ok_or_else(|| E::custom("YAML integer is not representable as JSON"))
+            }
+
+            fn visit_u64<E>(self, value: u64) -> Result<Self::Value, E> {
+                Ok(StrictYamlJsonValue(Value::Number(value.into())))
+            }
+
+            fn visit_u128<E>(self, value: u128) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                Number::from_u128(value)
+                    .map(Value::Number)
+                    .map(StrictYamlJsonValue)
+                    .ok_or_else(|| E::custom("YAML integer is not representable as JSON"))
+            }
+
+            fn visit_f64<E>(self, value: f64) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                Number::from_f64(value)
+                    .map(Value::Number)
+                    .map(StrictYamlJsonValue)
+                    .ok_or_else(|| E::custom("non-finite YAML number is not representable as JSON"))
+            }
+
+            fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                self.visit_string(value.to_owned())
+            }
+
+            fn visit_string<E>(self, value: String) -> Result<Self::Value, E> {
+                Ok(StrictYamlJsonValue(Value::String(value)))
+            }
+
+            fn visit_none<E>(self) -> Result<Self::Value, E> {
+                Ok(StrictYamlJsonValue(Value::Null))
+            }
+
+            fn visit_some<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+            where
+                D: serde::Deserializer<'de>,
+            {
+                StrictYamlJsonValue::deserialize(deserializer)
+            }
+
+            fn visit_unit<E>(self) -> Result<Self::Value, E> {
+                Ok(StrictYamlJsonValue(Value::Null))
+            }
+
+            fn visit_seq<A>(self, mut sequence: A) -> Result<Self::Value, A::Error>
+            where
+                A: SeqAccess<'de>,
+            {
+                let mut values = Vec::with_capacity(sequence.size_hint().unwrap_or(0));
+                while let Some(value) = sequence.next_element::<StrictYamlJsonValue>()? {
+                    values.push(value.0);
+                }
+                Ok(StrictYamlJsonValue(Value::Array(values)))
+            }
+
+            fn visit_map<A>(self, mut mapping: A) -> Result<Self::Value, A::Error>
+            where
+                A: MapAccess<'de>,
+            {
+                let mut keys = BTreeSet::new();
+                let mut values = Map::with_capacity(mapping.size_hint().unwrap_or(0));
+                while let Some(key) = mapping.next_key::<String>()? {
+                    if !keys.insert(key.clone()) {
+                        return Err(de::Error::custom(format!(
+                            "duplicate YAML mapping key {key:?}"
+                        )));
+                    }
+                    let value = mapping.next_value::<StrictYamlJsonValue>()?;
+                    values.insert(key, value.0);
+                }
+                Ok(StrictYamlJsonValue(Value::Object(values)))
+            }
+        }
+
+        deserializer.deserialize_any(StrictYamlJsonValueVisitor)
+    }
+}
+
 pub fn load_single_graph_document(input: &str) -> Result<Value, NativeDocumentError> {
     load_graph_document(input, None)
 }
@@ -57,18 +178,24 @@ pub fn load_graph_document(
     }
 
     let mut documents = if matches!(trimmed.as_bytes().first(), Some(b'{' | b'[')) {
-        vec![serde_json::from_str::<Value>(trimmed).map_err(|error| {
-            NativeDocumentError::ParseFailed {
+        vec![
+            parse_canonical_json(trimmed).map_err(|error| NativeDocumentError::ParseFailed {
                 message: format!("invalid JSON: {error}"),
-            }
-        })?]
+            })?,
+        ]
     } else {
         let mut documents = Vec::new();
         for document in serde_yaml::Deserializer::from_str(input) {
-            let value =
-                Value::deserialize(document).map_err(|error| NativeDocumentError::ParseFailed {
+            let value = StrictYamlJsonValue::deserialize(document)
+                .map(|value| value.0)
+                .map_err(|error| NativeDocumentError::ParseFailed {
                     message: error.to_string(),
                 })?;
+            validate_canonical_json_depth(&value).map_err(|error| {
+                NativeDocumentError::ParseFailed {
+                    message: format!("invalid YAML value: {error}"),
+                }
+            })?;
             if !value.is_null() {
                 documents.push(value);
             }

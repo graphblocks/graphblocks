@@ -4,6 +4,7 @@ use graphblocks_cli_native::{
     NativeCliMode, load_graph_document, run_compiler_workflow, run_stdlib_workflow_with_options,
 };
 use graphblocks_compiler::diagnostics::Severity;
+use graphblocks_schema::parse_canonical_json;
 use serde_json::{Value, json};
 
 fn main() {
@@ -64,7 +65,7 @@ fn main() {
                     eprintln!("--callback-receipt-json requires a JSON object argument");
                     std::process::exit(2);
                 };
-                match serde_json::from_str::<Value>(&value) {
+                match parse_canonical_json(&value) {
                     Ok(receipt) if receipt.is_object() => {
                         runtime_options.insert("callbackReceipt".to_owned(), receipt);
                     }
@@ -117,7 +118,7 @@ fn main() {
     };
 
     if command.as_deref() == Some("run") {
-        let inputs: Value = match serde_json::from_str::<Value>(&input_json) {
+        let inputs: Value = match parse_canonical_json(&input_json) {
             Ok(value) if value.is_object() => value,
             Ok(_) => {
                 eprintln!("--input-json must decode to a JSON object");

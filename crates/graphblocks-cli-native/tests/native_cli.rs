@@ -114,6 +114,75 @@ fn native_loader_preserves_strict_json_numbers_without_yaml_coercion() {
 }
 
 #[test]
+fn native_loader_rejects_duplicate_json_keys_at_any_depth() {
+    let error = load_single_graph_document(
+        r#"{
+            "kind":"Graph",
+            "metadata":{"name":"first","name":"second"}
+        }"#,
+    )
+    .expect_err("duplicate JSON keys must fail closed");
+
+    assert!(
+        matches!(
+            error,
+            NativeDocumentError::ParseFailed { ref message }
+                if message.contains("duplicate JSON object key \"name\"")
+        ),
+        "{error}"
+    );
+}
+
+#[test]
+fn native_loader_rejects_duplicate_yaml_keys_at_any_depth() {
+    let error = load_single_graph_document(
+        r#"
+kind: Graph
+metadata:
+  name: first
+  name: second
+"#,
+    )
+    .expect_err("duplicate YAML keys must fail closed");
+
+    assert!(
+        matches!(
+            error,
+            NativeDocumentError::ParseFailed { ref message }
+                if message.contains("duplicate YAML mapping key \"name\"")
+        ),
+        "{error}"
+    );
+}
+
+#[test]
+fn native_loader_rejects_json_and_yaml_beyond_canonical_depth_limit() {
+    let json_document = format!("{}null{}", r#"{"nested":"#.repeat(65), "}".repeat(65));
+    let json_error =
+        load_single_graph_document(&json_document).expect_err("over-deep JSON must fail closed");
+    assert!(
+        matches!(
+            json_error,
+            NativeDocumentError::ParseFailed { ref message }
+                if message.contains("must not exceed 64")
+        ),
+        "{json_error}"
+    );
+
+    let yaml_document = format!("{}leaf\n", "nested: {".repeat(65)) + &"}".repeat(65);
+    let yaml_error =
+        load_single_graph_document(&yaml_document).expect_err("over-deep YAML must fail closed");
+    assert!(
+        matches!(
+            yaml_error,
+            NativeDocumentError::ParseFailed { ref message }
+                if message.contains("must not exceed 64")
+        ),
+        "{yaml_error}"
+    );
+}
+
+#[test]
 fn native_loader_rejects_multi_document_yaml_without_graph_selection() {
     let error = load_single_graph_document(
         r#"
@@ -423,6 +492,30 @@ fn native_binary_run_accepts_input_json() -> Result<(), Box<dyn std::error::Erro
         payload.pointer("/outputs/prompt").and_then(Value::as_str),
         Some("CLI ok"),
     );
+    Ok(())
+}
+
+#[test]
+fn native_binary_run_rejects_duplicate_input_json_keys() -> Result<(), Box<dyn std::error::Error>> {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_graphblocks-native"))
+        .args([
+            "run",
+            "--input-json",
+            r#"{"message":{"text":"first","text":"second"}}"#,
+        ])
+        .stdin(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+    let stdin = child
+        .stdin
+        .as_mut()
+        .ok_or("native binary stdin pipe was not available")?;
+    stdin.write_all(serde_json::to_string(&prompt_graph("CLI {message.text}"))?.as_bytes())?;
+
+    let output = child.wait_with_output()?;
+
+    assert_eq!(output.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("duplicate JSON object key \"text\""));
     Ok(())
 }
 
