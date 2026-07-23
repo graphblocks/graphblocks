@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import re
 from dataclasses import replace
+from decimal import Decimal
 from math import nan
+from types import MappingProxyType
 
 import graphblocks
 import pytest
@@ -1023,6 +1025,84 @@ def test_tool_schema_registry_validates_required_nested_arguments() -> None:
     assert str(mismatch.value) == "schemas/ProcessRun@1 expected string at $.cmd[1]"
 
 
+def test_tool_schema_registry_accepts_immutable_objects_and_snapshots_nodes() -> None:
+    properties = {"cmd": JsonSchemaNode.array(JsonSchemaNode.string())}
+    node = JsonSchemaNode(
+        expected_type="object",
+        properties=properties,
+        required=frozenset({"cmd"}),
+    )
+    registry = ToolSchemaRegistry((JsonSchema("schemas/ProcessRun@1", node),))
+    properties["cmd"] = JsonSchemaNode.integer()
+
+    registry.validate(
+        "schemas/ProcessRun@1",
+        MappingProxyType({"cmd": ("echo", "hello")}),
+    )
+    with pytest.raises(TypeError):
+        node.properties["forged"] = JsonSchemaNode.string()
+
+
+def test_tool_schema_registry_accepts_canonical_decimals_and_rejects_non_finite_numbers(
+) -> None:
+    registry = ToolSchemaRegistry(
+        (
+            JsonSchema(
+                "schemas/Score@1",
+                JsonSchemaNode.number(),
+            ),
+        )
+    )
+
+    registry.validate("schemas/Score@1", Decimal("1e400"))
+    for value in (nan, float("inf"), Decimal("NaN"), Decimal("Infinity")):
+        with pytest.raises(
+            ToolSchemaValidationError,
+            match="expected number",
+        ):
+            registry.validate("schemas/Score@1", value)
+
+
+def test_tool_schema_registry_rejects_forged_embedded_records() -> None:
+    with pytest.raises(
+        ToolSchemaRegistryError,
+        match="schemas must contain JsonSchema records",
+    ):
+        ToolSchemaRegistry((object(),))  # type: ignore[arg-type]
+    with pytest.raises(
+        ToolSchemaRegistryError,
+        match="schema root must be a JsonSchemaNode",
+    ):
+        ToolSchemaRegistry(
+            (JsonSchema("schemas/Forged@1", object()),)  # type: ignore[arg-type]
+        )
+    with pytest.raises(
+        ToolSchemaRegistryError,
+        match="schema properties must contain JsonSchemaNode records",
+    ):
+        JsonSchemaNode(
+            expected_type="object",
+            properties={"forged": object()},  # type: ignore[dict-item]
+        )
+    with pytest.raises(
+        ToolSchemaRegistryError,
+        match="schema id must be a string",
+    ):
+        ToolSchemaRegistry(
+            (
+                JsonSchema(
+                    object(),  # type: ignore[arg-type]
+                    JsonSchemaNode.object(),
+                ),
+            )
+        )
+    with pytest.raises(
+        ToolSchemaRegistryError,
+        match="invalid JSON schema type",
+    ):
+        JsonSchemaNode(expected_type=[])  # type: ignore[arg-type]
+
+
 def test_tool_schema_registry_reports_missing_and_duplicate_schemas() -> None:
     with pytest.raises(ToolSchemaRegistryError) as duplicate:
         ToolSchemaRegistry(
@@ -1163,6 +1243,11 @@ def test_tool_approval_request_rejects_non_integer_counters() -> None:
         ({"revision": True}, "approval revision must be an integer"),
         ({"requested_at": False}, "approval requested_at must be an integer"),
         ({"expires_at": True}, "approval expires_at must be an integer"),
+        ({"revision": 1 << 32}, "approval revision must be at most"),
+        (
+            {"expires_at": 1 << 64},
+            "approval expires_at must be at most",
+        ),
     )
 
     for overrides, message in cases:
@@ -1178,6 +1263,14 @@ def test_tool_approval_request_rejects_non_integer_counters() -> None:
         (
             lambda: ToolApprovalRecord.requested(request).invalidate(False),
             "approval invalidated_at must be an integer",
+        ),
+        (
+            lambda: ToolApprovalRecord.approve(
+                request,
+                approver_id="admin-1",
+                decided_at=1 << 64,
+            ),
+            "approval decided_at must be at most",
         ),
     )
     for construct, message in record_cases:
@@ -1284,6 +1377,8 @@ def test_tool_lifecycle_counters_are_non_negative_and_positive() -> None:
         replace(call, revision=0)
     with pytest.raises(ValueError, match="tool call revision must be an integer"):
         replace(call, revision=True)  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="tool call revision must be at most"):
+        replace(call, revision=1 << 32)
     with pytest.raises(ValueError, match="tool call tool_call_id must not be empty"):
         replace(call, tool_call_id=" ")
     with pytest.raises(ValueError, match="tool call arguments_digest must not be empty"):
@@ -1454,6 +1549,17 @@ def test_tool_call_draft_append_rejects_non_string_argument_fragment() -> None:
     assert draft.argument_fragments == ()
     assert draft.sequence == 0
     assert draft.status == "proposed"
+
+
+def test_tool_call_revision_exhaustion_is_atomic() -> None:
+    max_revision = (1 << 32) - 1
+    call = replace(_search_call(_resolved_search_tool()), revision=max_revision)
+
+    with pytest.raises(ToolCallError, match="tool call revision is exhausted"):
+        call.revise_arguments({"query": "mutated"})
+
+    assert call.revision == max_revision
+    assert call.arguments == {"query": "runtime"}
 
 
 def _resolved_search_tool() -> ResolvedTool:
@@ -3944,6 +4050,18 @@ def test_streaming_tool_result_delta_is_not_a_durable_result() -> None:
     assert event.into_result() is None
 
 
+def test_tool_result_event_rejects_sequence_beyond_uint64() -> None:
+    with pytest.raises(
+        ValueError,
+        match="tool result event sequence must be at most",
+    ):
+        ToolResultEvent.started(
+            "call-1",
+            1 << 64,
+            started_at="2026-06-23T00:00:00Z",
+        )
+
+
 def test_tool_result_stream_state_accepts_draft_projection_and_final_result() -> None:
     stream = ToolResultStreamState()
     started = ToolResultEvent.started("call-1", 1, started_at="2026-06-23T00:00:00Z")
@@ -4059,6 +4177,31 @@ def test_tool_result_stream_constructor_replays_and_validates_seed_state() -> No
     ):
         ToolResultStreamState(
             last_sequences={"call-1": 2},
+            accepted_events=[started],
+        )
+
+
+def test_tool_result_stream_rejects_coercive_and_duplicate_restored_summaries() -> None:
+    started = ToolResultEvent.started(
+        "call-1",
+        1,
+        started_at="2026-06-23T00:00:00Z",
+    )
+
+    with pytest.raises(
+        ToolResultStreamError,
+        match="last_sequences entries must use positive integer sequences",
+    ):
+        ToolResultStreamState(
+            last_sequences={"call-1": True},
+            accepted_events=[started],
+        )
+    with pytest.raises(
+        ToolResultStreamError,
+        match="started_tool_calls must not contain duplicates",
+    ):
+        ToolResultStreamState(
+            started_tool_calls=["call-1", "call-1"],
             accepted_events=[started],
         )
 

@@ -4,6 +4,8 @@ import json
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
+from decimal import Decimal
+import math
 from types import MappingProxyType
 from typing import Literal
 
@@ -142,6 +144,11 @@ VALID_TOOL_EXECUTION_CANCELLATION_POLICIES = frozenset(
     {"cancel_dependents", "cancel_all", "allow_independent_calls"}
 )
 VALID_TOOL_APPROVAL_STATUSES = frozenset({"requested", "approved", "denied", "invalidated"})
+_VALID_JSON_SCHEMA_TYPES = frozenset(
+    {"null", "boolean", "integer", "number", "string", "array", "object"}
+)
+_MAX_TOOL_CALL_REVISION = (1 << 32) - 1
+_MAX_TOOL_SEQUENCE = (1 << 64) - 1
 
 
 class ToolCallError(RuntimeError):
@@ -269,6 +276,36 @@ def _validate_positive_integer(owner: str, field_name: str, value: object) -> in
     return value
 
 
+def _validate_bounded_positive_integer(
+    owner: str,
+    field_name: str,
+    value: object,
+    *,
+    maximum: int,
+) -> int:
+    value = _validate_positive_integer(owner, field_name, value)
+    if value > maximum:
+        raise ValueError(
+            f"{owner} {field_name} must be at most {maximum}"
+        )
+    return value
+
+
+def _validate_bounded_non_negative_integer(
+    owner: str,
+    field_name: str,
+    value: object,
+    *,
+    maximum: int,
+) -> int:
+    value = _validate_non_negative_integer(owner, field_name, value)
+    if value > maximum:
+        raise ValueError(
+            f"{owner} {field_name} must be at most {maximum}"
+        )
+    return value
+
+
 def _validate_string_collection(owner: str, field_name: str, value: object) -> frozenset[str]:
     if isinstance(value, str):
         raise ValueError(f"{owner} {field_name} must be a collection of strings")
@@ -338,9 +375,64 @@ def _parse_iso_datetime(value: str, *, owner: str, field: str) -> datetime:
 @dataclass(frozen=True, slots=True)
 class JsonSchemaNode:
     expected_type: JsonSchemaType | None = None
-    properties: dict[str, JsonSchemaNode] = field(default_factory=dict)
+    properties: Mapping[str, JsonSchemaNode] = field(default_factory=dict)
     required: frozenset[str] = field(default_factory=frozenset)
     items: JsonSchemaNode | None = None
+
+    def __post_init__(self) -> None:
+        if (
+            self.expected_type is not None
+            and (
+                not isinstance(self.expected_type, str)
+                or self.expected_type not in _VALID_JSON_SCHEMA_TYPES
+            )
+        ):
+            raise ToolSchemaRegistryError(
+                f"invalid JSON schema type {self.expected_type!r}"
+            )
+        if not isinstance(self.properties, Mapping):
+            raise ToolSchemaRegistryError(
+                "schema properties must be a mapping"
+            )
+        properties = dict(self.properties)
+        if any(not isinstance(key, str) for key in properties):
+            raise ToolSchemaRegistryError(
+                "schema property names must be strings"
+            )
+        if any(
+            not isinstance(schema, JsonSchemaNode)
+            for schema in properties.values()
+        ):
+            raise ToolSchemaRegistryError(
+                "schema properties must contain JsonSchemaNode records"
+            )
+        if isinstance(self.required, (str, bytes, bytearray, Mapping)):
+            raise ToolSchemaRegistryError(
+                "schema required properties must be a collection of strings"
+            )
+        try:
+            required = frozenset(self.required)
+        except TypeError as error:
+            raise ToolSchemaRegistryError(
+                "schema required properties must be a collection of strings"
+            ) from error
+        if any(not isinstance(name, str) for name in required):
+            raise ToolSchemaRegistryError(
+                "schema required properties must be a collection of strings"
+            )
+        if self.items is not None and not isinstance(
+            self.items,
+            JsonSchemaNode,
+        ):
+            raise ToolSchemaRegistryError(
+                "schema items must be a JsonSchemaNode"
+            )
+        object.__setattr__(
+            self,
+            "properties",
+            MappingProxyType(properties),
+        )
+        object.__setattr__(self, "required", required)
 
     @classmethod
     def any(cls) -> JsonSchemaNode:
@@ -390,12 +482,30 @@ class JsonSchema:
 @dataclass(frozen=True, slots=True)
 class ToolSchemaRegistry:
     schemas: tuple[JsonSchema, ...]
-    _schemas_by_id: dict[str, JsonSchema] = field(init=False, repr=False)
+    _schemas_by_id: Mapping[str, JsonSchema] = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "schemas", tuple(self.schemas))
+        if isinstance(self.schemas, (str, bytes, bytearray, Mapping)):
+            raise ToolSchemaRegistryError(
+                "schemas must contain JsonSchema records"
+            )
+        try:
+            schemas = tuple(self.schemas)
+        except TypeError as error:
+            raise ToolSchemaRegistryError(
+                "schemas must contain JsonSchema records"
+            ) from error
+        if any(not isinstance(schema, JsonSchema) for schema in schemas):
+            raise ToolSchemaRegistryError(
+                "schemas must contain JsonSchema records"
+            )
+        object.__setattr__(self, "schemas", schemas)
         schemas_by_id: dict[str, JsonSchema] = {}
         for schema in self.schemas:
+            if not isinstance(schema.root, JsonSchemaNode):
+                raise ToolSchemaRegistryError(
+                    "schema root must be a JsonSchemaNode"
+                )
             try:
                 SchemaId.parse(schema.schema_id)
             except SchemaIdError as error:
@@ -403,7 +513,11 @@ class ToolSchemaRegistry:
             if schema.schema_id in schemas_by_id:
                 raise ToolSchemaRegistryError(f"duplicate schema {schema.schema_id}")
             schemas_by_id[schema.schema_id] = schema
-        object.__setattr__(self, "_schemas_by_id", schemas_by_id)
+        object.__setattr__(
+            self,
+            "_schemas_by_id",
+            MappingProxyType(schemas_by_id),
+        )
 
     def validate(self, schema_id: str, value: object) -> None:
         schema = self._schemas_by_id.get(schema_id)
@@ -419,17 +533,26 @@ class ToolSchemaRegistry:
                 or (schema.expected_type == "integer" and isinstance(value, int) and not isinstance(value, bool))
                 or (
                     schema.expected_type == "number"
-                    and isinstance(value, (int, float))
-                    and not isinstance(value, bool)
+                    and (
+                        (isinstance(value, int) and not isinstance(value, bool))
+                        or (
+                            isinstance(value, float)
+                            and math.isfinite(value)
+                        )
+                        or (
+                            isinstance(value, Decimal)
+                            and value.is_finite()
+                        )
+                    )
                 )
                 or (schema.expected_type == "string" and isinstance(value, str))
                 or (schema.expected_type == "array" and isinstance(value, (list, tuple)))
-                or (schema.expected_type == "object" and isinstance(value, dict))
+                or (schema.expected_type == "object" and isinstance(value, Mapping))
             )
             if not matches:
                 raise ToolSchemaValidationError(f"{schema_id} expected {schema.expected_type} at {path}")
 
-        if schema.expected_type == "object" and isinstance(value, dict):
+        if schema.expected_type == "object" and isinstance(value, Mapping):
             for required in sorted(schema.required):
                 if required not in value:
                     raise ToolSchemaValidationError(f"{schema_id} missing required property {required} at {path}")
@@ -757,9 +880,24 @@ class ToolApprovalRequest:
             "principal_id",
         ):
             _validate_exact_non_empty_string("approval", field_name, getattr(self, field_name))
-        _validate_positive_integer("approval", "revision", self.revision)
-        _validate_non_negative_integer("approval", "requested_at", self.requested_at)
-        _validate_non_negative_integer("approval", "expires_at", self.expires_at)
+        _validate_bounded_positive_integer(
+            "approval",
+            "revision",
+            self.revision,
+            maximum=_MAX_TOOL_CALL_REVISION,
+        )
+        _validate_bounded_non_negative_integer(
+            "approval",
+            "requested_at",
+            self.requested_at,
+            maximum=_MAX_TOOL_SEQUENCE,
+        )
+        _validate_bounded_non_negative_integer(
+            "approval",
+            "expires_at",
+            self.expires_at,
+            maximum=_MAX_TOOL_SEQUENCE,
+        )
         if self.expires_at <= self.requested_at:
             raise ValueError("approval expiration must be after request time")
 
@@ -777,8 +915,18 @@ class ToolApprovalRequest:
         try:
             _validate_exact_non_empty_string("approval", "approval_id", approval_id)
             _validate_exact_non_empty_string("approval", "principal_id", principal_id)
-            _validate_non_negative_integer("approval", "requested_at", requested_at)
-            _validate_non_negative_integer("approval", "expires_at", expires_at)
+            _validate_bounded_non_negative_integer(
+                "approval",
+                "requested_at",
+                requested_at,
+                maximum=_MAX_TOOL_SEQUENCE,
+            )
+            _validate_bounded_non_negative_integer(
+                "approval",
+                "expires_at",
+                expires_at,
+                maximum=_MAX_TOOL_SEQUENCE,
+            )
         except ValueError as error:
             raise ToolApprovalError(str(error)) from error
         if not isinstance(resolved_tool, ResolvedTool):
@@ -838,14 +986,24 @@ class ToolApprovalRecord:
         if self.status == "invalidated" and self.invalidated_at is None:
             raise ValueError("invalidated approval record requires invalidated_at")
         if self.decided_at is not None:
-            _validate_non_negative_integer("approval", "decided_at", self.decided_at)
+            _validate_bounded_non_negative_integer(
+                "approval",
+                "decided_at",
+                self.decided_at,
+                maximum=_MAX_TOOL_SEQUENCE,
+            )
             if self.status in {"approved", "denied"}:
                 if self.decided_at < self.request.requested_at:
                     raise ValueError("approval decided_at must not be before requested_at")
                 if self.decided_at >= self.request.expires_at:
                     raise ValueError("approval decided_at must be before expires_at")
         if self.invalidated_at is not None:
-            _validate_non_negative_integer("approval", "invalidated_at", self.invalidated_at)
+            _validate_bounded_non_negative_integer(
+                "approval",
+                "invalidated_at",
+                self.invalidated_at,
+                maximum=_MAX_TOOL_SEQUENCE,
+            )
             if self.invalidated_at < self.request.requested_at:
                 raise ValueError("approval invalidated_at must not be before requested_at")
 
@@ -1173,7 +1331,12 @@ class ToolCall:
             _validate_exact_non_empty_string("tool call", field_name, getattr(self, field_name))
         if self.status not in VALID_TOOL_CALL_STATUSES:
             raise ValueError(f"invalid tool call status {self.status}")
-        _validate_positive_integer("tool call", "revision", self.revision)
+        _validate_bounded_positive_integer(
+            "tool call",
+            "revision",
+            self.revision,
+            maximum=_MAX_TOOL_CALL_REVISION,
+        )
         if isinstance(self.depends_on, str):
             raise ValueError("tool call depends_on must be a collection of strings")
         try:
@@ -1245,6 +1408,8 @@ class ToolCall:
     def revise_arguments(self, arguments: object) -> ToolCall:
         if self.status != "validated":
             raise ToolCallError("tool arguments cannot be revised after validation")
+        if self.revision == _MAX_TOOL_CALL_REVISION:
+            raise ToolCallError("tool call revision is exhausted")
         try:
             arguments_digest = canonical_hash(arguments)
         except (TypeError, ValueError) as error:
@@ -2477,7 +2642,12 @@ class ToolResultEvent:
         _validate_non_empty_string("tool result event", "tool_call_id", self.tool_call_id)
         if self.kind not in VALID_TOOL_RESULT_EVENT_KINDS:
             raise ValueError(f"invalid tool result event kind {self.kind}")
-        _validate_positive_integer("tool result event", "sequence", self.sequence)
+        _validate_bounded_positive_integer(
+            "tool result event",
+            "sequence",
+            self.sequence,
+            maximum=_MAX_TOOL_SEQUENCE,
+        )
         try:
             if isinstance(self.output, str):
                 raise TypeError
@@ -2592,13 +2762,56 @@ class ToolResultStreamState:
             )
         try:
             supplied_last_sequences = dict(self.last_sequences)
-            supplied_started = set(self.started_tool_calls)
+            supplied_started_items = tuple(self.started_tool_calls)
             supplied_final_results = dict(self.final_results)
             supplied_events = tuple(self.accepted_events)
         except (TypeError, ValueError) as error:
             raise ToolResultStreamError(
                 "tool result stream state contains invalid collections"
             ) from error
+        if any(
+            not isinstance(tool_call_id, str)
+            or not tool_call_id.strip()
+            or tool_call_id != tool_call_id.strip()
+            or not isinstance(sequence, int)
+            or isinstance(sequence, bool)
+            or sequence < 1
+            or sequence > _MAX_TOOL_SEQUENCE
+            for tool_call_id, sequence in supplied_last_sequences.items()
+        ):
+            raise ToolResultStreamError(
+                "tool result stream last_sequences entries must use positive "
+                "integer sequences and non-empty tool call ids"
+            )
+        if any(
+            not isinstance(tool_call_id, str)
+            or not tool_call_id.strip()
+            or tool_call_id != tool_call_id.strip()
+            for tool_call_id in supplied_started_items
+        ):
+            raise ToolResultStreamError(
+                "tool result stream started_tool_calls must contain "
+                "non-empty tool call ids"
+            )
+        if len(set(supplied_started_items)) != len(
+            supplied_started_items
+        ):
+            raise ToolResultStreamError(
+                "tool result stream started_tool_calls must not contain duplicates"
+            )
+        supplied_started = set(supplied_started_items)
+        if any(
+            not isinstance(tool_call_id, str)
+            or not tool_call_id.strip()
+            or tool_call_id != tool_call_id.strip()
+            or not isinstance(result, ToolResult)
+            or result.tool_call_id != tool_call_id
+            for tool_call_id, result in supplied_final_results.items()
+        ):
+            raise ToolResultStreamError(
+                "tool result stream final_results must map non-empty tool "
+                "call ids to matching ToolResult values"
+            )
         if any(not isinstance(event, ToolResultEvent) for event in supplied_events):
             raise ToolResultStreamError(
                 "tool result stream accepted_events must contain ToolResultEvent values"
