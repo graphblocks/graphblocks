@@ -23,10 +23,28 @@ def _validate_identifier(identifier: object) -> None:
     if (
         not isinstance(identifier, str)
         or not identifier
+        or not identifier.isascii()
         or not identifier.replace("_", "").isalnum()
         or identifier[0].isdigit()
     ):
         raise PostgresBudgetAdapterError(f"invalid SQL identifier: {identifier!r}")
+
+
+def _validate_budget_value(
+    value: object,
+    expected_type: type[object],
+    label: str,
+) -> None:
+    if not isinstance(value, expected_type):
+        raise PostgresBudgetAdapterError(f"{label} must be a {expected_type.__name__}")
+
+
+def _resolve_budget_schema(schema: object) -> PostgresBudgetSchema:
+    if schema is None:
+        return PostgresBudgetSchema()
+    if not isinstance(schema, PostgresBudgetSchema):
+        raise PostgresBudgetAdapterError("schema must be a PostgresBudgetSchema")
+    return schema
 
 
 def _resource_contract(resource: ResourceRef) -> dict[str, object]:
@@ -87,7 +105,7 @@ CREATE TABLE IF NOT EXISTS {self.schema}.budget_accounts (
   parent_budget_id text NULL,
   status text NOT NULL,
   policy_ref text NOT NULL,
-  revision bigint NOT NULL,
+  revision numeric(20, 0) NOT NULL,
   updated_at timestamptz NOT NULL DEFAULT now()
 );
 """.strip(),
@@ -99,7 +117,7 @@ CREATE TABLE IF NOT EXISTS {self.schema}.budget_reservations (
   amounts_json jsonb NOT NULL,
   purpose text NOT NULL,
   expires_at timestamptz NOT NULL,
-  fencing_token bigint NOT NULL,
+  fencing_token numeric(20, 0) NOT NULL,
   status text NOT NULL,
   updated_at timestamptz NOT NULL DEFAULT now()
 );
@@ -110,7 +128,7 @@ CREATE TABLE IF NOT EXISTS {self.schema}.budget_permits (
   reservation_refs_json jsonb NOT NULL,
   owner_json jsonb NOT NULL,
   atomic_unit_json jsonb NOT NULL,
-  admission_epoch bigint NOT NULL,
+  admission_epoch numeric(20, 0) NOT NULL,
   authorized_amounts_json jsonb NOT NULL,
   continuation_profile text NOT NULL,
   policy_snapshot_digest text NOT NULL,
@@ -129,7 +147,7 @@ CREATE TABLE IF NOT EXISTS {self.schema}.budget_settlements (
   released_json jsonb NOT NULL,
   overdraft_json jsonb NOT NULL,
   status text NOT NULL,
-  revision bigint NOT NULL,
+  revision numeric(20, 0) NOT NULL,
   settled_at timestamptz NOT NULL DEFAULT now()
 );
 """.strip(),
@@ -143,9 +161,29 @@ CREATE TABLE IF NOT EXISTS {self.schema}.completion_reserves (
   expires_at timestamptz NULL,
   status text NOT NULL,
   reservation_id text NULL REFERENCES {self.schema}.budget_reservations(reservation_id),
-  fencing_token bigint NOT NULL,
+  fencing_token numeric(20, 0) NOT NULL,
   updated_at timestamptz NOT NULL DEFAULT now()
 );
+""".strip(),
+            f"""
+ALTER TABLE {self.schema}.budget_accounts
+  ALTER COLUMN revision TYPE numeric(20, 0);
+""".strip(),
+            f"""
+ALTER TABLE {self.schema}.budget_reservations
+  ALTER COLUMN fencing_token TYPE numeric(20, 0);
+""".strip(),
+            f"""
+ALTER TABLE {self.schema}.budget_permits
+  ALTER COLUMN admission_epoch TYPE numeric(20, 0);
+""".strip(),
+            f"""
+ALTER TABLE {self.schema}.budget_settlements
+  ALTER COLUMN revision TYPE numeric(20, 0);
+""".strip(),
+            f"""
+ALTER TABLE {self.schema}.completion_reserves
+  ALTER COLUMN fencing_token TYPE numeric(20, 0);
 """.strip(),
             f"""
 CREATE OR REPLACE FUNCTION {self.schema}.reject_conflicting_append(
@@ -165,6 +203,7 @@ $$;
 
 
 def encode_budget_account(account: BudgetAccount) -> dict[str, object]:
+    _validate_budget_value(account, BudgetAccount, "account")
     return {
         "budget_id": account.budget_id,
         "scope_json": _resource_contract(account.scope),
@@ -177,6 +216,7 @@ def encode_budget_account(account: BudgetAccount) -> dict[str, object]:
 
 
 def encode_budget_reservation(reservation: BudgetReservation) -> dict[str, object]:
+    _validate_budget_value(reservation, BudgetReservation, "reservation")
     return {
         "reservation_id": reservation.reservation_id,
         "budget_id": reservation.budget_id,
@@ -190,6 +230,7 @@ def encode_budget_reservation(reservation: BudgetReservation) -> dict[str, objec
 
 
 def encode_budget_settlement(settlement: BudgetSettlement) -> dict[str, object]:
+    _validate_budget_value(settlement, BudgetSettlement, "settlement")
     return {
         "reservation_id": settlement.reservation_id,
         "budget_id": settlement.budget_id,
@@ -202,6 +243,7 @@ def encode_budget_settlement(settlement: BudgetSettlement) -> dict[str, object]:
 
 
 def encode_budget_permit(permit: BudgetPermit) -> dict[str, object]:
+    _validate_budget_value(permit, BudgetPermit, "permit")
     return {
         "permit_id": permit.permit_id,
         "reservation_refs_json": list(permit.reservation_refs),
@@ -218,6 +260,7 @@ def encode_budget_permit(permit: BudgetPermit) -> dict[str, object]:
 
 
 def encode_completion_reserve(reserve: CompletionReserve) -> dict[str, object]:
+    _validate_budget_value(reserve, CompletionReserve, "reserve")
     return {
         "reserve_id": reserve.reserve_id,
         "budget_id": reserve.budget_id,
@@ -236,7 +279,7 @@ def upsert_budget_account_statement(
     *,
     schema: PostgresBudgetSchema | None = None,
 ) -> PostgresStatement:
-    schema = schema or PostgresBudgetSchema()
+    schema = _resolve_budget_schema(schema)
     return PostgresStatement(
         name="budget_account_upsert",
         sql=f"""
@@ -276,7 +319,7 @@ def upsert_budget_reservation_statement(
     *,
     schema: PostgresBudgetSchema | None = None,
 ) -> PostgresStatement:
-    schema = schema or PostgresBudgetSchema()
+    schema = _resolve_budget_schema(schema)
     return PostgresStatement(
         name="budget_reservation_upsert",
         sql=f"""
@@ -309,7 +352,7 @@ ON CONFLICT (reservation_id) DO UPDATE SET
     THEN {schema.schema}.reject_conflicting_append(
       'budget reservation',
       EXCLUDED.reservation_id
-    )::bigint
+    )::numeric(20, 0)
     WHEN {schema.schema}.budget_reservations.fencing_token <= EXCLUDED.fencing_token
       AND (
         {schema.schema}.budget_reservations.status = EXCLUDED.status
@@ -356,7 +399,16 @@ def append_budget_settlement_statement(
     schema: PostgresBudgetSchema | None = None,
     permit_id: str | None = None,
 ) -> PostgresStatement:
-    schema = schema or PostgresBudgetSchema()
+    schema = _resolve_budget_schema(schema)
+    if permit_id is not None and (
+        not isinstance(permit_id, str)
+        or not permit_id
+        or permit_id != permit_id.strip()
+        or any(ord(character) < 0x20 or ord(character) == 0x7F for character in permit_id)
+    ):
+        raise PostgresBudgetAdapterError(
+            "permit_id must be a non-empty string without surrounding whitespace or control characters"
+        )
     params = encode_budget_settlement(settlement)
     params["permit_id"] = permit_id
     return PostgresStatement(
@@ -406,7 +458,7 @@ def append_budget_permit_statement(
     *,
     schema: PostgresBudgetSchema | None = None,
 ) -> PostgresStatement:
-    schema = schema or PostgresBudgetSchema()
+    schema = _resolve_budget_schema(schema)
     return PostgresStatement(
         name="budget_permit_append",
         sql=f"""
@@ -463,7 +515,7 @@ def upsert_completion_reserve_statement(
     *,
     schema: PostgresBudgetSchema | None = None,
 ) -> PostgresStatement:
-    schema = schema or PostgresBudgetSchema()
+    schema = _resolve_budget_schema(schema)
     return PostgresStatement(
         name="completion_reserve_upsert",
         sql=f"""
@@ -532,7 +584,7 @@ ON CONFLICT (reserve_id) DO UPDATE SET
     THEN {schema.schema}.reject_conflicting_append(
       'completion reserve',
       EXCLUDED.reserve_id
-    )::bigint
+    )::numeric(20, 0)
     WHEN {schema.schema}.completion_reserves.fencing_token <= EXCLUDED.fencing_token
       AND (
         {schema.schema}.completion_reserves.status = EXCLUDED.status

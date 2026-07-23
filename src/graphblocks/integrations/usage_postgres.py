@@ -15,6 +15,7 @@ def _validate_identifier(identifier: object) -> None:
     if (
         not isinstance(identifier, str)
         or not identifier
+        or not identifier.isascii()
         or not identifier.replace("_", "").isalnum()
         or identifier[0].isdigit()
     ):
@@ -231,6 +232,14 @@ BEGIN
           TABLE = 'usage_records',
           CONSTRAINT = 'usage_records_reconciliation_source';
       END IF;
+      IF existing.reconciliation_of IS NOT NULL THEN
+        RAISE EXCEPTION USING
+          ERRCODE = '23514',
+          MESSAGE = 'reconciled usage cannot itself be reconciled',
+          SCHEMA = '{self.schema}',
+          TABLE = 'usage_records',
+          CONSTRAINT = 'usage_records_reconciliation_contract';
+      END IF;
       IF ROW(
         existing.run_id,
         existing.attempt_id,
@@ -376,6 +385,8 @@ $graphblocks_usage_append$;
 
 
 def encode_usage_record(record: UsageRecord) -> dict[str, object]:
+    if not isinstance(record, UsageRecord):
+        raise PostgresUsageAdapterError("record must be a UsageRecord")
     return {
         "record_id": record.record_id,
         "source": record.source,
@@ -405,7 +416,10 @@ def append_usage_record_statement(
     retry the whole transaction at READ COMMITTED, not retry this statement in
     the failed transaction.
     """
-    schema = schema or PostgresUsageSchema()
+    if schema is None:
+        schema = PostgresUsageSchema()
+    elif not isinstance(schema, PostgresUsageSchema):
+        raise PostgresUsageAdapterError("schema must be a PostgresUsageSchema")
     return PostgresStatement(
         name="usage_record_append",
         sql=f"""

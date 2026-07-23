@@ -3,6 +3,8 @@ from __future__ import annotations
 from decimal import Decimal
 import importlib
 
+import pytest
+
 
 def test_postgres_adapters_have_valid_default_schema_names() -> None:
     graphblocks_budget_postgres = importlib.import_module("graphblocks.integrations.budget_postgres")
@@ -10,6 +12,26 @@ def test_postgres_adapters_have_valid_default_schema_names() -> None:
 
     assert graphblocks_budget_postgres.PostgresBudgetSchema().schema == "graphblocks_budget"
     assert graphblocks_usage_postgres.PostgresUsageSchema().schema == "graphblocks_usage"
+
+
+def test_postgres_adapters_reject_non_ascii_schema_identifiers() -> None:
+    graphblocks_budget_postgres = importlib.import_module(
+        "graphblocks.integrations.budget_postgres"
+    )
+    graphblocks_usage_postgres = importlib.import_module(
+        "graphblocks.integrations.usage_postgres"
+    )
+
+    with pytest.raises(
+        graphblocks_budget_postgres.PostgresBudgetAdapterError,
+        match="invalid SQL identifier",
+    ):
+        graphblocks_budget_postgres.PostgresBudgetSchema(schema="budget_Ⅳ")
+    with pytest.raises(
+        graphblocks_usage_postgres.PostgresUsageAdapterError,
+        match="invalid SQL identifier",
+    ):
+        graphblocks_usage_postgres.PostgresUsageSchema(schema="usage_Ⅳ")
 
 
 def test_postgres_statements_detach_nested_parameter_inputs() -> None:
@@ -88,6 +110,19 @@ def test_budget_postgres_schema_and_account_codec(monkeypatch) -> None:
     assert "budget_accounts.revision < EXCLUDED.revision" in statement.sql
     assert "budget_accounts.revision <= EXCLUDED.revision" not in statement.sql
     assert statement.params["budget_id"] == "budget-1"
+    migrations = "\n".join(schema.migration_statements())
+    assert "revision numeric(20, 0) NOT NULL" in migrations
+    assert "ALTER COLUMN revision TYPE numeric(20, 0)" in migrations
+    with pytest.raises(
+        graphblocks_budget_postgres.PostgresBudgetAdapterError,
+        match="schema must be a PostgresBudgetSchema",
+    ):
+        graphblocks_budget_postgres.upsert_budget_account_statement(account, schema=0)
+    with pytest.raises(
+        graphblocks_budget_postgres.PostgresBudgetAdapterError,
+        match="account must be a BudgetAccount",
+    ):
+        graphblocks_budget_postgres.encode_budget_account(object())
 
 
 def test_budget_postgres_reservation_statement(monkeypatch) -> None:
@@ -146,6 +181,9 @@ def test_budget_postgres_reservation_statement(monkeypatch) -> None:
     assert "'budget reservation'" in statement.sql
     assert statement.params["reservation_id"] == "reservation-1"
     assert statement.params["fencing_token"] == 7
+    assert "fencing_token numeric(20, 0) NOT NULL" in "\n".join(
+        schema.migration_statements()
+    )
 
 
 def test_budget_postgres_settlement_statement(monkeypatch) -> None:
@@ -244,6 +282,15 @@ def test_budget_postgres_settlement_statement_can_record_permit_link(monkeypatch
     assert "permit_id" in statement.sql
     assert "%(permit_id)s" in statement.sql
     assert statement.params["permit_id"] == "permit-1"
+    with pytest.raises(
+        graphblocks_budget_postgres.PostgresBudgetAdapterError,
+        match="permit_id must be a non-empty string",
+    ):
+        graphblocks_budget_postgres.append_budget_settlement_statement(
+            settlement,
+            schema=schema,
+            permit_id="\x00",
+        )
 
 
 def test_budget_postgres_permit_statement(monkeypatch) -> None:
@@ -445,6 +492,8 @@ def test_usage_postgres_schema_and_record_codec(monkeypatch) -> None:
     assert "WHERE stored.record_id = p_reconciliation_of" in append_function
     assert "p_occurred_at < existing.occurred_at" in append_function
     assert "usage reconciliation must preserve source record" in append_function
+    assert "existing.reconciliation_of IS NOT NULL" in append_function
+    assert "reconciled usage cannot itself be reconciled" in append_function
     assert "ELSIF p_source IS NOT DISTINCT FROM 'reconciled'" in append_function
     assert "provider response ' || p_provider_response_id ||" in append_function
     assert append_function.count("existing.amounts_json") >= 2
@@ -479,3 +528,13 @@ def test_usage_postgres_schema_and_record_codec(monkeypatch) -> None:
     assert "ON CONFLICT" not in statement.sql
     assert statement.params["provider_response_id"] == "response-1"
     assert statement.params["quota_window_id"] == "tenant-a:2026-06"
+    with pytest.raises(
+        graphblocks_usage_postgres.PostgresUsageAdapterError,
+        match="schema must be a PostgresUsageSchema",
+    ):
+        graphblocks_usage_postgres.append_usage_record_statement(record, schema=0)
+    with pytest.raises(
+        graphblocks_usage_postgres.PostgresUsageAdapterError,
+        match="record must be a UsageRecord",
+    ):
+        graphblocks_usage_postgres.encode_usage_record(object())
