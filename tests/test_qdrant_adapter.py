@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+from dataclasses import asdict
 import importlib
+import json
+import pickle
 
 import pytest
 
@@ -8,6 +11,26 @@ from graphblocks import SearchRequest
 
 
 _POINT_UUID = "550e8400-e29b-41d4-a716-446655440000"
+
+
+def test_qdrant_request_snapshots_support_standard_serialization(monkeypatch) -> None:
+    graphblocks_qdrant = importlib.import_module("graphblocks.integrations.qdrant")
+    request = graphblocks_qdrant.QdrantSearchRequest(
+        collection="support_chunks",
+        body={"query": {"values": [0.1]}},
+        query_text="refund",
+        metadata={"trace": {"tags": ["search"]}},
+    )
+
+    projected = asdict(request)
+    restored = pickle.loads(pickle.dumps(request))
+
+    assert json.loads(json.dumps(projected))["body"] == {
+        "query": {"values": [0.1]}
+    }
+    assert restored == request
+    with pytest.raises(AttributeError):
+        restored.metadata["trace"]["tags"].append("mutated")
 
 
 def test_qdrant_search_request_encodes_named_vector_and_filters(monkeypatch) -> None:

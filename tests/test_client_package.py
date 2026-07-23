@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-from dataclasses import replace
+from dataclasses import asdict, replace
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from io import BytesIO
 import importlib
 import json
 import math
+import pickle
 import re
 from pathlib import Path
 import sys
@@ -31,6 +32,35 @@ from graphblocks import (
 
 
 ROOT = Path(__file__).parents[1]
+
+
+def test_run_graph_command_json_snapshots_support_standard_serialization() -> None:
+    graphblocks_client = importlib.import_module("graphblocks.client")
+    command = graphblocks_client.RunGraphCommand(
+        graph={"nested": {"items": [1]}},
+        inputs={"request": {"tags": ["stable"]}},
+    )
+
+    projected = asdict(command)
+    restored = pickle.loads(pickle.dumps(command))
+
+    assert json.loads(json.dumps(projected))["graph"] == {
+        "nested": {"items": [1]}
+    }
+    assert restored == command
+    with pytest.raises(AttributeError):
+        restored.graph["nested"]["items"].append(2)
+
+    http_error = graphblocks_client.GraphBlocksHttpError(
+        400,
+        {"error": {"codes": ["invalid"]}},
+        raw_body=b"invalid",
+    )
+    restored_error = pickle.loads(pickle.dumps(http_error))
+
+    assert restored_error.status_code == 400
+    assert restored_error.payload == {"error": {"codes": ["invalid"]}}
+    assert restored_error.raw_body == b"invalid"
 
 
 def _remote_admitted_call(

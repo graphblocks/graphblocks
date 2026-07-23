@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import math
+from dataclasses import asdict
+import json
+import pickle
 import random
 import sys
 from collections.abc import Callable
@@ -46,6 +49,24 @@ from graphblocks.callbacks import (  # noqa: E402
     verify_webhook_hmac_sha256,
     webhook_headers_hmac_sha256,
 )
+
+
+def test_callback_payload_snapshots_support_standard_serialization() -> None:
+    projection = project_callback_payload(
+        {"nested": {"items": [1]}},
+        max_inline_bytes=256,
+    )
+
+    assert projection.payload == {"nested": {"items": [1]}}
+    assert json.loads(json.dumps(asdict(projection)))["payload"] == {
+        "nested": {"items": [1]}
+    }
+
+    restored = pickle.loads(pickle.dumps(projection))
+
+    assert restored == projection
+    with pytest.raises(AttributeError):
+        restored.payload["nested"]["items"].append(2)
 
 
 def _assert_raises_value_error(match: str, callback: Callable[[], object]) -> None:

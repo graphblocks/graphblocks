@@ -33,8 +33,21 @@ class FrozenWireJsonObject(Mapping[str, _ValueT], Generic[_ValueT]):
     def __eq__(self, other: object) -> bool:
         return isinstance(other, Mapping) and dict(self.__values) == dict(other)
 
-    def __deepcopy__(self, memo: dict[int, object]) -> FrozenWireJsonObject:
+    def __copy__(self) -> FrozenWireJsonObject:
         return self
+
+    def __deepcopy__(self, memo: dict[int, object]) -> dict[str, object]:
+        return {
+            key: thaw_wire_json(item)
+            for key, item in self.__values.items()
+        }
+
+    def __reduce_ex__(
+        self,
+        protocol: int,
+    ) -> tuple[type[FrozenWireJsonObject], tuple[dict[str, _ValueT]]]:
+        del protocol
+        return type(self), (dict(self.__values),)
 
 
 class FrozenWireJsonArray(tuple[object, ...]):
@@ -45,8 +58,18 @@ class FrozenWireJsonArray(tuple[object, ...]):
             return tuple(self) == tuple(other)
         return super().__eq__(other)
 
-    def __deepcopy__(self, memo: dict[int, object]) -> FrozenWireJsonArray:
+    def __copy__(self) -> FrozenWireJsonArray:
         return self
+
+    def __deepcopy__(self, memo: dict[int, object]) -> list[object]:
+        return [thaw_wire_json(item) for item in self]
+
+    def __reduce_ex__(
+        self,
+        protocol: int,
+    ) -> tuple[type[FrozenWireJsonArray], tuple[tuple[object, ...]]]:
+        del protocol
+        return type(self), (tuple(self),)
 
 
 def _freeze_json(value: object) -> object:

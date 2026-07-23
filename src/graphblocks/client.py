@@ -87,8 +87,18 @@ class _FrozenJsonArray(tuple[object, ...]):
             return tuple(self) == tuple(other)
         return super().__eq__(other)
 
-    def __deepcopy__(self, memo: dict[int, object]) -> _FrozenJsonArray:
+    def __copy__(self) -> _FrozenJsonArray:
         return self
+
+    def __deepcopy__(self, memo: dict[int, object]) -> list[object]:
+        return [_thaw_json_snapshot(item) for item in self]
+
+    def __reduce_ex__(
+        self,
+        protocol: int,
+    ) -> tuple[type[_FrozenJsonArray], tuple[tuple[object, ...]]]:
+        del protocol
+        return type(self), (tuple(self),)
 
 
 class _FrozenJsonObject(Mapping[str, object]):
@@ -112,8 +122,21 @@ class _FrozenJsonObject(Mapping[str, object]):
     def __eq__(self, other: object) -> bool:
         return isinstance(other, Mapping) and dict(self.__values) == dict(other)
 
-    def __deepcopy__(self, memo: dict[int, object]) -> _FrozenJsonObject:
+    def __copy__(self) -> _FrozenJsonObject:
         return self
+
+    def __deepcopy__(self, memo: dict[int, object]) -> dict[str, object]:
+        return {
+            key: _thaw_json_snapshot(item)
+            for key, item in self.__values.items()
+        }
+
+    def __reduce_ex__(
+        self,
+        protocol: int,
+    ) -> tuple[type[_FrozenJsonObject], tuple[dict[str, object]]]:
+        del protocol
+        return type(self), (dict(self.__values),)
 
 
 def _freeze_json_snapshot(value: object) -> object:
@@ -250,6 +273,31 @@ class GraphBlocksHttpError(RuntimeError):
         self.payload = _canonical_json_mapping("GraphBlocks HTTP error", "payload", payload)
         self.raw_body = bytes(raw_body) if raw_body is not None else None
         super().__init__(f"GraphBlocks HTTP request failed with status {status_code}")
+
+    def __reduce__(
+        self,
+    ) -> tuple[
+        Callable[
+            [type[GraphBlocksHttpError], int, dict[str, object], bytes | None],
+            GraphBlocksHttpError,
+        ],
+        tuple[type[GraphBlocksHttpError], int, dict[str, object], bytes | None],
+    ]:
+        payload = _thaw_json_snapshot(self.payload)
+        assert isinstance(payload, dict)
+        return (
+            _restore_graphblocks_http_error,
+            (type(self), self.status_code, payload, self.raw_body),
+        )
+
+
+def _restore_graphblocks_http_error(
+    error_type: type[GraphBlocksHttpError],
+    status_code: int,
+    payload: dict[str, object],
+    raw_body: bytes | None,
+) -> GraphBlocksHttpError:
+    return error_type(status_code, payload, raw_body=raw_body)
 
 
 class _SameOriginRedirectHandler(HTTPRedirectHandler):

@@ -58,7 +58,23 @@ VALID_CALLBACK_AUTH_KINDS = frozenset({"bearer", "hmac", "mtls", "oidc"})
 
 
 class _FrozenJsonArray(tuple[object, ...]):
-    pass
+    def __eq__(self, other: object) -> bool:
+        if isinstance(other, list):
+            return tuple(self) == tuple(other)
+        return super().__eq__(other)
+
+    def __copy__(self) -> _FrozenJsonArray:
+        return self
+
+    def __deepcopy__(self, memo: dict[int, object]) -> list[object]:
+        return [_thaw_json_value(item) for item in self]
+
+    def __reduce_ex__(
+        self,
+        protocol: int,
+    ) -> tuple[type[_FrozenJsonArray], tuple[tuple[object, ...]]]:
+        del protocol
+        return type(self), (tuple(self),)
 
 
 class _FrozenJsonObject(Mapping[str, object]):
@@ -82,8 +98,21 @@ class _FrozenJsonObject(Mapping[str, object]):
     def __eq__(self, other: object) -> bool:
         return isinstance(other, Mapping) and dict(self.__values) == dict(other)
 
-    def __deepcopy__(self, memo: dict[int, object]) -> _FrozenJsonObject:
+    def __copy__(self) -> _FrozenJsonObject:
         return self
+
+    def __deepcopy__(self, memo: dict[int, object]) -> dict[str, object]:
+        return {
+            key: _thaw_json_value(item)
+            for key, item in self.__values.items()
+        }
+
+    def __reduce_ex__(
+        self,
+        protocol: int,
+    ) -> tuple[type[_FrozenJsonObject], tuple[dict[str, object]]]:
+        del protocol
+        return type(self), (dict(self.__values),)
 
 
 def _utc_now_iso() -> str:
