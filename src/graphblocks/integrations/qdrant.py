@@ -6,7 +6,12 @@ from dataclasses import dataclass, field
 import math
 from uuid import UUID
 
-from graphblocks import SourceRef, canonical_dumps
+from graphblocks import SourceRef
+from graphblocks.integrations._wire import (
+    FrozenWireJsonObject,
+    snapshot_wire_json,
+    thaw_wire_json,
+)
 from graphblocks.rag import KnowledgeItemRef, SearchHit, SearchRequest
 
 
@@ -30,15 +35,25 @@ _VALID_SOURCE_TRUSTS = frozenset(
 def _strict_json_mapping(
     field_name: str,
     value: Mapping[object, object],
-) -> dict[str, object]:
-    materialized = dict(value)
-    try:
-        canonical_dumps(materialized)
-    except (TypeError, ValueError) as error:
-        raise QdrantAdapterError(
-            f"{field_name} must be a strict JSON object"
-        ) from error
-    return deepcopy(materialized)  # type: ignore[return-value]
+    *,
+    immutable: bool = False,
+) -> Mapping[str, object]:
+    if isinstance(value, FrozenWireJsonObject):
+        snapshot = value
+    else:
+        try:
+            snapshot = snapshot_wire_json(value, field_name=field_name)
+        except ValueError as error:
+            raise QdrantAdapterError(
+                f"{field_name} must be a strict JSON object"
+            ) from error
+    if not isinstance(snapshot, Mapping):
+        raise QdrantAdapterError(f"{field_name} must be a strict JSON object")
+    if immutable:
+        return snapshot
+    projection = thaw_wire_json(snapshot)
+    assert isinstance(projection, dict)
+    return projection
 
 
 @dataclass(frozen=True, slots=True)
@@ -90,19 +105,27 @@ class QdrantSearchRequest:
         if not isinstance(self.metadata, Mapping):
             raise QdrantAdapterError("metadata must be a mapping")
         object.__setattr__(self, "collection", collection)
-        object.__setattr__(self, "body", _strict_json_mapping("body", body))
+        object.__setattr__(
+            self,
+            "body",
+            _strict_json_mapping("body", body, immutable=True),
+        )
         object.__setattr__(
             self,
             "metadata",
-            _strict_json_mapping("metadata", self.metadata),
+            _strict_json_mapping("metadata", self.metadata, immutable=True),
         )
 
     def request_contract(self) -> dict[str, object]:
+        body = thaw_wire_json(self.body)
+        metadata = thaw_wire_json(self.metadata)
+        assert isinstance(body, dict)
+        assert isinstance(metadata, dict)
         return {
             "collection": self.collection,
-            "body": deepcopy(dict(self.body)),
+            "body": body,
             "query_text": self.query_text,
-            "metadata": deepcopy(dict(self.metadata)),
+            "metadata": metadata,
         }
 
 
@@ -140,14 +163,16 @@ def qdrant_search_request(
         "with_payload": True,
         "with_vector": False,
     }
-    filter_terms: list[dict[str, object]] = []
-    for key, value in sorted(request.filters.items()):
+    filter_items = list(request.filters.items())
+    for key, _ in filter_items:
         if not isinstance(key, str) or not key.strip():
             raise QdrantAdapterError("filter keys must be non-empty strings")
         if key != key.strip():
             raise QdrantAdapterError(
                 "filter keys must not contain surrounding whitespace"
             )
+    filter_terms: list[dict[str, object]] = []
+    for key, value in sorted(filter_items, key=lambda item: item[0]):
         if value is None:
             null_condition: dict[str, object] = {"is_null": {"key": key}}
             filter_terms.append(null_condition)

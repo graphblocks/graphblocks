@@ -173,6 +173,56 @@ def test_qdrant_search_request_preserves_null_filter(monkeypatch) -> None:
     }
 
 
+def test_qdrant_search_request_freezes_nested_wire_state_and_returns_detached_contracts(
+    monkeypatch,
+) -> None:
+    graphblocks_qdrant = importlib.import_module("graphblocks.integrations.qdrant")
+    body = {"filter": {"must": [{"key": "tenant_id", "match": {"value": "acme"}}]}}
+    metadata = {"trace": {"tags": ["search"]}}
+    search = graphblocks_qdrant.QdrantSearchRequest(
+        collection="support_chunks",
+        body=body,
+        query_text="refund",
+        metadata=metadata,
+    )
+
+    body["filter"]["must"][0]["key"] = "mutated"
+    metadata["trace"]["tags"].append("mutated")
+    with pytest.raises(TypeError):
+        search.body["filter"]["must"][0]["key"] = "mutated"
+    with pytest.raises(TypeError):
+        search.metadata["trace"]["tags"][0] = "mutated"
+
+    projection = search.request_contract()
+    projection["body"]["filter"]["must"][0]["key"] = "projected"
+    projection["metadata"]["trace"]["tags"].append("projected")
+
+    assert search.request_contract()["body"]["filter"]["must"][0]["key"] == "tenant_id"
+    assert search.request_contract()["metadata"] == {"trace": {"tags": ["search"]}}
+
+
+def test_qdrant_search_request_rejects_mixed_filter_key_types_at_the_boundary(
+    monkeypatch,
+) -> None:
+    graphblocks_qdrant = importlib.import_module("graphblocks.integrations.qdrant")
+    malformed_request = SearchRequest(query_text="refund", top_k=1)
+    object.__setattr__(
+        malformed_request,
+        "filters",
+        {"tenant_id": "acme", 1: "invalid"},
+    )
+
+    with pytest.raises(
+        graphblocks_qdrant.QdrantAdapterError,
+        match="filter keys",
+    ):
+        graphblocks_qdrant.qdrant_search_request(
+            malformed_request,
+            collection=graphblocks_qdrant.QdrantCollectionRef("support_chunks"),
+            vector=(0.1,),
+        )
+
+
 def test_qdrant_points_map_to_search_hits_with_source_acl_and_preview(monkeypatch) -> None:
     graphblocks_qdrant = importlib.import_module("graphblocks.integrations.qdrant")
     points = [

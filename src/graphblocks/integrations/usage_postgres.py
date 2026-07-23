@@ -208,6 +208,55 @@ BEGIN
     END IF;
 
     IF p_reconciliation_of IS NOT NULL THEN
+      IF p_source IS DISTINCT FROM 'reconciled'
+        OR p_confidence IS DISTINCT FROM 'exact'
+      THEN
+        RAISE EXCEPTION USING
+          ERRCODE = '23514',
+          MESSAGE = 'usage reconciliation must have reconciled source and exact confidence',
+          SCHEMA = '{self.schema}',
+          TABLE = 'usage_records',
+          CONSTRAINT = 'usage_records_reconciliation_contract';
+      END IF;
+
+      SELECT stored.*
+      INTO existing
+      FROM {self.schema}.usage_records AS stored
+      WHERE stored.record_id = p_reconciliation_of;
+      IF NOT FOUND THEN
+        RAISE EXCEPTION USING
+          ERRCODE = '23503',
+          MESSAGE = 'usage record ' || p_reconciliation_of || ' does not exist',
+          SCHEMA = '{self.schema}',
+          TABLE = 'usage_records',
+          CONSTRAINT = 'usage_records_reconciliation_source';
+      END IF;
+      IF ROW(
+        existing.run_id,
+        existing.attempt_id,
+        existing.provider_response_id,
+        existing.pricing_ref,
+        existing.quota_window_id,
+        existing.execution_scope,
+        existing.metadata_json
+      ) IS DISTINCT FROM ROW(
+        p_run_id,
+        p_attempt_id,
+        p_provider_response_id,
+        p_pricing_ref,
+        p_quota_window_id,
+        p_execution_scope,
+        p_metadata_json
+      ) OR p_occurred_at < existing.occurred_at THEN
+        RAISE EXCEPTION USING
+          ERRCODE = '23514',
+          MESSAGE = 'usage reconciliation must preserve source record ' ||
+            p_reconciliation_of || ' identity and ordering',
+          SCHEMA = '{self.schema}',
+          TABLE = 'usage_records',
+          CONSTRAINT = 'usage_records_reconciliation_contract';
+      END IF;
+
       SELECT stored.*
       INTO existing
       FROM {self.schema}.usage_records AS stored
@@ -221,6 +270,13 @@ BEGIN
           TABLE = 'usage_records',
           CONSTRAINT = 'usage_records_single_reconciliation';
       END IF;
+    ELSIF p_source IS NOT DISTINCT FROM 'reconciled' THEN
+      RAISE EXCEPTION USING
+        ERRCODE = '23514',
+        MESSAGE = 'reconciled usage requires a source record',
+        SCHEMA = '{self.schema}',
+        TABLE = 'usage_records',
+        CONSTRAINT = 'usage_records_reconciliation_contract';
     END IF;
 
     IF p_provider_response_id IS NOT NULL AND p_reconciliation_of IS NULL THEN
@@ -232,6 +288,40 @@ BEGIN
         AND stored.reconciliation_of IS NULL
       LIMIT 1;
       IF FOUND THEN
+        IF ROW(
+          existing.source,
+          existing.confidence,
+          existing.amounts_json,
+          existing.occurred_at,
+          existing.run_id,
+          existing.attempt_id,
+          existing.provider_response_id,
+          existing.pricing_ref,
+          existing.quota_window_id,
+          existing.execution_scope,
+          existing.reconciliation_of,
+          existing.metadata_json
+        ) IS DISTINCT FROM ROW(
+          p_source,
+          p_confidence,
+          p_amounts_json,
+          p_occurred_at,
+          p_run_id,
+          p_attempt_id,
+          p_provider_response_id,
+          p_pricing_ref,
+          p_quota_window_id,
+          p_execution_scope,
+          p_reconciliation_of,
+          p_metadata_json
+        ) THEN
+          RAISE EXCEPTION USING
+            ERRCODE = '23505',
+            MESSAGE = 'provider response ' || p_provider_response_id ||
+              ' conflicts with existing usage',
+            SCHEMA = '{self.schema}',
+            TABLE = 'usage_records';
+        END IF;
         RETURN QUERY SELECT 'deduplicated'::text, existing.record_id;
         RETURN;
       END IF;

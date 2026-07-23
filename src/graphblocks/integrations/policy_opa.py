@@ -82,6 +82,16 @@ class OpaPolicyInput:
     package_ref: str | None = None
 
     def __post_init__(self) -> None:
+        if not isinstance(self.input_json, str):
+            raise OpaPolicyAdapterError("OPA policy input must be valid strict JSON")
+        try:
+            parsed_input = canonical_loads(self.input_json)
+        except (TypeError, ValueError) as error:
+            raise OpaPolicyAdapterError(
+                "OPA policy input must be valid strict JSON"
+            ) from error
+        if not isinstance(parsed_input, Mapping):
+            raise OpaPolicyAdapterError("OPA policy input must be a JSON object")
         if self.package_ref is not None:
             if not isinstance(self.package_ref, str):
                 raise OpaPolicyAdapterError("package_ref must be a string")
@@ -95,6 +105,8 @@ class OpaPolicyInput:
             parsed_input = canonical_loads(self.input_json)
         except (TypeError, ValueError) as error:
             raise OpaPolicyAdapterError("OPA policy input must be valid strict JSON") from error
+        if not isinstance(parsed_input, Mapping):
+            raise OpaPolicyAdapterError("OPA policy input must be a JSON object")
         return {
             "package_ref": self.package_ref,
             "input": parsed_input,

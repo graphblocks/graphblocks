@@ -140,10 +140,19 @@ def test_opa_adapter_prepares_canonical_policy_input(monkeypatch) -> None:
 def test_opa_adapter_rejects_non_standard_input_json_constants(monkeypatch) -> None:
     graphblocks_policy_opa = importlib.import_module("graphblocks.integrations.policy_opa")
 
-    opa_input = graphblocks_policy_opa.OpaPolicyInput(input_json='{"score": NaN}')
-
     with pytest.raises(graphblocks_policy_opa.OpaPolicyAdapterError, match="strict JSON"):
-        opa_input.input_contract()
+        graphblocks_policy_opa.OpaPolicyInput(input_json='{"score": NaN}')
+
+
+def test_opa_adapter_rejects_non_object_input_json_during_restore(monkeypatch) -> None:
+    graphblocks_policy_opa = importlib.import_module("graphblocks.integrations.policy_opa")
+
+    for payload in ("null", "[1,2]", '"input"'):
+        with pytest.raises(
+            graphblocks_policy_opa.OpaPolicyAdapterError,
+            match="JSON object",
+        ):
+            graphblocks_policy_opa.OpaPolicyInput(input_json=payload)
 
 
 def test_policy_adapter_json_contracts_reject_duplicate_keys(monkeypatch) -> None:
@@ -155,14 +164,14 @@ def test_policy_adapter_json_contracts_reject_duplicate_keys(monkeypatch) -> Non
     with pytest.raises(graphblocks_policy_opa.OpaPolicyAdapterError, match="strict JSON"):
         graphblocks_policy_opa.OpaPolicyInput(
             input_json='{"action":"read","action":"write"}'
-        ).input_contract()
+        )
     with pytest.raises(
         graphblocks_policy_cedar.CedarPolicyAdapterError,
         match="strict JSON",
     ):
         graphblocks_policy_cedar.CedarAuthorizationRequest(
             authorization_json='{"action":"read","action":"write"}'
-        ).authorization_contract()
+        )
 
 
 def test_opa_adapter_rejects_blank_package_ref(monkeypatch) -> None:
@@ -475,22 +484,20 @@ def test_cedar_adapter_prepares_authorization_request(monkeypatch) -> None:
 def test_cedar_adapter_rejects_non_standard_authorization_json_constants(monkeypatch) -> None:
     graphblocks_policy_cedar = importlib.import_module("graphblocks.integrations.policy_cedar")
 
-    authorization = graphblocks_policy_cedar.CedarAuthorizationRequest(authorization_json='{"principal": NaN}')
-
     with pytest.raises(graphblocks_policy_cedar.CedarPolicyAdapterError, match="strict JSON"):
-        authorization.authorization_contract()
+        graphblocks_policy_cedar.CedarAuthorizationRequest(
+            authorization_json='{"principal": NaN}'
+        )
 
 
 def test_cedar_adapter_rejects_non_object_authorization_json(monkeypatch) -> None:
     graphblocks_policy_cedar = importlib.import_module("graphblocks.integrations.policy_cedar")
 
     for payload in ("null", "[1,2]", '"authorization"'):
-        authorization = graphblocks_policy_cedar.CedarAuthorizationRequest(
-            authorization_json=payload
-        )
-
         with pytest.raises(graphblocks_policy_cedar.CedarPolicyAdapterError, match="JSON object"):
-            authorization.authorization_contract()
+            graphblocks_policy_cedar.CedarAuthorizationRequest(
+                authorization_json=payload
+            )
 
 
 def test_cedar_adapter_rejects_blank_schema_ref(monkeypatch) -> None:

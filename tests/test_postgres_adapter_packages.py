@@ -442,6 +442,12 @@ def test_usage_postgres_schema_and_record_codec(monkeypatch) -> None:
     assert "CONSTRAINT = 'usage_records_single_reconciliation'" in append_function
     assert "WHEN unique_violation THEN" in append_function
     assert "RETURN QUERY SELECT 'deduplicated'::text, existing.record_id" in append_function
+    assert "WHERE stored.record_id = p_reconciliation_of" in append_function
+    assert "p_occurred_at < existing.occurred_at" in append_function
+    assert "usage reconciliation must preserve source record" in append_function
+    assert "ELSIF p_source IS NOT DISTINCT FROM 'reconciled'" in append_function
+    assert "provider response ' || p_provider_response_id ||" in append_function
+    assert append_function.count("existing.amounts_json") >= 2
     assert graphblocks_usage_postgres.encode_usage_record(record) == {
         "record_id": "usage-1",
         "source": "provider_reported",

@@ -86,6 +86,20 @@ class CedarAuthorizationRequest:
     schema_ref: str | None = None
 
     def __post_init__(self) -> None:
+        if not isinstance(self.authorization_json, str):
+            raise CedarPolicyAdapterError(
+                "Cedar authorization input must be valid strict JSON"
+            )
+        try:
+            contract = canonical_loads(self.authorization_json)
+        except (TypeError, ValueError) as error:
+            raise CedarPolicyAdapterError(
+                "Cedar authorization input must be valid strict JSON"
+            ) from error
+        if not isinstance(contract, Mapping):
+            raise CedarPolicyAdapterError(
+                "Cedar authorization input must be a JSON object"
+            )
         if self.schema_ref is not None:
             if not isinstance(self.schema_ref, str):
                 raise CedarPolicyAdapterError("schema_ref must be a string")
