@@ -121,6 +121,29 @@ def test_usage_record_deep_copies_mutable_amounts_and_metadata() -> None:
         )
 
 
+@pytest.mark.parametrize(
+    ("overrides", "message"),
+    (
+        ({"record_id": " usage-1"}, "record_id must not contain surrounding whitespace"),
+        ({"run_id": " run-1"}, "run_id must not contain surrounding whitespace"),
+    ),
+)
+def test_usage_record_rejects_whitespace_wrapped_identities(
+    overrides: dict[str, object],
+    message: str,
+) -> None:
+    values = {
+        "record_id": "usage-1",
+        "source": "runtime_measured",
+        "confidence": "estimated",
+        "amounts": [_tokens("12")],
+        "occurred_at": "2026-06-22T00:00:00Z",
+        "run_id": "run-1",
+    }
+    with pytest.raises(ValueError, match=message):
+        UsageRecord(**(values | overrides))  # type: ignore[arg-type]
+
+
 @pytest.mark.parametrize("ledger_factory", (InMemoryUsageLedger, SQLiteUsageLedger.in_memory))
 def test_usage_ledgers_round_trip_and_reconcile_nested_metadata(ledger_factory) -> None:
     ledger = ledger_factory()
@@ -905,6 +928,42 @@ def test_sqlite_usage_ledger_rejects_non_standard_json_constants_on_replay(
 
     with pytest.raises(ValueError, match=f"usage ledger {field_name} must be valid strict JSON"):
         ledger.records_for_run("run-1")
+    ledger.close()
+
+
+@pytest.mark.parametrize(
+    ("column", "payload"),
+    (
+        (
+            "amounts_json",
+            '[{"kind":"tokens","kind":"requests","amount":"1","unit":"tokens","dimensions":{}}]',
+        ),
+        ("metadata_json", '{"phase":"first","phase":"second"}'),
+    ),
+)
+def test_sqlite_usage_ledger_rejects_duplicate_json_keys_on_replay(
+    column: str,
+    payload: str,
+) -> None:
+    ledger = SQLiteUsageLedger.in_memory()
+    ledger.append(
+        UsageRecord(
+            record_id="usage-1",
+            source="runtime_measured",
+            confidence="estimated",
+            amounts=[_tokens("12")],
+            occurred_at="2026-06-22T00:00:00Z",
+            run_id="run-1",
+        )
+    )
+    ledger._connection.execute(
+        f"UPDATE usage_records SET {column} = ? WHERE record_id = ?",
+        (payload, "usage-1"),
+    )
+    ledger._connection.commit()
+
+    with pytest.raises(ValueError, match=f"usage ledger {column} must be valid strict JSON"):
+        ledger.get("usage-1")
     ledger.close()
 
 

@@ -440,6 +440,20 @@ def test_audit_package_persists_outbox_records(monkeypatch, tmp_path) -> None:
     reopened.close()
 
 
+@pytest.mark.parametrize("limit", (True, -1, 1.5))
+def test_audit_outbox_rejects_invalid_pending_limits(monkeypatch, limit: object) -> None:
+    graphblocks_audit = importlib.import_module("graphblocks.audit")
+    outbox = graphblocks_audit.SQLiteAuditOutbox.in_memory()
+
+    with pytest.raises(
+        ValueError,
+        match="audit outbox pending limit must be a non-negative integer",
+    ):
+        outbox.pending(limit=limit)  # type: ignore[arg-type]
+    assert outbox.pending(limit=0) == []
+    outbox.close()
+
+
 def test_audit_outbox_records_deep_freeze_payload_evidence(monkeypatch) -> None:
     graphblocks_audit = importlib.import_module("graphblocks.audit")
     outbox = graphblocks_audit.SQLiteAuditOutbox.in_memory()

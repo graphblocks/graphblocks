@@ -311,6 +311,98 @@ def test_lease_pool_rejects_invalid_capacity_units_and_expiration() -> None:
         pool.renew("missing", 1, expires_at=10, renewed_at=10)
 
 
+def test_lease_pool_rejects_inconsistent_restored_active_state() -> None:
+    active = ActiveLease(
+        resource="model",
+        owner="run-1",
+        units=1,
+        fencing_token=1,
+        attributes={},
+        acquired_at=1,
+    )
+
+    with pytest.raises(InvalidLeaseRequestError, match="references unknown resource"):
+        InMemoryLeasePool({"sandbox": 1}, active={"lease-000001": active})
+    with pytest.raises(InvalidLeaseRequestError, match="exceed capacity"):
+        InMemoryLeasePool(
+            {"model": 1},
+            active={
+                "lease-000001": active,
+                "lease-000002": ActiveLease(
+                    resource="model",
+                    owner="run-2",
+                    units=1,
+                    fencing_token=2,
+                    attributes={},
+                    acquired_at=1,
+                ),
+            },
+        )
+    with pytest.raises(InvalidLeaseRequestError, match="fencing tokens must be positive"):
+        InMemoryLeasePool(
+            {"model": 1},
+            active={
+                "lease-000001": ActiveLease(
+                    resource="model",
+                    owner="run-1",
+                    units=1,
+                    fencing_token=0,
+                    attributes={},
+                    acquired_at=1,
+                )
+            },
+        )
+    with pytest.raises(InvalidLeaseRequestError, match="fencing tokens must be unique"):
+        InMemoryLeasePool(
+            {"model": 2},
+            active={
+                "lease-000001": active,
+                "lease-000002": ActiveLease(
+                    resource="model",
+                    owner="run-2",
+                    units=1,
+                    fencing_token=1,
+                    attributes={},
+                    acquired_at=1,
+                ),
+            },
+        )
+
+
+@pytest.mark.parametrize(
+    ("factory", "message"),
+    (
+        (
+            lambda: InMemoryLeasePool({" model": 1}),
+            "resource name must not contain surrounding whitespace",
+        ),
+        (
+            lambda: ActiveLease("model", " run-1", 1, 1, {}, 1),
+            "owner must not contain surrounding whitespace",
+        ),
+        (
+            lambda: InMemoryLeasePool(
+                {"model": 1},
+                active={
+                    " lease-000001": ActiveLease(
+                        "model",
+                        "run-1",
+                        1,
+                        1,
+                        {},
+                        1,
+                    )
+                },
+            ),
+            "lease_id must not contain surrounding whitespace",
+        ),
+    ),
+)
+def test_lease_records_reject_whitespace_wrapped_identities(factory, message: str) -> None:
+    with pytest.raises(InvalidLeaseRequestError, match=message):
+        factory()
+
+
 @pytest.mark.parametrize("value", (math.nan, math.inf, -math.inf))
 def test_lease_pool_rejects_non_finite_times(value: float) -> None:
     pool = InMemoryLeasePool({"licensed-tool": 1})

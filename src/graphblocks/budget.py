@@ -133,6 +133,8 @@ def _validate_non_empty_string(owner: str, field_name: str, value: object) -> st
         raise ValueError(f"{owner} {field_name} must be a string")
     if not value.strip():
         raise ValueError(f"{owner} {field_name} must not be empty")
+    if value != value.strip():
+        raise ValueError(f"{owner} {field_name} must not contain surrounding whitespace")
     return value
 
 
@@ -207,10 +209,19 @@ def _validate_usage_amounts(owner: str, field_name: str, values: object) -> list
 
 
 def _loads_strict_json(field_name: str, value: str) -> object:
+    def reject_duplicate_keys(pairs: list[tuple[str, object]]) -> dict[str, object]:
+        decoded: dict[str, object] = {}
+        for key, item in pairs:
+            if key in decoded:
+                raise ValueError(f"duplicate JSON object key {key!r}")
+            decoded[key] = item
+        return decoded
+
     try:
         return json.loads(
             value,
             parse_constant=lambda constant: (_ for _ in ()).throw(ValueError(constant)),
+            object_pairs_hook=reject_duplicate_keys,
         )
     except ValueError as error:
         raise ValueError(f"budget ledger {field_name} must be valid strict JSON") from error
@@ -235,6 +246,10 @@ def _validate_string_tuple(owner: str, field_name: str, values: object) -> tuple
             raise ValueError(f"{owner} {field_name} items must be strings")
         if not item.strip():
             raise ValueError(f"{owner} {field_name} item must not be empty")
+        if item != item.strip():
+            raise ValueError(
+                f"{owner} {field_name} item must not contain surrounding whitespace"
+            )
     return normalized
 
 
@@ -676,6 +691,10 @@ class InMemoryBudgetLedger:
         actual_reservation_id = reservation_id or f"reservation-{self._reservation_counter:06d}"
         if actual_reservation_id in self._reservations:
             raise BudgetConflictError(f"reservation {actual_reservation_id!r} already exists")
+        self._reservation_counter = max(
+            self._reservation_counter,
+            _numeric_record_suffix(actual_reservation_id, "reservation-"),
+        )
         for held_budget_id in held_budget_ids:
             for key, amount in requested.items():
                 self._reserved[held_budget_id][key] = self._reserved[held_budget_id].get(key, Decimal("0")) + amount
@@ -1164,11 +1183,20 @@ def _usage_amount_to_json(amount: UsageAmount) -> dict[str, object]:
 
 
 def _usage_amount_from_json(data: dict[str, object]) -> UsageAmount:
+    if not isinstance(data, Mapping):
+        raise ValueError("budget ledger usage amounts must be objects")
+    raw_amount = data.get("amount")
+    if not isinstance(raw_amount, str):
+        raise ValueError("budget ledger usage amount values must be decimal strings")
+    try:
+        amount = Decimal(raw_amount)
+    except InvalidOperation as error:
+        raise ValueError("budget ledger usage amount values must be decimal strings") from error
     return UsageAmount(
-        kind=str(data["kind"]),
-        amount=Decimal(str(data["amount"])),
-        unit=str(data["unit"]),
-        dimensions=dict(data.get("dimensions", {})),
+        kind=data.get("kind"),  # type: ignore[arg-type]
+        amount=amount,
+        unit=data.get("unit"),  # type: ignore[arg-type]
+        dimensions=data.get("dimensions", {}),  # type: ignore[arg-type]
     )
 
 
@@ -1182,11 +1210,13 @@ def _resource_ref_to_json(resource: ResourceRef) -> dict[str, object]:
 
 
 def _resource_ref_from_json(data: dict[str, object]) -> ResourceRef:
+    if not isinstance(data, Mapping):
+        raise ValueError("budget ledger resource references must be objects")
     return ResourceRef(
-        resource_id=str(data["resource_id"]),
+        resource_id=data.get("resource_id"),  # type: ignore[arg-type]
         resource_kind=data.get("resource_kind"),
         tenant_id=data.get("tenant_id"),
-        attributes=dict(data.get("attributes", {})),
+        attributes=data.get("attributes", {}),  # type: ignore[arg-type]
     )
 
 
@@ -1258,14 +1288,19 @@ def _account_to_json(account: BudgetAccount) -> dict[str, object]:
 
 
 def _account_from_json(data: dict[str, object]) -> BudgetAccount:
+    if not isinstance(data, Mapping):
+        raise ValueError("budget ledger accounts must be objects")
+    raw_allocated = data.get("allocated", [])
+    if not isinstance(raw_allocated, list):
+        raise ValueError("budget ledger account allocated values must be arrays")
     return BudgetAccount(
-        budget_id=str(data["budget_id"]),
-        scope=_resource_ref_from_json(data["scope"]),
-        allocated=[_usage_amount_from_json(entry) for entry in data.get("allocated", [])],
+        budget_id=data.get("budget_id"),  # type: ignore[arg-type]
+        scope=_resource_ref_from_json(data.get("scope")),  # type: ignore[arg-type]
+        allocated=[_usage_amount_from_json(entry) for entry in raw_allocated],  # type: ignore[arg-type]
         parent_budget_id=data.get("parent_budget_id"),
         status=data.get("status", "active"),
-        policy_ref=str(data.get("policy_ref", "")),
-        revision=int(data.get("revision", 0)),
+        policy_ref=data.get("policy_ref", ""),  # type: ignore[arg-type]
+        revision=data.get("revision", 0),  # type: ignore[arg-type]
     )
 
 
@@ -1283,14 +1318,19 @@ def _reservation_to_json(reservation: BudgetReservation) -> dict[str, object]:
 
 
 def _reservation_from_json(data: dict[str, object]) -> BudgetReservation:
+    if not isinstance(data, Mapping):
+        raise ValueError("budget ledger reservations must be objects")
+    raw_amounts = data.get("amounts", [])
+    if not isinstance(raw_amounts, list):
+        raise ValueError("budget ledger reservation amounts must be arrays")
     return BudgetReservation(
-        reservation_id=str(data["reservation_id"]),
-        budget_id=str(data["budget_id"]),
-        owner=_resource_ref_from_json(data["owner"]),
-        amounts=[_usage_amount_from_json(entry) for entry in data.get("amounts", [])],
-        purpose=data["purpose"],
-        expires_at=str(data["expires_at"]),
-        fencing_token=int(data.get("fencing_token", 0)),
+        reservation_id=data.get("reservation_id"),  # type: ignore[arg-type]
+        budget_id=data.get("budget_id"),  # type: ignore[arg-type]
+        owner=_resource_ref_from_json(data.get("owner")),  # type: ignore[arg-type]
+        amounts=[_usage_amount_from_json(entry) for entry in raw_amounts],  # type: ignore[arg-type]
+        purpose=data.get("purpose"),  # type: ignore[arg-type]
+        expires_at=data.get("expires_at"),  # type: ignore[arg-type]
+        fencing_token=data.get("fencing_token", 0),  # type: ignore[arg-type]
         status=data.get("status", "reserved"),
     )
 
@@ -1312,18 +1352,32 @@ def _permit_to_json(permit: BudgetPermit) -> dict[str, object]:
 
 
 def _permit_from_json(data: dict[str, object]) -> BudgetPermit:
+    if not isinstance(data, Mapping):
+        raise ValueError("budget ledger permits must be objects")
+    reservation_refs = data.get("reservation_refs", [])
+    authorized_amounts = data.get("authorized_amounts", [])
+    low_watermark = data.get("low_watermark", [])
+    fencing_tokens = data.get("fencing_tokens", {})
+    if not isinstance(reservation_refs, list):
+        raise ValueError("budget ledger permit reservation_refs must be arrays")
+    if not isinstance(authorized_amounts, list):
+        raise ValueError("budget ledger permit authorized_amounts must be arrays")
+    if not isinstance(low_watermark, list):
+        raise ValueError("budget ledger permit low_watermark must be arrays")
+    if not isinstance(fencing_tokens, Mapping):
+        raise ValueError("budget ledger permit fencing_tokens must be objects")
     return BudgetPermit(
-        permit_id=str(data["permit_id"]),
-        reservation_refs=tuple(str(reservation_id) for reservation_id in data.get("reservation_refs", [])),
-        owner=_resource_ref_from_json(data["owner"]),
-        atomic_unit=_resource_ref_from_json(data["atomic_unit"]),
-        admission_epoch=int(data["admission_epoch"]),
-        authorized_amounts=[_usage_amount_from_json(entry) for entry in data.get("authorized_amounts", [])],
-        continuation_profile=str(data["continuation_profile"]),
-        policy_snapshot_digest=str(data["policy_snapshot_digest"]),
-        expires_at=str(data["expires_at"]),
-        low_watermark=[_usage_amount_from_json(entry) for entry in data.get("low_watermark", [])],
-        fencing_tokens={str(budget_id): int(token) for budget_id, token in data.get("fencing_tokens", {}).items()},
+        permit_id=data.get("permit_id"),  # type: ignore[arg-type]
+        reservation_refs=tuple(reservation_refs),  # type: ignore[arg-type]
+        owner=_resource_ref_from_json(data.get("owner")),  # type: ignore[arg-type]
+        atomic_unit=_resource_ref_from_json(data.get("atomic_unit")),  # type: ignore[arg-type]
+        admission_epoch=data.get("admission_epoch"),  # type: ignore[arg-type]
+        authorized_amounts=[_usage_amount_from_json(entry) for entry in authorized_amounts],  # type: ignore[arg-type]
+        continuation_profile=data.get("continuation_profile"),  # type: ignore[arg-type]
+        policy_snapshot_digest=data.get("policy_snapshot_digest"),  # type: ignore[arg-type]
+        expires_at=data.get("expires_at"),  # type: ignore[arg-type]
+        low_watermark=[_usage_amount_from_json(entry) for entry in low_watermark],  # type: ignore[arg-type]
+        fencing_tokens=dict(fencing_tokens),  # type: ignore[arg-type]
     )
 
 
@@ -1342,16 +1396,24 @@ def _completion_reserve_to_json(reserve: CompletionReserve) -> dict[str, object]
 
 
 def _completion_reserve_from_json(data: dict[str, object]) -> CompletionReserve:
+    if not isinstance(data, Mapping):
+        raise ValueError("budget ledger completion reserves must be objects")
+    raw_amounts = data.get("amounts", [])
+    spendable_by = data.get("spendable_by", [])
+    if not isinstance(raw_amounts, list):
+        raise ValueError("budget ledger completion reserve amounts must be arrays")
+    if not isinstance(spendable_by, list):
+        raise ValueError("budget ledger completion reserve spendable_by must be arrays")
     return CompletionReserve(
-        reserve_id=str(data["reserve_id"]),
-        budget_id=str(data["budget_id"]),
-        purpose=data["purpose"],
-        amounts=[_usage_amount_from_json(entry) for entry in data.get("amounts", [])],
-        spendable_by=frozenset(str(spender) for spender in data.get("spendable_by", [])),
+        reserve_id=data.get("reserve_id"),  # type: ignore[arg-type]
+        budget_id=data.get("budget_id"),  # type: ignore[arg-type]
+        purpose=data.get("purpose"),  # type: ignore[arg-type]
+        amounts=[_usage_amount_from_json(entry) for entry in raw_amounts],  # type: ignore[arg-type]
+        spendable_by=frozenset(spendable_by),  # type: ignore[arg-type]
         expires_at=data.get("expires_at"),
         status=data.get("status", "available"),
         reservation_id=data.get("reservation_id"),
-        fencing_token=int(data.get("fencing_token", 0)),
+        fencing_token=data.get("fencing_token", 0),  # type: ignore[arg-type]
     )
 
 
@@ -1400,53 +1462,260 @@ def _budget_ledger_to_snapshot(ledger: InMemoryBudgetLedger) -> dict[str, object
     }
 
 
+def _snapshot_object_map(
+    snapshot: Mapping[str, object],
+    field_name: str,
+) -> dict[str, object]:
+    value = snapshot.get(field_name, {})
+    if not isinstance(value, Mapping):
+        raise ValueError(f"budget ledger snapshot {field_name} must be an object")
+    copied: dict[str, object] = {}
+    for key, item in value.items():
+        if not isinstance(key, str) or not key.strip() or key != key.strip():
+            raise ValueError(
+                f"budget ledger snapshot {field_name} keys must be exact non-empty strings"
+            )
+        copied[key] = item
+    return copied
+
+
+def _snapshot_string_array_map(
+    snapshot: Mapping[str, object],
+    field_name: str,
+) -> dict[str, tuple[str, ...]]:
+    values = _snapshot_object_map(snapshot, field_name)
+    normalized: dict[str, tuple[str, ...]] = {}
+    for key, item in values.items():
+        if not isinstance(item, list):
+            raise ValueError(
+                f"budget ledger snapshot {field_name} values must be arrays"
+            )
+        normalized[key] = _validate_string_tuple(
+            "budget ledger snapshot",
+            f"{field_name} values",
+            item,
+        )
+    return normalized
+
+
+def _snapshot_counter(snapshot: Mapping[str, object], field_name: str) -> int:
+    value = snapshot.get(field_name, 0)
+    if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+        raise ValueError(
+            f"budget ledger snapshot {field_name} must be a non-negative integer"
+        )
+    return value
+
+
+def _validate_snapshot_record_ids(
+    field_name: str,
+    records: Mapping[str, object],
+    record_id_field: str,
+) -> None:
+    for key, record in records.items():
+        record_id = getattr(record, record_id_field)
+        if key != record_id:
+            raise ValueError(
+                f"budget ledger snapshot {field_name} key must match {record_id_field}"
+            )
+
+
+def _snapshot_budget_chain(
+    accounts: Mapping[str, BudgetAccount],
+    budget_id: str,
+) -> tuple[str, ...]:
+    chain: list[str] = []
+    seen: set[str] = set()
+    current_id: str | None = budget_id
+    while current_id is not None:
+        if current_id in seen:
+            raise ValueError(
+                f"budget ledger snapshot budget hierarchy contains a cycle at {current_id!r}"
+            )
+        account = accounts.get(current_id)
+        if account is None:
+            raise ValueError(
+                f"budget ledger snapshot references unknown budget {current_id!r}"
+            )
+        chain.append(current_id)
+        seen.add(current_id)
+        current_id = account.parent_budget_id
+    return tuple(chain)
+
+
+def _numeric_record_suffix(record_id: str, prefix: str) -> int:
+    suffix = record_id.removeprefix(prefix)
+    if record_id.startswith(prefix) and suffix.isascii() and suffix.isdecimal():
+        return int(suffix)
+    return 0
+
+
+def _validate_budget_ledger_snapshot_consistency(
+    ledger: InMemoryBudgetLedger,
+) -> None:
+    account_ids = set(ledger._accounts)
+    for field_name, values in (
+        ("allocated", ledger._allocated),
+        ("reserved", ledger._reserved),
+        ("committed", ledger._committed),
+        ("overdraft", ledger._overdraft),
+    ):
+        if set(values) != account_ids:
+            raise ValueError(
+                f"budget ledger snapshot {field_name} keys must match account ids"
+            )
+    for budget_id, account in ledger._accounts.items():
+        _snapshot_budget_chain(ledger._accounts, budget_id)
+        if _amounts_to_dict(account.allocated) != ledger._allocated[budget_id]:
+            raise ValueError(
+                "budget ledger snapshot account allocated amounts must match allocated state"
+            )
+
+    if set(ledger._reservation_holds) != set(ledger._reservations):
+        raise ValueError(
+            "budget ledger snapshot reservation_holds keys must match reservation ids"
+        )
+    for reservation_id, reservation in ledger._reservations.items():
+        expected_chain = _snapshot_budget_chain(
+            ledger._accounts,
+            reservation.budget_id,
+        )
+        if ledger._reservation_holds[reservation_id] != expected_chain:
+            raise ValueError(
+                "budget ledger snapshot reservation holds must match budget hierarchy"
+            )
+
+    if set(ledger._permit_spent) != set(ledger._permits):
+        raise ValueError(
+            "budget ledger snapshot permit_spent keys must match permit ids"
+        )
+    for permit in ledger._permits.values():
+        if any(
+            reservation_id not in ledger._reservations
+            for reservation_id in permit.reservation_refs
+        ):
+            raise ValueError(
+                "budget ledger snapshot permits must reference existing reservations"
+            )
+
+    if set(ledger._completion_reserve_holds) != set(
+        ledger._completion_reserves
+    ):
+        raise ValueError(
+            "budget ledger snapshot completion_reserve_holds keys must match reserve ids"
+        )
+    for reserve_id, reserve in ledger._completion_reserves.items():
+        expected_chain = _snapshot_budget_chain(ledger._accounts, reserve.budget_id)
+        if ledger._completion_reserve_holds[reserve_id] != expected_chain:
+            raise ValueError(
+                "budget ledger snapshot completion reserve holds must match budget hierarchy"
+            )
+        if (
+            reserve.reservation_id is not None
+            and reserve.reservation_id not in ledger._reservations
+        ):
+            raise ValueError(
+                "budget ledger snapshot completion reserve references unknown reservation"
+            )
+
+    max_reservation_counter = max(
+        (
+            _numeric_record_suffix(reservation_id, "reservation-")
+            for reservation_id in ledger._reservations
+        ),
+        default=0,
+    )
+    ledger._reservation_counter = max(
+        ledger._reservation_counter,
+        max_reservation_counter,
+    )
+    max_fencing_token = max(
+        (
+            *(
+                reservation.fencing_token
+                for reservation in ledger._reservations.values()
+            ),
+            *(
+                reserve.fencing_token
+                for reserve in ledger._completion_reserves.values()
+            ),
+        ),
+        default=0,
+    )
+    if ledger._fencing_counter < max_fencing_token:
+        raise ValueError(
+            "budget ledger snapshot fencing_counter precedes persisted fencing tokens"
+        )
+
+
 def _budget_ledger_from_snapshot(snapshot: dict[str, object]) -> InMemoryBudgetLedger:
+    version = snapshot.get("version")
+    if not isinstance(version, int) or isinstance(version, bool) or version != 1:
+        raise ValueError("budget ledger snapshot version must be integer 1")
     ledger = InMemoryBudgetLedger()
+    raw_accounts = _snapshot_object_map(snapshot, "accounts")
     ledger._accounts = {
-        str(budget_id): _account_from_json(account)
-        for budget_id, account in snapshot.get("accounts", {}).items()
+        budget_id: _account_from_json(account)  # type: ignore[arg-type]
+        for budget_id, account in raw_accounts.items()
     }
+    _validate_snapshot_record_ids("accounts", ledger._accounts, "budget_id")
     ledger._allocated = {
-        str(budget_id): _amount_map_from_json(amounts)
-        for budget_id, amounts in snapshot.get("allocated", {}).items()
+        budget_id: _amount_map_from_json(amounts)
+        for budget_id, amounts in _snapshot_object_map(snapshot, "allocated").items()
     }
     ledger._reserved = {
-        str(budget_id): _amount_map_from_json(amounts)
-        for budget_id, amounts in snapshot.get("reserved", {}).items()
+        budget_id: _amount_map_from_json(amounts)
+        for budget_id, amounts in _snapshot_object_map(snapshot, "reserved").items()
     }
     ledger._committed = {
-        str(budget_id): _amount_map_from_json(amounts)
-        for budget_id, amounts in snapshot.get("committed", {}).items()
+        budget_id: _amount_map_from_json(amounts)
+        for budget_id, amounts in _snapshot_object_map(snapshot, "committed").items()
     }
     ledger._overdraft = {
-        str(budget_id): _amount_map_from_json(amounts)
-        for budget_id, amounts in snapshot.get("overdraft", {}).items()
+        budget_id: _amount_map_from_json(amounts)
+        for budget_id, amounts in _snapshot_object_map(snapshot, "overdraft").items()
     }
+    raw_reservations = _snapshot_object_map(snapshot, "reservations")
     ledger._reservations = {
-        str(reservation_id): _reservation_from_json(reservation)
-        for reservation_id, reservation in snapshot.get("reservations", {}).items()
+        reservation_id: _reservation_from_json(reservation)  # type: ignore[arg-type]
+        for reservation_id, reservation in raw_reservations.items()
     }
-    ledger._reservation_holds = {
-        str(reservation_id): tuple(str(budget_id) for budget_id in budget_ids)
-        for reservation_id, budget_ids in snapshot.get("reservation_holds", {}).items()
-    }
+    _validate_snapshot_record_ids(
+        "reservations",
+        ledger._reservations,
+        "reservation_id",
+    )
+    ledger._reservation_holds = _snapshot_string_array_map(
+        snapshot,
+        "reservation_holds",
+    )
+    raw_permits = _snapshot_object_map(snapshot, "permits")
     ledger._permits = {
-        str(permit_id): _permit_from_json(permit) for permit_id, permit in snapshot.get("permits", {}).items()
+        permit_id: _permit_from_json(permit)  # type: ignore[arg-type]
+        for permit_id, permit in raw_permits.items()
     }
+    _validate_snapshot_record_ids("permits", ledger._permits, "permit_id")
     ledger._permit_spent = {
-        str(permit_id): _amount_map_from_json(amounts)
-        for permit_id, amounts in snapshot.get("permit_spent", {}).items()
+        permit_id: _amount_map_from_json(amounts)
+        for permit_id, amounts in _snapshot_object_map(snapshot, "permit_spent").items()
     }
+    raw_completion_reserves = _snapshot_object_map(snapshot, "completion_reserves")
     ledger._completion_reserves = {
-        str(reserve_id): _completion_reserve_from_json(reserve)
-        for reserve_id, reserve in snapshot.get("completion_reserves", {}).items()
+        reserve_id: _completion_reserve_from_json(reserve)  # type: ignore[arg-type]
+        for reserve_id, reserve in raw_completion_reserves.items()
     }
-    ledger._completion_reserve_holds = {
-        str(reserve_id): tuple(str(budget_id) for budget_id in budget_ids)
-        for reserve_id, budget_ids in snapshot.get("completion_reserve_holds", {}).items()
-    }
-    ledger._reservation_counter = int(snapshot.get("reservation_counter", 0))
-    ledger._fencing_counter = int(snapshot.get("fencing_counter", 0))
+    _validate_snapshot_record_ids(
+        "completion_reserves",
+        ledger._completion_reserves,
+        "reserve_id",
+    )
+    ledger._completion_reserve_holds = _snapshot_string_array_map(
+        snapshot,
+        "completion_reserve_holds",
+    )
+    ledger._reservation_counter = _snapshot_counter(snapshot, "reservation_counter")
+    ledger._fencing_counter = _snapshot_counter(snapshot, "fencing_counter")
+    _validate_budget_ledger_snapshot_consistency(ledger)
     return ledger
 
 

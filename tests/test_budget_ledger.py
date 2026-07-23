@@ -79,6 +79,7 @@ def test_usage_amount_rejects_negative_amounts_and_freezes_dimensions() -> None:
     for invalid_amount in (Decimal("NaN"), Decimal("Infinity"), Decimal("-Infinity")):
         with pytest.raises(ValueError, match="usage amount must be finite"):
             UsageAmount("model_total_tokens", invalid_amount, "tokens")
+
     with pytest.raises(ValueError, match="usage amount must be a decimal"):
         UsageAmount("model_total_tokens", object(), "tokens")  # type: ignore[arg-type]
     with pytest.raises(ValueError, match="usage amount must be non-negative"):
@@ -99,6 +100,34 @@ def test_usage_amount_rejects_negative_amounts_and_freezes_dimensions() -> None:
         UsageAmount("model_total_tokens", Decimal("1"), "tokens", dimensions={"model": " "})
     with pytest.raises(ValueError, match="usage amount dimensions must be string keys and values"):
         UsageAmount("model_total_tokens", Decimal("1"), "tokens", dimensions={"model": object()})  # type: ignore[dict-item]
+
+
+@pytest.mark.parametrize(
+    ("factory", "message"),
+    (
+        (
+            lambda: BudgetAccount(
+                " budget-1",
+                ResourceRef("tenant:acme"),
+                [_tokens("1")],
+            ),
+            "budget_id must not contain surrounding whitespace",
+        ),
+        (
+            lambda: CompletionReserve(
+                "reserve-1",
+                "budget-1",
+                "finalization",
+                [_tokens("1")],
+                frozenset({" worker.finalize"}),
+            ),
+            "spendable_by item must not contain surrounding whitespace",
+        ),
+    ),
+)
+def test_budget_records_reject_whitespace_wrapped_identities(factory, message: str) -> None:
+    with pytest.raises(ValueError, match=message):
+        factory()
 
 
 def test_budget_models_reject_unknown_typed_values() -> None:
@@ -643,6 +672,178 @@ def test_sqlite_budget_ledger_rejects_non_standard_snapshot_json_on_replay(tmp_p
 
     with pytest.raises(ValueError, match="budget ledger state_json must be valid strict JSON"):
         SQLiteBudgetLedger(path)
+
+
+def test_sqlite_budget_ledger_rejects_duplicate_snapshot_json_keys_on_replay(tmp_path) -> None:
+    path = tmp_path / "budget-duplicate-key.sqlite3"
+    ledger = SQLiteBudgetLedger(path)
+    ledger.allocate("budget-1", ResourceRef("tenant:acme"), [_tokens("100")], policy_ref="policy-1")
+    row = ledger._connection.execute(
+        "SELECT state_json FROM budget_ledger_snapshots WHERE snapshot_id = ?",
+        ("default",),
+    ).fetchone()
+    state_json = row["state_json"]
+    ledger._connection.execute(
+        "UPDATE budget_ledger_snapshots SET state_json = ? WHERE snapshot_id = ?",
+        (state_json.replace('{"accounts":', '{"version":1,"accounts":', 1), "default"),
+    )
+    ledger._connection.commit()
+    ledger.close()
+
+    with pytest.raises(ValueError, match="budget ledger state_json must be valid strict JSON"):
+        SQLiteBudgetLedger(path)
+
+
+@pytest.mark.parametrize(
+    ("field", "invalid_value", "message"),
+    (
+        ("version", True, "snapshot version must be integer 1"),
+        ("reservation_counter", 1.5, "reservation_counter must be a non-negative integer"),
+        ("account_id", 7, "budget account budget_id must be a string"),
+        ("account_revision", True, "budget account revision must be an integer"),
+        ("allocated_amount", 7, "usage amount values must be decimal strings"),
+        ("account_key_mismatch", "budget-2", "accounts key must match budget_id"),
+        (
+            "aggregate_key_mismatch",
+            None,
+            "reserved keys must match account ids",
+        ),
+        (
+            "account_allocation_mismatch",
+            "99",
+            "account allocated amounts must match allocated state",
+        ),
+    ),
+)
+def test_sqlite_budget_ledger_rejects_coerced_or_inconsistent_snapshot_fields(
+    tmp_path,
+    field: str,
+    invalid_value: object,
+    message: str,
+) -> None:
+    path = tmp_path / f"budget-invalid-{field}.sqlite3"
+    ledger = SQLiteBudgetLedger(path)
+    ledger.allocate("budget-1", ResourceRef("tenant:acme"), [_tokens("100")], policy_ref="policy-1")
+    row = ledger._connection.execute(
+        "SELECT state_json FROM budget_ledger_snapshots WHERE snapshot_id = ?",
+        ("default",),
+    ).fetchone()
+    snapshot = json.loads(row["state_json"])
+    if field == "version":
+        snapshot["version"] = invalid_value
+    elif field == "reservation_counter":
+        snapshot["reservation_counter"] = invalid_value
+    elif field == "account_id":
+        snapshot["accounts"]["budget-1"]["budget_id"] = invalid_value
+    elif field == "account_revision":
+        snapshot["accounts"]["budget-1"]["revision"] = invalid_value
+    elif field == "allocated_amount":
+        snapshot["accounts"]["budget-1"]["allocated"][0]["amount"] = invalid_value
+    elif field == "aggregate_key_mismatch":
+        snapshot["reserved"].pop("budget-1")
+    elif field == "account_allocation_mismatch":
+        snapshot["accounts"]["budget-1"]["allocated"][0]["amount"] = invalid_value
+    else:
+        snapshot["accounts"]["budget-1"]["budget_id"] = invalid_value
+    ledger._connection.execute(
+        "UPDATE budget_ledger_snapshots SET state_json = ? WHERE snapshot_id = ?",
+        (json.dumps(snapshot), "default"),
+    )
+    ledger._connection.commit()
+    ledger.close()
+
+    with pytest.raises(ValueError, match=message):
+        SQLiteBudgetLedger(path)
+
+
+@pytest.mark.parametrize(
+    ("field", "message"),
+    (
+        ("fencing_counter", "fencing_counter precedes persisted fencing tokens"),
+        ("reservation_holds", "reservation holds must match budget hierarchy"),
+    ),
+)
+def test_sqlite_budget_ledger_rejects_inconsistent_restored_counters_and_holds(
+    tmp_path,
+    field: str,
+    message: str,
+) -> None:
+    path = tmp_path / f"budget-inconsistent-{field}.sqlite3"
+    ledger = SQLiteBudgetLedger(path)
+    ledger.allocate(
+        "budget-1",
+        ResourceRef("tenant:acme"),
+        [_tokens("100")],
+        policy_ref="policy-1",
+    )
+    reservation = ledger.reserve(
+        "budget-1",
+        ResourceRef("run:1"),
+        [_tokens("10")],
+        purpose="task",
+        expires_at="2026-06-22T01:00:00Z",
+    )
+    row = ledger._connection.execute(
+        "SELECT state_json FROM budget_ledger_snapshots WHERE snapshot_id = ?",
+        ("default",),
+    ).fetchone()
+    snapshot = json.loads(row["state_json"])
+    if field == "reservation_holds":
+        snapshot["reservation_holds"][reservation.reservation_id] = []
+    else:
+        snapshot[field] = 0
+    ledger._connection.execute(
+        "UPDATE budget_ledger_snapshots SET state_json = ? WHERE snapshot_id = ?",
+        (json.dumps(snapshot), "default"),
+    )
+    ledger._connection.commit()
+    ledger.close()
+
+    with pytest.raises(ValueError, match=message):
+        SQLiteBudgetLedger(path)
+
+
+def test_sqlite_budget_ledger_reopens_custom_numeric_reservation_id(tmp_path) -> None:
+    path = tmp_path / "budget-custom-reservation.sqlite3"
+    ledger = SQLiteBudgetLedger(path)
+    ledger.allocate(
+        "budget-1",
+        ResourceRef("tenant:acme"),
+        [_tokens("100")],
+        policy_ref="policy-1",
+    )
+    ledger.reserve(
+        "budget-1",
+        ResourceRef("run:1"),
+        [_tokens("10")],
+        purpose="task",
+        expires_at="2026-06-22T01:00:00Z",
+        reservation_id="reservation-999999",
+    )
+    row = ledger._connection.execute(
+        "SELECT state_json FROM budget_ledger_snapshots WHERE snapshot_id = ?",
+        ("default",),
+    ).fetchone()
+    snapshot = json.loads(row["state_json"])
+    snapshot["reservation_counter"] = 1
+    ledger._connection.execute(
+        "UPDATE budget_ledger_snapshots SET state_json = ? WHERE snapshot_id = ?",
+        (json.dumps(snapshot), "default"),
+    )
+    ledger._connection.commit()
+    ledger.close()
+
+    reopened = SQLiteBudgetLedger(path)
+    generated = reopened.reserve(
+        "budget-1",
+        ResourceRef("run:2"),
+        [_tokens("10")],
+        purpose="task",
+        expires_at="2026-06-22T01:00:00Z",
+    )
+
+    assert generated.reservation_id == "reservation-1000000"
+    reopened.close()
 
 
 def test_sqlite_budget_ledger_rejects_non_finite_amount_map_on_replay(tmp_path) -> None:

@@ -164,6 +164,10 @@ class AdmissionTicket:
                 )
         elif self.queue_position is not None:
             raise AdmissionError("non-queued admission ticket must not have queue_position")
+        if self.state != "queued" and self.retry_after_ms is not None:
+            raise AdmissionError(
+                "non-queued admission ticket must not have retry_after_ms"
+            )
         if self.state in {"admitted", "running"} and self.fencing_token is None:
             raise AdmissionError(
                 "admitted or running admission ticket requires fencing_token"
@@ -172,6 +176,28 @@ class AdmissionTicket:
             raise AdmissionError("running admission ticket requires started_at_ms")
         if self.state in TERMINAL_ADMISSION_TICKET_STATES and self.completed_at_ms is None:
             raise AdmissionError("terminal admission ticket requires completed_at_ms")
+        if self.state in {"queued", "admitted"} and self.started_at_ms is not None:
+            raise AdmissionError(
+                "queued or admitted admission ticket must not have started_at_ms"
+            )
+        if self.state not in TERMINAL_ADMISSION_TICKET_STATES and self.completed_at_ms is not None:
+            raise AdmissionError(
+                "non-terminal admission ticket must not have completed_at_ms"
+            )
+        if self.started_at_ms is not None and self.started_at_ms < self.issued_at_ms:
+            raise AdmissionError(
+                "admission ticket started_at_ms must not precede issued_at_ms"
+            )
+        if self.completed_at_ms is not None:
+            lower_bound = (
+                self.issued_at_ms
+                if self.started_at_ms is None
+                else self.started_at_ms
+            )
+            if self.completed_at_ms < lower_bound:
+                raise AdmissionError(
+                    "admission ticket completed_at_ms must not precede its lifecycle"
+                )
 
     def contract(self) -> dict[str, object]:
         """Return the client-safe ticket projection.

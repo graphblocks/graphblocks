@@ -9,6 +9,7 @@ from graphblocks.policy import (
     PolicyProfile,
     PolicyRequest,
     PolicyRule,
+    PolicySnapshot,
     PrincipalRef,
     ResourceRef,
     StaticPolicyEvaluator,
@@ -48,6 +49,87 @@ def test_policy_bundle_digest_is_stable_after_obligation_parameter_mutation() ->
 
     assert obligation.parameters == {"level": "strict"}
     assert bundle.content_digest() == digest
+
+
+def test_policy_bundle_and_profile_snapshot_mutable_configuration() -> None:
+    rule = PolicyRule(
+        "allow-model",
+        "allow",
+        actions=("model.generate",),
+        resource_selectors=("model",),
+    )
+    rules = [rule]
+    fail_modes = {"before_node": "fail_closed"}
+    bundle = PolicyBundle(
+        "bundle-1",
+        "1.0.0",
+        rule_language="graphblocks.declarative@1",
+        rules=rules,  # type: ignore[arg-type]
+        default_fail_modes=fail_modes,
+    )
+    quota_accounts = {"tenant": {"limits": ["daily"]}}
+    thresholds = [{"kind": "tokens", "amount": 10}]
+    profile = PolicyProfile(
+        profile_id="profile-1",
+        bundle_refs=("bundle-1",),
+        scope_selectors=("tenant:acme",),
+        quota_accounts=quota_accounts,
+        thresholds=thresholds,  # type: ignore[arg-type]
+    )
+
+    rules.clear()
+    fail_modes["before_node"] = "defer"
+    quota_accounts["tenant"]["limits"].append("hourly")  # type: ignore[index]
+    thresholds[0]["amount"] = 99
+
+    assert bundle.rules == (rule,)
+    assert bundle.default_fail_modes == {"before_node": "fail_closed"}
+    assert profile.quota_accounts == {"tenant": {"limits": ["daily"]}}
+    assert profile.thresholds == ({"kind": "tokens", "amount": 10},)
+    with pytest.raises(TypeError):
+        bundle.default_fail_modes["before_node"] = "defer"
+    with pytest.raises(TypeError):
+        profile.quota_accounts["tenant"]["limits"].append("hourly")  # type: ignore[index,union-attr]
+
+
+@pytest.mark.parametrize(
+    ("factory", "message"),
+    (
+        (
+            lambda: PolicyBundle(
+                " bundle-1",
+                "1.0.0",
+                rule_language="graphblocks.declarative@1",
+            ),
+            "bundle_id must not contain surrounding whitespace",
+        ),
+        (
+            lambda: PolicyBundle(
+                "bundle-1",
+                "1.0.0",
+                rule_language="graphblocks.declarative@1",
+                rules=(object(),),  # type: ignore[arg-type]
+            ),
+            "rules must be PolicyRule records",
+        ),
+        (
+            lambda: PolicyBundle(
+                "bundle-1",
+                "1.0.0",
+                rule_language="graphblocks.declarative@1",
+                default_fail_modes={"before_node": "unknown"},  # type: ignore[dict-item]
+            ),
+            "unknown policy fail mode",
+        ),
+        (
+            lambda: PolicyProfile("profile-1", (), (), affinity="eventual"),  # type: ignore[arg-type]
+            "unknown policy profile affinity",
+        ),
+    ),
+)
+def test_policy_bundle_and_profile_reject_malformed_contracts(factory, message: str) -> None:
+    with pytest.raises(ValueError, match=message):
+        factory()
 
 
 def test_resolve_policy_snapshot_pins_effective_policy_identity() -> None:
@@ -170,6 +252,53 @@ def test_entitlement_digest_is_stable_after_principal_attribute_mutation() -> No
 
     assert entitlement.subject.attributes == {"department": "support"}
     assert entitlement.content_digest() == digest
+
+
+def test_entitlement_and_policy_snapshots_validate_identity_time_and_collections() -> None:
+    with pytest.raises(ValueError, match="subject must be a PrincipalRef"):
+        EntitlementSnapshot(
+            "ent-1",
+            object(),  # type: ignore[arg-type]
+            (),
+            "rev-1",
+            "2026-06-23T00:00:00Z",
+        )
+    with pytest.raises(ValueError, match="scopes must be ResourceRef records"):
+        EntitlementSnapshot(
+            "ent-1",
+            PrincipalRef("user-1"),
+            (object(),),  # type: ignore[arg-type]
+            "rev-1",
+            "2026-06-23T00:00:00Z",
+        )
+    with pytest.raises(ValueError, match="valid_until must be after resolved_at"):
+        EntitlementSnapshot(
+            "ent-1",
+            PrincipalRef("user-1"),
+            (),
+            "rev-1",
+            "2026-06-23T00:00:00Z",
+            valid_until="2026-06-23T00:00:00Z",
+        )
+    with pytest.raises(ValueError, match="unknown policy snapshot affinity"):
+        PolicySnapshot(
+            "snapshot-1",
+            "sha256:policy",
+            (),
+            "profile-1",
+            "eventual",  # type: ignore[arg-type]
+            "2026-06-23T00:00:00Z",
+        )
+    with pytest.raises(ValueError, match="valid_until must be after issued_at"):
+        PolicySnapshot(
+            "snapshot-1",
+            "sha256:policy",
+            (),
+            "profile-1",
+            "pinned",
+            "2026-06-23T00:00:00Z",
+            valid_until="2026-06-22T00:00:00Z",
+        )
 
 
 def test_static_policy_evaluator_can_be_built_from_policy_bundle() -> None:

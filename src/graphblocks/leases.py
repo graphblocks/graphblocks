@@ -45,6 +45,10 @@ def _validate_non_empty_string(field_name: str, value: object) -> str:
         raise InvalidLeaseRequestError(f"lease {field_name} must be a string")
     if not value.strip():
         raise InvalidLeaseRequestError(f"lease {field_name} must be a non-empty string")
+    if value != value.strip():
+        raise InvalidLeaseRequestError(
+            f"lease {field_name} must not contain surrounding whitespace"
+        )
     return value
 
 
@@ -195,8 +199,7 @@ class InMemoryLeasePool:
     def __post_init__(self) -> None:
         capacities = dict(self.capacities)
         for resource, capacity in capacities.items():
-            if not isinstance(resource, str) or not resource.strip():
-                raise InvalidLeaseRequestError("lease resource name must be a non-empty string")
+            _validate_non_empty_string("resource name", resource)
             if not isinstance(capacity, int) or isinstance(capacity, bool) or capacity <= 0:
                 raise InvalidLeaseRequestError(
                     f"lease capacity for {resource} must be a positive integer"
@@ -205,10 +208,32 @@ class InMemoryLeasePool:
         self.capacities = capacities
         max_restored_id = 0
         max_restored_fencing_token = 0
+        restored_units: dict[str, int] = {}
+        restored_fencing_tokens: set[int] = set()
         for lease_id, active in active_leases.items():
             Lease._validate_lease_id(lease_id)
             if not isinstance(active, ActiveLease):
                 raise InvalidLeaseRequestError("lease active records must be ActiveLease")
+            if active.resource not in capacities:
+                raise InvalidLeaseRequestError(
+                    f"active lease {lease_id!r} references unknown resource {active.resource!r}"
+                )
+            restored_units[active.resource] = (
+                restored_units.get(active.resource, 0) + active.units
+            )
+            if restored_units[active.resource] > capacities[active.resource]:
+                raise InvalidLeaseRequestError(
+                    f"active leases exceed capacity for resource {active.resource!r}"
+                )
+            if active.fencing_token <= 0:
+                raise InvalidLeaseRequestError(
+                    "active lease fencing tokens must be positive integers"
+                )
+            if active.fencing_token in restored_fencing_tokens:
+                raise InvalidLeaseRequestError(
+                    "active lease fencing tokens must be unique"
+                )
+            restored_fencing_tokens.add(active.fencing_token)
             suffix = lease_id.removeprefix("lease-")
             if (
                 lease_id.startswith("lease-")

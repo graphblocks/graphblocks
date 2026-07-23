@@ -206,10 +206,19 @@ def _usage_provider_duplicate_conflict(
 
 
 def _loads_strict_json(field_name: str, value: str) -> object:
+    def reject_duplicate_keys(pairs: list[tuple[str, object]]) -> dict[str, object]:
+        decoded: dict[str, object] = {}
+        for key, item in pairs:
+            if key in decoded:
+                raise ValueError(f"duplicate JSON object key {key!r}")
+            decoded[key] = item
+        return decoded
+
     try:
         return json.loads(
             value,
             parse_constant=lambda constant: (_ for _ in ()).throw(ValueError(constant)),
+            object_pairs_hook=reject_duplicate_keys,
         )
     except ValueError as error:
         raise ValueError(f"usage ledger {field_name} must be valid strict JSON") from error
@@ -243,6 +252,8 @@ class UsageRecord:
             raise ValueError("usage record_id must be a string")
         if not self.record_id.strip():
             raise ValueError("usage record_id must not be empty")
+        if self.record_id != self.record_id.strip():
+            raise ValueError("usage record_id must not contain surrounding whitespace")
         if self.source not in VALID_USAGE_SOURCES:
             raise ValueError(f"invalid usage source {self.source}")
         if self.confidence not in VALID_USAGE_CONFIDENCES:
@@ -264,6 +275,10 @@ class UsageRecord:
                 raise ValueError(f"usage {field_name} must be a string")
             if not value.strip():
                 raise ValueError(f"usage {field_name} must not be empty")
+            if value != value.strip():
+                raise ValueError(
+                    f"usage {field_name} must not contain surrounding whitespace"
+                )
         if self.source == "reconciled":
             if self.reconciliation_of is None:
                 raise ValueError(

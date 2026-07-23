@@ -10,6 +10,7 @@ from .canonical import canonical_dumps
 
 
 WORKER_PROTOCOL_VERSION = 1
+_MAX_WORKER_UNSIGNED_64 = (1 << 64) - 1
 
 WorkerState = Literal[
     "starting",
@@ -276,6 +277,14 @@ class WorkerAdmissionDecision:
                 "worker admission decision",
                 "reason_code",
                 reason_code,
+            )
+        if self.admitted and reason_codes:
+            raise WorkerProtocolError(
+                "admitted worker admission decision must not define reason_codes"
+            )
+        if not self.admitted and not reason_codes:
+            raise WorkerProtocolError(
+                "denied worker admission decision requires reason_codes"
             )
         object.__setattr__(self, "reason_codes", reason_codes)
         object.__setattr__(
@@ -707,6 +716,19 @@ def _validate_worker_non_negative_integer(owner: str, field_name: str, value: ob
         raise WorkerProtocolError(f"{owner} {field_name} must be an integer")
     if value < 0:
         raise WorkerProtocolError(f"{owner} {field_name} must not be negative")
+    return value
+
+
+def _validate_worker_unsigned_64_integer(
+    owner: str,
+    field_name: str,
+    value: object,
+) -> int:
+    value = _validate_worker_non_negative_integer(owner, field_name, value)
+    if value > _MAX_WORKER_UNSIGNED_64:
+        raise WorkerProtocolError(
+            f"{owner} {field_name} must fit an unsigned 64-bit integer"
+        )
     return value
 
 
@@ -1319,6 +1341,10 @@ class WorkerDrainPolicy:
                 raise WorkerProtocolError(f"{field_name} must be an integer")
             if value <= 0:
                 raise WorkerProtocolError(f"{field_name} must be positive")
+            if value > _MAX_WORKER_UNSIGNED_64:
+                raise WorkerProtocolError(
+                    f"{field_name} must fit an unsigned 64-bit integer"
+                )
         valid_dispositions = {"finish_in_place", "cancel", "checkpoint", "disconnect_with_resume_token"}
         for field_name, value in (
             ("on_deadline_online_request", self.on_deadline_online_request),
@@ -1372,7 +1398,7 @@ class WorkerDrainTask:
         object.__setattr__(
             self,
             "started_at_unix_ms",
-            _validate_worker_non_negative_integer(
+            _validate_worker_unsigned_64_integer(
                 "worker drain task",
                 "started_at_unix_ms",
                 self.started_at_unix_ms,
@@ -1456,7 +1482,7 @@ class WorkerDrainDecision:
         object.__setattr__(
             self,
             "deadline_unix_ms",
-            _validate_worker_non_negative_integer(
+            _validate_worker_unsigned_64_integer(
                 "worker drain decision",
                 "deadline_unix_ms",
                 self.deadline_unix_ms,
@@ -1532,7 +1558,7 @@ class WorkerDrainPlan:
         object.__setattr__(
             self,
             "drain_started_at_unix_ms",
-            _validate_worker_non_negative_integer(
+            _validate_worker_unsigned_64_integer(
                 "worker drain plan",
                 "drain_started_at_unix_ms",
                 self.drain_started_at_unix_ms,
@@ -1544,6 +1570,11 @@ class WorkerDrainPlan:
             raise WorkerProtocolError("worker drain plan decisions must be iterable") from error
         if any(not isinstance(decision, WorkerDrainDecision) for decision in decisions):
             raise WorkerProtocolError("worker drain plan decisions must be WorkerDrainDecision")
+        invocation_ids = tuple(decision.invocation_id for decision in decisions)
+        if len(set(invocation_ids)) != len(invocation_ids):
+            raise WorkerProtocolError(
+                "worker drain plan decisions must have unique invocation_ids"
+            )
         object.__setattr__(self, "decisions", decisions)
 
     @classmethod
@@ -1556,8 +1587,32 @@ class WorkerDrainPlan:
         drain_started_at_unix_ms: int,
         now_unix_ms: int,
     ) -> WorkerDrainPlan:
+        if not isinstance(worker, WorkerAdvertisement):
+            raise WorkerProtocolError("worker drain plan worker must be WorkerAdvertisement")
+        if not isinstance(policy, WorkerDrainPolicy):
+            raise WorkerProtocolError("worker drain plan policy must be WorkerDrainPolicy")
+        try:
+            normalized_tasks = tuple(tasks)
+        except TypeError as error:
+            raise WorkerProtocolError(
+                "worker drain plan tasks must be WorkerDrainTask records"
+            ) from error
+        if any(not isinstance(task, WorkerDrainTask) for task in normalized_tasks):
+            raise WorkerProtocolError(
+                "worker drain plan tasks must be WorkerDrainTask records"
+            )
+        drain_started_at_unix_ms = _validate_worker_unsigned_64_integer(
+            "worker drain plan",
+            "drain_started_at_unix_ms",
+            drain_started_at_unix_ms,
+        )
+        now_unix_ms = _validate_worker_unsigned_64_integer(
+            "worker drain plan",
+            "now_unix_ms",
+            now_unix_ms,
+        )
         decisions: list[WorkerDrainDecision] = []
-        for task in tasks:
+        for task in normalized_tasks:
             if task.workload == "online_request":
                 timeout_ms = policy.online_request_timeout_ms
                 deadline_disposition = policy.on_deadline_online_request
@@ -1569,6 +1624,10 @@ class WorkerDrainPlan:
                 deadline_disposition = policy.on_deadline_realtime_session
             else:
                 raise WorkerProtocolError(f"invalid drain workload {task.workload!r}")
+            if drain_started_at_unix_ms > _MAX_WORKER_UNSIGNED_64 - timeout_ms:
+                raise WorkerProtocolError(
+                    "worker drain plan deadline_unix_ms overflows unsigned 64-bit integer"
+                )
             deadline_unix_ms = drain_started_at_unix_ms + timeout_ms
             if now_unix_ms >= deadline_unix_ms:
                 disposition = deadline_disposition

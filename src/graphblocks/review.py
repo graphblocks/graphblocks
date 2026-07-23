@@ -8,7 +8,7 @@ from threading import RLock
 from types import MappingProxyType
 from typing import ParamSpec, Protocol, TypeVar, cast
 
-from .canonical import canonical_hash
+from .canonical import MAX_CANONICAL_JSON_DEPTH, canonical_dumps, canonical_hash
 from .evaluation import ResourceSnapshotRef, ReviewDecision, ReviewRecord
 from .policy import PrincipalRef
 
@@ -54,25 +54,89 @@ def _validate_string_tuple(owner: str, field_name: str, values: object) -> tuple
     return tuple(sorted(set(normalized)))
 
 
-def _freeze_metadata(owner: str, value: object) -> Mapping[str, object]:
+def _freeze_metadata(
+    owner: str,
+    value: object,
+    *,
+    active_containers: set[int] | None = None,
+    depth: int = 0,
+) -> Mapping[str, object]:
     if not isinstance(value, Mapping):
         raise ValueError(f"{owner} metadata must be a mapping")
+    if depth > MAX_CANONICAL_JSON_DEPTH:
+        raise ValueError(
+            f"{owner} metadata nesting must not exceed {MAX_CANONICAL_JSON_DEPTH} levels"
+        )
+    active = set() if active_containers is None else active_containers
+    identity = id(value)
+    if identity in active:
+        raise ValueError(f"{owner} metadata must not contain cyclic values")
+    active.add(identity)
     metadata = dict(value)
-    for key in metadata:
-        if not isinstance(key, str):
-            raise ValueError(f"{owner} metadata keys must be strings")
-        if not key.strip():
-            raise ValueError(f"{owner} metadata key must not be empty")
-        if key != key.strip():
-            raise ValueError(f"{owner} metadata key must not contain surrounding whitespace")
-    return MappingProxyType({key: _freeze_metadata_value(owner, item) for key, item in metadata.items()})
+    try:
+        for key in metadata:
+            if not isinstance(key, str):
+                raise ValueError(f"{owner} metadata keys must be strings")
+            if not key.strip():
+                raise ValueError(f"{owner} metadata key must not be empty")
+            if key != key.strip():
+                raise ValueError(f"{owner} metadata key must not contain surrounding whitespace")
+        return MappingProxyType(
+            {
+                key: _freeze_metadata_value(
+                    owner,
+                    item,
+                    active_containers=active,
+                    depth=depth + 1,
+                )
+                for key, item in metadata.items()
+            }
+        )
+    finally:
+        active.remove(identity)
 
 
-def _freeze_metadata_value(owner: str, value: object) -> object:
+def _freeze_metadata_value(
+    owner: str,
+    value: object,
+    *,
+    active_containers: set[int],
+    depth: int,
+) -> object:
+    if depth > MAX_CANONICAL_JSON_DEPTH:
+        raise ValueError(
+            f"{owner} metadata nesting must not exceed {MAX_CANONICAL_JSON_DEPTH} levels"
+        )
     if isinstance(value, Mapping):
-        return _freeze_metadata(owner, value)
+        return _freeze_metadata(
+            owner,
+            value,
+            active_containers=active_containers,
+            depth=depth,
+        )
     if isinstance(value, (list, tuple)):
-        return tuple(_freeze_metadata_value(owner, item) for item in value)
+        identity = id(value)
+        if identity in active_containers:
+            raise ValueError(f"{owner} metadata must not contain cyclic values")
+        active_containers.add(identity)
+        try:
+            return tuple(
+                _freeze_metadata_value(
+                    owner,
+                    item,
+                    active_containers=active_containers,
+                    depth=depth + 1,
+                )
+                for item in value
+            )
+        finally:
+            active_containers.remove(identity)
+    try:
+        canonical_dumps(value)
+    except (TypeError, ValueError) as error:
+        raise ValueError(
+            f"{owner} metadata must contain strict canonical JSON"
+        ) from error
     return value
 
 
@@ -237,7 +301,17 @@ class InMemoryReviewerCredentialProvider:
     credentials: tuple[ReviewerCredential, ...] = field(default_factory=tuple)
 
     def __init__(self, credentials: list[ReviewerCredential] | tuple[ReviewerCredential, ...] = ()) -> None:
-        object.__setattr__(self, "credentials", tuple(credentials))
+        try:
+            normalized = tuple(credentials)
+        except TypeError as error:
+            raise ValueError(
+                "reviewer credential provider credentials must be ReviewerCredential records"
+            ) from error
+        if any(not isinstance(credential, ReviewerCredential) for credential in normalized):
+            raise ValueError(
+                "reviewer credential provider credentials must be ReviewerCredential records"
+            )
+        object.__setattr__(self, "credentials", normalized)
 
     def credentials_for(self, reviewer: PrincipalRef, scope: str) -> tuple[ReviewerCredential, ...]:
         return tuple(credential for credential in self.credentials if credential.allows(reviewer, scope))
@@ -275,10 +349,26 @@ class ReviewWorkflow:
     _lock: RLock = field(default_factory=RLock, init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
-        self.reviews = tuple(self.reviews)
+        if not isinstance(self.request, ReviewRequest):
+            raise ValueError("review workflow request must be a ReviewRequest")
+        if not callable(getattr(self.credential_provider, "credentials_for", None)):
+            raise ValueError(
+                "review workflow credential_provider must provide credentials_for"
+            )
+        try:
+            reviews = tuple(self.reviews)
+        except TypeError as error:
+            raise ValueError(
+                "review workflow reviews must be ReviewRecord records"
+            ) from error
+        if any(not isinstance(review, ReviewRecord) for review in reviews):
+            raise ValueError("review workflow reviews must be ReviewRecord records")
+        self.reviews = reviews
 
     @_with_review_workflow_lock
     def with_review(self, review: ReviewRecord) -> ReviewWorkflow:
+        if not isinstance(review, ReviewRecord):
+            raise ValueError("review workflow review must be a ReviewRecord")
         reviews = tuple(existing for existing in self.reviews if existing.review_id != review.review_id)
         return replace(self, reviews=(*reviews, review))
 
@@ -294,6 +384,9 @@ class ReviewWorkflow:
         subject: ResourceSnapshotRef | None = None,
         comments: list[str] | None = None,
     ) -> ReviewRecord:
+        if not isinstance(reviewer, PrincipalRef):
+            raise ValueError("review reviewer must be a PrincipalRef")
+        scope = _validate_non_empty_string("review", "scope", scope)
         review_created_at = _parse_review_datetime(created_at, owner="review", field_name="created_at")
         request_created_at = _parse_review_datetime(
             self.request.created_at,
@@ -307,9 +400,24 @@ class ReviewWorkflow:
             raise ReviewSubjectChangedError(self.request.subject.digest, subject.digest)
         if scope not in self.request.required_scopes:
             raise ReviewScopeNotRequestedError(scope)
+        try:
+            provided_credentials = tuple(
+                self.credential_provider.credentials_for(reviewer, scope)
+            )
+        except TypeError as error:
+            raise ValueError(
+                "review credential provider must return ReviewerCredential records"
+            ) from error
+        if any(
+            not isinstance(credential, ReviewerCredential)
+            for credential in provided_credentials
+        ):
+            raise ValueError(
+                "review credential provider must return ReviewerCredential records"
+            )
         credentials = tuple(
             credential
-            for credential in self.credential_provider.credentials_for(reviewer, scope)
+            for credential in provided_credentials
             if credential.is_active_at(created_at)
         )
         if not credentials:

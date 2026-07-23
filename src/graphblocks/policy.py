@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from types import MappingProxyType
 from typing import Literal, get_args
 
-from .canonical import canonical_hash
+from .canonical import MAX_CANONICAL_JSON_DEPTH, canonical_dumps, canonical_hash
 
 
 PolicyEffect = Literal["allow", "deny", "allow_with_obligations", "defer"]
@@ -109,6 +109,8 @@ def _validate_non_empty_string(owner: str, field_name: str, value: object) -> st
         raise ValueError(f"{owner} {field_name} must be a string")
     if not value.strip():
         raise ValueError(f"{owner} {field_name} must not be empty")
+    if value != value.strip():
+        raise ValueError(f"{owner} {field_name} must not contain surrounding whitespace")
     return value
 
 
@@ -130,32 +132,107 @@ def _validate_string_tuple(owner: str, field_name: str, values: object) -> tuple
             raise ValueError(f"{owner} {field_name} items must be strings")
         if not item.strip():
             raise ValueError(f"{owner} {field_name} item must not be empty")
+        if item != item.strip():
+            raise ValueError(
+                f"{owner} {field_name} item must not contain surrounding whitespace"
+            )
     return normalized
 
 
-def _freeze_mapping(owner: str, field_name: str, value: object) -> MappingProxyType[str, object]:
+def _freeze_mapping(
+    owner: str,
+    field_name: str,
+    value: object,
+    *,
+    active_containers: set[int] | None = None,
+    depth: int = 0,
+) -> MappingProxyType[str, object]:
     if not isinstance(value, Mapping):
         raise ValueError(f"{owner} {field_name} must be a mapping")
-    mapping = dict(value)
-    if any(not isinstance(key, str) or not key.strip() for key in mapping):
-        raise ValueError(f"{owner} {field_name} keys must be non-empty strings")
-    return MappingProxyType(
-        {
-            key: _freeze_policy_value(owner, field_name, item)
-            for key, item in mapping.items()
-        }
-    )
-
-
-def _freeze_policy_value(owner: str, field_name: str, value: object) -> object:
-    if isinstance(value, Mapping):
-        return _FrozenPolicyMapping(_freeze_mapping(owner, field_name, value))
-    if isinstance(value, list):
-        return _FrozenPolicyList(
-            _freeze_policy_value(owner, field_name, item) for item in value
+    if depth > MAX_CANONICAL_JSON_DEPTH:
+        raise ValueError(
+            f"{owner} {field_name} nesting must not exceed "
+            f"{MAX_CANONICAL_JSON_DEPTH} levels"
         )
-    if isinstance(value, tuple):
-        return tuple(_freeze_policy_value(owner, field_name, item) for item in value)
+    active = set() if active_containers is None else active_containers
+    identity = id(value)
+    if identity in active:
+        raise ValueError(f"{owner} {field_name} must not contain cyclic values")
+    active.add(identity)
+    mapping = dict(value)
+    try:
+        if any(not isinstance(key, str) or not key.strip() for key in mapping):
+            raise ValueError(f"{owner} {field_name} keys must be non-empty strings")
+        if any(key != key.strip() for key in mapping):
+            raise ValueError(
+                f"{owner} {field_name} keys must not contain surrounding whitespace"
+            )
+        return MappingProxyType(
+            {
+                key: _freeze_policy_value(
+                    owner,
+                    field_name,
+                    item,
+                    active_containers=active,
+                    depth=depth + 1,
+                )
+                for key, item in mapping.items()
+            }
+        )
+    finally:
+        active.remove(identity)
+
+
+def _freeze_policy_value(
+    owner: str,
+    field_name: str,
+    value: object,
+    *,
+    active_containers: set[int],
+    depth: int,
+) -> object:
+    if depth > MAX_CANONICAL_JSON_DEPTH:
+        raise ValueError(
+            f"{owner} {field_name} nesting must not exceed "
+            f"{MAX_CANONICAL_JSON_DEPTH} levels"
+        )
+    if isinstance(value, Mapping):
+        return _FrozenPolicyMapping(
+            _freeze_mapping(
+                owner,
+                field_name,
+                value,
+                active_containers=active_containers,
+                depth=depth,
+            )
+        )
+    if isinstance(value, (list, tuple)):
+        identity = id(value)
+        if identity in active_containers:
+            raise ValueError(f"{owner} {field_name} must not contain cyclic values")
+        active_containers.add(identity)
+        try:
+            frozen = tuple(
+                _freeze_policy_value(
+                    owner,
+                    field_name,
+                    item,
+                    active_containers=active_containers,
+                    depth=depth + 1,
+                )
+                for item in value
+            )
+        finally:
+            active_containers.remove(identity)
+        if isinstance(value, list):
+            return _FrozenPolicyList(frozen)
+        return frozen
+    try:
+        canonical_dumps(value)
+    except (TypeError, ValueError) as error:
+        raise ValueError(
+            f"{owner} {field_name} must contain strict canonical JSON"
+        ) from error
     return value
 
 
@@ -286,6 +363,68 @@ class PolicyBundle:
     default_fail_modes: dict[str, str] = field(default_factory=dict)
     signature_ref: str | None = None
 
+    def __post_init__(self) -> None:
+        for field_name in ("bundle_id", "version", "rule_language"):
+            object.__setattr__(
+                self,
+                field_name,
+                _validate_non_empty_string(
+                    "policy bundle",
+                    field_name,
+                    getattr(self, field_name),
+                ),
+            )
+        try:
+            rules = tuple(self.rules)
+        except TypeError as error:
+            raise ValueError("policy bundle rules must be PolicyRule records") from error
+        if any(not isinstance(rule, PolicyRule) for rule in rules):
+            raise ValueError("policy bundle rules must be PolicyRule records")
+        rule_ids = tuple(rule.rule_id for rule in rules)
+        if len(set(rule_ids)) != len(rule_ids):
+            raise ValueError("policy bundle rule ids must be unique")
+        object.__setattr__(self, "rules", rules)
+        object.__setattr__(
+            self,
+            "external_evaluator_ref",
+            _validate_optional_non_empty_string(
+                "policy bundle",
+                "external_evaluator_ref",
+                self.external_evaluator_ref,
+            ),
+        )
+        object.__setattr__(
+            self,
+            "obligation_schema_versions",
+            _validate_string_tuple(
+                "policy bundle",
+                "obligation_schema_versions",
+                self.obligation_schema_versions,
+            ),
+        )
+        default_fail_modes = _freeze_mapping(
+            "policy bundle",
+            "default_fail_modes",
+            self.default_fail_modes,
+        )
+        for enforcement_point, fail_mode in default_fail_modes.items():
+            if enforcement_point not in VALID_ENFORCEMENT_POINTS:
+                raise ValueError(
+                    f"unknown policy bundle enforcement point {enforcement_point!r}"
+                )
+            if fail_mode not in VALID_POLICY_FAIL_MODES:
+                raise ValueError(f"unknown policy fail mode {fail_mode!r}")
+        object.__setattr__(self, "default_fail_modes", default_fail_modes)
+        object.__setattr__(
+            self,
+            "signature_ref",
+            _validate_optional_non_empty_string(
+                "policy bundle",
+                "signature_ref",
+                self.signature_ref,
+            ),
+        )
+
     def content_digest(self) -> str:
         return canonical_hash(
             _policy_value(
@@ -319,6 +458,64 @@ class PolicyProfile:
     required_reviews: tuple[str, ...] = field(default_factory=tuple)
     required_gates: tuple[str, ...] = field(default_factory=tuple)
 
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "profile_id",
+            _validate_non_empty_string("policy profile", "profile_id", self.profile_id),
+        )
+        for field_name in (
+            "bundle_refs",
+            "scope_selectors",
+            "required_reviews",
+            "required_gates",
+        ):
+            object.__setattr__(
+                self,
+                field_name,
+                _validate_string_tuple(
+                    "policy profile",
+                    field_name,
+                    getattr(self, field_name),
+                ),
+            )
+        for field_name in ("quota_accounts", "budgets", "capture"):
+            object.__setattr__(
+                self,
+                field_name,
+                _freeze_mapping(
+                    "policy profile",
+                    field_name,
+                    getattr(self, field_name),
+                ),
+            )
+        try:
+            thresholds = tuple(self.thresholds)
+        except TypeError as error:
+            raise ValueError(
+                "policy profile thresholds must contain mappings"
+            ) from error
+        object.__setattr__(
+            self,
+            "thresholds",
+            tuple(
+                _freeze_mapping("policy profile", "threshold item", threshold)
+                for threshold in thresholds
+            ),
+        )
+        if self.exhaustion is not None:
+            object.__setattr__(
+                self,
+                "exhaustion",
+                _freeze_mapping(
+                    "policy profile",
+                    "exhaustion",
+                    self.exhaustion,
+                ),
+            )
+        if self.affinity not in {"pinned", "boundary_refresh", "live"}:
+            raise ValueError(f"unknown policy profile affinity {self.affinity!r}")
+
 
 @dataclass(frozen=True, slots=True)
 class EntitlementSnapshot:
@@ -333,6 +530,83 @@ class EntitlementSnapshot:
     budget_grants: tuple[str, ...] = field(default_factory=tuple)
     overrides: tuple[str, ...] = field(default_factory=tuple)
     valid_until: str | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "snapshot_id",
+            _validate_non_empty_string(
+                "entitlement snapshot",
+                "snapshot_id",
+                self.snapshot_id,
+            ),
+        )
+        if not isinstance(self.subject, PrincipalRef):
+            raise ValueError("entitlement snapshot subject must be a PrincipalRef")
+        try:
+            scopes = tuple(self.scopes)
+        except TypeError as error:
+            raise ValueError(
+                "entitlement snapshot scopes must be ResourceRef records"
+            ) from error
+        if any(not isinstance(scope, ResourceRef) for scope in scopes):
+            raise ValueError("entitlement snapshot scopes must be ResourceRef records")
+        object.__setattr__(self, "scopes", scopes)
+        object.__setattr__(
+            self,
+            "source_revision",
+            _validate_non_empty_string(
+                "entitlement snapshot",
+                "source_revision",
+                self.source_revision,
+            ),
+        )
+        object.__setattr__(
+            self,
+            "resolved_at",
+            _validate_policy_datetime(
+                "entitlement snapshot",
+                "resolved_at",
+                self.resolved_at,
+            ),
+        )
+        object.__setattr__(
+            self,
+            "plan_id",
+            _validate_optional_non_empty_string(
+                "entitlement snapshot",
+                "plan_id",
+                self.plan_id,
+            ),
+        )
+        for field_name in (
+            "policy_profile_refs",
+            "grants",
+            "budget_grants",
+            "overrides",
+        ):
+            object.__setattr__(
+                self,
+                field_name,
+                _validate_string_tuple(
+                    "entitlement snapshot",
+                    field_name,
+                    getattr(self, field_name),
+                ),
+            )
+        if self.valid_until is not None:
+            valid_until = _validate_policy_datetime(
+                "entitlement snapshot",
+                "valid_until",
+                self.valid_until,
+            )
+            if _parse_policy_datetime(valid_until) <= _parse_policy_datetime(
+                self.resolved_at
+            ):
+                raise ValueError(
+                    "entitlement snapshot valid_until must be after resolved_at"
+                )
+            object.__setattr__(self, "valid_until", valid_until)
 
     def content_digest(self) -> str:
         return canonical_hash(
@@ -364,6 +638,75 @@ class PolicySnapshot:
     pricing_revision: str | None = None
     quota_window_ids: tuple[str, ...] = field(default_factory=tuple)
     valid_until: str | None = None
+
+    def __post_init__(self) -> None:
+        for field_name in (
+            "snapshot_id",
+            "effective_policy_digest",
+            "profile_ref",
+        ):
+            object.__setattr__(
+                self,
+                field_name,
+                _validate_non_empty_string(
+                    "policy snapshot",
+                    field_name,
+                    getattr(self, field_name),
+                ),
+            )
+        object.__setattr__(
+            self,
+            "policy_bundle_refs",
+            _validate_string_tuple(
+                "policy snapshot",
+                "policy_bundle_refs",
+                self.policy_bundle_refs,
+            ),
+        )
+        if self.affinity not in {"pinned", "boundary_refresh", "live"}:
+            raise ValueError(f"unknown policy snapshot affinity {self.affinity!r}")
+        object.__setattr__(
+            self,
+            "issued_at",
+            _validate_policy_datetime(
+                "policy snapshot",
+                "issued_at",
+                self.issued_at,
+            ),
+        )
+        for field_name in (
+            "entitlement_snapshot_ref",
+            "pricing_revision",
+        ):
+            object.__setattr__(
+                self,
+                field_name,
+                _validate_optional_non_empty_string(
+                    "policy snapshot",
+                    field_name,
+                    getattr(self, field_name),
+                ),
+            )
+        object.__setattr__(
+            self,
+            "quota_window_ids",
+            _validate_string_tuple(
+                "policy snapshot",
+                "quota_window_ids",
+                self.quota_window_ids,
+            ),
+        )
+        if self.valid_until is not None:
+            valid_until = _validate_policy_datetime(
+                "policy snapshot",
+                "valid_until",
+                self.valid_until,
+            )
+            if _parse_policy_datetime(valid_until) <= _parse_policy_datetime(
+                self.issued_at
+            ):
+                raise ValueError("policy snapshot valid_until must be after issued_at")
+            object.__setattr__(self, "valid_until", valid_until)
 
 
 @dataclass(frozen=True, slots=True)
@@ -539,11 +882,37 @@ class PolicyEnforcementRecord:
     metadata: dict[str, object] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "record_id",
+            _validate_non_empty_string(
+                "policy enforcement",
+                "record_id",
+                self.record_id,
+            ),
+        )
+        object.__setattr__(
+            self,
+            "decision_id",
+            _validate_non_empty_string(
+                "policy enforcement",
+                "decision_id",
+                self.decision_id,
+            ),
+        )
         if self.enforcement_point not in VALID_ENFORCEMENT_POINTS:
             raise ValueError(f"unknown enforcement point {self.enforcement_point!r}")
         if self.status not in VALID_ENFORCEMENT_STATUSES:
             raise ValueError(f"unknown policy enforcement status {self.status!r}")
-        object.__setattr__(self, "enforced_obligation_ids", tuple(self.enforced_obligation_ids))
+        object.__setattr__(
+            self,
+            "enforced_obligation_ids",
+            _validate_string_tuple(
+                "policy enforcement",
+                "enforced_obligation_ids",
+                self.enforced_obligation_ids,
+            ),
+        )
         object.__setattr__(self, "metadata", _freeze_mapping("policy enforcement", "metadata", self.metadata))
         if self.occurred_at:
             object.__setattr__(

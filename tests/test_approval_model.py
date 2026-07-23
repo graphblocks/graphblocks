@@ -202,6 +202,45 @@ def test_approval_request_metadata_is_copied_and_read_only() -> None:
         )
 
 
+@pytest.mark.parametrize("invalid_value", ({"bad"}, object()))
+def test_approval_request_rejects_non_json_metadata_values(invalid_value: object) -> None:
+    with pytest.raises(
+        ValueError,
+        match="approval request metadata must contain strict canonical JSON",
+    ):
+        ApprovalRequest.from_arguments(
+            "approval-1",
+            run_id="run-1",
+            subject=ResourceSnapshotRef("tool-call-1", "sha256:subject"),
+            action="process.execute",
+            arguments={"cmd": ["echo", "hello"]},
+            risk="external_process",
+            summary="Run a process",
+            metadata={"invalid": invalid_value},
+        )
+
+
+def test_approval_request_rejects_cyclic_metadata_and_invalid_arguments() -> None:
+    metadata: dict[str, object] = {}
+    metadata["self"] = metadata
+    request_args = {
+        "approval_id": "approval-1",
+        "run_id": "run-1",
+        "subject": ResourceSnapshotRef("tool-call-1", "sha256:subject"),
+        "action": "process.execute",
+        "risk": "external_process",
+        "summary": "Run a process",
+    }
+
+    with pytest.raises(ValueError, match="metadata must not contain cyclic values"):
+        ApprovalRequest.from_arguments(**request_args, arguments={}, metadata=metadata)
+    with pytest.raises(ValueError, match="arguments must contain strict canonical JSON"):
+        ApprovalRequest.from_arguments(
+            **request_args,
+            arguments={"invalid": object()},
+        )
+
+
 def test_approved_record_is_valid_only_for_same_subject_and_arguments() -> None:
     subject = ResourceSnapshotRef("tool-call-1", "sha256:subject")
     request = ApprovalRequest.from_arguments(

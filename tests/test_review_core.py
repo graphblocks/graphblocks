@@ -95,6 +95,26 @@ def test_review_request_rejects_invalid_identity_and_metadata_fields() -> None:
         request.metadata["scope"]["labels"].append("mutated")  # type: ignore[index, union-attr]
 
 
+def test_review_request_rejects_non_json_and_cyclic_metadata_values() -> None:
+    base = {
+        "request_id": "request-1",
+        "subject": ResourceSnapshotRef("candidate-1", "sha256:subject"),
+        "requested_by": PrincipalRef("author-1"),
+        "required_scopes": ("quality",),
+        "created_at": "2026-06-22T00:00:00Z",
+    }
+    with pytest.raises(
+        ValueError,
+        match="review request metadata must contain strict canonical JSON",
+    ):
+        ReviewRequest(**(base | {"metadata": {"invalid": object()}}))  # type: ignore[arg-type]
+
+    metadata: dict[str, object] = {}
+    metadata["self"] = metadata
+    with pytest.raises(ValueError, match="metadata must not contain cyclic values"):
+        ReviewRequest(**(base | {"metadata": metadata}))  # type: ignore[arg-type]
+
+
 @pytest.mark.parametrize(
     ("overrides", "expected_error"),
     (
@@ -168,6 +188,62 @@ def test_review_workflow_records_review_with_credential_reference() -> None:
     assert review.is_valid_for(request.subject)
     assert workflow.completed_scopes() == ("quality",)
     assert workflow.is_complete()
+
+
+def test_review_workflow_rejects_malformed_injected_state_and_provider_results() -> None:
+    request = ReviewRequest(
+        request_id="request-1",
+        subject=ResourceSnapshotRef("candidate-1", "sha256:subject"),
+        requested_by=PrincipalRef("author-1"),
+        required_scopes=("quality",),
+        created_at="2026-06-24T00:00:00Z",
+    )
+    reviewer = PrincipalRef("reviewer-1")
+
+    with pytest.raises(ValueError, match="credentials must be ReviewerCredential"):
+        InMemoryReviewerCredentialProvider([object()])  # type: ignore[list-item]
+    with pytest.raises(ValueError, match="request must be a ReviewRequest"):
+        ReviewWorkflow(object(), InMemoryReviewerCredentialProvider())  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="must provide credentials_for"):
+        ReviewWorkflow(request, object())  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="reviews must be ReviewRecord"):
+        ReviewWorkflow(
+            request,
+            InMemoryReviewerCredentialProvider(),
+            reviews=(object(),),  # type: ignore[arg-type]
+        )
+
+    class InvalidCredentialProvider:
+        def credentials_for(self, reviewer: PrincipalRef, scope: str) -> tuple[object, ...]:
+            return (object(),)
+
+    workflow = ReviewWorkflow(request, InvalidCredentialProvider())  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="review must be a ReviewRecord"):
+        workflow.with_review(object())  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="review reviewer must be a PrincipalRef"):
+        workflow.record_review(
+            review_id="review-1",
+            reviewer=object(),  # type: ignore[arg-type]
+            scope="quality",
+            decision="accept",
+            created_at="2026-06-24T00:05:00Z",
+        )
+    with pytest.raises(ValueError, match="scope must not contain surrounding whitespace"):
+        workflow.record_review(
+            review_id="review-1",
+            reviewer=reviewer,
+            scope=" quality",
+            decision="accept",
+            created_at="2026-06-24T00:05:00Z",
+        )
+    with pytest.raises(ValueError, match="must return ReviewerCredential"):
+        workflow.record_review(
+            review_id="review-1",
+            reviewer=reviewer,
+            scope="quality",
+            decision="accept",
+            created_at="2026-06-24T00:05:00Z",
+        )
 
 
 def test_review_workflow_replaces_replayed_review_id() -> None:

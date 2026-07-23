@@ -408,6 +408,10 @@ class SQLiteAuditOutbox:
         sql = "SELECT * FROM audit_outbox_records WHERE status IN ('pending', 'failed') ORDER BY sequence"
         parameters: tuple[object, ...] = ()
         if limit is not None:
+            if not isinstance(limit, int) or isinstance(limit, bool) or limit < 0:
+                raise ValueError(
+                    "audit outbox pending limit must be a non-negative integer"
+                )
             sql += " LIMIT ?"
             parameters = (limit,)
         rows = self._connection.execute(sql, parameters).fetchall()

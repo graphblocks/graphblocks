@@ -8,10 +8,66 @@ from graphblocks.admission import (
     AdmissionIdempotencyConflictError,
     AdmissionQueueFullError,
     AdmissionStaleFencingTokenError,
+    AdmissionTicket,
     AdmissionTicketNotFoundError,
     AdmissionTicketStateError,
     AdmissionTicketQueue,
 )
+
+
+def _ticket(**overrides: object) -> AdmissionTicket:
+    values: dict[str, object] = {
+        "ticket_id": "ticket-1",
+        "run_id": "run-1",
+        "request_id": "request-1",
+        "owner_id": "owner-1",
+        "limiter_id": "interactive",
+        "state": "admitted",
+        "units": 1,
+        "sequence": 1,
+        "state_version": 1,
+        "issued_at_ms": 100,
+        "expires_at_ms": 1_000,
+        "fencing_token": 1,
+    }
+    return AdmissionTicket(**(values | overrides))  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize(
+    ("overrides", "message"),
+    (
+        (
+            {"retry_after_ms": 10},
+            "non-queued admission ticket must not have retry_after_ms",
+        ),
+        (
+            {"started_at_ms": 110},
+            "queued or admitted admission ticket must not have started_at_ms",
+        ),
+        (
+            {"completed_at_ms": 110},
+            "non-terminal admission ticket must not have completed_at_ms",
+        ),
+        (
+            {"state": "running", "started_at_ms": 99},
+            "started_at_ms must not precede issued_at_ms",
+        ),
+        (
+            {
+                "state": "completed",
+                "started_at_ms": 150,
+                "completed_at_ms": 149,
+            },
+            "completed_at_ms must not precede its lifecycle",
+        ),
+    ),
+)
+def test_admission_ticket_rejects_inconsistent_lifecycle_fields(
+    overrides: dict[str, object],
+    message: str,
+) -> None:
+    with pytest.raises(AdmissionError, match=message):
+        _ticket(**overrides)
 
 
 def test_capacity_exhaustion_returns_ticket_and_completion_promotes_fifo() -> None:

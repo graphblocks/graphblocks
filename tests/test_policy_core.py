@@ -115,6 +115,45 @@ def test_policy_request_mappings_are_copied_and_read_only() -> None:
         )
 
 
+def test_policy_mappings_reject_mutable_non_json_and_cyclic_values() -> None:
+    for invalid_value in ({"mutable"}, object()):
+        with pytest.raises(
+            ValueError,
+            match="principal attributes must contain strict canonical JSON",
+        ):
+            PrincipalRef("user-1", attributes={"invalid": invalid_value})
+
+    attributes: dict[str, object] = {}
+    attributes["self"] = attributes
+    with pytest.raises(ValueError, match="attributes must not contain cyclic values"):
+        PrincipalRef("user-1", attributes=attributes)
+
+
+@pytest.mark.parametrize(
+    ("overrides", "message"),
+    (
+        ({"record_id": " record-1"}, "record_id must not contain surrounding whitespace"),
+        ({"decision_id": 7}, "decision_id must be a string"),
+        (
+            {"enforced_obligation_ids": "obl-1"},
+            "enforced_obligation_ids must be a collection of strings",
+        ),
+    ),
+)
+def test_policy_enforcement_record_rejects_malformed_identity_fields(
+    overrides: dict[str, object],
+    message: str,
+) -> None:
+    values = {
+        "record_id": "record-1",
+        "decision_id": "decision-1",
+        "enforcement_point": "before_node",
+        "status": "enforced",
+    }
+    with pytest.raises(ValueError, match=message):
+        PolicyEnforcementRecord(**(values | overrides))  # type: ignore[arg-type]
+
+
 def test_policy_security_mappings_are_recursively_copied_and_read_only() -> None:
     principal_attributes = {
         "claims": {"can_execute": False},

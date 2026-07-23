@@ -283,6 +283,14 @@ def test_worker_admission_decision_rejects_invalid_wire_payloads() -> None:
             "worker admission decision reason_code must not be empty",
         ),
         (
+            {**base, "admitted": True},
+            "admitted worker admission decision must not define reason_codes",
+        ),
+        (
+            {**base, "reasonCodes": []},
+            "denied worker admission decision requires reason_codes",
+        ),
+        (
             {**base, "requiredBlock": " "},
             "worker admission decision required_block must not be empty",
         ),
@@ -950,6 +958,10 @@ def test_worker_drain_payloads_reject_invalid_wire_shapes() -> None:
             lambda: WorkerDrainPolicy.from_wire({"onlineRequestTimeoutMs": "30"}),
             "online_request_timeout_ms must be an integer",
         ),
+        (
+            lambda: WorkerDrainPolicy(online_request_timeout_ms=1 << 64),
+            "online_request_timeout_ms must fit an unsigned 64-bit integer",
+        ),
     )
     for build, message in invalid_policy_checks:
         with pytest.raises(WorkerProtocolError, match=message):
@@ -963,6 +975,14 @@ def test_worker_drain_payloads_reject_invalid_wire_shapes() -> None:
         (
             lambda: WorkerDrainTask("online_request", request, started_at_unix_ms=True),
             "worker drain task started_at_unix_ms must be an integer",
+        ),
+        (
+            lambda: WorkerDrainTask(
+                "online_request",
+                request,
+                started_at_unix_ms=1 << 64,
+            ),
+            "started_at_unix_ms must fit an unsigned 64-bit integer",
         ),
         (
             lambda: WorkerDrainTask(
@@ -1032,6 +1052,21 @@ def test_worker_drain_payloads_reject_invalid_wire_shapes() -> None:
             ),
             "worker drain decision disposition has invalid disposition",
         ),
+        (
+            lambda: WorkerDrainDecision(
+                workload="online_request",
+                run_id=request.run_id,
+                invocation_id=request.invocation_id,
+                node_attempt_id=request.node_attempt_id,
+                lease_epoch=request.lease_epoch,
+                release_id=request.context.release_id,
+                deployment_revision_id=request.context.deployment_revision_id,
+                disposition="cancel",
+                deadline_unix_ms=1 << 64,
+                reason="deadline_reached",
+            ),
+            "deadline_unix_ms must fit an unsigned 64-bit integer",
+        ),
     )
     for build, message in invalid_decision_checks:
         with pytest.raises(WorkerProtocolError, match=message):
@@ -1055,8 +1090,26 @@ def test_worker_drain_payloads_reject_invalid_wire_shapes() -> None:
             "worker drain plan drain_started_at_unix_ms must be an integer",
         ),
         (
+            lambda: WorkerDrainPlan(
+                "worker-1",
+                "target-1",
+                1 << 64,
+                (decision,),
+            ),
+            "drain_started_at_unix_ms must fit an unsigned 64-bit integer",
+        ),
+        (
             lambda: WorkerDrainPlan("worker-1", "target-1", 0, (object(),)),
             "worker drain plan decisions must be WorkerDrainDecision",
+        ),
+        (
+            lambda: WorkerDrainPlan(
+                "worker-1",
+                "target-1",
+                0,
+                (decision, decision),
+            ),
+            "decisions must have unique invocation_ids",
         ),
         (
             lambda: WorkerDrainPlan(
@@ -1072,6 +1125,26 @@ def test_worker_drain_payloads_reject_invalid_wire_shapes() -> None:
     for build, message in invalid_plan_checks:
         with pytest.raises(WorkerProtocolError, match=message):
             build()
+
+    worker = WorkerAdvertisement.new(
+        "worker-1",
+        "target-1",
+        "sha256:package-lock",
+        "sha256:image",
+        [BlockCapability(request.block)],
+    )
+    task = WorkerDrainTask("online_request", request, started_at_unix_ms=0)
+    with pytest.raises(
+        WorkerProtocolError,
+        match="deadline_unix_ms overflows unsigned 64-bit integer",
+    ):
+        WorkerDrainPlan.for_worker(
+            worker,
+            WorkerDrainPolicy(online_request_timeout_ms=2),
+            (task,),
+            drain_started_at_unix_ms=(1 << 64) - 2,
+            now_unix_ms=0,
+        )
 
     plan_wire = WorkerDrainPlan("worker-1", "target-1", 0, (decision,)).to_wire()
     plan_wire["decisions"] = {}
