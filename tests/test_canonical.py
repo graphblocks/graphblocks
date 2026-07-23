@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import sys
 from collections.abc import Iterator, Mapping
 from decimal import Decimal
@@ -53,6 +54,10 @@ def _error_codes(graph: dict) -> list[str]:
         ).diagnostics.diagnostics
         if item.severity == "error"
     ]
+
+
+def test_canonical_dumps_preserves_the_stable_public_signature() -> None:
+    assert str(inspect.signature(canonical_dumps)) == "(value: 'Any') -> 'str'"
 
 
 def test_compile_rejects_nested_optional_output_into_required_input() -> None:

@@ -170,9 +170,9 @@ def canonical_loads(value: str | bytes | bytearray) -> Any:
     return snapshot
 
 
-def canonical_dumps(value: Any, *, _reject_tuples: bool = False) -> str:
+def _canonical_dumps(value: Any, *, reject_tuples: bool) -> str:
     snapshot, occupied_strings, has_decimal, has_large_integer = (
-        _canonical_snapshot(value, reject_tuples=_reject_tuples)
+        _canonical_snapshot(value, reject_tuples=reject_tuples)
     )
     if not has_decimal and not has_large_integer:
         try:
@@ -281,6 +281,10 @@ def canonical_dumps(value: Any, *, _reject_tuples: bool = False) -> str:
             canonical_number,
         )
     return encoded
+
+
+def canonical_dumps(value: Any) -> str:
+    return _canonical_dumps(value, reject_tuples=False)
 
 
 def canonical_hash(value: Any) -> str:

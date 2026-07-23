@@ -51,6 +51,7 @@ from graphblocks.application_event import (
     ApplicationProtocolLog,
     ApplicationProtocolStreamState,
 )
+from graphblocks.canonical import _canonical_dumps
 from graphblocks.runtime import InProcessRuntime, RuntimeRegistry, stdlib_registry
 from graphblocks.server import ApplicationProtocolCapabilities
 
@@ -1917,7 +1918,7 @@ def _canonical_json_mapping(label: str, field_name: str, value: object) -> _Froz
     if not isinstance(value, Mapping):
         raise ValueError(f"{label} {field_name} must be a JSON object")
     try:
-        canonical = canonical_dumps(value, _reject_tuples=True)
+        canonical = _canonical_dumps(value, reject_tuples=True)
         snapshot = canonical_loads(canonical)
     except TypeError as error:
         if "arrays must be lists" in str(error):

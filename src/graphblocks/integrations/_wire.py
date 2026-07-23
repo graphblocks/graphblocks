@@ -4,7 +4,7 @@ from collections.abc import Iterator, Mapping
 from types import MappingProxyType
 from typing import Generic, TypeVar
 
-from graphblocks.canonical import canonical_dumps, canonical_loads
+from graphblocks.canonical import _canonical_dumps, canonical_loads
 
 
 _ValueT = TypeVar("_ValueT")
@@ -63,7 +63,7 @@ def snapshot_wire_json(value: object, *, field_name: str) -> object:
     """Validate and immutably snapshot a JSON wire value in one source traversal."""
 
     try:
-        canonical = canonical_dumps(value, _reject_tuples=True)
+        canonical = _canonical_dumps(value, reject_tuples=True)
         snapshot = canonical_loads(canonical)
     except (TypeError, ValueError) as error:
         raise ValueError(f"{field_name} must contain strict JSON values") from error
