@@ -206,6 +206,92 @@ def test_tui_package_projects_job_progress_from_streaming_tool_results(monkeypat
     }
 
 
+def test_tui_package_reads_immutable_streaming_output_snapshots() -> None:
+    graphblocks_client = importlib.import_module("graphblocks.client")
+    graphblocks_tui = importlib.import_module("graphblocks.tui")
+    event = graphblocks_client.ApplicationProtocolEvent.new(
+        "JobProgress",
+        graphblocks_client.ApplicationProtocolEventMetadata(
+            event_id="event-progress",
+            protocol_version="graphblocks.app.v1",
+            run_id="run-1",
+            sequence=1,
+            occurred_at_unix_ms=1_000,
+        ),
+        payload={
+            "tool_call_id": "tool-call-1",
+            "output": [
+                {
+                    "kind": "text",
+                    "text": "searching immutable docs",
+                }
+            ],
+        },
+    )
+
+    state = graphblocks_tui.TuiProtocolSession("run-1").apply(event)
+
+    assert state.tool_progress == {
+        "tool-call-1": "searching immutable docs",
+    }
+
+
+def test_tui_package_rejects_malformed_restored_session_state() -> None:
+    graphblocks_tui = importlib.import_module("graphblocks.tui")
+
+    with pytest.raises(
+        graphblocks_tui.TuiContractError,
+        match="last_sequence must be an integer",
+    ):
+        graphblocks_tui.TuiProtocolSession("run-1", last_sequence=True)
+    with pytest.raises(
+        graphblocks_tui.TuiContractError,
+        match="counter values must be non-negative integers",
+    ):
+        graphblocks_tui.TuiProtocolSession(
+            "run-1",
+            counters={"RunStarted": True},
+        )
+    with pytest.raises(
+        graphblocks_tui.TuiContractError,
+        match="pending_actions must be a sequence",
+    ):
+        graphblocks_tui.TuiProtocolSession(
+            "run-1",
+            pending_actions="approval-1",
+        )
+    with pytest.raises(
+        graphblocks_tui.TuiContractError,
+        match="last_event must not be empty after an event sequence",
+    ):
+        graphblocks_tui.TuiProtocolSession("run-1", last_sequence=0)
+    with pytest.raises(
+        graphblocks_tui.TuiContractError,
+        match="last_event must be empty when last_sequence is -1",
+    ):
+        graphblocks_tui.TuiProtocolSession(
+            "run-1",
+            last_event="RunStarted",
+        )
+    with pytest.raises(
+        graphblocks_tui.TuiContractError,
+        match="last_sequence must fit an unsigned 64-bit integer",
+    ):
+        graphblocks_tui.TuiProtocolSession(
+            "run-1",
+            last_event="RunStarted",
+            last_sequence=1 << 64,
+        )
+    with pytest.raises(
+        graphblocks_tui.TuiContractError,
+        match="counter values must fit unsigned 64-bit integers",
+    ):
+        graphblocks_tui.TuiProtocolSession(
+            "run-1",
+            counters={"RunStarted": 1 << 64},
+        )
+
+
 def test_tui_package_ignores_boolean_tool_result_sequence_in_job_progress(monkeypatch) -> None:
     graphblocks_client = importlib.import_module("graphblocks.client")
     graphblocks_tui = importlib.import_module("graphblocks.tui")

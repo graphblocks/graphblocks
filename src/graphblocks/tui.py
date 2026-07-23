@@ -9,8 +9,33 @@ import json
 from .client import ApplicationProtocolEvent
 
 
+_MAX_U64 = (1 << 64) - 1
+
+
 class TuiContractError(ValueError):
     """Raised when a TUI screen contract is invalid."""
+
+
+def _non_empty_string(field_name: str, value: object) -> str:
+    if not isinstance(value, str):
+        raise TuiContractError(f"{field_name} must be a string")
+    if not value.strip():
+        raise TuiContractError(f"{field_name} must not be empty")
+    if value != value.strip():
+        raise TuiContractError(
+            f"{field_name} must not contain surrounding whitespace"
+        )
+    return value
+
+
+def _string_tuple(field_name: str, values: object) -> tuple[str, ...]:
+    if not isinstance(values, (list, tuple)):
+        raise TuiContractError(f"{field_name} must be a sequence")
+    normalized = tuple(
+        _non_empty_string(f"{field_name} item", value)
+        for value in values
+    )
+    return tuple(dict.fromkeys(normalized))
 
 
 def _canonical_dumps(value: object) -> str:
@@ -18,7 +43,12 @@ def _canonical_dumps(value: object) -> str:
 
 
 def _sorted_str_mapping(values: Mapping[str, object]) -> dict[str, str]:
-    return {str(key): str(value) for key, value in sorted(dict(values).items())}
+    if not isinstance(values, Mapping):
+        raise TuiContractError("rows must be a mapping")
+    normalized: dict[str, str] = {}
+    for key, value in values.items():
+        normalized[_non_empty_string("row key", key)] = str(value)
+    return dict(sorted(normalized.items()))
 
 
 def _content_digest(value: object) -> str:
@@ -31,8 +61,7 @@ class TuiSection:
     rows: Mapping[str, object] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        if not self.title.strip():
-            raise TuiContractError("section title must not be empty")
+        _non_empty_string("section title", self.title)
         object.__setattr__(self, "rows", _sorted_str_mapping(self.rows))
 
     def section_contract(self) -> dict[str, object]:
@@ -49,12 +78,10 @@ class TuiCommand:
     key: str | None = None
 
     def __post_init__(self) -> None:
-        if not self.label.strip():
-            raise TuiContractError("command label must not be empty")
-        if not self.action.strip():
-            raise TuiContractError("command action must not be empty")
-        if self.key is not None and not self.key.strip():
-            raise TuiContractError("command key must not be empty")
+        _non_empty_string("command label", self.label)
+        _non_empty_string("command action", self.action)
+        if self.key is not None:
+            _non_empty_string("command key", self.key)
 
     def command_contract(self) -> dict[str, str]:
         contract = {"label": self.label, "action": self.action}
@@ -71,12 +98,20 @@ class TuiScreen:
     commands: tuple[TuiCommand, ...] = field(default_factory=tuple)
 
     def __post_init__(self) -> None:
-        if not self.name.strip():
-            raise TuiContractError("screen name must not be empty")
-        if not self.title.strip():
-            raise TuiContractError("screen title must not be empty")
-        object.__setattr__(self, "sections", tuple(self.sections))
-        object.__setattr__(self, "commands", tuple(self.commands))
+        _non_empty_string("screen name", self.name)
+        _non_empty_string("screen title", self.title)
+        if not isinstance(self.sections, (list, tuple)):
+            raise TuiContractError("screen sections must be a sequence")
+        if not isinstance(self.commands, (list, tuple)):
+            raise TuiContractError("screen commands must be a sequence")
+        sections = tuple(self.sections)
+        commands = tuple(self.commands)
+        if any(not isinstance(section, TuiSection) for section in sections):
+            raise TuiContractError("screen sections must contain TuiSection records")
+        if any(not isinstance(command, TuiCommand) for command in commands):
+            raise TuiContractError("screen commands must contain TuiCommand records")
+        object.__setattr__(self, "sections", sections)
+        object.__setattr__(self, "commands", commands)
 
     def screen_contract(self) -> dict[str, object]:
         return {
@@ -92,7 +127,14 @@ class TuiSessionSnapshot:
     screens: tuple[TuiScreen, ...]
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "screens", tuple(self.screens))
+        if not isinstance(self.screens, (list, tuple)):
+            raise TuiContractError("session screens must be a sequence")
+        screens = tuple(self.screens)
+        if any(not isinstance(screen, TuiScreen) for screen in screens):
+            raise TuiContractError(
+                "session screens must contain TuiScreen records"
+            )
+        object.__setattr__(self, "screens", screens)
 
     def snapshot_contract(self) -> dict[str, object]:
         return {"screens": [screen.screen_contract() for screen in self.screens]}
@@ -113,27 +155,80 @@ class TuiProtocolSession:
     pending_actions: tuple[str, ...] = field(default_factory=tuple)
     artifacts: tuple[str, ...] = field(default_factory=tuple)
     tool_progress: Mapping[str, object] = field(default_factory=dict)
-    counters: Mapping[str, object] = field(default_factory=dict)
+    counters: Mapping[str, int] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        if not self.run_id.strip():
-            raise TuiContractError("run_id must not be empty")
-        if not self.protocol_version.strip():
-            raise TuiContractError("protocol_version must not be empty")
-        if not self.status.strip():
-            raise TuiContractError("status must not be empty")
+        _non_empty_string("run_id", self.run_id)
+        _non_empty_string("protocol_version", self.protocol_version)
+        _non_empty_string("status", self.status)
+        if not isinstance(self.last_event, str):
+            raise TuiContractError("last_event must be a string")
+        if self.last_event and self.last_event != self.last_event.strip():
+            raise TuiContractError(
+                "last_event must not contain surrounding whitespace"
+            )
+        if not isinstance(self.last_sequence, int) or isinstance(
+            self.last_sequence,
+            bool,
+        ):
+            raise TuiContractError("last_sequence must be an integer")
         if self.last_sequence < -1:
             raise TuiContractError("last_sequence must be at least -1")
-        object.__setattr__(self, "pending_actions", tuple(dict.fromkeys(str(item) for item in self.pending_actions)))
-        object.__setattr__(self, "artifacts", tuple(dict.fromkeys(str(item) for item in self.artifacts)))
+        if self.last_sequence > _MAX_U64:
+            raise TuiContractError(
+                "last_sequence must fit an unsigned 64-bit integer"
+            )
+        if self.last_sequence == -1 and self.last_event:
+            raise TuiContractError(
+                "last_event must be empty when last_sequence is -1"
+            )
+        if self.last_sequence >= 0 and not self.last_event:
+            raise TuiContractError(
+                "last_event must not be empty after an event sequence"
+            )
+        if not isinstance(self.assistant_text, str):
+            raise TuiContractError("assistant_text must be a string")
+        _non_empty_string("assistant_state", self.assistant_state)
+        object.__setattr__(
+            self,
+            "pending_actions",
+            _string_tuple("pending_actions", self.pending_actions),
+        )
+        object.__setattr__(
+            self,
+            "artifacts",
+            _string_tuple("artifacts", self.artifacts),
+        )
         object.__setattr__(self, "tool_progress", _sorted_str_mapping(self.tool_progress))
+        if not isinstance(self.counters, Mapping):
+            raise TuiContractError("counters must be a mapping")
+        counters: dict[str, int] = {}
+        for key, value in self.counters.items():
+            key_text = _non_empty_string("counter key", key)
+            if (
+                not isinstance(value, int)
+                or isinstance(value, bool)
+                or value < 0
+            ):
+                raise TuiContractError(
+                    "counter values must be non-negative integers"
+                )
+            if value > _MAX_U64:
+                raise TuiContractError(
+                    "counter values must fit unsigned 64-bit integers"
+                )
+            counters[key_text] = value
         object.__setattr__(
             self,
             "counters",
-            {str(key): int(value) for key, value in sorted(dict(self.counters).items())},
+            dict(sorted(counters.items())),
         )
 
     def apply(self, event: ApplicationProtocolEvent) -> TuiProtocolSession:
+        if not isinstance(event, ApplicationProtocolEvent):
+            raise TuiContractError(
+                "event must be an ApplicationProtocolEvent"
+            )
         if event.metadata.run_id != self.run_id:
             raise TuiContractError("event run_id mismatch")
         if event.metadata.protocol_version != self.protocol_version:
@@ -152,24 +247,58 @@ class TuiProtocolSession:
         counters[event.kind] = counters.get(event.kind, 0) + 1
 
         if event.kind == "RunStarted":
-            status = str(payload.get("status", "running"))
+            event_status = payload.get("status")
+            status = (
+                event_status
+                if isinstance(event_status, str) and event_status.strip()
+                else "running"
+            )
         elif event.kind == "RunCompleted":
-            status = str(payload.get("status", "completed"))
+            event_status = payload.get("status")
+            status = (
+                event_status
+                if isinstance(event_status, str) and event_status.strip()
+                else "completed"
+            )
         elif event.kind == "RunFailed":
-            status = str(payload.get("status", "failed"))
+            event_status = payload.get("status")
+            status = (
+                event_status
+                if isinstance(event_status, str) and event_status.strip()
+                else "failed"
+            )
         elif event.kind == "RunCancelled":
-            status = str(payload.get("status", "cancelled"))
+            event_status = payload.get("status")
+            status = (
+                event_status
+                if isinstance(event_status, str) and event_status.strip()
+                else "cancelled"
+            )
         elif event.kind == "RunPolicyStopped":
-            status = str(payload.get("status", "policy_stopped"))
+            event_status = payload.get("status")
+            status = (
+                event_status
+                if isinstance(event_status, str) and event_status.strip()
+                else "policy_stopped"
+            )
         elif event.kind == "RunExpired":
-            status = str(payload.get("status", "expired"))
+            event_status = payload.get("status")
+            status = (
+                event_status
+                if isinstance(event_status, str) and event_status.strip()
+                else "expired"
+            )
         elif event.kind == "BudgetExhausted":
             status = "budget_exhausted"
         elif event.kind == "ExecutionDegraded":
             status = "degraded"
         elif event.kind == "OutputCutoff":
             terminal_reason = payload.get("terminal_reason", payload.get("terminalReason"))
-            status = str(terminal_reason or "cutoff")
+            status = (
+                terminal_reason
+                if isinstance(terminal_reason, str) and terminal_reason.strip()
+                else "cutoff"
+            )
             draft_disposition = payload.get("draft_disposition", payload.get("draftDisposition"))
             if draft_disposition == "retract":
                 assistant_state = "retracted"
@@ -230,10 +359,10 @@ class TuiProtocolSession:
                     summary = payload.get("delta")
                 if not isinstance(summary, str):
                     output = payload.get("output")
-                    if isinstance(output, list):
+                    if isinstance(output, (list, tuple)):
                         text_parts = []
                         for part in output:
-                            if isinstance(part, dict):
+                            if isinstance(part, Mapping):
                                 text = part.get("text")
                                 if isinstance(text, str) and text:
                                     text_parts.append(text)
@@ -274,12 +403,9 @@ def run_status_screen(
     last_event: str,
     counters: Mapping[str, object] | None = None,
 ) -> TuiScreen:
-    if not run_id.strip():
-        raise TuiContractError("run_id must not be empty")
-    if not state.strip():
-        raise TuiContractError("state must not be empty")
-    if not last_event.strip():
-        raise TuiContractError("last_event must not be empty")
+    _non_empty_string("run_id", run_id)
+    _non_empty_string("state", state)
+    _non_empty_string("last_event", last_event)
     return TuiScreen(
         name="run-status",
         title=f"Run {run_id}",
@@ -360,6 +486,8 @@ def admission_ticket_screen(ticket: Mapping[str, object]) -> TuiScreen:
 
 
 def workspace_assistant_screen(state: TuiProtocolSession) -> TuiScreen:
+    if not isinstance(state, TuiProtocolSession):
+        raise TuiContractError("state must be a TuiProtocolSession")
     commands = [
         TuiCommand("Refresh", "refresh", "r"),
         TuiCommand("Cancel", "cancel", "c"),
