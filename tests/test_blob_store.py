@@ -442,6 +442,40 @@ def test_s3_compatible_blob_store_uses_injected_client_without_sdk_dependency() 
     }
 
 
+def test_s3_compatible_blob_store_rejects_full_body_checksum_drift() -> None:
+    client = _FakeS3Client()
+    store = S3CompatibleBlobStore(bucket="kb-artifacts", client=client)
+    key = BlobKey("docs/policy.txt")
+    store.put(key, b"alpha policy", PutOptions(media_type="text/plain"))
+    client.objects[("kb-artifacts", key.key)]["Body"] = b"omega policy"
+
+    with pytest.raises(BlobStoreError, match="does not match recorded checksum"):
+        store.get(key)
+    assert client.head_requests == 0
+
+
+def test_s3_compatible_blob_store_get_does_not_issue_follow_up_head() -> None:
+    client = _FakeS3Client()
+    store = S3CompatibleBlobStore(bucket="kb-artifacts", client=client)
+    key = BlobKey("docs/policy.txt")
+    store.put(key, b"alpha policy", PutOptions(media_type="text/plain"))
+
+    assert store.get(key) == b"alpha policy"
+    assert client.head_requests == 0
+
+
+def test_s3_compatible_blob_store_validates_get_object_content_length() -> None:
+    client = _FakeS3Client()
+    store = S3CompatibleBlobStore(bucket="kb-artifacts", client=client)
+    key = BlobKey("docs/policy.txt")
+    store.put(key, b"alpha policy", PutOptions(media_type="text/plain"))
+    client.get_content_length_override = 99
+
+    with pytest.raises(BlobStoreError, match="GetObject ContentLength"):
+        store.get(key)
+    assert client.head_requests == 0
+
+
 def test_s3_compatible_blob_store_rejects_invalid_identity_fields() -> None:
     with pytest.raises(ValueError, match="bucket must be a string"):
         S3CompatibleBlobStore(bucket=object(), client=_FakeS3Client())  # type: ignore[arg-type]
@@ -509,6 +543,8 @@ class _FakeS3Client:
     def __init__(self) -> None:
         self.objects: dict[tuple[str, str], dict[str, object]] = {}
         self.range_headers: list[str | None] = []
+        self.head_requests = 0
+        self.get_content_length_override: int | None = None
 
     def put_object(self, **kwargs: object) -> dict[str, object]:
         key = (str(kwargs["Bucket"]), str(kwargs["Key"]))
@@ -536,9 +572,20 @@ class _FakeS3Client:
             start_text, end_text = range_header.removeprefix("bytes=").split("-", 1)
             start = int(start_text)
             body = body[start:] if end_text == "" else body[start : int(end_text) + 1]
-        return {"Body": _FakeBody(body)}
+        return {
+            "Body": _FakeBody(body),
+            "ContentLength": (
+                len(body)
+                if self.get_content_length_override is None
+                else self.get_content_length_override
+            ),
+            "ContentType": item["ContentType"],
+            "Metadata": dict(item["Metadata"]),
+            "ETag": item["ETag"],
+        }
 
     def head_object(self, **kwargs: object) -> dict[str, object]:
+        self.head_requests += 1
         key = (str(kwargs["Bucket"]), str(kwargs["Key"]))
         try:
             item = self.objects[key]

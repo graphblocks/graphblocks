@@ -495,7 +495,19 @@ class S3CompatibleBlobStore:
         response = self._invoke("get_object", **kwargs)
         if not isinstance(response, Mapping) or "Body" not in response:
             raise BlobStoreError("s3 get_object response must include Body")
-        return self._read_body(response["Body"])
+        data = self._read_body(response["Body"])
+        content_length = self._content_length(response.get("ContentLength"))
+        if content_length is not None and content_length != len(data):
+            raise BlobStoreError(
+                f"blob {key.key!r} does not match s3 GetObject ContentLength"
+            )
+        if byte_range is None:
+            metadata = self._response_metadata(response.get("Metadata"))
+            recorded_checksum = metadata.get(_GRAPHBLOCKS_CHECKSUM_METADATA)
+            actual_checksum = "sha256:" + hashlib.sha256(data).hexdigest()
+            if recorded_checksum is not None and recorded_checksum != actual_checksum:
+                raise BlobStoreError(f"blob {key.key!r} does not match recorded checksum")
+        return data
 
     def head(self, key: BlobKey) -> BlobMetadata:
         self._validate_key(key)
