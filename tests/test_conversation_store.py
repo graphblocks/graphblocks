@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 import math
+from threading import Event, Lock
 
 import pytest
 
@@ -40,6 +42,50 @@ def test_append_messages_uses_expected_revision_cas() -> None:
     assert snapshot.conversation.messages == (message,)
     with pytest.raises(ConversationConflictError):
         store.append_messages("conv-1", expected_revision=0, messages=[message])
+
+
+def test_append_messages_serializes_concurrent_revision_checks() -> None:
+    store = InMemoryConversationStore()
+    store.create(Conversation(conversation_id="conv-1"))
+    first_read = Event()
+    second_read = Event()
+    call_lock = Lock()
+
+    class CoordinatedConversations(dict[str, Conversation]):
+        calls = 0
+
+        def get(self, key: str, default: Conversation | None = None) -> Conversation | None:
+            with call_lock:
+                self.calls += 1
+                call = self.calls
+            if call == 1:
+                first_read.set()
+                second_read.wait(timeout=0.25)
+            elif call == 2:
+                second_read.set()
+            return super().get(key, default)
+
+    store._conversations = CoordinatedConversations(store._conversations)
+    messages = (
+        Message(message_id="msg-1", role="user"),
+        Message(message_id="msg-2", role="user"),
+    )
+
+    def append(message: Message) -> str:
+        first_read.wait(timeout=1)
+        try:
+            store.append_messages("conv-1", expected_revision=0, messages=[message])
+        except ConversationConflictError:
+            return "conflict"
+        return "success"
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        outcomes = list(executor.map(append, messages))
+
+    assert sorted(outcomes) == ["conflict", "success"]
+    snapshot = store.get("conv-1")
+    assert snapshot.revision == 1
+    assert len(snapshot.conversation.messages) == 1
 
 
 def test_conversation_store_copies_message_payloads_at_boundaries() -> None:
@@ -151,6 +197,30 @@ def test_branch_preserves_lineage_and_copies_messages_through_source_message() -
     assert branch.revision == 0
     assert branch.messages == (user_message,)
     assert branch.metadata["source_revision"] == 1
+
+
+def test_archived_conversation_rejects_compaction_without_mutation() -> None:
+    store = InMemoryConversationStore()
+    message = Message(message_id="msg-1", role="user")
+    store.create(Conversation(conversation_id="conv-1", messages=(message,)))
+    archived_revision = store.archive("conv-1")
+
+    with pytest.raises(ConversationArchivedError, match="is archived"):
+        store.record_compaction(
+            "conv-1",
+            CompactionRecord(
+                compaction_id="compaction-1",
+                source_message_ids=("msg-1",),
+                output_message_id="msg-1",
+                method="summary",
+                token_before=10,
+                token_after=5,
+            ),
+        )
+
+    snapshot = store.get("conv-1")
+    assert snapshot.revision == archived_revision
+    assert snapshot.conversation.compactions == ()
 
 
 def test_scoped_attachments_resolve_for_context() -> None:

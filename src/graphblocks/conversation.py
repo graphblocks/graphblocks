@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
-from collections.abc import Mapping
+from functools import wraps
 import math
-from typing import Literal
+from threading import RLock
+from typing import Literal, ParamSpec, TypeVar, cast
 
 from .documents import ArtifactRef
 
@@ -46,6 +48,18 @@ VALID_TURN_STATUSES = frozenset(
     )
 )
 TERMINAL_TURN_STATUSES = frozenset(("completed", "failed", "cancelled", "policy_stopped"))
+_P = ParamSpec("_P")
+_R = TypeVar("_R")
+
+
+def _with_conversation_store_lock(method: Callable[_P, _R]) -> Callable[_P, _R]:
+    @wraps(method)
+    def locked(*args: _P.args, **kwargs: _P.kwargs) -> _R:
+        store = cast("InMemoryConversationStore", args[0])
+        with store._lock:
+            return method(*args, **kwargs)
+
+    return locked
 
 
 def _validate_non_empty_string(owner: str, field_name: str, value: object) -> str:
@@ -501,18 +515,22 @@ def _copy_turn(turn: Turn) -> Turn:
 class InMemoryConversationStore:
     _conversations: dict[str, Conversation] = field(default_factory=dict)
     _turns: dict[str, Turn] = field(default_factory=dict)
+    _lock: RLock = field(default_factory=RLock, init=False, repr=False)
 
+    @_with_conversation_store_lock
     def create(self, conversation: Conversation) -> None:
         if conversation.conversation_id in self._conversations:
             raise ConversationConflictError(f"conversation {conversation.conversation_id!r} already exists")
         self._conversations[conversation.conversation_id] = _copy_conversation(conversation)
 
+    @_with_conversation_store_lock
     def get(self, conversation_id: str) -> ConversationSnapshot:
         conversation = self._conversations.get(conversation_id)
         if conversation is None:
             raise ConversationNotFoundError(f"conversation {conversation_id!r} does not exist")
         return ConversationSnapshot(conversation=_copy_conversation(conversation), revision=conversation.revision)
 
+    @_with_conversation_store_lock
     def begin_turn(self, conversation_id: str, expected_revision: int, turn_id: str) -> Turn:
         conversation = self._conversations.get(conversation_id)
         if conversation is None:
@@ -529,12 +547,14 @@ class InMemoryConversationStore:
         self._turns[turn_id] = turn
         return _copy_turn(turn)
 
+    @_with_conversation_store_lock
     def get_turn(self, turn_id: str) -> Turn:
         turn = self._turns.get(turn_id)
         if turn is None:
             raise TurnNotFoundError(f"turn {turn_id!r} does not exist")
         return _copy_turn(turn)
 
+    @_with_conversation_store_lock
     def append_turn_message(self, turn_id: str, message: Message) -> Turn:
         turn = self._turns.get(turn_id)
         if turn is None:
@@ -555,6 +575,7 @@ class InMemoryConversationStore:
         self._turns[turn_id] = updated
         return _copy_turn(updated)
 
+    @_with_conversation_store_lock
     def commit_turn(self, turn_id: str) -> Turn:
         turn = self._turns.get(turn_id)
         if turn is None:
@@ -592,6 +613,7 @@ class InMemoryConversationStore:
         self._turns[turn_id] = completed
         return _copy_turn(completed)
 
+    @_with_conversation_store_lock
     def abort_turn(self, turn_id: str) -> Turn:
         turn = self._turns.get(turn_id)
         if turn is None:
@@ -611,6 +633,7 @@ class InMemoryConversationStore:
         self._turns[turn_id] = cancelled
         return _copy_turn(cancelled)
 
+    @_with_conversation_store_lock
     def policy_stop_turn(self, turn_id: str) -> Turn:
         turn = self._turns.get(turn_id)
         if turn is None:
@@ -630,6 +653,7 @@ class InMemoryConversationStore:
         self._turns[turn_id] = stopped
         return _copy_turn(stopped)
 
+    @_with_conversation_store_lock
     def append_messages(self, conversation_id: str, expected_revision: int, messages: list[Message]) -> int:
         conversation = self._conversations.get(conversation_id)
         if conversation is None:
@@ -659,6 +683,7 @@ class InMemoryConversationStore:
         self._conversations[conversation_id] = updated
         return new_revision
 
+    @_with_conversation_store_lock
     def branch(self, request: BranchRequest) -> Conversation:
         conversation = self._conversations.get(request.conversation_id)
         if conversation is None:
@@ -711,6 +736,7 @@ class InMemoryConversationStore:
         self._conversations[branch_id] = branch
         return _copy_conversation(branch)
 
+    @_with_conversation_store_lock
     def regenerate(self, request: RegenerateRequest) -> Conversation:
         conversation = self._conversations.get(request.conversation_id)
         if conversation is None:
@@ -813,6 +839,7 @@ class InMemoryConversationStore:
         self._conversations[branch_id] = branch
         return _copy_conversation(branch)
 
+    @_with_conversation_store_lock
     def add_attachment(self, conversation_id: str, attachment: FileAttachment) -> int:
         conversation = self._conversations.get(conversation_id)
         if conversation is None:
@@ -833,6 +860,7 @@ class InMemoryConversationStore:
         )
         return new_revision
 
+    @_with_conversation_store_lock
     def resolve_attachments(
         self,
         conversation_id: str,
@@ -854,10 +882,13 @@ class InMemoryConversationStore:
             )
         )
 
+    @_with_conversation_store_lock
     def record_compaction(self, conversation_id: str, record: CompactionRecord) -> int:
         conversation = self._conversations.get(conversation_id)
         if conversation is None:
             raise ConversationNotFoundError(f"conversation {conversation_id!r} does not exist")
+        if conversation.archived:
+            raise ConversationArchivedError(f"conversation {conversation_id!r} is archived")
         message_ids = {message.message_id for message in conversation.messages}
         for source_message_id in record.source_message_ids:
             if source_message_id not in message_ids:
@@ -878,6 +909,7 @@ class InMemoryConversationStore:
         )
         return new_revision
 
+    @_with_conversation_store_lock
     def archive(self, conversation_id: str) -> int:
         conversation = self._conversations.get(conversation_id)
         if conversation is None:
@@ -896,6 +928,7 @@ class InMemoryConversationStore:
         )
         return new_revision
 
+    @_with_conversation_store_lock
     def delete(self, conversation_id: str, policy: DeletePolicy = "tombstone") -> int | None:
         conversation = self._conversations.get(conversation_id)
         if conversation is None:
