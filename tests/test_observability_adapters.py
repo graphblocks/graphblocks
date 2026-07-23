@@ -1,15 +1,16 @@
 from __future__ import annotations
 
+from dataclasses import asdict
 from decimal import Decimal
 import importlib
 import json
+import pickle
 import sys
 from concurrent.futures import ThreadPoolExecutor
 from threading import Event, Lock
 from types import SimpleNamespace
 
 import pytest
-
 from graphblocks.output_policy import (
     VALID_DRAFT_DISPOSITIONS,
     VALID_OUTPUT_DISPOSITIONS,
@@ -103,6 +104,69 @@ def test_telemetry_observation_contract_detaches_mutable_inputs(monkeypatch) -> 
         "timing_ms": {"execution": 128, "queue_wait": 4},
         "attributes": {"tenant": "tenant-1"},
     }
+
+
+def test_telemetry_records_deep_freeze_and_serialize_json_snapshots(monkeypatch) -> None:
+    graphblocks_telemetry = importlib.import_module("graphblocks.telemetry")
+    attributes = {"nested": {"items": [1]}}
+    observation = graphblocks_telemetry.GenerationTelemetryRecord(
+        record_id="gen-serialized",
+        run_id="run-1",
+        span_id="span-1",
+        node_id="agent",
+        provider="openai-compatible",
+        model="gpt-test",
+        usage={"input_tokens": 1},
+        timing_ms={"execution": 2},
+        attributes=attributes,
+    )
+
+    attributes["nested"]["items"].append(2)
+    projected = asdict(observation)
+    restored = pickle.loads(pickle.dumps(observation))
+
+    assert json.loads(json.dumps(projected))["attributes"] == {
+        "nested": {"items": [1]}
+    }
+    assert restored == observation
+    assert observation.observation_contract()["attributes"] == {
+        "nested": {"items": [1]}
+    }
+    with pytest.raises(TypeError):
+        restored.attributes["nested"]["items"].append(2)
+
+
+@pytest.mark.parametrize(
+    ("field_name", "value", "message"),
+    [
+        ("usage", {"tokens": True}, "non-negative integers"),
+        ("usage", {" tokens": 1}, "exact non-empty strings"),
+        ("timing_ms", {"execution": -1}, "non-negative integers"),
+        ("attributes", {"score": float("nan")}, "canonical JSON"),
+    ],
+)
+def test_telemetry_records_reject_invalid_json_snapshot_values(
+    monkeypatch,
+    field_name: str,
+    value: dict[str, object],
+    message: str,
+) -> None:
+    graphblocks_telemetry = importlib.import_module("graphblocks.telemetry")
+    kwargs: dict[str, object] = {
+        "record_id": "gen-invalid",
+        "run_id": "run-1",
+        "span_id": "span-1",
+        "node_id": "agent",
+        "provider": "openai-compatible",
+        "model": "gpt-test",
+        field_name: value,
+    }
+
+    with pytest.raises(
+        graphblocks_telemetry.TelemetryProjectionError,
+        match=message,
+    ):
+        graphblocks_telemetry.GenerationTelemetryRecord(**kwargs)
 
 
 def test_telemetry_policy_and_tool_records_apply_capture_policy(monkeypatch) -> None:
@@ -312,6 +376,48 @@ def test_telemetry_capture_policy_redacts_sensitive_observation_fields(monkeypat
     }
     assert observation.attributes["prompt"] == "secret prompt"
     assert "TelemetryCapturePolicy" in graphblocks_telemetry.__all__
+
+
+def test_telemetry_capture_policy_protects_nested_attribute_keys(monkeypatch) -> None:
+    graphblocks_telemetry = importlib.import_module("graphblocks.telemetry")
+    observation = graphblocks_telemetry.GenerationTelemetryRecord(
+        record_id="gen-nested",
+        run_id="run-1",
+        span_id="span-1",
+        node_id="agent",
+        provider="openai-compatible",
+        model="gpt-test",
+        attributes={
+            "context": {
+                "authorization": "Bearer secret",
+                "entries": [
+                    {
+                        "apiKey": "secret-key",
+                        "tenant": "tenant-1",
+                        "debug": "drop me",
+                    }
+                ],
+            }
+        },
+    )
+    policy = graphblocks_telemetry.TelemetryCapturePolicy(
+        redacted_attribute_keys=("authorization", "api_key"),
+        dropped_attribute_keys=("debug",),
+    )
+
+    redacted = policy.apply_generation(observation)
+
+    assert redacted.attributes == {
+        "context": {
+            "authorization": "[redacted]",
+            "entries": [
+                {
+                    "apiKey": "[redacted]",
+                    "tenant": "tenant-1",
+                }
+            ],
+        }
+    }
 
 
 def test_default_telemetry_capture_redacts_normalized_sensitive_keys(monkeypatch) -> None:

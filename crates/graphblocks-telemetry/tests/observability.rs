@@ -494,6 +494,50 @@ fn telemetry_key_protection_normalizes_case_and_naming_style() {
 }
 
 #[test]
+fn telemetry_capture_policy_protects_nested_sensitive_attributes() {
+    let record =
+        GenerationTelemetryRecord::new("gen-1", "run-1", "span-1", "agent", "openai", "gpt-test")
+            .with_attribute(
+                "request",
+                json!({
+                    "headers": {
+                        "Authorization": "Bearer nested-secret",
+                        "content_type": "application/json",
+                    },
+                    "attempts": [
+                        {
+                            "apiKey": "nested-key",
+                            "password": "drop-me",
+                            "totalTokens": 42,
+                        }
+                    ],
+                }),
+            );
+    let policy = TelemetryCapturePolicy::new()
+        .with_redacted_attribute_key("authorization")
+        .with_redacted_attribute_key("api_key")
+        .with_dropped_attribute_key("password");
+
+    let protected = policy.apply_generation(&record);
+
+    assert_eq!(
+        protected.attributes["request"],
+        json!({
+            "headers": {
+                "Authorization": "[redacted]",
+                "content_type": "application/json",
+            },
+            "attempts": [
+                {
+                    "apiKey": "[redacted]",
+                    "totalTokens": 42,
+                }
+            ],
+        }),
+    );
+}
+
+#[test]
 fn telemetry_capture_policy_linter_flags_unprotected_and_invalid_redaction_policy() {
     let linter = TelemetryCapturePolicyLinter::from_keys(
         ["api_key", "authorization"],

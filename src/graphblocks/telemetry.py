@@ -5,11 +5,11 @@ from dataclasses import dataclass, field, replace
 from functools import wraps
 import json
 from threading import RLock
-from types import MappingProxyType
 from typing import ParamSpec, TypeVar, cast
 
-from graphblocks.canonical import canonical_dumps, canonical_hash
+from graphblocks.canonical import canonical_dumps, canonical_hash, canonical_loads
 from graphblocks.diagnostics import Diagnostic, Severity
+from graphblocks.documents import FrozenDict, FrozenList
 from graphblocks.output_policy import (
     VALID_DRAFT_DISPOSITIONS,
     VALID_OUTPUT_DISPOSITIONS,
@@ -95,6 +95,7 @@ _TOKEN_USAGE_ATTRIBUTE_KEYS = frozenset(
         "totaltokens",
     }
 )
+_MAX_TELEMETRY_ATTRIBUTE_DEPTH = 64
 
 
 class TelemetryProjectionError(RuntimeError):
@@ -167,6 +168,73 @@ def _optional_non_negative_integer(owner: str, field_name: str, value: object | 
     return value
 
 
+def _freeze_telemetry_json_value(value: object) -> object:
+    if isinstance(value, dict):
+        return FrozenDict(
+            {
+                key: _freeze_telemetry_json_value(item)
+                for key, item in value.items()
+            }
+        )
+    if isinstance(value, list):
+        return FrozenList(_freeze_telemetry_json_value(item) for item in value)
+    return value
+
+
+def _freeze_telemetry_attributes(
+    owner: str,
+    value: object,
+) -> FrozenDict:
+    if not isinstance(value, Mapping):
+        raise TelemetryProjectionError(f"{owner} attributes must be a mapping")
+    try:
+        snapshot = canonical_loads(canonical_dumps(value))
+    except (TypeError, ValueError) as error:
+        raise TelemetryProjectionError(
+            f"{owner} attributes must contain canonical JSON values"
+        ) from error
+    if not isinstance(snapshot, dict):
+        raise TelemetryProjectionError(f"{owner} attributes must be a mapping")
+    frozen = _freeze_telemetry_json_value(snapshot)
+    assert isinstance(frozen, FrozenDict)
+    return frozen
+
+
+def _freeze_telemetry_integer_mapping(
+    owner: str,
+    field_name: str,
+    value: object,
+) -> FrozenDict:
+    if not isinstance(value, Mapping):
+        raise TelemetryProjectionError(f"{owner} {field_name} must be a mapping")
+    normalized: dict[str, int] = {}
+    for key, item in value.items():
+        if (
+            not isinstance(key, str)
+            or not key.strip()
+            or key != key.strip()
+        ):
+            raise TelemetryProjectionError(
+                f"{owner} {field_name} keys must be exact non-empty strings"
+            )
+        if (
+            not isinstance(item, int)
+            or isinstance(item, bool)
+            or item < 0
+        ):
+            raise TelemetryProjectionError(
+                f"{owner} {field_name} values must be non-negative integers"
+            )
+        normalized[key] = item
+    return FrozenDict(normalized)
+
+
+def _telemetry_json_projection(value: Mapping[str, object]) -> dict[str, object]:
+    projection = canonical_loads(canonical_dumps(value))
+    assert isinstance(projection, dict)
+    return projection
+
+
 def capture_native_telemetry_content(
     decision: Mapping[str, object],
     content: Mapping[str, object],
@@ -209,9 +277,32 @@ class GenerationTelemetryRecord:
                     getattr(self, field_name),
                 ),
             )
-        object.__setattr__(self, "usage", MappingProxyType(dict(self.usage)))
-        object.__setattr__(self, "timing_ms", MappingProxyType(dict(self.timing_ms)))
-        object.__setattr__(self, "attributes", MappingProxyType(dict(self.attributes)))
+        object.__setattr__(
+            self,
+            "usage",
+            _freeze_telemetry_integer_mapping(
+                "generation telemetry record",
+                "usage",
+                self.usage,
+            ),
+        )
+        object.__setattr__(
+            self,
+            "timing_ms",
+            _freeze_telemetry_integer_mapping(
+                "generation telemetry record",
+                "timing_ms",
+                self.timing_ms,
+            ),
+        )
+        object.__setattr__(
+            self,
+            "attributes",
+            _freeze_telemetry_attributes(
+                "generation telemetry record",
+                self.attributes,
+            ),
+        )
 
     def observation_contract(self) -> dict[str, object]:
         return {
@@ -226,7 +317,7 @@ class GenerationTelemetryRecord:
             "output_digest": self.output_digest,
             "usage": dict(sorted(self.usage.items())),
             "timing_ms": dict(sorted(self.timing_ms.items())),
-            "attributes": dict(sorted(self.attributes.items())),
+            "attributes": _telemetry_json_projection(self.attributes),
         }
 
 
@@ -337,7 +428,14 @@ class OutputPolicyTelemetryRecord:
                 self.last_client_delivered_sequence,
             ),
         )
-        object.__setattr__(self, "attributes", MappingProxyType(dict(self.attributes)))
+        object.__setattr__(
+            self,
+            "attributes",
+            _freeze_telemetry_attributes(
+                "output policy telemetry record",
+                self.attributes,
+            ),
+        )
 
     def observation_contract(self) -> dict[str, object]:
         return {
@@ -355,7 +453,7 @@ class OutputPolicyTelemetryRecord:
             "durable_result": self.durable_result,
             "accepted_through_sequence": self.accepted_through_sequence,
             "last_client_delivered_sequence": self.last_client_delivered_sequence,
-            "attributes": dict(sorted(self.attributes.items())),
+            "attributes": _telemetry_json_projection(self.attributes),
         }
 
 
@@ -430,7 +528,14 @@ class ToolExecutionTelemetryRecord:
                     f"tool execution telemetry record effects has invalid value {effect!r}"
                 )
         object.__setattr__(self, "effects", effects)
-        object.__setattr__(self, "attributes", MappingProxyType(dict(self.attributes)))
+        object.__setattr__(
+            self,
+            "attributes",
+            _freeze_telemetry_attributes(
+                "tool execution telemetry record",
+                self.attributes,
+            ),
+        )
 
     def observation_contract(self) -> dict[str, object]:
         return {
@@ -444,7 +549,7 @@ class ToolExecutionTelemetryRecord:
             "effect_outcome": self.effect_outcome,
             "effects": list(self.effects),
             "duration_ms": self.duration_ms,
-            "attributes": dict(sorted(self.attributes.items())),
+            "attributes": _telemetry_json_projection(self.attributes),
         }
 
 
@@ -543,14 +648,32 @@ class TelemetryCapturePolicy:
     def apply_tool_execution(self, record: ToolExecutionTelemetryRecord) -> ToolExecutionTelemetryRecord:
         return replace(record, attributes=self._protected_attributes(record.attributes))
 
-    def _protected_attributes(self, attributes: Mapping[str, object]) -> dict[str, object]:
+    def _protected_attributes(
+        self,
+        attributes: Mapping[str, object],
+        depth: int = 0,
+    ) -> dict[str, object]:
         return {
             key: self.replacement
             if _attribute_key_matches(key, self.redacted_attribute_keys)
-            else value
+            else self._protected_attribute_value(value, depth)
             for key, value in attributes.items()
             if not _attribute_key_matches(key, self.dropped_attribute_keys)
         }
+
+    def _protected_attribute_value(self, value: object, depth: int) -> object:
+        if isinstance(value, Mapping):
+            if depth >= _MAX_TELEMETRY_ATTRIBUTE_DEPTH:
+                return self.replacement
+            return self._protected_attributes(value, depth + 1)
+        if isinstance(value, (list, tuple)):
+            if depth >= _MAX_TELEMETRY_ATTRIBUTE_DEPTH:
+                return self.replacement
+            return [
+                self._protected_attribute_value(item, depth + 1)
+                for item in value
+            ]
+        return value
 
 
 @dataclass(frozen=True, slots=True)

@@ -62,6 +62,8 @@ pub const DEFAULT_CONTENT_TELEMETRY_ATTRIBUTE_KEYS: &[&str] = &[
     "tool_result",
 ];
 
+const MAX_TELEMETRY_ATTRIBUTE_DEPTH: usize = 64;
+
 fn normalized_telemetry_key(key: &str) -> String {
     key.chars()
         .filter(|character| character.is_alphanumeric())
@@ -750,22 +752,43 @@ impl TelemetryCapturePolicy {
     ) -> BTreeMap<String, Value> {
         attributes
             .iter()
-            .filter_map(|(key, value)| {
-                if telemetry_key_matches(
-                    key,
-                    self.dropped_attribute_keys.iter().map(String::as_str),
-                ) {
-                    None
-                } else if telemetry_key_matches(
-                    key,
-                    self.redacted_attribute_keys.iter().map(String::as_str),
-                ) {
-                    Some((key.clone(), Value::String(self.replacement.clone())))
-                } else {
-                    Some((key.clone(), value.clone()))
-                }
-            })
+            .filter_map(|(key, value)| self.protected_attribute(key, value, 0))
             .collect()
+    }
+
+    fn protected_attribute(
+        &self,
+        key: &str,
+        value: &Value,
+        depth: usize,
+    ) -> Option<(String, Value)> {
+        if telemetry_key_matches(key, self.dropped_attribute_keys.iter().map(String::as_str)) {
+            return None;
+        }
+        if telemetry_key_matches(key, self.redacted_attribute_keys.iter().map(String::as_str)) {
+            return Some((key.to_owned(), Value::String(self.replacement.clone())));
+        }
+
+        Some((key.to_owned(), self.protected_attribute_value(value, depth)))
+    }
+
+    fn protected_attribute_value(&self, value: &Value, depth: usize) -> Value {
+        match value {
+            Value::Array(values) if depth < MAX_TELEMETRY_ATTRIBUTE_DEPTH => Value::Array(
+                values
+                    .iter()
+                    .map(|value| self.protected_attribute_value(value, depth + 1))
+                    .collect(),
+            ),
+            Value::Object(values) if depth < MAX_TELEMETRY_ATTRIBUTE_DEPTH => Value::Object(
+                values
+                    .iter()
+                    .filter_map(|(key, value)| self.protected_attribute(key, value, depth + 1))
+                    .collect(),
+            ),
+            Value::Array(_) | Value::Object(_) => Value::String(self.replacement.clone()),
+            Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => value.clone(),
+        }
     }
 }
 
