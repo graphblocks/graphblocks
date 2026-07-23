@@ -5,6 +5,8 @@ from pathlib import Path
 import sys
 from types import SimpleNamespace
 
+import pytest
+
 
 ROOT = Path(__file__).parents[1]
 
@@ -47,6 +49,17 @@ def test_stdlib_scripted_model_uses_default_response_then_echo(monkeypatch) -> N
             "output_chars": 9,
         },
     }
+
+
+def test_scripted_model_response_rejects_coerced_usage() -> None:
+    graphblocks_stdlib = importlib.import_module("graphblocks.stdlib")
+
+    with pytest.raises(ValueError, match="non-negative integers"):
+        graphblocks_stdlib.ScriptedModelResponse(
+            "ok",
+            "scripted",
+            {"output_chars": True},
+        )
 
 
 def test_stdlib_package_lazy_native_runner_delegates_to_runtime(monkeypatch) -> None:

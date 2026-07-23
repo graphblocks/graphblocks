@@ -1,7 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
-import math
+from collections.abc import Mapping, Sequence
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -43,6 +42,7 @@ JournalKind = Literal[
     "node_started",
     "node_retry",
     "node_succeeded",
+    "node_completed",
     "node_failed",
     "run_succeeded",
     "run_failed",
@@ -79,7 +79,12 @@ _LOCAL_TERMINAL_JOURNAL_KINDS = frozenset(
     {"run_succeeded", "run_failed", "run_cancelled"}
 )
 _JOURNAL_KINDS = _LOCAL_JOURNAL_KINDS | frozenset(
-    {"run_waiting_callback", "external_callback_received", "run_resuming"}
+    {
+        "run_waiting_callback",
+        "external_callback_received",
+        "run_resuming",
+        "node_completed",
+    }
 )
 _TERMINAL_JOURNAL_KINDS = frozenset(
     {"run_succeeded", "run_failed", "run_cancelled"}
@@ -90,7 +95,7 @@ MAX_U64 = (1 << 64) - 1
 
 class JournalLike(Protocol):
     @property
-    def records(self) -> list[JournalRecord]:
+    def records(self) -> Sequence[JournalRecord]:
         ...
 
     @property
@@ -196,7 +201,23 @@ class JournalRecord:
     payload: Mapping[str, Any]
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "payload", _freeze_json_like(self.payload))
+        if (
+            not isinstance(self.sequence, int)
+            or isinstance(self.sequence, bool)
+            or self.sequence < 1
+        ):
+            raise ValueError("execution journal sequence must be a positive integer")
+        if not isinstance(self.kind, str) or self.kind not in _JOURNAL_KINDS:
+            raise ValueError(f"unsupported journal kind {self.kind!r}")
+        if not isinstance(self.payload, Mapping):
+            raise TypeError("execution journal payload must be a mapping")
+        snapshot = _loads_strict_json(
+            "execution journal payload",
+            _dumps_strict_json("execution journal payload", self.payload),
+        )
+        if not isinstance(snapshot, dict):
+            raise TypeError("execution journal payload must be a mapping")
+        object.__setattr__(self, "payload", _freeze_json_like(snapshot))
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -206,11 +227,64 @@ class JournalRecord:
         }
 
 
-@dataclass(slots=True)
+@dataclass(frozen=True, slots=True)
 class ExecutionJournal:
     run_id: str
-    records: list[JournalRecord] = field(default_factory=list)
+    records: tuple[JournalRecord, ...] = field(default_factory=tuple)
     terminal_kind: JournalKind | None = None
+
+    def __post_init__(self) -> None:
+        if (
+            not isinstance(self.run_id, str)
+            or not self.run_id.strip()
+            or self.run_id != self.run_id.strip()
+        ):
+            raise ValueError("execution journal run id must be an exact nonempty string")
+        if isinstance(self.records, (str, bytes, bytearray, Mapping)):
+            raise ValueError(
+                "execution journal records must be JournalRecord values"
+            )
+        try:
+            records = tuple(self.records)
+        except TypeError as error:
+            raise ValueError(
+                "execution journal records must be JournalRecord values"
+            ) from error
+        if any(not isinstance(record, JournalRecord) for record in records):
+            raise ValueError("execution journal records must be JournalRecord values")
+        for expected_sequence, record in enumerate(records, start=1):
+            if record.sequence != expected_sequence:
+                raise JournalStateError(
+                    "execution journal record sequences must be contiguous"
+                )
+        terminal_records = [
+            record for record in records if record.kind in _TERMINAL_JOURNAL_KINDS
+        ]
+        if len(terminal_records) > 1:
+            raise JournalStateError(
+                "execution journal must not contain multiple terminal records"
+            )
+        if terminal_records and terminal_records[0] is not records[-1]:
+            raise JournalStateError(
+                "execution journal terminal record must be last"
+            )
+        inferred_terminal = (
+            terminal_records[0].kind if terminal_records else None
+        )
+        if self.terminal_kind is not None:
+            if (
+                not isinstance(self.terminal_kind, str)
+                or self.terminal_kind not in _TERMINAL_JOURNAL_KINDS
+            ):
+                raise ValueError(
+                    f"journal terminal kind is invalid: {self.terminal_kind!r}"
+                )
+            if self.terminal_kind != inferred_terminal:
+                raise JournalStateError(
+                    "execution journal terminal_kind must match its terminal record"
+                )
+        object.__setattr__(self, "records", records)
+        object.__setattr__(self, "terminal_kind", inferred_terminal)
 
     def append(self, kind: JournalKind, payload: dict[str, Any]) -> JournalRecord:
         if kind not in _JOURNAL_KINDS:
@@ -222,7 +296,7 @@ class ExecutionJournal:
         if self.terminal_kind is not None:
             raise JournalStateError(f"cannot append {kind} after terminal {self.terminal_kind}")
         record = JournalRecord(len(self.records) + 1, kind, payload)
-        self.records.append(record)
+        object.__setattr__(self, "records", (*self.records, record))
         return record
 
     def append_terminal(self, kind: JournalKind, payload: dict[str, Any]) -> JournalRecord:
@@ -231,8 +305,8 @@ class ExecutionJournal:
         if self.terminal_kind is not None:
             raise JournalStateError(f"terminal already recorded as {self.terminal_kind}")
         record = JournalRecord(len(self.records) + 1, kind, payload)
-        self.records.append(record)
-        self.terminal_kind = kind
+        object.__setattr__(self, "records", (*self.records, record))
+        object.__setattr__(self, "terminal_kind", kind)
         return record
 
 
@@ -320,6 +394,14 @@ class SQLiteExecutionJournal:
     connection: sqlite3.Connection = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
+        if (
+            not isinstance(self.run_id, str)
+            or not self.run_id.strip()
+            or self.run_id != self.run_id.strip()
+        ):
+            raise ValueError(
+                "SQLite execution journal run id must be an exact nonempty string"
+            )
         self.path = Path(self.path)
         self.connection = sqlite3.connect(self.path)
         self.connection.row_factory = sqlite3.Row

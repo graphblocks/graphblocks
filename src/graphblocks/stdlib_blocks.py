@@ -9,9 +9,12 @@ that the portable Graph contract uses.
 from __future__ import annotations
 
 from collections.abc import Mapping
+from copy import deepcopy
 from dataclasses import dataclass
+from types import MappingProxyType
 from typing import Generic, Literal, TypeAlias, TypeVar
 
+from .canonical import canonical_dumps, canonical_loads
 from .typed import BoundBlock, InputRef, NodeOutput, PortType
 
 
@@ -111,6 +114,28 @@ STRING: PortType[StringValue] = PortType(
 )
 
 
+def _validate_positive_integer(field_name: str, value: object) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"{field_name} must be an integer")
+    if value < 1:
+        raise ValueError(f"{field_name} must be positive")
+    return value
+
+
+def _validate_optional_exact_string(field_name: str, value: object) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ValueError(f"{field_name} must be a string when provided")
+    if not value.strip():
+        raise ValueError(f"{field_name} must be non-empty when provided")
+    if value != value.strip():
+        raise ValueError(
+            f"{field_name} must not contain surrounding whitespace"
+        )
+    return value
+
+
 @dataclass(frozen=True, slots=True)
 class RetrieveExecutePlanOutputs:
     result: NodeOutput[RetrievalResultValue]
@@ -125,11 +150,17 @@ class RetrieveExecutePlan:
     failure_mode: FederatedFailureMode | None = None
 
     def __post_init__(self) -> None:
-        if self.minimum_successful_sources < 1:
-            raise ValueError("minimum_successful_sources must be positive")
-        if self.top_k is not None and self.top_k < 1:
-            raise ValueError("top_k must be positive when provided")
-        if self.failure_mode not in {None, "fail", "partial"}:
+        _validate_positive_integer(
+            "minimum_successful_sources",
+            self.minimum_successful_sources,
+        )
+        if self.top_k is not None:
+            _validate_positive_integer("top_k", self.top_k)
+        _validate_optional_exact_string("retriever_id", self.retriever_id)
+        if self.failure_mode is not None and (
+            not isinstance(self.failure_mode, str)
+            or self.failure_mode not in {"fail", "partial"}
+        ):
             raise ValueError("failure_mode must be fail or partial")
 
     def bind(
@@ -173,18 +204,22 @@ class RetrieveFuse:
     retriever_id: str | None = None
 
     def __post_init__(self) -> None:
-        if self.algorithm not in {
-            "concatenate",
-            "reciprocal_rank_fusion",
-            "weighted_rank",
-            "normalized_score",
-            "interleave",
-        }:
+        if (
+            not isinstance(self.algorithm, str)
+            or self.algorithm
+            not in {
+                "concatenate",
+                "reciprocal_rank_fusion",
+                "weighted_rank",
+                "normalized_score",
+                "interleave",
+            }
+        ):
             raise ValueError("algorithm must name a supported retrieval fusion strategy")
-        if self.k < 1:
-            raise ValueError("k must be positive")
-        if self.top_k is not None and self.top_k < 1:
-            raise ValueError("top_k must be positive when provided")
+        _validate_positive_integer("k", self.k)
+        if self.top_k is not None:
+            _validate_positive_integer("top_k", self.top_k)
+        _validate_optional_exact_string("retriever_id", self.retriever_id)
 
     def bind(self, *, sources: InputRef[RetrievalSourcesValue]) -> BoundBlock[RetrieveFuseOutputs]:
         config: dict[str, object] = {"algorithm": self.algorithm, "k": self.k}
@@ -215,10 +250,10 @@ class RankDocuments:
     input_limit: int | None = None
 
     def __post_init__(self) -> None:
-        if not self.reranker_id:
+        if _validate_optional_exact_string("reranker_id", self.reranker_id) is None:
             raise ValueError("reranker_id must be non-empty")
-        if self.input_limit is not None and self.input_limit < 1:
-            raise ValueError("input_limit must be positive when provided")
+        if self.input_limit is not None:
+            _validate_positive_integer("input_limit", self.input_limit)
 
     def bind(
         self,
@@ -254,12 +289,20 @@ class ContextBuild:
     deduplicate: bool | None = None
 
     def __post_init__(self) -> None:
-        if self.context_id == "":
-            raise ValueError("context_id must be non-empty when provided")
-        if self.max_tokens < 1:
-            raise ValueError("max_tokens must be positive")
+        _validate_optional_exact_string("context_id", self.context_id)
+        _validate_positive_integer("max_tokens", self.max_tokens)
+        if (
+            isinstance(self.reserve_output_tokens, bool)
+            or not isinstance(self.reserve_output_tokens, int)
+        ):
+            raise ValueError("reserve_output_tokens must be an integer")
         if self.reserve_output_tokens < 0:
             raise ValueError("reserve_output_tokens must not be negative")
+        if self.deduplicate is not None and not isinstance(
+            self.deduplicate,
+            bool,
+        ):
+            raise ValueError("deduplicate must be a boolean when provided")
 
     def bind(self, *, evidence: InputRef[SearchHitsValue]) -> BoundBlock[ContextBuildOutputs]:
         config: dict[str, object] = {
@@ -300,6 +343,55 @@ class StructuredGenerate(Generic[StructuredValueT]):
     output_schema: PortType[StructuredValueT]
     response: Mapping[str, object]
 
+    def __post_init__(self) -> None:
+        if not isinstance(self.output_schema, PortType):
+            raise ValueError("output_schema must be a PortType")
+        if not isinstance(self.response, Mapping):
+            raise ValueError("response must be a mapping")
+        response = deepcopy(dict(self.response))
+        try:
+            canonical_dumps(response)
+        except (TypeError, ValueError) as error:
+            raise ValueError("response must be canonical JSON") from error
+        frozen_containers: dict[int, object] = {}
+        pending: list[tuple[object, bool]] = [(response, False)]
+        while pending:
+            value, visited = pending.pop()
+            if not isinstance(value, (Mapping, list, tuple)):
+                continue
+            if not visited:
+                pending.append((value, True))
+                if isinstance(value, Mapping):
+                    pending.extend((item, False) for item in value.values())
+                else:
+                    pending.extend((item, False) for item in value)
+                continue
+            if isinstance(value, Mapping):
+                frozen_containers[id(value)] = MappingProxyType(
+                    {
+                        key: (
+                            frozen_containers[id(item)]
+                            if isinstance(item, (Mapping, list, tuple))
+                            else item
+                        )
+                        for key, item in value.items()
+                    }
+                )
+            else:
+                frozen_containers[id(value)] = tuple(
+                    (
+                        frozen_containers[id(item)]
+                        if isinstance(item, (Mapping, list, tuple))
+                        else item
+                    )
+                    for item in value
+                )
+        object.__setattr__(
+            self,
+            "response",
+            frozen_containers[id(response)],
+        )
+
     def bind(
         self,
         *,
@@ -319,7 +411,7 @@ class StructuredGenerate(Generic[StructuredValueT]):
             },
             config={
                 "outputSchema": self.output_schema.schema,
-                "response": dict(self.response),
+                "response": canonical_loads(canonical_dumps(self.response)),
             },
             _outputs=lambda node_id, owner: StructuredGenerateOutputs(
                 value=NodeOutput(node_id, "value", self.output_schema, owner),
@@ -346,13 +438,19 @@ class AnswerValidateGrounding:
     on_insufficient_evidence: GroundingFailurePolicy = "abstain"
 
     def __post_init__(self) -> None:
-        if self.on_insufficient_evidence not in {
-            "warn",
-            "fail",
-            "abstain",
-            "repair",
-            "remove_invalid",
-        }:
+        if not isinstance(self.require_citation, bool):
+            raise ValueError("require_citation must be a boolean")
+        if (
+            not isinstance(self.on_insufficient_evidence, str)
+            or self.on_insufficient_evidence
+            not in {
+                "warn",
+                "fail",
+                "abstain",
+                "repair",
+                "remove_invalid",
+            }
+        ):
             raise ValueError("on_insufficient_evidence must name a grounding failure policy")
 
     def bind(

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Iterator, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from copy import deepcopy
@@ -13,6 +14,7 @@ from graphblocks.plugins import BlockCatalog, BlockDescriptor, PortDescriptor
 from graphblocks.runtime import (
     ExecutionJournal,
     InProcessRuntime,
+    JournalRecord,
     JournalStateError,
     LocalRuntime,
     RuntimeRegistry,
@@ -1765,6 +1767,75 @@ def test_journal_rejects_output_after_terminal() -> None:
 
     with pytest.raises(JournalStateError):
         journal.append("node_succeeded", {"node": "late"})
+
+
+def test_journal_constructors_reject_forged_or_recursive_history() -> None:
+    with pytest.raises(ValueError, match="sequence must be a positive integer"):
+        JournalRecord(True, "run_started", {})  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="unsupported journal kind"):
+        JournalRecord(1, "unknown", {})  # type: ignore[arg-type]
+
+    native_record = JournalRecord(1, "node_completed", {"outputs": ["prompt"]})
+    assert native_record.to_dict() == {
+        "sequence": 1,
+        "kind": "node_completed",
+        "payload": {"outputs": ["prompt"]},
+    }
+
+    recursive: dict[str, object] = {}
+    recursive["self"] = recursive
+    with pytest.raises(ValueError, match="must be valid strict JSON"):
+        JournalRecord(1, "run_started", recursive)
+
+    terminal = JournalRecord(1, "run_succeeded", {"outputs": {}})
+    trailing = JournalRecord(2, "node_succeeded", {"node": "late"})
+    with pytest.raises(JournalStateError, match="terminal record must be last"):
+        ExecutionJournal("run-test", records=[terminal, trailing])
+    with pytest.raises(JournalStateError, match="terminal_kind must match"):
+        ExecutionJournal(
+            "run-test",
+            records=[terminal],
+            terminal_kind="run_failed",
+        )
+
+
+def test_journal_snapshots_payload_once_and_hides_mutable_history() -> None:
+    class FlippingPayload(Mapping[str, object]):
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def __getitem__(self, key: str) -> object:
+            raise AssertionError("__getitem__ must not be called")
+
+        def __iter__(self) -> Iterator[str]:
+            raise AssertionError("__iter__ must not be called")
+
+        def __len__(self) -> int:
+            return 1
+
+        def items(self) -> object:
+            self.calls += 1
+            if self.calls == 1:
+                return (("safe", {"value": 1}),)
+            return (("unsafe", object()),)
+
+    payload = FlippingPayload()
+    record = JournalRecord(1, "run_started", payload)
+    journal = ExecutionJournal("run-test", records=(record,))
+
+    assert record.to_dict()["payload"] == {"safe": {"value": 1}}
+    assert payload.calls == 1
+    with pytest.raises(AttributeError):
+        journal.records.append(
+            JournalRecord(2, "run_succeeded", {}),
+        )
+    with pytest.raises(AttributeError):
+        journal.terminal_kind = "run_succeeded"
+
+
+def test_sqlite_journal_rejects_ambiguous_run_identity(tmp_path) -> None:
+    with pytest.raises(ValueError, match="exact nonempty string"):
+        SQLiteExecutionJournal(tmp_path / "journal.sqlite3", " run-test")
 
 
 def test_runtime_fails_when_block_is_not_registered() -> None:

@@ -9,7 +9,7 @@ from typing import Literal
 
 from .canonical import canonical_hash
 from .conversation import ContentPart
-from .documents import ArtifactRef
+from .documents import ArtifactRef, FrozenDict, FrozenList
 from .output_policy import PendingToolCallsDisposition
 from .policy import PolicyDecision, PolicyRequest, PrincipalRef, ResourceRef as PolicyResourceRef
 from .schema import SchemaId, SchemaIdError
@@ -1187,6 +1187,10 @@ class ToolCall:
             raise ValueError("tool call dependency ids must not be empty")
         if any(dependency != dependency.strip() for dependency in depends_on):
             raise ValueError("tool call dependency ids must not contain surrounding whitespace")
+        if len(set(depends_on)) != len(depends_on):
+            raise ValueError("tool call dependency ids must not contain duplicates")
+        if self.tool_call_id in depends_on:
+            raise ValueError("tool call must not depend on itself")
         created_at_time = (
             _parse_iso_datetime(self.created_at, owner="tool call", field="created_at")
             if self.created_at is not None
@@ -2562,12 +2566,63 @@ class ToolResultEvent:
         return self.result if self.is_final_durable_result() else None
 
 
-@dataclass(slots=True)
+@dataclass(frozen=True, slots=True)
 class ToolResultStreamState:
     last_sequences: dict[str, int] = field(default_factory=dict)
     started_tool_calls: set[str] = field(default_factory=set)
     final_results: dict[str, ToolResult] = field(default_factory=dict)
     accepted_events: list[ToolResultEvent] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.last_sequences, Mapping):
+            raise ToolResultStreamError(
+                "tool result stream last_sequences must be a mapping"
+            )
+        if isinstance(self.started_tool_calls, (str, bytes, bytearray, Mapping)):
+            raise ToolResultStreamError(
+                "tool result stream started_tool_calls must be a collection"
+            )
+        if not isinstance(self.final_results, Mapping):
+            raise ToolResultStreamError(
+                "tool result stream final_results must be a mapping"
+            )
+        if isinstance(self.accepted_events, (str, bytes, bytearray, Mapping)):
+            raise ToolResultStreamError(
+                "tool result stream accepted_events must be a collection"
+            )
+        try:
+            supplied_last_sequences = dict(self.last_sequences)
+            supplied_started = set(self.started_tool_calls)
+            supplied_final_results = dict(self.final_results)
+            supplied_events = tuple(self.accepted_events)
+        except (TypeError, ValueError) as error:
+            raise ToolResultStreamError(
+                "tool result stream state contains invalid collections"
+            ) from error
+        if any(not isinstance(event, ToolResultEvent) for event in supplied_events):
+            raise ToolResultStreamError(
+                "tool result stream accepted_events must contain ToolResultEvent values"
+            )
+
+        object.__setattr__(self, "last_sequences", FrozenDict())
+        object.__setattr__(self, "started_tool_calls", frozenset())
+        object.__setattr__(self, "final_results", FrozenDict())
+        object.__setattr__(self, "accepted_events", FrozenList())
+        for event in supplied_events:
+            self.accept(event)
+
+        if supplied_last_sequences and supplied_last_sequences != self.last_sequences:
+            raise ToolResultStreamError(
+                "tool result stream last_sequences do not match accepted_events"
+            )
+        if supplied_started and supplied_started != self.started_tool_calls:
+            raise ToolResultStreamError(
+                "tool result stream started_tool_calls do not match accepted_events"
+            )
+        if supplied_final_results and supplied_final_results != self.final_results:
+            raise ToolResultStreamError(
+                "tool result stream final_results do not match accepted_events"
+            )
 
     def accept(self, event: ToolResultEvent) -> ToolResultEvent:
         if not isinstance(event, ToolResultEvent):
@@ -2612,12 +2667,35 @@ class ToolResultStreamState:
                 )
 
         result = event.into_result()
+        final_results = dict(self.final_results)
         if result is not None:
-            self.final_results[event.tool_call_id] = result
+            final_results[event.tool_call_id] = result
+        started_tool_calls = set(self.started_tool_calls)
         if event.kind == "started":
-            self.started_tool_calls.add(event.tool_call_id)
-        self.last_sequences[event.tool_call_id] = event.sequence
-        self.accepted_events.append(event)
+            started_tool_calls.add(event.tool_call_id)
+        last_sequences = dict(self.last_sequences)
+        last_sequences[event.tool_call_id] = event.sequence
+        accepted_events = [*self.accepted_events, event]
+        object.__setattr__(
+            self,
+            "final_results",
+            FrozenDict(final_results),
+        )
+        object.__setattr__(
+            self,
+            "started_tool_calls",
+            frozenset(started_tool_calls),
+        )
+        object.__setattr__(
+            self,
+            "last_sequences",
+            FrozenDict(last_sequences),
+        )
+        object.__setattr__(
+            self,
+            "accepted_events",
+            FrozenList(accepted_events),
+        )
         return event
 
     def final_result_for(self, tool_call_id: str) -> ToolResult | None:

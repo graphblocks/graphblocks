@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Literal
 
 from .budget import BudgetPermit, UsageAmount
-from .output_policy import OutputCutoff
+from .output_policy import OutputCutoff as OutputCutoff
 
 
 ContinuationWork = Literal[
@@ -52,6 +53,71 @@ DurableResult = Literal[
 ]
 EffectPolicy = Literal["preserve_atomicity", "cancel_if_safe", "finish_committing_effect", "compensate_if_committed"]
 AfterUnitPolicy = Literal["reject", "pause", "fallback", "close"]
+VALID_CONTINUATION_WORK = frozenset(
+    {
+        "current_provider_call",
+        "already_admitted_child_work",
+        "declared_finalization",
+        "checkpoint",
+        "cleanup",
+        "read_only_tool",
+    }
+)
+VALID_FORBIDDEN_WORK = frozenset(
+    {
+        "new_turn",
+        "plan_expansion",
+        "optional_task",
+        "new_trial",
+        "state_changing_effect",
+        "unreserved_provider_call",
+    }
+)
+VALID_WORK_KINDS = VALID_CONTINUATION_WORK | VALID_FORBIDDEN_WORK
+VALID_EXHAUSTION_PRESETS = frozenset(
+    {
+        "finish_current_turn",
+        "finish_current_call",
+        "finish_current_step",
+        "checkpoint_and_pause",
+        "hard_stop",
+        "degrade_then_finalize",
+        "request_extension",
+    }
+)
+VALID_IN_FLIGHT_POLICIES = frozenset(
+    {
+        "finish_current_unit",
+        "checkpoint_then_pause",
+        "degrade_and_continue",
+        "request_topup_or_approval",
+        "cancel_immediately",
+    }
+)
+VALID_EXHAUSTION_UNITS = frozenset(
+    {"provider_call", "node", "agent_step", "turn", "map_item", "task", "trial", "run"}
+)
+VALID_CLIENT_DELIVERY = frozenset(
+    {"stop_immediately", "continue_to_boundary", "buffer_until_commit"}
+)
+VALID_DURABLE_RESULTS = frozenset(
+    {
+        "none",
+        "retract",
+        "mark_incomplete",
+        "commit_partial",
+        "commit_with_exhaustion_notice",
+    }
+)
+VALID_EFFECT_POLICIES = frozenset(
+    {
+        "preserve_atomicity",
+        "cancel_if_safe",
+        "finish_committing_effect",
+        "compensate_if_committed",
+    }
+)
+VALID_AFTER_UNIT_POLICIES = frozenset({"reject", "pause", "fallback", "close"})
 
 
 class ExhaustionPolicyError(RuntimeError):
@@ -70,6 +136,34 @@ def _validate_non_negative_integer(owner: str, field_name: str, value: object) -
     return value
 
 
+def _validate_exact_non_empty_string(
+    owner: str,
+    field_name: str,
+    value: object,
+) -> str:
+    if not isinstance(value, str):
+        raise ValueError(f"{owner} {field_name} must be a string")
+    if not value.strip():
+        raise ValueError(f"{owner} {field_name} must not be empty")
+    if value != value.strip():
+        raise ValueError(f"{owner} {field_name} must not contain surrounding whitespace")
+    return value
+
+
+def _parse_iso_datetime(owner: str, field_name: str, value: object) -> datetime:
+    value = _validate_exact_non_empty_string(owner, field_name, value)
+    normalized = f"{value[:-1]}+00:00" if value.endswith("Z") else value
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError as error:
+        raise ValueError(
+            f"{owner} {field_name} must be an ISO datetime"
+        ) from error
+    if parsed.tzinfo is None:
+        raise ValueError(f"{owner} {field_name} must include a timezone")
+    return parsed.astimezone(timezone.utc)
+
+
 @dataclass(frozen=True, slots=True)
 class ContinuationEnvelope:
     allowed_work: set[ContinuationWork] = field(default_factory=set)
@@ -77,6 +171,65 @@ class ContinuationEnvelope:
     max_additional_usage: list[UsageAmount] = field(default_factory=list)
     max_additional_steps: int | None = None
     deadline: str | None = None
+
+    def __post_init__(self) -> None:
+        for field_name, values, valid_values in (
+            ("allowed_work", self.allowed_work, VALID_CONTINUATION_WORK),
+            ("forbidden_work", self.forbidden_work, VALID_FORBIDDEN_WORK),
+        ):
+            if isinstance(values, (str, bytes, bytearray)):
+                raise ValueError(
+                    f"continuation envelope {field_name} must be a collection"
+                )
+            try:
+                normalized = frozenset(values)
+            except TypeError as error:
+                raise ValueError(
+                    f"continuation envelope {field_name} must be a collection"
+                ) from error
+            invalid = sorted(
+                repr(value) for value in normalized if value not in valid_values
+            )
+            if invalid:
+                raise ValueError(
+                    f"continuation envelope {field_name} contains invalid work "
+                    f"{invalid[0]}"
+                )
+            object.__setattr__(self, field_name, normalized)
+        if isinstance(self.max_additional_usage, (str, bytes, bytearray)):
+            raise ValueError(
+                "continuation envelope max_additional_usage must contain UsageAmount values"
+            )
+        try:
+            max_additional_usage = tuple(self.max_additional_usage)
+        except TypeError as error:
+            raise ValueError(
+                "continuation envelope max_additional_usage must contain UsageAmount values"
+            ) from error
+        if any(
+            not isinstance(amount, UsageAmount)
+            for amount in max_additional_usage
+        ):
+            raise ValueError(
+                "continuation envelope max_additional_usage must contain UsageAmount values"
+            )
+        if self.max_additional_steps is not None:
+            _validate_non_negative_integer(
+                "continuation envelope",
+                "max_additional_steps",
+                self.max_additional_steps,
+            )
+        if self.deadline is not None:
+            _parse_iso_datetime(
+                "continuation envelope",
+                "deadline",
+                self.deadline,
+            )
+        object.__setattr__(
+            self,
+            "max_additional_usage",
+            max_additional_usage,
+        )
 
     @property
     def is_bounded(self) -> bool:
@@ -87,6 +240,22 @@ class ContinuationEnvelope:
 class PartialOutputPolicy:
     client_delivery: ClientDelivery = "stop_immediately"
     durable_result: DurableResult = "mark_incomplete"
+
+    def __post_init__(self) -> None:
+        if (
+            not isinstance(self.client_delivery, str)
+            or self.client_delivery not in VALID_CLIENT_DELIVERY
+        ):
+            raise ValueError(
+                f"invalid exhaustion client delivery {self.client_delivery!r}"
+            )
+        if (
+            not isinstance(self.durable_result, str)
+            or self.durable_result not in VALID_DURABLE_RESULTS
+        ):
+            raise ValueError(
+                f"invalid exhaustion durable result {self.durable_result!r}"
+            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -101,6 +270,69 @@ class ExhaustionPolicy:
     output: PartialOutputPolicy = field(default_factory=PartialOutputPolicy)
     effects: EffectPolicy = "preserve_atomicity"
     after_unit: AfterUnitPolicy = "reject"
+
+    def __post_init__(self) -> None:
+        if self.preset is not None and (
+            not isinstance(self.preset, str)
+            or self.preset not in VALID_EXHAUSTION_PRESETS
+        ):
+            raise ValueError(f"invalid exhaustion preset {self.preset!r}")
+        if (
+            not isinstance(self.in_flight, str)
+            or self.in_flight not in VALID_IN_FLIGHT_POLICIES
+        ):
+            raise ValueError(f"invalid in-flight policy {self.in_flight!r}")
+        if (
+            not isinstance(self.unit, str)
+            or self.unit not in VALID_EXHAUSTION_UNITS
+        ):
+            raise ValueError(f"invalid exhaustion unit {self.unit!r}")
+        if not isinstance(self.deny_new_work, bool):
+            raise ValueError("exhaustion deny_new_work must be a boolean")
+        if self.continuation is not None and not isinstance(
+            self.continuation,
+            ContinuationEnvelope,
+        ):
+            raise ValueError(
+                "exhaustion continuation must be a ContinuationEnvelope"
+            )
+        if isinstance(self.max_overdraft, (str, bytes, bytearray)):
+            raise ValueError(
+                "exhaustion max_overdraft must contain UsageAmount values"
+            )
+        try:
+            max_overdraft = tuple(self.max_overdraft)
+        except TypeError as error:
+            raise ValueError(
+                "exhaustion max_overdraft must contain UsageAmount values"
+            ) from error
+        if any(not isinstance(amount, UsageAmount) for amount in max_overdraft):
+            raise ValueError(
+                "exhaustion max_overdraft must contain UsageAmount values"
+            )
+        if self.deadline is not None:
+            _parse_iso_datetime(
+                "exhaustion",
+                "deadline",
+                self.deadline,
+            )
+        if not isinstance(self.output, PartialOutputPolicy):
+            raise ValueError(
+                "exhaustion output must be a PartialOutputPolicy"
+            )
+        if (
+            not isinstance(self.effects, str)
+            or self.effects not in VALID_EFFECT_POLICIES
+        ):
+            raise ValueError(f"invalid exhaustion effect policy {self.effects!r}")
+        if (
+            not isinstance(self.after_unit, str)
+            or self.after_unit not in VALID_AFTER_UNIT_POLICIES
+        ):
+            raise ValueError(
+                f"invalid exhaustion after-unit policy {self.after_unit!r}"
+            )
+        object.__setattr__(self, "max_overdraft", max_overdraft)
 
     @classmethod
     def from_preset(
@@ -223,8 +455,17 @@ class AdmissionDecision:
     allowed: bool
     reason: str
 
+    def __post_init__(self) -> None:
+        if not isinstance(self.allowed, bool):
+            raise ValueError("admission decision allowed must be a boolean")
+        _validate_exact_non_empty_string(
+            "admission decision",
+            "reason",
+            self.reason,
+        )
 
-@dataclass(slots=True)
+
+@dataclass(frozen=True, slots=True)
 class ExhaustionController:
     policy: ExhaustionPolicy
     atomic_unit_id: str
@@ -232,10 +473,68 @@ class ExhaustionController:
     continuation_permit: BudgetPermit | None = None
     validation_time: str | None = None
     used_additional_steps: int = 0
-    used_additional_usage: list[UsageAmount] = field(default_factory=list)
+    used_additional_usage: tuple[UsageAmount, ...] = field(default_factory=tuple)
 
     def __post_init__(self) -> None:
+        if not isinstance(self.policy, ExhaustionPolicy):
+            raise ValueError("exhaustion policy must be an ExhaustionPolicy")
+        _validate_exact_non_empty_string(
+            "exhaustion",
+            "atomic_unit_id",
+            self.atomic_unit_id,
+        )
         _validate_non_negative_integer("exhaustion", "admission_epoch", self.admission_epoch)
+        _validate_non_negative_integer(
+            "exhaustion",
+            "used_additional_steps",
+            self.used_additional_steps,
+        )
+        if self.continuation_permit is not None and not isinstance(
+            self.continuation_permit,
+            BudgetPermit,
+        ):
+            raise ValueError(
+                "exhaustion continuation_permit must be a BudgetPermit"
+            )
+        if self.validation_time is not None:
+            _parse_iso_datetime(
+                "exhaustion",
+                "validation_time",
+                self.validation_time,
+            )
+        deadlines = (
+            self.policy.deadline,
+            self.policy.continuation.deadline
+            if self.policy.continuation is not None
+            else None,
+        )
+        if any(deadline is not None for deadline in deadlines):
+            if self.validation_time is None:
+                raise ValueError(
+                    "exhaustion deadline enforcement requires validation_time"
+                )
+        if isinstance(self.used_additional_usage, (str, bytes, bytearray)):
+            raise ValueError(
+                "exhaustion used_additional_usage must contain UsageAmount values"
+            )
+        try:
+            used_additional_usage = tuple(self.used_additional_usage)
+        except TypeError as error:
+            raise ValueError(
+                "exhaustion used_additional_usage must contain UsageAmount values"
+            ) from error
+        if any(
+            not isinstance(amount, UsageAmount)
+            for amount in used_additional_usage
+        ):
+            raise ValueError(
+                "exhaustion used_additional_usage must contain UsageAmount values"
+            )
+        object.__setattr__(
+            self,
+            "used_additional_usage",
+            used_additional_usage,
+        )
 
     def admit(
         self,
@@ -246,10 +545,42 @@ class ExhaustionController:
         requested_usage: list[UsageAmount] | None = None,
     ) -> AdmissionDecision:
         work_epoch = _validate_non_negative_integer("exhaustion", "work_epoch", work_epoch)
+        if (
+            not isinstance(work_kind, str)
+            or work_kind not in VALID_WORK_KINDS
+        ):
+            raise ValueError(f"invalid exhaustion work kind {work_kind!r}")
+        if permit is not None and not isinstance(permit, BudgetPermit):
+            raise ValueError("exhaustion permit must be a BudgetPermit")
         envelope = self.policy.continuation
-        requested_usage_list = list(requested_usage or [])
+        try:
+            requested_usage_list = list(requested_usage or [])
+        except TypeError as error:
+            raise ValueError(
+                "exhaustion requested_usage must contain UsageAmount values"
+            ) from error
+        if any(
+            not isinstance(amount, UsageAmount)
+            for amount in requested_usage_list
+        ):
+            raise ValueError(
+                "exhaustion requested_usage must contain UsageAmount values"
+            )
         if envelope is None:
             return AdmissionDecision(False, "missing_continuation")
+        if self.validation_time is not None:
+            validation_time = _parse_iso_datetime(
+                "exhaustion",
+                "validation_time",
+                self.validation_time,
+            )
+            deadlines = tuple(
+                _parse_iso_datetime("exhaustion", "deadline", deadline)
+                for deadline in (self.policy.deadline, envelope.deadline)
+                if deadline is not None
+            )
+            if any(validation_time >= deadline for deadline in deadlines):
+                return AdmissionDecision(False, "continuation_deadline_exceeded")
         if work_kind in envelope.forbidden_work:
             return AdmissionDecision(False, "forbidden_work")
         if self.policy.deny_new_work and work_kind not in envelope.allowed_work:
@@ -299,8 +630,16 @@ class ExhaustionController:
         ):
             return AdmissionDecision(False, "max_additional_steps_exceeded")
         if work_epoch > self.admission_epoch:
-            self.used_additional_steps += 1
-            self.used_additional_usage.extend(requested_usage_list)
+            object.__setattr__(
+                self,
+                "used_additional_steps",
+                self.used_additional_steps + 1,
+            )
+            object.__setattr__(
+                self,
+                "used_additional_usage",
+                (*self.used_additional_usage, *requested_usage_list),
+            )
         return AdmissionDecision(True, "allowed")
 
     def _valid_permit(self, permit: BudgetPermit) -> bool:

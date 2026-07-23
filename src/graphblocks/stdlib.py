@@ -12,7 +12,37 @@ class ScriptedModelResponse:
     usage: Mapping[str, int] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "usage", MappingProxyType(dict(self.usage)))
+        if not isinstance(self.response, str):
+            raise ValueError("scripted model response must be a string")
+        if (
+            not isinstance(self.finish_reason, str)
+            or not self.finish_reason.strip()
+            or self.finish_reason != self.finish_reason.strip()
+        ):
+            raise ValueError(
+                "scripted model finish_reason must be an exact non-empty string"
+            )
+        if not isinstance(self.usage, Mapping):
+            raise ValueError("scripted model usage must be a mapping")
+        usage = dict(self.usage)
+        for key, value in usage.items():
+            if (
+                not isinstance(key, str)
+                or not key.strip()
+                or key != key.strip()
+            ):
+                raise ValueError(
+                    "scripted model usage keys must be exact non-empty strings"
+                )
+            if (
+                not isinstance(value, int)
+                or isinstance(value, bool)
+                or value < 0
+            ):
+                raise ValueError(
+                    "scripted model usage values must be non-negative integers"
+                )
+        object.__setattr__(self, "usage", MappingProxyType(usage))
 
     def response_contract(self) -> dict[str, object]:
         return {

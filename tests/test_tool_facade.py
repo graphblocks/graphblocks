@@ -47,7 +47,6 @@ from graphblocks import (
     ToolApprovalRequest,
     ToolBinding,
     ToolCatalog,
-    ToolCall,
     ToolCallDraft,
     ToolCallError,
     ToolResult,
@@ -4042,6 +4041,55 @@ def test_tool_result_stream_state_rejects_duplicate_started_event() -> None:
     assert error.value.last_sequence == 1
 
 
+def test_tool_result_stream_constructor_replays_and_validates_seed_state() -> None:
+    started = ToolResultEvent.started(
+        "call-1",
+        1,
+        started_at="2026-06-23T00:00:00Z",
+    )
+    stream = ToolResultStreamState(accepted_events=[started])
+
+    assert stream.last_sequences == {"call-1": 1}
+    assert stream.started_tool_calls == {"call-1"}
+    assert stream.accepted_events == [started]
+
+    with pytest.raises(
+        ToolResultStreamError,
+        match="last_sequences do not match accepted_events",
+    ):
+        ToolResultStreamState(
+            last_sequences={"call-1": 2},
+            accepted_events=[started],
+        )
+
+
+def test_tool_result_stream_exposes_read_only_snapshots_while_accepting_events() -> None:
+    started = ToolResultEvent.started(
+        "call-1",
+        1,
+        started_at="2026-06-23T00:00:00Z",
+    )
+    stream = ToolResultStreamState(accepted_events=[started])
+
+    with pytest.raises(TypeError, match="frozen mapping"):
+        stream.last_sequences["call-1"] = 99
+    with pytest.raises(AttributeError):
+        stream.started_tool_calls.add("forged")
+    with pytest.raises(TypeError, match="frozen list"):
+        stream.accepted_events.append(started)
+    with pytest.raises(AttributeError):
+        stream.final_results = {}
+
+    delta = ToolResultEvent.delta(
+        "call-1",
+        2,
+        (ContentPart(kind="text", text="safe"),),
+    )
+    assert stream.accept(delta) == delta
+    assert stream.last_sequences == {"call-1": 2}
+    assert stream.accepted_events == [started, delta]
+
+
 def test_tool_result_event_and_effect_outcome_reject_unknown_literals() -> None:
     with pytest.raises(ValueError, match="invalid tool result event kind progress"):
         ToolResultEvent(kind="progress", tool_call_id="call-1", sequence=1)
@@ -4395,6 +4443,16 @@ def test_tool_execution_plan_rejects_unknown_dependency() -> None:
         )
 
     assert str(error.value) == "tool call call-b depends on unknown tool call call-missing"
+
+
+def test_tool_call_rejects_duplicate_and_self_dependencies() -> None:
+    with pytest.raises(ValueError, match="dependency ids must not contain duplicates"):
+        replace(
+            _tool_call("call-b"),
+            depends_on=("call-a", "call-a"),
+        )
+    with pytest.raises(ValueError, match="must not depend on itself"):
+        replace(_tool_call("call-a"), depends_on=("call-a",))
 
 
 def test_tool_execution_plan_rejects_dependency_cycle() -> None:

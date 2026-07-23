@@ -70,15 +70,9 @@ def test_agent_state_patch_rejects_unknown_schema_keys() -> None:
 
 def test_agent_state_patch_rejects_invalid_operations_without_mutating_state() -> None:
     state = AgentState(values={"profile": "initial"})
-    patch = AgentStatePatch(
-        (
-            AgentStatePatchOp("set", "profile", "updated"),
-            AgentStatePatchOp("merge", "extra", {"debug": True}),
-        )
-    )
 
     with pytest.raises(AgentStateError, match="unknown agent state patch operation merge"):
-        state.apply_patch(0, patch)
+        AgentStatePatchOp("merge", "extra", {"debug": True})
 
     assert state.revision == 0
     assert state.values == {"profile": "initial"}
@@ -109,3 +103,58 @@ def test_agent_spec_records_output_policy_profile_ref_for_agent_run() -> None:
 
     assert spec.output_policy_profile_ref == "assistant-output-standard"
     assert spec.tools == ("knowledge.search",)
+
+
+def test_agent_constructors_reject_ambiguous_and_coerced_state() -> None:
+    with pytest.raises(ValueError, match="tools must not contain duplicates"):
+        AgentSpec("support-models", tools=("knowledge.search", "knowledge.search"))
+    with pytest.raises(ValueError, match="max_steps must be an integer"):
+        AgentSpec("support-models", max_steps=True)  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="parallel_tool_calls must be a boolean"):
+        AgentSpec("support-models", parallel_tool_calls=1)  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="allowed_keys must not contain duplicates"):
+        AgentStateSchema(("profile", "profile"))
+    with pytest.raises(AgentStateError, match="delete operations must not carry a value"):
+        AgentStatePatchOp("delete", "profile", "unexpected")
+    with pytest.raises(ValueError, match="revision must be an integer"):
+        AgentState(revision=False)
+
+
+def test_agent_state_snapshots_nested_patch_values_before_commit() -> None:
+    payload = {"preferences": ["short"]}
+    state = AgentState()
+
+    state.apply_patch(0, AgentStatePatch().set("profile", payload))
+    payload["preferences"].append("mutable")
+
+    assert state.values == {"profile": {"preferences": ["short"]}}
+
+    recursive: dict[str, object] = {}
+    recursive["self"] = recursive
+    with pytest.raises(AgentStateError, match="must be canonical JSON"):
+        state.apply_patch(1, AgentStatePatch().set("recursive", recursive))
+    assert state.revision == 1
+
+
+def test_agent_state_canonical_snapshot_prevents_deepcopy_injection() -> None:
+    class DeepcopyInjection(dict[str, object]):
+        def __deepcopy__(self, _memo: object) -> object:
+            return object()
+
+    state = AgentState(values={"profile": DeepcopyInjection(theme="dark")})
+    state.apply_patch(
+        0,
+        AgentStatePatch().set(
+            "next",
+            DeepcopyInjection(preferences=["short"]),
+        ),
+    )
+
+    assert state.values == {
+        "profile": {"theme": "dark"},
+        "next": {"preferences": ["short"]},
+    }
+    with pytest.raises(TypeError, match="frozen mapping"):
+        state.values["forged"] = True
+    with pytest.raises(AttributeError):
+        state.revision = 0

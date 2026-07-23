@@ -8,6 +8,7 @@ from typing import Literal
 
 from .canonical import canonical_hash
 from .conversation import ContentPart
+from .documents import FrozenDict
 
 
 OutputDisposition = Literal["allow", "hold", "redact", "replace", "abort_response", "abort_turn", "deny_commit"]
@@ -294,6 +295,14 @@ class DeclarativeOutputPolicyEvaluator:
 
 
 class GenerationChunk:
+    __slots__ = (
+        "stream_id",
+        "response_id",
+        "sequence",
+        "_text",
+        "_sealed",
+    )
+
     def __init__(self, stream_id: str, response_id: str, sequence: int, text: str) -> None:
         _validate_non_empty_string("generation chunk", "stream_id", stream_id)
         _validate_non_empty_string("generation chunk", "response_id", response_id)
@@ -302,10 +311,24 @@ class GenerationChunk:
             raise ValueError("generation chunk sequence must be positive")
         if not isinstance(text, str):
             raise ValueError("generation chunk text must be a string")
-        self.stream_id = stream_id
-        self.response_id = response_id
-        self.sequence = sequence
-        self.text = text
+        object.__setattr__(self, "stream_id", stream_id)
+        object.__setattr__(self, "response_id", response_id)
+        object.__setattr__(self, "sequence", sequence)
+        object.__setattr__(self, "_text", text)
+        object.__setattr__(self, "_sealed", True)
+
+    def __getattribute__(self, name: str) -> object:
+        if name == "text":
+            return object.__getattribute__(self, "_text")
+        return object.__getattribute__(self, name)
+
+    def __setattr__(self, name: str, value: object) -> None:
+        if object.__getattribute__(self, "_sealed"):
+            raise AttributeError("generation chunks are immutable")
+        object.__setattr__(self, name, value)
+
+    def __delattr__(self, name: str) -> None:
+        raise AttributeError("generation chunks are immutable")
 
     @classmethod
     def text(cls, stream_id: str, response_id: str, sequence: int, text: str) -> GenerationChunk:
@@ -758,7 +781,7 @@ class OutputGateUpdate:
     pending_tool_calls: PendingToolCallsDisposition | None = None
 
 
-@dataclass(slots=True)
+@dataclass(frozen=True, slots=True)
 class OutputDeliveryGate:
     stream_id: str
     response_id: str
@@ -776,10 +799,14 @@ class OutputDeliveryGate:
     cutoff: OutputCutoff | None = None
 
     def __post_init__(self) -> None:
-        _validate_non_empty_string("output gate", "stream_id", self.stream_id)
-        _validate_non_empty_string("output gate", "response_id", self.response_id)
+        _validate_exact_non_empty_string("output gate", "stream_id", self.stream_id)
+        _validate_exact_non_empty_string("output gate", "response_id", self.response_id)
         if self.turn_id is not None:
-            _validate_non_empty_string("output gate", "turn_id", self.turn_id)
+            _validate_exact_non_empty_string("output gate", "turn_id", self.turn_id)
+        if not isinstance(self.delivery_policy, OutputDeliveryPolicy):
+            raise TypeError(
+                "output gate delivery_policy must be an OutputDeliveryPolicy"
+            )
         _validate_non_negative_integer("last_generated_sequence", self.last_generated_sequence, owner="output gate")
         _validate_non_negative_integer(
             "last_policy_accepted_sequence",
@@ -802,6 +829,81 @@ class OutputDeliveryGate:
             raise ValueError(
                 "last_client_delivered_sequence cannot exceed last_policy_accepted_sequence outside immediate_draft"
             )
+        if not isinstance(self.pending, Mapping):
+            raise TypeError("output gate pending must be a mapping")
+        pending: dict[int, GenerationChunk] = {}
+        for sequence, chunk in self.pending.items():
+            if (
+                not isinstance(sequence, int)
+                or isinstance(sequence, bool)
+                or sequence < 1
+            ):
+                raise OutputGateError(
+                    "output gate pending keys must be positive integer sequences"
+                )
+            if not isinstance(chunk, GenerationChunk):
+                raise TypeError(
+                    "output gate pending values must be GenerationChunk"
+                )
+            if chunk.sequence != sequence:
+                raise OutputGateError(
+                    f"pending chunk sequence {chunk.sequence} does not match key {sequence}"
+                )
+            if chunk.stream_id != self.stream_id:
+                raise OutputGateError(
+                    f"pending chunk stream_id {chunk.stream_id!r} "
+                    f"does not match {self.stream_id!r}"
+                )
+            if chunk.response_id != self.response_id:
+                raise OutputGateError(
+                    f"pending chunk response_id {chunk.response_id!r} "
+                    f"does not match {self.response_id!r}"
+                )
+            if sequence <= self.last_client_delivered_sequence:
+                raise OutputGateError(
+                    f"pending chunk {sequence} is already delivered through "
+                    f"{self.last_client_delivered_sequence}"
+                )
+            if sequence > self.last_generated_sequence:
+                raise OutputGateError(
+                    f"pending chunk {sequence} exceeds last generated sequence "
+                    f"{self.last_generated_sequence}"
+                )
+            pending[sequence] = chunk
+        if self.cutoff is not None:
+            if not isinstance(self.cutoff, OutputCutoff):
+                raise TypeError("output gate cutoff must be an OutputCutoff")
+            if pending:
+                raise OutputGateError(
+                    "output gate terminal cutoff state must not retain pending chunks"
+                )
+            if (
+                self.cutoff.stream_id != self.stream_id
+                or self.cutoff.response_id != self.response_id
+                or self.cutoff.turn_id != self.turn_id
+                or self.cutoff.last_generated_sequence
+                != self.last_generated_sequence
+                or self.cutoff.last_policy_accepted_sequence
+                != self.last_policy_accepted_sequence
+                or self.cutoff.last_client_delivered_sequence
+                != self.last_client_delivered_sequence
+            ):
+                raise OutputGateError(
+                    "output gate cutoff does not match restored gate state"
+                )
+        else:
+            expected_sequence = self.last_client_delivered_sequence + 1
+            for sequence in sorted(pending):
+                if sequence != expected_sequence:
+                    raise OutputGateError(
+                        f"missing pending chunk {expected_sequence}"
+                    )
+                expected_sequence += 1
+            if expected_sequence != self.last_generated_sequence + 1:
+                raise OutputGateError(
+                    f"missing pending chunk {expected_sequence}"
+                )
+        object.__setattr__(self, "pending", FrozenDict(pending))
         self.delivery_policy.validate()
 
     @classmethod
@@ -817,7 +919,30 @@ class OutputDeliveryGate:
         turn_id: str | None = None,
         delivery_policy: OutputDeliveryPolicy | None = None,
     ) -> OutputDeliveryGate:
-        gate = cls(
+        pending_by_sequence: dict[int, GenerationChunk] = {}
+        for chunk in pending:
+            if not isinstance(chunk, GenerationChunk):
+                raise TypeError("OutputDeliveryGate.from_state pending entries must be GenerationChunk")
+            if chunk.stream_id != stream_id:
+                raise OutputGateError(f"pending chunk stream_id {chunk.stream_id!r} does not match {stream_id!r}")
+            if chunk.response_id != response_id:
+                raise OutputGateError(
+                    f"pending chunk response_id {chunk.response_id!r} does not match {response_id!r}"
+                )
+            if chunk.sequence <= last_client_delivered_sequence:
+                raise OutputGateError(
+                    f"pending chunk {chunk.sequence} is already delivered through "
+                    f"{last_client_delivered_sequence}"
+                )
+            if chunk.sequence > last_generated_sequence:
+                raise OutputGateError(
+                    f"pending chunk {chunk.sequence} exceeds last generated sequence {last_generated_sequence}"
+                )
+            if chunk.sequence in pending_by_sequence:
+                raise OutputGateError(f"duplicate pending chunk {chunk.sequence}")
+            pending_by_sequence[chunk.sequence] = chunk
+
+        return cls(
             stream_id,
             response_id,
             turn_id=turn_id,
@@ -826,39 +951,11 @@ class OutputDeliveryGate:
                 on_violation="abort_response",
                 holdback_max_tokens=48,
             ),
+            pending=pending_by_sequence,
             last_generated_sequence=last_generated_sequence,
             last_policy_accepted_sequence=last_policy_accepted_sequence,
             last_client_delivered_sequence=last_client_delivered_sequence,
         )
-        pending_by_sequence: dict[int, GenerationChunk] = {}
-        for chunk in pending:
-            if not isinstance(chunk, GenerationChunk):
-                raise TypeError("OutputDeliveryGate.from_state pending entries must be GenerationChunk")
-            if chunk.stream_id != gate.stream_id:
-                raise OutputGateError(f"pending chunk stream_id {chunk.stream_id!r} does not match {gate.stream_id!r}")
-            if chunk.response_id != gate.response_id:
-                raise OutputGateError(
-                    f"pending chunk response_id {chunk.response_id!r} does not match {gate.response_id!r}"
-                )
-            if chunk.sequence <= gate.last_client_delivered_sequence:
-                raise OutputGateError(
-                    f"pending chunk {chunk.sequence} is already delivered through "
-                    f"{gate.last_client_delivered_sequence}"
-                )
-            if chunk.sequence > gate.last_generated_sequence:
-                raise OutputGateError(
-                    f"pending chunk {chunk.sequence} exceeds last generated sequence {gate.last_generated_sequence}"
-                )
-            if chunk.sequence in pending_by_sequence:
-                raise OutputGateError(f"duplicate pending chunk {chunk.sequence}")
-            pending_by_sequence[chunk.sequence] = chunk
-
-        for sequence in range(gate.last_client_delivered_sequence + 1, gate.last_generated_sequence + 1):
-            if sequence not in pending_by_sequence:
-                raise OutputGateError(f"missing pending chunk {sequence}")
-
-        gate.pending = pending_by_sequence
-        return gate
 
     @classmethod
     def from_cutoff(
@@ -888,10 +985,14 @@ class OutputDeliveryGate:
         return tuple(self.pending[sequence] for sequence in sorted(self.pending))
 
     def with_turn_id(self, turn_id: str) -> OutputDeliveryGate:
-        _validate_non_empty_string("output gate", "turn_id", turn_id)
-        self.turn_id = turn_id
+        _validate_exact_non_empty_string("output gate", "turn_id", turn_id)
+        object.__setattr__(self, "turn_id", turn_id)
         if self.cutoff is not None:
-            self.cutoff = replace(self.cutoff, turn_id=turn_id)
+            object.__setattr__(
+                self,
+                "cutoff",
+                replace(self.cutoff, turn_id=turn_id),
+            )
         return self
 
     def record_chunk(self, chunk: GenerationChunk) -> list[GenerationChunk]:
@@ -929,14 +1030,23 @@ class OutputDeliveryGate:
             raise OutputGateError(
                 f"bounded_holdback pending output exceeds {self.delivery_policy.holdback_max_bytes} bytes"
             )
-        self.last_generated_sequence = chunk.sequence
-        self.pending[chunk.sequence] = chunk
+        object.__setattr__(
+            self,
+            "last_generated_sequence",
+            chunk.sequence,
+        )
         if self.delivery_policy.mode != "immediate_draft":
+            pending = dict(self.pending)
+            pending[chunk.sequence] = chunk
+            object.__setattr__(self, "pending", FrozenDict(pending))
             return []
 
-        delivered = self.pending.pop(chunk.sequence)
-        self.last_client_delivered_sequence = delivered.sequence
-        return [delivered]
+        object.__setattr__(
+            self,
+            "last_client_delivered_sequence",
+            chunk.sequence,
+        )
+        return [chunk]
 
     def commit_accepted_output(self) -> list[GenerationChunk]:
         return self._commit_accepted_output(explicit_commit=True)
@@ -950,9 +1060,16 @@ class OutputDeliveryGate:
         while next_sequence <= accepted_through and next_sequence in self.pending:
             deliverable.append(self.pending[next_sequence])
             next_sequence += 1
-        for chunk in deliverable:
-            self.pending.pop(chunk.sequence, None)
-            self.last_client_delivered_sequence = chunk.sequence
+        if deliverable:
+            pending = dict(self.pending)
+            for chunk in deliverable:
+                pending.pop(chunk.sequence, None)
+            object.__setattr__(self, "pending", FrozenDict(pending))
+            object.__setattr__(
+                self,
+                "last_client_delivered_sequence",
+                deliverable[-1].sequence,
+            )
         return deliverable
 
     def _flushable_accepted_sequence(self, *, explicit_commit: bool) -> int:
@@ -1005,9 +1122,13 @@ class OutputDeliveryGate:
                         f"{decision.accepted_through_sequence} exceeds last generated sequence "
                         f"{self.last_generated_sequence}"
                     )
-                self.last_policy_accepted_sequence = max(
-                    self.last_policy_accepted_sequence,
-                    decision.accepted_through_sequence,
+                object.__setattr__(
+                    self,
+                    "last_policy_accepted_sequence",
+                    max(
+                        self.last_policy_accepted_sequence,
+                        decision.accepted_through_sequence,
+                    ),
                 )
             if self.delivery_policy.mode == "buffer_until_commit":
                 return OutputGateUpdate(deliverable=[])
@@ -1028,6 +1149,7 @@ class OutputDeliveryGate:
                         f"{self.last_generated_sequence}"
                     )
             redacted_text_by_sequence: dict[int, str] = {}
+            pending = dict(self.pending)
             if decision.disposition == "redact":
                 redactions_by_sequence: dict[int, list[dict[str, object]]] = {}
                 for redaction in decision.redactions:
@@ -1062,7 +1184,7 @@ class OutputDeliveryGate:
                         )
                     if sequence not in self.pending:
                         raise OutputGateError(f"missing pending chunk {sequence}")
-                    text = self.pending[sequence].text
+                    text = pending[sequence].text
                     for redaction in redactions:
                         start = redaction.get("start")
                         end = redaction.get("end")
@@ -1123,12 +1245,16 @@ class OutputDeliveryGate:
                         f"{self.last_client_delivered_sequence}"
                     )
             if accepted_through_sequence is not None:
-                self.last_policy_accepted_sequence = max(
-                    self.last_policy_accepted_sequence,
-                    accepted_through_sequence,
+                object.__setattr__(
+                    self,
+                    "last_policy_accepted_sequence",
+                    max(
+                        self.last_policy_accepted_sequence,
+                        accepted_through_sequence,
+                    ),
                 )
             for sequence, text in redacted_text_by_sequence.items():
-                self.pending[sequence] = GenerationChunk.text(
+                pending[sequence] = GenerationChunk.text(
                     self.stream_id,
                     self.response_id,
                     sequence,
@@ -1136,18 +1262,27 @@ class OutputDeliveryGate:
                 )
             if decision.disposition == "replace" and accepted_through_sequence is not None:
                 if self.last_client_delivered_sequence < accepted_through_sequence:
-                    self.pending.pop(accepted_through_sequence, None)
+                    pending.pop(accepted_through_sequence, None)
             for sequence, chunk in replacement_chunks:
-                self.pending[sequence] = chunk
+                pending[sequence] = chunk
             if replacement_end_sequence is not None:
-                self.last_policy_accepted_sequence = max(
-                    self.last_policy_accepted_sequence,
-                    replacement_end_sequence,
+                object.__setattr__(
+                    self,
+                    "last_policy_accepted_sequence",
+                    max(
+                        self.last_policy_accepted_sequence,
+                        replacement_end_sequence,
+                    ),
                 )
-                self.last_generated_sequence = max(
-                    self.last_generated_sequence,
-                    replacement_end_sequence,
+                object.__setattr__(
+                    self,
+                    "last_generated_sequence",
+                    max(
+                        self.last_generated_sequence,
+                        replacement_end_sequence,
+                    ),
                 )
+            object.__setattr__(self, "pending", FrozenDict(pending))
             if self.delivery_policy.mode == "buffer_until_commit":
                 return OutputGateUpdate(deliverable=[])
             return OutputGateUpdate(deliverable=self._commit_accepted_output(explicit_commit=False))
@@ -1160,9 +1295,13 @@ class OutputDeliveryGate:
                         f"{decision.accepted_through_sequence} exceeds last generated sequence "
                         f"{self.last_generated_sequence}"
                     )
-                self.last_policy_accepted_sequence = max(
-                    self.last_policy_accepted_sequence,
-                    decision.accepted_through_sequence,
+                object.__setattr__(
+                    self,
+                    "last_policy_accepted_sequence",
+                    max(
+                        self.last_policy_accepted_sequence,
+                        decision.accepted_through_sequence,
+                    ),
                 )
             pending_tool_calls = (
                 "deny"
@@ -1182,8 +1321,8 @@ class OutputDeliveryGate:
                 policy_decision_id=decision.decision_id,
                 occurred_at=occurred_at,
             )
-            self.pending.clear()
-            self.cutoff = cutoff
+            object.__setattr__(self, "pending", FrozenDict())
+            object.__setattr__(self, "cutoff", cutoff)
             return OutputGateUpdate(
                 deliverable=[],
                 cutoff=cutoff,

@@ -971,6 +971,63 @@ def test_output_delivery_gate_rejects_missing_pending_resume_chunk() -> None:
     assert str(error.value) == "missing pending chunk 2"
 
 
+def test_output_delivery_gate_constructor_rejects_forged_resume_state() -> None:
+    chunk = GenerationChunk.text("stream-1", "response-1", 1, "held")
+    with pytest.raises(OutputGateError, match="does not match key 2"):
+        OutputDeliveryGate(
+            "stream-1",
+            "response-1",
+            pending={2: chunk},
+            last_generated_sequence=2,
+        )
+    with pytest.raises(OutputGateError, match="missing pending chunk 1"):
+        OutputDeliveryGate(
+            "stream-1",
+            "response-1",
+            last_generated_sequence=1,
+        )
+
+    cutoff = OutputCutoff(
+        "other-stream",
+        "response-1",
+        occurred_at="2026-06-23T00:00:00Z",
+    )
+    with pytest.raises(OutputGateError, match="cutoff does not match"):
+        OutputDeliveryGate(
+            "stream-1",
+            "response-1",
+            cutoff=cutoff,
+        )
+
+    gate = OutputDeliveryGate("stream-1", "response-1")
+    with pytest.raises(ValueError, match="must not contain surrounding whitespace"):
+        gate.with_turn_id(" turn-1")
+
+
+def test_output_gate_snapshots_are_immutable_and_continuity_check_is_bounded() -> None:
+    chunk = GenerationChunk.text("stream-1", "response-1", 1, "held")
+    gate = OutputDeliveryGate.from_state(
+        "stream-1",
+        "response-1",
+        pending=(chunk,),
+        last_generated_sequence=1,
+    )
+
+    with pytest.raises(AttributeError, match="immutable"):
+        chunk.text = "mutated"
+    with pytest.raises(TypeError, match="frozen mapping"):
+        gate.pending.clear()
+    with pytest.raises(AttributeError):
+        gate.last_generated_sequence = 0
+
+    with pytest.raises(OutputGateError, match="missing pending chunk 1"):
+        OutputDeliveryGate(
+            "stream-1",
+            "response-1",
+            last_generated_sequence=10**30,
+        )
+
+
 def test_output_delivery_gate_resumes_terminal_cutoff_state() -> None:
     cutoff = OutputCutoff(
         stream_id="stream-1",

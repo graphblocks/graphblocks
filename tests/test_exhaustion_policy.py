@@ -286,3 +286,92 @@ def test_continuation_usage_accumulates_against_envelope_bound() -> None:
     assert denied.allowed is False
     assert denied.reason == "max_additional_usage_exceeded"
     assert second.allowed is True
+
+
+def test_exhaustion_constructors_freeze_limits_and_reject_coercion() -> None:
+    allowed = {"cleanup"}
+    usage = [_tokens("10")]
+    envelope = ContinuationEnvelope(
+        allowed_work=allowed,
+        max_additional_usage=usage,
+        max_additional_steps=1,
+    )
+    allowed.add("checkpoint")
+    usage.append(_tokens("20"))
+
+    assert envelope.allowed_work == frozenset({"cleanup"})
+    assert envelope.max_additional_usage == (_tokens("10"),)
+
+    with pytest.raises(ValueError, match="max_additional_steps must be an integer"):
+        ContinuationEnvelope(max_additional_steps=True)  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="deny_new_work must be a boolean"):
+        ExhaustionPolicy(
+            preset="hard_stop",
+            in_flight="cancel_immediately",
+            unit="run",
+            deny_new_work=1,  # type: ignore[arg-type]
+        )
+
+
+def test_exhaustion_admission_rejects_unknown_work_and_usage_types() -> None:
+    policy = ExhaustionPolicy.from_preset("hard_stop", unit="run")
+    controller = ExhaustionController(
+        policy,
+        atomic_unit_id="run:1",
+        admission_epoch=1,
+    )
+
+    with pytest.raises(ValueError, match="invalid exhaustion work kind"):
+        controller.admit("invented", work_epoch=1)  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="requested_usage"):
+        controller.admit(
+            "cleanup",
+            work_epoch=1,
+            requested_usage=[object()],  # type: ignore[list-item]
+        )
+
+
+def test_exhaustion_state_cannot_reset_limits_and_deadlines_are_enforced() -> None:
+    deadline_policy = ExhaustionPolicy.from_preset(
+        "checkpoint_and_pause",
+        unit="run",
+        continuation=ContinuationEnvelope(
+            deadline="2026-06-23T00:00:00Z",
+        ),
+    )
+    assert validate_exhaustion_policy(deadline_policy, production=True) == []
+    with pytest.raises(ValueError, match="requires validation_time"):
+        ExhaustionController(
+            deadline_policy,
+            atomic_unit_id="run:1",
+            admission_epoch=1,
+        )
+
+    controller = ExhaustionController(
+        deadline_policy,
+        atomic_unit_id="run:1",
+        admission_epoch=1,
+        validation_time="2026-06-23T00:00:00Z",
+    )
+    decision = controller.admit("checkpoint", work_epoch=2)
+    assert decision.allowed is False
+    assert decision.reason == "continuation_deadline_exceeded"
+
+    bounded = ExhaustionController(
+        ExhaustionPolicy.from_preset(
+            "checkpoint_and_pause",
+            unit="run",
+            continuation=ContinuationEnvelope(max_additional_steps=1),
+        ),
+        atomic_unit_id="run:1",
+        admission_epoch=1,
+    )
+    assert bounded.admit("checkpoint", work_epoch=2).allowed
+    with pytest.raises(AttributeError):
+        bounded.used_additional_steps = 0
+    with pytest.raises(AttributeError):
+        bounded.used_additional_usage = ()
+    assert (
+        bounded.admit("checkpoint", work_epoch=2).reason
+        == "max_additional_steps_exceeded"
+    )
