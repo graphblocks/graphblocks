@@ -238,3 +238,49 @@ def test_terraform_bridge_rejects_nonfinite_values_and_coerced_flags(
             "service.url",
             required="true",  # type: ignore[arg-type]
         )
+
+
+def test_terraform_bridge_rejects_ambiguous_paths_and_malformed_json_boundaries(
+    monkeypatch,
+) -> None:
+    graphblocks_terraform = _import_terraform(monkeypatch)
+
+    with pytest.raises(graphblocks_terraform.TerraformBridgeError, match="conflicting"):
+        graphblocks_terraform.TerraformBridgeSpec(
+            workspace="support-prod",
+            output_bindings=(
+                graphblocks_terraform.TerraformOutputBinding("service", "service"),
+                graphblocks_terraform.TerraformOutputBinding("service_url", "service.url"),
+            ),
+        )
+    with pytest.raises(graphblocks_terraform.TerraformBridgeError, match="attribute keys"):
+        graphblocks_terraform.TerraformInfrastructureRequirement(
+            target_id="control",
+            target_kind="service",
+            execution_host="rust",
+            resource_type="deployment",
+            resource_name="control",
+            attributes={1: "invalid"},  # type: ignore[dict-item]
+        )
+    with pytest.raises(graphblocks_terraform.TerraformBridgeError, match="capabilities"):
+        graphblocks_terraform.TerraformInfrastructureRequirement(
+            target_id="control",
+            target_kind="service",
+            execution_host="rust",
+            resource_type="deployment",
+            resource_name="control",
+            capabilities=(object(),),  # type: ignore[arg-type]
+        )
+
+    bridge = graphblocks_terraform.TerraformBridgeSpec(
+        workspace="support-prod",
+        output_bindings=(
+            graphblocks_terraform.TerraformOutputBinding("worker_url", "service.url"),
+        ),
+    )
+    with pytest.raises(graphblocks_terraform.TerraformBridgeError, match="value"):
+        bridge.materialize_outputs({"worker_url": {"sensitive": False}})
+    with pytest.raises(graphblocks_terraform.TerraformBridgeError, match="JSON"):
+        bridge.materialize_outputs({"worker_url": object()})
+    with pytest.raises(graphblocks_terraform.TerraformBridgeError, match="name"):
+        bridge.materialize_binding_document(1, {"worker_url": "ok"})  # type: ignore[arg-type]

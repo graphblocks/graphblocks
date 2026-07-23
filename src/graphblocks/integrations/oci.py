@@ -5,6 +5,7 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 import hashlib
 import json
+import re
 
 from graphblocks.deployment import GraphRelease
 
@@ -21,7 +22,13 @@ class OciContractError(ValueError):
 
 
 def _canonical_dumps(value: object) -> str:
-    return json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+    return json.dumps(
+        value,
+        allow_nan=False,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
 
 
 def _validate_digest(digest: str) -> None:
@@ -147,14 +154,37 @@ class OciArtifactReference:
     digest: str | None = None
 
     def __post_init__(self) -> None:
-        if not self.registry.strip():
-            raise OciContractError("registry must not be empty")
-        if not self.repository.strip():
-            raise OciContractError("repository must not be empty")
+        if (
+            not isinstance(self.registry, str)
+            or not self.registry.strip()
+            or self.registry != self.registry.strip()
+            or "/" in self.registry
+            or "@" in self.registry
+            or any(ord(character) < 32 for character in self.registry)
+        ):
+            raise OciContractError("OCI reference registry is invalid")
+        if (
+            not isinstance(self.repository, str)
+            or not self.repository.strip()
+            or self.repository != self.repository.strip()
+            or "@" in self.repository
+            or ":" in self.repository
+            or "\\" in self.repository
+            or any(
+                part in {"", ".", ".."}
+                for part in self.repository.split("/")
+            )
+            or any(ord(character) < 32 for character in self.repository)
+        ):
+            raise OciContractError("OCI reference repository is invalid")
         if (self.tag is None) == (self.digest is None):
             raise OciContractError("exactly one of tag or digest must be provided")
-        if self.tag is not None and not self.tag.strip():
-            raise OciContractError("tag must not be empty")
+        if self.tag is not None and (
+            not isinstance(self.tag, str)
+            or re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}", self.tag)
+            is None
+        ):
+            raise OciContractError("OCI reference tag is invalid")
         if self.digest is not None:
             _validate_digest(self.digest)
 
@@ -298,8 +328,14 @@ class ReleaseSbom:
     components: tuple[Mapping[str, object], ...] = field(default_factory=tuple)
 
     def __post_init__(self) -> None:
+        if not isinstance(self.release, GraphRelease):
+            raise OciContractError("SBOM release must be a GraphRelease")
+        try:
+            components = tuple(self.components)
+        except TypeError as error:
+            raise OciContractError("SBOM components must be mappings") from error
         normalized = []
-        for component in self.components:
+        for component in components:
             if not isinstance(component, Mapping):
                 raise OciContractError("SBOM components must be mappings")
             component_type = component.get("type")
@@ -308,11 +344,20 @@ class ReleaseSbom:
                 raise OciContractError("SBOM component type must not be empty")
             if not isinstance(name, str) or not name.strip():
                 raise OciContractError("SBOM component name must not be empty")
+            raw_item = dict(component)
+            if any(not isinstance(key, str) for key in raw_item):
+                raise OciContractError("SBOM component keys must be strings")
             item = {
-                str(key): deepcopy(value)
-                for key, value in sorted(component.items())
-                if value is not None
+                key: deepcopy(raw_item[key])
+                for key in sorted(raw_item)
+                if raw_item[key] is not None
             }
+            try:
+                _canonical_dumps(item)
+            except (RecursionError, TypeError, ValueError) as error:
+                raise OciContractError(
+                    "SBOM components must contain strict JSON values"
+                ) from error
             normalized.append(item)
         object.__setattr__(
             self,
@@ -558,7 +603,7 @@ def build_release_image(
         tag_reference=OciArtifactReference(
             registry=registry,
             repository=repository,
-            tag=tag or release.version,
+            tag=release.version if tag is None else tag,
         ),
         manifest=manifest,
     )

@@ -107,17 +107,49 @@ class TerraformInfrastructureRequirement:
                 raise TerraformBridgeError(f"{field_name} must not be empty")
         if not isinstance(self.attributes, Mapping):
             raise TerraformBridgeError("requirement attributes must be a mapping")
+        raw_attributes = dict(self.attributes)
+        if any(not isinstance(key, str) for key in raw_attributes):
+            raise TerraformBridgeError("requirement attribute keys must be strings")
         attributes = {
-            str(key): deepcopy(value)
-            for key, value in sorted(dict(self.attributes).items())
+            key: deepcopy(raw_attributes[key])
+            for key in sorted(raw_attributes)
         }
         try:
             _canonical_dumps(attributes)
         except (RecursionError, TypeError, ValueError) as error:
             raise TerraformBridgeError("requirement attributes must be JSON-serializable") from error
+        normalized_collections: dict[str, tuple[str, ...]] = {}
+        for field_name in ("capabilities", "effects"):
+            raw_values = getattr(self, field_name)
+            if isinstance(raw_values, (str, bytes, Mapping)):
+                raise TerraformBridgeError(
+                    f"requirement {field_name} must be a collection of strings"
+                )
+            try:
+                values = tuple(raw_values)
+            except TypeError as error:
+                raise TerraformBridgeError(
+                    f"requirement {field_name} must be a collection of strings"
+                ) from error
+            if any(
+                not isinstance(value, str)
+                or not value.strip()
+                or value != value.strip()
+                for value in values
+            ):
+                raise TerraformBridgeError(
+                    f"requirement {field_name} must contain stable non-empty strings"
+                )
+            normalized_collections[field_name] = tuple(sorted(set(values)))
+        if self.image is not None and (
+            not isinstance(self.image, str)
+            or not self.image.strip()
+            or self.image != self.image.strip()
+        ):
+            raise TerraformBridgeError("requirement image must be a stable non-empty string")
         object.__setattr__(self, "attributes", attributes)
-        object.__setattr__(self, "capabilities", tuple(sorted({str(value) for value in self.capabilities})))
-        object.__setattr__(self, "effects", tuple(sorted({str(value) for value in self.effects})))
+        object.__setattr__(self, "capabilities", normalized_collections["capabilities"])
+        object.__setattr__(self, "effects", normalized_collections["effects"])
 
     @classmethod
     def for_execution_target(
@@ -128,6 +160,8 @@ class TerraformInfrastructureRequirement:
         resource_name: str,
         attributes: Mapping[str, object] | None = None,
     ) -> TerraformInfrastructureRequirement:
+        if not isinstance(target, ExecutionTarget):
+            raise TerraformBridgeError("target must be an ExecutionTarget")
         return cls(
             target_id=target.target_id,
             target_kind=target.kind,
@@ -199,6 +233,23 @@ class TerraformBridgeSpec:
         graphblocks_keys = [binding.graphblocks_key for binding in output_bindings]
         if len(graphblocks_keys) != len(set(graphblocks_keys)):
             raise TerraformBridgeError("output binding graphblocks_key values must be unique")
+        binding_paths = {
+            graphblocks_key: tuple(graphblocks_key.split("."))
+            for graphblocks_key in graphblocks_keys
+        }
+        for graphblocks_key, path in binding_paths.items():
+            if any(not part for part in path):
+                raise TerraformBridgeError(
+                    f"invalid graphblocks binding path {graphblocks_key!r}"
+                )
+            for other_key, other_path in binding_paths.items():
+                if graphblocks_key == other_key:
+                    continue
+                if len(path) < len(other_path) and other_path[: len(path)] == path:
+                    raise TerraformBridgeError(
+                        "conflicting graphblocks binding paths "
+                        f"{graphblocks_key!r} and {other_key!r}"
+                    )
         object.__setattr__(self, "output_bindings", output_bindings)
 
         try:
@@ -253,6 +304,10 @@ class TerraformBridgeSpec:
                     raise TerraformBridgeError(
                         f"sensitive Terraform output {binding.output_name!r} requires secret_ref"
                     )
+                if "value" not in raw_value:
+                    raise TerraformBridgeError(
+                        f"Terraform output {binding.output_name!r} must contain value"
+                    )
             if binding.secret_ref is not None:
                 materialized[binding.graphblocks_key] = {"secretRef": binding.secret_ref}
                 continue
@@ -260,7 +315,14 @@ class TerraformBridgeSpec:
                 value = raw_value["value"]
             else:
                 value = raw_value
-            materialized[binding.graphblocks_key] = deepcopy(value)
+            try:
+                copied_value = deepcopy(value)
+                _canonical_dumps(copied_value)
+            except (RecursionError, TypeError, ValueError) as error:
+                raise TerraformBridgeError(
+                    f"Terraform output {binding.output_name!r} value must be strict JSON"
+                ) from error
+            materialized[binding.graphblocks_key] = copied_value
         return {key: materialized[key] for key in sorted(materialized)}
 
     def materialize_binding_document(
@@ -271,11 +333,11 @@ class TerraformBridgeSpec:
         api_version: str = "graphblocks.ai/v1alpha1",
         kind: str = "Binding",
     ) -> dict[str, object]:
-        if not name.strip():
+        if not isinstance(name, str) or not name.strip():
             raise TerraformBridgeError("binding document name must not be empty")
-        if not api_version.strip():
+        if not isinstance(api_version, str) or not api_version.strip():
             raise TerraformBridgeError("binding document api_version must not be empty")
-        if not kind.strip():
+        if not isinstance(kind, str) or not kind.strip():
             raise TerraformBridgeError("binding document kind must not be empty")
 
         spec: dict[str, object] = {}

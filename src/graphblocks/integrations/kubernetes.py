@@ -109,11 +109,53 @@ def _object_metadata(
 
 def _env_contracts(env: Mapping[str, str] | Iterable[KubernetesEnv | KubernetesSecretEnv]) -> list[dict[str, object]]:
     if isinstance(env, Mapping):
-        return [
-            KubernetesEnv(str(key), str(value)).env_contract()
-            for key, value in sorted(env.items())
-        ]
-    return [item.env_contract() for item in sorted(tuple(env), key=lambda env_item: env_item.name)]
+        values = dict(env)
+        if any(
+            not isinstance(key, str) or not isinstance(value, str)
+            for key, value in values.items()
+        ):
+            raise KubernetesAdapterError(
+                "environment mapping keys and values must be strings"
+            )
+        items: tuple[KubernetesEnv | KubernetesSecretEnv, ...] = tuple(
+            KubernetesEnv(key, value) for key, value in sorted(values.items())
+        )
+    else:
+        try:
+            items = tuple(env)
+        except TypeError as error:
+            raise KubernetesAdapterError(
+                "environment must contain KubernetesEnv or KubernetesSecretEnv values"
+            ) from error
+        if any(
+            not isinstance(item, (KubernetesEnv, KubernetesSecretEnv))
+            for item in items
+        ):
+            raise KubernetesAdapterError(
+                "environment must contain KubernetesEnv or KubernetesSecretEnv values"
+            )
+    names = [item.name for item in items]
+    if len(names) != len(set(names)):
+        raise KubernetesAdapterError("environment variable names must be unique")
+    return [
+        item.env_contract()
+        for item in sorted(items, key=lambda env_item: env_item.name)
+    ]
+
+
+def _validated_ports(ports: Iterable[KubernetesPort]) -> tuple[KubernetesPort, ...]:
+    try:
+        materialized = tuple(ports)
+    except TypeError as error:
+        raise KubernetesAdapterError(
+            "ports must contain KubernetesPort values"
+        ) from error
+    if any(not isinstance(port, KubernetesPort) for port in materialized):
+        raise KubernetesAdapterError("ports must contain KubernetesPort values")
+    names = [port.name for port in materialized]
+    if len(names) != len(set(names)):
+        raise KubernetesAdapterError("Kubernetes port names must be unique")
+    return materialized
 
 
 @dataclass(frozen=True, slots=True)
@@ -302,6 +344,47 @@ class KubernetesManifestSet:
         )
         if len(prune_targets) != len(set(prune_targets)):
             raise KubernetesAdapterError("prune_targets must be unique")
+        active_identities: set[tuple[str, str, str, str]] = set()
+        for document in self._documents:
+            metadata = document.get("metadata")
+            if not isinstance(metadata, Mapping):
+                continue
+            identity_values = (
+                document.get("apiVersion"),
+                document.get("kind"),
+                metadata.get("name"),
+                metadata.get("namespace", ""),
+            )
+            if (
+                not all(
+                    isinstance(value, str) and value
+                    for value in identity_values[:3]
+                )
+                or not isinstance(identity_values[3], str)
+            ):
+                continue
+            identity = (
+                identity_values[0],
+                identity_values[1],
+                identity_values[2],
+                identity_values[3],
+            )
+            if identity in active_identities:
+                raise KubernetesAdapterError(
+                    f"Kubernetes documents contain duplicate resource identity {identity!r}"
+                )
+            active_identities.add(identity)
+        for target in prune_targets:
+            identity = (
+                target.api_version,
+                target.kind,
+                target.name,
+                target.namespace,
+            )
+            if identity in active_identities:
+                raise KubernetesAdapterError(
+                    f"prune target references active Kubernetes resource {identity!r}"
+                )
         object.__setattr__(self, "prune_targets", prune_targets)
 
     @property
@@ -326,8 +409,10 @@ class HelmChartFile:
     content: str
 
     def __post_init__(self) -> None:
-        if not self.path.strip():
+        if not isinstance(self.path, str) or not self.path.strip():
             raise KubernetesAdapterError("Helm chart file path must not be empty")
+        if "\\" in self.path or any(ord(character) < 32 for character in self.path):
+            raise KubernetesAdapterError(f"invalid Helm chart file path: {self.path!r}")
         path_parts = self.path.split("/")
         if self.path.startswith("/") or any(part in {"", ".", ".."} for part in path_parts):
             raise KubernetesAdapterError(f"invalid Helm chart file path: {self.path!r}")
@@ -460,6 +545,7 @@ def render_target_deployment(
     if deployment_image is None or not deployment_image.strip():
         raise KubernetesAdapterError("target image must be provided")
 
+    ports = _validated_ports(ports)
     port_contracts = [port.container_contract() for port in ports]
     env_contracts = _env_contracts(env)
 
@@ -523,6 +609,7 @@ def render_target_service(
     if not name.strip():
         raise KubernetesAdapterError("service name must not be empty")
     options = options or KubernetesRenderOptions()
+    ports = _validated_ports(ports)
     service_ports = [port.service_contract() for port in ports]
     if not service_ports:
         raise KubernetesAdapterError("service must expose at least one port")
@@ -565,7 +652,7 @@ def render_rollout_manifests(
             candidate_replicas,
         )
     options = options or KubernetesRenderOptions()
-    ports = tuple(ports)
+    ports = _validated_ports(ports)
     env_contracts = _env_contracts(env)
     active_step = rollout_plan.current_step(active_step_index)
 
@@ -785,9 +872,25 @@ def render_callback_ingress_manifests(
     if not security["require_signature"]:
         raise KubernetesAdapterError("GB6002: enabled callback ingress must require signatures")
 
-    parent_refs = tuple(deepcopy(dict(parent_ref)) for parent_ref in parent_refs)
+    try:
+        raw_parent_refs = tuple(parent_refs)
+    except TypeError as error:
+        raise KubernetesAdapterError(
+            "callback ingress parentRefs must contain mappings"
+        ) from error
+    if any(not isinstance(parent_ref, Mapping) for parent_ref in raw_parent_refs):
+        raise KubernetesAdapterError(
+            "callback ingress parentRefs must contain mappings"
+        )
+    parent_refs = tuple(deepcopy(dict(parent_ref)) for parent_ref in raw_parent_refs)
     if not parent_refs:
         raise KubernetesAdapterError("callback ingress HTTPRoute must declare at least one parentRef")
+    try:
+        _canonical_dumps(parent_refs)
+    except (TypeError, ValueError) as error:
+        raise KubernetesAdapterError(
+            "callback ingress parentRefs must contain strict JSON values"
+        ) from error
 
     labels = _callback_ingress_labels(name, options)
     annotations = _callback_ingress_annotations(config)
@@ -1033,6 +1136,10 @@ def _callback_ingress_contract(callback_ingress: Mapping[str, object]) -> dict[s
 
 
 def _bool_config(config: Mapping[str, object], camel: str, snake: str, *, default: bool) -> bool:
+    if camel in config and snake in config and config[camel] != config[snake]:
+        raise KubernetesAdapterError(
+            f"callback ingress {camel} has conflicting camelCase and snake_case values"
+        )
     value = config.get(camel, config.get(snake, default))
     if not isinstance(value, bool):
         raise KubernetesAdapterError(f"callback ingress {camel} must be a boolean")
@@ -1040,6 +1147,10 @@ def _bool_config(config: Mapping[str, object], camel: str, snake: str, *, defaul
 
 
 def _positive_int_config(config: Mapping[str, object], camel: str, snake: str, *, default: int) -> int:
+    if camel in config and snake in config and config[camel] != config[snake]:
+        raise KubernetesAdapterError(
+            f"callback ingress {camel} has conflicting camelCase and snake_case values"
+        )
     value = config.get(camel, config.get(snake, default))
     if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
         raise KubernetesAdapterError(f"callback ingress {camel} must be a positive integer")

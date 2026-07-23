@@ -590,3 +590,45 @@ def test_oci_reference_renders_tag_and_digest_forms(monkeypatch) -> None:
 
     assert tagged.ref() == "registry.example.com/graphblocks/support-agent:2026.06.23.1"
     assert digested.ref() == f"registry.example.com/graphblocks/support-agent@{_digest('manifest')}"
+
+
+def test_oci_contract_rejects_non_json_sbom_and_ambiguous_references(
+    monkeypatch,
+) -> None:
+    graphblocks_oci = _import_oci(monkeypatch)
+    graphblocks_deployment = importlib.import_module("graphblocks.deployment")
+    release = graphblocks_deployment.GraphRelease("support-agent", "2026.06.23.1")
+
+    with pytest.raises(graphblocks_oci.OciContractError, match="strict JSON"):
+        graphblocks_oci.ReleaseSbom(
+            release,
+            components=(
+                {"type": "library", "name": "unsafe", "score": float("nan")},
+            ),
+        )
+    for values in (
+        {"registry": "registry.example.com/tenant", "repository": "support-agent", "tag": "v1"},
+        {"registry": "registry.example.com", "repository": "../support-agent", "tag": "v1"},
+        {"registry": "registry.example.com", "repository": "support-agent", "tag": "bad@tag"},
+    ):
+        with pytest.raises(graphblocks_oci.OciContractError, match="reference"):
+            graphblocks_oci.OciArtifactReference(**values)
+
+
+def test_oci_build_release_image_rejects_explicit_empty_tag(monkeypatch) -> None:
+    graphblocks_oci = _import_oci(monkeypatch)
+    graphblocks_deployment = importlib.import_module("graphblocks.deployment")
+    release = graphblocks_deployment.GraphRelease("support-agent", "2026.06.23.1")
+    bundle = graphblocks_oci.OciDescriptor.from_payload(
+        "application/vnd.graphblocks.bundle.v1+tar",
+        b"bundle",
+    )
+
+    with pytest.raises(graphblocks_oci.OciContractError, match="tag"):
+        graphblocks_oci.build_release_image(
+            release,
+            registry="registry.example.com",
+            repository="graphblocks/support-agent",
+            tag="",
+            bundle_descriptor=bundle,
+        )

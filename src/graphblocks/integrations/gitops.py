@@ -27,7 +27,15 @@ def _canonical_dumps(value: object) -> str:
 
 
 def _sorted_str_mapping(values: Mapping[str, str]) -> dict[str, str]:
-    return {str(key): str(value) for key, value in sorted(dict(values).items())}
+    if not isinstance(values, Mapping):
+        raise GitOpsContractError("GitOps metadata must be a mapping of strings")
+    copied = dict(values)
+    if any(
+        not isinstance(key, str) or not isinstance(value, str)
+        for key, value in copied.items()
+    ):
+        raise GitOpsContractError("GitOps metadata keys and values must be strings")
+    return {key: copied[key] for key in sorted(copied)}
 
 
 def _release_annotations(release: GraphRelease, annotations: Mapping[str, str] | None) -> dict[str, str]:
@@ -77,7 +85,7 @@ class GitOpsSource:
             ("path", self.path),
             ("target_revision", self.target_revision),
         ):
-            if not value.strip():
+            if not isinstance(value, str) or not value.strip():
                 raise GitOpsContractError(f"{field_name} must not be empty")
 
     def argocd_contract(self) -> dict[str, str]:
@@ -94,9 +102,9 @@ class GitOpsDestination:
     namespace: str = "default"
 
     def __post_init__(self) -> None:
-        if not self.server.strip():
+        if not isinstance(self.server, str) or not self.server.strip():
             raise GitOpsContractError("destination server must not be empty")
-        if not self.namespace.strip():
+        if not isinstance(self.namespace, str) or not self.namespace.strip():
             raise GitOpsContractError("destination namespace must not be empty")
 
     def argocd_contract(self) -> dict[str, str]:
@@ -113,11 +121,13 @@ class FluxSourceRef:
     namespace: str | None = None
 
     def __post_init__(self) -> None:
-        if not self.kind.strip():
+        if not isinstance(self.kind, str) or not self.kind.strip():
             raise GitOpsContractError("Flux source kind must not be empty")
-        if not self.name.strip():
+        if not isinstance(self.name, str) or not self.name.strip():
             raise GitOpsContractError("Flux source name must not be empty")
-        if self.namespace is not None and not self.namespace.strip():
+        if self.namespace is not None and (
+            not isinstance(self.namespace, str) or not self.namespace.strip()
+        ):
             raise GitOpsContractError("Flux source namespace must not be empty")
 
     def flux_contract(self) -> dict[str, str]:
@@ -144,8 +154,38 @@ class GitOpsManifestSet:
         copied = tuple(deepcopy(dict(document)) for document in materialized)
         try:
             _canonical_dumps(copied)
-        except (TypeError, ValueError) as error:
+        except (RecursionError, TypeError, ValueError) as error:
             raise GitOpsContractError("GitOps documents must contain strict JSON values") from error
+        identities: set[tuple[str, str, str, str]] = set()
+        for document in copied:
+            metadata = document.get("metadata")
+            if not isinstance(metadata, Mapping):
+                continue
+            identity_values = (
+                document.get("apiVersion"),
+                document.get("kind"),
+                metadata.get("name"),
+                metadata.get("namespace", ""),
+            )
+            if (
+                not all(
+                    isinstance(value, str) and value
+                    for value in identity_values[:3]
+                )
+                or not isinstance(identity_values[3], str)
+            ):
+                continue
+            identity = (
+                identity_values[0],
+                identity_values[1],
+                identity_values[2],
+                identity_values[3],
+            )
+            if identity in identities:
+                raise GitOpsContractError(
+                    f"GitOps documents contain duplicate resource identity {identity!r}"
+                )
+            identities.add(identity)
         object.__setattr__(self, "_documents", copied)
 
     @property
@@ -175,12 +215,18 @@ def render_argocd_application(
     labels: Mapping[str, str] | None = None,
     annotations: Mapping[str, str] | None = None,
 ) -> GitOpsManifest:
-    if not name.strip():
+    if not isinstance(name, str) or not name.strip():
         raise GitOpsContractError("Application name must not be empty")
-    if not project.strip():
+    if not isinstance(project, str) or not project.strip():
         raise GitOpsContractError("Application project must not be empty")
     if not isinstance(automated, bool):
         raise GitOpsContractError("Application automated must be a boolean")
+    if not isinstance(release, GraphRelease):
+        raise GitOpsContractError("release must be a GraphRelease")
+    if not isinstance(source, GitOpsSource):
+        raise GitOpsContractError("source must be a GitOpsSource")
+    if not isinstance(destination, GitOpsDestination):
+        raise GitOpsContractError("destination must be a GitOpsDestination")
     spec: dict[str, object] = {
         "project": project,
         "source": source.argocd_contract(),
@@ -214,10 +260,14 @@ def render_flux_kustomization(
         ("Kustomization namespace", namespace),
         ("Kustomization interval", interval),
     ):
-        if not value.strip():
+        if not isinstance(value, str) or not value.strip():
             raise GitOpsContractError(f"{field_name} must not be empty")
     if not isinstance(prune, bool):
         raise GitOpsContractError("Kustomization prune must be a boolean")
+    if not isinstance(release, GraphRelease):
+        raise GitOpsContractError("release must be a GraphRelease")
+    if not isinstance(source_ref, FluxSourceRef):
+        raise GitOpsContractError("source_ref must be a FluxSourceRef")
     return {
         "apiVersion": "kustomize.toolkit.fluxcd.io/v1",
         "kind": "Kustomization",
@@ -242,7 +292,7 @@ def render_graphblocks_desired_state(
     labels: Mapping[str, str] | None = None,
     annotations: Mapping[str, str] | None = None,
 ) -> GitOpsManifest:
-    if not name.strip():
+    if not isinstance(name, str) or not name.strip():
         raise GitOpsContractError("GraphBlocks desired state name must not be empty")
     if not isinstance(release, GraphRelease):
         raise GitOpsContractError("release must be a GraphRelease")
@@ -254,6 +304,13 @@ def render_graphblocks_desired_state(
         )
     if not isinstance(desired_state, Mapping):
         raise GitOpsContractError("desired_state must be a mapping")
+    copied_desired_state = deepcopy(dict(desired_state))
+    try:
+        _canonical_dumps(copied_desired_state)
+    except (RecursionError, TypeError, ValueError) as error:
+        raise GitOpsContractError(
+            "desired_state must contain strict JSON values"
+        ) from error
     release_contract: dict[str, object] = {
         "name": release.name,
         "version": release.version,
@@ -277,7 +334,7 @@ def render_graphblocks_desired_state(
                 "createdAt": deployment_revision.created_at,
                 "contentDigest": deployment_revision.content_digest(),
             },
-            "desiredState": deepcopy(dict(desired_state)),
+            "desiredState": copied_desired_state,
         },
     }
 

@@ -807,3 +807,92 @@ def test_kubernetes_adapter_rejects_coerced_numeric_and_boolean_fields(
             service_name="callback-worker",
             include_network_policy="false",  # type: ignore[arg-type]
         )
+
+
+def test_kubernetes_manifest_set_rejects_duplicate_or_pruned_active_identity(
+    monkeypatch,
+) -> None:
+    graphblocks_kubernetes = _import_kubernetes(monkeypatch)
+    document = {
+        "apiVersion": "apps/v1",
+        "kind": "Deployment",
+        "metadata": {"name": "worker", "namespace": "support"},
+    }
+
+    with pytest.raises(graphblocks_kubernetes.KubernetesAdapterError, match="duplicate"):
+        graphblocks_kubernetes.KubernetesManifestSet((document, document))
+    with pytest.raises(graphblocks_kubernetes.KubernetesAdapterError, match="active"):
+        graphblocks_kubernetes.KubernetesManifestSet(
+            (document,),
+            prune_targets=(
+                graphblocks_kubernetes.KubernetesPruneTarget(
+                    "apps/v1",
+                    "Deployment",
+                    "worker",
+                    "support",
+                ),
+            ),
+        )
+
+
+def test_kubernetes_renderer_rejects_duplicate_container_contracts(
+    monkeypatch,
+) -> None:
+    graphblocks_kubernetes = _import_kubernetes(monkeypatch)
+    graphblocks_deployment = importlib.import_module("graphblocks.deployment")
+    target = graphblocks_deployment.ExecutionTarget(
+        "agent-workers",
+        "worker_pool",
+        "rust",
+        image="ghcr.io/acme/support-agent@sha256:runtime",
+    )
+
+    with pytest.raises(graphblocks_kubernetes.KubernetesAdapterError, match="port names"):
+        graphblocks_kubernetes.render_target_deployment(
+            "support-agent",
+            target,
+            ports=(
+                graphblocks_kubernetes.KubernetesPort("http", 8080),
+                graphblocks_kubernetes.KubernetesPort("http", 8081),
+            ),
+        )
+    with pytest.raises(
+        graphblocks_kubernetes.KubernetesAdapterError,
+        match="environment variable names",
+    ):
+        graphblocks_kubernetes.render_target_deployment(
+            "support-agent",
+            target,
+            env=(
+                graphblocks_kubernetes.KubernetesEnv("TOKEN", "one"),
+                graphblocks_kubernetes.KubernetesEnv("TOKEN", "two"),
+            ),
+        )
+
+
+def test_kubernetes_callback_and_helm_paths_reject_ambiguous_inputs(
+    monkeypatch,
+) -> None:
+    graphblocks_kubernetes = _import_kubernetes(monkeypatch)
+
+    with pytest.raises(graphblocks_kubernetes.KubernetesAdapterError, match="conflicting"):
+        graphblocks_kubernetes.render_callback_ingress_manifests(
+            "callbacks",
+            {
+                "enabled": True,
+                "routes": [
+                    {
+                        "path": "/callbacks/{callback_id}",
+                        "command": "SubmitAsyncCallback",
+                    }
+                ],
+                "security": {
+                    "requireSignature": True,
+                    "require_signature": False,
+                },
+            },
+            service_name="callback-worker",
+            parent_refs=({"name": "gateway"},),
+        )
+    with pytest.raises(graphblocks_kubernetes.KubernetesAdapterError, match="path"):
+        graphblocks_kubernetes.HelmChartFile(r"..\Chart.yaml", "unsafe")

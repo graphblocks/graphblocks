@@ -208,3 +208,48 @@ def test_gitops_rejects_coerced_flags_and_mismatched_release_revision(
             deployment_revision=revision,
             desired_state={},
         )
+
+
+def test_gitops_rejects_non_json_state_non_string_metadata_and_duplicate_identity(
+    monkeypatch,
+) -> None:
+    graphblocks_gitops = _import_gitops(monkeypatch)
+    graphblocks_deployment = importlib.import_module("graphblocks.deployment")
+    release = _release(monkeypatch)
+    revision = graphblocks_deployment.DeploymentRevision(
+        revision_id="rev-1",
+        release_digest=release.content_digest(),
+        deployment_spec_hash="sha256:deployment",
+        physical_plan_hash="sha256:plan",
+        resolved_binding_hash="sha256:binding",
+        target_capability_hash="sha256:targets",
+        created_at="2026-06-29T00:00:00Z",
+    )
+
+    with pytest.raises(graphblocks_gitops.GitOpsContractError, match="strict JSON"):
+        graphblocks_gitops.render_graphblocks_desired_state(
+            "support-production",
+            release=release,
+            deployment_revision=revision,
+            desired_state={"threshold": float("nan")},
+        )
+    with pytest.raises(graphblocks_gitops.GitOpsContractError, match="strings"):
+        graphblocks_gitops.render_argocd_application(
+            "support-agent",
+            release=release,
+            source=graphblocks_gitops.GitOpsSource(
+                "https://git.example.com/platform.git",
+                "clusters/prod",
+            ),
+            destination=graphblocks_gitops.GitOpsDestination(namespace="support"),
+            labels={1: "invalid"},  # type: ignore[dict-item]
+        )
+
+    document = graphblocks_gitops.render_graphblocks_desired_state(
+        "support-production",
+        release=release,
+        deployment_revision=revision,
+        desired_state={},
+    )
+    with pytest.raises(graphblocks_gitops.GitOpsContractError, match="duplicate"):
+        graphblocks_gitops.GitOpsManifestSet((document, document))
