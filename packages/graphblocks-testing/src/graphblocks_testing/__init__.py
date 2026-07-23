@@ -81,17 +81,13 @@ from graphblocks.deployment import (
 )
 from graphblocks.blob_store import BlobKey, LocalBlobStore, PutOptions
 from graphblocks.document_parsers import (
-    DocumentParserError,
     DocumentParserRegistry,
     ParserDescriptor,
     plain_text_parser_descriptor,
 )
 from graphblocks.documents import (
     ArtifactRef,
-    AssetRevision,
-    ParsedDocument,
     SourceRef,
-    SourceAsset,
     chunk_document_by_lines,
     create_local_text_revision,
     parse_plain_text_document,
@@ -234,7 +230,6 @@ from graphblocks.tools import (
     ToolApprovalRecord,
     ToolApprovalRequest,
     ToolBinding,
-    ToolCall,
     ToolCallDraft,
     ToolCallError,
     ToolCatalog,
@@ -254,7 +249,6 @@ from graphblocks.tools import (
 from graphblocks.usage import InMemoryUsageLedger, SQLiteUsageLedger, UsageRecord
 from graphblocks.workspace import (
     InMemoryWorkspaceStore,
-    WorkspaceMutationDecision,
     WorkspaceMutationPolicy,
     WorkspaceSnapshot,
     WorkspaceTrialPlan,
@@ -375,7 +369,10 @@ def _tool_execution_error_code(error: ToolExecutionPlanError) -> str:
     message = str(error)
     if "requires an effect key" in message or "share effect key" in message:
         return "unsafe_parallel_effects"
-    if "duplicate dependency" in message:
+    if (
+        "duplicate dependency" in message
+        or "dependency ids must not contain duplicates" in message
+    ):
         return "duplicate_dependency"
     if "not pending" in message:
         return "tool_call_not_pending"
@@ -18129,6 +18126,7 @@ class TckRunner:
         effect_key_template = fixture.get("effectKeyTemplate")
         raw_calls = fixture.get("calls", [])
         planned_calls: list[ToolPlanCall] = []
+        call_construction_error: ToolExecutionPlanError | None = None
         for call_index, raw_call in enumerate(raw_calls if isinstance(raw_calls, list) else []):
             if not isinstance(raw_call, Mapping):
                 diagnostics.append(
@@ -18149,36 +18147,52 @@ class TckRunner:
                     }
                 )
                 continue
-            draft = ToolCallDraft.proposed(
-                response_id,
-                str(raw_call.get("toolCallId", "")),
-                str(raw_call.get("toolName", "tool.run")),
-            )
-            draft = draft.append_argument_fragment(json.dumps(raw_arguments, sort_keys=True))
-            call = draft.complete_arguments().into_tool_call(
-                str(raw_call.get("resolvedToolId", "resolved-tool-1")),
-                created_at=str(raw_call.get("createdAt", "2026-06-23T00:00:00Z")),
-            )
-            depends_on = raw_call.get("dependsOn", raw_call.get("depends_on", ()))
-            if isinstance(depends_on, str):
-                depends_on = (depends_on,)
-            call = replace(call, depends_on=tuple(str(dependency) for dependency in depends_on or ()))
-            raw_effects = raw_call.get("effects", [])
-            if isinstance(raw_effects, str):
-                raw_effects = [raw_effects]
-            planned_call = ToolPlanCall(
-                call,
-                effect_key=(str(raw_call["effectKey"]) if raw_call.get("effectKey") is not None else None),
-                effects=frozenset(str(effect) for effect in raw_effects or ()),
-                cancellation=str(raw_call.get("cancellation", "cooperative")),
-            )
-            if effect_key_template is not None and raw_call.get("effectKey") is None:
-                planned_call = planned_call.with_effect_key_template(str(effect_key_template))
-            planned_calls.append(planned_call)
+            try:
+                draft = ToolCallDraft.proposed(
+                    response_id,
+                    str(raw_call.get("toolCallId", "")),
+                    str(raw_call.get("toolName", "tool.run")),
+                )
+                draft = draft.append_argument_fragment(json.dumps(raw_arguments, sort_keys=True))
+                call = draft.complete_arguments().into_tool_call(
+                    str(raw_call.get("resolvedToolId", "resolved-tool-1")),
+                    created_at=str(raw_call.get("createdAt", "2026-06-23T00:00:00Z")),
+                )
+                depends_on = raw_call.get("dependsOn", raw_call.get("depends_on", ()))
+                if isinstance(depends_on, str):
+                    depends_on = (depends_on,)
+                call = replace(
+                    call,
+                    depends_on=tuple(str(dependency) for dependency in depends_on or ()),
+                )
+                raw_effects = raw_call.get("effects", [])
+                if isinstance(raw_effects, str):
+                    raw_effects = [raw_effects]
+                planned_call = ToolPlanCall(
+                    call,
+                    effect_key=(
+                        str(raw_call["effectKey"])
+                        if raw_call.get("effectKey") is not None
+                        else None
+                    ),
+                    effects=frozenset(str(effect) for effect in raw_effects or ()),
+                    cancellation=str(raw_call.get("cancellation", "cooperative")),
+                )
+                if effect_key_template is not None and raw_call.get("effectKey") is None:
+                    planned_call = planned_call.with_effect_key_template(str(effect_key_template))
+                planned_calls.append(planned_call)
+            except ToolExecutionPlanError as error:
+                call_construction_error = error
+                break
+            except ValueError as error:
+                call_construction_error = ToolExecutionPlanError(str(error))
+                break
 
         observed: dict[str, object] = {"operations": []}
         expected_creation_error = fixture.get("expectedCreationError")
         try:
+            if call_construction_error is not None:
+                raise call_construction_error
             plan = ToolExecutionPlan(
                 plan_id=str(fixture.get("planId", "plan-1")),
                 response_id=response_id,

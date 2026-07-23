@@ -1540,7 +1540,7 @@ def test_testing_package_exhaustion_tck_rejects_boolean_continuation_permit_epoc
                 "preset": "checkpoint_and_pause",
                 "unit": "turn",
                 "continuation": {
-                    "allowedWork": ["resume"],
+                    "allowedWork": ["checkpoint"],
                     "maxAdditionalSteps": 1,
                     "deadline": "2026-06-22T01:00:00Z",
                 },
@@ -1605,6 +1605,7 @@ def test_testing_package_exhaustion_tck_rejects_boolean_admission_permit_epoch(m
                 },
             },
             "admissionEpoch": 7,
+            "validationTime": "2026-06-22T00:00:00Z",
             "admissions": [
                 {
                     "workKind": "checkpoint",
