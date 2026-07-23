@@ -414,8 +414,8 @@ class _FrozenEvidenceDict(dict[str, object]):
     def __copy__(self) -> _FrozenEvidenceDict:
         return self
 
-    def __deepcopy__(self, _memo: dict[int, object]) -> _FrozenEvidenceDict:
-        return self
+    def __deepcopy__(self, memo: dict[int, object]) -> dict[str, object]:
+        return deepcopy(dict(self), memo)
 
     def __reduce__(self) -> tuple[object, tuple[dict[str, object]]]:
         return (_FrozenEvidenceDict, (dict(self),))
@@ -505,6 +505,84 @@ def _materialize_tck_evidence(value: object, *, mutable: bool) -> object:
     return value
 
 
+class _FrozenCaseEvidenceList(list[object]):
+    def _immutable(self, *_args: object, **_kwargs: object) -> None:
+        raise TypeError("TCK case evidence is immutable")
+
+    __setitem__ = _immutable
+    __delitem__ = _immutable
+    __iadd__ = _immutable
+    __imul__ = _immutable
+    append = _immutable
+    clear = _immutable
+    extend = _immutable
+    insert = _immutable
+    pop = _immutable
+    remove = _immutable
+    reverse = _immutable
+    sort = _immutable
+
+    def __copy__(self) -> _FrozenCaseEvidenceList:
+        return self
+
+    def __deepcopy__(self, memo: dict[int, object]) -> list[object]:
+        return deepcopy(list(self), memo)
+
+    def __reduce__(self) -> tuple[object, tuple[list[object]]]:
+        return (_FrozenCaseEvidenceList, (list(self),))
+
+
+def _materialize_tck_case_evidence(value: object) -> object:
+    if isinstance(value, Mapping):
+        return _FrozenEvidenceDict(
+            {
+                key: _materialize_tck_case_evidence(item)
+                for key, item in value.items()
+            }
+        )
+    if isinstance(value, tuple):
+        return _FrozenCaseEvidenceList(
+            _materialize_tck_case_evidence(item) for item in value
+        )
+    return value
+
+
+_TCK_CASE_EVIDENCE_FIELDS = frozenset(
+    {
+        "graph",
+        "inputs",
+        "native_node_outputs",
+        "expected_outputs",
+        "block_catalog",
+        "schema_value",
+        "expected_canonical_value",
+        "expected_resource_errors",
+        "policy_delivery",
+        "policy_operations",
+        "expected_gate_state",
+        "application_event_operations",
+        "application_protocol_fixture",
+        "sequence_operations",
+        "exhaustion_fixture",
+        "budget_race_fixture",
+        "conversation_fixture",
+        "documents_fixture",
+        "deployment_fixture",
+        "durable_fixture",
+        "migration_fixture",
+        "orchestration_fixture",
+        "rag_fixture",
+        "retry_fixture",
+        "tool_lifecycle_fixture",
+        "tool_execution_fixture",
+        "tool_result_fixture",
+        "usage_fixture",
+        "voice_fixture",
+        "approval_review_fixture",
+    }
+)
+
+
 @dataclass(frozen=True, slots=True)
 class TckCase:
     case_id: str
@@ -559,6 +637,19 @@ class TckCase:
     usage_fixture: dict[str, object] = field(default_factory=dict)
     voice_fixture: dict[str, object] = field(default_factory=dict)
     approval_review_fixture: dict[str, object] = field(default_factory=dict)
+    _sealed: bool = field(default=False, init=False, repr=False, compare=False)
+
+    def __getattribute__(self, name: str) -> object:
+        value = object.__getattribute__(self, name)
+        if name in _TCK_CASE_EVIDENCE_FIELDS and object.__getattribute__(self, "_sealed"):
+            frozen = _freeze_tck_evidence(value)
+            if isinstance(value, tuple):
+                return tuple(
+                    _materialize_tck_case_evidence(item)
+                    for item in frozen
+                )
+            return _materialize_tck_case_evidence(frozen)
+        return value
 
     def __post_init__(self) -> None:
         if not self.case_id.strip():
@@ -744,6 +835,7 @@ class TckCase:
                     raise ValueError("typed value schema TCK case requires expected_canonical_json")
             if self.expected_major_version is not None and self.expected_major_version <= 0:
                 raise ValueError("schema TCK expected_major_version must be positive")
+        object.__setattr__(self, "_sealed", True)
 
     @classmethod
     def compiler(

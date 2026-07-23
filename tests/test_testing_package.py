@@ -152,6 +152,47 @@ def test_tck_case_detaches_nested_inputs_from_caller_mutation(monkeypatch) -> No
     assert schema_case.schema_value == {"nested": {"value": "original"}}
 
 
+def test_tck_case_public_views_cannot_mutate_execution_contract(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+    runtime_case = graphblocks_testing.TckCase.runtime(
+        case_id="runtime/immutable-contract",
+        graph={"spec": {"nodes": {}}},
+        inputs={"request": {"parts": [{"text": "original"}]}},
+        expected_outputs={"response": {"text": "original"}},
+    )
+    durable_case = graphblocks_testing.TckCase.durable(
+        case_id="durable/immutable-contract",
+        fixture={"expected": {"ok": True}},
+    )
+    schema_case = graphblocks_testing.TckCase.schema(
+        case_id="schema/immutable-contract",
+        schema_id=None,
+        schema_case_type="resource",
+        schema_value={"nested": {"value": "original"}},
+        expected_ok=True,
+    )
+
+    with pytest.raises(TypeError):
+        runtime_case.graph["spec"]["nodes"]["injected"] = {"block": "example.injected@1"}
+    with pytest.raises(TypeError):
+        runtime_case.inputs["request"]["parts"].append({"text": "mutated"})
+    with pytest.raises(TypeError):
+        runtime_case.expected_outputs["response"]["text"] = "mutated"
+    with pytest.raises(TypeError):
+        durable_case.durable_fixture["expected"]["ok"] = False
+    with pytest.raises(TypeError):
+        schema_case.schema_value["nested"]["value"] = "mutated"
+
+    dict.__setitem__(runtime_case.graph, "injected", True)
+    assert runtime_case.graph == {"spec": {"nodes": {}}}
+    assert isinstance(runtime_case.inputs["request"]["parts"], list)
+    assert runtime_case.inputs == {"request": {"parts": [{"text": "original"}]}}
+    assert runtime_case.expected_outputs == {"response": {"text": "original"}}
+    assert durable_case.durable_fixture == {"expected": {"ok": True}}
+    assert schema_case.schema_value == {"nested": {"value": "original"}}
+
+
 def test_tck_evidence_resists_base_dict_mutation_bypass(monkeypatch) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")
