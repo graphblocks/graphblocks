@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier, BrokenBarrierError
+
 import pytest
 
 from graphblocks.evaluation import ResourceSnapshotRef, ReviewRecord
@@ -209,6 +212,59 @@ def test_review_workflow_replaces_replayed_review_id() -> None:
     assert workflow.completed_scopes() == ("quality",)
 
 
+def test_review_workflow_serializes_concurrent_review_recording() -> None:
+    request = ReviewRequest(
+        request_id="request-1",
+        subject=ResourceSnapshotRef("candidate-1", "sha256:subject"),
+        requested_by=PrincipalRef("author-1"),
+        required_scopes=("quality", "safety"),
+        created_at="2026-06-24T00:00:00Z",
+    )
+    reviewer = PrincipalRef("reviewer-1")
+    workflow = ReviewWorkflow(
+        request=request,
+        credential_provider=InMemoryReviewerCredentialProvider(
+            [
+                ReviewerCredential(
+                    "cred-reviewer",
+                    reviewer,
+                    scopes=("quality", "safety"),
+                    issued_at="2026-06-24T00:00:00Z",
+                )
+            ]
+        ),
+    )
+    reads = Barrier(2)
+
+    class CoordinatedReviews(tuple[ReviewRecord, ...]):
+        def __iter__(self):
+            try:
+                reads.wait(timeout=0.2)
+            except BrokenBarrierError:
+                pass
+            return super().__iter__()
+
+    workflow.reviews = CoordinatedReviews()
+
+    def record(scope: str) -> None:
+        workflow.record_review(
+            review_id=f"review-{scope}",
+            reviewer=reviewer,
+            scope=scope,
+            decision="accept",
+            created_at="2026-06-24T00:05:00Z",
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        list(executor.map(record, ("quality", "safety")))
+
+    assert {review.review_id for review in workflow.reviews} == {
+        "review-quality",
+        "review-safety",
+    }
+    assert workflow.is_complete()
+
+
 def test_reviewer_credential_rejects_invalid_timestamps() -> None:
     reviewer = PrincipalRef("reviewer-1")
 
@@ -386,6 +442,34 @@ def test_review_workflow_rejects_invalid_review_created_at() -> None:
             decision="accept",
             created_at="later",
         )
+
+
+def test_review_workflow_rejects_review_before_request_creation() -> None:
+    request = ReviewRequest(
+        request_id="request-1",
+        subject=ResourceSnapshotRef("candidate-1", "sha256:subject"),
+        requested_by=PrincipalRef("author-1"),
+        required_scopes=("quality",),
+        created_at="2026-06-24T00:05:00Z",
+    )
+    reviewer = PrincipalRef("reviewer-1")
+    workflow = ReviewWorkflow(
+        request=request,
+        credential_provider=InMemoryReviewerCredentialProvider(
+            [ReviewerCredential("cred-quality", reviewer, scopes=("quality",), issued_at="2026-06-24T00:00:00Z")]
+        ),
+    )
+
+    with pytest.raises(ValueError, match="review created_at must not precede request created_at"):
+        workflow.record_review(
+            review_id="review-1",
+            reviewer=reviewer,
+            scope="quality",
+            decision="accept",
+            created_at="2026-06-24T00:04:59Z",
+        )
+
+    assert workflow.reviews == ()
 
 
 def test_review_workflow_rejects_missing_credential_for_scope() -> None:

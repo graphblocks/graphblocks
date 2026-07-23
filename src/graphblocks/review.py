@@ -1,14 +1,30 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
+from functools import wraps
+from threading import RLock
 from types import MappingProxyType
-from typing import Protocol
+from typing import ParamSpec, Protocol, TypeVar, cast
 
 from .canonical import canonical_hash
 from .evaluation import ResourceSnapshotRef, ReviewDecision, ReviewRecord
 from .policy import PrincipalRef
+
+
+_P = ParamSpec("_P")
+_R = TypeVar("_R")
+
+
+def _with_review_workflow_lock(method: Callable[_P, _R]) -> Callable[_P, _R]:
+    @wraps(method)
+    def locked(*args: _P.args, **kwargs: _P.kwargs) -> _R:
+        workflow = cast("ReviewWorkflow", args[0])
+        with workflow._lock:
+            return method(*args, **kwargs)
+
+    return locked
 
 
 def _validate_non_empty_string(owner: str, field_name: str, value: object) -> str:
@@ -256,14 +272,17 @@ class ReviewWorkflow:
     request: ReviewRequest
     credential_provider: ReviewerCredentialProvider
     reviews: tuple[ReviewRecord, ...] = field(default_factory=tuple)
+    _lock: RLock = field(default_factory=RLock, init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         self.reviews = tuple(self.reviews)
 
+    @_with_review_workflow_lock
     def with_review(self, review: ReviewRecord) -> ReviewWorkflow:
         reviews = tuple(existing for existing in self.reviews if existing.review_id != review.review_id)
         return replace(self, reviews=(*reviews, review))
 
+    @_with_review_workflow_lock
     def record_review(
         self,
         *,
@@ -275,7 +294,14 @@ class ReviewWorkflow:
         subject: ResourceSnapshotRef | None = None,
         comments: list[str] | None = None,
     ) -> ReviewRecord:
-        _parse_review_datetime(created_at, owner="review", field_name="created_at")
+        review_created_at = _parse_review_datetime(created_at, owner="review", field_name="created_at")
+        request_created_at = _parse_review_datetime(
+            self.request.created_at,
+            owner="review request",
+            field_name="created_at",
+        )
+        if review_created_at < request_created_at:
+            raise ValueError("review created_at must not precede request created_at")
         subject = self.request.subject if subject is None else subject
         if subject.resource_id != self.request.subject.resource_id or subject.digest != self.request.subject.digest:
             raise ReviewSubjectChangedError(self.request.subject.digest, subject.digest)
@@ -305,6 +331,7 @@ class ReviewWorkflow:
         )
         return review
 
+    @_with_review_workflow_lock
     def completed_scopes(self) -> tuple[str, ...]:
         completed = {
             review.scope
@@ -313,6 +340,7 @@ class ReviewWorkflow:
         }
         return tuple(sorted(scope for scope in self.request.required_scopes if scope in completed))
 
+    @_with_review_workflow_lock
     def is_complete(self) -> bool:
         return self.completed_scopes() == self.request.required_scopes
 
