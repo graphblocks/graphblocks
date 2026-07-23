@@ -3,6 +3,8 @@ from __future__ import annotations
 import importlib
 from pathlib import Path
 
+import pytest
+
 
 ROOT = Path(__file__).parents[1]
 
@@ -118,3 +120,90 @@ def test_dashboards_template_digest_is_stable_across_metadata_order(monkeypatch)
     )
 
     assert left.content_digest() == right.content_digest()
+
+
+def test_dashboard_records_reject_coercion_and_ambiguous_variables(monkeypatch) -> None:
+    graphblocks_dashboards = _import_dashboards(monkeypatch)
+    panel = graphblocks_dashboards.DashboardPanel("Token Usage", "sum(tokens)")
+    variable = graphblocks_dashboards.DashboardVariable("release_id", "label_values(release_id)")
+
+    with pytest.raises(
+        graphblocks_dashboards.DashboardAssetError,
+        match="variable name must be a string",
+    ):
+        graphblocks_dashboards.DashboardVariable(1, "query")  # type: ignore[arg-type]
+    with pytest.raises(
+        graphblocks_dashboards.DashboardAssetError,
+        match="panels must contain DashboardPanel",
+    ):
+        graphblocks_dashboards.DashboardTemplate(
+            "tokens",
+            "Tokens",
+            panels=(object(),),
+        )
+    with pytest.raises(
+        graphblocks_dashboards.DashboardAssetError,
+        match="variable names must be unique",
+    ):
+        graphblocks_dashboards.DashboardTemplate(
+            "tokens",
+            "Tokens",
+            panels=(panel,),
+            variables=(variable, variable),
+        )
+    with pytest.raises(
+        graphblocks_dashboards.DashboardAssetError,
+        match="metadata key must be a string",
+    ):
+        graphblocks_dashboards.DashboardTemplate(
+            "tokens",
+            "Tokens",
+            panels=(panel,),
+            metadata={1: "coerced"},  # type: ignore[dict-item]
+        )
+
+
+def test_dashboard_metadata_is_immutable_and_slo_numbers_are_strict(monkeypatch) -> None:
+    graphblocks_dashboards = _import_dashboards(monkeypatch)
+    metadata = {"team": "runtime"}
+    template = graphblocks_dashboards.DashboardTemplate(
+        "tokens",
+        "Tokens",
+        panels=(graphblocks_dashboards.DashboardPanel("Token Usage", "sum(tokens)"),),
+        metadata=metadata,
+    )
+    digest = template.content_digest()
+    metadata["team"] = "mutated"
+
+    assert template.metadata == {"team": "runtime"}
+    assert template.content_digest() == digest
+    with pytest.raises(TypeError):
+        template.metadata["team"] = "mutated"
+    for objective, message in (
+        (True, "must be numeric"),
+        ("0.99", "must be numeric"),
+        (float("nan"), "must be finite"),
+    ):
+        with pytest.raises(graphblocks_dashboards.DashboardAssetError, match=message):
+            graphblocks_dashboards.SloRule(
+                "availability",
+                objective,  # type: ignore[arg-type]
+                "sum(up)",
+                "30d",
+            )
+
+
+def test_runbook_rejects_scalar_empty_and_coerced_steps(monkeypatch) -> None:
+    graphblocks_dashboards = _import_dashboards(monkeypatch)
+
+    for steps, message in (
+        ("restart", "steps must be a collection"),
+        ((), "requires at least one step"),
+        ((1,), "step must be a string"),
+    ):
+        with pytest.raises(graphblocks_dashboards.DashboardAssetError, match=message):
+            graphblocks_dashboards.RunbookTemplate(
+                "restart",
+                "Restart service",
+                steps,  # type: ignore[arg-type]
+            )

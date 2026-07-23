@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
+from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from decimal import Decimal
 from enum import Enum
@@ -59,6 +60,18 @@ class GraphReleaseGraph:
     graph_hash: str
     normalized_plan_hash: str
 
+    def __post_init__(self) -> None:
+        _require_stable_deployment_string(
+            self.graph_hash,
+            "release graph graph_hash",
+            GraphReleaseError,
+        )
+        _require_stable_deployment_string(
+            self.normalized_plan_hash,
+            "release graph normalized_plan_hash",
+            GraphReleaseError,
+        )
+
     def canonical_value(self) -> dict[str, str]:
         return {
             "graph_hash": self.graph_hash,
@@ -70,6 +83,13 @@ class GraphReleaseGraph:
 class ImageRef:
     image: str
 
+    def __post_init__(self) -> None:
+        _require_stable_deployment_string(
+            self.image,
+            "release image",
+            GraphReleaseError,
+        )
+
     def canonical_value(self) -> dict[str, str]:
         return {"image": self.image}
 
@@ -80,6 +100,36 @@ class PromptLock:
     name: str
     version: str | None = None
     lock_label: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.kind not in {"versioned", "label"}:
+            raise GraphReleaseError(f"invalid prompt lock kind {self.kind!r}")
+        _require_stable_deployment_string(
+            self.name,
+            "prompt lock name",
+            GraphReleaseError,
+        )
+        if self.version is not None:
+            _require_stable_deployment_string(
+                self.version,
+                "prompt lock version",
+                GraphReleaseError,
+            )
+        if self.lock_label is not None:
+            _require_stable_deployment_string(
+                self.lock_label,
+                "prompt lock label",
+                GraphReleaseError,
+            )
+        if self.kind == "versioned":
+            if self.version is None or self.lock_label is not None:
+                raise GraphReleaseError(
+                    "versioned prompt lock requires version and forbids label"
+                )
+        elif self.lock_label is None or self.version is not None:
+            raise GraphReleaseError(
+                "label prompt lock requires label and forbids version"
+            )
 
     @classmethod
     def versioned(cls, name: str, version: str) -> PromptLock:
@@ -100,6 +150,18 @@ class KnowledgeBinding:
     index_id: str
     index_revision: str
 
+    def __post_init__(self) -> None:
+        _require_stable_deployment_string(
+            self.index_id,
+            "knowledge binding index_id",
+            GraphReleaseError,
+        )
+        _require_stable_deployment_string(
+            self.index_revision,
+            "knowledge binding index_revision",
+            GraphReleaseError,
+        )
+
     def canonical_value(self) -> dict[str, str]:
         return {
             "index_id": self.index_id,
@@ -112,6 +174,21 @@ class ReleaseLockRef:
     ref: str
     digest: str | None = None
     lock_type: str | None = None
+
+    def __post_init__(self) -> None:
+        _require_stable_deployment_string(
+            self.ref,
+            "release lock ref",
+            GraphReleaseError,
+        )
+        for field_name in ("digest", "lock_type"):
+            value = getattr(self, field_name)
+            if value is not None:
+                _require_stable_deployment_string(
+                    value,
+                    f"release lock {field_name}",
+                    GraphReleaseError,
+                )
 
     def canonical_value(self) -> dict[str, str | None]:
         return {
@@ -126,6 +203,16 @@ class SupplyChainLock:
     sbom_ref: str | None = None
     provenance_ref: str | None = None
     signature_policy: str | None = None
+
+    def __post_init__(self) -> None:
+        for field_name in ("sbom_ref", "provenance_ref", "signature_policy"):
+            value = getattr(self, field_name)
+            if value is not None:
+                _require_stable_deployment_string(
+                    value,
+                    f"supply chain {field_name}",
+                    GraphReleaseError,
+                )
 
     def canonical_value(self) -> dict[str, str | None]:
         return {
@@ -202,6 +289,28 @@ def _deployment_string_collection(
     return tuple(sorted(normalized))
 
 
+def _release_record_mapping(
+    field_name: str,
+    values: object,
+    record_type: type,
+) -> MappingProxyType[str, object]:
+    if not isinstance(values, Mapping):
+        raise GraphReleaseError(f"graph release {field_name} must be a mapping")
+    normalized: dict[str, object] = {}
+    for key, value in values.items():
+        normalized_key = _require_stable_deployment_string(
+            key,
+            f"graph release {field_name} key",
+            GraphReleaseError,
+        )
+        if not isinstance(value, record_type):
+            raise GraphReleaseError(
+                f"graph release {field_name} values must be {record_type.__name__}"
+            )
+        normalized[normalized_key] = value
+    return MappingProxyType(dict(sorted(normalized.items())))
+
+
 @dataclass(frozen=True, slots=True)
 class GraphRelease:
     name: str
@@ -217,13 +326,65 @@ class GraphRelease:
     supply_chain: SupplyChainLock | None = None
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "graphs", MappingProxyType(dict(self.graphs)))
-        object.__setattr__(self, "images", MappingProxyType(dict(self.images)))
-        object.__setattr__(self, "locks", MappingProxyType(dict(self.locks)))
-        object.__setattr__(self, "prompt_locks", MappingProxyType(dict(self.prompt_locks)))
-        object.__setattr__(self, "knowledge", MappingProxyType(dict(self.knowledge)))
+        _require_stable_deployment_string(
+            self.name,
+            "graph release name",
+            GraphReleaseError,
+        )
+        _require_stable_deployment_string(
+            self.version,
+            "graph release version",
+            GraphReleaseError,
+        )
+        for field_name in (
+            "bundle_digest",
+            "bundle_media_type",
+            "application_hash",
+        ):
+            value = getattr(self, field_name)
+            if value is not None:
+                _require_stable_deployment_string(
+                    value,
+                    f"graph release {field_name}",
+                    GraphReleaseError,
+                )
+        graphs = _release_record_mapping("graphs", self.graphs, GraphReleaseGraph)
+        images = _release_record_mapping("images", self.images, ImageRef)
+        locks = _release_record_mapping("locks", self.locks, ReleaseLockRef)
+        prompt_locks = _release_record_mapping(
+            "prompt_locks",
+            self.prompt_locks,
+            PromptLock,
+        )
+        knowledge = _release_record_mapping(
+            "knowledge",
+            self.knowledge,
+            KnowledgeBinding,
+        )
+        for key, binding in knowledge.items():
+            assert isinstance(binding, KnowledgeBinding)
+            if key != binding.index_id:
+                raise GraphReleaseError(
+                    "graph release knowledge key must match binding index_id"
+                )
+        if self.supply_chain is not None and not isinstance(
+            self.supply_chain,
+            SupplyChainLock,
+        ):
+            raise GraphReleaseError(
+                "graph release supply_chain must be a SupplyChainLock"
+            )
+        object.__setattr__(self, "graphs", graphs)
+        object.__setattr__(self, "images", images)
+        object.__setattr__(self, "locks", locks)
+        object.__setattr__(self, "prompt_locks", prompt_locks)
+        object.__setattr__(self, "knowledge", knowledge)
 
-    def with_bundle(self, digest: str, media_type: str) -> GraphRelease:
+    def with_bundle(
+        self,
+        digest: str | None,
+        media_type: str | None,
+    ) -> GraphRelease:
         return replace(self, bundle_digest=digest, bundle_media_type=media_type)
 
     def with_application_hash(self, application_hash: str) -> GraphRelease:
@@ -831,14 +992,22 @@ class RolloutStep:
         )
         if self.kind not in {"validate", "shadow", "canary", "blue_green", "promote"}:
             raise RolloutError(f"invalid rollout step kind {self.kind!r}")
-        if isinstance(self.traffic_percent, bool) or not 0 <= self.traffic_percent <= 100:
+        if (
+            not isinstance(self.traffic_percent, int)
+            or isinstance(self.traffic_percent, bool)
+            or not 0 <= self.traffic_percent <= 100
+        ):
             raise RolloutError("rollout traffic_percent must be between 0 and 100")
         if self.minimum_samples is not None and (
-            isinstance(self.minimum_samples, bool) or self.minimum_samples < 1
+            not isinstance(self.minimum_samples, int)
+            or isinstance(self.minimum_samples, bool)
+            or self.minimum_samples < 1
         ):
             raise RolloutError("rollout minimum_samples must be positive")
         if self.minimum_duration_seconds is not None and (
-            isinstance(self.minimum_duration_seconds, bool) or self.minimum_duration_seconds < 1
+            not isinstance(self.minimum_duration_seconds, int)
+            or isinstance(self.minimum_duration_seconds, bool)
+            or self.minimum_duration_seconds < 1
         ):
             raise RolloutError("rollout minimum_duration_seconds must be positive")
         if self.effects not in {"normal", "suppress", "sandbox"}:
@@ -893,11 +1062,73 @@ class RolloutAnalysisResult:
             "rollout analysis step_id must not be empty",
             RolloutError,
         )
-        if isinstance(self.sample_count, bool) or self.sample_count < 0:
+        if not isinstance(self.passed, bool):
+            raise RolloutError("rollout analysis passed must be a boolean")
+        if (
+            not isinstance(self.sample_count, int)
+            or isinstance(self.sample_count, bool)
+            or self.sample_count < 0
+        ):
             raise RolloutError("rollout analysis sample_count must be non-negative")
-        if isinstance(self.duration_seconds, bool) or self.duration_seconds < 0:
+        if (
+            not isinstance(self.duration_seconds, int)
+            or isinstance(self.duration_seconds, bool)
+            or self.duration_seconds < 0
+        ):
             raise RolloutError("rollout analysis duration_seconds must be non-negative")
-        object.__setattr__(self, "metrics", dict(self.metrics))
+        if not isinstance(self.non_reversible_effect_observed, bool):
+            raise RolloutError(
+                "rollout analysis non_reversible_effect_observed must be a boolean"
+            )
+        if self.reason is not None:
+            _require_stable_deployment_string(
+                self.reason,
+                "rollout analysis reason",
+                RolloutError,
+            )
+        if not isinstance(self.metrics, Mapping):
+            raise RolloutError("rollout analysis metrics must be a mapping")
+        metrics = deepcopy(dict(self.metrics))
+        try:
+            canonical_dumps(metrics)
+        except (TypeError, ValueError) as error:
+            raise RolloutError(
+                "rollout analysis metrics must be canonical JSON"
+            ) from error
+        frozen_containers: dict[int, object] = {}
+        pending: list[tuple[object, bool]] = [(metrics, False)]
+        while pending:
+            value, visited = pending.pop()
+            if not isinstance(value, (Mapping, list, tuple)):
+                continue
+            if not visited:
+                pending.append((value, True))
+                if isinstance(value, Mapping):
+                    pending.extend((item, False) for item in value.values())
+                else:
+                    pending.extend((item, False) for item in value)
+                continue
+            if isinstance(value, Mapping):
+                frozen_containers[id(value)] = MappingProxyType(
+                    {
+                        key: (
+                            frozen_containers[id(item)]
+                            if isinstance(item, (Mapping, list, tuple))
+                            else item
+                        )
+                        for key, item in value.items()
+                    }
+                )
+            else:
+                frozen_containers[id(value)] = tuple(
+                    (
+                        frozen_containers[id(item)]
+                        if isinstance(item, (Mapping, list, tuple))
+                        else item
+                    )
+                    for item in value
+                )
+        object.__setattr__(self, "metrics", frozen_containers[id(metrics)])
 
 
 def _finite_canary_metric(value: object, field_name: str) -> float:
@@ -1066,9 +1297,29 @@ class RolloutPlan:
         )
         if self.strategy not in {"canary", "blue_green"}:
             raise RolloutError(f"invalid rollout strategy {self.strategy!r}")
-        steps = tuple(self.steps)
+        if self.stable_revision_id == self.candidate_revision_id:
+            raise RolloutError(
+                "rollout stable and candidate revisions must be distinct"
+            )
+        for field_name in ("affinity", "analysis_profile_ref"):
+            value = getattr(self, field_name)
+            if value is not None:
+                _require_stable_deployment_string(
+                    value,
+                    f"rollout {field_name}",
+                    RolloutError,
+                )
+        try:
+            steps = tuple(self.steps)
+        except TypeError as error:
+            raise RolloutError("rollout steps must be a collection") from error
         if not steps:
             raise RolloutError("rollout plan requires at least one step")
+        if any(not isinstance(step, RolloutStep) for step in steps):
+            raise RolloutError("rollout steps must contain RolloutStep records")
+        step_ids = [step.step_id for step in steps]
+        if len(set(step_ids)) != len(step_ids):
+            raise RolloutError("rollout step_id values must be unique")
         if steps[0].kind != "validate":
             raise RolloutError("rollout plan must start with validate")
         if steps[-1].kind != "promote":

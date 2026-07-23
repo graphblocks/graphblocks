@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 import hashlib
 import json
+from pathlib import PurePosixPath
+from types import MappingProxyType
 from typing import Iterable
 
 from graphblocks.diagnostics import Diagnostic, DiagnosticSet, Severity
@@ -10,6 +13,32 @@ from graphblocks.diagnostics import Diagnostic, DiagnosticSet, Severity
 
 class DevtoolsContractError(ValueError):
     """Raised when a developer tooling contract is invalid."""
+
+
+def _stable_string(
+    owner: str,
+    field_name: str,
+    value: object,
+    *,
+    optional: bool = False,
+) -> str | None:
+    if value is None and optional:
+        return None
+    if not isinstance(value, str):
+        raise DevtoolsContractError(f"{owner} {field_name} must be a string")
+    if not value.strip():
+        raise DevtoolsContractError(f"{owner} {field_name} must not be empty")
+    if value != value.strip():
+        raise DevtoolsContractError(
+            f"{owner} {field_name} must not contain surrounding whitespace"
+        )
+    try:
+        value.encode("utf-8")
+    except UnicodeEncodeError as error:
+        raise DevtoolsContractError(
+            f"{owner} {field_name} must contain valid Unicode scalar values"
+        ) from error
+    return value
 
 
 def _content_digest(content: str) -> str:
@@ -37,8 +66,8 @@ class DevGraphNode:
     label: str | None = None
 
     def __post_init__(self) -> None:
-        if not self.node_id.strip():
-            raise DevtoolsContractError("node_id must not be empty")
+        _stable_string("graph node", "node_id", self.node_id)
+        _stable_string("graph node", "label", self.label, optional=True)
 
     def dot_line(self) -> str:
         label = self.label or self.node_id
@@ -52,10 +81,9 @@ class DevGraphEdge:
     label: str | None = None
 
     def __post_init__(self) -> None:
-        if not self.source.strip():
-            raise DevtoolsContractError("edge source must not be empty")
-        if not self.target.strip():
-            raise DevtoolsContractError("edge target must not be empty")
+        _stable_string("graph edge", "source", self.source)
+        _stable_string("graph edge", "target", self.target)
+        _stable_string("graph edge", "label", self.label, optional=True)
 
     def dot_line(self) -> str:
         line = f"  {_dot_quote(self.source)} -> {_dot_quote(self.target)}"
@@ -71,10 +99,35 @@ class DevGraph:
     edges: tuple[DevGraphEdge, ...] = field(default_factory=tuple)
 
     def __post_init__(self) -> None:
-        if not self.graph_id.strip():
-            raise DevtoolsContractError("graph_id must not be empty")
-        object.__setattr__(self, "nodes", tuple(self.nodes))
-        object.__setattr__(self, "edges", tuple(self.edges))
+        _stable_string("developer graph", "graph_id", self.graph_id)
+        try:
+            nodes = tuple(self.nodes)
+            edges = tuple(self.edges)
+        except TypeError as error:
+            raise DevtoolsContractError(
+                "developer graph nodes and edges must be collections"
+            ) from error
+        if any(not isinstance(node, DevGraphNode) for node in nodes):
+            raise DevtoolsContractError(
+                "developer graph nodes must contain DevGraphNode records"
+            )
+        if any(not isinstance(edge, DevGraphEdge) for edge in edges):
+            raise DevtoolsContractError(
+                "developer graph edges must contain DevGraphEdge records"
+            )
+        node_ids = [node.node_id for node in nodes]
+        if len(set(node_ids)) != len(node_ids):
+            raise DevtoolsContractError("developer graph node_id values must be unique")
+        known_node_ids = set(node_ids)
+        if any(
+            edge.source not in known_node_ids or edge.target not in known_node_ids
+            for edge in edges
+        ):
+            raise DevtoolsContractError(
+                "developer graph edges must reference declared nodes"
+            )
+        object.__setattr__(self, "nodes", nodes)
+        object.__setattr__(self, "edges", edges)
 
     def to_dot(self) -> str:
         lines = [f"digraph {_dot_quote(self.graph_id)} {{"]
@@ -90,10 +143,8 @@ class MigrationStep:
     description: str
 
     def __post_init__(self) -> None:
-        if not self.kind.strip():
-            raise DevtoolsContractError("migration step kind must not be empty")
-        if not self.description.strip():
-            raise DevtoolsContractError("migration step description must not be empty")
+        _stable_string("migration step", "kind", self.kind)
+        _stable_string("migration step", "description", self.description)
 
     def step_contract(self) -> dict[str, str]:
         return {"kind": self.kind, "description": self.description}
@@ -105,9 +156,16 @@ class MigrationPlan:
     steps: tuple[MigrationStep, ...]
 
     def __post_init__(self) -> None:
-        if not self.plan_id.strip():
-            raise DevtoolsContractError("migration plan_id must not be empty")
-        object.__setattr__(self, "steps", tuple(self.steps))
+        _stable_string("migration plan", "plan_id", self.plan_id)
+        try:
+            steps = tuple(self.steps)
+        except TypeError as error:
+            raise DevtoolsContractError("migration plan steps must be a collection") from error
+        if any(not isinstance(step, MigrationStep) for step in steps):
+            raise DevtoolsContractError(
+                "migration plan steps must contain MigrationStep records"
+            )
+        object.__setattr__(self, "steps", steps)
 
     def plan_contract(self) -> dict[str, object]:
         return {
@@ -122,8 +180,9 @@ class ProfileSample:
     elapsed_ms: int
 
     def __post_init__(self) -> None:
-        if not self.node_id.strip():
-            raise DevtoolsContractError("profile sample node_id must not be empty")
+        _stable_string("profile sample", "node_id", self.node_id)
+        if not isinstance(self.elapsed_ms, int) or isinstance(self.elapsed_ms, bool):
+            raise DevtoolsContractError("profile sample elapsed_ms must be an integer")
         if self.elapsed_ms < 0:
             raise DevtoolsContractError("profile sample elapsed_ms must not be negative")
 
@@ -131,17 +190,49 @@ class ProfileSample:
 @dataclass(frozen=True, slots=True)
 class ProfilingSummary:
     profile_id: str
-    node_totals_ms: dict[str, int]
+    node_totals_ms: Mapping[str, int]
 
     def __post_init__(self) -> None:
-        if not self.profile_id.strip():
-            raise DevtoolsContractError("profile_id must not be empty")
-        object.__setattr__(self, "node_totals_ms", dict(sorted(self.node_totals_ms.items())))
+        _stable_string("profiling summary", "profile_id", self.profile_id)
+        if not isinstance(self.node_totals_ms, Mapping):
+            raise DevtoolsContractError(
+                "profiling summary node_totals_ms must be a mapping"
+            )
+        normalized: dict[str, int] = {}
+        for node_id, elapsed_ms in self.node_totals_ms.items():
+            normalized_node_id = _stable_string(
+                "profiling summary",
+                "node_totals_ms key",
+                node_id,
+            )
+            assert normalized_node_id is not None
+            if not isinstance(elapsed_ms, int) or isinstance(elapsed_ms, bool):
+                raise DevtoolsContractError(
+                    "profiling summary node totals must be integers"
+                )
+            if elapsed_ms < 0:
+                raise DevtoolsContractError(
+                    "profiling summary node totals must not be negative"
+                )
+            normalized[normalized_node_id] = elapsed_ms
+        object.__setattr__(
+            self,
+            "node_totals_ms",
+            MappingProxyType(dict(sorted(normalized.items()))),
+        )
 
     @classmethod
     def from_samples(cls, *, profile_id: str, samples: tuple[ProfileSample, ...]) -> ProfilingSummary:
+        try:
+            normalized_samples = tuple(samples)
+        except TypeError as error:
+            raise DevtoolsContractError("profile samples must be a collection") from error
+        if any(not isinstance(sample, ProfileSample) for sample in normalized_samples):
+            raise DevtoolsContractError(
+                "profile samples must contain ProfileSample records"
+            )
         totals: dict[str, int] = {}
-        for sample in samples:
+        for sample in normalized_samples:
             totals[sample.node_id] = totals.get(sample.node_id, 0) + sample.elapsed_ms
         return cls(profile_id=profile_id, node_totals_ms=totals)
 
@@ -160,10 +251,30 @@ class CodegenArtifact:
     content: str
 
     def __post_init__(self) -> None:
-        if not self.language.strip():
-            raise DevtoolsContractError("codegen language must not be empty")
-        if not self.path.strip():
-            raise DevtoolsContractError("codegen path must not be empty")
+        _stable_string("codegen artifact", "language", self.language)
+        path = _stable_string("codegen artifact", "path", self.path)
+        assert path is not None
+        if "\\" in path:
+            raise DevtoolsContractError(
+                "codegen artifact path must be a relative POSIX path"
+            )
+        parsed_path = PurePosixPath(path)
+        if (
+            parsed_path.is_absolute()
+            or any(part in {".", ".."} for part in parsed_path.parts)
+            or parsed_path.as_posix() != path
+        ):
+            raise DevtoolsContractError(
+                "codegen artifact path must be a relative normalized path"
+            )
+        if not isinstance(self.content, str):
+            raise DevtoolsContractError("codegen artifact content must be a string")
+        try:
+            self.content.encode("utf-8")
+        except UnicodeEncodeError as error:
+            raise DevtoolsContractError(
+                "codegen artifact content must contain valid Unicode scalar values"
+            ) from error
 
     def content_digest(self) -> str:
         return _content_digest(self.content)
@@ -182,9 +293,22 @@ class DiagnosticBundleSection:
     diagnostics: DiagnosticSet | tuple[Diagnostic, ...] = field(default_factory=tuple)
 
     def __post_init__(self) -> None:
-        if not self.name.strip():
-            raise DevtoolsContractError("diagnostic bundle section name must not be empty")
-        diagnostics = self.diagnostics.diagnostics if isinstance(self.diagnostics, DiagnosticSet) else self.diagnostics
+        _stable_string("diagnostic bundle section", "name", self.name)
+        raw_diagnostics = (
+            self.diagnostics.diagnostics
+            if isinstance(self.diagnostics, DiagnosticSet)
+            else self.diagnostics
+        )
+        try:
+            diagnostics = tuple(raw_diagnostics)
+        except TypeError as error:
+            raise DevtoolsContractError(
+                "diagnostic bundle section diagnostics must be a collection"
+            ) from error
+        if any(not isinstance(diagnostic, Diagnostic) for diagnostic in diagnostics):
+            raise DevtoolsContractError(
+                "diagnostic bundle section diagnostics must contain Diagnostic records"
+            )
         object.__setattr__(
             self,
             "diagnostics",
@@ -218,9 +342,27 @@ class DiagnosticBundle:
     sections: tuple[DiagnosticBundleSection, ...] = field(default_factory=tuple)
 
     def __post_init__(self) -> None:
-        if not self.bundle_id.strip():
-            raise DevtoolsContractError("diagnostic bundle_id must not be empty")
-        object.__setattr__(self, "sections", tuple(sorted(self.sections, key=lambda item: item.name)))
+        _stable_string("diagnostic bundle", "bundle_id", self.bundle_id)
+        try:
+            sections = tuple(self.sections)
+        except TypeError as error:
+            raise DevtoolsContractError(
+                "diagnostic bundle sections must be a collection"
+            ) from error
+        if any(not isinstance(section, DiagnosticBundleSection) for section in sections):
+            raise DevtoolsContractError(
+                "diagnostic bundle sections must contain DiagnosticBundleSection records"
+            )
+        section_names = [section.name for section in sections]
+        if len(set(section_names)) != len(section_names):
+            raise DevtoolsContractError(
+                "diagnostic bundle section names must be unique"
+            )
+        object.__setattr__(
+            self,
+            "sections",
+            tuple(sorted(sections, key=lambda item: item.name)),
+        )
 
     @property
     def ok(self) -> bool:

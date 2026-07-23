@@ -119,6 +119,61 @@ def test_evaluate_gate_rejects_duplicate_check_and_metric_identities() -> None:
             subject,
             metrics=[duplicate_metric, duplicate_metric],
         )
+    with pytest.raises(ValueError, match="required_check_ids must not contain duplicates"):
+        evaluate_gate(
+            "duplicate-required",
+            subject,
+            checks=[duplicate_check],
+            required_check_ids=["duplicate", "duplicate"],
+        )
+
+
+def test_evaluate_gate_rejects_evidence_for_another_subject() -> None:
+    subject = ResourceSnapshotRef("candidate-1", "sha256:candidate")
+    stale_subject = ResourceSnapshotRef("candidate-1", "sha256:stale")
+    stale_check = CheckResult("lint", stale_subject, "passed")
+    stale_metric = MetricObservation(
+        "accuracy",
+        Decimal("1"),
+        subject=stale_subject,
+    )
+
+    with pytest.raises(ValueError, match="checks must target the gate subject"):
+        evaluate_gate("quality", subject, checks=[stale_check])
+    with pytest.raises(ValueError, match="metrics must target the gate subject"):
+        evaluate_gate("quality", subject, metrics=[stale_metric])
+
+
+def test_evaluate_gate_binds_evidence_by_stable_snapshot_identity() -> None:
+    subject = ResourceSnapshotRef(
+        "candidate-1",
+        "sha256:candidate",
+        resource_kind="workspace",
+        metadata={"source": "gate"},
+    )
+    equivalent_subject = ResourceSnapshotRef(
+        "candidate-1",
+        "sha256:candidate",
+        uri="file:///tmp/candidate",
+        metadata={"source": "check"},
+    )
+    check = CheckResult("lint", equivalent_subject, "passed")
+    metric = MetricObservation(
+        "accuracy",
+        Decimal("1"),
+        subject=equivalent_subject,
+    )
+
+    gate = evaluate_gate(
+        "quality",
+        subject,
+        checks=[check],
+        metrics=[metric],
+        required_check_ids=["lint"],
+    )
+
+    assert gate.decision == "pass"
+    assert gate.subject == subject
 
 
 def test_diagnostic_rejects_unknown_severity() -> None:
@@ -165,6 +220,17 @@ def test_metric_baseline_and_gate_threshold_reject_non_finite_values() -> None:
         MetricObservation("latency", Decimal("1"), baseline_value=Decimal("NaN"))
     with pytest.raises(ValueError, match="gate constraint threshold must be finite"):
         GateConstraint("latency", "at_most", Decimal("Infinity"))
+    for baseline in (True, "1", object()):
+        with pytest.raises(ValueError, match="baseline_value must be numeric"):
+            MetricObservation(
+                "latency",
+                Decimal("1"),
+                baseline_value=baseline,  # type: ignore[arg-type]
+            )
+    with pytest.raises(ValueError, match="metric observation value must be a decimal"):
+        MetricObservation("latency", object())  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="gate constraint threshold must be a decimal"):
+        GateConstraint("latency", "equals", object())  # type: ignore[arg-type]
 
 
 def test_ordered_gate_constraint_treats_non_numeric_string_as_violation() -> None:
@@ -180,6 +246,72 @@ def test_ordered_gate_constraint_treats_non_numeric_string_as_violation() -> Non
     assert gate.violated_constraints == ["metric:latency"]
 
 
+@pytest.mark.parametrize(
+    ("value", "operator", "threshold"),
+    (
+        (True, "equals", Decimal("1")),
+        (Decimal("1"), "equals", True),
+        ("10", "equals", Decimal("10")),
+        ("10", "at_most", Decimal("10")),
+        (Decimal("10"), "at_most", "10"),
+    ),
+)
+def test_gate_constraints_do_not_coerce_incompatible_operand_types(
+    value: Decimal | bool | str,
+    operator: str,
+    threshold: Decimal | bool | str,
+) -> None:
+    subject = ResourceSnapshotRef("candidate-1", "sha256:candidate")
+
+    gate = evaluate_gate(
+        "quality",
+        subject,
+        metrics=[MetricObservation("metric", value)],
+        constraints=[
+            GateConstraint(
+                "metric",
+                operator,  # type: ignore[arg-type]
+                threshold,
+            )
+        ],
+    )
+
+    assert gate.decision == "fail"
+    assert gate.violated_constraints == ["metric:metric"]
+
+
+@pytest.mark.parametrize(
+    ("value", "operator", "threshold"),
+    (
+        (True, "equals", True),
+        ("ready", "equals", "ready"),
+        (Decimal("10"), "at_least", Decimal("9")),
+        (Decimal("10"), "at_most", Decimal("11")),
+    ),
+)
+def test_gate_constraints_accept_compatible_operand_types(
+    value: Decimal | bool | str,
+    operator: str,
+    threshold: Decimal | bool | str,
+) -> None:
+    subject = ResourceSnapshotRef("candidate-1", "sha256:candidate")
+
+    gate = evaluate_gate(
+        "quality",
+        subject,
+        metrics=[MetricObservation("metric", value)],
+        constraints=[
+            GateConstraint(
+                "metric",
+                operator,  # type: ignore[arg-type]
+                threshold,
+            )
+        ],
+    )
+
+    assert gate.decision == "pass"
+
+
 def test_evaluation_metadata_is_deep_copied_from_callers() -> None:
     metadata = {"labels": {"groups": ["trusted"]}}
     snapshot = ResourceSnapshotRef(
@@ -190,6 +322,23 @@ def test_evaluation_metadata_is_deep_copied_from_callers() -> None:
     metadata["labels"]["groups"].append("mutated")
 
     assert snapshot.metadata == {"labels": {"groups": ["trusted"]}}
+
+
+def test_evaluation_metadata_rejects_recursive_and_non_json_values() -> None:
+    recursive: dict[str, object] = {}
+    recursive["self"] = recursive
+    with pytest.raises(ValueError, match="must contain canonical JSON values"):
+        ResourceSnapshotRef(
+            "candidate-1",
+            "sha256:candidate",
+            metadata=recursive,
+        )
+    with pytest.raises(ValueError, match="must contain canonical JSON values"):
+        ResourceSnapshotRef(
+            "candidate-1",
+            "sha256:candidate",
+            metadata={"unsupported": object()},
+        )
 
 
 def test_check_result_validates_status_subject_and_copies_collections() -> None:
@@ -381,6 +530,20 @@ def test_gate_constraint_and_result_validate_literals_and_copy_lists() -> None:
         GateResult("quality", subject, "fail", violated_constraints=[" "])
     with pytest.raises(ValueError, match="gate result metrics items must be MetricObservation"):
         GateResult("quality", subject, "pass", metrics=[object()])  # type: ignore[list-item]
+    with pytest.raises(ValueError, match="non-failing gate result must not contain"):
+        GateResult(
+            "quality",
+            subject,
+            "pass",
+            violated_constraints=["metric:latency"],
+        )
+    with pytest.raises(ValueError, match="metrics must have unique names"):
+        GateResult(
+            "quality",
+            subject,
+            "pass",
+            metrics=[metric, metric],
+        )
 
 
 @pytest.mark.parametrize(
@@ -1169,6 +1332,20 @@ def test_run_provenance_validates_model_visible_tools_and_copies_metadata() -> N
             "2026-06-22T00:00:00Z",
             metadata={object(): "trace"},
         )  # type: ignore[dict-item]
+    duplicate_name = ModelVisibleToolRef(
+        "knowledge.search",
+        "resolved-other",
+        "sha256:def-other",
+        "sha256:binding-other",
+        "policy-snapshot-1",
+        True,
+    )
+    with pytest.raises(ValueError, match="unique tool_name"):
+        RunProvenance(
+            "sha256:graph",
+            "2026-06-22T00:00:00Z",
+            model_visible_tools=(tool_ref, duplicate_name),
+        )
 
 
 @pytest.mark.parametrize(

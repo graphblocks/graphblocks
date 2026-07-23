@@ -98,6 +98,25 @@ def test_outcome_records_validate_identity_status_and_metadata() -> None:
         Outcome("failed", code="provider.timeout", retryable="yes")  # type: ignore[arg-type]
     with pytest.raises(ValueError, match="outcome metadata key must not be empty"):
         Outcome("value", metadata={" ": "bad"})
+    with pytest.raises(ValueError, match="metadata key must not contain surrounding whitespace"):
+        Outcome("value", metadata={" unstable ": "bad"})
+    with pytest.raises(ValueError, match="metadata numbers must be finite"):
+        Outcome("value", metadata={"score": float("nan")})
+    with pytest.raises(ValueError, match="metadata values must be JSON-compatible"):
+        Outcome("value", metadata={"unsupported": object()})
+
+
+def test_outcome_metadata_rejects_cycles_and_excessive_depth() -> None:
+    recursive: dict[str, object] = {}
+    recursive["self"] = recursive
+    with pytest.raises(ValueError, match="outcome metadata must not be recursive"):
+        Outcome("value", metadata=recursive)
+
+    overdeep: object = "leaf"
+    for _ in range(65):
+        overdeep = {"nested": overdeep}
+    with pytest.raises(ValueError, match="outcome metadata exceeds maximum depth 64"):
+        Outcome("value", metadata=overdeep)  # type: ignore[arg-type]
 
 
 def test_readiness_records_validate_shapes_and_copy_inputs() -> None:
@@ -127,6 +146,8 @@ def test_readiness_records_validate_shapes_and_copy_inputs() -> None:
         Readiness.blocked("value", source, Outcome.value("payload"))
     with pytest.raises(ValueError, match="ready readiness must not carry missing or blocked fields"):
         Readiness(kind="ready", inputs={"value": resolved}, missing=(source,))
+    with pytest.raises(ValueError, match="duplicate normalized keys"):
+        Readiness(kind="ready", inputs={"value": resolved, " value ": resolved})
 
 
 def test_readiness_tracker_rejects_invalid_publish_and_dependency_records() -> None:
@@ -141,3 +162,12 @@ def test_readiness_tracker_rejects_invalid_publish_and_dependency_records() -> N
         tracker.signal(object())  # type: ignore[arg-type]
     with pytest.raises(ValueError, match="readiness dependencies must be InputDependency"):
         tracker.readiness([object()])  # type: ignore[list-item]
+    with pytest.raises(ValueError, match="readiness dependencies must not contain duplicate inputs"):
+        tracker.readiness(
+            [
+                InputDependency.value("value", source),
+                InputDependency.outcome("value", PortRef("other", "value")),
+            ]
+        )
+    with pytest.raises(ValueError, match="readiness dependencies must be a collection"):
+        tracker.readiness(None)  # type: ignore[arg-type]

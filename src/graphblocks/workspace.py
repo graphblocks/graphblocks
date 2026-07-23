@@ -7,7 +7,7 @@ from functools import wraps
 from threading import RLock
 from typing import ParamSpec, TypeVar, cast
 
-from .canonical import canonical_hash
+from .canonical import canonical_dumps, canonical_hash
 from .evaluation import ChangeSet, CheckResult, GateResult, ResourceSnapshotRef, ReviewRecord
 from .orchestration import LeaseGrant
 from .policy import PrincipalRef
@@ -44,7 +44,7 @@ def _validate_optional_non_empty_string(owner: str, field_name: str, value: obje
 
 
 def _validate_string_tuple(owner: str, field_name: str, value: object) -> tuple[str, ...]:
-    if isinstance(value, str):
+    if isinstance(value, (str, bytes, bytearray, Mapping)):
         raise ValueError(f"{owner} {field_name} must be a collection of strings")
     try:
         items = tuple(value)  # type: ignore[arg-type]
@@ -65,6 +65,13 @@ def _copy_resource_snapshot_ref(resource: ResourceSnapshotRef) -> ResourceSnapsh
         uri=resource.uri,
         metadata=deepcopy(resource.metadata),
     )
+
+
+def _same_resource_snapshot_identity(
+    left: ResourceSnapshotRef,
+    right: ResourceSnapshotRef,
+) -> bool:
+    return left.resource_id == right.resource_id and left.digest == right.digest
 
 
 @dataclass(frozen=True, slots=True)
@@ -99,6 +106,12 @@ class WorkspaceSnapshot:
                 raise ValueError("workspace snapshot metadata key must not be empty")
             if key != key.strip():
                 raise ValueError("workspace snapshot metadata key must not contain surrounding whitespace")
+        try:
+            canonical_dumps(metadata)
+        except (TypeError, ValueError) as error:
+            raise ValueError(
+                "workspace snapshot metadata must contain canonical JSON values"
+            ) from error
         resources = tuple(
             sorted(
                 (_copy_resource_snapshot_ref(resource) for resource in self.resources),
@@ -222,7 +235,43 @@ class WorkspaceMutationPolicy:
         base_resources: tuple[ResourceSnapshotRef, ...] = (),
         candidate_resources: tuple[ResourceSnapshotRef, ...] = (),
     ) -> WorkspaceMutationDecision:
-        del principal
+        if not isinstance(change_set, ChangeSet):
+            raise ValueError(
+                "workspace mutation policy change_set must be a ChangeSet"
+            )
+        if not isinstance(principal, PrincipalRef):
+            raise ValueError(
+                "workspace mutation policy principal must be a PrincipalRef"
+            )
+        review_scopes = _validate_string_tuple(
+            "workspace mutation policy",
+            "review_scopes",
+            review_scopes,
+        )
+        try:
+            normalized_base_resources = tuple(base_resources)
+            normalized_candidate_resources = tuple(candidate_resources)
+        except TypeError as error:
+            raise ValueError(
+                "workspace mutation policy resources must be collections"
+            ) from error
+        for resources in (
+            normalized_base_resources,
+            normalized_candidate_resources,
+        ):
+            if any(
+                not isinstance(resource, ResourceSnapshotRef)
+                for resource in resources
+            ):
+                raise ValueError(
+                    "workspace mutation policy resources must contain "
+                    "ResourceSnapshotRef records"
+                )
+            resource_ids = [resource.resource_id for resource in resources]
+            if len(set(resource_ids)) != len(resource_ids):
+                raise ValueError(
+                    "workspace mutation policy resources must have unique resource_id values"
+                )
         reasons: list[str] = []
         review_scope_set = set(review_scopes)
         read_only_resource_ids = set(self.read_only_resource_ids)
@@ -256,9 +305,12 @@ class WorkspaceMutationPolicy:
                     reasons.append("workspace.read_only_resource_changed")
                 if isinstance(resource_kind, str) and resource_kind in read_only_resource_kinds:
                     reasons.append("workspace.read_only_resource_kind_changed")
-        if base_resources or candidate_resources:
-            candidate_by_resource_id = {resource.resource_id: resource for resource in candidate_resources}
-            for resource in base_resources:
+        if normalized_base_resources or normalized_candidate_resources:
+            candidate_by_resource_id = {
+                resource.resource_id: resource
+                for resource in normalized_candidate_resources
+            }
+            for resource in normalized_base_resources:
                 is_read_only_resource = resource.resource_id in read_only_resource_ids or (
                     resource.resource_kind is not None and resource.resource_kind in read_only_resource_kinds
                 )
@@ -368,13 +420,26 @@ class WorkspaceCommitRequest:
             raise ValueError("workspace commit request trial_id is required for lease validation")
         if not isinstance(self.metadata, Mapping):
             raise ValueError("workspace commit request metadata must be a mapping")
+        metadata = deepcopy(dict(self.metadata))
+        for key in metadata:
+            _validate_non_empty_string(
+                "workspace commit request",
+                "metadata key",
+                key,
+            )
+        try:
+            canonical_dumps(metadata)
+        except (TypeError, ValueError) as error:
+            raise ValueError(
+                "workspace commit request metadata must contain canonical JSON values"
+            ) from error
         object.__setattr__(self, "reviews", reviews)
         object.__setattr__(self, "trial_id", trial_id)
         object.__setattr__(self, "required_check_ids", required_check_ids)
         object.__setattr__(self, "required_lease_kinds", required_lease_kinds)
         object.__setattr__(self, "required_review_scopes", required_review_scopes)
         object.__setattr__(self, "leases", leases)
-        object.__setattr__(self, "metadata", dict(self.metadata))
+        object.__setattr__(self, "metadata", metadata)
 
 
 @dataclass(frozen=True, slots=True)
@@ -444,13 +509,19 @@ class WorkspaceTrialPlan:
             check = checks_by_id.get(check_id)
             if check is None:
                 raise WorkspaceTrialError(f"workspace trial is missing required check {check_id!r}")
-            if check.subject != self.change_set.candidate:
+            if not _same_resource_snapshot_identity(
+                check.subject,
+                self.change_set.candidate,
+            ):
                 raise WorkspaceTrialError(f"workspace trial check {check_id!r} has a stale subject")
             if check.status != "passed":
                 raise WorkspaceTrialError(f"workspace trial check {check_id!r} did not pass")
         if self.gate is None:
             raise WorkspaceTrialError("workspace trial is missing a required gate")
-        if self.gate.subject != self.change_set.candidate:
+        if not _same_resource_snapshot_identity(
+            self.gate.subject,
+            self.change_set.candidate,
+        ):
             raise WorkspaceTrialError("workspace trial gate has a stale subject")
         if self.gate.decision != "pass":
             raise WorkspaceTrialError("workspace trial gate did not pass")
@@ -562,8 +633,98 @@ class InMemoryWorkspaceStore:
     _commits: list[WorkspaceCommit] = field(default_factory=list)
     _lock: RLock = field(default_factory=RLock, init=False, repr=False, compare=False)
 
+    def __post_init__(self) -> None:
+        if not isinstance(self._snapshots, Mapping):
+            raise ValueError("workspace store snapshots must be a mapping")
+        snapshots: dict[str, WorkspaceSnapshot] = {}
+        for workspace_id, snapshot in self._snapshots.items():
+            _validate_non_empty_string(
+                "workspace store",
+                "snapshot key",
+                workspace_id,
+            )
+            if not isinstance(snapshot, WorkspaceSnapshot):
+                raise ValueError(
+                    "workspace store snapshots must contain WorkspaceSnapshot values"
+                )
+            if snapshot.workspace_id != workspace_id:
+                raise ValueError(
+                    "workspace store snapshot key must match snapshot workspace_id"
+                )
+            snapshots[workspace_id] = _copy_workspace_snapshot(snapshot)
+
+        if isinstance(self._commits, (str, bytes, bytearray, Mapping)):
+            raise ValueError("workspace store commits must be a collection")
+        try:
+            raw_commits = tuple(self._commits)
+        except TypeError as error:
+            raise ValueError("workspace store commits must be a collection") from error
+        if any(not isinstance(commit, WorkspaceCommit) for commit in raw_commits):
+            raise ValueError(
+                "workspace store commits must contain WorkspaceCommit values"
+            )
+        commits = tuple(_copy_workspace_commit(commit) for commit in raw_commits)
+        commit_ids = [commit.commit_id for commit in commits]
+        if len(set(commit_ids)) != len(commit_ids):
+            raise ValueError("workspace store commit_id values must be unique")
+
+        commits_by_workspace: dict[str, list[WorkspaceCommit]] = {}
+        snapshot_ids_by_workspace: dict[str, set[str]] = {}
+        for commit in commits:
+            if commit.workspace_id not in snapshots:
+                raise ValueError(
+                    "workspace store commit must reference a restored workspace"
+                )
+            if commit.snapshot.base_snapshot_id != commit.previous_snapshot_id:
+                raise ValueError(
+                    "workspace store commit snapshot must reference previous_snapshot_id"
+                )
+            workspace_commits = commits_by_workspace.setdefault(
+                commit.workspace_id,
+                [],
+            )
+            used_snapshot_ids = snapshot_ids_by_workspace.setdefault(
+                commit.workspace_id,
+                {commit.previous_snapshot_id},
+            )
+            if commit.snapshot.snapshot_id in used_snapshot_ids:
+                raise ValueError(
+                    "workspace store commit chain snapshot identities must be unique"
+                )
+            used_snapshot_ids.add(commit.snapshot.snapshot_id)
+            if workspace_commits:
+                previous = workspace_commits[-1]
+                if commit.previous_snapshot_id != previous.snapshot.snapshot_id:
+                    raise ValueError(
+                        "workspace store commit chain snapshot identities must be linked"
+                    )
+                if commit.snapshot.revision != previous.snapshot.revision + 1:
+                    raise ValueError(
+                        "workspace store commit chain revisions must be consecutive"
+                    )
+                if (
+                    commit.snapshot.base_snapshot_digest
+                    != previous.snapshot.content_digest()
+                ):
+                    raise ValueError(
+                        "workspace store commit chain base digest must match "
+                        "the previous snapshot"
+                    )
+            workspace_commits.append(commit)
+
+        for workspace_id, workspace_commits in commits_by_workspace.items():
+            if snapshots[workspace_id] != workspace_commits[-1].snapshot:
+                raise ValueError(
+                    "workspace store restored head must match the latest commit snapshot"
+                )
+
+        self._snapshots = snapshots
+        self._commits = list(commits)
+
     @_with_workspace_lock
     def put_snapshot(self, snapshot: WorkspaceSnapshot) -> InMemoryWorkspaceStore:
+        if not isinstance(snapshot, WorkspaceSnapshot):
+            raise ValueError("workspace store snapshot must be a WorkspaceSnapshot")
         stored = _copy_workspace_snapshot(snapshot)
         existing = self._snapshots.get(stored.workspace_id)
         if existing is not None:
@@ -577,6 +738,7 @@ class InMemoryWorkspaceStore:
 
     @_with_workspace_lock
     def current(self, workspace_id: str) -> WorkspaceSnapshot:
+        _validate_non_empty_string("workspace store", "workspace_id", workspace_id)
         snapshot = self._snapshots.get(workspace_id)
         if snapshot is None:
             raise WorkspaceNotFoundError(workspace_id)
@@ -598,6 +760,10 @@ class InMemoryWorkspaceStore:
         operations: list[dict[str, object]] | None = None,
         commit_id: str | None = None,
     ) -> WorkspaceCommit:
+        if policy is not None and not isinstance(policy, WorkspaceMutationPolicy):
+            raise ValueError(
+                "workspace commit policy must be a WorkspaceMutationPolicy"
+            )
         current = self.current(workspace_id)
         if current.snapshot_id != expected_snapshot_id:
             raise WorkspaceSnapshotConflictError(expected_snapshot_id, current.snapshot_id)
@@ -688,7 +854,10 @@ class InMemoryWorkspaceStore:
             raise WorkspaceCommitAuthorizationError("workspace commit candidate targets another workspace")
         if not request.mutation_decision.allowed:
             raise WorkspaceCommitAuthorizationError("workspace commit mutation decision is denied")
-        if request.gate.decision != "pass" or request.gate.subject != request.change_set.candidate:
+        if request.gate.decision != "pass" or not _same_resource_snapshot_identity(
+            request.gate.subject,
+            request.change_set.candidate,
+        ):
             raise WorkspaceCommitAuthorizationError("workspace commit gate is not valid for the candidate")
         for check_id in request.required_check_ids:
             if check_id not in request.gate.check_ids:

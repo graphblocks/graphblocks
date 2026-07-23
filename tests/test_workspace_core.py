@@ -82,6 +82,15 @@ def test_workspace_snapshot_validates_identity_revision_resources_and_metadata()
         WorkspaceSnapshot("workspace-1", "snapshot-1", 1, metadata=object())  # type: ignore[arg-type]
     with pytest.raises(ValueError, match="workspace snapshot metadata keys must be strings"):
         WorkspaceSnapshot("workspace-1", "snapshot-1", 1, metadata={object(): "value"})  # type: ignore[dict-item]
+    recursive: dict[str, object] = {}
+    recursive["self"] = recursive
+    with pytest.raises(ValueError, match="metadata must contain canonical JSON values"):
+        WorkspaceSnapshot(
+            "workspace-1",
+            "snapshot-1",
+            1,
+            metadata=recursive,
+        )
 
 
 @pytest.mark.parametrize(
@@ -314,6 +323,34 @@ def test_workspace_mutation_policy_requires_allowed_kind_and_reviewer() -> None:
     )
 
     assert allowed.allowed
+
+
+def test_workspace_mutation_policy_rejects_malformed_evaluation_context() -> None:
+    policy = WorkspaceMutationPolicy("policy-1", ("file",))
+    subject = ResourceSnapshotRef("workspace", "sha256:base", resource_kind="workspace")
+    change_set = ChangeSet("change-1", subject, subject)
+
+    with pytest.raises(ValueError, match="change_set must be a ChangeSet"):
+        policy.evaluate(object(), PrincipalRef("author-1"))  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="principal must be a PrincipalRef"):
+        policy.evaluate(change_set, object())  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="review_scopes must be a collection"):
+        policy.evaluate(
+            change_set,
+            PrincipalRef("author-1"),
+            review_scopes="quality",  # type: ignore[arg-type]
+        )
+    duplicate_resource = ResourceSnapshotRef(
+        "file.txt",
+        "sha256:file",
+        resource_kind="file",
+    )
+    with pytest.raises(ValueError, match="unique resource_id"):
+        policy.evaluate(
+            change_set,
+            PrincipalRef("author-1"),
+            base_resources=(duplicate_resource, duplicate_resource),
+        )
 
 
 @pytest.mark.parametrize(
@@ -668,6 +705,101 @@ def test_workspace_store_deep_copies_nested_metadata_at_boundaries() -> None:
     }
 
 
+def test_workspace_store_validates_and_detaches_restored_state() -> None:
+    source = InMemoryWorkspaceStore().put_snapshot(
+        WorkspaceSnapshot(
+            "workspace-1",
+            "snapshot-1",
+            1,
+            metadata={"labels": {"groups": ["trusted"]}},
+        )
+    )
+    source.compare_and_swap_commit(
+        workspace_id="workspace-1",
+        expected_snapshot_id="snapshot-1",
+        new_snapshot_id="snapshot-2",
+        resources=(),
+        committed_by=PrincipalRef("author-1"),
+        committed_at="2026-06-24T00:05:00Z",
+        change_set_id="change-1",
+    )
+    restored_snapshots = {"workspace-1": source.current("workspace-1")}
+    restored_commits = list(source._commits)
+
+    restored = InMemoryWorkspaceStore(
+        _snapshots=restored_snapshots,
+        _commits=restored_commits,
+    )
+    restored_snapshots["workspace-1"].metadata["labels"]["groups"].append(
+        "snapshot-caller"
+    )
+    restored_commits[0].snapshot.metadata["labels"]["groups"].append(
+        "commit-caller"
+    )
+
+    assert restored.current("workspace-1").metadata == {
+        "labels": {"groups": ["trusted"]}
+    }
+    assert restored._commits[0].snapshot.metadata == {
+        "labels": {"groups": ["trusted"]}
+    }
+
+
+def test_workspace_store_rejects_invalid_restored_state_identities() -> None:
+    source = InMemoryWorkspaceStore().put_snapshot(
+        WorkspaceSnapshot("workspace-1", "snapshot-1", 1)
+    )
+    source.compare_and_swap_commit(
+        workspace_id="workspace-1",
+        expected_snapshot_id="snapshot-1",
+        new_snapshot_id="snapshot-2",
+        resources=(),
+        committed_by=PrincipalRef("author-1"),
+        committed_at="2026-06-24T00:05:00Z",
+        change_set_id="change-1",
+        commit_id="commit-1",
+    )
+    source.compare_and_swap_commit(
+        workspace_id="workspace-1",
+        expected_snapshot_id="snapshot-2",
+        new_snapshot_id="snapshot-3",
+        resources=(),
+        committed_by=PrincipalRef("author-1"),
+        committed_at="2026-06-24T00:06:00Z",
+        change_set_id="change-2",
+        commit_id="commit-2",
+    )
+    head = source.current("workspace-1")
+    commits = tuple(source._commits)
+
+    with pytest.raises(ValueError, match="key must match snapshot workspace_id"):
+        InMemoryWorkspaceStore(_snapshots={"wrong-workspace": head})
+    with pytest.raises(ValueError, match="commit_id values must be unique"):
+        InMemoryWorkspaceStore(
+            _snapshots={"workspace-1": head},
+            _commits=(commits[0], replace(commits[1], commit_id="commit-1")),
+        )
+    broken_snapshot = replace(
+        commits[1].snapshot,
+        base_snapshot_id="snapshot-unrelated",
+    )
+    broken_commit = replace(
+        commits[1],
+        previous_snapshot_id="snapshot-unrelated",
+        snapshot=broken_snapshot,
+    )
+    with pytest.raises(ValueError, match="chain snapshot identities must be linked"):
+        InMemoryWorkspaceStore(
+            _snapshots={"workspace-1": broken_snapshot},
+            _commits=(commits[0], broken_commit),
+        )
+    with pytest.raises(ValueError, match="restored head must match"):
+        InMemoryWorkspaceStore(
+            _snapshots={"workspace-1": commits[0].snapshot},
+            _commits=commits,
+        )
+
+
 def test_workspace_store_rejects_policy_denied_commit() -> None:
     base = WorkspaceSnapshot(
         workspace_id="workspace-1",
@@ -847,6 +979,79 @@ def test_workspace_trial_plan_materializes_and_enforces_verified_commit_request(
             committed_by=PrincipalRef("optimizer-1"),
             committed_at="2026-07-02T00:30:00Z",
         )
+
+
+def test_workspace_trial_and_commit_bind_evidence_by_snapshot_identity() -> None:
+    base = WorkspaceSnapshot(
+        "workspace-1",
+        "snapshot-1",
+        1,
+        created_at="2026-07-02T00:00:00Z",
+    )
+    candidate = WorkspaceSnapshot(
+        "workspace-1",
+        "snapshot-2",
+        2,
+        created_at="2026-07-02T00:05:00Z",
+        base_snapshot_id=base.snapshot_id,
+        base_snapshot_digest=base.content_digest(),
+    )
+    canonical_candidate = ResourceSnapshotRef(
+        "workspace-1",
+        candidate.content_digest(),
+        resource_kind="workspace",
+        metadata={"source": "change-set"},
+    )
+    evidence_subject = ResourceSnapshotRef(
+        "workspace-1",
+        candidate.content_digest(),
+        uri="file:///tmp/workspace-1",
+        metadata={"source": "check"},
+    )
+    gate_subject = ResourceSnapshotRef(
+        "workspace-1",
+        candidate.content_digest(),
+        metadata={"source": "gate"},
+    )
+    change_set = ChangeSet(
+        "change-1",
+        ResourceSnapshotRef("workspace-1", base.content_digest()),
+        canonical_candidate,
+    )
+    check = CheckResult("lint", evidence_subject, "passed")
+    gate = evaluate_gate(
+        "quality",
+        gate_subject,
+        checks=[check],
+        required_check_ids=["lint"],
+    )
+    request = WorkspaceTrialPlan(
+        "trial-1",
+        change_set,
+        1,
+        required_check_ids=("lint",),
+        checks=(check,),
+        gate=gate,
+        mutation_decision=WorkspaceMutationDecision(True),
+    ).to_commit_request(
+        "commit-1",
+        now="2026-07-02T00:04:00Z",
+    )
+
+    committed = (
+        InMemoryWorkspaceStore()
+        .put_snapshot(base)
+        .compare_and_swap_commit_request(
+            workspace_id="workspace-1",
+            request=request,
+            new_snapshot_id="snapshot-2",
+            resources=(),
+            committed_by=PrincipalRef("author-1"),
+            committed_at="2026-07-02T00:05:00Z",
+        )
+    )
+
+    assert committed.snapshot.content_digest() == canonical_candidate.digest
 
 
 def test_workspace_trial_plan_fails_closed_when_governance_evidence_is_missing_or_stale() -> None:

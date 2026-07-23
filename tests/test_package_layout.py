@@ -982,6 +982,68 @@ def test_package_lock_records_validate_component_artifact_and_uniqueness() -> No
         )
 
 
+def test_package_lock_records_are_deterministic_and_reject_unstable_collections() -> None:
+    first = PackageLockEntry(
+        "component-b",
+        "graphblocks",
+        None,
+        None,
+        False,
+        None,
+        None,
+        None,
+        dependencies=("dependency-b", "dependency-a", "dependency-a"),
+    )
+    second = PackageLockEntry(
+        "component-a",
+        "graphblocks",
+        None,
+        None,
+        False,
+        None,
+        None,
+        None,
+    )
+    lock = PackageLock(
+        1,
+        "1.0",
+        requested=("component-b", "component-a", "component-b"),
+        entries=(first, second),
+        excluded_categories=("cloud_sdk", "cloud_sdk"),
+    )
+
+    assert first.dependencies == ("dependency-a", "dependency-b")
+    assert lock.requested == ("component-a", "component-b")
+    assert [entry.component for entry in lock.entries] == [
+        "component-b",
+        "component-a",
+    ]
+    assert lock.excluded_categories == ("cloud_sdk",)
+    with pytest.raises(ValueError, match="must not contain surrounding whitespace"):
+        PackageLockEntry(
+            " component",
+            "graphblocks",
+            None,
+            None,
+            False,
+            None,
+            None,
+            None,
+        )
+    with pytest.raises(ValueError, match="dependencies must be a collection"):
+        PackageLockEntry(
+            "component",
+            "graphblocks",
+            None,
+            None,
+            False,
+            None,
+            None,
+            None,
+            dependencies={"dependency": True},  # type: ignore[arg-type]
+        )
+
+
 @pytest.mark.parametrize("alias", ("graphblocks_core", "graphblocks.core", "graphblocks---core"))
 def test_package_lock_preserves_exact_component_identity(alias: str) -> None:
     entry = PackageLockEntry(
@@ -1638,6 +1700,24 @@ def test_wheel_matrix_records_validate_identity_and_collection_types() -> None:
             "src/graphblocks",
             (" ",),
         )
+    ordered_versions = WheelBuildTarget(
+        "graphblocks",
+        "pyproject.toml",
+        "hatchling.build",
+        "pure_python",
+        "src/graphblocks",
+        ("3.9", "3.10", "3.9"),
+    )
+    assert ordered_versions.python_versions == ("3.9", "3.10")
+    with pytest.raises(ValueError, match="python_versions items must be valid versions"):
+        WheelBuildTarget(
+            "graphblocks",
+            "pyproject.toml",
+            "hatchling.build",
+            "pure_python",
+            "src/graphblocks",
+            ("not-a-version",),
+        )
 
     matrix = WheelMatrix(targets=[target])  # type: ignore[arg-type]
 
@@ -1648,6 +1728,27 @@ def test_wheel_matrix_records_validate_identity_and_collection_types() -> None:
         WheelMatrix(
             targets=(target,),
             diagnostics=(object(),),  # type: ignore[arg-type]
+        )
+
+
+@pytest.mark.parametrize(
+    "manifest",
+    (
+        "/tmp/pyproject.toml",
+        "../pyproject.toml",
+        "packages/../pyproject.toml",
+        r"packages\pyproject.toml",
+    ),
+)
+def test_wheel_build_target_rejects_unsafe_manifest_paths(manifest: str) -> None:
+    with pytest.raises(ValueError, match="manifest must be a"):
+        WheelBuildTarget(
+            distribution="graphblocks",
+            manifest=manifest,
+            backend="hatchling.build",
+            kind="pure_python",
+            source_layout="src/graphblocks",
+            python_versions=("3.11",),
         )
 
 

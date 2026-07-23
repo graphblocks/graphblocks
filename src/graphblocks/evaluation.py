@@ -8,7 +8,7 @@ from decimal import Decimal
 import math
 from typing import Literal
 
-from .canonical import canonical_hash
+from .canonical import canonical_dumps, canonical_hash
 from .diagnostics import Diagnostic
 from .documents import ArtifactRef
 from .policy import PrincipalRef
@@ -131,19 +131,29 @@ def _copy_mapping(owner: str, field_name: str, value: object) -> dict[str, objec
             raise ValueError(f"{owner} {field_name} key must not be empty")
         if key != key.strip():
             raise ValueError(f"{owner} {field_name} key must not contain surrounding whitespace")
+    try:
+        canonical_dumps(mapping)
+    except (TypeError, ValueError) as error:
+        raise ValueError(
+            f"{owner} {field_name} must contain canonical JSON values"
+        ) from error
     return mapping
 
 
 def _finite_float(owner: str, field_name: str, value: object) -> float:
-    if isinstance(value, bool):
+    if isinstance(value, bool) or not isinstance(value, (int, float, Decimal)):
         raise ValueError(f"{owner} {field_name} must be numeric")
-    try:
-        numeric = float(value)  # type: ignore[arg-type]
-    except (TypeError, ValueError) as error:
-        raise ValueError(f"{owner} {field_name} must be numeric") from error
+    numeric = float(value)
     if not math.isfinite(numeric):
         raise ValueError(f"{owner} {field_name} must be finite")
     return numeric
+
+
+def _same_resource_snapshot_identity(
+    left: ResourceSnapshotRef,
+    right: ResourceSnapshotRef,
+) -> bool:
+    return left.resource_id == right.resource_id and left.digest == right.digest
 
 
 @dataclass(frozen=True, slots=True)
@@ -266,6 +276,16 @@ class RunProvenance:
             raise ValueError("run provenance model_visible_tools must be a collection") from error
         if any(not isinstance(tool, ModelVisibleToolRef) for tool in model_visible_tools):
             raise ValueError("run provenance model_visible_tools items must be ModelVisibleToolRef")
+        tool_names = [tool.tool_name for tool in model_visible_tools]
+        resolved_tool_ids = [tool.resolved_tool_id for tool in model_visible_tools]
+        if len(set(tool_names)) != len(tool_names):
+            raise ValueError(
+                "run provenance model_visible_tools must have unique tool_name values"
+            )
+        if len(set(resolved_tool_ids)) != len(resolved_tool_ids):
+            raise ValueError(
+                "run provenance model_visible_tools must have unique resolved_tool_id values"
+            )
         object.__setattr__(self, "model_visible_tools", tuple(sorted(model_visible_tools)))
         object.__setattr__(self, "runner", _copy_mapping("run provenance", "runner", self.runner))
         object.__setattr__(self, "metadata", _copy_mapping("run provenance", "metadata", self.metadata))
@@ -389,10 +409,22 @@ class MetricObservation:
             _validate_exact_non_empty_string("metric observation", "unit", self.unit)
         if self.direction not in VALID_METRIC_DIRECTIONS:
             raise ValueError(f"invalid metric direction {self.direction}")
-        if isinstance(self.value, float):
+        if isinstance(self.value, (int, float)) and not isinstance(self.value, bool):
             object.__setattr__(self, "value", Decimal(str(self.value)))
+        elif self.value is not None and not isinstance(
+            self.value,
+            (Decimal, bool, str),
+        ):
+            raise ValueError(
+                "metric observation value must be a decimal, boolean, string, or null"
+            )
         if isinstance(self.value, Decimal) and not self.value.is_finite():
             raise ValueError("metric observation value must be finite")
+        if self.baseline_value is not None and (
+            isinstance(self.baseline_value, bool)
+            or not isinstance(self.baseline_value, (int, float, Decimal))
+        ):
+            raise ValueError("metric observation baseline_value must be numeric")
         if self.baseline_value is not None and not isinstance(self.baseline_value, Decimal):
             object.__setattr__(self, "baseline_value", Decimal(str(self.baseline_value)))
         if self.baseline_value is not None and not self.baseline_value.is_finite():
@@ -413,6 +445,10 @@ class GateConstraint:
         _validate_exact_non_empty_string("gate constraint", "metric_name", self.metric_name)
         if self.operator not in VALID_CONSTRAINT_OPERATORS:
             raise ValueError(f"invalid gate constraint operator {self.operator}")
+        if not isinstance(self.threshold, (int, float, Decimal, bool, str)):
+            raise ValueError(
+                "gate constraint threshold must be a decimal, boolean, or string"
+            )
         if isinstance(self.threshold, (int, float)) and not isinstance(self.threshold, bool):
             object.__setattr__(self, "threshold", Decimal(str(self.threshold)))
         if isinstance(self.threshold, Decimal) and not self.threshold.is_finite():
@@ -439,16 +475,41 @@ class GateResult:
             "check_ids",
             _validate_exact_string_list("gate result", "check_ids", self.check_ids),
         )
+        if len(set(self.check_ids)) != len(self.check_ids):
+            raise ValueError("gate result check_ids must not contain duplicates")
         object.__setattr__(
             self,
             "violated_constraints",
             _validate_exact_string_list("gate result", "violated_constraints", self.violated_constraints),
         )
+        if len(set(self.violated_constraints)) != len(self.violated_constraints):
+            raise ValueError(
+                "gate result violated_constraints must not contain duplicates"
+            )
         object.__setattr__(
             self,
             "metrics",
             _validate_record_list("gate result", "metrics", self.metrics, MetricObservation),
         )
+        metric_names = [metric.name for metric in self.metrics]
+        if len(set(metric_names)) != len(metric_names):
+            raise ValueError("gate result metrics must have unique names")
+        if any(
+            metric.subject is not None
+            and not _same_resource_snapshot_identity(metric.subject, self.subject)
+            for metric in self.metrics
+        ):
+            raise ValueError("gate result metrics must target the gate subject")
+        if self.policy_ref is not None:
+            _validate_exact_non_empty_string(
+                "gate result",
+                "policy_ref",
+                self.policy_ref,
+            )
+        if self.decision != "fail" and self.violated_constraints:
+            raise ValueError(
+                "non-failing gate result must not contain violated constraints"
+            )
     policy_ref: str | None = None
 
 
@@ -790,16 +851,50 @@ def evaluate_gate(
 ) -> GateResult:
     check_list = list(checks or [])
     metric_list = list(metrics or [])
-    required = list(
-        required_check_ids
-        if required_check_ids is not None
-        else [check.check_id for check in check_list]
-    )
-    violated: list[str] = []
-
+    if not isinstance(subject, ResourceSnapshotRef):
+        raise ValueError("gate subject must be a ResourceSnapshotRef")
+    if any(not isinstance(check, CheckResult) for check in check_list):
+        raise ValueError("gate checks must contain CheckResult records")
+    if any(
+        not _same_resource_snapshot_identity(check.subject, subject)
+        for check in check_list
+    ):
+        raise ValueError("gate checks must target the gate subject")
+    if any(not isinstance(metric, MetricObservation) for metric in metric_list):
+        raise ValueError("gate metrics must contain MetricObservation records")
+    if any(
+        metric.subject is not None
+        and not _same_resource_snapshot_identity(metric.subject, subject)
+        for metric in metric_list
+    ):
+        raise ValueError("gate metrics must target the gate subject")
+    constraint_list = list(constraints or [])
+    if any(
+        not isinstance(constraint, GateConstraint)
+        for constraint in constraint_list
+    ):
+        raise ValueError("gate constraints must contain GateConstraint records")
     checks_by_id = {check.check_id: check for check in check_list}
     if len(checks_by_id) != len(check_list):
         raise ValueError("gate checks must not contain duplicate check_id values")
+    metrics_by_name = {metric.name: metric for metric in metric_list}
+    if len(metrics_by_name) != len(metric_list):
+        raise ValueError("gate metrics must not contain duplicate names")
+    required = _validate_exact_string_list(
+        "gate",
+        "required_check_ids",
+        (
+            required_check_ids
+            if required_check_ids is not None
+            else [check.check_id for check in check_list]
+        ),
+    )
+    if len(set(required)) != len(required):
+        raise ValueError("gate required_check_ids must not contain duplicates")
+    if policy_ref is not None:
+        _validate_exact_non_empty_string("gate", "policy_ref", policy_ref)
+    violated: list[str] = []
+
     inconclusive = False
     for check_id in required:
         check = checks_by_id.get(check_id)
@@ -808,13 +903,18 @@ def evaluate_gate(
         elif check.status in {"error", "timeout", "inconclusive"}:
             inconclusive = True
 
-    metrics_by_name = {metric.name: metric for metric in metric_list}
-    if len(metrics_by_name) != len(metric_list):
-        raise ValueError("gate metrics must not contain duplicate names")
-    for constraint in constraints or []:
+    for constraint in constraint_list:
         metric = metrics_by_name.get(constraint.metric_name)
-        if metric is None or not _metric_satisfies(metric.value, constraint.operator, constraint.threshold):
-            violated.append(f"metric:{constraint.metric_name}")
+        violation = f"metric:{constraint.metric_name}"
+        if (
+            metric is None
+            or not _metric_satisfies(
+                metric.value,
+                constraint.operator,
+                constraint.threshold,
+            )
+        ) and violation not in violated:
+            violated.append(violation)
 
     decision: GateDecision
     if violated:
@@ -838,17 +938,18 @@ def _metric_satisfies(value: Decimal | bool | str | None, operator: ConstraintOp
     if value is None:
         return False
     if operator == "equals":
-        return value == threshold
-    try:
-        comparable_value = value if isinstance(value, Decimal) else Decimal(str(value))
-        comparable_threshold = threshold if isinstance(threshold, Decimal) else Decimal(str(threshold))
-        if not comparable_value.is_finite() or not comparable_threshold.is_finite():
-            return False
-        if operator == "at_least":
-            return comparable_value >= comparable_threshold
-        return comparable_value <= comparable_threshold
-    except Exception:
+        if isinstance(value, Decimal) and isinstance(threshold, Decimal):
+            return value == threshold
+        if isinstance(value, bool) and isinstance(threshold, bool):
+            return value == threshold
+        if isinstance(value, str) and isinstance(threshold, str):
+            return value == threshold
         return False
+    if not isinstance(value, Decimal) or not isinstance(threshold, Decimal):
+        return False
+    if operator == "at_least":
+        return value >= threshold
+    return value <= threshold
 
 
 def _canonical_value(value: object) -> object:

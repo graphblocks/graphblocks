@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from types import MappingProxyType
 from collections.abc import Mapping
+from dataclasses import dataclass, field
+import math
+from types import MappingProxyType
 from typing import Literal
 
 
@@ -25,6 +26,8 @@ VALID_OUTCOME_STATUSES = frozenset(
 VALID_INPUT_MODES = frozenset(("value", "outcome"))
 VALID_READINESS_KINDS = frozenset(("ready", "waiting", "blocked"))
 VALID_RESOLVED_INPUT_KINDS = frozenset(("value", "outcome"))
+_MAX_METADATA_DEPTH = 64
+_MAX_METADATA_NODES = 10_000
 
 
 def _validate_non_empty_string(owner: str, field_name: str, value: object) -> str:
@@ -44,19 +47,78 @@ def _validate_optional_non_empty_string(owner: str, field_name: str, value: obje
 def _freeze_metadata(owner: str, metadata: object) -> Mapping[str, object]:
     if not isinstance(metadata, Mapping):
         raise ValueError(f"{owner} metadata must be a mapping")
-    snapshot: dict[str, object] = {}
-    for key, value in metadata.items():
-        key_text = _validate_non_empty_string(owner, "metadata key", key)
-        snapshot[key_text] = _freeze_metadata_value(owner, value)
-    return MappingProxyType(snapshot)
+    frozen = _freeze_metadata_value(
+        owner,
+        metadata,
+        depth=0,
+        active_containers=set(),
+        node_count=[0],
+    )
+    assert isinstance(frozen, Mapping)
+    return frozen
 
 
-def _freeze_metadata_value(owner: str, value: object) -> object:
+def _freeze_metadata_value(
+    owner: str,
+    value: object,
+    *,
+    depth: int,
+    active_containers: set[int],
+    node_count: list[int],
+) -> object:
+    if depth > _MAX_METADATA_DEPTH:
+        raise ValueError(f"{owner} metadata exceeds maximum depth {_MAX_METADATA_DEPTH}")
+    node_count[0] += 1
+    if node_count[0] > _MAX_METADATA_NODES:
+        raise ValueError(f"{owner} metadata exceeds maximum node count {_MAX_METADATA_NODES}")
     if isinstance(value, Mapping):
-        return _freeze_metadata(owner, value)
+        identity = id(value)
+        if identity in active_containers:
+            raise ValueError(f"{owner} metadata must not be recursive")
+        active_containers.add(identity)
+        try:
+            snapshot: dict[str, object] = {}
+            for key, item in value.items():
+                key_text = _validate_non_empty_string(owner, "metadata key", key)
+                if key_text != key_text.strip():
+                    raise ValueError(
+                        f"{owner} metadata key must not contain surrounding whitespace"
+                    )
+                snapshot[key_text] = _freeze_metadata_value(
+                    owner,
+                    item,
+                    depth=depth + 1,
+                    active_containers=active_containers,
+                    node_count=node_count,
+                )
+            return MappingProxyType(snapshot)
+        finally:
+            active_containers.remove(identity)
     if isinstance(value, (list, tuple)):
-        return tuple(_freeze_metadata_value(owner, item) for item in value)
-    return value
+        identity = id(value)
+        if identity in active_containers:
+            raise ValueError(f"{owner} metadata must not be recursive")
+        active_containers.add(identity)
+        try:
+            return tuple(
+                _freeze_metadata_value(
+                    owner,
+                    item,
+                    depth=depth + 1,
+                    active_containers=active_containers,
+                    node_count=node_count,
+                )
+                for item in value
+            )
+        finally:
+            active_containers.remove(identity)
+    if value is None or isinstance(value, (str, bool, int)):
+        return value
+    if isinstance(value, float):
+        if math.isfinite(value):
+            return value
+        raise ValueError(f"{owner} metadata numbers must be finite")
+    raise ValueError(f"{owner} metadata values must be JSON-compatible")
 
 
 @dataclass(frozen=True, order=True, slots=True)
@@ -79,7 +141,7 @@ class Outcome:
     metadata: dict[str, object] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        if self.status not in VALID_OUTCOME_STATUSES:
+        if not isinstance(self.status, str) or self.status not in VALID_OUTCOME_STATUSES:
             raise ValueError(f"invalid outcome status {self.status}")
         object.__setattr__(self, "code", _validate_optional_non_empty_string("outcome", "code", self.code))
         object.__setattr__(self, "message", _validate_optional_non_empty_string("outcome", "message", self.message))
@@ -134,7 +196,7 @@ class InputDependency:
         object.__setattr__(self, "input", _validate_non_empty_string("input dependency", "input", self.input).strip())
         if not isinstance(self.source, PortRef):
             raise ValueError("input dependency source must be PortRef")
-        if self.mode not in VALID_INPUT_MODES:
+        if not isinstance(self.mode, str) or self.mode not in VALID_INPUT_MODES:
             raise ValueError(f"invalid input dependency mode {self.mode}")
 
     @classmethod
@@ -152,7 +214,7 @@ class ResolvedInput:
     payload: object
 
     def __post_init__(self) -> None:
-        if self.kind not in VALID_RESOLVED_INPUT_KINDS:
+        if not isinstance(self.kind, str) or self.kind not in VALID_RESOLVED_INPUT_KINDS:
             raise ValueError(f"invalid resolved input kind {self.kind}")
         if self.kind == "outcome" and not isinstance(self.payload, Outcome):
             raise ValueError("resolved input outcome payload must be Outcome")
@@ -176,13 +238,20 @@ class Readiness:
     outcome: Outcome | None = None
 
     def __post_init__(self) -> None:
-        if self.kind not in VALID_READINESS_KINDS:
+        if not isinstance(self.kind, str) or self.kind not in VALID_READINESS_KINDS:
             raise ValueError(f"invalid readiness kind {self.kind}")
         if not isinstance(self.inputs, Mapping):
             raise ValueError("readiness inputs must be a mapping")
         inputs: dict[str, ResolvedInput] = {}
         for key, value in self.inputs.items():
-            inputs[_validate_non_empty_string("readiness", "inputs key", key).strip()] = _validate_resolved_input(value)
+            normalized_key = _validate_non_empty_string(
+                "readiness",
+                "inputs key",
+                key,
+            ).strip()
+            if normalized_key in inputs:
+                raise ValueError("readiness inputs must not contain duplicate normalized keys")
+            inputs[normalized_key] = _validate_resolved_input(value)
         object.__setattr__(self, "inputs", MappingProxyType(inputs))
         missing = tuple(self.missing)
         if any(not isinstance(port, PortRef) for port in missing):
@@ -242,12 +311,25 @@ class ReadinessTracker:
         return self.signals.get(port)
 
     def readiness(self, dependencies: list[InputDependency]) -> Readiness:
+        if isinstance(dependencies, (str, bytes, bytearray)):
+            raise ValueError("readiness dependencies must be a collection")
+        try:
+            normalized_dependencies = tuple(dependencies)
+        except TypeError as error:
+            raise ValueError("readiness dependencies must be a collection") from error
+        if any(
+            not isinstance(dependency, InputDependency)
+            for dependency in normalized_dependencies
+        ):
+            raise ValueError("readiness dependencies must be InputDependency")
+        dependency_inputs = [dependency.input for dependency in normalized_dependencies]
+        if len(set(dependency_inputs)) != len(dependency_inputs):
+            raise ValueError("readiness dependencies must not contain duplicate inputs")
+
         missing: list[PortRef] = []
         resolved: dict[str, ResolvedInput] = {}
 
-        for dependency in dependencies:
-            if not isinstance(dependency, InputDependency):
-                raise ValueError("readiness dependencies must be InputDependency")
+        for dependency in normalized_dependencies:
             outcome = self.signals.get(dependency.source)
             if outcome is None:
                 missing.append(dependency.source)

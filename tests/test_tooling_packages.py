@@ -450,3 +450,97 @@ def test_devtools_package_builds_deterministic_diagnostic_bundle(monkeypatch) ->
         bundle_id="release-checks",
         sections=tuple(reversed(bundle.sections)),
     ).content_digest()
+
+
+def test_devtools_graph_rejects_ambiguous_and_dangling_nodes(monkeypatch) -> None:
+    graphblocks_devtools = importlib.import_module("graphblocks.devtools")
+    node = graphblocks_devtools.DevGraphNode("begin")
+
+    with pytest.raises(
+        graphblocks_devtools.DevtoolsContractError,
+        match="node_id values must be unique",
+    ):
+        graphblocks_devtools.DevGraph("graph", nodes=(node, node))
+    with pytest.raises(
+        graphblocks_devtools.DevtoolsContractError,
+        match="edges must reference declared nodes",
+    ):
+        graphblocks_devtools.DevGraph(
+            "graph",
+            nodes=(node,),
+            edges=(graphblocks_devtools.DevGraphEdge("begin", "missing"),),
+        )
+    with pytest.raises(
+        graphblocks_devtools.DevtoolsContractError,
+        match="nodes must contain DevGraphNode",
+    ):
+        graphblocks_devtools.DevGraph("graph", nodes=(object(),))
+
+
+def test_devtools_profile_values_are_strict_immutable_snapshots(monkeypatch) -> None:
+    graphblocks_devtools = importlib.import_module("graphblocks.devtools")
+    totals = {"agent": 10}
+    summary = graphblocks_devtools.ProfilingSummary("profile", totals)
+    totals["agent"] = 20
+
+    assert summary.node_totals_ms == {"agent": 10}
+    with pytest.raises(TypeError):
+        summary.node_totals_ms["agent"] = 30
+    for elapsed in (True, 1.5, "10"):
+        with pytest.raises(
+            graphblocks_devtools.DevtoolsContractError,
+            match="elapsed_ms must be an integer",
+        ):
+            graphblocks_devtools.ProfileSample(
+                "agent",
+                elapsed,  # type: ignore[arg-type]
+            )
+    with pytest.raises(
+        graphblocks_devtools.DevtoolsContractError,
+        match="node totals must be integers",
+    ):
+        graphblocks_devtools.ProfilingSummary(
+            "profile",
+            {"agent": True},  # type: ignore[dict-item]
+        )
+
+
+@pytest.mark.parametrize(
+    "path",
+    (
+        "/tmp/generated.py",
+        "../generated.py",
+        "nested/../generated.py",
+        r"nested\generated.py",
+    ),
+)
+def test_codegen_artifact_rejects_unsafe_paths(monkeypatch, path: str) -> None:
+    graphblocks_devtools = importlib.import_module("graphblocks.devtools")
+
+    with pytest.raises(
+        graphblocks_devtools.DevtoolsContractError,
+        match="codegen artifact path must be a relative",
+    ):
+        graphblocks_devtools.CodegenArtifact("python", path, "pass\n")
+
+
+def test_diagnostic_bundle_rejects_invalid_and_duplicate_sections(monkeypatch) -> None:
+    graphblocks_devtools = importlib.import_module("graphblocks.devtools")
+    section = graphblocks_devtools.DiagnosticBundleSection("compiler")
+
+    with pytest.raises(
+        graphblocks_devtools.DevtoolsContractError,
+        match="diagnostics must contain Diagnostic",
+    ):
+        graphblocks_devtools.DiagnosticBundleSection(
+            "compiler",
+            diagnostics=(object(),),
+        )
+    with pytest.raises(
+        graphblocks_devtools.DevtoolsContractError,
+        match="section names must be unique",
+    ):
+        graphblocks_devtools.DiagnosticBundle(
+            "bundle",
+            sections=(section, section),
+        )

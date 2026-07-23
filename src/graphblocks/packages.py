@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from importlib import resources
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import stat
 import tomllib
 from typing import Any, Literal
@@ -26,6 +27,10 @@ def _validate_non_empty_string(owner: str, field_name: str, value: object) -> st
         raise ValueError(f"{owner} {field_name} must be a string")
     if not value.strip():
         raise ValueError(f"{owner} {field_name} must not be empty")
+    if value != value.strip():
+        raise ValueError(
+            f"{owner} {field_name} must not contain surrounding whitespace"
+        )
     return value
 
 
@@ -36,7 +41,7 @@ def _validate_optional_non_empty_string(owner: str, field_name: str, value: obje
 
 
 def _validate_string_tuple(owner: str, field_name: str, value: object) -> tuple[str, ...]:
-    if isinstance(value, str):
+    if isinstance(value, (str, bytes, bytearray, Mapping)):
         raise ValueError(f"{owner} {field_name} must be a collection of strings")
     try:
         items = tuple(value)  # type: ignore[arg-type]
@@ -89,15 +94,31 @@ class PackageLockEntry:
         object.__setattr__(
             self,
             "dependencies",
-            _validate_string_tuple("package lock entry", "dependencies", self.dependencies),
+            tuple(
+                sorted(
+                    set(
+                        _validate_string_tuple(
+                            "package lock entry",
+                            "dependencies",
+                            self.dependencies,
+                        )
+                    )
+                )
+            ),
         )
         object.__setattr__(
             self,
             "forbidden_dependencies",
-            _validate_string_tuple(
-                "package lock entry",
-                "forbidden_dependencies",
-                self.forbidden_dependencies,
+            tuple(
+                sorted(
+                    set(
+                        _validate_string_tuple(
+                            "package lock entry",
+                            "forbidden_dependencies",
+                            self.forbidden_dependencies,
+                        )
+                    )
+                )
             ),
         )
 
@@ -138,7 +159,17 @@ class PackageLock:
         object.__setattr__(
             self,
             "requested",
-            _validate_string_tuple("package lock", "requested", self.requested),
+            tuple(
+                sorted(
+                    set(
+                        _validate_string_tuple(
+                            "package lock",
+                            "requested",
+                            self.requested,
+                        )
+                    )
+                )
+            ),
         )
         entries = tuple(self.entries)
         if any(not isinstance(entry, PackageLockEntry) for entry in entries):
@@ -159,7 +190,17 @@ class PackageLock:
         object.__setattr__(
             self,
             "excluded_categories",
-            _validate_string_tuple("package lock", "excluded_categories", self.excluded_categories),
+            tuple(
+                sorted(
+                    set(
+                        _validate_string_tuple(
+                            "package lock",
+                            "excluded_categories",
+                            self.excluded_categories,
+                        )
+                    )
+                )
+            ),
         )
 
     def entry(self, component: str) -> PackageLockEntry | None:
@@ -194,12 +235,39 @@ class WheelBuildTarget:
     def __post_init__(self) -> None:
         for field_name in ("distribution", "manifest", "backend", "source_layout"):
             _validate_non_empty_string("wheel build target", field_name, getattr(self, field_name))
+        if "\\" in self.manifest:
+            raise ValueError(
+                "wheel build target manifest must be a relative POSIX path"
+            )
+        manifest_path = PurePosixPath(self.manifest)
+        if (
+            manifest_path.is_absolute()
+            or not manifest_path.parts
+            or any(part in {".", ".."} for part in manifest_path.parts)
+            or manifest_path.as_posix() != self.manifest
+        ):
+            raise ValueError(
+                "wheel build target manifest must be a normalized relative path"
+            )
         if self.kind not in {"pure_python", "native_extension"}:
             raise ValueError(f"invalid wheel build target kind {self.kind}")
+        python_versions = _validate_string_tuple(
+            "wheel build target",
+            "python_versions",
+            self.python_versions,
+        )
+        try:
+            normalized_python_versions = tuple(
+                sorted(set(python_versions), key=Version)
+            )
+        except InvalidVersion as error:
+            raise ValueError(
+                "wheel build target python_versions items must be valid versions"
+            ) from error
         object.__setattr__(
             self,
             "python_versions",
-            _validate_string_tuple("wheel build target", "python_versions", self.python_versions),
+            normalized_python_versions,
         )
 
     def target_contract(self) -> dict[str, object]:

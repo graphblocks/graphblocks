@@ -85,6 +85,8 @@ PHASE_FIVE_IMAGE_ROLES = (
     "sandbox",
 )
 SCHEMA_RESOURCE_KINDS = frozenset(kind for _, kind in RESOURCE_SCHEMA_PATHS)
+_MAX_RELEASE_BUNDLE_BYTES = 64 * 1024 * 1024
+_MAX_RELEASE_BUNDLE_MEMBER_BYTES = 32 * 1024 * 1024
 
 
 def _loads_strict_json(owner: str, value: str) -> object:
@@ -95,9 +97,14 @@ def _loads_strict_json(owner: str, value: str) -> object:
 
 
 def _field(mapping: Mapping[str, object], *names: str, default: object = None) -> object:
-    for name in names:
-        if name in mapping:
-            return mapping[name]
+    present = [name for name in dict.fromkeys(names) if name in mapping]
+    if len(present) > 1:
+        raise ValueError(
+            "mapping must not contain multiple aliases for the same field: "
+            + ", ".join(repr(name) for name in present)
+        )
+    if present:
+        return mapping[present[0]]
     return default
 
 
@@ -1019,6 +1026,11 @@ def _main(argv: list[str] | None = None) -> int:
                 and args.release_command == "verify"
                 and args.path.suffix.lower() == ".gbr"
             ):
+                if args.path.stat().st_size > _MAX_RELEASE_BUNDLE_BYTES:
+                    raise ValueError(
+                        "GraphRelease bundle exceeds maximum size "
+                        f"{_MAX_RELEASE_BUNDLE_BYTES} bytes"
+                    )
                 archive_bytes = args.path.read_bytes()
                 archive_digest = (
                     "sha256:" + hashlib.sha256(archive_bytes).hexdigest()
@@ -1032,6 +1044,14 @@ def _main(argv: list[str] | None = None) -> int:
                     release_member = archive.getmember("release.json")
                     if not manifest_member.isfile() or not release_member.isfile():
                         raise ValueError("GraphRelease bundle members must be regular files")
+                    if (
+                        manifest_member.size > _MAX_RELEASE_BUNDLE_MEMBER_BYTES
+                        or release_member.size > _MAX_RELEASE_BUNDLE_MEMBER_BYTES
+                    ):
+                        raise ValueError(
+                            "GraphRelease bundle member exceeds maximum size "
+                            f"{_MAX_RELEASE_BUNDLE_MEMBER_BYTES} bytes"
+                        )
                     manifest_file = archive.extractfile(manifest_member)
                     release_file = archive.extractfile(release_member)
                     if manifest_file is None or release_file is None:
@@ -1052,7 +1072,14 @@ def _main(argv: list[str] | None = None) -> int:
                 archive_manifest = manifest_value
                 release_documents = [dict(release_value)]
             else:
-                release_documents = load_documents(args.path)
+                try:
+                    release_documents = load_documents(args.path)
+                except ValueError as error:
+                    if "YAML document numbers must be finite" in str(error):
+                        raise ValueError(
+                            "GraphRelease document must contain only finite JSON numbers"
+                        ) from error
+                    raise
             matching_releases = [
                 document
                 for document in release_documents
@@ -1073,22 +1100,34 @@ def _main(argv: list[str] | None = None) -> int:
             spec = document.get("spec", {})
             if not isinstance(metadata, Mapping) or not isinstance(spec, Mapping):
                 raise ValueError("GraphRelease documents require metadata and spec mappings")
-            name = str(_field(metadata, "name", default="")).strip()
-            version = str(
-                _field(metadata, "version", default=_field(spec, "version", default=""))
-            ).strip()
-            if not name:
+            name = _field(metadata, "name")
+            metadata_version = _field(metadata, "version")
+            spec_version = _field(spec, "version")
+            if metadata_version is not None and spec_version is not None:
+                raise ValueError(
+                    "GraphRelease version must appear in metadata or spec, not both"
+                )
+            version = metadata_version if metadata_version is not None else spec_version
+            if name is None:
                 raise ValueError("GraphRelease metadata.name is required")
-            if not version:
+            if version is None:
                 raise ValueError("GraphRelease metadata.version is required")
 
-            release = GraphRelease(name=name, version=version)
+            release = GraphRelease(name=name, version=version)  # type: ignore[arg-type]
             bundle_data = _field(spec, "bundle", default={})
             if bundle_data is not None:
                 if not isinstance(bundle_data, Mapping):
                     raise ValueError("GraphRelease spec.bundle must be a mapping")
                 bundle_digest = _field(bundle_data, "digest")
                 bundle_ref = _field(bundle_data, "ref")
+                if bundle_ref is not None and (
+                    not isinstance(bundle_ref, str)
+                    or not bundle_ref.strip()
+                    or bundle_ref != bundle_ref.strip()
+                ):
+                    raise ValueError(
+                        "GraphRelease spec.bundle.ref must be an exact non-empty string"
+                    )
                 if (
                     bundle_digest is None
                     and isinstance(bundle_ref, str)
@@ -1098,8 +1137,8 @@ def _main(argv: list[str] | None = None) -> int:
                 media_type = _field(bundle_data, "mediaType", "media_type")
                 if bundle_digest is not None or media_type is not None:
                     release = release.with_bundle(
-                        str(bundle_digest or ""),
-                        str(media_type or ""),
+                        bundle_digest,  # type: ignore[arg-type]
+                        media_type,  # type: ignore[arg-type]
                     )
 
             application_data = _field(spec, "application")
@@ -1111,7 +1150,7 @@ def _main(argv: list[str] | None = None) -> int:
                     "application_hash",
                 )
                 if application_hash is not None:
-                    release = release.with_application_hash(str(application_hash))
+                    release = release.with_application_hash(application_hash)  # type: ignore[arg-type]
 
             graphs_data = _field(spec, "graphs", default={})
             if not isinstance(graphs_data, Mapping):
@@ -1120,18 +1159,19 @@ def _main(argv: list[str] | None = None) -> int:
                 if not isinstance(graph_data, Mapping):
                     raise ValueError(f"GraphRelease graph {graph_name!r} must be a mapping")
                 release = release.with_graph(
-                    str(graph_name),
+                    graph_name,  # type: ignore[arg-type]
                     GraphReleaseGraph(
-                        graph_hash=str(
-                            _field(graph_data, "graphHash", "graph_hash", default="")
+                        graph_hash=_field(  # type: ignore[arg-type]
+                            graph_data,
+                            "graphHash",
+                            "graph_hash",
+                            default="",
                         ),
-                        normalized_plan_hash=str(
-                            _field(
-                                graph_data,
-                                "normalizedPlanHash",
-                                "normalized_plan_hash",
-                                default="",
-                            )
+                        normalized_plan_hash=_field(  # type: ignore[arg-type]
+                            graph_data,
+                            "normalizedPlanHash",
+                            "normalized_plan_hash",
+                            default="",
                         ),
                     ),
                 )
@@ -1144,7 +1184,10 @@ def _main(argv: list[str] | None = None) -> int:
                     image_value = _field(image_data, "image", "ref", default="")
                 else:
                     image_value = image_data
-                release = release.with_image(str(image_name), ImageRef(str(image_value)))
+                release = release.with_image(
+                    image_name,  # type: ignore[arg-type]
+                    ImageRef(image_value),  # type: ignore[arg-type]
+                )
 
             locks_data = _field(spec, "locks", default={})
             if not isinstance(locks_data, Mapping):
@@ -1159,11 +1202,11 @@ def _main(argv: list[str] | None = None) -> int:
                     lock_digest = None
                     lock_type = None
                 release = release.with_lock(
-                    str(lock_name),
+                    lock_name,  # type: ignore[arg-type]
                     ReleaseLockRef(
-                        ref=str(lock_ref),
-                        digest=str(lock_digest) if lock_digest is not None else None,
-                        lock_type=str(lock_type) if lock_type is not None else None,
+                        ref=lock_ref,  # type: ignore[arg-type]
+                        digest=lock_digest,  # type: ignore[arg-type]
+                        lock_type=lock_type,  # type: ignore[arg-type]
                     ),
                 )
 
@@ -1179,18 +1222,32 @@ def _main(argv: list[str] | None = None) -> int:
             for prompt_name, prompt_data in prompts_data.items():
                 if not isinstance(prompt_data, Mapping):
                     raise ValueError(f"GraphRelease prompt {prompt_name!r} must be a mapping")
-                resolved_name = str(_field(prompt_data, "name", default=prompt_name))
+                resolved_name = _field(prompt_data, "name", default=prompt_name)
                 prompt_version = _field(prompt_data, "version")
                 prompt_label = _field(prompt_data, "label", "lockLabel", "lock_label")
+                if prompt_version is not None and prompt_label is not None:
+                    raise ValueError(
+                        f"GraphRelease prompt {prompt_name!r} must not contain "
+                        "both version and label"
+                    )
                 if prompt_version is not None:
-                    prompt_lock = PromptLock.versioned(resolved_name, str(prompt_version))
+                    prompt_lock = PromptLock.versioned(
+                        resolved_name,  # type: ignore[arg-type]
+                        prompt_version,  # type: ignore[arg-type]
+                    )
                 elif prompt_label is not None:
-                    prompt_lock = PromptLock.label(resolved_name, str(prompt_label))
+                    prompt_lock = PromptLock.label(
+                        resolved_name,  # type: ignore[arg-type]
+                        prompt_label,  # type: ignore[arg-type]
+                    )
                 else:
                     raise ValueError(
                         f"GraphRelease prompt {prompt_name!r} requires version or label"
                     )
-                release = release.with_prompt_lock(str(prompt_name), prompt_lock)
+                release = release.with_prompt_lock(
+                    prompt_name,  # type: ignore[arg-type]
+                    prompt_lock,
+                )
 
             knowledge_data = _field(spec, "knowledge", default={})
             if not isinstance(knowledge_data, Mapping):
@@ -1199,15 +1256,13 @@ def _main(argv: list[str] | None = None) -> int:
             if top_level_revision is not None:
                 release = release.with_knowledge(
                     KnowledgeBinding(
-                        index_id=str(
-                            _field(
-                                knowledge_data,
-                                "indexId",
-                                "index_id",
-                                default="default",
-                            )
+                        index_id=_field(  # type: ignore[arg-type]
+                            knowledge_data,
+                            "indexId",
+                            "index_id",
+                            default="default",
                         ),
-                        index_revision=str(top_level_revision),
+                        index_revision=top_level_revision,  # type: ignore[arg-type]
                     )
                 )
             else:
@@ -1216,23 +1271,25 @@ def _main(argv: list[str] | None = None) -> int:
                         raise ValueError(
                             f"GraphRelease knowledge binding {index_id!r} must be a mapping"
                         )
+                    resolved_index_id = _field(
+                        binding_data,
+                        "indexId",
+                        "index_id",
+                        default=index_id,
+                    )
+                    if resolved_index_id != index_id:
+                        raise ValueError(
+                            f"GraphRelease knowledge binding {index_id!r} "
+                            "indexId must match its mapping key"
+                        )
                     release = release.with_knowledge(
                         KnowledgeBinding(
-                            index_id=str(
-                                _field(
-                                    binding_data,
-                                    "indexId",
-                                    "index_id",
-                                    default=index_id,
-                                )
-                            ),
-                            index_revision=str(
-                                _field(
-                                    binding_data,
-                                    "indexRevision",
-                                    "index_revision",
-                                    default="",
-                                )
+                            index_id=resolved_index_id,  # type: ignore[arg-type]
+                            index_revision=_field(  # type: ignore[arg-type]
+                                binding_data,
+                                "indexRevision",
+                                "index_revision",
+                                default="",
                             ),
                         )
                     )
@@ -1240,23 +1297,22 @@ def _main(argv: list[str] | None = None) -> int:
             if supply_chain_data is not None:
                 if not isinstance(supply_chain_data, Mapping):
                     raise ValueError("GraphRelease spec.supplyChain must be a mapping")
+                sbom_ref = _field(supply_chain_data, "sbomRef", "sbom_ref")
+                provenance_ref = _field(
+                    supply_chain_data,
+                    "provenanceRef",
+                    "provenance_ref",
+                )
+                signature_policy = _field(
+                    supply_chain_data,
+                    "signaturePolicy",
+                    "signature_policy",
+                )
                 release = release.with_supply_chain(
                     SupplyChainLock(
-                        sbom_ref=(
-                            str(_field(supply_chain_data, "sbomRef", "sbom_ref"))
-                            if _field(supply_chain_data, "sbomRef", "sbom_ref") is not None
-                            else None
-                        ),
-                        provenance_ref=(
-                            str(_field(supply_chain_data, "provenanceRef", "provenance_ref"))
-                            if _field(supply_chain_data, "provenanceRef", "provenance_ref") is not None
-                            else None
-                        ),
-                        signature_policy=(
-                            str(_field(supply_chain_data, "signaturePolicy", "signature_policy"))
-                            if _field(supply_chain_data, "signaturePolicy", "signature_policy") is not None
-                            else None
-                        ),
+                        sbom_ref=sbom_ref,  # type: ignore[arg-type]
+                        provenance_ref=provenance_ref,  # type: ignore[arg-type]
+                        signature_policy=signature_policy,  # type: ignore[arg-type]
                     )
                 )
             if archive_manifest is not None:

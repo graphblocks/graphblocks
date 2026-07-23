@@ -7,6 +7,7 @@ import sqlite3
 import sys
 import tarfile
 from types import SimpleNamespace
+import pytest
 import yaml
 
 import graphblocks.cli as cli_module
@@ -1658,6 +1659,72 @@ def test_release_verify_cli_accepts_immutable_release(tmp_path, capsys) -> None:
     assert payload["mutableReferences"] == []
 
 
+@pytest.mark.parametrize(
+    ("metadata", "spec", "message"),
+    (
+        (
+            {"name": 7, "version": "2026.06.24.1"},
+            {"bundle": {"digest": "sha256:bundle"}},
+            "graph release name must be a string",
+        ),
+        (
+            {"name": "support-agent", "version": "2026.06.24.1"},
+            {
+                "version": "2026.06.24.2",
+                "bundle": {"digest": "sha256:bundle"},
+            },
+            "version must appear in metadata or spec, not both",
+        ),
+        (
+            {"name": "support-agent", "version": "2026.06.24.1"},
+            {
+                "bundle": {
+                    "digest": "sha256:bundle",
+                    "mediaType": "application/vnd.graphblocks.release.v1",
+                    "media_type": "application/vnd.graphblocks.release.v1",
+                }
+            },
+            "multiple aliases for the same field",
+        ),
+        (
+            {"name": "support-agent", "version": "2026.06.24.1"},
+            {
+                "bundle": {"digest": "sha256:bundle"},
+                "prompts": {
+                    "answer": {
+                        "name": "support.answer",
+                        "version": "1",
+                        "label": "production",
+                    }
+                },
+            },
+            "both version and label",
+        ),
+    ),
+)
+def test_release_verify_cli_rejects_coercion_and_ambiguous_fields(
+    tmp_path,
+    capsys,
+    metadata,
+    spec,
+    message,
+) -> None:
+    release = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "GraphRelease",
+        "metadata": metadata,
+        "spec": spec,
+    }
+    path = tmp_path / "release.yaml"
+    path.write_text(yaml.safe_dump(release), encoding="utf-8")
+
+    assert main(["release", "verify", str(path), "--json"]) == 1
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is False
+    assert message in payload["error"]
+
+
 def test_release_verify_cli_rejects_mutable_production_references(tmp_path, capsys) -> None:
     release = {
         "apiVersion": "graphblocks.ai/v1alpha3",
@@ -2161,3 +2228,20 @@ def test_release_build_cli_rejects_non_finite_release_numbers(tmp_path, capsys) 
         "ok": False,
     }
     assert not bundle.exists()
+
+
+def test_release_verify_cli_rejects_oversized_bundle_before_reading(
+    tmp_path,
+    capsys,
+) -> None:
+    bundle = tmp_path / "oversized.gbr"
+    with bundle.open("wb") as stream:
+        stream.truncate(64 * 1024 * 1024 + 1)
+
+    assert main(["release", "verify", str(bundle), "--json"]) == 1
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload == {
+        "error": "GraphRelease bundle exceeds maximum size 67108864 bytes",
+        "ok": False,
+    }

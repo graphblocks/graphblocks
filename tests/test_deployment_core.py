@@ -124,6 +124,43 @@ def test_release_evidence_maps_cannot_be_mutated_after_construction() -> None:
     assert bundle.content_digest() == bundle_digest
 
 
+def test_graph_release_records_reject_malformed_and_ambiguous_identity() -> None:
+    for factory, message in (
+        (
+            lambda: GraphReleaseGraph(" ", "sha256:plan"),
+            "release graph graph_hash",
+        ),
+        (lambda: ImageRef(object()), "release image"),  # type: ignore[arg-type]
+        (
+            lambda: KnowledgeBinding("index", " current "),
+            "knowledge binding index_revision",
+        ),
+        (lambda: ReleaseLockRef(" "), "release lock ref"),
+    ):
+        with pytest.raises(GraphReleaseError, match=message):
+            factory()
+
+    for prompt_lock in (
+        lambda: PromptLock("versioned", "prompt"),
+        lambda: PromptLock("versioned", "prompt", "1", "production"),
+        lambda: PromptLock("label", "prompt", version="1"),
+        lambda: PromptLock("unknown", "prompt"),  # type: ignore[arg-type]
+    ):
+        with pytest.raises(GraphReleaseError, match="prompt lock"):
+            prompt_lock()
+
+    with pytest.raises(GraphReleaseError, match="bundle_media_type must not be empty"):
+        GraphRelease("release", "1", bundle_media_type=" ")
+    with pytest.raises(GraphReleaseError, match="graphs values must be GraphReleaseGraph"):
+        GraphRelease("release", "1", graphs={"main": object()})  # type: ignore[dict-item]
+    with pytest.raises(GraphReleaseError, match="knowledge key must match"):
+        GraphRelease(
+            "release",
+            "1",
+            knowledge={"alias": KnowledgeBinding("index", "revision")},
+        )
+
+
 def test_release_bundle_rejects_coerced_or_unstable_evidence_identity() -> None:
     release = GraphRelease("support-agent", "2026.06.23.1")
 
@@ -735,6 +772,53 @@ def test_rollout_models_reject_invalid_string_fields() -> None:
             candidate_revision_id="rev-canary",
             steps=(RolloutStep.validate(), RolloutStep.promote()),
         )
+
+
+@pytest.mark.parametrize("value", (1.5, "10", True))
+def test_rollout_models_reject_coerced_numeric_fields(value: object) -> None:
+    with pytest.raises(RolloutError, match="traffic_percent"):
+        RolloutStep.canary("canary", traffic_percent=value)  # type: ignore[arg-type]
+    with pytest.raises(RolloutError, match="sample_count"):
+        RolloutAnalysisResult(
+            "canary",
+            True,
+            sample_count=value,  # type: ignore[arg-type]
+        )
+
+
+def test_rollout_models_reject_ambiguous_steps_and_mutable_metrics() -> None:
+    validate = RolloutStep.validate()
+    promote = RolloutStep.promote()
+    with pytest.raises(RolloutError, match="step_id values must be unique"):
+        RolloutPlan(
+            "rollout",
+            "stable",
+            "candidate",
+            steps=(validate, RolloutStep.validate(), promote),
+        )
+    with pytest.raises(RolloutError, match="revisions must be distinct"):
+        RolloutPlan(
+            "rollout",
+            "same",
+            "same",
+            steps=(validate, promote),
+        )
+
+    metrics = {"quality": {"samples": [1]}}
+    result = RolloutAnalysisResult("validate", True, metrics=metrics)
+    metrics["quality"]["samples"].append(2)  # type: ignore[index, union-attr]
+
+    assert result.metrics == {"quality": {"samples": (1,)}}
+    with pytest.raises(TypeError):
+        result.metrics["other"] = 1
+    with pytest.raises(TypeError):
+        result.metrics["quality"]["other"] = 2  # type: ignore[index]
+    with pytest.raises(AttributeError):
+        result.metrics["quality"]["samples"].append(2)  # type: ignore[index, union-attr]
+    recursive: dict[str, object] = {}
+    recursive["self"] = recursive
+    with pytest.raises(RolloutError, match="metrics must be canonical JSON"):
+        RolloutAnalysisResult("validate", True, metrics=recursive)
     with pytest.raises(RolloutError, match="stable_revision_id must be a string"):
         RolloutPlan(
             rollout_id="rollout-1",
