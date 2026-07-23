@@ -451,7 +451,6 @@ class InMemoryRunStore:
             run_id = requested_run_id
             if run_id in self.runs:
                 raise ValueError(f"run store run_id {run_id!r} already exists")
-        self.next_id += 1
         record = RunRecord(
             run_id=run_id,
             graph_hash=graph_hash,
@@ -460,11 +459,17 @@ class InMemoryRunStore:
             invocation_mode=invocation_mode,
             model_visible_tools=tuple(model_visible_tools),
         )
+        self.next_id += 1
         self.runs[run_id] = record
         return deepcopy(record)
 
     @_with_in_memory_run_store_lock
     def get_run(self, run_id: str) -> RunRecord:
+        run_id = _validate_non_empty_string(
+            "run store",
+            "run_id",
+            run_id,
+        )
         return deepcopy(self.runs[run_id])
 
     @_with_in_memory_run_store_lock

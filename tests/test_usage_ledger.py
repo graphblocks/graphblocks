@@ -1003,6 +1003,14 @@ def test_sqlite_usage_ledger_rejects_duplicate_json_keys_on_replay(
             '[{"kind":"tokens","amount":"1","unit":"tokens","dimensions":[]}]',
             "amounts_json dimensions must be an object",
         ),
+        (
+            "amounts_json",
+            (
+                '[{"kind":"tokens","amount":"1","unit":"tokens",'
+                '"dimensions":{},"unexpected":true}]'
+            ),
+            "amounts_json items have unknown fields",
+        ),
         ("metadata_json", "[]", "metadata_json must be an object"),
     ),
 )
@@ -1029,6 +1037,33 @@ def test_sqlite_usage_ledger_rejects_invalid_json_shapes_on_replay(
     ledger._connection.commit()
 
     with pytest.raises(ValueError, match=message):
+        ledger.get("usage-1")
+    ledger.close()
+
+
+def test_sqlite_usage_ledger_wraps_excessively_nested_stored_json() -> None:
+    ledger = SQLiteUsageLedger.in_memory()
+    ledger.append(
+        UsageRecord(
+            record_id="usage-1",
+            source="runtime_measured",
+            confidence="estimated",
+            amounts=[_tokens("12")],
+            occurred_at="2026-06-22T00:00:00Z",
+            run_id="run-1",
+        )
+    )
+    deeply_nested = ("[" * 1_100) + "0" + ("]" * 1_100)
+    ledger._connection.execute(
+        "UPDATE usage_records SET amounts_json = ? WHERE record_id = ?",
+        (deeply_nested, "usage-1"),
+    )
+    ledger._connection.commit()
+
+    with pytest.raises(
+        ValueError,
+        match="usage ledger amounts_json must be valid strict JSON",
+    ):
         ledger.get("usage-1")
     ledger.close()
 

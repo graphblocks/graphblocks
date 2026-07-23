@@ -250,6 +250,13 @@ def test_run_store_validates_create_patch_status_and_copies_inputs() -> None:
         store.create_run("sha256:test", {}, run_id=" ")
     with pytest.raises(ValueError, match="run store run_id must not contain surrounding whitespace"):
         store.create_run("sha256:test", {}, run_id=" run-1")
+    with pytest.raises(ValueError, match="run store run_id must not be empty"):
+        store.get_run(" ")
+    with pytest.raises(
+        ValueError,
+        match="run store run_id must not contain surrounding whitespace",
+    ):
+        store.get_run(" run-000001")
     with pytest.raises(ValueError, match="invalid run invocation mode"):
         store.create_run("sha256:test", {}, invocation_mode="deferred")  # type: ignore[arg-type]
     with pytest.raises(ValueError, match="run store patch must be an object"):
@@ -280,6 +287,22 @@ def test_run_store_records_model_visible_tools_and_preserves_them_across_mutatio
     assert record.model_visible_tools == (search_tool, ticket_tool)
     assert patched.model_visible_tools == record.model_visible_tools
     assert running.model_visible_tools == record.model_visible_tools
+
+
+def test_in_memory_run_creation_failure_does_not_consume_sequence() -> None:
+    store = InMemoryRunStore()
+
+    with pytest.raises(
+        ValueError,
+        match="model_visible_tools must be ModelVisibleToolRef",
+    ):
+        store.create_run(
+            "sha256:test",
+            {},
+            model_visible_tools=(object(),),  # type: ignore[arg-type]
+        )
+
+    assert store.create_run("sha256:test", {}).run_id == "run-000001"
 
 
 def test_run_store_records_model_visible_tools_after_run_creation() -> None:

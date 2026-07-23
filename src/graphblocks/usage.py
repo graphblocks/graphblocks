@@ -234,7 +234,7 @@ def _loads_strict_json(field_name: str, value: str) -> object:
             parse_constant=lambda constant: (_ for _ in ()).throw(ValueError(constant)),
             object_pairs_hook=reject_duplicate_keys,
         )
-    except ValueError as error:
+    except (RecursionError, TypeError, ValueError) as error:
         raise ValueError(f"usage ledger {field_name} must be valid strict JSON") from error
 
 
@@ -603,6 +603,15 @@ class SQLiteUsageLedger:
                             f"provider response {record.provider_response_id!r} conflicts with existing usage"
                         ) from error
                     return existing
+            if record.reconciliation_of is not None:
+                existing_reconciliation = self._reconciliation_for(
+                    record.reconciliation_of
+                )
+                if existing_reconciliation is not None:
+                    raise UsageRecordConflictError(
+                        f"usage record {record.reconciliation_of!r} "
+                        "already has a reconciliation"
+                    ) from error
             raise UsageRecordConflictError(f"usage record {record.record_id!r} already exists") from error
         return record
 
@@ -698,6 +707,16 @@ class SQLiteUsageLedger:
         for amount in raw_amounts:
             if not isinstance(amount, Mapping):
                 raise ValueError("usage ledger amounts_json items must be objects")
+            unknown_fields = set(amount) - {
+                "kind",
+                "amount",
+                "unit",
+                "dimensions",
+            }
+            if unknown_fields:
+                raise ValueError(
+                    "usage ledger amounts_json items have unknown fields"
+                )
             dimensions = amount.get("dimensions", {})
             if not isinstance(dimensions, Mapping):
                 raise ValueError(
