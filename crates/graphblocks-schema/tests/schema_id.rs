@@ -36,6 +36,10 @@ fn schema_id_rejects_missing_or_invalid_version() {
         SchemaId::parse("schemas/Chat\tMessage@1"),
         Err(SchemaIdError::InvalidName),
     );
+    assert_eq!(
+        SchemaId::parse("schemas/Message@legacy@1"),
+        Err(SchemaIdError::InvalidName),
+    );
 }
 
 #[test]

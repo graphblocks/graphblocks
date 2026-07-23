@@ -8,7 +8,7 @@ import pytest
 import yaml
 
 import graphblocks
-from graphblocks.canonical import canonical_loads
+from graphblocks.canonical import canonical_dumps, canonical_loads
 import graphblocks.schema as schema_module
 from graphblocks.schema import (
     RESOURCE_SCHEMA_PATHS,
@@ -328,3 +328,67 @@ def test_invalid_authoritative_schema_fails_closed(tmp_path: Path) -> None:
 
     with pytest.raises(SchemaManifestError, match="not valid draft 2020-12"):
         load_resource_schema("graphblocks.ai/v1alpha3", "Graph", schema_root=tmp_path)
+
+
+@pytest.mark.parametrize(
+    ("field", "replacement", "message"),
+    (
+        (
+            "$id",
+            "graphblocks.ai/v1alpha3/not-graph.schema.json",
+            "must declare expected \\$id",
+        ),
+        (
+            "$schema",
+            "http://json-schema.org/draft-07/schema#",
+            "must declare draft 2020-12",
+        ),
+    ),
+)
+def test_resource_schema_loader_rejects_mismatched_schema_identity(
+    tmp_path: Path,
+    field: str,
+    replacement: str,
+    message: str,
+) -> None:
+    relative_path = RESOURCE_SCHEMA_PATHS[("graphblocks.ai/v1alpha3", "Graph")]
+    schema_path = tmp_path / relative_path
+    schema_path.parent.mkdir(parents=True)
+    document = canonical_loads(
+        (ROOT / "schemas" / relative_path).read_text(encoding="utf-8")
+    )
+    document[field] = replacement
+    schema_path.write_text(
+        canonical_dumps(document),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(SchemaManifestError, match=message):
+        load_resource_schema(
+            "graphblocks.ai/v1alpha3",
+            "Graph",
+            schema_root=tmp_path,
+        )
+
+
+def test_resource_schema_loader_rejects_schema_symlink_escape(
+    tmp_path: Path,
+    symlink_or_skip,
+) -> None:
+    relative_path = RESOURCE_SCHEMA_PATHS[("graphblocks.ai/v1alpha3", "Graph")]
+    schema_root = tmp_path / "schemas"
+    schema_path = schema_root / relative_path
+    schema_path.parent.mkdir(parents=True)
+    outside = tmp_path / "outside.schema.json"
+    outside.write_text(
+        (ROOT / "schemas" / relative_path).read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    symlink_or_skip(schema_path, outside)
+
+    with pytest.raises(SchemaManifestError, match="non-symlinked file"):
+        load_resource_schema(
+            "graphblocks.ai/v1alpha3",
+            "Graph",
+            schema_root=schema_root,
+        )

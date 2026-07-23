@@ -543,8 +543,18 @@ def test_composition_rejects_import_cycle(tmp_path: Path) -> None:
         ("value: 2026-07-13T00:00:00Z\n", "CompositionInvalidYaml"),
         ("value: .nan\n", "CompositionInvalidYaml"),
         ("value: &recursive [*recursive]\n", "CompositionInvalidYaml"),
+        ('value: "\\uD800"\n', "CompositionInvalidYaml"),
+        ('"\\uDFFF": value\n', "CompositionInvalidYaml"),
     ],
-    ids=["duplicate-key", "unknown-tag", "timestamp", "nan", "recursive-alias"],
+    ids=[
+        "duplicate-key",
+        "unknown-tag",
+        "timestamp",
+        "nan",
+        "recursive-alias",
+        "surrogate-value",
+        "surrogate-key",
+    ],
 )
 def test_composition_rejects_noncanonical_or_unsafe_yaml(
     tmp_path: Path,

@@ -197,6 +197,9 @@ impl SchemaId {
         if name.is_empty() {
             return Err(SchemaIdError::EmptyName);
         }
+        if name.contains('@') {
+            return Err(SchemaIdError::InvalidName);
+        }
         if version.is_empty() || !version.bytes().all(|byte| byte.is_ascii_digit()) {
             return Err(SchemaIdError::InvalidMajorVersion);
         }
@@ -670,6 +673,7 @@ impl<'de> Deserialize<'de> for TypedValue {
         D: Deserializer<'de>,
     {
         #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
         struct TypedValueEnvelope {
             schema: SchemaId,
             value: Value,

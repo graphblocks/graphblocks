@@ -83,3 +83,21 @@ def test_load_documents_rejects_non_json_yaml_values(
 
     with pytest.raises(ValueError, match=message):
         load_documents(path)
+
+
+@pytest.mark.parametrize(
+    "content",
+    (
+        'value: "\\uD800"\n',
+        '"\\uDFFF": value\n',
+    ),
+)
+def test_load_documents_rejects_unicode_surrogates(
+    tmp_path: Path,
+    content: str,
+) -> None:
+    path = tmp_path / "surrogate.yaml"
+    path.write_text(content, encoding="utf-8")
+
+    with pytest.raises(ValueError, match="Unicode scalar values"):
+        load_documents(path)

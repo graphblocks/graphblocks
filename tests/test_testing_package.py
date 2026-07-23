@@ -800,7 +800,7 @@ def test_testing_package_loads_shared_schema_tck_cases(monkeypatch) -> None:
     cases = graphblocks_testing.load_schema_tck_cases(ROOT / "tck" / "schema" / "cases.json")
     report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry()).run_cases(cases)
 
-    assert [case.kind for case in cases] == ["schema"] * 4
+    assert [case.kind for case in cases] == ["schema"] * 5
     assert any(not case.expected_ok for case in cases)
     assert report.ok
     assert {result.observed["valid"] for result in report.results} == {False, True}
@@ -900,6 +900,7 @@ def test_schema_suite_loader_executes_all_schema_fixtures(monkeypatch) -> None:
         "nested_schema_id",
         "missing_major_version",
         "noncanonical_major_version",
+        "multiple_version_separators",
         *(
             case.case_id
             for case in graphblocks_testing.load_schema_resource_tck_cases(
@@ -7827,6 +7828,7 @@ def test_testing_package_discovers_all_shared_tck_suite_manifests(monkeypatch) -
         "nested_schema_id",
         "missing_major_version",
         "noncanonical_major_version",
+        "multiple_version_separators",
         *(
             case.case_id
             for case in graphblocks_testing.load_schema_resource_tck_cases(

@@ -28,6 +28,7 @@ from .documents import FrozenList, _freeze_value
 SCHEMA_MANIFEST_VERSION = 1
 MAX_RESOURCE_DOCUMENT_DEPTH = 64
 _U32_MAX_DECIMAL = "4294967295"
+_RESOURCE_SCHEMA_DRAFT = "https://json-schema.org/draft/2020-12/schema"
 
 
 class _DiagnosticInteger(int):
@@ -132,6 +133,8 @@ class SchemaId:
             raise SchemaIdError("schema id must include a major version suffix")
         if name == "":
             raise SchemaIdError("schema id name must not be empty")
+        if "@" in name:
+            raise SchemaIdError("schema id name is not canonical")
         if version == "" or not all("0" <= char <= "9" for char in version):
             raise SchemaIdError("schema id major version must be a positive integer")
         if len(version) > 1 and version.startswith("0"):
@@ -198,12 +201,18 @@ class TypedValue:
     def from_value(cls, value: Mapping[str, object]) -> TypedValue:
         if not isinstance(value, Mapping):
             raise TypeError("typed value envelope must be a mapping")
-        schema_id = value.get("schema")
+        items = tuple(value.items())
+        envelope = dict(items)
+        if len(envelope) != len(items):
+            raise ValueError("typed value envelope must not contain duplicate fields")
+        if any(key not in {"schema", "value"} for key in envelope):
+            raise ValueError("typed value envelope contains unknown fields")
+        schema_id = envelope.get("schema")
         if not isinstance(schema_id, str):
             raise ValueError("typed value schema must be a string")
-        if "value" not in value:
+        if "value" not in envelope:
             raise ValueError("typed value must include a value field")
-        return cls.new(schema_id, value["value"])
+        return cls.new(schema_id, envelope["value"])
 
     def canonical_value(self) -> dict[str, object]:
         return {
@@ -429,6 +438,30 @@ def load_resource_schema(
 
     root = Path(schema_root) if schema_root is not None else _default_resource_schema_root()
     candidate = root.joinpath(*relative_path.split("/"))
+    if isinstance(root, Path):
+        current = root
+        try:
+            resolved_root = root.resolve(strict=True)
+            for part in PurePosixPath(relative_path).parts:
+                current = current / part
+                if current.is_symlink():
+                    raise SchemaManifestError(
+                        f"resource schema {relative_path} must be a regular "
+                        "non-symlinked file"
+                    )
+            resolved_candidate = candidate.resolve(strict=True)
+            resolved_candidate.relative_to(resolved_root)
+            if not candidate.is_file():
+                raise SchemaManifestError(
+                    f"resource schema {relative_path} must be a regular "
+                    "non-symlinked file"
+                )
+        except SchemaManifestError:
+            raise
+        except (OSError, ValueError) as error:
+            raise SchemaManifestError(
+                f"cannot load resource schema {relative_path}: {error}"
+            ) from error
     try:
         document = canonical_loads(candidate.read_text(encoding="utf-8"))
     except (OSError, TypeError, ValueError) as error:
@@ -437,6 +470,15 @@ def load_resource_schema(
         ) from error
     if not isinstance(document, Mapping):
         raise SchemaManifestError(f"resource schema {relative_path} must be a JSON object")
+    if document.get("$id") != relative_path:
+        raise SchemaManifestError(
+            f"resource schema {relative_path} must declare expected $id "
+            f"{relative_path!r}"
+        )
+    if document.get("$schema") != _RESOURCE_SCHEMA_DRAFT:
+        raise SchemaManifestError(
+            f"resource schema {relative_path} must declare draft 2020-12"
+        )
     try:
         Draft202012Validator.check_schema(document)
     except SchemaError as error:

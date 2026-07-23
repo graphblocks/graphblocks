@@ -65,6 +65,9 @@ def test_schema_id_rejects_missing_or_invalid_version() -> None:
     with pytest.raises(SchemaIdError, match="name is not canonical"):
         SchemaId.parse("schemas/Message Type@1")
 
+    with pytest.raises(SchemaIdError, match="name is not canonical"):
+        SchemaId.parse("schemas/Message@legacy@1")
+
 
 def test_schema_id_rejects_non_string_and_surrogate_values_cleanly() -> None:
     with pytest.raises(SchemaIdError, match="must be a string"):
@@ -95,6 +98,14 @@ def test_typed_value_rejects_malformed_direct_construction_and_envelopes() -> No
         TypedValue("schemas/Message@1", {})  # type: ignore[arg-type]
     with pytest.raises(TypeError, match="envelope must be a mapping"):
         TypedValue.from_value([])  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="contains unknown fields"):
+        TypedValue.from_value(
+            {
+                "schema": "schemas/Message@1",
+                "value": {},
+                "unexpected": True,
+            }
+        )
 
 
 def test_typed_value_rejects_non_json_values_at_construction() -> None:

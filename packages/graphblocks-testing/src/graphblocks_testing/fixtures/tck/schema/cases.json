@@ -34,5 +34,13 @@
       "valid": false,
       "error": "SchemaIdError"
     }
+  },
+  {
+    "name": "multiple_version_separators",
+    "schema_id": "schemas/Message@legacy@1",
+    "expected": {
+      "valid": false,
+      "error": "SchemaIdError"
+    }
   }
 ]

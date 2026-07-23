@@ -326,7 +326,16 @@ def _validate_json_value(value: object, *, source: str) -> None:
                 path=path,
                 source=source,
             )
-        if current is None or isinstance(current, (str, bool, int)):
+        if isinstance(current, str):
+            if any("\ud800" <= character <= "\udfff" for character in current):
+                raise CompositionError(
+                    "CompositionInvalidYaml",
+                    "YAML strings must contain only Unicode scalar values",
+                    path=path,
+                    source=source,
+                )
+            continue
+        if current is None or isinstance(current, (bool, int)):
             continue
         if isinstance(current, float):
             if not math.isfinite(current):
@@ -353,6 +362,16 @@ def _validate_json_value(value: object, *, source: str) -> None:
                         raise CompositionError(
                             "CompositionInvalidYaml",
                             "YAML mapping keys must be strings",
+                            path=path,
+                            source=source,
+                        )
+                    if any(
+                        "\ud800" <= character <= "\udfff"
+                        for character in key
+                    ):
+                        raise CompositionError(
+                            "CompositionInvalidYaml",
+                            "YAML strings must contain only Unicode scalar values",
                             path=path,
                             source=source,
                         )

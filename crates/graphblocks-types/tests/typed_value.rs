@@ -35,6 +35,18 @@ fn typed_value_rejects_invalid_schema_id() {
 }
 
 #[test]
+fn typed_value_deserialization_rejects_unknown_envelope_fields() {
+    let error = serde_json::from_value::<TypedValue>(json!({
+        "schema": "schemas/Message@1",
+        "value": {"text": "hello"},
+        "unexpected": true,
+    }))
+    .expect_err("unknown typed-value envelope fields must fail closed");
+
+    assert!(error.to_string().contains("unknown field"));
+}
+
+#[test]
 fn typed_value_matches_shared_tck_cases() -> Result<(), Box<dyn std::error::Error>> {
     let cases: Vec<Value> = serde_json::from_str(include_str!("fixtures/typed-values.json"))?;
 

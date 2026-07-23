@@ -79,6 +79,11 @@ def _validate_document_value(
                     raise ValueError(
                         f"{source}:{document_index}: YAML mapping keys must be strings"
                     )
+                if any("\ud800" <= character <= "\udfff" for character in key):
+                    raise ValueError(
+                        f"{source}:{document_index}: YAML strings must contain "
+                        "only Unicode scalar values"
+                    )
                 _validate_document_value(
                     source,
                     document_index,
@@ -110,7 +115,14 @@ def _validate_document_value(
             active.remove(identity)
         return
 
-    if value is None or isinstance(value, (str, bool, int)):
+    if isinstance(value, str):
+        if any("\ud800" <= character <= "\udfff" for character in value):
+            raise ValueError(
+                f"{source}:{document_index}: YAML strings must contain "
+                "only Unicode scalar values"
+            )
+        return
+    if value is None or isinstance(value, (bool, int)):
         return
     if isinstance(value, float):
         if math.isfinite(value):
