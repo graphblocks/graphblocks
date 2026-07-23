@@ -7,7 +7,6 @@ from pathlib import Path
 import sqlite3
 from threading import Lock
 import time
-from types import MappingProxyType
 from typing import Any, Callable, Literal, Protocol
 
 from .async_operation import VALID_ASYNC_OPERATION_KINDS
@@ -18,6 +17,7 @@ from .compiler import (
     compile_graph,
 )
 from .duration import parse_duration_milliseconds, parse_duration_seconds
+from .documents import FrozenDict, FrozenList
 from .evaluation import ModelVisibleToolRef
 from .leases import InMemoryLeasePool
 from .plugins import BlockCatalog, builtin_block_catalog
@@ -128,11 +128,16 @@ def _configured_retry_attempts(value: Any) -> int:
 
 def _freeze_json_like(value: Any) -> Any:
     if isinstance(value, Mapping):
-        return MappingProxyType({key: _freeze_json_like(nested) for key, nested in value.items()})
+        return FrozenDict(
+            {
+                key: _freeze_json_like(nested)
+                for key, nested in value.items()
+            }
+        )
     if isinstance(value, list):
-        return tuple(_freeze_json_like(nested) for nested in value)
+        return FrozenList(_freeze_json_like(nested) for nested in value)
     if isinstance(value, tuple):
-        return tuple(_freeze_json_like(nested) for nested in value)
+        return FrozenList(_freeze_json_like(nested) for nested in value)
     return value
 
 
@@ -586,7 +591,19 @@ class RuntimeCheckpoint:
                 raise ValueError(
                     f"runtime checkpoint {field_name} must not contain surrounding whitespace"
                 )
-        remaining_nodes = tuple(self.remaining_nodes)
+        if isinstance(
+            self.remaining_nodes,
+            (str, bytes, bytearray, Mapping),
+        ):
+            raise ValueError(
+                "runtime checkpoint remaining_nodes must contain exact non-empty strings"
+            )
+        try:
+            remaining_nodes = tuple(self.remaining_nodes)
+        except TypeError as error:
+            raise ValueError(
+                "runtime checkpoint remaining_nodes must contain exact non-empty strings"
+            ) from error
         if any(
             not isinstance(node, str)
             or not node.strip()
@@ -605,7 +622,7 @@ class RuntimeCheckpoint:
                 "runtime checkpoint wait_node must be present in remaining_nodes"
             )
         object.__setattr__(self, "remaining_nodes", tuple(sorted(remaining_nodes)))
-        if not self.state_digest.startswith("sha256:") or len(self.state_digest) != 71:
+        if re.fullmatch(r"sha256:[0-9a-f]{64}", self.state_digest) is None:
             raise ValueError(
                 "runtime checkpoint state_digest must be a canonical sha256 digest"
             )
@@ -730,6 +747,10 @@ class RuntimeCheckpoint:
             raise ValueError(
                 "runtime checkpoint waiting operation must not define both expires_at_unix_ms and infinite_wait_policy"
             )
+        if self.content_digest() != self.state_digest:
+            raise ValueError(
+                "runtime checkpoint state does not match the issuing runtime"
+            )
 
     def to_json(self) -> dict[str, object]:
         return {
@@ -779,11 +800,42 @@ class CallbackReceiptVerifier(Protocol):
 class RunResult:
     run_id: str
     status: Literal["succeeded", "failed", "cancelled", "waiting_callback"]
-    outputs: dict[str, Any]
+    outputs: Mapping[str, Any]
     journal: JournalLike
     checkpoint: RuntimeCheckpoint | None = None
 
     def __post_init__(self) -> None:
+        if (
+            not isinstance(self.run_id, str)
+            or not self.run_id.strip()
+            or self.run_id != self.run_id.strip()
+        ):
+            raise ValueError("runtime result run_id must be an exact non-empty string")
+        if self.status not in {
+            "succeeded",
+            "failed",
+            "cancelled",
+            "waiting_callback",
+        }:
+            raise ValueError(f"invalid runtime result status {self.status!r}")
+        if not isinstance(self.outputs, Mapping):
+            raise TypeError("runtime result outputs must be a mapping")
+        try:
+            output_snapshot = canonical_loads(
+                canonical_dumps(_mutable_json_like(self.outputs))
+            )
+        except (TypeError, ValueError) as error:
+            raise ValueError(
+                "runtime result outputs must contain only JSON values"
+            ) from error
+        if not isinstance(output_snapshot, dict):
+            raise TypeError("runtime result outputs must be a mapping")
+        object.__setattr__(self, "outputs", _freeze_json_like(output_snapshot))
+        if self.checkpoint is not None and not isinstance(
+            self.checkpoint,
+            RuntimeCheckpoint,
+        ):
+            raise TypeError("runtime result checkpoint must be a RuntimeCheckpoint")
         if self.status == "waiting_callback" and self.checkpoint is None:
             raise ValueError(
                 "waiting_callback runtime result requires a checkpoint"
@@ -791,6 +843,21 @@ class RunResult:
         if self.status != "waiting_callback" and self.checkpoint is not None:
             raise ValueError(
                 "terminal runtime result must not retain a checkpoint"
+            )
+        if self.checkpoint is not None and self.checkpoint.run_id != self.run_id:
+            raise ValueError("runtime result and checkpoint run ids must match")
+        journal_run_id = getattr(self.journal, "run_id", None)
+        if journal_run_id is not None and journal_run_id != self.run_id:
+            raise ValueError("runtime result and journal run ids must match")
+        expected_terminal_kind = {
+            "succeeded": "run_succeeded",
+            "failed": "run_failed",
+            "cancelled": "run_cancelled",
+            "waiting_callback": None,
+        }[self.status]
+        if getattr(self.journal, "terminal_kind", None) != expected_terminal_kind:
+            raise ValueError(
+                "runtime result status must match its terminal journal record"
             )
 
 

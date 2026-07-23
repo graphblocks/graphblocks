@@ -17,6 +17,7 @@ from graphblocks.runtime import (
     JournalRecord,
     JournalStateError,
     LocalRuntime,
+    RunResult,
     RuntimeRegistry,
     SQLiteExecutionJournal,
     stdlib_registry,
@@ -35,6 +36,34 @@ def _accept_callback_receipt(
     expected_release_digest,
 ) -> bool:
     return True
+
+
+def test_runtime_result_rejects_impossible_restored_state_and_freezes_outputs() -> None:
+    outputs = {"answer": {"parts": ["stable"]}}
+    journal = ExecutionJournal("run-result")
+    journal.append_terminal("run_succeeded", {"outputs": outputs})
+
+    result = RunResult("run-result", "succeeded", outputs, journal)
+
+    outputs["answer"]["parts"].append("caller-mutated")
+    assert result.outputs == {"answer": {"parts": ["stable"]}}
+    with pytest.raises(TypeError):
+        result.outputs["answer"] = {}  # type: ignore[index]
+    with pytest.raises(TypeError):
+        result.outputs["answer"]["parts"].append("direct-mutated")  # type: ignore[index,union-attr]
+
+    with pytest.raises(ValueError, match="invalid runtime result status"):
+        RunResult("run-result", "pending", {}, journal)  # type: ignore[arg-type]
+    with pytest.raises(
+        ValueError,
+        match="runtime result status must match its terminal journal record",
+    ):
+        RunResult("run-result", "failed", {}, journal)
+    with pytest.raises(
+        ValueError,
+        match="runtime result and journal run ids must match",
+    ):
+        RunResult("other-run", "succeeded", {}, journal)
 
 
 def test_runtime_rejects_competing_sources_before_overwriting_a_node_input() -> None:
@@ -947,6 +976,14 @@ def test_runtime_suspends_at_callback_wait_and_resumes_from_checkpoint() -> None
     for invalid_operation, expected_error in invalid_checkpoint_operations:
         with pytest.raises(ValueError, match=expected_error):
             replace(waiting.checkpoint, operation=invalid_operation)
+    with pytest.raises(
+        ValueError,
+        match="runtime checkpoint state_digest must be a canonical sha256 digest",
+    ):
+        replace(
+            waiting.checkpoint,
+            state_digest="sha256:" + "z" * 64,
+        )
 
     callback_receipt = {
         "operation_id": "operation-runtime-resume-1",

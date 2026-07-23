@@ -28,6 +28,7 @@ from graphblocks.orchestration import (
     TaskPlanCycleError,
     TaskPlanContextAccessError,
     TaskPlanDependencyError,
+    TaskPlanDuplicateStepError,
     TaskPlanIdentityError,
     TaskPlanLimitError,
     TaskPlanLimits,
@@ -66,6 +67,62 @@ def test_task_plan_patch_is_order_stable_and_revises_steps() -> None:
     assert [step.step_id for step in updated.steps] == ["draft", "verify"]
     assert updated.step("draft").description == "Draft response with citations"
     assert updated.content_digest() == updated.apply_patch(TaskPlanPatch("noop", "plan-1", 2)).content_digest()
+
+
+def test_task_plan_records_reject_ambiguous_restored_collections_and_revisions() -> None:
+    with pytest.raises(ValueError, match="task plan revision must be positive"):
+        TaskPlan("plan-1", "answer", revision=0)
+    with pytest.raises(
+        ValueError,
+        match="task plan patch base_revision must be positive",
+    ):
+        TaskPlanPatch("patch-1", "plan-1", 0)
+    with pytest.raises(
+        ValueError,
+        match="task step depends_on must be a collection of step ids",
+    ):
+        TaskStep("draft", "Draft response", depends_on="source")  # type: ignore[arg-type]
+    with pytest.raises(
+        ValueError,
+        match="task plan context_resources must be a collection of resource ids",
+    ):
+        TaskPlan("plan-1", "answer", context_resources="policy-doc")  # type: ignore[arg-type]
+    with pytest.raises(
+        TaskPlanContextAccessError,
+        match="invalid_mode",
+    ):
+        TaskContextAccess("draft", "policy-doc", "execute")  # type: ignore[arg-type]
+    with pytest.raises(
+        TaskPlanContextAccessError,
+        match="invalid_mode",
+    ):
+        TaskContextAccess("draft", "policy-doc", ["read"])  # type: ignore[arg-type]
+
+
+def test_task_plan_patch_rejects_duplicate_and_conflicting_step_operations() -> None:
+    with pytest.raises(TaskPlanDuplicateStepError) as duplicate:
+        TaskPlanPatch(
+            "patch-1",
+            "plan-1",
+            1,
+            upsert_steps=(
+                TaskStep("draft", "First draft"),
+                TaskStep("draft", "Replacement draft"),
+            ),
+        )
+    assert duplicate.value.step_id == "draft"
+
+    with pytest.raises(
+        ValueError,
+        match="must not both upsert and remove step 'draft'",
+    ):
+        TaskPlanPatch(
+            "patch-2",
+            "plan-1",
+            1,
+            upsert_steps=(TaskStep("draft", "Draft"),),
+            remove_step_ids=("draft",),
+        )
 
 
 def test_task_plan_records_detach_nested_metadata_from_callers() -> None:

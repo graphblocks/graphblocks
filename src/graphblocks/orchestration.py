@@ -99,9 +99,21 @@ class TaskStep:
     def __post_init__(self) -> None:
         _validate_task_identity("step", "step_id", self.step_id)
         _validate_task_identity("step", "description", self.description)
-        for dependency_id in self.depends_on:
+        if isinstance(self.depends_on, (str, bytes, bytearray, Mapping)):
+            raise ValueError(
+                "task step depends_on must be a collection of step ids"
+            )
+        try:
+            depends_on = tuple(self.depends_on)
+        except TypeError as error:
+            raise ValueError(
+                "task step depends_on must be a collection of step ids"
+            ) from error
+        for dependency_id in depends_on:
             _validate_task_identity("step", "depends_on", dependency_id)
-        object.__setattr__(self, "depends_on", tuple(self.depends_on))
+        if len(set(depends_on)) != len(depends_on):
+            raise ValueError("task step depends_on must not contain duplicates")
+        object.__setattr__(self, "depends_on", depends_on)
         object.__setattr__(self, "metadata", _copy_metadata("task step", self.metadata))
 
     def canonical_value(self) -> dict[str, object]:
@@ -126,10 +138,58 @@ class TaskPlanPatch:
     def __post_init__(self) -> None:
         _validate_task_identity("patch", "patch_id", self.patch_id)
         _validate_task_identity("patch", "base_plan_id", self.base_plan_id)
-        object.__setattr__(self, "upsert_steps", tuple(self.upsert_steps))
-        for step_id in self.remove_step_ids:
+        if (
+            not isinstance(self.base_revision, int)
+            or isinstance(self.base_revision, bool)
+            or self.base_revision < 1
+        ):
+            raise ValueError("task plan patch base_revision must be positive")
+        if isinstance(self.upsert_steps, (str, bytes, bytearray, Mapping)):
+            raise ValueError(
+                "task plan patch upsert_steps must contain TaskStep records"
+            )
+        try:
+            upsert_steps = tuple(self.upsert_steps)
+        except TypeError as error:
+            raise ValueError(
+                "task plan patch upsert_steps must contain TaskStep records"
+            ) from error
+        if any(not isinstance(step, TaskStep) for step in upsert_steps):
+            raise ValueError(
+                "task plan patch upsert_steps must contain TaskStep records"
+            )
+        upsert_step_ids = [step.step_id for step in upsert_steps]
+        if len(set(upsert_step_ids)) != len(upsert_step_ids):
+            duplicate_step_id = next(
+                step_id
+                for index, step_id in enumerate(upsert_step_ids)
+                if step_id in upsert_step_ids[:index]
+            )
+            raise TaskPlanDuplicateStepError(duplicate_step_id)
+        object.__setattr__(self, "upsert_steps", upsert_steps)
+        if isinstance(self.remove_step_ids, (str, bytes, bytearray, Mapping)):
+            raise ValueError(
+                "task plan patch remove_step_ids must be a collection of step ids"
+            )
+        try:
+            remove_step_ids = tuple(self.remove_step_ids)
+        except TypeError as error:
+            raise ValueError(
+                "task plan patch remove_step_ids must be a collection of step ids"
+            ) from error
+        for step_id in remove_step_ids:
             _validate_task_identity("patch", "remove_step_ids", step_id)
-        object.__setattr__(self, "remove_step_ids", tuple(sorted(set(self.remove_step_ids))))
+        if len(set(remove_step_ids)) != len(remove_step_ids):
+            raise ValueError(
+                "task plan patch remove_step_ids must not contain duplicates"
+            )
+        overlap = set(upsert_step_ids) & set(remove_step_ids)
+        if overlap:
+            raise ValueError(
+                "task plan patch must not both upsert and remove step "
+                f"{min(overlap)!r}"
+            )
+        object.__setattr__(self, "remove_step_ids", tuple(sorted(remove_step_ids)))
         object.__setattr__(self, "metadata", _copy_metadata("task plan patch", self.metadata))
 
 
@@ -164,6 +224,18 @@ class TaskContextAccess:
     def __post_init__(self) -> None:
         _validate_task_identity("context_access", "step_id", self.step_id)
         _validate_task_identity("context_access", "resource_id", self.resource_id)
+        if (
+            not isinstance(self.mode, str)
+            or self.mode not in VALID_CONTEXT_ACCESS_MODES
+        ):
+            raise TaskPlanContextAccessError(
+                self.step_id,
+                self.resource_id,
+                str(self.mode),
+                "invalid_mode",
+            )
+        if self.reason is not None:
+            _validate_task_identity("context_access", "reason", self.reason)
 
     def canonical_value(self) -> dict[str, object]:
         return {
@@ -244,17 +316,84 @@ class TaskPlan:
     def __post_init__(self) -> None:
         _validate_task_identity("plan", "plan_id", self.plan_id)
         _validate_task_identity("plan", "objective", self.objective)
-        object.__setattr__(self, "steps", tuple(sorted(self.steps, key=lambda step: step.step_id)))
+        if (
+            not isinstance(self.revision, int)
+            or isinstance(self.revision, bool)
+            or self.revision < 1
+        ):
+            raise ValueError("task plan revision must be positive")
+        if not isinstance(self.limits, TaskPlanLimits):
+            raise ValueError("task plan limits must be TaskPlanLimits")
+        if isinstance(self.steps, (str, bytes, bytearray, Mapping)):
+            raise ValueError("task plan steps must contain TaskStep records")
+        try:
+            steps = tuple(self.steps)
+        except TypeError as error:
+            raise ValueError(
+                "task plan steps must contain TaskStep records"
+            ) from error
+        if any(not isinstance(step, TaskStep) for step in steps):
+            raise ValueError("task plan steps must contain TaskStep records")
+        object.__setattr__(
+            self,
+            "steps",
+            tuple(sorted(steps, key=lambda step: step.step_id)),
+        )
         object.__setattr__(self, "metadata", _copy_metadata("task plan", self.metadata))
-        for resource_id in self.context_resources:
+        if isinstance(
+            self.context_resources,
+            (str, bytes, bytearray, Mapping),
+        ):
+            raise ValueError(
+                "task plan context_resources must be a collection of resource ids"
+            )
+        try:
+            context_resources = tuple(self.context_resources)
+        except TypeError as error:
+            raise ValueError(
+                "task plan context_resources must be a collection of resource ids"
+            ) from error
+        for resource_id in context_resources:
             _validate_task_identity("plan", "context_resources", resource_id)
-        object.__setattr__(self, "context_resources", tuple(sorted(set(self.context_resources))))
+        if len(set(context_resources)) != len(context_resources):
+            raise ValueError(
+                "task plan context_resources must not contain duplicates"
+            )
+        object.__setattr__(
+            self,
+            "context_resources",
+            tuple(sorted(context_resources)),
+        )
+        if isinstance(
+            self.context_access,
+            (str, bytes, bytearray, Mapping),
+        ):
+            raise ValueError(
+                "task plan context_access must contain TaskContextAccess records"
+            )
+        try:
+            context_access = tuple(self.context_access)
+        except TypeError as error:
+            raise ValueError(
+                "task plan context_access must contain TaskContextAccess records"
+            ) from error
+        if any(
+            not isinstance(access, TaskContextAccess)
+            for access in context_access
+        ):
+            raise ValueError(
+                "task plan context_access must contain TaskContextAccess records"
+            )
+        if len(set(context_access)) != len(context_access):
+            raise ValueError(
+                "task plan context_access must not contain duplicates"
+            )
         object.__setattr__(
             self,
             "context_access",
             tuple(
                 sorted(
-                    self.context_access,
+                    context_access,
                     key=lambda access: (access.step_id, access.resource_id, access.mode),
                 )
             ),

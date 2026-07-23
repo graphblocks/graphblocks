@@ -114,7 +114,7 @@ def test_execution_journal_enforces_terminal_kind_api(tmp_path, sqlite: bool) ->
     with pytest.raises(ValueError, match="terminal kind is invalid"):
         journal.append_terminal("node_started", {"node": "render"})  # type: ignore[arg-type]
 
-    assert journal.records == []
+    assert tuple(journal.records) == ()
 
 
 def test_sqlite_execution_journal_rejects_append_after_terminal_on_reopen(tmp_path) -> None:
