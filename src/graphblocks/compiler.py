@@ -68,6 +68,15 @@ ORDER_CAPABLE_CALLBACK_TARGETS = frozenset({"webhook", "websocket", "sse"})
 DEFAULT_CALLBACK_MAX_PAYLOAD_BYTES = 262_144
 
 
+def _diagnostic_value(value: object) -> str:
+    try:
+        return str(value)
+    except (TypeError, ValueError):
+        if isinstance(value, int) and not isinstance(value, bool):
+            return "<arbitrary-size integer>"
+        return "<unprintable value>"
+
+
 def _config_error_path(base: str, error: ValidationError) -> str:
     path = base
     for part in error.absolute_path:
@@ -109,6 +118,17 @@ def _config_error_message(error: ValidationError) -> str:
         return "value must match at least one allowed schema"
     if error.validator == "not":
         return "value matches a forbidden schema"
+    if error.validator in {
+        "minimum",
+        "maximum",
+        "exclusiveMinimum",
+        "exclusiveMaximum",
+        "multipleOf",
+    }:
+        return (
+            f"value {_diagnostic_value(error.instance)} violates "
+            f"the {error.validator} constraint"
+        )
     return error.message
 
 
@@ -738,6 +758,10 @@ def compile_graph(
     *,
     allow_unknown_blocks: bool = False,
 ) -> Plan:
+    if not isinstance(document, dict):
+        raise TypeError("graph document must be a mapping")
+    if block_catalog is not None and not isinstance(block_catalog, BlockCatalog):
+        raise TypeError("block_catalog must be a BlockCatalog")
     if not isinstance(allow_unknown_blocks, bool):
         raise TypeError("allow_unknown_blocks must be a boolean")
     api_version = document.get("apiVersion")
@@ -777,7 +801,7 @@ def compile_graph(
             ]
         }
         return Plan(
-            document,
+            invalid_resource_identity,
             canonical_hash(invalid_resource_identity),
             DiagnosticSet(
                 tuple(
@@ -800,9 +824,16 @@ def compile_graph(
         return Plan(normalized, canonical_hash(normalized), DiagnosticSet(tuple(diagnostics)))
 
     schema_violations = ()
-    if api_version not in {GRAPH_API_VERSION, *LEGACY_GRAPH_API_VERSIONS}:
+    if (
+        not isinstance(api_version, str)
+        or api_version not in {GRAPH_API_VERSION, *LEGACY_GRAPH_API_VERSIONS}
+    ):
         diagnostics.append(
-            Diagnostic("GB0002", f"unsupported Graph apiVersion {api_version!r}", "$.apiVersion")
+            Diagnostic(
+                "GB0002",
+                f"unsupported Graph apiVersion {_diagnostic_value(api_version)}",
+                "$.apiVersion",
+            )
         )
     else:
         schema_violations = resource_schema_errors(migrated)
@@ -1088,7 +1119,7 @@ def compile_graph(
                 diagnostics.append(
                     Diagnostic(
                         "GB1030",
-                        f"invalid output delivery mode {mode}",
+                        f"invalid output delivery mode {_diagnostic_value(mode)}",
                         "$.spec.outputPolicy.delivery.mode",
                     )
                 )
@@ -1099,7 +1130,7 @@ def compile_graph(
                 diagnostics.append(
                     Diagnostic(
                         "GB1044",
-                        f"invalid violation action {delivery_on_violation}",
+                        f"invalid violation action {_diagnostic_value(delivery_on_violation)}",
                         "$.spec.outputPolicy.delivery.onViolation",
                     )
                 )
@@ -1116,7 +1147,8 @@ def compile_graph(
                 diagnostics.append(
                     Diagnostic(
                         "GB1028",
-                        f"invalid draft disposition {delivered_draft_disposition}",
+                        "invalid draft disposition "
+                        f"{_diagnostic_value(delivered_draft_disposition)}",
                         delivered_draft_path,
                     )
                 )
@@ -1133,7 +1165,7 @@ def compile_graph(
                             diagnostics.append(
                                 Diagnostic(
                                     "GB1029",
-                                    f"invalid flush boundary {boundary}",
+                                    f"invalid flush boundary {_diagnostic_value(boundary)}",
                                     f"{flush_boundaries_path}[{boundary_index}]",
                                 )
                             )
@@ -1213,7 +1245,8 @@ def compile_graph(
                     diagnostics.append(
                         Diagnostic(
                             "GB1033",
-                            f"invalid output policy enforcement point {enforcement_point}",
+                            "invalid output policy enforcement point "
+                            f"{_diagnostic_value(enforcement_point)}",
                             f"$.spec.outputPolicy.evaluation.enforcementPoints[{index}]",
                         )
                     )
@@ -1300,7 +1333,7 @@ def compile_graph(
                 diagnostics.append(
                     Diagnostic(
                         "GB1031",
-                        f"invalid output disposition {disposition}",
+                        f"invalid output disposition {_diagnostic_value(disposition)}",
                         "$.spec.outputPolicy.onViolation.disposition",
                     )
                 )
@@ -1319,7 +1352,8 @@ def compile_graph(
                 diagnostics.append(
                     Diagnostic(
                         "GB1036",
-                        f"invalid provider cancellation {provider_cancellation_mode}",
+                        "invalid provider cancellation "
+                        f"{_diagnostic_value(provider_cancellation_mode)}",
                         provider_cancellation_path,
                     )
                 )
@@ -1335,7 +1369,8 @@ def compile_graph(
                 diagnostics.append(
                     Diagnostic(
                         "GB1035",
-                        f"invalid pending tool calls disposition {pending_tool_calls_disposition}",
+                        "invalid pending tool calls disposition "
+                        f"{_diagnostic_value(pending_tool_calls_disposition)}",
                         "$.spec.outputPolicy.onViolation.pendingToolCalls.disposition",
                     )
                 )
@@ -1350,7 +1385,8 @@ def compile_graph(
                 diagnostics.append(
                     Diagnostic(
                         "GB1028",
-                        f"invalid draft disposition {delivered_draft_disposition}",
+                        "invalid draft disposition "
+                        f"{_diagnostic_value(delivered_draft_disposition)}",
                         "$.spec.outputPolicy.onViolation.deliveredDraft.disposition",
                     )
                 )
@@ -1366,7 +1402,8 @@ def compile_graph(
                 diagnostics.append(
                     Diagnostic(
                         "GB1032",
-                        f"invalid output durable result {durable_result_disposition}",
+                        "invalid output durable result "
+                        f"{_diagnostic_value(durable_result_disposition)}",
                         "$.spec.outputPolicy.onViolation.durableResult.disposition",
                     )
                 )
@@ -1506,7 +1543,7 @@ def compile_graph(
                     diagnostics.append(
                         Diagnostic(
                             "GB1040",
-                            f"invalid tool effect {effect}",
+                            f"invalid tool effect {_diagnostic_value(effect)}",
                             effect_path,
                         )
                     )
@@ -1531,7 +1568,7 @@ def compile_graph(
                     diagnostics.append(
                         Diagnostic(
                             "GB1037",
-                            f"invalid tool approval {mode}",
+                            f"invalid tool approval {_diagnostic_value(mode)}",
                             f"$.spec.bindings.tools.{tool_key}.approval.mode",
                         )
                     )
@@ -1561,7 +1598,7 @@ def compile_graph(
                     diagnostics.append(
                         Diagnostic(
                             "GB1037",
-                            f"invalid tool approval {approval}",
+                            f"invalid tool approval {_diagnostic_value(approval)}",
                             f"$.spec.bindings.tools.{tool_key}.approval",
                         )
                     )
@@ -1581,7 +1618,7 @@ def compile_graph(
                 diagnostics.append(
                     Diagnostic(
                         "GB1042",
-                        f"invalid tool idempotency {idempotency}",
+                        f"invalid tool idempotency {_diagnostic_value(idempotency)}",
                         f"$.spec.bindings.tools.{tool_key}.idempotency",
                     )
                 )
@@ -1593,7 +1630,7 @@ def compile_graph(
                 diagnostics.append(
                     Diagnostic(
                         "GB1038",
-                        f"invalid tool cancellation {cancellation}",
+                        f"invalid tool cancellation {_diagnostic_value(cancellation)}",
                         f"$.spec.bindings.tools.{tool_key}.cancellation",
                     )
                 )
@@ -1606,7 +1643,7 @@ def compile_graph(
                 diagnostics.append(
                     Diagnostic(
                         "GB1043",
-                        f"invalid tool result mode {result_mode}",
+                        f"invalid tool result mode {_diagnostic_value(result_mode)}",
                         f"$.spec.bindings.tools.{tool_key}.{result_mode_key}",
                     )
                 )

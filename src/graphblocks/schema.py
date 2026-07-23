@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
+from copy import deepcopy
 from dataclasses import dataclass, field
 from decimal import Decimal
 from importlib import resources
@@ -8,21 +9,53 @@ from importlib.resources.abc import Traversable
 import math
 from pathlib import Path, PurePosixPath
 import re
+from typing import Any
 
-from jsonschema import Draft202012Validator
+from jsonschema import Draft202012Validator, validators
 from jsonschema.exceptions import SchemaError, ValidationError
 
 from .canonical import (
+    _MANUAL_INTEGER_BIT_LENGTH,
     _has_unicode_surrogate,
     canonical_dumps,
     canonical_hash,
     canonical_loads,
 )
+from .documents import _freeze_value
 
 
 SCHEMA_MANIFEST_VERSION = 1
 MAX_RESOURCE_DOCUMENT_DEPTH = 64
 _U32_MAX_DECIMAL = "4294967295"
+
+
+class _DiagnosticInteger(int):
+    def __repr__(self) -> str:
+        return "<arbitrary-size integer>"
+
+    def __str__(self) -> str:
+        return "<arbitrary-size integer>"
+
+
+def _validate_type_without_instance_repr(
+    validator: Any,
+    expected_types: str | list[str],
+    instance: object,
+    _schema: Mapping[str, object],
+) -> Iterable[ValidationError]:
+    type_names = (
+        expected_types if isinstance(expected_types, list) else [expected_types]
+    )
+    if not any(
+        validator.is_type(instance, type_name) for type_name in type_names
+    ):
+        yield ValidationError("value does not have an allowed JSON type")
+
+
+_ResourceValidator = validators.extend(
+    Draft202012Validator,
+    {"type": _validate_type_without_instance_repr},
+)
 
 
 class SchemaIdError(ValueError):
@@ -80,8 +113,14 @@ class SchemaId:
 
     def __post_init__(self) -> None:
         raw = self.raw
+        if not isinstance(raw, str):
+            raise SchemaIdError("schema id must be a string")
         if raw == "":
             raise SchemaIdError("schema id must not be empty")
+        if _has_unicode_surrogate(raw):
+            raise SchemaIdError(
+                "schema id must contain only Unicode scalar values"
+            )
         if raw.strip() != raw:
             raise SchemaIdError("schema id name is not canonical")
         if any(character.isspace() for character in raw):
@@ -134,39 +173,19 @@ class TypedValue:
     value: object
 
     def __post_init__(self) -> None:
-        stack: list[tuple[object, bool]] = [(self.value, False)]
-        active_containers: set[int] = set()
-        while stack:
-            current, leaving = stack.pop()
-            if leaving:
-                active_containers.remove(id(current))
-                continue
-            if current is None or isinstance(current, (str, bool, int, float, Decimal)):
-                continue
-            if isinstance(current, list):
-                if id(current) in active_containers:
-                    raise ValueError("typed value value must be canonical JSON")
-                active_containers.add(id(current))
-                stack.append((current, True))
-                stack.extend((item, False) for item in current)
-                continue
-            if isinstance(current, dict):
-                if id(current) in active_containers:
-                    raise ValueError("typed value value must be canonical JSON")
-                active_containers.add(id(current))
-                stack.append((current, True))
-                for key, nested in current.items():
-                    if not isinstance(key, str):
-                        raise ValueError("typed value value must be canonical JSON")
-                    stack.append((nested, False))
-                continue
-            raise ValueError("typed value value must be canonical JSON")
-
+        if not isinstance(self.schema_id, SchemaId):
+            raise TypeError("typed value schema_id must be a SchemaId")
         try:
-            canonical_value = canonical_loads(canonical_dumps(self.value))
+            canonical_value = canonical_loads(
+                canonical_dumps(self.value, _reject_tuples=True)
+            )
         except (TypeError, ValueError) as error:
             raise ValueError("typed value value must be canonical JSON") from error
-        object.__setattr__(self, "value", canonical_value)
+        object.__setattr__(
+            self,
+            "value",
+            _freeze_value("typed value", canonical_value),
+        )
 
     @classmethod
     def new(cls, schema_id: str | SchemaId, value: object) -> TypedValue:
@@ -176,6 +195,8 @@ class TypedValue:
 
     @classmethod
     def from_value(cls, value: Mapping[str, object]) -> TypedValue:
+        if not isinstance(value, Mapping):
+            raise TypeError("typed value envelope must be a mapping")
         schema_id = value.get("schema")
         if not isinstance(schema_id, str):
             raise ValueError("typed value schema must be a string")
@@ -201,6 +222,9 @@ class SchemaManifestEntry:
     draft: str | None = None
     title: str | None = None
 
+    def __post_init__(self) -> None:
+        _validate_schema_manifest_entry(self)
+
     def manifest_entry(self) -> dict[str, object]:
         entry: dict[str, object] = {
             "schemaId": self.schema_id,
@@ -214,36 +238,82 @@ class SchemaManifestEntry:
         return entry
 
 
+def _validate_schema_manifest_entry(entry: SchemaManifestEntry) -> None:
+    if (
+        not isinstance(entry.schema_id, str)
+        or not entry.schema_id
+        or entry.schema_id != entry.schema_id.strip()
+        or _has_unicode_surrogate(entry.schema_id)
+    ):
+        raise SchemaManifestError(
+            "schema manifest entries require a non-empty schema id"
+        )
+    if (
+        not isinstance(entry.path, str)
+        or not entry.path
+        or entry.path != entry.path.strip()
+        or _has_unicode_surrogate(entry.path)
+    ):
+        raise SchemaManifestError(
+            f"schema manifest entry {entry.schema_id} requires a relative path"
+        )
+    path = entry.path
+    path_parts = path.split("/")
+    canonical_path = PurePosixPath(path).as_posix()
+    if (
+        path != canonical_path
+        or PurePosixPath(path).is_absolute()
+        or "\\" in path
+        or "\x00" in path
+        or any(part in {"", ".", ".."} for part in path_parts)
+        or re.match(r"^[A-Za-z]:", path) is not None
+    ):
+        raise SchemaManifestError(
+            f"schema manifest entry {entry.schema_id} "
+            "requires a safe canonical relative path"
+        )
+    if not isinstance(entry.digest, str) or re.fullmatch(
+        r"sha256:[0-9a-f]{64}", entry.digest
+    ) is None:
+        raise SchemaManifestError(
+            f"schema manifest entry {entry.schema_id} requires a sha256 digest"
+        )
+    for field_name, field_value in (
+        ("draft", entry.draft),
+        ("title", entry.title),
+    ):
+        if field_value is not None and (
+            not isinstance(field_value, str)
+            or _has_unicode_surrogate(field_value)
+        ):
+            raise SchemaManifestError(
+                f"schema manifest entry {entry.schema_id} {field_name} "
+                "must be a Unicode scalar string"
+            )
+
+
 @dataclass(frozen=True, slots=True)
 class SchemaManifest:
     entries: tuple[SchemaManifestEntry, ...]
 
     def __post_init__(self) -> None:
-        entries = tuple(sorted(self.entries, key=lambda entry: (entry.schema_id, entry.path)))
+        try:
+            source_entries = tuple(self.entries)
+        except TypeError as error:
+            raise SchemaManifestError(
+                "schema manifest entries must be an iterable of manifest entries"
+            ) from error
+        if any(not isinstance(entry, SchemaManifestEntry) for entry in source_entries):
+            raise SchemaManifestError(
+                "schema manifest entries must contain only SchemaManifestEntry values"
+            )
+        for entry in source_entries:
+            _validate_schema_manifest_entry(entry)
+        entries = tuple(
+            sorted(source_entries, key=lambda entry: (entry.schema_id, entry.path))
+        )
         seen: set[str] = set()
         for entry in entries:
-            if not isinstance(entry.schema_id, str) or not entry.schema_id.strip():
-                raise SchemaManifestError("schema manifest entries require a non-empty schema id")
-            if not isinstance(entry.path, str) or not entry.path.strip():
-                raise SchemaManifestError(f"schema manifest entry {entry.schema_id} requires a relative path")
-            path = entry.path
-            path_parts = path.split("/")
-            canonical_path = PurePosixPath(path).as_posix()
-            if (
-                path != canonical_path
-                or PurePosixPath(path).is_absolute()
-                or "\\" in path
-                or "\x00" in path
-                or any(part in {"", ".", ".."} for part in path_parts)
-                or re.match(r"^[A-Za-z]:", path) is not None
-            ):
-                raise SchemaManifestError(
-                    f"schema manifest entry {entry.schema_id} requires a safe canonical relative path"
-                )
-            if not isinstance(entry.digest, str) or re.fullmatch(
-                r"sha256:[0-9a-f]{64}", entry.digest
-            ) is None:
-                raise SchemaManifestError(f"schema manifest entry {entry.schema_id} requires a sha256 digest")
             if entry.schema_id in seen:
                 raise SchemaManifestError(f"duplicate schema id {entry.schema_id}")
             seen.add(entry.schema_id)
@@ -605,8 +675,35 @@ def resource_schema_errors(
         )
 
     schema = load_resource_schema(api_version, kind, schema_root=schema_root)
-    validator = Draft202012Validator(schema)
-    violations = [_schema_violation(error) for error in validator.iter_errors(document)]
+    validation_document = deepcopy(document)
+    validation_values: list[object] = [validation_document]
+    while validation_values:
+        value = validation_values.pop()
+        if isinstance(value, dict):
+            for key, child in value.items():
+                if (
+                    isinstance(child, int)
+                    and not isinstance(child, bool)
+                    and child.bit_length() > _MANUAL_INTEGER_BIT_LENGTH
+                ):
+                    value[key] = _DiagnosticInteger(child)
+                elif isinstance(child, (dict, list)):
+                    validation_values.append(child)
+        elif isinstance(value, list):
+            for index, child in enumerate(value):
+                if (
+                    isinstance(child, int)
+                    and not isinstance(child, bool)
+                    and child.bit_length() > _MANUAL_INTEGER_BIT_LENGTH
+                ):
+                    value[index] = _DiagnosticInteger(child)
+                elif isinstance(child, (dict, list)):
+                    validation_values.append(child)
+    validator = _ResourceValidator(schema)
+    violations = [
+        _schema_violation(error)
+        for error in validator.iter_errors(validation_document)
+    ]
     return tuple(
         sorted(
             violations,

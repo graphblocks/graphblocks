@@ -118,6 +118,34 @@ def test_current_stable_resources_must_already_satisfy_the_stable_schema() -> No
     assert plugin_error.value.path.startswith("$.spec.blocks[0]")
 
 
+def test_migration_rejects_invalid_root_and_recursive_documents_cleanly() -> None:
+    with pytest.raises(TypeError, match="must be a mapping"):
+        migrate_document([])  # type: ignore[arg-type]
+
+    recursive: dict[str, object] = {
+        "apiVersion": GRAPH_API_VERSION,
+        "kind": "Graph",
+    }
+    recursive["spec"] = recursive
+    with pytest.raises(ValueError, match="canonical JSON values"):
+        migrate_document(recursive)
+
+
+def test_migration_reports_non_string_resource_versions() -> None:
+    document = {
+        "apiVersion": ["graphblocks.ai/v1"],
+        "kind": "Graph",
+        "metadata": {"name": "bad-version"},
+        "spec": {"nodes": {}},
+    }
+
+    with pytest.raises(MigrationError) as captured:
+        migrate_document(document)
+
+    assert captured.value.code == "GB0002"
+    assert captured.value.path == "$.apiVersion"
+
+
 def test_migrate_cli_emits_normalized_v1_graph(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     path = tmp_path / "legacy.yaml"
     path.write_text(

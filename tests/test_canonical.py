@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+from collections.abc import Iterator, Mapping
 from decimal import Decimal
 from types import SimpleNamespace
 
@@ -240,6 +241,52 @@ def test_canonical_json_allows_shared_non_recursive_values() -> None:
     assert canonical_dumps({"left": shared, "right": shared}) == (
         '{"left":{"value":1.25},"right":{"value":1.25}}'
     )
+
+
+def test_canonical_json_snapshots_stateful_mappings_once() -> None:
+    class StatefulMapping(Mapping[str, object]):
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def __getitem__(self, key: str) -> object:
+            raise AssertionError("__getitem__ must not be called")
+
+        def __iter__(self) -> Iterator[str]:
+            raise AssertionError("__iter__ must not be called")
+
+        def __len__(self) -> int:
+            return 1
+
+        def items(self) -> object:
+            self.calls += 1
+            if self.calls == 1:
+                return (("stable", Decimal("1.25")),)
+            return (("changed", Decimal("9.5")),)
+
+    value = StatefulMapping()
+
+    assert canonical_dumps(value) == '{"stable":1.25}'
+    assert value.calls == 1
+
+
+def test_canonical_json_does_not_impose_a_python_only_node_limit() -> None:
+    value = [None] * 100_001
+
+    encoded = canonical_dumps(value)
+
+    assert canonical_loads(encoded) == value
+
+
+def test_canonical_json_preserves_integers_beyond_python_digit_limits() -> None:
+    positive_digits = "1" + "0" * 5_000
+    negative_digits = "-" + positive_digits
+
+    positive = canonical_loads(positive_digits)
+    negative = canonical_loads(negative_digits)
+
+    assert canonical_dumps(positive) == positive_digits
+    assert canonical_dumps(negative) == negative_digits
+    assert canonical_dumps(10**5_000) == positive_digits
 
 
 def test_canonical_json_rejects_excessive_nesting_without_recursion_errors() -> None:

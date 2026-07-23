@@ -66,6 +66,13 @@ def test_schema_id_rejects_missing_or_invalid_version() -> None:
         SchemaId.parse("schemas/Message Type@1")
 
 
+def test_schema_id_rejects_non_string_and_surrogate_values_cleanly() -> None:
+    with pytest.raises(SchemaIdError, match="must be a string"):
+        SchemaId.parse(None)  # type: ignore[arg-type]
+    with pytest.raises(SchemaIdError, match="Unicode scalar values"):
+        SchemaId.parse("schemas/\ud800@1")
+
+
 def test_typed_value_preserves_schema_id_and_round_trips_canonical_json() -> None:
     value = TypedValue.new("schemas/Message@1", {"z": 1, "a": [True]})
 
@@ -83,6 +90,13 @@ def test_typed_value_rejects_invalid_schema_id() -> None:
         TypedValue.new("schemas/Message", {})
 
 
+def test_typed_value_rejects_malformed_direct_construction_and_envelopes() -> None:
+    with pytest.raises(TypeError, match="schema_id must be a SchemaId"):
+        TypedValue("schemas/Message@1", {})  # type: ignore[arg-type]
+    with pytest.raises(TypeError, match="envelope must be a mapping"):
+        TypedValue.from_value([])  # type: ignore[arg-type]
+
+
 def test_typed_value_rejects_non_json_values_at_construction() -> None:
     with pytest.raises(ValueError, match="canonical JSON"):
         TypedValue.new("schemas/Message@1", object())
@@ -95,6 +109,41 @@ def test_typed_value_rejects_non_json_values_at_construction() -> None:
 
     with pytest.raises(ValueError, match="canonical JSON"):
         TypedValue.new("schemas/Message@1", "\ud800")
+
+
+def test_typed_value_snapshots_stateful_mappings_once() -> None:
+    class StatefulDict(dict[str, object]):
+        def __init__(self) -> None:
+            super().__init__()
+            self.calls = 0
+
+        def items(self) -> object:
+            self.calls += 1
+            if self.calls == 1:
+                return (("stable", 1),)
+            return (("changed", 2),)
+
+    source = StatefulDict()
+
+    value = TypedValue.new("schemas/Message@1", source)
+
+    assert value.value == {"stable": 1}
+    assert source.calls == 1
+
+
+def test_typed_value_deeply_freezes_state_and_returns_mutable_projections() -> None:
+    source = {"nested": {"items": [1]}}
+    value = TypedValue.new("schemas/Message@1", source)
+
+    source["nested"]["items"].append(2)
+
+    assert value.value == {"nested": {"items": [1]}}
+    with pytest.raises(TypeError, match="frozen list"):
+        value.value["nested"]["items"].append(3)  # type: ignore[index,union-attr]
+
+    projection = value.canonical_value()
+    projection["value"]["nested"]["items"].append(4)  # type: ignore[index,union-attr]
+    assert value.value == {"nested": {"items": [1]}}
 
 
 def test_typed_value_rejects_python_only_json_like_values() -> None:
@@ -332,6 +381,59 @@ def test_schema_manifest_rejects_noncanonical_sha256_digests(digest: str) -> Non
         )
 
 
+def test_schema_manifest_rejects_malformed_entry_collections_cleanly() -> None:
+    with pytest.raises(SchemaManifestError, match="non-empty schema id"):
+        SchemaManifestEntry(  # type: ignore[arg-type]
+            schema_id=1,
+            path="schemas/schema.json",
+            digest="sha256:" + "0" * 64,
+        )
+
+    with pytest.raises(SchemaManifestError, match="SchemaManifestEntry"):
+        SchemaManifest(("not-an-entry",))  # type: ignore[arg-type]
+
+    with pytest.raises(SchemaManifestError, match="Unicode scalar string"):
+        SchemaManifest(
+            (
+                SchemaManifestEntry(
+                    schema_id="example.com/schema.json",
+                    path="schemas/schema.json",
+                    digest="sha256:" + "0" * 64,
+                    title="\ud800",
+                ),
+            )
+        )
+
+
+def test_schema_manifest_validates_sort_fields_before_sorting() -> None:
+    digest = "sha256:" + "0" * 64
+    with pytest.raises(SchemaManifestError, match="non-empty schema id"):
+        SchemaManifest(
+            (
+                SchemaManifestEntry(
+                    schema_id="example.com/valid.json",
+                    path="valid.json",
+                    digest=digest,
+                ),
+                SchemaManifestEntry(  # type: ignore[arg-type]
+                    schema_id=1,
+                    path="invalid.json",
+                    digest=digest,
+                ),
+            )
+        )
+    with pytest.raises(SchemaManifestError, match="relative path"):
+        SchemaManifest(
+            (
+                SchemaManifestEntry(
+                    schema_id="example.com/surrogate.json",
+                    path="schema-\ud800.json",
+                    digest=digest,
+                ),
+            )
+        )
+
+
 @pytest.mark.parametrize("value", [b"bytes", {"set"}, object()])
 def test_compile_graph_reports_non_json_values_as_diagnostics(value: object) -> None:
     document = {
@@ -346,6 +448,36 @@ def test_compile_graph_reports_non_json_values_as_diagnostics(value: object) -> 
     assert not plan.ok
     assert [(item.code, item.path) for item in plan.diagnostics.diagnostics] == [
         ("GB0014", "$.spec.extensions")
+    ]
+
+
+def test_compile_graph_rejects_malformed_top_level_collaborators_cleanly() -> None:
+    with pytest.raises(TypeError, match="graph document must be a mapping"):
+        compile_graph([])  # type: ignore[arg-type]
+    with pytest.raises(TypeError, match="block_catalog must be a BlockCatalog"):
+        compile_graph(
+            {
+                "apiVersion": "graphblocks.ai/v1",
+                "kind": "Graph",
+                "metadata": {"name": "bad-catalog"},
+                "spec": {"nodes": {}},
+            },
+            block_catalog=object(),  # type: ignore[arg-type]
+        )
+
+
+def test_compile_graph_reports_non_string_api_versions_without_type_errors() -> None:
+    plan = compile_graph(
+        {
+            "apiVersion": ["graphblocks.ai/v1"],
+            "kind": "Graph",
+            "metadata": {"name": "bad-version"},
+            "spec": {"nodes": {}},
+        }
+    )
+
+    assert [(item.code, item.path) for item in plan.diagnostics.diagnostics] == [
+        ("GB0002", "$.apiVersion")
     ]
 
 
@@ -369,6 +501,108 @@ def test_compile_graph_reports_excessive_depth_as_a_diagnostic() -> None:
     assert [(item.code, item.message) for item in plan.diagnostics.diagnostics] == [
         ("GB0014", "resource nesting must not exceed 64 levels")
     ]
+
+
+def test_compile_graph_preserves_spec_valid_arbitrary_size_integers() -> None:
+    huge_integer = 10**5_000
+    document = {
+        "apiVersion": "graphblocks.ai/v1",
+        "kind": "Graph",
+        "metadata": {"name": "huge-integer"},
+        "spec": {
+            "nodes": {
+                "source": {
+                    "block": "example.source@1",
+                    "config": {"huge": huge_integer},
+                }
+            },
+        },
+    }
+
+    plan = compile_graph(document, allow_unknown_blocks=True)
+
+    assert plan.ok
+    assert plan.normalized["spec"]["nodes"]["source"]["config"]["huge"] == huge_integer
+    assert canonical_hash(plan.normalized).startswith("sha256:")
+
+
+def test_compile_graph_reports_invalid_fields_with_arbitrary_size_integers() -> None:
+    plan = compile_graph(
+        {
+            "apiVersion": "graphblocks.ai/v1",
+            "kind": "Graph",
+            "metadata": {"name": 10**5_000},
+            "spec": {"nodes": {}},
+        }
+    )
+
+    assert not plan.ok
+    assert any(
+        item.path == "$.metadata.name"
+        for item in plan.diagnostics.diagnostics
+    )
+
+
+def test_compile_graph_reports_arbitrary_size_integer_enum_as_diagnostic() -> None:
+    huge_integer = 10**5_000
+    plan = compile_graph(
+        {
+            "apiVersion": "graphblocks.ai/v1",
+            "kind": "Graph",
+            "metadata": {"name": "huge-enum"},
+            "spec": {
+                "nodes": {"source": {"block": "example.source@1"}},
+                "bindings": {
+                    "tools": {
+                        "createTicket": {
+                            "definition": {
+                                "name": "ticket.create",
+                                "description": "Create a support ticket.",
+                                "inputSchema": "schemas/TicketCreateRequest@1",
+                            },
+                            "implementation": {
+                                "kind": "block",
+                                "block": "example.tool@1",
+                            },
+                            "cancellation": huge_integer,
+                        }
+                    }
+                },
+            },
+        },
+        allow_unknown_blocks=True,
+    )
+
+    assert not plan.ok
+    assert any(
+        item.path == "$.spec.bindings.tools.createTicket.cancellation"
+        for item in plan.diagnostics.diagnostics
+    )
+
+
+def test_compile_graph_reports_arbitrary_size_integer_combinator_as_diagnostic() -> None:
+    plan = compile_graph(
+        {
+            "apiVersion": "graphblocks.ai/v1",
+            "kind": "Graph",
+            "metadata": {"name": "huge-combinator"},
+            "spec": {
+                "nodes": {
+                    "source": {
+                        "block": "example.source@1",
+                        "flow": {"retry": 10**5_000},
+                    }
+                }
+            },
+        },
+        allow_unknown_blocks=True,
+    )
+
+    assert not plan.ok
+    assert any(
+        item.path == "$.spec.nodes.source.flow.retry"
+        for item in plan.diagnostics.diagnostics
+    )
 
 
 def test_checked_in_schema_manifest_digest_is_golden() -> None:

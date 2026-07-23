@@ -12,6 +12,9 @@ from .migration import migrate_document
 
 PSEUDO_NODES = {"$input", "$output", "$state", "$context", "$execution"}
 MAX_CANONICAL_JSON_DEPTH = 64
+_MANUAL_INTEGER_BIT_LENGTH = 1_024
+_INTEGER_CHUNK_BASE = 1_000_000_000
+_INTEGER_CHUNK_DIGITS = 9
 
 
 def _depth_error() -> ValueError:
@@ -33,6 +36,118 @@ def _has_unicode_surrogate(value: str) -> bool:
     return any("\ud800" <= character <= "\udfff" for character in value)
 
 
+def _parse_integer(token: str) -> int:
+    negative = token.startswith("-")
+    digits = token[1:] if negative else token
+    first_chunk_length = len(digits) % _INTEGER_CHUNK_DIGITS
+    if first_chunk_length == 0:
+        first_chunk_length = _INTEGER_CHUNK_DIGITS
+    value = int(digits[:first_chunk_length])
+    for offset in range(first_chunk_length, len(digits), _INTEGER_CHUNK_DIGITS):
+        value = (
+            value * _INTEGER_CHUNK_BASE
+            + int(digits[offset : offset + _INTEGER_CHUNK_DIGITS])
+        )
+    return -value if negative else value
+
+
+def _format_integer(value: int) -> str:
+    if value == 0:
+        return "0"
+    negative = value < 0
+    magnitude = -value if negative else value
+    chunks: list[int] = []
+    while magnitude:
+        magnitude, chunk = divmod(magnitude, _INTEGER_CHUNK_BASE)
+        chunks.append(chunk)
+    encoded = str(chunks.pop())
+    encoded += "".join(
+        f"{chunk:0{_INTEGER_CHUNK_DIGITS}d}" for chunk in reversed(chunks)
+    )
+    return f"-{encoded}" if negative else encoded
+
+
+def _canonical_snapshot(
+    value: Any,
+    *,
+    reject_tuples: bool = False,
+) -> tuple[Any, set[str], bool, bool]:
+    """Copy and validate one potentially stateful Python value exactly once."""
+
+    root: list[Any] = [None]
+    pending: list[
+        tuple[Any, dict[str, Any] | list[Any], str | int, int, bool]
+    ] = [(value, root, 0, 0, False)]
+    active_containers: set[int] = set()
+    occupied_strings: set[str] = set()
+    has_decimal = False
+    has_large_integer = False
+    while pending:
+        current_value, parent, parent_key, depth, leaving = pending.pop()
+        if leaving:
+            active_containers.remove(id(current_value))
+            continue
+        if depth > MAX_CANONICAL_JSON_DEPTH:
+            raise _depth_error()
+        if isinstance(current_value, Mapping):
+            identity = id(current_value)
+            if identity in active_containers:
+                raise ValueError("canonical JSON values must not be recursive")
+            items = tuple(current_value.items())
+            copied_mapping: dict[str, Any] = {}
+            seen_keys: set[str] = set()
+            for key, _child_value in items:
+                if not isinstance(key, str):
+                    raise TypeError("canonical JSON object keys must be strings")
+                if _has_unicode_surrogate(key):
+                    raise ValueError(
+                        "canonical JSON strings must contain only Unicode scalar values"
+                    )
+                if key in seen_keys:
+                    raise ValueError(f"duplicate JSON object key {key!r}")
+                seen_keys.add(key)
+                occupied_strings.add(key)
+            parent[parent_key] = copied_mapping
+            active_containers.add(identity)
+            pending.append((current_value, parent, parent_key, depth, True))
+            for key, child_value in reversed(items):
+                pending.append(
+                    (child_value, copied_mapping, key, depth + 1, False)
+                )
+        elif isinstance(current_value, list | tuple):
+            if reject_tuples and isinstance(current_value, tuple):
+                raise TypeError("canonical JSON arrays must be lists")
+            identity = id(current_value)
+            if identity in active_containers:
+                raise ValueError("canonical JSON values must not be recursive")
+            items = tuple(current_value)
+            copied_list: list[Any] = [None] * len(items)
+            parent[parent_key] = copied_list
+            active_containers.add(identity)
+            pending.append((current_value, parent, parent_key, depth, True))
+            for index in range(len(items) - 1, -1, -1):
+                pending.append(
+                    (items[index], copied_list, index, depth + 1, False)
+                )
+        else:
+            if isinstance(current_value, str):
+                if _has_unicode_surrogate(current_value):
+                    raise ValueError(
+                        "canonical JSON strings must contain only Unicode scalar values"
+                    )
+                occupied_strings.add(current_value)
+            elif isinstance(current_value, Decimal):
+                has_decimal = True
+            elif (
+                isinstance(current_value, int)
+                and not isinstance(current_value, bool)
+                and current_value.bit_length() > _MANUAL_INTEGER_BIT_LENGTH
+            ):
+                has_large_integer = True
+            parent[parent_key] = current_value
+    return root[0], occupied_strings, has_decimal, has_large_integer
+
+
 def canonical_loads(value: str | bytes | bytearray) -> Any:
     try:
         decoded = json.loads(
@@ -43,79 +158,26 @@ def canonical_loads(value: str | bytes | bytearray) -> Any:
                 and canonical_dumps(Decimal(token)) == canonical_dumps(float(token))
                 else Decimal(token)
             ),
+            parse_int=_parse_integer,
             parse_constant=lambda constant: (_ for _ in ()).throw(ValueError(constant)),
             object_pairs_hook=_reject_duplicate_keys,
         )
     except RecursionError as error:
         raise _depth_error() from error
-    pending_values = [(decoded, 0)]
-    while pending_values:
-        current_value, depth = pending_values.pop()
-        if depth > MAX_CANONICAL_JSON_DEPTH:
-            raise _depth_error()
-        if isinstance(current_value, str):
-            if _has_unicode_surrogate(current_value):
-                raise ValueError(
-                    "canonical JSON strings must contain only Unicode scalar values"
-                )
-        elif isinstance(current_value, dict):
-            for key, child_value in current_value.items():
-                if _has_unicode_surrogate(key):
-                    raise ValueError(
-                        "canonical JSON strings must contain only Unicode scalar values"
-                    )
-                pending_values.append((child_value, depth + 1))
-        elif isinstance(current_value, list):
-            pending_values.extend((child_value, depth + 1) for child_value in current_value)
-    return decoded
+    snapshot, _occupied_strings, _has_decimal, _has_large_integer = (
+        _canonical_snapshot(decoded)
+    )
+    return snapshot
 
 
-def canonical_dumps(value: Any) -> str:
-    pending_values: list[tuple[Any, bool, int]] = [(value, False, 0)]
-    active_containers: set[int] = set()
-    occupied_strings: set[str] = set()
-    has_decimal = False
-    while pending_values:
-        current_value, leaving, depth = pending_values.pop()
-        if leaving:
-            active_containers.remove(id(current_value))
-            continue
-        if depth > MAX_CANONICAL_JSON_DEPTH:
-            raise _depth_error()
-        if isinstance(current_value, Mapping):
-            if id(current_value) in active_containers:
-                raise ValueError("canonical JSON values must not be recursive")
-            active_containers.add(id(current_value))
-            pending_values.append((current_value, True, depth))
-            for key, child_value in current_value.items():
-                if not isinstance(key, str):
-                    raise TypeError("canonical JSON object keys must be strings")
-                if _has_unicode_surrogate(key):
-                    raise ValueError(
-                        "canonical JSON strings must contain only Unicode scalar values"
-                    )
-                occupied_strings.add(key)
-                pending_values.append((child_value, False, depth + 1))
-        elif isinstance(current_value, list | tuple):
-            if id(current_value) in active_containers:
-                raise ValueError("canonical JSON values must not be recursive")
-            active_containers.add(id(current_value))
-            pending_values.append((current_value, True, depth))
-            pending_values.extend(
-                (item, False, depth + 1) for item in current_value
-            )
-        elif isinstance(current_value, str):
-            if _has_unicode_surrogate(current_value):
-                raise ValueError(
-                    "canonical JSON strings must contain only Unicode scalar values"
-                )
-            occupied_strings.add(current_value)
-        elif isinstance(current_value, Decimal):
-            has_decimal = True
-    if not has_decimal:
+def canonical_dumps(value: Any, *, _reject_tuples: bool = False) -> str:
+    snapshot, occupied_strings, has_decimal, has_large_integer = (
+        _canonical_snapshot(value, reject_tuples=_reject_tuples)
+    )
+    if not has_decimal and not has_large_integer:
         try:
             return json.dumps(
-                value,
+                snapshot,
                 ensure_ascii=False,
                 sort_keys=True,
                 separators=(",", ":"),
@@ -125,7 +187,9 @@ def canonical_dumps(value: Any) -> str:
             raise _depth_error() from error
 
     root: list[Any] = [None]
-    pending_copies: list[tuple[Any, dict[str, Any] | list[Any], str | int]] = [(value, root, 0)]
+    pending_copies: list[tuple[Any, dict[str, Any] | list[Any], str | int]] = [
+        (snapshot, root, 0)
+    ]
     decimal_tokens: dict[str, str] = {}
     token_index = 0
     while pending_copies:
@@ -170,6 +234,20 @@ def canonical_dumps(value: Any) -> str:
             while token in occupied_strings:
                 token_index += 1
                 token = f"\x00graphblocks-decimal-{token_index}\x00"
+            token_index += 1
+            occupied_strings.add(token)
+            decimal_tokens[token] = canonical_number
+            parent[parent_key] = token
+        elif (
+            isinstance(current_value, int)
+            and not isinstance(current_value, bool)
+            and current_value.bit_length() > _MANUAL_INTEGER_BIT_LENGTH
+        ):
+            canonical_number = _format_integer(current_value)
+            token = f"\x00graphblocks-integer-{token_index}\x00"
+            while token in occupied_strings:
+                token_index += 1
+                token = f"\x00graphblocks-integer-{token_index}\x00"
             token_index += 1
             occupied_strings.add(token)
             decimal_tokens[token] = canonical_number

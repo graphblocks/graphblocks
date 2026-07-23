@@ -11,9 +11,10 @@ from collections.abc import Callable, Mapping
 from copy import deepcopy
 from dataclasses import dataclass, field, fields, is_dataclass
 import re
+from types import MappingProxyType
 from typing import Any, Generic, TypeVar
 
-from .canonical import canonical_dumps, normalize_graph
+from .canonical import canonical_dumps, canonical_loads, normalize_graph
 from .migration import GRAPH_API_VERSION
 from .plugins import BlockCatalog, builtin_block_catalog
 from .schema import SchemaId
@@ -24,6 +25,8 @@ OutputsT = TypeVar("OutputsT")
 
 _PRIMITIVE_TYPE_REFS = frozenset({"Any", "Boolean", "Bytes", "Integer", "Number", "Null", "String"})
 _TYPE_CONSTRUCTOR_ARITY = {"List": 1, "Map": 2, "Optional": 1}
+_MAX_PORT_TYPE_REF_DEPTH = 32
+_MAX_PORT_TYPE_REF_LENGTH = 4_096
 
 
 @dataclass(frozen=True)
@@ -53,6 +56,11 @@ class GraphInput(Generic[T]):
     port_type: PortType[T]
     _owner: object = field(repr=False, compare=False)
 
+    def __post_init__(self) -> None:
+        _validate_name(self.name, "graph input")
+        if not isinstance(self.port_type, PortType):
+            raise TypeError("graph input port_type must be a PortType")
+
     @property
     def reference(self) -> str:
         return f"$input.{self.name}"
@@ -63,6 +71,11 @@ class GraphOutput(Generic[T]):
     name: str
     port_type: PortType[T]
     _owner: object = field(repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        _validate_name(self.name, "graph output")
+        if not isinstance(self.port_type, PortType):
+            raise TypeError("graph output port_type must be a PortType")
 
     @property
     def reference(self) -> str:
@@ -75,6 +88,12 @@ class NodeOutput(Generic[T]):
     name: str
     port_type: PortType[T]
     _owner: object = field(repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        _validate_name(self.node_id, "node id")
+        _validate_name(self.name, "block output")
+        if not isinstance(self.port_type, PortType):
+            raise TypeError("node output port_type must be a PortType")
 
     @property
     def reference(self) -> str:
@@ -100,18 +119,50 @@ class BoundBlock(Generic[OutputsT]):
             raise ValueError("bound block id must be a non-empty string")
         if self.block_id != self.block_id.strip():
             raise ValueError("bound block id must not contain surrounding whitespace")
+        for field_name, field_value in (
+            ("inputs", self.inputs),
+            ("expected_inputs", self.expected_inputs),
+            ("expected_outputs", self.expected_outputs),
+            ("config", self.config),
+        ):
+            if not isinstance(field_value, Mapping):
+                raise TypeError(f"bound block {field_name} must be a mapping")
+        if not callable(self._outputs):
+            raise TypeError("bound block output factory must be callable")
+        inputs = MappingProxyType(dict(self.inputs.items()))
+        expected_inputs = MappingProxyType(dict(self.expected_inputs.items()))
+        expected_outputs = MappingProxyType(dict(self.expected_outputs.items()))
+        try:
+            config = canonical_loads(canonical_dumps(self.config))
+        except (TypeError, ValueError) as error:
+            raise ValueError("bound block config must contain canonical JSON") from error
+        if not isinstance(config, dict):
+            raise TypeError("bound block config must be a mapping")
+        object.__setattr__(self, "inputs", inputs)
+        object.__setattr__(self, "expected_inputs", expected_inputs)
+        object.__setattr__(self, "expected_outputs", expected_outputs)
+        object.__setattr__(self, "config", _freeze_json(config))
         self._validate_input_contract()
-        canonical_dumps(dict(self.config))
 
     def _validate_input_contract(self) -> None:
         for name in self.expected_inputs:
             _validate_name(name, "expected block input")
         for name in self.expected_outputs:
             _validate_name(name, "expected block output")
+        for contract in (self.expected_inputs, self.expected_outputs):
+            for name, port_type in contract.items():
+                if not isinstance(port_type, PortType):
+                    raise TypeError(
+                        f"expected block port {name!r} must be a PortType"
+                    )
         for name, reference in self.inputs.items():
             _validate_name(name, "block input")
             if not isinstance(reference, GraphInput | NodeOutput):
                 raise TypeError(f"block input {name!r} must be a typed port reference")
+            if not isinstance(reference.port_type, PortType):
+                raise TypeError(
+                    f"block input {name!r} must use a PortType"
+                )
         actual_names = set(self.inputs)
         expected_names = set(self.expected_inputs)
         missing = sorted(expected_names - actual_names)
@@ -141,7 +192,7 @@ class BoundBlock(Generic[OutputsT]):
             "inputs": {name: reference.reference for name, reference in self.inputs.items()},
         }
         if self.config:
-            node["config"] = deepcopy(dict(self.config))
+            node["config"] = _thaw_json(self.config)
         outputs = self._outputs(node_id, owner)
         actual_outputs = {output.name: output for output in _iter_node_outputs(outputs)}
         missing_outputs = sorted(set(self.expected_outputs) - set(actual_outputs))
@@ -153,6 +204,10 @@ class BoundBlock(Generic[OutputsT]):
             )
         for name, expected_type in self.expected_outputs.items():
             actual_type = actual_outputs[name].port_type
+            if not isinstance(actual_type, PortType):
+                raise TypeError(
+                    f"{self.block_id} output {name!r} must use a PortType"
+                )
             if not actual_type.matches(expected_type):
                 raise TypeError(
                     f"{self.block_id} output {name!r} expects "
@@ -181,9 +236,17 @@ class GraphBuilder:
         _validate_name(self.name, "graph name")
         if not isinstance(self.api_version, str) or not self.api_version.strip():
             raise ValueError("graph api_version must be a non-empty string")
+        if self.api_version != self.api_version.strip():
+            raise ValueError(
+                "graph api_version must not contain surrounding whitespace"
+            )
+        if not isinstance(self.block_catalog, BlockCatalog):
+            raise TypeError("graph block_catalog must be a BlockCatalog")
 
     def input(self, name: str, port_type: PortType[T]) -> GraphInput[T]:
         _validate_name(name, "graph input")
+        if not isinstance(port_type, PortType):
+            raise TypeError("graph input port_type must be a PortType")
         SchemaId.parse(port_type.schema)
         if name in self._inputs:
             raise ValueError(f"graph input {name!r} is already declared")
@@ -194,6 +257,8 @@ class GraphBuilder:
 
     def output(self, name: str, port_type: PortType[T]) -> GraphOutput[T]:
         _validate_name(name, "graph output")
+        if not isinstance(port_type, PortType):
+            raise TypeError("graph output port_type must be a PortType")
         SchemaId.parse(port_type.schema)
         if name in self._outputs:
             raise ValueError(f"graph output {name!r} is already declared")
@@ -204,6 +269,8 @@ class GraphBuilder:
 
     def add(self, node_id: str, block: BoundBlock[OutputsT]) -> OutputsT:
         _validate_name(node_id, "node id")
+        if not isinstance(block, BoundBlock):
+            raise TypeError("graph block must be a BoundBlock")
         if node_id in self._nodes:
             raise ValueError(f"node {node_id!r} is already declared")
         descriptor = self.block_catalog.get(block.block_id)
@@ -277,6 +344,10 @@ class GraphBuilder:
         return outputs
 
     def publish(self, output: GraphOutput[T], value: NodeOutput[T]) -> None:
+        if not isinstance(output, GraphOutput):
+            raise TypeError("published output must be a GraphOutput")
+        if not isinstance(value, NodeOutput):
+            raise TypeError("published value must be a NodeOutput")
         if output._owner is not self._owner:
             raise ValueError("graph output belongs to a different GraphBuilder")
         if self._issued_outputs.get(id(output)) is not output:
@@ -339,7 +410,17 @@ def _validate_name(value: object, label: str) -> None:
         raise ValueError(f"{label} must not contain surrounding whitespace")
 
 
-def _validate_port_type_ref(value: str) -> None:
+def _validate_port_type_ref(value: str, nesting_depth: int = 0) -> None:
+    if len(value) > _MAX_PORT_TYPE_REF_LENGTH:
+        raise ValueError(
+            "port type reference must contain at most "
+            f"{_MAX_PORT_TYPE_REF_LENGTH} characters"
+        )
+    if nesting_depth > _MAX_PORT_TYPE_REF_DEPTH:
+        raise ValueError(
+            "port type reference nesting must not exceed "
+            f"{_MAX_PORT_TYPE_REF_DEPTH} levels"
+        )
     if not value or value != value.strip() or any(character.isspace() for character in value):
         raise ValueError("port type reference must be non-empty and contain no whitespace")
     if value in _PRIMITIVE_TYPE_REFS:
@@ -371,7 +452,25 @@ def _validate_port_type_ref(value: str) -> None:
     if len(arguments) != expected_arity or any(not argument for argument in arguments):
         raise ValueError(f"invalid port type reference {value!r}")
     for argument in arguments:
-        _validate_port_type_ref(argument)
+        _validate_port_type_ref(argument, nesting_depth + 1)
+
+
+def _freeze_json(value: object) -> object:
+    if isinstance(value, dict):
+        return MappingProxyType(
+            {key: _freeze_json(child) for key, child in value.items()}
+        )
+    if isinstance(value, list):
+        return tuple(_freeze_json(child) for child in value)
+    return value
+
+
+def _thaw_json(value: object) -> object:
+    if isinstance(value, Mapping):
+        return {key: _thaw_json(child) for key, child in value.items()}
+    if isinstance(value, tuple):
+        return [_thaw_json(child) for child in value]
+    return value
 
 
 def _iter_node_outputs(value: object, seen: set[int] | None = None) -> list[NodeOutput[Any]]:

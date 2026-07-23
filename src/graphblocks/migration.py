@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from copy import deepcopy
 from typing import Any
 
 GRAPH_API_VERSION = "graphblocks.ai/v1"
@@ -76,7 +75,17 @@ def _migrate_document(
     *,
     require_valid_target: bool,
 ) -> dict[str, Any]:
-    migrated = deepcopy(document)
+    if not isinstance(document, dict):
+        raise TypeError("migration document must be a mapping")
+    # Import lazily to avoid the canonical/migration module cycle. The
+    # round-trip gives all later migration steps one bounded, trusted snapshot
+    # instead of retaining caller-owned or stateful containers.
+    from .canonical import canonical_dumps, canonical_loads
+
+    try:
+        migrated = canonical_loads(canonical_dumps(document))
+    except (TypeError, ValueError) as error:
+        raise ValueError("migration document must contain canonical JSON values") from error
     kind = migrated.get("kind")
     api_version = migrated.get("apiVersion")
     if kind == "Graph":
@@ -88,7 +97,10 @@ def _migrate_document(
                     resource_name="Graph",
                 )
             return migrated
-        if api_version not in LEGACY_GRAPH_API_VERSIONS:
+        if (
+            not isinstance(api_version, str)
+            or api_version not in LEGACY_GRAPH_API_VERSIONS
+        ):
             raise MigrationError(
                 "GB0002",
                 f"Graph apiVersion {api_version!r} has no migration to {GRAPH_API_VERSION}",
@@ -113,7 +125,10 @@ def _migrate_document(
                     resource_name="PluginManifest",
                 )
             return migrated
-        if api_version not in LEGACY_PLUGIN_API_VERSIONS:
+        if (
+            not isinstance(api_version, str)
+            or api_version not in LEGACY_PLUGIN_API_VERSIONS
+        ):
             raise MigrationError(
                 "GB2002",
                 f"PluginManifest apiVersion {api_version!r} has no migration to {PLUGIN_API_VERSION}",

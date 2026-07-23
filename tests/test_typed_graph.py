@@ -163,6 +163,54 @@ def test_typed_block_rejects_missing_and_unexpected_input_keys() -> None:
         )
 
 
+def test_bound_block_snapshots_contracts_and_deeply_freezes_config() -> None:
+    config: dict[str, object] = {"nested": {"values": [1]}}
+    expected_outputs = {"answer": ANSWER}
+    block = BoundBlock(
+        block_id="test.answer@1",
+        inputs={},
+        expected_inputs={},
+        expected_outputs=expected_outputs,
+        config=config,
+        _outputs=lambda node_id, owner: NodeOutput(
+            node_id,
+            "answer",
+            ANSWER,
+            owner,
+        ),
+    )
+
+    config["nested"] = {"values": [9]}
+    expected_outputs.clear()
+    node, _outputs = block._materialize("answer", object())
+
+    assert node["config"] == {"nested": {"values": [1]}}
+    assert tuple(block.expected_outputs) == ("answer",)
+    nested = cast(dict[str, object], block.config["nested"])
+    with pytest.raises(TypeError):
+        nested["changed"] = True
+
+
+def test_port_type_reference_nesting_is_bounded_without_recursion_errors() -> None:
+    type_ref = "graphblocks.ai/Answer@1"
+    for _ in range(33):
+        type_ref = f"Optional<{type_ref}>"
+
+    with pytest.raises(ValueError, match="nesting must not exceed 32 levels"):
+        PortType(type_ref, object)
+
+
+def test_graph_builder_rejects_malformed_collaborators_cleanly() -> None:
+    graph = GraphBuilder("invalid-collaborators")
+
+    with pytest.raises(TypeError, match="port_type must be a PortType"):
+        graph.input("query", object())  # type: ignore[arg-type]
+    with pytest.raises(TypeError, match="graph block must be a BoundBlock"):
+        graph.add("node", object())  # type: ignore[arg-type]
+    with pytest.raises(TypeError, match="published output must be a GraphOutput"):
+        graph.publish(object(), object())  # type: ignore[arg-type]
+
+
 def test_typed_block_rejects_missing_declared_output() -> None:
     graph = GraphBuilder(
         "missing-block-output",
@@ -337,3 +385,22 @@ def test_typed_stdlib_configs_reject_invalid_literals() -> None:
         AnswerValidateGrounding(  # type: ignore[arg-type]
             on_insufficient_evidence="continue"
         )
+
+
+def test_typed_stdlib_configs_reject_coerced_numbers_and_snapshot_response() -> None:
+    with pytest.raises(ValueError, match="minimum_successful_sources must be an integer"):
+        RetrieveExecutePlan(minimum_successful_sources=True)  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="k must be an integer"):
+        RetrieveFuse(k=False)  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="deduplicate must be a boolean"):
+        ContextBuild(deduplicate=1)  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="require_citation must be a boolean"):
+        AnswerValidateGrounding(require_citation=1)  # type: ignore[arg-type]
+
+    response = {"items": [{"text": "stable"}]}
+    block = StructuredGenerate(output_schema=ANSWER, response=response)
+    response["items"][0]["text"] = "mutated"
+
+    assert block.response["items"][0]["text"] == "stable"  # type: ignore[index]
+    with pytest.raises(TypeError):
+        block.response["items"][0]["text"] = "mutated"  # type: ignore[index]
