@@ -5,6 +5,7 @@ import pytest
 from graphblocks.conversation import (
     ContentPart,
     Conversation,
+    ConversationArchivedError,
     ConversationConflictError,
     InMemoryConversationStore,
     Message,
@@ -106,6 +107,29 @@ def test_empty_turn_commit_does_not_advance_conversation_revision() -> None:
     assert store.get_turn("turn-1").status == "created"
 
 
+def test_archiving_conversation_stops_active_turn_mutation_and_commit() -> None:
+    store = InMemoryConversationStore()
+    store.create(Conversation("conv-1"))
+    store.begin_turn("conv-1", expected_revision=0, turn_id="turn-1")
+    store.append_turn_message(
+        "turn-1",
+        Message("msg-1", "assistant"),
+    )
+    store.archive("conv-1", expected_revision=0)
+
+    with pytest.raises(ConversationArchivedError):
+        store.append_turn_message(
+            "turn-1",
+            Message("msg-2", "assistant"),
+        )
+    with pytest.raises(ConversationArchivedError):
+        store.commit_turn("turn-1")
+
+    assert store.get_turn("turn-1").status == "failed"
+    assert store.get("conv-1").revision == 1
+    assert store.get("conv-1").conversation.messages == ()
+
+
 def test_duplicate_message_id_commit_is_reported_as_conflict_without_mutation() -> None:
     store = InMemoryConversationStore()
     store.create(
@@ -142,7 +166,11 @@ def test_conversation_delete_removes_draft_turns(policy: str) -> None:
         ),
     )
 
-    store.delete("conv-1", policy=policy)  # type: ignore[arg-type]
+    store.delete(
+        "conv-1",
+        policy=policy,  # type: ignore[arg-type]
+        expected_revision=0,
+    )
 
     with pytest.raises(TurnNotFoundError):
         store.get_turn("turn-1")

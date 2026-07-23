@@ -15,6 +15,7 @@ from .policy import PrincipalRef
 
 _P = ParamSpec("_P")
 _R = TypeVar("_R")
+_MAX_WORKSPACE_REVISION = (1 << 64) - 1
 
 
 def _with_workspace_lock(method: Callable[_P, _R]) -> Callable[_P, _R]:
@@ -71,7 +72,19 @@ def _same_resource_snapshot_identity(
     left: ResourceSnapshotRef,
     right: ResourceSnapshotRef,
 ) -> bool:
-    return left.resource_id == right.resource_id and left.digest == right.digest
+    return (
+        left.resource_id == right.resource_id
+        and left.digest == right.digest
+        and left.resource_kind == right.resource_kind
+        and left.uri == right.uri
+        and left.metadata == right.metadata
+    )
+
+
+def _next_workspace_revision(revision: int) -> int:
+    if revision >= _MAX_WORKSPACE_REVISION:
+        raise OverflowError("workspace revision exhausted")
+    return revision + 1
 
 
 @dataclass(frozen=True, slots=True)
@@ -92,10 +105,21 @@ class WorkspaceSnapshot:
             raise ValueError("workspace snapshot revision must be an integer")
         if self.revision <= 0:
             raise ValueError("workspace snapshot revision must be positive")
+        if self.revision > _MAX_WORKSPACE_REVISION:
+            raise ValueError(
+                "workspace snapshot revision exceeds storage range"
+            )
         if not isinstance(self.created_at, str):
             raise ValueError("workspace snapshot created_at must be a string")
         _validate_optional_non_empty_string("workspace snapshot", "base_snapshot_id", self.base_snapshot_id)
         _validate_optional_non_empty_string("workspace snapshot", "base_snapshot_digest", self.base_snapshot_digest)
+        if (self.base_snapshot_id is None) != (
+            self.base_snapshot_digest is None
+        ):
+            raise ValueError(
+                "workspace snapshot base_snapshot_id and "
+                "base_snapshot_digest must be provided together"
+            )
         if not isinstance(self.metadata, Mapping):
             raise ValueError("workspace snapshot metadata must be a mapping")
         metadata = deepcopy(dict(self.metadata))
@@ -386,6 +410,11 @@ class WorkspaceCommitRequest:
             or self.expected_base_revision <= 0
         ):
             raise ValueError("workspace commit request expected_base_revision must be positive")
+        if self.expected_base_revision > _MAX_WORKSPACE_REVISION:
+            raise ValueError(
+                "workspace commit request expected_base_revision exceeds "
+                "storage range"
+            )
         if not isinstance(self.mutation_decision, WorkspaceMutationDecision):
             raise ValueError("workspace commit request mutation_decision must be a WorkspaceMutationDecision")
         if not isinstance(self.gate, GateResult):
@@ -466,6 +495,11 @@ class WorkspaceTrialPlan:
             or self.expected_base_revision <= 0
         ):
             raise ValueError("workspace trial plan expected_base_revision must be positive")
+        if self.expected_base_revision > _MAX_WORKSPACE_REVISION:
+            raise ValueError(
+                "workspace trial plan expected_base_revision exceeds "
+                "storage range"
+            )
         object.__setattr__(
             self,
             "required_check_ids",
@@ -548,6 +582,10 @@ class WorkspaceTrialPlan:
                 for review in self.reviews
                 if review.scope == scope
                 and review.decision in {"accept", "accept_with_conditions"}
+                and _same_resource_snapshot_identity(
+                    review.subject,
+                    self.change_set.candidate,
+                )
                 and review.is_valid_for(self.change_set.candidate)
             )
             if not matching:
@@ -610,6 +648,14 @@ class WorkspaceCommit:
             raise ValueError("workspace commit snapshot must be a WorkspaceSnapshot")
         if self.snapshot.workspace_id != self.workspace_id:
             raise ValueError("workspace commit snapshot workspace_id must match workspace_id")
+        if self.snapshot.base_snapshot_id != self.previous_snapshot_id:
+            raise ValueError(
+                "workspace commit snapshot must reference previous_snapshot_id"
+            )
+        if self.snapshot.base_snapshot_digest is None:
+            raise ValueError(
+                "workspace commit snapshot must reference a base snapshot digest"
+            )
         if not isinstance(self.committed_by, PrincipalRef):
             raise ValueError("workspace commit committed_by must be a PrincipalRef")
         object.__setattr__(self, "snapshot", _copy_workspace_snapshot(self.snapshot))
@@ -789,7 +835,7 @@ class InMemoryWorkspaceStore:
         candidate = WorkspaceSnapshot(
             workspace_id=workspace_id,
             snapshot_id=new_snapshot_id,
-            revision=current.revision + 1,
+            revision=_next_workspace_revision(current.revision),
             resources=resources,
             created_at=committed_at,
             base_snapshot_id=current.snapshot_id,
@@ -866,6 +912,10 @@ class InMemoryWorkspaceStore:
                 )
         if any(
             review.decision not in {"accept", "accept_with_conditions"}
+            or not _same_resource_snapshot_identity(
+                review.subject,
+                request.change_set.candidate,
+            )
             or not review.is_valid_for(request.change_set.candidate)
             for review in request.reviews
         ):
@@ -874,6 +924,10 @@ class InMemoryWorkspaceStore:
             if not any(
                 review.scope == scope
                 and review.decision in {"accept", "accept_with_conditions"}
+                and _same_resource_snapshot_identity(
+                    review.subject,
+                    request.change_set.candidate,
+                )
                 and review.is_valid_for(request.change_set.candidate)
                 for review in request.reviews
             ):
@@ -893,7 +947,7 @@ class InMemoryWorkspaceStore:
         candidate = WorkspaceSnapshot(
             workspace_id=workspace_id,
             snapshot_id=new_snapshot_id,
-            revision=current.revision + 1,
+            revision=_next_workspace_revision(current.revision),
             resources=resources,
             created_at=committed_at,
             base_snapshot_id=current.snapshot_id,

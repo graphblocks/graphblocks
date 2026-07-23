@@ -10175,11 +10175,16 @@ class TckRunner:
                     )
                 )
                 store.create(Conversation(conversation_id=conversation_id))
-                store.append_messages(conversation_id, expected_revision=0, messages=messages)
+                source_revision = store.append_messages(
+                    conversation_id,
+                    expected_revision=0,
+                    messages=messages,
+                )
                 branch = store.branch(
                     BranchRequest(
                         conversation_id=conversation_id,
                         from_message_id=branch_from_message_id,
+                        expected_revision=source_revision,
                         new_conversation_id=branch_conversation_id,
                     )
                 )
@@ -10187,6 +10192,7 @@ class TckRunner:
                     RegenerateRequest(
                         conversation_id=conversation_id,
                         assistant_message_id=regenerate_assistant_message_id,
+                        expected_revision=source_revision,
                         new_conversation_id=regenerate_conversation_id,
                     )
                 )
@@ -10251,9 +10257,13 @@ class TckRunner:
                     )
                 )
                 store.create(Conversation(conversation_id=conversation_id))
-                store.append_messages(conversation_id, expected_revision=0, messages=messages)
+                source_revision = store.append_messages(
+                    conversation_id,
+                    expected_revision=0,
+                    messages=messages,
+                )
                 for raw_attachment in raw_attachments:
-                    store.add_attachment(
+                    source_revision = store.add_attachment(
                         conversation_id,
                         FileAttachment(
                             attachment_id=str(raw_attachment.get("attachmentId", raw_attachment.get("attachment_id", "att"))),
@@ -10275,17 +10285,20 @@ class TckRunner:
                                 else None
                             ),
                         ),
+                        expected_revision=source_revision,
                     )
                 branch = store.branch(
                     BranchRequest(
                         conversation_id=conversation_id,
                         from_message_id=branch_from_message_id,
+                        expected_revision=source_revision,
                         new_conversation_id=branch_conversation_id,
                     )
                 )
                 request_without_attachments = BranchRequest(
                     conversation_id=conversation_id,
                     from_message_id=branch_from_message_id,
+                    expected_revision=source_revision,
                     new_conversation_id=branch_without_attachments_id,
                     include_attachments=False,
                 )
@@ -10345,8 +10358,9 @@ class TckRunner:
                         ),
                     )
                 )
+                source_revision = 0
                 for raw_attachment in raw_attachments:
-                    store.add_attachment(
+                    source_revision = store.add_attachment(
                         conversation_id,
                         FileAttachment(
                             attachment_id=str(raw_attachment.get("attachmentId", raw_attachment.get("attachment_id", "att"))),
@@ -10368,6 +10382,7 @@ class TckRunner:
                                 else None
                             ),
                         ),
+                        expected_revision=source_revision,
                     )
                 with_conversation_scope = store.resolve_attachments(
                     conversation_id,
@@ -10400,7 +10415,10 @@ class TckRunner:
                     )
                 parent_message_id = raw_message.get("parentMessageId", raw_message.get("parent_message_id"))
                 store.create(Conversation(conversation_id=conversation_id))
-                archive_revision = store.archive(conversation_id)
+                archive_revision = store.archive(
+                    conversation_id,
+                    expected_revision=0,
+                )
                 append_rejected = False
                 try:
                     store.append_messages(
@@ -10470,7 +10488,11 @@ class TckRunner:
                         }
                     )
                 store.create(Conversation(conversation_id=conversation_id))
-                store.append_messages(conversation_id, expected_revision=0, messages=messages)
+                source_revision = store.append_messages(
+                    conversation_id,
+                    expected_revision=0,
+                    messages=messages,
+                )
                 revision = store.record_compaction(
                     conversation_id,
                     CompactionRecord(
@@ -10506,6 +10528,7 @@ class TckRunner:
                             else None
                         ),
                     ),
+                    expected_revision=source_revision,
                 )
                 snapshot = store.get(conversation_id)
                 compaction = snapshot.conversation.compactions[0]
@@ -10577,9 +10600,13 @@ class TckRunner:
                         }
                     )
                 store.create(Conversation(conversation_id=conversation_id))
-                store.append_messages(conversation_id, expected_revision=0, messages=messages)
+                source_revision = store.append_messages(
+                    conversation_id,
+                    expected_revision=0,
+                    messages=messages,
+                )
                 for raw_attachment in raw_attachments:
-                    store.add_attachment(
+                    source_revision = store.add_attachment(
                         conversation_id,
                         FileAttachment(
                             attachment_id=str(raw_attachment.get("attachmentId", raw_attachment.get("attachment_id", "att"))),
@@ -10601,8 +10628,9 @@ class TckRunner:
                                 else None
                             ),
                         ),
+                        expected_revision=source_revision,
                     )
-                store.record_compaction(
+                source_revision = store.record_compaction(
                     conversation_id,
                     CompactionRecord(
                         compaction_id=str(
@@ -10632,8 +10660,13 @@ class TckRunner:
                             )
                         ),
                     ),
+                    expected_revision=source_revision,
                 )
-                tombstone_revision = store.delete(conversation_id, policy="tombstone")
+                tombstone_revision = store.delete(
+                    conversation_id,
+                    policy="tombstone",
+                    expected_revision=source_revision,
+                )
                 tombstone = store.get(conversation_id).conversation
 
                 hard_delete_conversation_id = str(
@@ -10648,7 +10681,11 @@ class TckRunner:
                         messages=tuple(messages),
                     )
                 )
-                store.delete(hard_delete_conversation_id, policy="hard")
+                store.delete(
+                    hard_delete_conversation_id,
+                    policy="hard",
+                    expected_revision=0,
+                )
                 hard_deleted = False
                 try:
                     store.get(hard_delete_conversation_id)

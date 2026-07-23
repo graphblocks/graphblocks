@@ -174,11 +174,23 @@ def test_conversation_records_validate_identity_literals_and_nested_types() -> N
 
 def test_conversation_request_compaction_and_turn_records_validate_contracts() -> None:
     with pytest.raises(ValueError, match="branch request include_attachments must be a boolean"):
-        BranchRequest("conv-1", "msg-1", include_attachments="yes")  # type: ignore[arg-type]
+        BranchRequest("conv-1", "msg-1", 0, include_attachments="yes")  # type: ignore[arg-type]
     with pytest.raises(ValueError, match="regenerate request assistant_message_id must not be empty"):
-        RegenerateRequest("conv-1", " ")
+        RegenerateRequest("conv-1", " ", 0)
     with pytest.raises(ValueError, match="compaction record source_message_ids must not be empty"):
         CompactionRecord("compact-1", (), "msg-summary", "summary", 10, 5)
+    with pytest.raises(
+        ValueError,
+        match="compaction record source_message_ids must be unique",
+    ):
+        CompactionRecord(
+            "compact-1",
+            ("msg-1", "msg-1"),
+            "msg-summary",
+            "summary",
+            10,
+            5,
+        )
     with pytest.raises(ValueError, match="compaction record token_after must not exceed token_before"):
         CompactionRecord("compact-1", ("msg-1",), "msg-summary", "summary", 10, 11)
     with pytest.raises(ValueError, match="invalid turn status"):
@@ -205,6 +217,28 @@ def test_conversation_request_compaction_and_turn_records_validate_contracts() -
         )
 
 
+def test_conversation_rejects_restored_compactions_with_dangling_messages() -> None:
+    message = Message("msg-1", "user")
+    compaction = CompactionRecord(
+        "compact-1",
+        ("msg-1",),
+        "msg-summary",
+        "summary",
+        10,
+        5,
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="conversation compactions must reference conversation messages",
+    ):
+        Conversation(
+            "conv-1",
+            messages=(message,),
+            compactions=(compaction,),
+        )
+
+
 def test_conversation_store_validates_and_detaches_restored_state() -> None:
     conversation = Conversation("conv-1", metadata={"state": {"phase": "initial"}})
     restored = InMemoryConversationStore({"conv-1": conversation})
@@ -220,6 +254,120 @@ def test_conversation_store_validates_and_detaches_restored_state() -> None:
             {"conv-1": conversation},
             {"turn-1": Turn("turn-1", "missing", 0)},
         )
+    with pytest.raises(
+        ValueError,
+        match="turn base revision must not exceed conversation revision",
+    ):
+        InMemoryConversationStore(
+            {"conv-1": conversation},
+            {"turn-1": Turn("turn-1", "conv-1", 1)},
+        )
+
+
+def test_all_conversation_mutations_reject_stale_revisions_atomically() -> None:
+    store = InMemoryConversationStore()
+    messages = (
+        Message("msg-user", "user"),
+        Message("msg-assistant", "assistant", parent_message_id="msg-user"),
+        Message("msg-summary", "assistant"),
+    )
+    store.create(Conversation("conv-1"))
+    store.append_messages(
+        "conv-1",
+        expected_revision=0,
+        messages=list(messages),
+    )
+    original = store.get("conv-1")
+
+    with pytest.raises(ConversationConflictError):
+        store.add_attachment(
+            "conv-1",
+            FileAttachment(
+                "att-1",
+                ArtifactRef("artifact-1", "blob://artifact-1"),
+                "conversation",
+                "reference",
+            ),
+            expected_revision=0,
+        )
+    with pytest.raises(ConversationConflictError):
+        store.record_compaction(
+            "conv-1",
+            CompactionRecord(
+                "compact-1",
+                ("msg-user", "msg-assistant"),
+                "msg-summary",
+                "summary",
+                10,
+                5,
+            ),
+            expected_revision=0,
+        )
+    with pytest.raises(ConversationConflictError):
+        store.archive("conv-1", expected_revision=0)
+    with pytest.raises(ConversationConflictError):
+        store.delete(
+            "conv-1",
+            expected_revision=0,
+        )
+    with pytest.raises(ConversationConflictError):
+        store.branch(
+            BranchRequest(
+                "conv-1",
+                "msg-user",
+                expected_revision=0,
+                new_conversation_id="conv-branch",
+            )
+        )
+    with pytest.raises(ConversationConflictError):
+        store.regenerate(
+            RegenerateRequest(
+                "conv-1",
+                "msg-assistant",
+                expected_revision=0,
+                new_conversation_id="conv-regenerated",
+            )
+        )
+
+    assert store.get("conv-1") == original
+    with pytest.raises(ConversationNotFoundError):
+        store.get("conv-branch")
+    with pytest.raises(ConversationNotFoundError):
+        store.get("conv-regenerated")
+
+
+def test_conversation_revision_exhaustion_does_not_mutate_state() -> None:
+    maximum = (1 << 64) - 1
+    conversation = Conversation("conv-1", revision=maximum)
+    store = InMemoryConversationStore({"conv-1": conversation})
+
+    with pytest.raises(OverflowError, match="conversation revision exhausted"):
+        store.append_messages(
+            "conv-1",
+            expected_revision=maximum,
+            messages=[Message("msg-1", "user")],
+        )
+
+    assert store.get("conv-1").conversation == conversation
+    with pytest.raises(ValueError, match="conversation revision exceeds storage range"):
+        Conversation("conv-invalid", revision=maximum + 1)
+
+
+def test_empty_message_append_does_not_advance_conversation_revision() -> None:
+    store = InMemoryConversationStore()
+    store.create(Conversation("conv-1"))
+
+    with pytest.raises(
+        ValueError,
+        match="conversation store messages must not be empty",
+    ):
+        store.append_messages(
+            "conv-1",
+            expected_revision=0,
+            messages=[],
+        )
+
+    assert store.get("conv-1").revision == 0
 
 
 def test_branch_preserves_lineage_and_copies_messages_through_source_message() -> None:
@@ -237,7 +385,14 @@ def test_branch_preserves_lineage_and_copies_messages_through_source_message() -
     store.create(Conversation(conversation_id="conv-1"))
     store.append_messages("conv-1", expected_revision=0, messages=[user_message, assistant_message])
 
-    branch = store.branch(BranchRequest(conversation_id="conv-1", from_message_id="msg-user", new_conversation_id="conv-2"))
+    branch = store.branch(
+        BranchRequest(
+            conversation_id="conv-1",
+            from_message_id="msg-user",
+            expected_revision=1,
+            new_conversation_id="conv-2",
+        )
+    )
 
     assert branch.conversation_id == "conv-2"
     assert branch.branch_of == "conv-1"
@@ -251,7 +406,7 @@ def test_archived_conversation_rejects_compaction_without_mutation() -> None:
     store = InMemoryConversationStore()
     message = Message(message_id="msg-1", role="user")
     store.create(Conversation(conversation_id="conv-1", messages=(message,)))
-    archived_revision = store.archive("conv-1")
+    archived_revision = store.archive("conv-1", expected_revision=0)
 
     with pytest.raises(ConversationArchivedError, match="is archived"):
         store.record_compaction(
@@ -264,6 +419,7 @@ def test_archived_conversation_rejects_compaction_without_mutation() -> None:
                 token_before=10,
                 token_after=5,
             ),
+            expected_revision=archived_revision,
         )
 
     snapshot = store.get("conv-1")
@@ -289,6 +445,7 @@ def test_scoped_attachments_resolve_for_context() -> None:
             ingestion_status="ready",
             message_id="msg-user",
         ),
+        expected_revision=0,
     )
     store.add_attachment(
         "conv-1",
@@ -299,6 +456,7 @@ def test_scoped_attachments_resolve_for_context() -> None:
             purpose="direct_input",
             ingestion_status="ready",
         ),
+        expected_revision=1,
     )
     store.add_attachment(
         "conv-1",
@@ -310,6 +468,7 @@ def test_scoped_attachments_resolve_for_context() -> None:
             ingestion_status="pending",
             message_id="msg-user",
         ),
+        expected_revision=2,
     )
 
     attachments = store.resolve_attachments("conv-1", ["msg-user"], include_conversation_scope=True)
@@ -340,7 +499,11 @@ def test_message_scoped_attachment_must_reference_a_conversation_message() -> No
         ValueError,
         match="message-scoped conversation attachment must reference a conversation message",
     ):
-        store.add_attachment("conv-1", orphan)
+        store.add_attachment(
+            "conv-1",
+            orphan,
+            expected_revision=0,
+        )
 
     snapshot = store.get("conv-1")
     assert snapshot.revision == 0
@@ -363,6 +526,7 @@ def test_branch_respects_include_attachments_and_message_scope() -> None:
             ingestion_status="ready",
             message_id="msg-1",
         ),
+        expected_revision=1,
     )
     store.add_attachment(
         "conv-1",
@@ -374,6 +538,7 @@ def test_branch_respects_include_attachments_and_message_scope() -> None:
             ingestion_status="ready",
             message_id="msg-2",
         ),
+        expected_revision=2,
     )
     store.add_attachment(
         "conv-1",
@@ -384,15 +549,22 @@ def test_branch_respects_include_attachments_and_message_scope() -> None:
             purpose="reference",
             ingestion_status="ready",
         ),
+        expected_revision=3,
     )
 
     with_attachments = store.branch(
-        BranchRequest(conversation_id="conv-1", from_message_id="msg-1", new_conversation_id="conv-branch-1")
+        BranchRequest(
+            conversation_id="conv-1",
+            from_message_id="msg-1",
+            expected_revision=4,
+            new_conversation_id="conv-branch-1",
+        )
     )
     without_attachments = store.branch(
         BranchRequest(
             conversation_id="conv-1",
             from_message_id="msg-1",
+            expected_revision=4,
             new_conversation_id="conv-branch-2",
             include_attachments=False,
         )
@@ -422,6 +594,7 @@ def test_regenerate_supersedes_assistant_and_branches_from_parent_user() -> None
         RegenerateRequest(
             conversation_id="conv-1",
             assistant_message_id="msg-assistant",
+            expected_revision=1,
             new_conversation_id="conv-regenerated",
         )
     )
@@ -452,6 +625,7 @@ def test_regenerate_uses_previous_user_message_when_parent_is_not_recorded() -> 
         RegenerateRequest(
             conversation_id="conv-1",
             assistant_message_id="msg-2",
+            expected_revision=1,
             new_conversation_id="conv-regenerated",
         )
     )
@@ -473,6 +647,7 @@ def test_regenerate_branch_id_conflict_does_not_supersede_assistant() -> None:
             RegenerateRequest(
                 conversation_id="conv-1",
                 assistant_message_id="msg-2",
+                expected_revision=1,
                 new_conversation_id="conv-regenerated",
             )
         )
@@ -506,6 +681,7 @@ def test_compaction_record_preserves_source_messages_and_records_token_delta() -
             token_after=120,
             model="summary-model",
         ),
+        expected_revision=1,
     )
 
     snapshot = store.get("conv-1")
@@ -535,6 +711,7 @@ def test_compaction_rejects_missing_source_or_output_message() -> None:
                 token_before=10,
                 token_after=5,
             ),
+            expected_revision=1,
         )
 
     with pytest.raises(MessageNotFoundError):
@@ -548,6 +725,7 @@ def test_compaction_rejects_missing_source_or_output_message() -> None:
                 token_before=10,
                 token_after=5,
             ),
+            expected_revision=1,
         )
 
 
@@ -576,12 +754,14 @@ def test_branch_and_regenerate_drop_compactions_with_excluded_messages() -> None
             token_before=20,
             token_after=10,
         ),
+        expected_revision=1,
     )
 
     branch = store.branch(
         BranchRequest(
             conversation_id="conv-1",
             from_message_id="msg-assistant",
+            expected_revision=2,
             new_conversation_id="conv-branch",
             include_memory=True,
         )
@@ -590,6 +770,7 @@ def test_branch_and_regenerate_drop_compactions_with_excluded_messages() -> None
         RegenerateRequest(
             conversation_id="conv-1",
             assistant_message_id="msg-assistant",
+            expected_revision=2,
             new_conversation_id="conv-regenerated",
             include_memory=True,
         )
@@ -603,7 +784,7 @@ def test_archive_prevents_later_appends() -> None:
     store = InMemoryConversationStore()
     store.create(Conversation(conversation_id="conv-1"))
 
-    revision = store.archive("conv-1")
+    revision = store.archive("conv-1", expected_revision=0)
 
     assert revision == 1
     assert store.get("conv-1").conversation.archived is True
@@ -619,7 +800,7 @@ def test_delete_hard_removes_conversation() -> None:
     store = InMemoryConversationStore()
     store.create(Conversation(conversation_id="conv-1"))
 
-    store.delete("conv-1", policy="hard")
+    store.delete("conv-1", policy="hard", expected_revision=0)
 
     with pytest.raises(ConversationNotFoundError):
         store.get("conv-1")
@@ -629,7 +810,11 @@ def test_delete_tombstone_retains_empty_archived_conversation() -> None:
     store = InMemoryConversationStore()
     store.create(Conversation(conversation_id="conv-1"))
 
-    revision = store.delete("conv-1", policy="tombstone")
+    revision = store.delete(
+        "conv-1",
+        policy="tombstone",
+        expected_revision=0,
+    )
 
     snapshot = store.get("conv-1")
     assert revision == 1

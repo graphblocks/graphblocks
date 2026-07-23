@@ -49,6 +49,7 @@ VALID_TURN_STATUSES = frozenset(
     )
 )
 TERMINAL_TURN_STATUSES = frozenset(("completed", "failed", "cancelled", "policy_stopped"))
+_MAX_CONVERSATION_REVISION = (1 << 64) - 1
 _P = ParamSpec("_P")
 _R = TypeVar("_R")
 
@@ -85,6 +86,35 @@ def _validate_non_negative_int(owner: str, field_name: str, value: object) -> in
     if value < 0:
         raise ValueError(f"{owner} {field_name} must be non-negative")
     return value
+
+
+def _validate_revision(owner: str, field_name: str, value: object) -> int:
+    revision = _validate_non_negative_int(owner, field_name, value)
+    if revision > _MAX_CONVERSATION_REVISION:
+        raise ValueError(f"{owner} {field_name} exceeds storage range")
+    return revision
+
+
+def _next_revision(revision: int) -> int:
+    if revision >= _MAX_CONVERSATION_REVISION:
+        raise OverflowError("conversation revision exhausted")
+    return revision + 1
+
+
+def _require_expected_revision(
+    conversation: Conversation,
+    expected_revision: object,
+) -> None:
+    expected = _validate_revision(
+        "conversation store",
+        "expected_revision",
+        expected_revision,
+    )
+    if conversation.revision != expected:
+        raise ConversationConflictError(
+            f"conversation {conversation.conversation_id!r} is at revision "
+            f"{conversation.revision}, not {expected}"
+        )
 
 
 def _copy_mapping(owner: str, field_name: str, value: object) -> dict[str, object]:
@@ -376,6 +406,10 @@ class CompactionRecord:
         object.__setattr__(self, "source_message_ids", _validate_string_tuple("compaction record", "source_message_ids", self.source_message_ids))
         if not self.source_message_ids:
             raise ValueError("compaction record source_message_ids must not be empty")
+        if len(set(self.source_message_ids)) != len(self.source_message_ids):
+            raise ValueError(
+                "compaction record source_message_ids must be unique"
+            )
         object.__setattr__(self, "output_message_id", _validate_non_empty_string("compaction record", "output_message_id", self.output_message_id).strip())
         object.__setattr__(self, "method", _validate_non_empty_string("compaction record", "method", self.method).strip())
         object.__setattr__(self, "token_before", _validate_non_negative_int("compaction record", "token_before", self.token_before))
@@ -427,8 +461,23 @@ class Conversation:
         compaction_ids = [record.compaction_id for record in compactions]
         if len(set(compaction_ids)) != len(compaction_ids):
             raise ValueError("conversation compaction_id values must be unique")
+        if any(
+            record.output_message_id not in message_ids
+            or any(
+                source_message_id not in message_ids
+                for source_message_id in record.source_message_ids
+            )
+            for record in compactions
+        ):
+            raise ValueError(
+                "conversation compactions must reference conversation messages"
+            )
         object.__setattr__(self, "compactions", compactions)
-        object.__setattr__(self, "revision", _validate_non_negative_int("conversation", "revision", self.revision))
+        object.__setattr__(
+            self,
+            "revision",
+            _validate_revision("conversation", "revision", self.revision),
+        )
         if not isinstance(self.archived, bool):
             raise ValueError("conversation archived must be a boolean")
         object.__setattr__(self, "branch_of", _validate_optional_non_empty_string("conversation", "branch_of", self.branch_of))
@@ -448,7 +497,15 @@ class ConversationSnapshot:
     def __post_init__(self) -> None:
         if not isinstance(self.conversation, Conversation):
             raise ValueError("conversation snapshot conversation must be Conversation")
-        object.__setattr__(self, "revision", _validate_non_negative_int("conversation snapshot", "revision", self.revision))
+        object.__setattr__(
+            self,
+            "revision",
+            _validate_revision(
+                "conversation snapshot",
+                "revision",
+                self.revision,
+            ),
+        )
         if self.revision != self.conversation.revision:
             raise ValueError("conversation snapshot revision must match conversation revision")
 
@@ -457,6 +514,7 @@ class ConversationSnapshot:
 class BranchRequest:
     conversation_id: str
     from_message_id: str
+    expected_revision: int
     new_conversation_id: str | None = None
     include_attachments: bool = True
     include_memory: bool = False
@@ -464,6 +522,15 @@ class BranchRequest:
     def __post_init__(self) -> None:
         object.__setattr__(self, "conversation_id", _validate_non_empty_string("branch request", "conversation_id", self.conversation_id).strip())
         object.__setattr__(self, "from_message_id", _validate_non_empty_string("branch request", "from_message_id", self.from_message_id).strip())
+        object.__setattr__(
+            self,
+            "expected_revision",
+            _validate_revision(
+                "branch request",
+                "expected_revision",
+                self.expected_revision,
+            ),
+        )
         object.__setattr__(self, "new_conversation_id", _validate_optional_non_empty_string("branch request", "new_conversation_id", self.new_conversation_id))
         if not isinstance(self.include_attachments, bool):
             raise ValueError("branch request include_attachments must be a boolean")
@@ -475,6 +542,7 @@ class BranchRequest:
 class RegenerateRequest:
     conversation_id: str
     assistant_message_id: str
+    expected_revision: int
     new_conversation_id: str | None = None
     include_attachments: bool = True
     include_memory: bool = False
@@ -482,6 +550,15 @@ class RegenerateRequest:
     def __post_init__(self) -> None:
         object.__setattr__(self, "conversation_id", _validate_non_empty_string("regenerate request", "conversation_id", self.conversation_id).strip())
         object.__setattr__(self, "assistant_message_id", _validate_non_empty_string("regenerate request", "assistant_message_id", self.assistant_message_id).strip())
+        object.__setattr__(
+            self,
+            "expected_revision",
+            _validate_revision(
+                "regenerate request",
+                "expected_revision",
+                self.expected_revision,
+            ),
+        )
         object.__setattr__(
             self,
             "new_conversation_id",
@@ -507,7 +584,11 @@ class Turn:
     def __post_init__(self) -> None:
         object.__setattr__(self, "turn_id", _validate_non_empty_string("turn", "turn_id", self.turn_id).strip())
         object.__setattr__(self, "conversation_id", _validate_non_empty_string("turn", "conversation_id", self.conversation_id).strip())
-        object.__setattr__(self, "base_revision", _validate_non_negative_int("turn", "base_revision", self.base_revision))
+        object.__setattr__(
+            self,
+            "base_revision",
+            _validate_revision("turn", "base_revision", self.base_revision),
+        )
         if self.status not in VALID_TURN_STATUSES:
             raise ValueError(f"invalid turn status {self.status}")
         messages = tuple(self.messages)
@@ -518,7 +599,15 @@ class Turn:
             raise ValueError("turn message_id values must be unique")
         object.__setattr__(self, "messages", messages)
         if self.committed_revision is not None:
-            object.__setattr__(self, "committed_revision", _validate_non_negative_int("turn", "committed_revision", self.committed_revision))
+            object.__setattr__(
+                self,
+                "committed_revision",
+                _validate_revision(
+                    "turn",
+                    "committed_revision",
+                    self.committed_revision,
+                ),
+            )
         object.__setattr__(self, "committed_message_ids", _validate_string_tuple("turn", "committed_message_ids", self.committed_message_ids))
         if len(self.committed_message_ids) != len(set(self.committed_message_ids)):
             raise ValueError("turn committed_message_ids must be unique")
@@ -654,6 +743,11 @@ class InMemoryConversationStore:
                 raise ValueError(
                     "conversation store turn must reference a stored conversation"
                 )
+            if turn.base_revision > conversation.revision:
+                raise ValueError(
+                    "conversation store turn base revision must not exceed "
+                    "conversation revision"
+                )
             if (
                 turn.status == "completed"
                 and turn.committed_revision is not None
@@ -679,12 +773,21 @@ class InMemoryConversationStore:
 
     @_with_conversation_store_lock
     def create(self, conversation: Conversation) -> None:
+        if not isinstance(conversation, Conversation):
+            raise ValueError(
+                "conversation store conversation must be a Conversation"
+            )
         if conversation.conversation_id in self._conversations:
             raise ConversationConflictError(f"conversation {conversation.conversation_id!r} already exists")
         self._conversations[conversation.conversation_id] = _copy_conversation(conversation)
 
     @_with_conversation_store_lock
     def get(self, conversation_id: str) -> ConversationSnapshot:
+        conversation_id = _validate_non_empty_string(
+            "conversation store",
+            "conversation_id",
+            conversation_id,
+        )
         conversation = self._conversations.get(conversation_id)
         if conversation is None:
             raise ConversationNotFoundError(f"conversation {conversation_id!r} does not exist")
@@ -692,6 +795,16 @@ class InMemoryConversationStore:
 
     @_with_conversation_store_lock
     def begin_turn(self, conversation_id: str, expected_revision: int, turn_id: str) -> Turn:
+        conversation_id = _validate_non_empty_string(
+            "conversation store",
+            "conversation_id",
+            conversation_id,
+        )
+        turn_id = _validate_non_empty_string(
+            "conversation store",
+            "turn_id",
+            turn_id,
+        )
         conversation = self._conversations.get(conversation_id)
         if conversation is None:
             raise ConversationNotFoundError(f"conversation {conversation_id!r} does not exist")
@@ -699,16 +812,22 @@ class InMemoryConversationStore:
             raise ConversationArchivedError(f"conversation {conversation_id!r} is archived")
         if turn_id in self._turns:
             raise TurnConflictError(f"turn {turn_id!r} already exists")
-        if conversation.revision != expected_revision:
-            raise ConversationConflictError(
-                f"conversation {conversation_id!r} is at revision {conversation.revision}, not {expected_revision}"
-            )
-        turn = Turn(turn_id=turn_id, conversation_id=conversation_id, base_revision=expected_revision)
+        _require_expected_revision(conversation, expected_revision)
+        turn = Turn(
+            turn_id=turn_id,
+            conversation_id=conversation_id,
+            base_revision=expected_revision,
+        )
         self._turns[turn_id] = turn
         return _copy_turn(turn)
 
     @_with_conversation_store_lock
     def get_turn(self, turn_id: str) -> Turn:
+        turn_id = _validate_non_empty_string(
+            "conversation store",
+            "turn_id",
+            turn_id,
+        )
         turn = self._turns.get(turn_id)
         if turn is None:
             raise TurnNotFoundError(f"turn {turn_id!r} does not exist")
@@ -716,11 +835,27 @@ class InMemoryConversationStore:
 
     @_with_conversation_store_lock
     def append_turn_message(self, turn_id: str, message: Message) -> Turn:
+        turn_id = _validate_non_empty_string(
+            "conversation store",
+            "turn_id",
+            turn_id,
+        )
+        if not isinstance(message, Message):
+            raise ValueError("conversation store message must be a Message")
         turn = self._turns.get(turn_id)
         if turn is None:
             raise TurnNotFoundError(f"turn {turn_id!r} does not exist")
         if turn.status in {"completed", "failed", "cancelled", "policy_stopped"}:
             raise TurnConflictError(f"turn {turn_id!r} is already terminal")
+        conversation = self._conversations.get(turn.conversation_id)
+        if conversation is None:
+            raise ConversationNotFoundError(
+                f"conversation {turn.conversation_id!r} does not exist"
+            )
+        if conversation.archived:
+            raise ConversationArchivedError(
+                f"conversation {turn.conversation_id!r} is archived"
+            )
         draft_message = _copy_message(replace(message, status="draft"))
         updated = Turn(
             turn_id=turn.turn_id,
@@ -737,6 +872,11 @@ class InMemoryConversationStore:
 
     @_with_conversation_store_lock
     def commit_turn(self, turn_id: str) -> Turn:
+        turn_id = _validate_non_empty_string(
+            "conversation store",
+            "turn_id",
+            turn_id,
+        )
         turn = self._turns.get(turn_id)
         if turn is None:
             raise TurnNotFoundError(f"turn {turn_id!r} does not exist")
@@ -747,7 +887,11 @@ class InMemoryConversationStore:
         committed_messages = tuple(_copy_message(replace(message, status="committed")) for message in turn.messages)
         try:
             new_revision = self.append_messages(turn.conversation_id, turn.base_revision, list(committed_messages))
-        except ConversationConflictError:
+        except (
+            ConversationArchivedError,
+            ConversationConflictError,
+            OverflowError,
+        ):
             failed = Turn(
                 turn_id=turn.turn_id,
                 conversation_id=turn.conversation_id,
@@ -775,6 +919,11 @@ class InMemoryConversationStore:
 
     @_with_conversation_store_lock
     def abort_turn(self, turn_id: str) -> Turn:
+        turn_id = _validate_non_empty_string(
+            "conversation store",
+            "turn_id",
+            turn_id,
+        )
         turn = self._turns.get(turn_id)
         if turn is None:
             raise TurnNotFoundError(f"turn {turn_id!r} does not exist")
@@ -795,6 +944,11 @@ class InMemoryConversationStore:
 
     @_with_conversation_store_lock
     def policy_stop_turn(self, turn_id: str) -> Turn:
+        turn_id = _validate_non_empty_string(
+            "conversation store",
+            "turn_id",
+            turn_id,
+        )
         turn = self._turns.get(turn_id)
         if turn is None:
             raise TurnNotFoundError(f"turn {turn_id!r} does not exist")
@@ -815,17 +969,30 @@ class InMemoryConversationStore:
 
     @_with_conversation_store_lock
     def append_messages(self, conversation_id: str, expected_revision: int, messages: list[Message]) -> int:
+        conversation_id = _validate_non_empty_string(
+            "conversation store",
+            "conversation_id",
+            conversation_id,
+        )
         conversation = self._conversations.get(conversation_id)
         if conversation is None:
             raise ConversationNotFoundError(f"conversation {conversation_id!r} does not exist")
         if conversation.archived:
             raise ConversationArchivedError(f"conversation {conversation_id!r} is archived")
-        if conversation.revision != expected_revision:
-            raise ConversationConflictError(
-                f"conversation {conversation_id!r} is at revision {conversation.revision}, not {expected_revision}"
+        _require_expected_revision(conversation, expected_revision)
+        if not isinstance(messages, list):
+            raise ValueError("conversation store messages must be a list")
+        if not messages:
+            raise ValueError("conversation store messages must not be empty")
+        if any(not isinstance(message, Message) for message in messages):
+            raise ValueError(
+                "conversation store messages must contain Message records"
             )
-        new_revision = conversation.revision + 1
-        copied_messages = tuple(_copy_message(message) for message in messages)
+        new_revision = _next_revision(conversation.revision)
+        copied_messages = tuple(
+            _copy_message(message)
+            for message in messages
+        )
         try:
             updated = Conversation(
                 conversation_id=conversation.conversation_id,
@@ -845,11 +1012,19 @@ class InMemoryConversationStore:
 
     @_with_conversation_store_lock
     def branch(self, request: BranchRequest) -> Conversation:
+        if not isinstance(request, BranchRequest):
+            raise ValueError(
+                "conversation store branch request must be a BranchRequest"
+            )
         conversation = self._conversations.get(request.conversation_id)
         if conversation is None:
             raise ConversationNotFoundError(f"conversation {request.conversation_id!r} does not exist")
         if conversation.archived:
             raise ConversationArchivedError(f"conversation {request.conversation_id!r} is archived")
+        _require_expected_revision(
+            conversation,
+            request.expected_revision,
+        )
         branch_id = request.new_conversation_id or f"{request.conversation_id}:branch:{request.from_message_id}"
         if branch_id in self._conversations:
             raise ConversationConflictError(f"conversation {branch_id!r} already exists")
@@ -898,11 +1073,19 @@ class InMemoryConversationStore:
 
     @_with_conversation_store_lock
     def regenerate(self, request: RegenerateRequest) -> Conversation:
+        if not isinstance(request, RegenerateRequest):
+            raise ValueError(
+                "conversation store regenerate request must be a RegenerateRequest"
+            )
         conversation = self._conversations.get(request.conversation_id)
         if conversation is None:
             raise ConversationNotFoundError(f"conversation {request.conversation_id!r} does not exist")
         if conversation.archived:
             raise ConversationArchivedError(f"conversation {request.conversation_id!r} is archived")
+        _require_expected_revision(
+            conversation,
+            request.expected_revision,
+        )
         branch_id = request.new_conversation_id or f"{request.conversation_id}:regenerate:{request.assistant_message_id}"
         if branch_id in self._conversations:
             raise ConversationConflictError(f"conversation {branch_id!r} already exists")
@@ -990,7 +1173,7 @@ class InMemoryConversationStore:
             messages=superseded_messages,
             attachments=conversation.attachments,
             compactions=conversation.compactions,
-            revision=conversation.revision + 1,
+            revision=_next_revision(conversation.revision),
             archived=conversation.archived,
             branch_of=conversation.branch_of,
             branched_from_message_id=conversation.branched_from_message_id,
@@ -1000,13 +1183,29 @@ class InMemoryConversationStore:
         return _copy_conversation(branch)
 
     @_with_conversation_store_lock
-    def add_attachment(self, conversation_id: str, attachment: FileAttachment) -> int:
+    def add_attachment(
+        self,
+        conversation_id: str,
+        attachment: FileAttachment,
+        *,
+        expected_revision: int,
+    ) -> int:
+        conversation_id = _validate_non_empty_string(
+            "conversation store",
+            "conversation_id",
+            conversation_id,
+        )
+        if not isinstance(attachment, FileAttachment):
+            raise ValueError(
+                "conversation store attachment must be a FileAttachment"
+            )
         conversation = self._conversations.get(conversation_id)
         if conversation is None:
             raise ConversationNotFoundError(f"conversation {conversation_id!r} does not exist")
         if conversation.archived:
             raise ConversationArchivedError(f"conversation {conversation_id!r} is archived")
-        new_revision = conversation.revision + 1
+        _require_expected_revision(conversation, expected_revision)
+        new_revision = _next_revision(conversation.revision)
         self._conversations[conversation_id] = Conversation(
             conversation_id=conversation.conversation_id,
             messages=conversation.messages,
@@ -1028,6 +1227,25 @@ class InMemoryConversationStore:
         *,
         include_conversation_scope: bool,
     ) -> tuple[FileAttachment, ...]:
+        conversation_id = _validate_non_empty_string(
+            "conversation store",
+            "conversation_id",
+            conversation_id,
+        )
+        if not isinstance(message_ids, list):
+            raise ValueError(
+                "conversation store message_ids must be a list"
+            )
+        for message_id in message_ids:
+            _validate_non_empty_string(
+                "conversation store",
+                "message_id",
+                message_id,
+            )
+        if not isinstance(include_conversation_scope, bool):
+            raise ValueError(
+                "conversation store include_conversation_scope must be a boolean"
+            )
         conversation = self._conversations.get(conversation_id)
         if conversation is None:
             raise ConversationNotFoundError(f"conversation {conversation_id!r} does not exist")
@@ -1043,19 +1261,35 @@ class InMemoryConversationStore:
         )
 
     @_with_conversation_store_lock
-    def record_compaction(self, conversation_id: str, record: CompactionRecord) -> int:
+    def record_compaction(
+        self,
+        conversation_id: str,
+        record: CompactionRecord,
+        *,
+        expected_revision: int,
+    ) -> int:
+        conversation_id = _validate_non_empty_string(
+            "conversation store",
+            "conversation_id",
+            conversation_id,
+        )
+        if not isinstance(record, CompactionRecord):
+            raise ValueError(
+                "conversation store compaction must be a CompactionRecord"
+            )
         conversation = self._conversations.get(conversation_id)
         if conversation is None:
             raise ConversationNotFoundError(f"conversation {conversation_id!r} does not exist")
         if conversation.archived:
             raise ConversationArchivedError(f"conversation {conversation_id!r} is archived")
+        _require_expected_revision(conversation, expected_revision)
         message_ids = {message.message_id for message in conversation.messages}
         for source_message_id in record.source_message_ids:
             if source_message_id not in message_ids:
                 raise MessageNotFoundError(f"message {source_message_id!r} does not exist")
         if record.output_message_id not in message_ids:
             raise MessageNotFoundError(f"message {record.output_message_id!r} does not exist")
-        new_revision = conversation.revision + 1
+        new_revision = _next_revision(conversation.revision)
         self._conversations[conversation_id] = Conversation(
             conversation_id=conversation.conversation_id,
             messages=conversation.messages,
@@ -1070,11 +1304,22 @@ class InMemoryConversationStore:
         return new_revision
 
     @_with_conversation_store_lock
-    def archive(self, conversation_id: str) -> int:
+    def archive(
+        self,
+        conversation_id: str,
+        *,
+        expected_revision: int,
+    ) -> int:
+        conversation_id = _validate_non_empty_string(
+            "conversation store",
+            "conversation_id",
+            conversation_id,
+        )
         conversation = self._conversations.get(conversation_id)
         if conversation is None:
             raise ConversationNotFoundError(f"conversation {conversation_id!r} does not exist")
-        new_revision = conversation.revision + 1
+        _require_expected_revision(conversation, expected_revision)
+        new_revision = _next_revision(conversation.revision)
         self._conversations[conversation_id] = Conversation(
             conversation_id=conversation.conversation_id,
             messages=conversation.messages,
@@ -1089,10 +1334,24 @@ class InMemoryConversationStore:
         return new_revision
 
     @_with_conversation_store_lock
-    def delete(self, conversation_id: str, policy: DeletePolicy = "tombstone") -> int | None:
+    def delete(
+        self,
+        conversation_id: str,
+        policy: DeletePolicy = "tombstone",
+        *,
+        expected_revision: int,
+    ) -> int | None:
+        conversation_id = _validate_non_empty_string(
+            "conversation store",
+            "conversation_id",
+            conversation_id,
+        )
+        if policy not in VALID_DELETE_POLICIES:
+            raise ValueError("policy must be tombstone or hard")
         conversation = self._conversations.get(conversation_id)
         if conversation is None:
             raise ConversationNotFoundError(f"conversation {conversation_id!r} does not exist")
+        _require_expected_revision(conversation, expected_revision)
         if policy == "hard":
             del self._conversations[conversation_id]
             self._turns = {
@@ -1101,9 +1360,7 @@ class InMemoryConversationStore:
                 if turn.conversation_id != conversation_id
             }
             return None
-        if policy != "tombstone":
-            raise ValueError("policy must be tombstone or hard")
-        new_revision = conversation.revision + 1
+        new_revision = _next_revision(conversation.revision)
         metadata = dict(conversation.metadata)
         metadata["deleted"] = True
         self._conversations[conversation_id] = Conversation(

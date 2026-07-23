@@ -91,6 +91,16 @@ def test_workspace_snapshot_validates_identity_revision_resources_and_metadata()
             1,
             metadata=recursive,
         )
+    with pytest.raises(
+        ValueError,
+        match="base_snapshot_id and base_snapshot_digest must be provided together",
+    ):
+        WorkspaceSnapshot(
+            "workspace-1",
+            "snapshot-1",
+            1,
+            base_snapshot_id="snapshot-0",
+        )
 
 
 @pytest.mark.parametrize(
@@ -175,6 +185,8 @@ def test_workspace_commit_validates_identity_links_and_copies_snapshot() -> None
         revision=2,
         resources=(ResourceSnapshotRef("a.txt", "sha256:a2", resource_kind="file"),),
         created_at="2026-06-24T00:05:00Z",
+        base_snapshot_id="snapshot-1",
+        base_snapshot_digest="sha256:base",
         metadata={"phase": "candidate"},
     )
 
@@ -222,6 +234,19 @@ def test_workspace_commit_validates_identity_links_and_copies_snapshot() -> None
             "2026-06-24T00:05:00Z",
             "change-1",
         )
+    with pytest.raises(
+        ValueError,
+        match="snapshot must reference previous_snapshot_id",
+    ):
+        WorkspaceCommit(
+            "commit-1",
+            "workspace-1",
+            "snapshot-other",
+            snapshot,
+            PrincipalRef("author-1"),
+            "2026-06-24T00:05:00Z",
+            "change-1",
+        )
 
 
 @pytest.mark.parametrize(
@@ -241,6 +266,8 @@ def test_workspace_commit_rejects_whitespace_wrapped_identities(field_name: str,
         revision=2,
         resources=(ResourceSnapshotRef("a.txt", "sha256:a2", resource_kind="file"),),
         created_at="2026-06-24T00:05:00Z",
+        base_snapshot_id="snapshot-1",
+        base_snapshot_digest="sha256:base",
     )
     values = {
         "commit_id": "commit-1",
@@ -484,6 +511,38 @@ def test_workspace_store_compare_and_swap_commit_updates_revision() -> None:
 
     assert error.value.expected_snapshot_id == "snapshot-1"
     assert error.value.actual_snapshot_id == "snapshot-2"
+
+
+def test_workspace_revision_exhaustion_does_not_mutate_head() -> None:
+    maximum = (1 << 64) - 1
+    base = WorkspaceSnapshot(
+        "workspace-1",
+        "snapshot-maximum",
+        maximum,
+    )
+    store = InMemoryWorkspaceStore().put_snapshot(base)
+
+    with pytest.raises(OverflowError, match="workspace revision exhausted"):
+        store.compare_and_swap_commit(
+            workspace_id="workspace-1",
+            expected_snapshot_id="snapshot-maximum",
+            new_snapshot_id="snapshot-overflow",
+            resources=(),
+            committed_by=PrincipalRef("author-1"),
+            committed_at="2026-06-24T00:05:00Z",
+            change_set_id="change-1",
+        )
+
+    assert store.current("workspace-1") == base
+    with pytest.raises(
+        ValueError,
+        match="workspace snapshot revision exceeds storage range",
+    ):
+        WorkspaceSnapshot(
+            "workspace-invalid",
+            "snapshot-invalid",
+            maximum + 1,
+        )
 
 
 def test_workspace_store_rejects_reused_snapshot_identity() -> None:
@@ -981,7 +1040,7 @@ def test_workspace_trial_plan_materializes_and_enforces_verified_commit_request(
         )
 
 
-def test_workspace_trial_and_commit_bind_evidence_by_snapshot_identity() -> None:
+def test_workspace_trial_binds_complete_candidate_evidence() -> None:
     base = WorkspaceSnapshot(
         "workspace-1",
         "snapshot-1",
@@ -1008,11 +1067,6 @@ def test_workspace_trial_and_commit_bind_evidence_by_snapshot_identity() -> None
         uri="file:///tmp/workspace-1",
         metadata={"source": "check"},
     )
-    gate_subject = ResourceSnapshotRef(
-        "workspace-1",
-        candidate.content_digest(),
-        metadata={"source": "gate"},
-    )
     change_set = ChangeSet(
         "change-1",
         ResourceSnapshotRef("workspace-1", base.content_digest()),
@@ -1021,37 +1075,59 @@ def test_workspace_trial_and_commit_bind_evidence_by_snapshot_identity() -> None
     check = CheckResult("lint", evidence_subject, "passed")
     gate = evaluate_gate(
         "quality",
-        gate_subject,
+        canonical_candidate,
         checks=[check],
         required_check_ids=["lint"],
     )
-    request = WorkspaceTrialPlan(
-        "trial-1",
-        change_set,
-        1,
-        required_check_ids=("lint",),
-        checks=(check,),
-        gate=gate,
-        mutation_decision=WorkspaceMutationDecision(True),
-    ).to_commit_request(
-        "commit-1",
-        now="2026-07-02T00:04:00Z",
-    )
 
-    committed = (
-        InMemoryWorkspaceStore()
-        .put_snapshot(base)
-        .compare_and_swap_commit_request(
-            workspace_id="workspace-1",
-            request=request,
-            new_snapshot_id="snapshot-2",
-            resources=(),
-            committed_by=PrincipalRef("author-1"),
-            committed_at="2026-07-02T00:05:00Z",
+    with pytest.raises(
+        WorkspaceTrialError,
+        match="check 'lint' has a stale subject",
+    ):
+        WorkspaceTrialPlan(
+            "trial-1",
+            change_set,
+            1,
+            required_check_ids=("lint",),
+            checks=(check,),
+            gate=gate,
+            mutation_decision=WorkspaceMutationDecision(True),
+        ).to_commit_request(
+            "commit-1",
+            now="2026-07-02T00:04:00Z",
         )
-    )
 
-    assert committed.snapshot.content_digest() == canonical_candidate.digest
+    canonical_check = CheckResult(
+        "lint",
+        canonical_candidate,
+        "passed",
+    )
+    stale_gate = evaluate_gate(
+        "quality",
+        ResourceSnapshotRef(
+            "workspace-1",
+            candidate.content_digest(),
+            metadata={"source": "gate"},
+        ),
+        checks=[canonical_check],
+        required_check_ids=["lint"],
+    )
+    with pytest.raises(
+        WorkspaceTrialError,
+        match="gate has a stale subject",
+    ):
+        WorkspaceTrialPlan(
+            "trial-1",
+            change_set,
+            1,
+            required_check_ids=("lint",),
+            checks=(canonical_check,),
+            gate=stale_gate,
+            mutation_decision=WorkspaceMutationDecision(True),
+        ).to_commit_request(
+            "commit-1",
+            now="2026-07-02T00:04:00Z",
+        )
 
 
 def test_workspace_trial_plan_fails_closed_when_governance_evidence_is_missing_or_stale() -> None:
