@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from decimal import Decimal
+import json
+from threading import Barrier, BrokenBarrierError, Lock
 
 import pytest
 
@@ -246,6 +249,49 @@ def test_budget_ledger_rejects_reservation_above_available_balance() -> None:
 
     with pytest.raises(BudgetExceededError):
         ledger.reserve("budget-1", ResourceRef("run:2"), [_tokens("30")], purpose="provider_call", expires_at="later")
+
+
+def test_in_memory_budget_ledger_serializes_concurrent_reservations() -> None:
+    ledger = InMemoryBudgetLedger()
+    ledger.allocate("budget-1", ResourceRef("tenant:acme"), [_tokens("10")], policy_ref="policy-1")
+    reads = Barrier(2)
+    read_count = 0
+    read_count_lock = Lock()
+
+    class CoordinatedReserved(dict):
+        def get(self, key, default=None):
+            nonlocal read_count
+            value = super().get(key, default)
+            with read_count_lock:
+                should_wait = read_count < 2
+                read_count += 1
+            if should_wait:
+                try:
+                    reads.wait(timeout=0.2)
+                except BrokenBarrierError:
+                    pass
+            return value
+
+    ledger._reserved["budget-1"] = CoordinatedReserved(ledger._reserved["budget-1"])
+
+    def reserve(owner_id: str) -> str:
+        try:
+            ledger.reserve(
+                "budget-1",
+                ResourceRef(owner_id),
+                [_tokens("10")],
+                purpose="provider_call",
+                expires_at="later",
+            )
+        except BudgetExceededError:
+            return "exceeded"
+        return "reserved"
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        outcomes = list(executor.map(reserve, ("run:1", "run:2")))
+
+    assert sorted(outcomes) == ["exceeded", "reserved"]
+    assert ledger.balance("budget-1").reserved == [_tokens("10")]
 
 
 @pytest.mark.parametrize("status", ("exhausted", "paused", "closed"))
@@ -596,6 +642,67 @@ def test_sqlite_budget_ledger_rejects_non_standard_snapshot_json_on_replay(tmp_p
     ledger.close()
 
     with pytest.raises(ValueError, match="budget ledger state_json must be valid strict JSON"):
+        SQLiteBudgetLedger(path)
+
+
+def test_sqlite_budget_ledger_rejects_non_finite_amount_map_on_replay(tmp_path) -> None:
+    path = tmp_path / "budget.sqlite3"
+    ledger = SQLiteBudgetLedger(path)
+    ledger.allocate("budget-1", ResourceRef("tenant:acme"), [_tokens("100")], policy_ref="policy-1")
+    row = ledger._connection.execute(
+        "SELECT state_json FROM budget_ledger_snapshots WHERE snapshot_id = ?",
+        ("default",),
+    ).fetchone()
+    snapshot = json.loads(row["state_json"])
+    snapshot["allocated"]["budget-1"][0]["amount"] = "NaN"
+    ledger._connection.execute(
+        "UPDATE budget_ledger_snapshots SET state_json = ? WHERE snapshot_id = ?",
+        (json.dumps(snapshot), "default"),
+    )
+    ledger._connection.commit()
+    ledger.close()
+
+    with pytest.raises(ValueError, match="budget ledger amount map values must be finite"):
+        SQLiteBudgetLedger(path)
+
+
+@pytest.mark.parametrize(
+    ("payload", "message"),
+    (
+        ({}, "amount maps must be arrays"),
+        ([None], "amount map entries must be objects"),
+        (
+            [{"kind": 42, "unit": "tokens", "amount": "1", "dimensions": {}}],
+            "amount map kinds must be non-empty strings",
+        ),
+        (
+            [{"kind": "tokens", "unit": "tokens", "amount": "1", "dimensions": []}],
+            "amount map dimensions must be objects",
+        ),
+    ),
+)
+def test_sqlite_budget_ledger_rejects_invalid_amount_map_shapes_on_replay(
+    tmp_path,
+    payload: object,
+    message: str,
+) -> None:
+    path = tmp_path / "budget-invalid-amount-map.sqlite3"
+    ledger = SQLiteBudgetLedger(path)
+    ledger.allocate("budget-1", ResourceRef("tenant:acme"), [_tokens("100")], policy_ref="policy-1")
+    row = ledger._connection.execute(
+        "SELECT state_json FROM budget_ledger_snapshots WHERE snapshot_id = ?",
+        ("default",),
+    ).fetchone()
+    snapshot = json.loads(row["state_json"])
+    snapshot["allocated"]["budget-1"] = payload
+    ledger._connection.execute(
+        "UPDATE budget_ledger_snapshots SET state_json = ? WHERE snapshot_id = ?",
+        (json.dumps(snapshot), "default"),
+    )
+    ledger._connection.commit()
+    ledger.close()
+
+    with pytest.raises(ValueError, match=message):
         SQLiteBudgetLedger(path)
 
 

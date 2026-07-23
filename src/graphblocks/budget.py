@@ -4,11 +4,13 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
+from functools import wraps
 import json
 from pathlib import Path
 import sqlite3
+from threading import RLock
 from types import MappingProxyType
-from typing import Literal, TypeVar, cast, get_args
+from typing import Literal, ParamSpec, TypeVar, cast, get_args
 
 from .canonical import canonical_dumps
 from .policy import ResourceRef
@@ -16,6 +18,7 @@ from .policy import ResourceRef
 
 AmountKey = tuple[str, str, tuple[tuple[str, str], ...]]
 BudgetLedgerResult = TypeVar("BudgetLedgerResult")
+BudgetLedgerParams = ParamSpec("BudgetLedgerParams")
 BudgetStatus = Literal["active", "exhausted", "paused", "closed"]
 ReservationPurpose = Literal["provider_call", "task", "trial", "tool", "finalization", "cleanup"]
 ReservationStatus = Literal["reserved", "committed", "released", "expired"]
@@ -27,6 +30,21 @@ VALID_RESERVATION_PURPOSES = frozenset(get_args(ReservationPurpose))
 VALID_RESERVATION_STATUSES = frozenset(get_args(ReservationStatus))
 VALID_COMPLETION_RESERVE_PURPOSES = frozenset(get_args(CompletionReservePurpose))
 VALID_COMPLETION_RESERVE_STATUSES = frozenset(get_args(CompletionReserveStatus))
+
+
+def _with_in_memory_budget_ledger_lock(
+    method: Callable[BudgetLedgerParams, BudgetLedgerResult],
+) -> Callable[BudgetLedgerParams, BudgetLedgerResult]:
+    @wraps(method)
+    def locked(
+        *args: BudgetLedgerParams.args,
+        **kwargs: BudgetLedgerParams.kwargs,
+    ) -> BudgetLedgerResult:
+        ledger = cast("InMemoryBudgetLedger", args[0])
+        with ledger._lock:
+            return method(*args, **kwargs)
+
+    return locked
 
 
 class BudgetError(RuntimeError):
@@ -598,7 +616,9 @@ class InMemoryBudgetLedger:
     _completion_reserve_holds: dict[str, tuple[str, ...]] = field(default_factory=dict)
     _reservation_counter: int = 0
     _fencing_counter: int = 0
+    _lock: RLock = field(default_factory=RLock, init=False, repr=False, compare=False)
 
+    @_with_in_memory_budget_ledger_lock
     def allocate(
         self,
         budget_id: str,
@@ -628,6 +648,7 @@ class InMemoryBudgetLedger:
         self._overdraft[budget_id] = {}
         return _copy_budget_record(account)
 
+    @_with_in_memory_budget_ledger_lock
     def reserve(
         self,
         budget_id: str,
@@ -675,6 +696,7 @@ class InMemoryBudgetLedger:
         self._reservation_holds[actual_reservation_id] = held_budget_ids
         return _copy_budget_record(reservation)
 
+    @_with_in_memory_budget_ledger_lock
     def commit(
         self,
         reservation_id: str,
@@ -733,6 +755,7 @@ class InMemoryBudgetLedger:
             revision=self._accounts[budget_id].revision,
         )
 
+    @_with_in_memory_budget_ledger_lock
     def release(self, reservation_id: str) -> BudgetSettlement:
         reservation = self._reservations.get(reservation_id)
         if reservation is None:
@@ -760,6 +783,7 @@ class InMemoryBudgetLedger:
             revision=self._accounts[budget_id].revision,
         )
 
+    @_with_in_memory_budget_ledger_lock
     def expire(self, reservation_id: str) -> BudgetSettlement:
         reservation = self._reservations.get(reservation_id)
         if reservation is None:
@@ -787,6 +811,7 @@ class InMemoryBudgetLedger:
             revision=self._accounts[budget_id].revision,
         )
 
+    @_with_in_memory_budget_ledger_lock
     def issue_permit(
         self,
         permit_id: str,
@@ -834,6 +859,7 @@ class InMemoryBudgetLedger:
         self._permit_spent[permit_id] = {}
         return _copy_budget_record(permit)
 
+    @_with_in_memory_budget_ledger_lock
     def commit_with_permit(
         self,
         permit_id: str,
@@ -852,6 +878,7 @@ class InMemoryBudgetLedger:
             max_overdraft=max_overdraft,
         )
 
+    @_with_in_memory_budget_ledger_lock
     def commit_with_permit_at(
         self,
         permit_id: str,
@@ -893,14 +920,17 @@ class InMemoryBudgetLedger:
                 del spent[key]
         return settlement
 
+    @_with_in_memory_budget_ledger_lock
     def release_with_permit(self, permit_id: str, reservation_id: str, *, now: str) -> BudgetSettlement:
         permit = self._permit_for_reservation(permit_id, reservation_id)
         self._ensure_permit_not_expired(permit, now)
         return self.release(reservation_id)
 
+    @_with_in_memory_budget_ledger_lock
     def release_with_permit_at(self, permit_id: str, reservation_id: str, *, now: str) -> BudgetSettlement:
         return self.release_with_permit(permit_id, reservation_id, now=now)
 
+    @_with_in_memory_budget_ledger_lock
     def create_completion_reserve(
         self,
         reserve_id: str,
@@ -946,12 +976,14 @@ class InMemoryBudgetLedger:
         self._completion_reserve_holds[reserve_id] = held_budget_ids
         return _copy_budget_record(reserve)
 
+    @_with_in_memory_budget_ledger_lock
     def completion_reserve(self, reserve_id: str) -> CompletionReserve:
         reserve = self._completion_reserves.get(reserve_id)
         if reserve is None:
             raise BudgetCompletionReserveNotFoundError(f"completion reserve {reserve_id!r} does not exist")
         return _copy_budget_record(reserve)
 
+    @_with_in_memory_budget_ledger_lock
     def spend_completion_reserve(
         self,
         reserve_id: str,
@@ -991,9 +1023,11 @@ class InMemoryBudgetLedger:
         )
         return _copy_budget_record(reservation)
 
+    @_with_in_memory_budget_ledger_lock
     def release_completion_reserve(self, reserve_id: str) -> CompletionReserve:
         return self._settle_completion_reserve(reserve_id, "released")
 
+    @_with_in_memory_budget_ledger_lock
     def expire_completion_reserve(self, reserve_id: str) -> CompletionReserve:
         return self._settle_completion_reserve(reserve_id, "expired")
 
@@ -1022,6 +1056,7 @@ class InMemoryBudgetLedger:
         self._completion_reserves[reserve_id] = updated
         return _copy_budget_record(updated)
 
+    @_with_in_memory_budget_ledger_lock
     def balance(self, budget_id: str) -> BudgetBalance:
         account = self._accounts.get(budget_id)
         if account is None:
@@ -1167,11 +1202,46 @@ def _amount_map_to_json(values: dict[AmountKey, Decimal]) -> list[dict[str, obje
     ]
 
 
-def _amount_map_from_json(entries: list[dict[str, object]]) -> dict[AmountKey, Decimal]:
+def _amount_map_from_json(entries: object) -> dict[AmountKey, Decimal]:
+    if not isinstance(entries, list):
+        raise ValueError("budget ledger amount maps must be arrays")
     values: dict[AmountKey, Decimal] = {}
     for entry in entries:
-        dimensions = tuple(sorted(dict(entry.get("dimensions", {})).items()))
-        values[(str(entry["kind"]), str(entry["unit"]), dimensions)] = Decimal(str(entry["amount"]))
+        if not isinstance(entry, Mapping):
+            raise ValueError("budget ledger amount map entries must be objects")
+        kind = entry.get("kind")
+        unit = entry.get("unit")
+        if not isinstance(kind, str) or not kind.strip():
+            raise ValueError("budget ledger amount map kinds must be non-empty strings")
+        if not isinstance(unit, str) or not unit.strip():
+            raise ValueError("budget ledger amount map units must be non-empty strings")
+        raw_dimensions = entry.get("dimensions", {})
+        if not isinstance(raw_dimensions, Mapping):
+            raise ValueError("budget ledger amount map dimensions must be objects")
+        dimensions_map = dict(raw_dimensions)
+        if any(
+            not isinstance(key, str)
+            or not key.strip()
+            or not isinstance(value, str)
+            or not value.strip()
+            for key, value in dimensions_map.items()
+        ):
+            raise ValueError(
+                "budget ledger amount map dimensions must have non-empty string keys and values"
+            )
+        dimensions = tuple(sorted(dimensions_map.items()))
+        try:
+            amount = Decimal(str(entry.get("amount")))
+        except (InvalidOperation, ValueError) as error:
+            raise ValueError("budget ledger amount map values must be decimals") from error
+        if not amount.is_finite():
+            raise ValueError("budget ledger amount map values must be finite")
+        if amount < 0:
+            raise ValueError("budget ledger amount map values must be non-negative")
+        key = (kind, unit, dimensions)
+        if key in values:
+            raise ValueError("budget ledger amount map keys must be unique")
+        values[key] = amount
     return values
 
 
