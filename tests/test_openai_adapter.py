@@ -876,3 +876,32 @@ def test_openai_streaming_tool_call_assembler_rejects_unstable_identity(monkeypa
                 ],
             )
         )
+
+
+def test_openai_streaming_tool_call_assembler_rejects_delta_atomically(monkeypatch) -> None:
+    graphblocks_openai = importlib.import_module("graphblocks.integrations.openai")
+    assembler = graphblocks_openai.OpenAIStreamingToolCallDraftAssembler()
+    partially_invalid = graphblocks_openai.OpenAIChatDelta(
+        response_id="chatcmpl-atomic",
+        sequence=1,
+        choice_index=0,
+        tool_call_deltas=[
+            {
+                "index": 0,
+                "id": "call-1",
+                "name": "knowledge.search",
+                "arguments_delta": '{"query":"refund"}',
+            },
+            {
+                "index": 1,
+                "id": "call-2",
+                "arguments_delta": "{}",
+            },
+        ],
+    )
+
+    with pytest.raises(graphblocks_openai.OpenAICompatibleAdapterError, match="requires a name"):
+        assembler.apply_delta(partially_invalid)
+
+    assert assembler.response_id is None
+    assert assembler.drafts() == ()

@@ -196,13 +196,16 @@ class OpenAIStreamingToolCallDraftAssembler:
     def apply_delta(self, delta: OpenAIChatDelta) -> tuple[ToolCallDraft, ...]:
         if not isinstance(delta, OpenAIChatDelta):
             raise OpenAICompatibleAdapterError("delta must be an OpenAIChatDelta")
-        if self.response_id is None:
-            self.response_id = delta.response_id
-        elif self.response_id != delta.response_id:
+        response_id = self.response_id
+        if response_id is None:
+            response_id = delta.response_id
+        elif response_id != delta.response_id:
             raise OpenAICompatibleAdapterError(
-                f"streaming tool call delta changed response id from {self.response_id} to {delta.response_id}"
+                f"streaming tool call delta changed response id from {response_id} to {delta.response_id}"
             )
 
+        drafts_by_index = dict(self._drafts_by_index)
+        index_order = list(self._index_order)
         updated: list[ToolCallDraft] = []
         for tool_call_delta in delta.tool_call_deltas:
             if not isinstance(tool_call_delta, Mapping):
@@ -211,7 +214,7 @@ class OpenAIStreamingToolCallDraftAssembler:
             if isinstance(index, bool) or not isinstance(index, int) or index < 0:
                 raise OpenAICompatibleAdapterError("streaming tool call delta index must be a non-negative integer")
 
-            draft = self._drafts_by_index.get(index)
+            draft = drafts_by_index.get(index)
             call_id = tool_call_delta.get("id")
             name = tool_call_delta.get("name")
             if draft is None:
@@ -220,8 +223,8 @@ class OpenAIStreamingToolCallDraftAssembler:
                 if not isinstance(name, str) or not name.strip():
                     raise OpenAICompatibleAdapterError("streaming tool call delta requires a name for new index")
                 draft = ToolCallDraft.proposed(delta.response_id, call_id, name)
-                self._drafts_by_index[index] = draft
-                self._index_order.append(index)
+                drafts_by_index[index] = draft
+                index_order.append(index)
             else:
                 if call_id is not None and call_id != draft.tool_call_id:
                     raise OpenAICompatibleAdapterError(
@@ -239,8 +242,11 @@ class OpenAIStreamingToolCallDraftAssembler:
                 if not isinstance(arguments_delta, str):
                     raise OpenAICompatibleAdapterError("streaming tool call arguments_delta must be a string")
                 draft = draft.append_argument_fragment(arguments_delta)
-                self._drafts_by_index[index] = draft
+                drafts_by_index[index] = draft
             updated.append(draft)
+        self.response_id = response_id
+        self._drafts_by_index = drafts_by_index
+        self._index_order = index_order
         return tuple(updated)
 
     def drafts(self) -> tuple[ToolCallDraft, ...]:
