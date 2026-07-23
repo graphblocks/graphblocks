@@ -9,8 +9,15 @@ import math
 import re
 from typing import Literal, TypeAlias
 
-from .canonical import canonical_hash
-from .documents import DocumentChunk, DocumentSpan, SourceRef, sha256_digest_bytes
+from .canonical import canonical_dumps, canonical_hash
+from .documents import (
+    DocumentChunk,
+    DocumentSpan,
+    FrozenDict,
+    FrozenList,
+    SourceRef,
+    sha256_digest_bytes,
+)
 from .evaluation import MetricObservation, ResultBundle
 
 KnowledgeDeleteMode: TypeAlias = Literal["tombstone", "hard"]
@@ -79,7 +86,35 @@ def _copy_metadata(owner: str, value: object, *, field_name: str = "metadata") -
             raise ValueError(f"{owner} {field_name} keys must not be empty")
         if key != key.strip():
             raise ValueError(f"{owner} {field_name} keys must not contain surrounding whitespace")
-    return metadata
+    try:
+        canonical_dumps(metadata)
+    except (TypeError, ValueError) as error:
+        raise ValueError(
+            f"{owner} {field_name} must contain strict canonical JSON"
+        ) from error
+    return {
+        key: _copy_metadata_value(item)
+        for key, item in metadata.items()
+    }
+
+
+def _copy_metadata_value(value: object) -> object:
+    if isinstance(value, FrozenDict):
+        return FrozenDict(
+            {key: _copy_metadata_value(item) for key, item in value.items()}
+        )
+    if isinstance(value, Mapping):
+        return {
+            key: _copy_metadata_value(item)
+            for key, item in value.items()
+        }
+    if isinstance(value, FrozenList):
+        return FrozenList(_copy_metadata_value(item) for item in value)
+    if isinstance(value, list):
+        return [_copy_metadata_value(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_copy_metadata_value(item) for item in value)
+    return value
 
 
 def _copy_string_list(owner: str, field_name: str, value: object) -> list[str]:
@@ -228,16 +263,20 @@ class RetrievalResult:
         _validate_non_empty_string("retrieval result", "retrieval_id", self.retrieval_id)
         if not isinstance(self.request, SearchRequest):
             raise ValueError("retrieval result request must be a SearchRequest")
-        object.__setattr__(
-            self,
-            "hits",
-            _copy_typed_list("retrieval result", "hits", self.hits, SearchHit),
-        )
+        hits = _copy_typed_list("retrieval result", "hits", self.hits, SearchHit)
+        hit_ids = [hit.hit_id for hit in hits]
+        if len(hit_ids) != len(set(hit_ids)):
+            raise ValueError("retrieval result hit_id values must be unique")
+        object.__setattr__(self, "hits", hits)
         object.__setattr__(
             self,
             "total_candidates",
             _validate_non_negative_int("retrieval result", "total_candidates", self.total_candidates),
         )
+        if self.total_candidates is not None and self.total_candidates < len(hits):
+            raise ValueError(
+                "retrieval result total_candidates must not be less than hits length"
+            )
         latency_ms = _validate_optional_finite_float("retrieval result", "latency_ms", self.latency_ms)
         if latency_ms is not None and latency_ms < 0:
             raise ValueError("retrieval result latency_ms must be non-negative")
@@ -355,11 +394,11 @@ class ContextPack:
 
     def __post_init__(self) -> None:
         _validate_non_empty_string("context pack", "context_id", self.context_id)
-        object.__setattr__(
-            self,
-            "hits",
-            _copy_typed_list("context pack", "hits", self.hits, SearchHit),
-        )
+        hits = _copy_typed_list("context pack", "hits", self.hits, SearchHit)
+        hit_ids = [hit.hit_id for hit in hits]
+        if len(hit_ids) != len(set(hit_ids)):
+            raise ValueError("context pack hit_id values must be unique")
+        object.__setattr__(self, "hits", hits)
         token_budget = _validate_non_negative_int("context pack", "token_budget", self.token_budget)
         token_count = _validate_non_negative_int("context pack", "token_count", self.token_count)
         if token_budget is not None and token_count is not None and token_count > token_budget:
@@ -459,11 +498,18 @@ class RagResultPayload:
     def __post_init__(self) -> None:
         if not isinstance(self.query_plan, QueryPlan):
             raise ValueError("rag result payload query_plan must be a QueryPlan")
-        object.__setattr__(
-            self,
+        retrievals = _copy_typed_list(
+            "rag result payload",
             "retrievals",
-            _copy_typed_list("rag result payload", "retrievals", self.retrievals, RetrievalResult),
+            self.retrievals,
+            RetrievalResult,
         )
+        retrieval_ids = [retrieval.retrieval_id for retrieval in retrievals]
+        if len(retrieval_ids) != len(set(retrieval_ids)):
+            raise ValueError(
+                "rag result payload retrieval_id values must be unique"
+            )
+        object.__setattr__(self, "retrievals", retrievals)
         if not isinstance(self.context, ContextPack):
             raise ValueError("rag result payload context must be a ContextPack")
         object.__setattr__(
@@ -697,6 +743,8 @@ class KnowledgeWriteReport:
         assert affected_count is not None
         object.__setattr__(self, "affected_count", affected_count)
         chunk_ids = _copy_string_list("knowledge write report", "chunk_ids", self.chunk_ids)
+        if len(chunk_ids) != len(set(chunk_ids)):
+            raise ValueError("knowledge write report chunk_ids must be unique")
         if affected_count != len(chunk_ids):
             raise ValueError("knowledge write report affected_count must match chunk_ids length")
         object.__setattr__(self, "chunk_ids", chunk_ids)
@@ -714,11 +762,16 @@ class KnowledgePublishResult:
     def __post_init__(self) -> None:
         for field_name in ("index_id", "asset_id", "revision_id"):
             _validate_non_empty_string("knowledge publish result", field_name, getattr(self, field_name))
-        object.__setattr__(
-            self,
+        published_chunk_ids = _copy_string_list(
+            "knowledge publish result",
             "published_chunk_ids",
-            _copy_string_list("knowledge publish result", "published_chunk_ids", self.published_chunk_ids),
+            self.published_chunk_ids,
         )
+        if len(published_chunk_ids) != len(set(published_chunk_ids)):
+            raise ValueError(
+                "knowledge publish result published_chunk_ids must be unique"
+            )
+        object.__setattr__(self, "published_chunk_ids", published_chunk_ids)
         object.__setattr__(self, "metadata", _copy_metadata("knowledge publish result", self.metadata))
 
 
@@ -1862,7 +1915,6 @@ def validate_answer_citations(
         raise ValueError("failure_policy must be one of warn, fail, abstain, repair, or remove_invalid")
 
     severity: Literal["warning", "error"] = "warning" if failure_policy == "warn" else "error"
-    normalize_text = lambda value: " ".join(value.split()).lower()
     issues: list[CitationValidationIssue] = []
     citations_by_id: dict[str, Citation] = {}
     context_source_texts: list[tuple[SourceRef, str]] = []
@@ -1921,7 +1973,7 @@ def validate_answer_citations(
                         severity=severity,
                     )
                 )
-            normalized_claim_text = normalize_text(claim.text)
+            normalized_claim_text = " ".join(claim.text.split()).lower()
             if normalized_claim_text:
                 matching_texts = [
                     text
@@ -1929,7 +1981,8 @@ def validate_answer_citations(
                     if _source_ref_matches(citation.source, source_ref)
                 ]
                 if matching_texts and not any(
-                    normalized_claim_text in normalize_text(text) for text in matching_texts
+                    normalized_claim_text in " ".join(text.split()).lower()
+                    for text in matching_texts
                 ):
                     issues.append(
                         CitationValidationIssue(
@@ -1975,9 +2028,10 @@ def validate_answer_citations(
                 )
             )
         if citation.cited_text is not None:
-            quoted_text = normalize_text(citation.cited_text)
+            quoted_text = " ".join(citation.cited_text.split()).lower()
             if quoted_text and not any(
-                quoted_text in normalize_text(text) for _, text in matching_sources
+                quoted_text in " ".join(text.split()).lower()
+                for _, text in matching_sources
             ):
                 issues.append(
                     CitationValidationIssue(
@@ -2235,10 +2289,66 @@ class InMemoryKnowledgeIndex:
     _records: dict[str, KnowledgeIndexRecord] = field(default_factory=dict)
     _published_revisions: dict[str, str] = field(default_factory=dict)
 
+    def __post_init__(self) -> None:
+        _validate_non_empty_string("knowledge index", "index_id", self.index_id)
+        if not isinstance(self._records, Mapping):
+            raise ValueError("knowledge index records must be a mapping")
+        records: dict[str, KnowledgeIndexRecord] = {}
+        for chunk_id, record in self._records.items():
+            _validate_non_empty_string("knowledge index", "chunk_id", chunk_id)
+            if not isinstance(record, KnowledgeIndexRecord):
+                raise ValueError(
+                    "knowledge index records must be KnowledgeIndexRecord records"
+                )
+            if record.chunk.chunk_id != chunk_id:
+                raise ValueError(
+                    "knowledge index record key must match chunk chunk_id"
+                )
+            records[chunk_id] = record
+        if not isinstance(self._published_revisions, Mapping):
+            raise ValueError("knowledge index published revisions must be a mapping")
+        published_revisions: dict[str, str] = {}
+        for asset_id, revision_id in self._published_revisions.items():
+            _validate_non_empty_string("knowledge index", "asset_id", asset_id)
+            _validate_non_empty_string("knowledge index", "revision_id", revision_id)
+            if not any(
+                record.status == "active"
+                and record.chunk.asset_id == asset_id
+                and record.chunk.revision_id == revision_id
+                for record in records.values()
+            ):
+                raise ValueError(
+                    "knowledge index published revision must reference an active chunk"
+                )
+            published_revisions[asset_id] = revision_id
+        self._records = records
+        self._published_revisions = published_revisions
+
     def upsert_chunks(self, chunks: list[DocumentChunk]) -> KnowledgeWriteReport:
-        chunk_ids: list[str] = []
-        for chunk in chunks:
-            chunk_ids.append(chunk.chunk_id)
+        if isinstance(chunks, (str, bytes, bytearray)):
+            raise ValueError("knowledge index chunks must be DocumentChunk records")
+        try:
+            chunk_records = tuple(chunks)
+        except TypeError as error:
+            raise ValueError(
+                "knowledge index chunks must be DocumentChunk records"
+            ) from error
+        if any(not isinstance(chunk, DocumentChunk) for chunk in chunk_records):
+            raise ValueError("knowledge index chunks must be DocumentChunk records")
+        chunk_ids = [chunk.chunk_id for chunk in chunk_records]
+        if len(chunk_ids) != len(set(chunk_ids)):
+            raise ValueError("knowledge index chunks must not contain duplicate chunk_ids")
+        for chunk in chunk_records:
+            existing = self._records.get(chunk.chunk_id)
+            if existing is not None and (
+                existing.chunk.asset_id,
+                existing.chunk.revision_id,
+                existing.chunk.document_id,
+            ) != (chunk.asset_id, chunk.revision_id, chunk.document_id):
+                raise KnowledgeIndexError(
+                    f"knowledge item {chunk.chunk_id!r} cannot change lineage"
+                )
+        for chunk in chunk_records:
             self._records[chunk.chunk_id] = KnowledgeIndexRecord(chunk=chunk, status="active")
         return KnowledgeWriteReport(
             operation="upsert",
@@ -2248,6 +2358,7 @@ class InMemoryKnowledgeIndex:
         )
 
     def delete_asset(self, asset_id: str, mode: KnowledgeDeleteMode) -> KnowledgeWriteReport:
+        _validate_non_empty_string("knowledge index", "asset_id", asset_id)
         if mode not in {"hard", "tombstone"}:
             raise ValueError("mode must be hard or tombstone")
         chunk_ids = [
@@ -2273,15 +2384,18 @@ class InMemoryKnowledgeIndex:
 
     def update_chunk_metadata(self, chunk_id: str, metadata: dict[str, object]) -> KnowledgeWriteReport:
         record = self._require_record(chunk_id)
+        metadata_copy = _copy_metadata(
+            "knowledge index update", metadata, field_name="metadata"
+        )
         merged_metadata = dict(record.chunk.metadata)
-        for key in sorted(metadata):
-            merged_metadata[key] = metadata[key]
+        for key in sorted(metadata_copy):
+            merged_metadata[key] = metadata_copy[key]
         self._records[chunk_id] = replace(record, chunk=replace(record.chunk, metadata=merged_metadata))
         return KnowledgeWriteReport(
             operation="update_metadata",
             affected_count=1,
             chunk_ids=[chunk_id],
-            metadata={"metadata_keys": sorted(metadata)},
+            metadata={"metadata_keys": sorted(metadata_copy)},
         )
 
     def update_chunk_acl(self, chunk_id: str, acl: dict[str, object] | None) -> KnowledgeWriteReport:
@@ -2294,6 +2408,8 @@ class InMemoryKnowledgeIndex:
         )
 
     def publish_revision(self, asset_id: str, revision_id: str) -> KnowledgePublishResult:
+        _validate_non_empty_string("knowledge index", "asset_id", asset_id)
+        _validate_non_empty_string("knowledge index", "revision_id", revision_id)
         published_chunk_ids = [
             chunk_id
             for chunk_id, record in sorted(self._records.items())
@@ -2362,10 +2478,29 @@ class InMemoryChunkRetriever:
     chunks: list[DocumentChunk]
     retriever_id: str = "local-chunk"
 
+    def __post_init__(self) -> None:
+        _validate_non_empty_string("chunk retriever", "retriever_id", self.retriever_id)
+        if isinstance(self.chunks, (str, bytes, bytearray)):
+            raise ValueError("chunk retriever chunks must be DocumentChunk records")
+        try:
+            chunks = list(self.chunks)
+        except TypeError as error:
+            raise ValueError(
+                "chunk retriever chunks must be DocumentChunk records"
+            ) from error
+        if any(not isinstance(chunk, DocumentChunk) for chunk in chunks):
+            raise ValueError("chunk retriever chunks must be DocumentChunk records")
+        chunk_ids = [chunk.chunk_id for chunk in chunks]
+        if len(chunk_ids) != len(set(chunk_ids)):
+            raise ValueError("chunk retriever chunks must not contain duplicate chunk_ids")
+        self.chunks = chunks
+
     def search(self, query_text: str, top_k: int = 10) -> list[SearchHit]:
         return self.retrieve(SearchRequest(query_text=query_text, top_k=top_k)).hits
 
     def retrieve(self, request: SearchRequest) -> RetrievalResult:
+        if not isinstance(request, SearchRequest):
+            raise ValueError("chunk retriever request must be a SearchRequest")
         request_hash = canonical_hash(
             {
                 "query_text": request.query_text,

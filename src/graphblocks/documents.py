@@ -5,6 +5,8 @@ from dataclasses import dataclass, field
 from collections.abc import Mapping
 from typing import Any, Literal
 
+from .canonical import canonical_dumps
+
 
 JsonObject = dict[str, Any]
 SOURCE_KINDS = frozenset(("upload", "local", "http", "s3", "gcs", "sharepoint", "drive", "email", "record_store", "generated"))
@@ -134,8 +136,12 @@ def _freeze_mapping(owner: str, field_name: str, value: object | None, *, string
         key_text = _validate_non_empty_string(owner, f"{field_name} key", key)
         if string_values and not isinstance(item, str):
             raise ValueError(f"{owner} {field_name} values must be strings")
-        snapshot[key_text] = _freeze_value(owner, item)
-    return FrozenDict(snapshot)
+        snapshot[key_text] = item
+    try:
+        canonical_dumps(snapshot)
+    except (TypeError, ValueError) as error:
+        raise ValueError(f"{owner} {field_name} must contain strict canonical JSON") from error
+    return FrozenDict({key: _freeze_value(owner, item) for key, item in snapshot.items()})
 
 
 def _freeze_value(owner: str, value: Any) -> Any:
@@ -430,6 +436,11 @@ def create_local_text_revision(
     observed_at: str,
     filename: str | None = None,
 ) -> tuple[SourceAsset, AssetRevision]:
+    source_uri = _validate_non_empty_string("local text revision", "source_uri", source_uri)
+    if not isinstance(text, str):
+        raise ValueError("local text revision text must be a string")
+    observed_at = _validate_non_empty_string("local text revision", "observed_at", observed_at)
+    filename = _validate_optional_non_empty_string("local text revision", "filename", filename)
     encoded = text.encode("utf-8")
     content_hash = sha256_digest_bytes(encoded)
     asset_id = "asset:" + sha256_digest_bytes(source_uri.encode("utf-8"))
@@ -459,6 +470,14 @@ def create_local_text_revision(
 
 
 def parse_plain_text_document(asset: SourceAsset, revision: AssetRevision, text: str) -> ParsedDocument:
+    if not isinstance(asset, SourceAsset):
+        raise ValueError("plain text parser asset must be a SourceAsset")
+    if not isinstance(revision, AssetRevision):
+        raise ValueError("plain text parser revision must be an AssetRevision")
+    if revision.asset_id != asset.asset_id:
+        raise ValueError("plain text parser revision asset_id must match source asset asset_id")
+    if not isinstance(text, str):
+        raise ValueError("plain text parser text must be a string")
     elements: list[DocumentElement] = []
     offset = 0
     order = 0
@@ -500,8 +519,16 @@ def chunk_document_by_lines(
     revision: AssetRevision,
     max_elements: int = 8,
 ) -> list[DocumentChunk]:
-    if max_elements < 1:
-        raise ValueError("max_elements must be at least 1")
+    if not isinstance(document, ParsedDocument):
+        raise ValueError("line chunker document must be a ParsedDocument")
+    if not isinstance(revision, AssetRevision):
+        raise ValueError("line chunker revision must be an AssetRevision")
+    if document.asset_id != revision.asset_id:
+        raise ValueError("line chunker document asset_id must match revision asset_id")
+    if document.revision_id != revision.revision_id:
+        raise ValueError("line chunker document revision_id must match revision revision_id")
+    if not isinstance(max_elements, int) or isinstance(max_elements, bool) or max_elements < 1:
+        raise ValueError("max_elements must be a positive integer")
     chunks: list[DocumentChunk] = []
     for chunk_index, start in enumerate(range(0, len(document.elements), max_elements)):
         grouped = document.elements[start : start + max_elements]

@@ -134,6 +134,39 @@ def test_ingestion_records_validate_identity_metadata_and_nested_types() -> None
         replace(manifest, status="failed")
     with pytest.raises(ValueError, match="non-failed ingestion manifest must not include error"):
         replace(manifest, error="temporary failure")
+    with pytest.raises(ValueError, match="chunk_ids must not contain duplicates"):
+        IndexRecordRef(
+            "knowledge",
+            "record-1",
+            "asset-1",
+            "rev-1",
+            chunk_ids=("chunk-1", "chunk-1"),
+        )
+    with pytest.raises(ValueError, match="duplicate identities"):
+        replace(
+            manifest,
+            index_records=(_index_record("rev-1"), _index_record("rev-1")),
+        )
+
+    recursive: dict[str, object] = {}
+    recursive["self"] = recursive
+    with pytest.raises(ValueError, match="strict canonical JSON"):
+        ProcessorRef("plain-text", "1", metadata=recursive)
+
+
+def test_ingestion_manifest_new_rejects_mismatched_asset_lineage() -> None:
+    asset, revision = _source_revision("rev-1")
+
+    with pytest.raises(ValueError, match="revision asset_id must match"):
+        IngestionManifest.new(
+            "manifest-1",
+            asset,
+            replace(revision, asset_id="asset-2"),
+            ProcessorRef("plain-text", "1"),
+            ProcessorRef("line-chunker", "1"),
+            "sha256:pipeline",
+            "2026-06-22T00:00:00Z",
+        )
 
 
 @pytest.mark.parametrize(
@@ -407,6 +440,40 @@ def test_ingestion_manifest_store_detaches_and_validates_restored_state() -> Non
         InMemoryIngestionManifestStore(
             {ready.manifest_id: ready},
             {ready.asset_id: "manifest-missing"},
+        )
+    with pytest.raises(ValueError, match="cover every ready manifest"):
+        InMemoryIngestionManifestStore({ready.manifest_id: ready}, {})
+
+
+def test_ingestion_manifest_store_rejects_invalid_start_and_failure_replay() -> None:
+    store = InMemoryIngestionManifestStore()
+    with pytest.raises(IngestionError, match="cannot be created from"):
+        store.create_processing(
+            replace(_manifest("manifest-1", "rev-1"), status="processing"),
+            "2026-06-22T00:01:00Z",
+        )
+
+    store.create_processing(
+        _manifest("manifest-1", "rev-1"),
+        "2026-06-22T00:01:00Z",
+    )
+    first = store.fail(
+        "manifest-1",
+        "parser unavailable",
+        "2026-06-22T00:02:00Z",
+    )
+    replay = store.fail(
+        "manifest-1",
+        "parser unavailable",
+        "2026-06-22T00:03:00Z",
+    )
+
+    assert replay == first
+    with pytest.raises(IngestionError, match="failure replay"):
+        store.fail(
+            "manifest-1",
+            "different error",
+            "2026-06-22T00:04:00Z",
         )
 
 

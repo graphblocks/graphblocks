@@ -644,6 +644,14 @@ def test_rag_result_payload_and_bundle_validate_nested_records() -> None:
         RagResultPayload(query_plan=object(), retrievals=[retrieval], context=context, model_response={}, answer=answer)  # type: ignore[arg-type]
     with pytest.raises(ValueError, match="rag result payload retrievals must be a list of RetrievalResult records"):
         RagResultPayload(query_plan=payload.query_plan, retrievals=[object()], context=context, model_response={}, answer=answer)  # type: ignore[list-item]
+    with pytest.raises(ValueError, match="retrieval_id values must be unique"):
+        RagResultPayload(
+            query_plan=payload.query_plan,
+            retrievals=[retrieval, retrieval],
+            context=context,
+            model_response={},
+            answer=answer,
+        )
     with pytest.raises(ValueError, match="rag result payload model_response must be a mapping"):
         RagResultPayload(query_plan=payload.query_plan, retrievals=[retrieval], context=context, model_response=object(), answer=answer)  # type: ignore[arg-type]
     with pytest.raises(ValueError, match="rag result bundle profile must be rag"):

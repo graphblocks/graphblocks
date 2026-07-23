@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from graphblocks.documents import (
     chunk_document_by_lines,
     create_local_text_revision,
@@ -77,3 +79,24 @@ def test_chunk_document_by_lines_preserves_lineage_and_source_spans() -> None:
     assert chunks[0].source_refs[0].locator.chunk_id == chunks[0].chunk_id
     assert chunks[0].source_refs[0].locator.char_start == 0
     assert chunks[0].source_refs[0].locator.char_end == 23
+
+
+def test_document_processing_rejects_mismatched_lineage_and_boolean_chunk_size() -> None:
+    first_asset, first_revision = create_local_text_revision(
+        "file:///tmp/first.txt",
+        "first\n",
+        observed_at="2026-06-22T00:00:00Z",
+    )
+    _, second_revision = create_local_text_revision(
+        "file:///tmp/second.txt",
+        "second\n",
+        observed_at="2026-06-22T00:00:00Z",
+    )
+    document = parse_plain_text_document(first_asset, first_revision, "first\n")
+
+    with pytest.raises(ValueError, match="revision asset_id must match"):
+        parse_plain_text_document(first_asset, second_revision, "second\n")
+    with pytest.raises(ValueError, match="document asset_id must match"):
+        chunk_document_by_lines(document, second_revision)
+    with pytest.raises(ValueError, match="positive integer"):
+        chunk_document_by_lines(document, first_revision, max_elements=True)  # type: ignore[arg-type]

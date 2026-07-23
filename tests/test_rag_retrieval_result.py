@@ -139,6 +139,17 @@ def test_rag_request_item_hit_context_and_result_records_validate_wire_shape() -
         RetrievalResult(retrieval_id="ret-1", request=request, hits=[], total_candidates=-1)
     with pytest.raises(ValueError, match="retrieval result latency_ms must be finite"):
         RetrievalResult(retrieval_id="ret-1", request=request, hits=[], latency_ms=float("nan"))
+    with pytest.raises(ValueError, match="hit_id values must be unique"):
+        RetrievalResult(retrieval_id="ret-1", request=request, hits=[hit, hit])
+    with pytest.raises(ValueError, match="must not be less than hits length"):
+        RetrievalResult(
+            retrieval_id="ret-1",
+            request=request,
+            hits=[hit],
+            total_candidates=0,
+        )
+    with pytest.raises(ValueError, match="context pack hit_id values must be unique"):
+        ContextPack(context_id="ctx-1", hits=[hit, hit])
 
 
 @pytest.mark.parametrize(

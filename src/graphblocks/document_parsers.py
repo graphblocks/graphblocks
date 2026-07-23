@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from pathlib import PurePosixPath
 from types import MappingProxyType
 
+from .canonical import canonical_dumps
 from .documents import AssetRevision, ParsedDocument, SourceAsset, parse_plain_text_document
 from .documents import ArtifactRef
 
@@ -47,8 +48,14 @@ def _freeze_metadata(owner: str, metadata: object) -> Mapping[str, object]:
     snapshot: dict[str, object] = {}
     for key, value in metadata.items():
         key_text = _validate_exact_non_empty_string(owner, "metadata key", key)
-        snapshot[key_text] = _freeze_metadata_value(owner, value)
-    return MappingProxyType(snapshot)
+        snapshot[key_text] = value
+    try:
+        canonical_dumps(snapshot)
+    except (TypeError, ValueError) as error:
+        raise ValueError(f"{owner} metadata must contain strict canonical JSON") from error
+    return MappingProxyType(
+        {key: _freeze_metadata_value(owner, value) for key, value in snapshot.items()}
+    )
 
 
 def _freeze_metadata_value(owner: str, value: object) -> object:
@@ -274,6 +281,18 @@ class DocumentParserRegistry:
         body: bytes,
         lock: ParserSelectionLock,
     ) -> ParsedDocument:
+        if not isinstance(asset, SourceAsset):
+            raise ValueError("locked parser asset must be a SourceAsset")
+        if not isinstance(revision, AssetRevision):
+            raise ValueError("locked parser revision must be an AssetRevision")
+        if revision.asset_id != asset.asset_id:
+            raise DocumentParserError(
+                "locked parser revision asset_id must match source asset asset_id"
+            )
+        if not isinstance(body, bytes):
+            raise ValueError("locked parser body must be bytes")
+        if not isinstance(lock, ParserSelectionLock):
+            raise ValueError("locked parser lock must be a ParserSelectionLock")
         if (
             lock.artifact_checksum is not None
             and revision.artifact.checksum != lock.artifact_checksum

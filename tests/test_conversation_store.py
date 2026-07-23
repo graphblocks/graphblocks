@@ -153,6 +153,23 @@ def test_conversation_records_validate_identity_literals_and_nested_types() -> N
         Conversation("conv-1", archived="yes")  # type: ignore[arg-type]
     with pytest.raises(ValueError, match="conversation snapshot revision must match conversation revision"):
         ConversationSnapshot(Conversation("conv-1", revision=1), revision=0)
+    with pytest.raises(ValueError, match="surrounding whitespace"):
+        Message(message_id=" msg-1", role="user")
+
+    recursive: list[object] = []
+    recursive.append(recursive)
+    with pytest.raises(ValueError, match="strict canonical JSON"):
+        ContentPart(kind="json", data={"recursive": recursive})
+    nested: dict[str, object] = {}
+    current = nested
+    for _ in range(65):
+        child: dict[str, object] = {}
+        current["child"] = child
+        current = child
+    with pytest.raises(ValueError, match="at most 64 nesting levels"):
+        ContentPart(kind="json", data=nested)
+    with pytest.raises(ValueError, match="strict canonical JSON"):
+        ContentPart(kind="text", text="hello", metadata={"value": "\ud800"})
 
 
 def test_conversation_request_compaction_and_turn_records_validate_contracts() -> None:
@@ -172,6 +189,37 @@ def test_conversation_request_compaction_and_turn_records_validate_contracts() -
         Turn("turn-1", "conv-1", 0, status="completed", committed_message_ids=("msg-1",))
     with pytest.raises(ValueError, match="non-completed turn must not carry committed revision data"):
         Turn("turn-1", "conv-1", 0, committed_revision=1)
+    duplicate = Message("msg-1", "assistant", status="draft")
+    with pytest.raises(ValueError, match="turn message_id values must be unique"):
+        Turn("turn-1", "conv-1", 0, messages=(duplicate, duplicate))
+    committed = Message("msg-1", "assistant", status="committed")
+    with pytest.raises(ValueError, match="base_revision plus one"):
+        Turn(
+            "turn-1",
+            "conv-1",
+            0,
+            status="completed",
+            messages=(committed,),
+            committed_revision=2,
+            committed_message_ids=("msg-1",),
+        )
+
+
+def test_conversation_store_validates_and_detaches_restored_state() -> None:
+    conversation = Conversation("conv-1", metadata={"state": {"phase": "initial"}})
+    restored = InMemoryConversationStore({"conv-1": conversation})
+    conversation.metadata["state"]["phase"] = "mutated"  # type: ignore[index]
+
+    assert restored.get("conv-1").conversation.metadata == {
+        "state": {"phase": "initial"}
+    }
+    with pytest.raises(ValueError, match="conversation key must match"):
+        InMemoryConversationStore({"wrong": conversation})
+    with pytest.raises(ValueError, match="reference a stored conversation"):
+        InMemoryConversationStore(
+            {"conv-1": conversation},
+            {"turn-1": Turn("turn-1", "missing", 0)},
+        )
 
 
 def test_branch_preserves_lineage_and_copies_messages_through_source_message() -> None:

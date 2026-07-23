@@ -67,6 +67,31 @@ def test_rank_documents_reads_snake_case_query_text() -> None:
     assert [hit["hitId"] for hit in result["hits"]] == ["relevant", "irrelevant"]
 
 
+def test_rag_wire_records_reject_ambiguous_aliases_and_non_mapping_metadata() -> None:
+    hit = _hit("hit-1", "chunk-1", 1, "local", "Audit logs")
+
+    with pytest.raises(ValueError, match="must not contain both"):
+        rank_documents(
+            {
+                "query": {
+                    "queryText": "audit",
+                    "query_text": "audit",
+                },
+                "hits": [hit],
+            },
+            {},
+            {},
+        )
+
+    hit["metadata"] = [("source", "local")]
+    with pytest.raises(TypeError, match="search hit metadata must be a mapping"):
+        rank_documents(
+            {"query": "audit", "hits": [hit]},
+            {},
+            {},
+        )
+
+
 def test_rag_blocks_execute_as_one_runtime_graph_with_injected_sources() -> None:
     registry = stdlib_registry()
     graph = {

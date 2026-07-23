@@ -264,3 +264,24 @@ def test_document_payload_records_validate_nested_types_and_copy_collections() -
         DocumentSpan("asset-1", "rev-1", "doc-1", char_start=5, char_end=1)
     with pytest.raises(ValueError, match="document chunk source_refs must be SourceRef"):
         DocumentChunk("chunk-1", "doc-1", "asset-1", "rev-1", "hello", ("el-1",), (object(),), {})  # type: ignore[arg-type]
+
+
+def test_document_json_fields_reject_recursive_and_noncanonical_values() -> None:
+    recursive: dict[str, object] = {}
+    recursive["self"] = recursive
+
+    with pytest.raises(ValueError, match="strict canonical JSON"):
+        SourceLocation(bbox=recursive)
+    with pytest.raises(ValueError, match="strict canonical JSON"):
+        ParsedDocument(
+            "doc-1",
+            "asset-1",
+            "rev-1",
+            {"processor_id": "plain-text", "invalid": object()},
+        )
+    with pytest.raises(ValueError, match="strict canonical JSON"):
+        SourceRef(
+            "source-1",
+            "document_chunk",
+            metadata={"invalid_unicode": "\ud800"},
+        )

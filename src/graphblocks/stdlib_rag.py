@@ -41,6 +41,10 @@ def _sequence(value: object, label: str) -> list[Any]:
 
 
 def _value(record: Mapping[str, Any], camel_key: str, snake_key: str, default: Any = None) -> Any:
+    if camel_key in record and snake_key in record:
+        raise ValueError(
+            f"wire record must not contain both {camel_key!r} and {snake_key!r}"
+        )
     if camel_key in record:
         return record[camel_key]
     return record.get(snake_key, default)
@@ -94,7 +98,7 @@ def _source_ref_from_wire(value: object) -> SourceRef:
         relevant_as_of=_value(record, "relevantAsOf", "relevant_as_of"),
         trust=record.get("trust", "unknown"),
         access_policy=_value(record, "accessPolicy", "access_policy"),
-        metadata=dict(record.get("metadata", {})),
+        metadata=_mapping(record.get("metadata", {}), "source reference metadata"),
     )
 
 
@@ -126,7 +130,7 @@ def _hit_from_wire(value: object) -> SearchHit:
             payload_ref=_value(item_record, "payloadRef", "payload_ref"),
             preview=_sequence(item_record.get("preview", []), "search hit item preview"),
             acl=item_record.get("acl"),
-            metadata=dict(item_record.get("metadata", {})),
+            metadata=_mapping(item_record.get("metadata", {}), "search hit item metadata"),
         ),
         rank=record.get("rank"),
         retriever=record.get("retriever"),
@@ -137,7 +141,7 @@ def _hit_from_wire(value: object) -> SearchHit:
             _source_ref_from_wire(item)
             for item in _sequence(record.get("highlights", []), "search hit highlights")
         ],
-        metadata=dict(record.get("metadata", {})),
+        metadata=_mapping(record.get("metadata", {}), "search hit metadata"),
     )
 
 
@@ -174,8 +178,8 @@ def _request_from_wire(value: object) -> SearchRequest:
     return SearchRequest(
         query_text=query_text,
         top_k=_value(record, "topK", "top_k", 10),
-        filters=dict(record.get("filters", {})),
-        metadata=dict(record.get("metadata", {})),
+        filters=_mapping(record.get("filters", {}), "search request filters"),
+        metadata=_mapping(record.get("metadata", {}), "search request metadata"),
     )
 
 
@@ -204,7 +208,7 @@ def _retrieval_from_wire(value: object, fallback_request: SearchRequest) -> Retr
         total_candidates=_value(record, "totalCandidates", "total_candidates"),
         latency_ms=_value(record, "latencyMs", "latency_ms"),
         warnings=_sequence(record.get("warnings", []), "retrieval result warnings"),
-        metadata=dict(record.get("metadata", {})),
+        metadata=_mapping(record.get("metadata", {}), "retrieval result metadata"),
     )
 
 
@@ -227,7 +231,7 @@ def _context_from_wire(value: object) -> ContextPack:
         hits=[_hit_from_wire(item) for item in _sequence(record.get("hits", []), "context pack hits")],
         token_budget=_value(record, "tokenBudget", "token_budget"),
         token_count=_value(record, "tokenCount", "token_count"),
-        metadata=dict(record.get("metadata", {})),
+        metadata=_mapping(record.get("metadata", {}), "context pack metadata"),
     )
 
 
@@ -246,7 +250,7 @@ def _abstention_from_wire(value: object) -> Abstention:
     return Abstention(
         reason=record.get("reason"),
         user_message=_value(record, "userMessage", "user_message"),
-        diagnostics=dict(record.get("diagnostics", {})),
+        diagnostics=_mapping(record.get("diagnostics", {}), "answer abstention diagnostics"),
     )
 
 
@@ -283,7 +287,7 @@ def _answer_from_wire(value: object) -> Answer:
                     _value(claim, "citationIds", "citation_ids", []),
                     "answer claim citationIds",
                 ),
-                metadata=dict(claim.get("metadata", {})),
+                metadata=_mapping(claim.get("metadata", {}), "answer claim metadata"),
             )
         )
     citations = []
@@ -296,7 +300,7 @@ def _answer_from_wire(value: object) -> Answer:
                 claim_id=_value(citation, "claimId", "claim_id"),
                 cited_text=_value(citation, "citedText", "cited_text"),
                 confidence=citation.get("confidence"),
-                metadata=dict(citation.get("metadata", {})),
+                metadata=_mapping(citation.get("metadata", {}), "answer citation metadata"),
             )
         )
     abstention = record.get("abstention")
@@ -306,7 +310,7 @@ def _answer_from_wire(value: object) -> Answer:
         claims=claims,
         citations=citations,
         abstention=None if abstention is None else _abstention_from_wire(abstention),
-        metadata=dict(record.get("metadata", {})),
+        metadata=_mapping(record.get("metadata", {}), "answer metadata"),
     )
 
 
@@ -373,7 +377,7 @@ def retrieve_execute_plan(
                 result=None if raw_result is None else _retrieval_from_wire(raw_result, request),
                 error=source.get("error"),
                 weight=source.get("weight", 1.0),
-                metadata=dict(source.get("metadata", {})),
+                metadata=_mapping(source.get("metadata", {}), "retrieval source metadata"),
             )
         )
     minimum_successful = _value(config, "minimumSuccessfulSources", "minimum_successful_sources", 1)
@@ -455,13 +459,12 @@ def rank_documents(
         query_record = dict(query)
         query_terms = _value(query_record, "queryTerms", "query_terms")
         if query_terms is None:
-            query_text = query_record.get(
-                "original",
-                query_record.get(
-                    "queryText",
-                    query_record.get("query_text", query_record.get("text", "")),
-                ),
-            )
+            query_text = _value(query_record, "queryText", "query_text")
+            if query_text is None:
+                query_text = query_record.get(
+                    "original",
+                    query_record.get("text", ""),
+                )
             query_terms = str(query_text).split()
     else:
         query_terms = str(query).split()
@@ -527,7 +530,7 @@ def context_build(
             "minimumSourceModifiedAt",
             "minimum_source_modified_at",
         ),
-        metadata=dict(config.get("metadata", {})),
+        metadata=_mapping(config.get("metadata", {}), "context metadata"),
     )
     return {"pack": _context_to_wire(pack)}
 

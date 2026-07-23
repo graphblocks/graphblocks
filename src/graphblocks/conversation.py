@@ -7,6 +7,7 @@ import math
 from threading import RLock
 from typing import Literal, ParamSpec, TypeVar, cast
 
+from .canonical import MAX_CANONICAL_JSON_DEPTH, canonical_dumps
 from .documents import ArtifactRef
 
 MessageRole = Literal["system", "developer", "user", "assistant", "tool"]
@@ -67,6 +68,8 @@ def _validate_non_empty_string(owner: str, field_name: str, value: object) -> st
         raise ValueError(f"{owner} {field_name} must be a string")
     if not value.strip():
         raise ValueError(f"{owner} {field_name} must not be empty")
+    if value != value.strip():
+        raise ValueError(f"{owner} {field_name} must not contain surrounding whitespace")
     return value
 
 
@@ -87,14 +90,78 @@ def _validate_non_negative_int(owner: str, field_name: str, value: object) -> in
 def _copy_mapping(owner: str, field_name: str, value: object) -> dict[str, object]:
     if not isinstance(value, Mapping):
         raise ValueError(f"{owner} {field_name} must be a mapping")
-    copied: dict[str, object] = {}
-    for key, item in value.items():
-        key_text = _validate_non_empty_string(owner, f"{field_name} key", key)
-        copied[key_text] = _copy_json_value(owner, f"{field_name}.{key_text}", item)
-    return copied
+    for key in value:
+        _validate_non_empty_string(owner, f"{field_name} key", key)
+    try:
+        canonical_dumps(value)
+    except (TypeError, ValueError) as error:
+        try:
+            _copy_mapping_value(
+                owner,
+                field_name,
+                value,
+                active_containers=set(),
+                depth=0,
+            )
+        except ValueError:
+            raise
+        raise ValueError(f"{owner} {field_name} must contain strict canonical JSON") from error
+    return _copy_mapping_value(
+        owner,
+        field_name,
+        value,
+        active_containers=set(),
+        depth=0,
+    )
 
 
-def _copy_json_value(owner: str, path: str, value: object) -> object:
+def _copy_mapping_value(
+    owner: str,
+    path: str,
+    value: Mapping[object, object],
+    *,
+    active_containers: set[int],
+    depth: int,
+) -> dict[str, object]:
+    if depth > MAX_CANONICAL_JSON_DEPTH:
+        raise ValueError(
+            f"{owner} {path} must contain strict canonical JSON "
+            f"with at most {MAX_CANONICAL_JSON_DEPTH} nesting levels"
+        )
+    identity = id(value)
+    if identity in active_containers:
+        raise ValueError(
+            f"{owner} {path} must contain strict canonical JSON without cyclic values"
+        )
+    active_containers.add(identity)
+    try:
+        return {
+            _validate_non_empty_string(owner, f"{path} key", key): _copy_json_value(
+                owner,
+                f"{path}.{key}",
+                item,
+                active_containers=active_containers,
+                depth=depth + 1,
+            )
+            for key, item in value.items()
+        }
+    finally:
+        active_containers.remove(identity)
+
+
+def _copy_json_value(
+    owner: str,
+    path: str,
+    value: object,
+    *,
+    active_containers: set[int],
+    depth: int,
+) -> object:
+    if depth > MAX_CANONICAL_JSON_DEPTH:
+        raise ValueError(
+            f"{owner} {path} must contain strict canonical JSON "
+            f"with at most {MAX_CANONICAL_JSON_DEPTH} nesting levels"
+        )
     if value is None or isinstance(value, str) or isinstance(value, bool):
         return value
     if isinstance(value, int) and not isinstance(value, bool):
@@ -104,9 +171,33 @@ def _copy_json_value(owner: str, path: str, value: object) -> object:
             raise ValueError(f"{owner} {path} must not contain non-finite numbers")
         return value
     if isinstance(value, list):
-        return [_copy_json_value(owner, path, item) for item in value]
+        identity = id(value)
+        if identity in active_containers:
+            raise ValueError(
+                f"{owner} {path} must contain strict canonical JSON without cyclic values"
+            )
+        active_containers.add(identity)
+        try:
+            return [
+                _copy_json_value(
+                    owner,
+                    path,
+                    item,
+                    active_containers=active_containers,
+                    depth=depth + 1,
+                )
+                for item in value
+            ]
+        finally:
+            active_containers.remove(identity)
     if isinstance(value, Mapping):
-        return _copy_mapping(owner, path, value)
+        return _copy_mapping_value(
+            owner,
+            path,
+            value,
+            active_containers=active_containers,
+            depth=depth,
+        )
     raise ValueError(f"{owner} {path} must contain only JSON values")
 
 
@@ -422,15 +513,30 @@ class Turn:
         messages = tuple(self.messages)
         if any(not isinstance(message, Message) for message in messages):
             raise ValueError("turn messages must be Message")
+        message_ids = [message.message_id for message in messages]
+        if len(message_ids) != len(set(message_ids)):
+            raise ValueError("turn message_id values must be unique")
         object.__setattr__(self, "messages", messages)
         if self.committed_revision is not None:
             object.__setattr__(self, "committed_revision", _validate_non_negative_int("turn", "committed_revision", self.committed_revision))
         object.__setattr__(self, "committed_message_ids", _validate_string_tuple("turn", "committed_message_ids", self.committed_message_ids))
+        if len(self.committed_message_ids) != len(set(self.committed_message_ids)):
+            raise ValueError("turn committed_message_ids must be unique")
         if self.status == "completed":
             if self.committed_revision is None:
                 raise ValueError("completed turn requires committed_revision")
+            if self.committed_revision != self.base_revision + 1:
+                raise ValueError(
+                    "completed turn committed_revision must equal base_revision plus one"
+                )
             if not self.committed_message_ids:
                 raise ValueError("completed turn requires committed_message_ids")
+            if self.committed_message_ids != tuple(message_ids):
+                raise ValueError(
+                    "completed turn committed_message_ids must match turn messages"
+                )
+            if any(message.status != "committed" for message in messages):
+                raise ValueError("completed turn messages must be committed")
         elif self.committed_revision is not None or self.committed_message_ids:
             raise ValueError("non-completed turn must not carry committed revision data")
         object.__setattr__(self, "metadata", _copy_mapping("turn", "metadata", self.metadata))
@@ -516,6 +622,60 @@ class InMemoryConversationStore:
     _conversations: dict[str, Conversation] = field(default_factory=dict)
     _turns: dict[str, Turn] = field(default_factory=dict)
     _lock: RLock = field(default_factory=RLock, init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        if not isinstance(self._conversations, Mapping):
+            raise ValueError("conversation store conversations must be a mapping")
+        conversations: dict[str, Conversation] = {}
+        for conversation_id, conversation in self._conversations.items():
+            _validate_non_empty_string(
+                "conversation store", "conversation_id", conversation_id
+            )
+            if not isinstance(conversation, Conversation):
+                raise ValueError(
+                    "conversation store conversations must be Conversation records"
+                )
+            if conversation.conversation_id != conversation_id:
+                raise ValueError(
+                    "conversation store conversation key must match conversation_id"
+                )
+            conversations[conversation_id] = _copy_conversation(conversation)
+        if not isinstance(self._turns, Mapping):
+            raise ValueError("conversation store turns must be a mapping")
+        turns: dict[str, Turn] = {}
+        for turn_id, turn in self._turns.items():
+            _validate_non_empty_string("conversation store", "turn_id", turn_id)
+            if not isinstance(turn, Turn):
+                raise ValueError("conversation store turns must be Turn records")
+            if turn.turn_id != turn_id:
+                raise ValueError("conversation store turn key must match turn_id")
+            conversation = conversations.get(turn.conversation_id)
+            if conversation is None:
+                raise ValueError(
+                    "conversation store turn must reference a stored conversation"
+                )
+            if (
+                turn.status == "completed"
+                and turn.committed_revision is not None
+                and turn.committed_revision > conversation.revision
+            ):
+                raise ValueError(
+                    "conversation store completed turn revision must not exceed conversation revision"
+                )
+            if turn.status == "completed":
+                stored_message_ids = {
+                    message.message_id for message in conversation.messages
+                }
+                if any(
+                    message_id not in stored_message_ids
+                    for message_id in turn.committed_message_ids
+                ):
+                    raise ValueError(
+                        "conversation store completed turn messages must exist in conversation"
+                    )
+            turns[turn_id] = _copy_turn(turn)
+        self._conversations = conversations
+        self._turns = turns
 
     @_with_conversation_store_lock
     def create(self, conversation: Conversation) -> None:

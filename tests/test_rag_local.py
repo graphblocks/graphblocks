@@ -193,6 +193,74 @@ def test_in_memory_knowledge_index_reports_not_found_for_missing_item() -> None:
         raise AssertionError("missing knowledge item should fail metadata update")
 
 
+def test_knowledge_index_rejects_duplicate_upserts_and_invalid_restored_state() -> None:
+    asset, revision = create_local_text_revision(
+        "file:///tmp/duplicates.txt",
+        "alpha\n",
+        observed_at="2026-06-22T00:00:00Z",
+    )
+    document = parse_plain_text_document(asset, revision, "alpha\n")
+    chunk = chunk_document_by_lines(document, revision, max_elements=1)[0]
+
+    index = InMemoryKnowledgeIndex("knowledge-local")
+    with pytest.raises(ValueError, match="duplicate chunk_ids"):
+        index.upsert_chunks([chunk, chunk])
+    with pytest.raises(ValueError, match="record key must match"):
+        InMemoryKnowledgeIndex(
+            "knowledge-local",
+            {"wrong": KnowledgeIndexRecord(chunk, "active")},
+        )
+    with pytest.raises(ValueError, match="must reference an active chunk"):
+        InMemoryKnowledgeIndex(
+            "knowledge-local",
+            {chunk.chunk_id: KnowledgeIndexRecord(chunk, "tombstoned")},
+            {asset.asset_id: revision.revision_id},
+        )
+
+
+def test_knowledge_index_lineage_conflict_does_not_partially_upsert() -> None:
+    asset, revision = create_local_text_revision(
+        "file:///tmp/atomic-upsert.txt",
+        "alpha\nbeta\n",
+        observed_at="2026-06-22T00:00:00Z",
+    )
+    document = parse_plain_text_document(asset, revision, "alpha\nbeta\n")
+    chunks = chunk_document_by_lines(document, revision, max_elements=1)
+    index = InMemoryKnowledgeIndex("knowledge-local")
+    index.upsert_chunks([chunks[0]])
+    conflicting = replace(chunks[0], asset_id="asset:other")
+
+    with pytest.raises(KnowledgeIndexError, match="cannot change lineage"):
+        index.upsert_chunks([chunks[1], conflicting])
+
+    assert index.record(chunks[1].chunk_id) is None
+    assert index.record(chunks[0].chunk_id) == KnowledgeIndexRecord(
+        chunks[0],
+        "active",
+    )
+
+
+def test_rag_metadata_is_deeply_detached_and_strict_json() -> None:
+    metadata = {"scope": {"labels": ["initial"]}}
+    report = KnowledgeWriteReport("upsert", 1, ["chunk-1"], metadata)
+    metadata["scope"]["labels"].append("mutated")  # type: ignore[index, union-attr]
+
+    assert report.metadata == {"scope": {"labels": ["initial"]}}
+    recursive: dict[str, object] = {}
+    recursive["self"] = recursive
+    with pytest.raises(ValueError, match="strict canonical JSON"):
+        KnowledgeWriteReport("upsert", 1, ["chunk-1"], recursive)
+    with pytest.raises(ValueError, match="chunk_ids must be unique"):
+        KnowledgeWriteReport("upsert", 2, ["chunk-1", "chunk-1"])
+    with pytest.raises(ValueError, match="published_chunk_ids must be unique"):
+        KnowledgePublishResult(
+            "knowledge-local",
+            "asset-1",
+            "rev-1",
+            ["chunk-1", "chunk-1"],
+        )
+
+
 def test_knowledge_index_records_validate_wire_shape() -> None:
     asset, revision = create_local_text_revision(
         "file:///tmp/shape.txt",

@@ -193,6 +193,21 @@ def test_parser_descriptor_freezes_metadata_snapshot() -> None:
         descriptor.metadata["nested"]["formats"] += ("md",)  # type: ignore[index, operator]
 
 
+def test_parser_records_reject_recursive_and_noncanonical_metadata() -> None:
+    recursive: dict[str, object] = {}
+    recursive["self"] = recursive
+
+    with pytest.raises(ValueError, match="strict canonical JSON"):
+        ParserDescriptor("plain-text", "1", metadata=recursive)
+    with pytest.raises(ValueError, match="strict canonical JSON"):
+        ParserSelectionLock(
+            "plain-text",
+            "1",
+            "media_type",
+            metadata={"invalid_unicode": "\ud800"},
+        )
+
+
 def test_parser_registry_uses_extension_when_media_type_is_missing() -> None:
     registry = DocumentParserRegistry()
     registry.register(plain_text_parser_descriptor())
@@ -256,6 +271,27 @@ def test_parser_registry_parse_locked_uses_locked_parser_version() -> None:
 
     assert document.parser == {"processor_id": "plain-text", "version": "1"}
     assert [element.content for element in document.elements] == ["Alpha", "Beta"]
+
+
+def test_parser_registry_parse_locked_rejects_mismatched_asset_lineage() -> None:
+    registry = DocumentParserRegistry()
+    registry.register(plain_text_parser_descriptor())
+    asset = SourceAsset("asset-1", "file:///tmp/policy.txt", "local")
+    revision = AssetRevision(
+        "rev-1",
+        "asset-2",
+        "sha256:content",
+        "2026-06-22T00:00:00Z",
+        ArtifactRef(
+            "artifact-1",
+            "file:///tmp/policy.txt",
+            media_type="text/plain",
+        ),
+    )
+    lock = registry.select(revision.artifact)
+
+    with pytest.raises(DocumentParserError, match="asset_id must match"):
+        registry.parse_locked(asset, revision, b"Alpha\n", lock)
 
 
 def test_parser_registry_falls_back_through_ordered_candidate_chain() -> None:
