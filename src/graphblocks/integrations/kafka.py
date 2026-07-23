@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from copy import deepcopy
 from dataclasses import dataclass, field
 
 from graphblocks.durable import SinkCommitRequest, SourceCursor, SourceEvent
+from graphblocks.integrations._wire import (
+    FrozenWireJsonObject,
+    snapshot_wire_json,
+    thaw_wire_json,
+)
 
 
 class KafkaAdapterError(ValueError):
@@ -52,16 +56,35 @@ def _partition(value: object) -> int:
     return partition
 
 
-def _headers(value: object) -> dict[str, str]:
+def _headers(value: object) -> Mapping[str, str]:
     if not isinstance(value, Mapping):
         raise KafkaAdapterError("headers must be a mapping of strings")
-    headers = dict(value)
-    if any(
-        not isinstance(name, str) or not isinstance(header_value, str)
-        for name, header_value in headers.items()
-    ):
-        raise KafkaAdapterError("headers must be a mapping of strings")
-    return dict(sorted(headers.items()))
+    headers: dict[str, str] = {}
+    for name, header_value in tuple(value.items()):
+        if (
+            not isinstance(name, str)
+            or not name
+            or name != name.strip()
+            or any(ord(character) < 0x20 or ord(character) == 0x7F for character in name)
+            or not isinstance(header_value, str)
+            or any(
+                (ord(character) < 0x20 and character != "\t")
+                or ord(character) == 0x7F
+                for character in header_value
+            )
+        ):
+            raise KafkaAdapterError("headers must be stable HTTP-compatible strings")
+        if name in headers:
+            raise KafkaAdapterError(f"headers must not contain duplicate key {name!r}")
+        headers[name] = header_value
+    return FrozenWireJsonObject(dict(sorted(headers.items())))
+
+
+def _wire_value(field_name: str, value: object) -> object:
+    try:
+        return snapshot_wire_json(value, field_name=field_name)
+    except ValueError as error:
+        raise KafkaAdapterError(str(error)) from error
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,7 +95,7 @@ class KafkaRecord:
     value: object
     key: object | None = None
     timestamp_unix_ms: int | None = None
-    headers: dict[str, str] = field(default_factory=dict)
+    headers: Mapping[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         _validate_topic(self.topic)
@@ -83,13 +106,17 @@ class KafkaRecord:
             timestamp_unix_ms = _offset("timestamp_unix_ms", timestamp_unix_ms)
         object.__setattr__(self, "timestamp_unix_ms", timestamp_unix_ms)
         object.__setattr__(self, "headers", _headers(self.headers))
-        object.__setattr__(self, "value", deepcopy(self.value))
-        object.__setattr__(self, "key", deepcopy(self.key))
+        object.__setattr__(self, "value", _wire_value("value", self.value))
+        object.__setattr__(self, "key", _wire_value("key", self.key))
 
     def to_source_event(self) -> SourceEvent:
         return SourceEvent(
             SourceCursor(self.topic, self.partition, self.offset),
-            {"key": self.key, "value": self.value, "headers": dict(self.headers)},
+            {
+                "key": thaw_wire_json(self.key),
+                "value": thaw_wire_json(self.value),
+                "headers": dict(self.headers),
+            },
             event_time_unix_ms=self.timestamp_unix_ms,
         )
 
@@ -132,7 +159,7 @@ class KafkaSinkRecord:
     value: object
     key: object | None = None
     partition: int | None = None
-    headers: dict[str, str] = field(default_factory=dict)
+    headers: Mapping[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         _validate_topic(self.topic)
@@ -141,8 +168,8 @@ class KafkaSinkRecord:
             partition = _partition(partition)
         object.__setattr__(self, "partition", partition)
         object.__setattr__(self, "headers", _headers(self.headers))
-        object.__setattr__(self, "value", deepcopy(self.value))
-        object.__setattr__(self, "key", deepcopy(self.key))
+        object.__setattr__(self, "value", _wire_value("value", self.value))
+        object.__setattr__(self, "key", _wire_value("key", self.key))
 
     @classmethod
     def from_sink_commit(

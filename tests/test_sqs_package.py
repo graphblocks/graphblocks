@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+import json
 
 import pytest
 
@@ -122,6 +123,37 @@ def test_sqs_message_snapshots_body_and_rejects_non_boolean_fifo(monkeypatch) ->
     with pytest.raises(graphblocks_sqs.SqsAdapterError, match="fifo"):
         graphblocks_sqs.SqsSendMessage.from_sink_commit(
             queue="orders", request=request, fifo="false"  # type: ignore[arg-type]
+        )
+
+
+def test_sqs_messages_expose_immutable_strict_json_snapshots(monkeypatch) -> None:
+    graphblocks_sqs = _import_sqs(monkeypatch)
+    message = graphblocks_sqs.SqsMessage(
+        queue="orders",
+        receive_sequence=1,
+        message_id="msg-1",
+        receipt_handle="receipt-1",
+        body={"items": [{"state": "created"}]},
+        attributes={"tenant": "acme"},
+    )
+
+    with pytest.raises(TypeError):
+        message.body["items"][0]["state"] = "cancelled"
+    with pytest.raises(TypeError):
+        dict.__setitem__(message.body, "items", [])
+    with pytest.raises(TypeError):
+        message.attributes["tenant"] = "other"
+    projected = message.to_source_event()
+    json.dumps(projected.payload)
+    projected.payload["body"]["items"][0]["state"] = "mutated"
+
+    assert message.to_source_event().payload["body"] == {
+        "items": [{"state": "created"}]
+    }
+    with pytest.raises(graphblocks_sqs.SqsAdapterError, match="strict JSON"):
+        graphblocks_sqs.SqsSendMessage(
+            "orders",
+            {"items": ("not", "json")},
         )
 
 

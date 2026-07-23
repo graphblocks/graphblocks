@@ -272,6 +272,66 @@ def test_mcp_adapter_discovery_rejects_blank_tool_metadata(monkeypatch) -> None:
     assert definitions[0].tags == frozenset({"global", "support"})
 
 
+def test_mcp_adapter_rejects_conflicting_schema_and_artifact_aliases(
+    monkeypatch,
+) -> None:
+    graphblocks_mcp = importlib.import_module("graphblocks.integrations.mcp")
+
+    with pytest.raises(
+        graphblocks_mcp.McpToolAdapterError,
+        match="input schema.*multiple field aliases",
+    ):
+        graphblocks_mcp.discover_mcp_tool_definitions(
+            {
+                "tools": [
+                    {
+                        "name": "knowledge.search",
+                        "inputSchema": {"type": "object"},
+                        "input_schema": "schemas/Replaced@1",
+                    }
+                ]
+            }
+        )
+    with pytest.raises(
+        graphblocks_mcp.McpToolAdapterError,
+        match="schema reference.*multiple field aliases",
+    ):
+        graphblocks_mcp.discover_mcp_tool_definitions(
+            {
+                "tools": [
+                    {
+                        "name": "knowledge.search",
+                        "inputSchema": {
+                            "$id": "schemas/Trusted@1",
+                            "schemaId": "schemas/Replaced@1",
+                        },
+                    }
+                ]
+            }
+        )
+
+    admitted, resolved = _admitted_call_for(
+        McpToolImplementation(server="support-mcp", remote_name="search"),
+        tool_name="knowledge.search",
+        binding_id="binding-mcp-search",
+        arguments={"query": "billing"},
+    )
+    with pytest.raises(
+        graphblocks_mcp.McpToolAdapterError,
+        match="artifact_id.*multiple field aliases",
+    ):
+        graphblocks_mcp.mcp_tool_result_artifact_ready(
+            admitted,
+            resolved,
+            sequence=1,
+            artifact={
+                "artifact_id": "artifact-1",
+                "artifactId": "artifact-replaced",
+                "uri": "artifact://artifact-1",
+            },
+        )
+
+
 def test_mcp_adapter_rejects_generated_schema_reference_collisions(monkeypatch) -> None:
     graphblocks_mcp = importlib.import_module("graphblocks.integrations.mcp")
 
@@ -1009,6 +1069,65 @@ def test_openapi_adapter_discovery_rejects_blank_operation_metadata(monkeypatch)
     assert definitions[0].name == "createTicket"
     assert definitions[0].description == "Create a support ticket."
     assert definitions[0].tags == frozenset({"support", "tickets"})
+
+
+def test_openapi_adapter_rejects_malformed_paths_and_artifact_aliases(
+    monkeypatch,
+) -> None:
+    graphblocks_openapi = importlib.import_module(
+        "graphblocks.integrations.openapi"
+    )
+
+    with pytest.raises(
+        graphblocks_openapi.OpenApiToolAdapterError,
+        match="path item.*must be an object",
+    ):
+        graphblocks_openapi.define_openapi_tools_from_spec(
+            {"paths": {"/tickets": []}}
+        )
+    with pytest.raises(
+        graphblocks_openapi.OpenApiToolAdapterError,
+        match="schema reference.*multiple field aliases",
+    ):
+        graphblocks_openapi.define_openapi_tools_from_spec(
+            {
+                "paths": {
+                    "/tickets": {
+                        "post": {
+                            "operationId": "createTicket",
+                            "x-graphblocks-input-schema": {
+                                "$id": "schemas/Trusted@1",
+                                "schemaId": "schemas/Replaced@1",
+                            },
+                        }
+                    }
+                }
+            }
+        )
+
+    admitted, resolved = _admitted_call_for(
+        OpenApiToolImplementation(
+            connection="ticket-system",
+            operation_id="createTicket",
+        ),
+        tool_name="ticket.create",
+        binding_id="binding-ticket-create",
+        arguments={"title": "Need help"},
+    )
+    with pytest.raises(
+        graphblocks_openapi.OpenApiToolAdapterError,
+        match="artifact_id.*multiple field aliases",
+    ):
+        graphblocks_openapi.openapi_tool_result_artifact_ready(
+            admitted,
+            resolved,
+            sequence=1,
+            artifact={
+                "artifact_id": "artifact-1",
+                "artifactId": "artifact-replaced",
+                "uri": "artifact://artifact-1",
+            },
+        )
 
 
 def test_openapi_adapter_discovery_rejects_non_string_path_keys(monkeypatch) -> None:

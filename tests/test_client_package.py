@@ -848,6 +848,44 @@ def test_client_package_response_outputs_are_nested_snapshots(monkeypatch) -> No
     assert response.outputs == {"answer": {"text": "ok"}}
 
 
+def test_client_models_expose_immutable_json_snapshots(monkeypatch) -> None:
+    graphblocks_client = importlib.import_module("graphblocks.client")
+    command = graphblocks_client.RunGraphCommand(
+        graph={"kind": "Graph", "spec": {"nodes": []}},
+        inputs={"messages": [{"text": "hello"}]},
+    )
+    response = graphblocks_client.RunGraphResponse(
+        run_id="run-1",
+        status="succeeded",
+        outputs={"answer": {"parts": ["ok"]}},
+        events=(),
+        event_stream=graphblocks_client.ApplicationEventStreamState(),
+    )
+    snapshot = graphblocks_client.RunStreamSnapshot(
+        run_id="run-1",
+        stream={"status": {"phase": "done"}},
+        events=(),
+        event_stream=graphblocks_client.ApplicationEventStreamState(),
+    )
+    error = graphblocks_client.GraphBlocksHttpError(
+        409,
+        {"error": {"code": "conflict"}},
+    )
+
+    with pytest.raises(TypeError):
+        command.graph["spec"]["nodes"] += [{"id": "injected"}]
+    with pytest.raises(TypeError):
+        dict.__setitem__(command.graph, "spec", {})
+    with pytest.raises(TypeError):
+        command.inputs["messages"][0]["text"] = "mutated"
+    with pytest.raises(TypeError):
+        response.outputs["answer"]["parts"] += ["mutated"]
+    with pytest.raises(TypeError):
+        snapshot.stream["status"]["phase"] = "running"
+    with pytest.raises(TypeError):
+        error.payload["error"]["code"] = "changed"
+
+
 @pytest.mark.parametrize("status", ("accepted", "background"))
 def test_client_package_durable_response_requires_handle_fields(monkeypatch, status: str) -> None:
     graphblocks_client = importlib.import_module("graphblocks.client")
@@ -1673,6 +1711,73 @@ def test_client_package_rejects_malformed_http_run_response(
                 graph={"kind": "Graph", "metadata": {"name": "remote-run"}},
                 run_id="run-http-1",
             )
+        )
+
+
+def test_client_rejects_conflicting_response_and_event_aliases(monkeypatch) -> None:
+    graphblocks_client = importlib.import_module("graphblocks.client")
+
+    class ConflictingRunResponse:
+        def read(self) -> bytes:
+            return json.dumps(
+                {
+                    "runId": "run-http-1",
+                    "run_id": "run-replaced",
+                    "status": "succeeded",
+                    "outputs": {},
+                    "events": [],
+                }
+            ).encode("utf-8")
+
+    client = graphblocks_client.HttpGraphBlocksClient(
+        "https://graphblocks.example/api",
+        transport=lambda request, *, timeout: ConflictingRunResponse(),
+    )
+    command = graphblocks_client.RunGraphCommand(
+        graph={"kind": "Graph", "metadata": {"name": "remote-run"}},
+        run_id="run-http-1",
+    )
+
+    with pytest.raises(ValueError, match="multiple field aliases"):
+        client.run_graph(command)
+
+    with pytest.raises(ValueError, match="event_id.*multiple field aliases"):
+        graphblocks_client._application_events_from_payloads(
+            [
+                {
+                    "kind": "RunStarted",
+                    "metadata": {
+                        "eventId": "event-1",
+                        "event_id": "event-replaced",
+                        "runId": "run-http-1",
+                        "responseId": "response-1",
+                        "releaseId": "release-1",
+                        "policySnapshotId": "policy-1",
+                        "occurredAt": "2026-06-24T00:00:00Z",
+                    },
+                    "payload": {},
+                }
+            ]
+        )
+
+
+def test_remote_artifact_rejects_conflicting_field_aliases(monkeypatch) -> None:
+    graphblocks_client = importlib.import_module("graphblocks.client")
+    admitted, resolved = _remote_admitted_call(arguments={"query": "billing"})
+
+    with pytest.raises(
+        graphblocks_client.RemoteToolAdapterError,
+        match="artifact_id.*multiple field aliases",
+    ):
+        graphblocks_client.remote_tool_result_artifact_ready(
+            admitted,
+            resolved,
+            sequence=1,
+            artifact={
+                "artifact_id": "artifact-1",
+                "artifactId": "artifact-replaced",
+                "uri": "artifact://artifact-1",
+            },
         )
 
 

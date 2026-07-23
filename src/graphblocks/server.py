@@ -333,8 +333,19 @@ def _validate_mandatory_callback_policy(
 
 
 def _validate_callback_not_authoritative(owner: str, config: Mapping[str, object]) -> None:
-    authoritative_for = config.get("authoritativeFor", config.get("authoritative_for"))
-    if config.get("sourceOfTruth") is True or config.get("source_of_truth") is True or authoritative_for:
+    authoritative_for = _server_alias_value(
+        config,
+        owner,
+        "authoritative_for",
+        "authoritativeFor",
+    )
+    source_of_truth = _server_alias_value(
+        config,
+        owner,
+        "source_of_truth",
+        "sourceOfTruth",
+    )
+    if source_of_truth is True or authoritative_for:
         raise ValueError(f"{owner} callback delivery must not be used as the source of truth")
 
 
@@ -379,7 +390,13 @@ def _validate_callback_delivery_target(owner: str, delivery: Mapping[str, object
     _validate_non_empty_string(
         owner,
         "delivery.signing.secret_ref",
-        signing.get("secret_ref", signing.get("secretRef", "")),
+        _server_alias_value(
+            signing,
+            owner,
+            "secret_ref",
+            "secretRef",
+            "",
+        ),
     )
 
 
@@ -502,15 +519,28 @@ def _freeze_json_value(
 
 
 def _validate_server_event_filter(owner: str, event_filter: Mapping[str, object]) -> None:
-    for source_key, field_name in (
-        ("types", "types"),
-        ("node_ids", "node_ids"),
-        ("nodeIds", "node_ids"),
-        ("operation_ids", "operation_ids"),
-        ("operationIds", "operation_ids"),
+    for raw_values, field_name in (
+        (event_filter.get("types"), "types"),
+        (
+            _server_alias_value(
+                event_filter,
+                owner,
+                "node_ids",
+                "nodeIds",
+            ),
+            "node_ids",
+        ),
+        (
+            _server_alias_value(
+                event_filter,
+                owner,
+                "operation_ids",
+                "operationIds",
+            ),
+            "operation_ids",
+        ),
     ):
-        if source_key in event_filter:
-            raw_values = event_filter[source_key]
+        if raw_values is not None:
             _validate_string_sequence(owner, f"event_filter.{field_name}", raw_values)
             if any(value != value.strip() for value in raw_values):  # type: ignore[union-attr]
                 raise ValueError(
@@ -527,7 +557,12 @@ def _validate_server_event_filter(owner: str, event_filter: Mapping[str, object]
                 f"{owner} event_filter.visibility must contain only client, operator, internal, or audit_only"
             )
 
-    severity_min = event_filter.get("severity_min", event_filter.get("severityMin"))
+    severity_min = _server_alias_value(
+        event_filter,
+        owner,
+        "severity_min",
+        "severityMin",
+    )
     if severity_min is not None:
         severity_min_text = _validate_non_empty_string(
             owner,
@@ -537,9 +572,11 @@ def _validate_server_event_filter(owner: str, event_filter: Mapping[str, object]
         if severity_min != severity_min_text or severity_min_text not in SERVER_EVENT_SEVERITY_RANKS:
             raise ValueError(f"{owner} event_filter.severity_min is invalid")
 
-    include_terminal_events = event_filter.get(
+    include_terminal_events = _server_alias_value(
+        event_filter,
+        owner,
         "include_terminal_events",
-        event_filter.get("includeTerminalEvents"),
+        "includeTerminalEvents",
     )
     if include_terminal_events is not None and not isinstance(include_terminal_events, bool):
         raise ValueError(f"{owner} event_filter.include_terminal_events must be a boolean")
@@ -1643,18 +1680,40 @@ class ServerEventSubscription:
         body = _server_request_json_body(request, "subscribe request")
         if not isinstance(body, Mapping):
             raise ValueError("subscribe request body must be a JSON object")
-        event_filter = body.get("event_filter", body.get("eventFilter", {}))
+        event_filter = _server_alias_value(
+            body,
+            "subscribe request",
+            "event_filter",
+            "eventFilter",
+            {},
+        )
         delivery = body.get("delivery", {})
         if not isinstance(event_filter, Mapping):
             raise ValueError("subscribe request event_filter must be a JSON object")
         if not isinstance(delivery, Mapping):
             raise ValueError("subscribe request delivery must be a JSON object")
-        subscription_id = body.get("subscription_id", body.get("subscriptionId"))
+        subscription_id = _server_alias_value(
+            body,
+            "subscribe request",
+            "subscription_id",
+            "subscriptionId",
+        )
         if subscription_id is None:
             subscription_id = f"sub-{run_id}-{ordinal:06d}"
-        replay_from_cursor = body.get("replay_from_cursor", body.get("replayFromCursor"))
+        replay_from_cursor = _server_alias_value(
+            body,
+            "subscribe request",
+            "replay_from_cursor",
+            "replayFromCursor",
+        )
         failure_policy = _validate_callback_failure_policy(
-            body.get("failure_policy", body.get("failurePolicy", "retry_then_dead_letter"))
+            _server_alias_value(
+                body,
+                "subscribe request",
+                "failure_policy",
+                "failurePolicy",
+                "retry_then_dead_letter",
+            )
         )
         _validate_callback_not_authoritative("server event subscription", body)
         _validate_mandatory_callback_policy("server event subscription", body, delivery, failure_policy)
@@ -1784,18 +1843,40 @@ class ServerCallbackRegistration:
         body = _server_request_json_body(request, "register callback request")
         if not isinstance(body, Mapping):
             raise ValueError("register callback request body must be a JSON object")
-        event_filter = body.get("event_filter", body.get("eventFilter", {}))
+        event_filter = _server_alias_value(
+            body,
+            "register callback request",
+            "event_filter",
+            "eventFilter",
+            {},
+        )
         delivery = body.get("delivery", {})
         if not isinstance(event_filter, Mapping):
             raise ValueError("register callback request event_filter must be a JSON object")
         if not isinstance(delivery, Mapping):
             raise ValueError("register callback request delivery must be a JSON object")
-        subscription_id = body.get("subscription_id", body.get("subscriptionId"))
+        subscription_id = _server_alias_value(
+            body,
+            "register callback request",
+            "subscription_id",
+            "subscriptionId",
+        )
         if subscription_id is None:
             subscription_id = f"callback-sub-{ordinal:06d}"
-        replay_from_cursor = body.get("replay_from_cursor", body.get("replayFromCursor"))
+        replay_from_cursor = _server_alias_value(
+            body,
+            "register callback request",
+            "replay_from_cursor",
+            "replayFromCursor",
+        )
         failure_policy = _validate_callback_failure_policy(
-            body.get("failure_policy", body.get("failurePolicy", "retry_then_dead_letter"))
+            _server_alias_value(
+                body,
+                "register callback request",
+                "failure_policy",
+                "failurePolicy",
+                "retry_then_dead_letter",
+            )
         )
         _validate_callback_not_authoritative("server callback registration", body)
         _validate_mandatory_callback_policy("server callback registration", body, delivery, failure_policy)
@@ -1809,7 +1890,13 @@ class ServerCallbackRegistration:
             scope_id=_validate_exact_non_empty_string(
                 "server callback registration",
                 "scope_id",
-                body.get("scope_id", body.get("scopeId", "")),
+                _server_alias_value(
+                    body,
+                    "register callback request",
+                    "scope_id",
+                    "scopeId",
+                    "",
+                ),
             ),
             event_filter=event_filter,
             delivery=delivery,
@@ -1981,6 +2068,20 @@ def _callback_alias_value(
     camel_present = camel in body
     if snake_present and camel_present and body[snake] != body[camel]:
         raise ValueError(f"server async callback {snake} aliases must not conflict")
+    return body.get(snake, body.get(camel, default))
+
+
+def _server_alias_value(
+    body: Mapping[str, object],
+    owner: str,
+    snake: str,
+    camel: str,
+    default: object = None,
+) -> object:
+    if snake in body and camel in body:
+        raise ValueError(
+            f"{owner} {snake} must not contain multiple field aliases"
+        )
     return body.get(snake, body.get(camel, default))
 
 
@@ -3992,19 +4093,37 @@ class GraphBlocksServerApp:
                 response_mode = _validate_exact_non_empty_string(
                     "run request",
                     "responseMode",
-                    payload.get("responseMode", payload.get("response_mode", "sync")),
+                    _server_alias_value(
+                        payload,
+                        "run request",
+                        "response_mode",
+                        "responseMode",
+                        "sync",
+                    ),
                 )
                 if response_mode not in {"sync", "accepted", "background"}:
                     raise ValueError("run request responseMode must be one of sync, accepted, or background")
                 run_id = _validate_exact_non_empty_string(
                     "run request",
                     "runId",
-                    payload.get("runId", payload.get("run_id", "run-000001")),
+                    _server_alias_value(
+                        payload,
+                        "run request",
+                        "run_id",
+                        "runId",
+                        "run-000001",
+                    ),
                 )
                 request_id = _validate_exact_non_empty_string(
                     "run request",
                     "requestId",
-                    payload.get("requestId", payload.get("request_id", run_id)),
+                    _server_alias_value(
+                        payload,
+                        "run request",
+                        "request_id",
+                        "requestId",
+                        run_id,
+                    ),
                 )
                 if run_id in self._events_by_run_id:
                     existing_ticket_id = self._admission_ticket_ids_by_run_id.get(
@@ -4053,23 +4172,51 @@ class GraphBlocksServerApp:
                 response_id = _validate_exact_non_empty_string(
                     "run request",
                     "responseId",
-                    payload.get("responseId", payload.get("response_id", "response-000001")),
+                    _server_alias_value(
+                        payload,
+                        "run request",
+                        "response_id",
+                        "responseId",
+                        "response-000001",
+                    ),
                 )
                 release_id = _validate_exact_non_empty_string(
                     "run request",
                     "releaseId",
-                    payload.get("releaseId", payload.get("release_id", "local")),
+                    _server_alias_value(
+                        payload,
+                        "run request",
+                        "release_id",
+                        "releaseId",
+                        "local",
+                    ),
                 )
                 policy_snapshot_id = _validate_exact_non_empty_string(
                     "run request",
                     "policySnapshotId",
-                    payload.get("policySnapshotId", payload.get("policy_snapshot_id", "local")),
+                    _server_alias_value(
+                        payload,
+                        "run request",
+                        "policy_snapshot_id",
+                        "policySnapshotId",
+                        "local",
+                    ),
                 )
-                occurred_at = payload.get("occurredAt", payload.get("occurred_at"))
+                occurred_at = _server_alias_value(
+                    payload,
+                    "run request",
+                    "occurred_at",
+                    "occurredAt",
+                )
                 if occurred_at is None:
                     occurred_at = _utc_now_iso()
                 occurred_at = _validate_iso_datetime("run request", "occurredAt", occurred_at)
-                turn_id_value = payload.get("turnId", payload.get("turn_id"))
+                turn_id_value = _server_alias_value(
+                    payload,
+                    "run request",
+                    "turn_id",
+                    "turnId",
+                )
                 turn_id = (
                     _validate_exact_non_empty_string("run request", "turnId", turn_id_value)
                     if turn_id_value is not None
@@ -4079,9 +4226,12 @@ class GraphBlocksServerApp:
                     self.admission_ticket_queue is not None
                     and response_mode in {"accepted", "background"}
                 )
-                admission_units = payload.get(
+                admission_units = _server_alias_value(
+                    payload,
+                    "run request",
+                    "admission_units",
                     "admissionUnits",
-                    payload.get("admission_units", 1),
+                    1,
                 )
                 if (
                     not isinstance(admission_units, int)
@@ -5966,7 +6116,12 @@ class GraphBlocksServerApp:
             "delivery_id",
             delivery_id,
         )
-        operator_value = payload.get("operator", payload.get("operatorPrincipal"))
+        operator_value = _server_alias_value(
+            payload,
+            "callback delivery control request",
+            "operator",
+            "operatorPrincipal",
+        )
         if operator_value is None and principal is not None:
             operator = principal.principal_id
         else:
@@ -6039,7 +6194,12 @@ class GraphBlocksServerApp:
         payload: Mapping[str, object],
         principal: PrincipalRef | None,
     ) -> ServerResponse:
-        last_cursor = payload.get("last_cursor", payload.get("lastCursor"))
+        last_cursor = _server_alias_value(
+            payload,
+            "attach request",
+            "last_cursor",
+            "lastCursor",
+        )
         if last_cursor is not None:
             last_cursor = _validate_run_cursor("attach request", "last_cursor", run_id, last_cursor)
         capabilities = payload.get("capabilities", ())
@@ -6124,7 +6284,13 @@ class GraphBlocksServerApp:
         detached_at: str,
     ) -> ServerResponse:
         detached_at = _validate_iso_datetime("detach request", "detached_at", detached_at)
-        raw_client_id = payload.get("client_id", payload.get("clientId", ""))
+        raw_client_id = _server_alias_value(
+            payload,
+            "detach request",
+            "client_id",
+            "clientId",
+            "",
+        )
         client_id = _validate_non_empty_string(
             "detach request",
             "client_id",
@@ -6489,7 +6655,12 @@ class GraphBlocksServerApp:
         acknowledged_at: str,
     ) -> ServerResponse:
         acknowledged_at = _validate_iso_datetime("ack request", "acknowledged_at", acknowledged_at)
-        event_id = payload.get("event_id", payload.get("eventId"))
+        event_id = _server_alias_value(
+            payload,
+            "ack request",
+            "event_id",
+            "eventId",
+        )
         cursor = payload.get("cursor")
         if event_id is None and cursor is None:
             raise ValueError("ack request requires event_id or cursor")

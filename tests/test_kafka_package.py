@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+import json
 
 import pytest
 
@@ -148,6 +149,41 @@ def test_kafka_records_own_mutable_values_and_validate_sink_boundaries(
             topic="orders-out",
             request=request,
             key_field=" orderId",
+        )
+
+
+def test_kafka_records_expose_immutable_strict_json_snapshots(monkeypatch) -> None:
+    graphblocks_kafka = _import_kafka(monkeypatch)
+    record = graphblocks_kafka.KafkaRecord(
+        "orders",
+        0,
+        1,
+        {"items": [{"state": "created"}]},
+        headers={"tenant": "acme"},
+    )
+
+    with pytest.raises(TypeError):
+        record.value["items"][0]["state"] = "cancelled"
+    with pytest.raises(TypeError):
+        dict.__setitem__(record.value, "items", [])
+    with pytest.raises(TypeError):
+        record.headers["tenant"] = "other"
+    first_event = record.to_source_event()
+    json.dumps(first_event.payload)
+    first_event.payload["value"]["items"][0]["state"] = "mutated"
+
+    assert record.to_source_event().payload["value"] == {
+        "items": [{"state": "created"}]
+    }
+    with pytest.raises(graphblocks_kafka.KafkaAdapterError, match="strict JSON"):
+        graphblocks_kafka.KafkaRecord("orders", 0, 1, {"items": ("not", "json")})
+    with pytest.raises(graphblocks_kafka.KafkaAdapterError, match="headers"):
+        graphblocks_kafka.KafkaRecord(
+            "orders",
+            0,
+            1,
+            {},
+            headers={"trace": "ok\r\ninjected: yes"},
         )
 
 

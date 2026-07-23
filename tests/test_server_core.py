@@ -676,6 +676,106 @@ def test_server_app_rejects_duplicate_security_sensitive_request_keys(
     }
 
 
+@pytest.mark.parametrize(
+    ("snake", "camel", "snake_value", "camel_value"),
+    (
+        ("run_id", "runId", "run-trusted", "run-replaced"),
+        ("response_mode", "responseMode", "sync", "background"),
+        ("policy_snapshot_id", "policySnapshotId", "policy-1", "policy-2"),
+        ("admission_units", "admissionUnits", 1, 2),
+    ),
+)
+def test_server_app_rejects_conflicting_run_request_field_aliases(
+    snake: str,
+    camel: str,
+    snake_value: object,
+    camel_value: object,
+) -> None:
+    app = GraphBlocksServerApp(
+        auth_hook=StaticBearerAuthHook(
+            {"token-1": PrincipalRef("user-1")}
+        )
+    )
+    response = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "graph": {},
+                    snake: snake_value,
+                    camel: camel_value,
+                }
+            ).encode("utf-8"),
+        )
+    )
+
+    assert response.status_code == 400
+    assert "multiple field aliases" in json.loads(
+        response.body.decode("utf-8")
+    )["error"]
+
+
+def test_server_subscription_boundaries_reject_conflicting_aliases() -> None:
+    request = ServerRequest(
+        method="POST",
+        path="/runs/run-1/subscriptions",
+        headers={},
+        query={},
+        cookies={},
+        body=json.dumps(
+            {
+                "subscription_id": "sub-1",
+                "subscriptionId": "sub-replaced",
+                "delivery": {
+                    "kind": "local_callback",
+                    "callback_name": "test",
+                },
+            }
+        ).encode("utf-8"),
+    )
+
+    with pytest.raises(ValueError, match="multiple field aliases"):
+        ServerEventSubscription.from_request(
+            run_id="run-1",
+            request=request,
+            ordinal=1,
+        )
+    with pytest.raises(ValueError, match="multiple field aliases"):
+        ServerEventSubscription(
+            subscription_id="sub-1",
+            run_id="run-1",
+            event_filter={
+                "node_ids": ["node-trusted"],
+                "nodeIds": ["node-replaced"],
+            },
+            delivery={
+                "kind": "local_callback",
+                "callback_name": "test",
+            },
+        )
+    with pytest.raises(ValueError, match="multiple field aliases"):
+        ServerCallbackRegistration(
+            subscription_id="callback-sub-1",
+            scope="run",
+            scope_id="run-1",
+            event_filter={},
+            delivery={
+                "kind": "webhook",
+                "method": "POST",
+                "url": "https://relay.example/events",
+                "signing": {
+                    "algorithm": "hmac-sha256",
+                    "secret_ref": "secret://trusted",
+                    "secretRef": "secret://replaced",
+                },
+            },
+        )
+
+
 def test_server_app_rejects_excessively_nested_request_json() -> None:
     app = GraphBlocksServerApp(
         auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")})

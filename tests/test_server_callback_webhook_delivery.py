@@ -6,6 +6,8 @@ import sys
 from pathlib import Path
 from threading import Event
 
+import pytest
+
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT / "src") not in sys.path:
@@ -372,3 +374,23 @@ def test_server_registration_records_missing_secret_without_calling_transport() 
         }
     ]
     assert app.callback_delivery_results("callback-sub-delivery-1") == tuple(payload["deliveries"])
+
+
+def test_webhook_dispatcher_validates_collaborators_and_freezes_response_headers() -> None:
+    with pytest.raises(ValueError, match="secret_resolver"):
+        RegisteredSecretWebhookDispatcher(
+            secret_resolver=object(),
+            transport=RecordingWebhookTransport(),
+        )
+    with pytest.raises(ValueError, match="transport"):
+        RegisteredSecretWebhookDispatcher(
+            secret_resolver=RecordingSecretResolver({}),
+            transport=object(),
+        )
+
+    response = WebhookTransportResponse(
+        429,
+        {"Retry-After": "1"},
+    )
+    with pytest.raises(TypeError):
+        response.headers["Retry-After"] = "999"

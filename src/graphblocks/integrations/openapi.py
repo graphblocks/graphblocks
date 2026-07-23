@@ -28,6 +28,42 @@ class OpenApiToolAdapterError(RuntimeError):
     pass
 
 
+def _alias_value(
+    value: Mapping[str, object],
+    names: tuple[str, ...],
+    *,
+    owner: str,
+    field_name: str,
+    default: object = None,
+) -> object:
+    present = tuple(name for name in names if name in value)
+    if len(present) > 1:
+        raise OpenApiToolAdapterError(
+            f"{owner} {field_name} must not contain multiple field aliases"
+        )
+    if not present:
+        return default
+    return value[present[0]]
+
+
+def _stable_string(value: object, *, owner: str, field_name: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise OpenApiToolAdapterError(
+            f"{owner} requires non-empty string {field_name}"
+        )
+    normalized = value.strip()
+    if any(
+        ord(character) < 0x20
+        or ord(character) == 0x7F
+        or "\ud800" <= character <= "\udfff"
+        for character in normalized
+    ):
+        raise OpenApiToolAdapterError(
+            f"{owner} {field_name} must not contain control characters"
+        )
+    return normalized
+
+
 def evaluate_native_connector_capabilities(
     connection: Mapping[str, object],
     required_capabilities: object,
@@ -70,15 +106,31 @@ class OpenApiOperationInvocation:
                 not isinstance(value, str)
                 or not value.strip()
                 or value != value.strip()
+                or any(
+                    ord(character) < 0x20
+                    or ord(character) == 0x7F
+                    or "\ud800" <= character <= "\udfff"
+                    for character in value
+                )
             ):
-                raise OpenApiToolAdapterError(f"OpenAPI invocation {field_name} must not be empty")
+                raise OpenApiToolAdapterError(
+                    f"OpenAPI invocation {field_name} must not be empty or unstable"
+                )
         if self.idempotency_key is not None:
             if (
                 not isinstance(self.idempotency_key, str)
                 or not self.idempotency_key.strip()
                 or self.idempotency_key != self.idempotency_key.strip()
+                or any(
+                    ord(character) < 0x20
+                    or ord(character) == 0x7F
+                    or "\ud800" <= character <= "\udfff"
+                    for character in self.idempotency_key
+                )
             ):
-                raise OpenApiToolAdapterError("OpenAPI invocation idempotency_key must not be empty")
+                raise OpenApiToolAdapterError(
+                    "OpenAPI invocation idempotency_key must not be empty or unstable"
+                )
         if not isinstance(self.arguments_json, str) or not self.arguments_json.strip():
             raise OpenApiToolAdapterError("OpenAPI invocation arguments_json must not be empty")
         arguments = _openapi_invocation_arguments(self.arguments_json)
@@ -200,7 +252,9 @@ def define_openapi_tools_from_spec(
             continue
         path_item = raw_paths[path]
         if not isinstance(path_item, Mapping):
-            continue
+            raise OpenApiToolAdapterError(
+                f"OpenAPI path item {path!r} must be an object"
+            )
         for method in _OPENAPI_HTTP_METHODS:
             operation = path_item.get(method)
             if operation is None:
@@ -680,7 +734,12 @@ def _artifact_ref(artifact: ArtifactRef | Mapping[str, object], *, owner: str) -
         return artifact
     if not isinstance(artifact, Mapping):
         raise OpenApiToolAdapterError(f"{owner} tool result artifact must be an ArtifactRef or object")
-    artifact_id = artifact.get("artifact_id", artifact.get("artifactId"))
+    artifact_id = _alias_value(
+        artifact,
+        ("artifact_id", "artifactId"),
+        owner=f"{owner} tool result artifact",
+        field_name="artifact_id",
+    )
     uri = artifact.get("uri")
     if not isinstance(artifact_id, str) or not isinstance(uri, str):
         raise OpenApiToolAdapterError(f"{owner} tool result artifact requires artifact_id and uri")
@@ -706,25 +765,30 @@ def _artifact_ref(artifact: ArtifactRef | Mapping[str, object], *, owner: str) -
 
 
 def _optional_string(artifact: Mapping[str, object], *names: str, owner: str) -> str | None:
-    for name in names:
-        if name in artifact:
-            value = artifact[name]
-            if value is None or isinstance(value, str):
-                return value
-            raise OpenApiToolAdapterError(f"{owner} tool result artifact {name} must be a string")
-    return None
+    value = _alias_value(
+        artifact,
+        tuple(names),
+        owner=f"{owner} tool result artifact",
+        field_name=names[0],
+    )
+    if value is None or isinstance(value, str):
+        return value
+    raise OpenApiToolAdapterError(f"{owner} tool result artifact {names[0]} must be a string")
 
 
 def _optional_integer(artifact: Mapping[str, object], *names: str, owner: str) -> int | None:
-    for name in names:
-        if name in artifact:
-            value = artifact[name]
-            if value is None:
-                return None
-            if isinstance(value, int) and not isinstance(value, bool):
-                return value
-            raise OpenApiToolAdapterError(f"{owner} tool result artifact {name} must be an integer")
-    return None
+    present_name = next((name for name in names if name in artifact), names[0])
+    value = _alias_value(
+        artifact,
+        tuple(names),
+        owner=f"{owner} tool result artifact",
+        field_name=names[0],
+    )
+    if value is None:
+        return None
+    if isinstance(value, int) and not isinstance(value, bool):
+        return value
+    raise OpenApiToolAdapterError(f"{owner} tool result artifact {present_name} must be an integer")
 
 
 _OPENAPI_HTTP_METHODS = ("delete", "get", "head", "options", "patch", "post", "put", "trace")
@@ -810,10 +874,7 @@ def _operation_schema_ref(
     if value is None:
         return fallback
     if isinstance(value, str):
-        value = value.strip()
-        if not value:
-            raise OpenApiToolAdapterError(f"{owner} must not be empty")
-        return value
+        return _stable_string(value, owner=owner, field_name="schema")
     if isinstance(value, Mapping):
         return _schema_ref_from_openapi_schema(value, fallback=fallback, schema_prefix=schema_prefix)
     raise OpenApiToolAdapterError(f"{owner} must be a string or object")
@@ -825,13 +886,30 @@ def _schema_ref_from_openapi_schema(
     fallback: str | None,
     schema_prefix: str,
 ) -> str | None:
-    for key in ("x-graphblocks-schema-ref", "schemaId", "schema_id", "$id"):
-        schema_ref = schema.get(key)
-        if isinstance(schema_ref, str) and schema_ref:
-            return schema_ref
+    schema_ref = _alias_value(
+        schema,
+        ("x-graphblocks-schema-ref", "schemaId", "schema_id", "$id"),
+        owner="OpenAPI schema",
+        field_name="schema reference",
+    )
+    if schema_ref is not None:
+        return _stable_string(
+            schema_ref,
+            owner="OpenAPI schema",
+            field_name="schema reference",
+        )
     schema_ref = schema.get("$ref")
-    if isinstance(schema_ref, str) and schema_ref:
-        prefix = schema_prefix.strip().rstrip("/")
+    if schema_ref is not None:
+        schema_ref = _stable_string(
+            schema_ref,
+            owner="OpenAPI schema",
+            field_name="$ref",
+        )
+        prefix = _stable_string(
+            schema_prefix,
+            owner="OpenAPI",
+            field_name="schema_prefix",
+        ).rstrip("/")
         if not prefix:
             raise OpenApiToolAdapterError("OpenAPI schema_prefix must not be empty")
         return f"{prefix}/{_schema_slug(schema_ref.rsplit('/', 1)[-1])}@1"
@@ -927,9 +1005,7 @@ def _parse_iso_datetime(value: str, *, owner: str, field: str) -> datetime:
 
 def _required_string(value: Mapping[str, object], name: str, *, owner: str) -> str:
     item = value.get(name)
-    if not isinstance(item, str) or not item.strip():
-        raise OpenApiToolAdapterError(f"{owner} requires non-empty string {name}")
-    return item.strip()
+    return _stable_string(item, owner=owner, field_name=name)
 
 
 def _optional_text(value: Mapping[str, object], name: str) -> str | None:
@@ -951,14 +1027,17 @@ def _string_set(value: Iterable[str] | object, *, owner: str) -> frozenset[str]:
         raise OpenApiToolAdapterError(f"{owner} must be a sequence of strings") from error
     stripped_values: list[str] = []
     for item in values:
-        if not isinstance(item, str) or not item.strip():
-            raise OpenApiToolAdapterError(f"{owner} must contain only non-empty strings")
-        stripped_values.append(item.strip())
+        normalized = _stable_string(item, owner=owner, field_name="entry")
+        stripped_values.append(normalized)
     return frozenset(stripped_values)
 
 
 def _generated_schema_ref(schema_prefix: str, operation_id: str, direction: str) -> str:
-    prefix = schema_prefix.strip().rstrip("/")
+    prefix = _stable_string(
+        schema_prefix,
+        owner="OpenAPI",
+        field_name="schema_prefix",
+    ).rstrip("/")
     if not prefix:
         raise OpenApiToolAdapterError("OpenAPI schema_prefix must not be empty")
     return f"{prefix}/{_schema_slug(operation_id)}/{direction}@1"

@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from copy import deepcopy
 from dataclasses import dataclass, field
 
 from graphblocks.durable import SinkCommitRequest, SourceCursor, SourceEvent
+from graphblocks.integrations._wire import (
+    FrozenWireJsonObject,
+    snapshot_wire_json,
+    thaw_wire_json,
+)
 
 
 class NatsAdapterError(ValueError):
@@ -22,15 +26,31 @@ def _stable_string(field_name: str, value: object) -> str:
     return value
 
 
-def _string_mapping(field_name: str, value: object) -> dict[str, str]:
+def _string_mapping(field_name: str, value: object) -> Mapping[str, str]:
     if not isinstance(value, Mapping):
         raise NatsAdapterError(f"{field_name} must be a mapping")
     normalized: dict[str, str] = {}
-    for key, item in value.items():
-        if not isinstance(item, str):
+    for key, item in tuple(value.items()):
+        if not isinstance(item, str) or any(
+            (ord(character) < 0x20 and character != "\t")
+            or ord(character) == 0x7F
+            for character in item
+        ):
             raise NatsAdapterError(f"{field_name} values must be strings")
-        normalized[_stable_string(f"{field_name} key", key)] = item
-    return dict(sorted(normalized.items()))
+        normalized_key = _stable_string(f"{field_name} key", key)
+        if normalized_key in normalized:
+            raise NatsAdapterError(
+                f"{field_name} must not contain duplicate key {normalized_key!r}"
+            )
+        normalized[normalized_key] = item
+    return FrozenWireJsonObject(dict(sorted(normalized.items())))
+
+
+def _wire_value(field_name: str, value: object) -> object:
+    try:
+        return snapshot_wire_json(value, field_name=field_name)
+    except ValueError as error:
+        raise NatsAdapterError(str(error)) from error
 
 
 def _validate_integer(field_name: str, value: object, *, minimum: int) -> None:
@@ -46,7 +66,7 @@ class NatsMessage:
     sequence: int
     payload: object
     timestamp_unix_ms: int | None = None
-    headers: dict[str, str] = field(default_factory=dict)
+    headers: Mapping[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         _stable_string("stream", self.stream)
@@ -54,13 +74,17 @@ class NatsMessage:
         _validate_integer("sequence", self.sequence, minimum=1)
         if self.timestamp_unix_ms is not None:
             _validate_integer("timestamp_unix_ms", self.timestamp_unix_ms, minimum=0)
-        object.__setattr__(self, "payload", deepcopy(self.payload))
+        object.__setattr__(self, "payload", _wire_value("payload", self.payload))
         object.__setattr__(self, "headers", _string_mapping("headers", self.headers))
 
     def to_source_event(self) -> SourceEvent:
         return SourceEvent(
             SourceCursor(self.stream, 0, self.sequence),
-            {"subject": self.subject, "payload": self.payload, "headers": dict(self.headers)},
+            {
+                "subject": self.subject,
+                "payload": thaw_wire_json(self.payload),
+                "headers": dict(self.headers),
+            },
             event_time_unix_ms=self.timestamp_unix_ms,
         )
 
@@ -96,11 +120,11 @@ class NatsConsumerCursor:
 class NatsPublishMessage:
     subject: str
     payload: object
-    headers: dict[str, str] = field(default_factory=dict)
+    headers: Mapping[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         _stable_string("subject", self.subject)
-        object.__setattr__(self, "payload", deepcopy(self.payload))
+        object.__setattr__(self, "payload", _wire_value("payload", self.payload))
         object.__setattr__(self, "headers", _string_mapping("headers", self.headers))
 
     @classmethod

@@ -32,20 +32,60 @@ class McpToolAdapterError(RuntimeError):
     pass
 
 
+def _alias_value(
+    value: Mapping[str, object],
+    names: tuple[str, ...],
+    *,
+    owner: str,
+    field_name: str,
+    default: object = None,
+) -> object:
+    present = tuple(name for name in names if name in value)
+    if len(present) > 1:
+        raise McpToolAdapterError(
+            f"{owner} {field_name} must not contain multiple field aliases"
+        )
+    if not present:
+        return default
+    return value[present[0]]
+
+
+def _stable_string(value: object, *, owner: str, field_name: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise McpToolAdapterError(f"{owner} requires non-empty string {field_name}")
+    normalized = value.strip()
+    if any(
+        ord(character) < 0x20
+        or ord(character) == 0x7F
+        or "\ud800" <= character <= "\udfff"
+        for character in normalized
+    ):
+        raise McpToolAdapterError(
+            f"{owner} {field_name} must not contain control characters"
+        )
+    return normalized
+
+
 class McpInlineSchemaRegistry:
     def __init__(self, schemas: Mapping[str, Mapping[str, object]]) -> None:
         if not isinstance(schemas, Mapping):
             raise McpToolAdapterError("MCP inline schemas must be a mapping")
         documents: dict[str, dict[str, object]] = {}
         for schema_ref, schema in schemas.items():
-            if (
-                not isinstance(schema_ref, str)
-                or not schema_ref.strip()
-                or schema_ref != schema_ref.strip()
-            ):
+            try:
+                normalized_schema_ref = _stable_string(
+                    schema_ref,
+                    owner="MCP inline schema",
+                    field_name="reference",
+                )
+                if normalized_schema_ref != schema_ref:
+                    raise McpToolAdapterError(
+                        "MCP inline schema reference must be exact"
+                    )
+            except McpToolAdapterError:
                 raise McpToolAdapterError(
                     "MCP inline schema reference must be a stable non-empty string"
-                )
+                ) from None
             if not isinstance(schema, Mapping):
                 raise McpToolAdapterError(f"MCP inline schema {schema_ref!r} must be an object")
             try:
@@ -152,15 +192,31 @@ class McpToolInvocation:
                 not isinstance(value, str)
                 or not value.strip()
                 or value != value.strip()
+                or any(
+                    ord(character) < 0x20
+                    or ord(character) == 0x7F
+                    or "\ud800" <= character <= "\udfff"
+                    for character in value
+                )
             ):
-                raise McpToolAdapterError(f"MCP invocation {field_name} must not be empty")
+                raise McpToolAdapterError(
+                    f"MCP invocation {field_name} must not be empty or unstable"
+                )
         if self.idempotency_key is not None:
             if (
                 not isinstance(self.idempotency_key, str)
                 or not self.idempotency_key.strip()
                 or self.idempotency_key != self.idempotency_key.strip()
+                or any(
+                    ord(character) < 0x20
+                    or ord(character) == 0x7F
+                    or "\ud800" <= character <= "\udfff"
+                    for character in self.idempotency_key
+                )
             ):
-                raise McpToolAdapterError("MCP invocation idempotency_key must not be empty")
+                raise McpToolAdapterError(
+                    "MCP invocation idempotency_key must not be empty or unstable"
+                )
         if not isinstance(self.arguments_json, str) or not self.arguments_json.strip():
             raise McpToolAdapterError("MCP invocation arguments_json must not be empty")
         arguments = _mcp_invocation_arguments(self.arguments_json)
@@ -279,22 +335,34 @@ def discover_mcp_tool_definitions(
         seen.add(name)
 
         generated_input_schema = _generated_schema_ref(schema_prefix, name, "input")
+        raw_input_schema = _alias_value(
+            raw_tool,
+            ("inputSchema", "input_schema"),
+            owner=f"MCP capabilities tool {name}",
+            field_name="input schema",
+        )
         input_schema = _schema_ref(
-            raw_tool.get("inputSchema", raw_tool.get("input_schema")),
+            raw_input_schema,
             fallback=generated_input_schema,
             owner=f"MCP capabilities tool {name}",
         )
         output_schema = None
         generated_output_schema = _generated_schema_ref(schema_prefix, name, "output")
+        raw_output_schema = _alias_value(
+            raw_tool,
+            ("outputSchema", "output_schema"),
+            owner=f"MCP capabilities tool {name}",
+            field_name="output schema",
+        )
         if "outputSchema" in raw_tool or "output_schema" in raw_tool:
             output_schema = _schema_ref(
-                raw_tool.get("outputSchema", raw_tool.get("output_schema")),
+                raw_output_schema,
                 fallback=generated_output_schema,
                 owner=f"MCP capabilities tool {name}",
             )
         for raw_schema, schema_ref, direction in (
-            (raw_tool.get("inputSchema", raw_tool.get("input_schema")), input_schema, "input"),
-            (raw_tool.get("outputSchema", raw_tool.get("output_schema")), output_schema, "output"),
+            (raw_input_schema, input_schema, "input"),
+            (raw_output_schema, output_schema, "output"),
         ):
             if not isinstance(raw_schema, Mapping) or schema_ref is None:
                 continue
@@ -747,7 +815,12 @@ def _artifact_ref(artifact: ArtifactRef | Mapping[str, object], *, owner: str) -
         return artifact
     if not isinstance(artifact, Mapping):
         raise McpToolAdapterError(f"{owner} tool result artifact must be an ArtifactRef or object")
-    artifact_id = artifact.get("artifact_id", artifact.get("artifactId"))
+    artifact_id = _alias_value(
+        artifact,
+        ("artifact_id", "artifactId"),
+        owner=f"{owner} tool result artifact",
+        field_name="artifact_id",
+    )
     uri = artifact.get("uri")
     if not isinstance(artifact_id, str) or not isinstance(uri, str):
         raise McpToolAdapterError(f"{owner} tool result artifact requires artifact_id and uri")
@@ -773,25 +846,30 @@ def _artifact_ref(artifact: ArtifactRef | Mapping[str, object], *, owner: str) -
 
 
 def _optional_string(artifact: Mapping[str, object], *names: str, owner: str) -> str | None:
-    for name in names:
-        if name in artifact:
-            value = artifact[name]
-            if value is None or isinstance(value, str):
-                return value
-            raise McpToolAdapterError(f"{owner} tool result artifact {name} must be a string")
-    return None
+    value = _alias_value(
+        artifact,
+        tuple(names),
+        owner=f"{owner} tool result artifact",
+        field_name=names[0],
+    )
+    if value is None or isinstance(value, str):
+        return value
+    raise McpToolAdapterError(f"{owner} tool result artifact {names[0]} must be a string")
 
 
 def _optional_integer(artifact: Mapping[str, object], *names: str, owner: str) -> int | None:
-    for name in names:
-        if name in artifact:
-            value = artifact[name]
-            if value is None:
-                return None
-            if isinstance(value, int) and not isinstance(value, bool):
-                return value
-            raise McpToolAdapterError(f"{owner} tool result artifact {name} must be an integer")
-    return None
+    present_name = next((name for name in names if name in artifact), names[0])
+    value = _alias_value(
+        artifact,
+        tuple(names),
+        owner=f"{owner} tool result artifact",
+        field_name=names[0],
+    )
+    if value is None:
+        return None
+    if isinstance(value, int) and not isinstance(value, bool):
+        return value
+    raise McpToolAdapterError(f"{owner} tool result artifact {present_name} must be an integer")
 
 
 def _validate_resolved_tool_capability(
@@ -875,9 +953,7 @@ def _parse_iso_datetime(value: str, *, owner: str, field: str) -> datetime:
 
 def _required_string(value: Mapping[str, object], name: str, *, owner: str) -> str:
     item = value.get(name)
-    if not isinstance(item, str) or not item.strip():
-        raise McpToolAdapterError(f"{owner} requires non-empty string {name}")
-    return item.strip()
+    return _stable_string(item, owner=owner, field_name=name)
 
 
 def _optional_text(value: Mapping[str, object], name: str) -> str | None:
@@ -899,23 +975,27 @@ def _string_set(value: Iterable[str] | object, *, owner: str) -> frozenset[str]:
         raise McpToolAdapterError(f"{owner} must be a sequence of strings") from error
     stripped_values: list[str] = []
     for item in values:
-        if not isinstance(item, str) or not item.strip():
-            raise McpToolAdapterError(f"{owner} must contain only non-empty strings")
-        stripped_values.append(item.strip())
+        normalized = _stable_string(item, owner=owner, field_name="entry")
+        stripped_values.append(normalized)
     return frozenset(stripped_values)
 
 
 def _schema_ref(value: object, *, fallback: str, owner: str) -> str:
     if isinstance(value, str):
-        value = value.strip()
-        if not value:
-            raise McpToolAdapterError(f"{owner} schema must not be empty")
-        return value
+        return _stable_string(value, owner=owner, field_name="schema")
     if isinstance(value, Mapping):
-        for key in ("x-graphblocks-schema-ref", "schemaId", "schema_id", "$id"):
-            schema_ref = value.get(key)
-            if isinstance(schema_ref, str) and schema_ref:
-                return schema_ref
+        schema_ref = _alias_value(
+            value,
+            ("x-graphblocks-schema-ref", "schemaId", "schema_id", "$id"),
+            owner=owner,
+            field_name="schema reference",
+        )
+        if schema_ref is not None:
+            return _stable_string(
+                schema_ref,
+                owner=owner,
+                field_name="schema reference",
+            )
         return fallback
     if value is None:
         return fallback
@@ -923,7 +1003,11 @@ def _schema_ref(value: object, *, fallback: str, owner: str) -> str:
 
 
 def _generated_schema_ref(schema_prefix: str, tool_name: str, direction: str) -> str:
-    prefix = schema_prefix.strip().rstrip("/")
+    prefix = _stable_string(
+        schema_prefix,
+        owner="MCP",
+        field_name="schema_prefix",
+    ).rstrip("/")
     if not prefix:
         raise McpToolAdapterError("MCP schema_prefix must not be empty")
     return f"{prefix}/{_schema_slug(tool_name)}/{direction}@1"

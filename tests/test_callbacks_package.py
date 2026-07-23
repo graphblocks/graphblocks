@@ -161,6 +161,8 @@ def test_callback_envelope_freezes_internal_payload_snapshot() -> None:
     with pytest.raises(TypeError):
         envelope.payload["summary"] = {"files": ["mutated"]}  # type: ignore[index]
     with pytest.raises(TypeError):
+        dict.__setitem__(envelope.payload, "summary", {})
+    with pytest.raises(TypeError):
         envelope.payload["summary"]["files"] = ["mutated"]  # type: ignore[index]
     with pytest.raises(AttributeError):
         envelope.payload["summary"]["files"].append("mutated")  # type: ignore[index, union-attr]
@@ -1538,6 +1540,38 @@ def test_webhook_response_decision_rejects_malformed_retry_after() -> None:
             terminal=False,
             reason="rate_limited",
             retry_after="eventually",
+        ),
+    )
+
+
+def test_webhook_response_boundaries_reject_inconsistent_flags_and_header_injection() -> None:
+    _assert_raises_value_error(
+        "either retryable or terminal",
+        lambda: WebhookResponseDecision(
+            status_code=429,
+            status="retry",
+            retry=True,
+            terminal=True,
+            reason="rate_limited",
+        ),
+    )
+    _assert_raises_value_error(
+        "retry_after requires a retryable",
+        lambda: WebhookResponseDecision(
+            status_code=400,
+            status="failed",
+            retry=False,
+            terminal=True,
+            reason="invalid",
+            retry_after="2026-07-02T00:00:01Z",
+        ),
+    )
+    _assert_raises_value_error(
+        "headers values must be strings",
+        lambda: classify_webhook_response(
+            429,
+            headers={"Retry-After": "1\r\nInjected: true"},
+            received_at="2026-07-02T00:00:00Z",
         ),
     )
 

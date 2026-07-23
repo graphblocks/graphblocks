@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 import json
 import math
+from types import MappingProxyType
 from urllib.error import HTTPError
 from urllib.parse import quote, urlencode, urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
@@ -27,6 +28,7 @@ from graphblocks import (
     ToolSchemaValidationError,
     canonical_dumps,
     canonical_hash,
+    canonical_loads,
     validate_tool_result_for_model,
 )
 from graphblocks.application_event import (
@@ -78,6 +80,77 @@ def _strict_json_loads(value: str | bytes) -> object:
     return decoded
 
 
+class _FrozenJsonArray(tuple[object, ...]):
+    def __eq__(self, other: object) -> bool:
+        if isinstance(other, list):
+            return tuple(self) == tuple(other)
+        return super().__eq__(other)
+
+    def __deepcopy__(self, memo: dict[int, object]) -> _FrozenJsonArray:
+        return self
+
+
+class _FrozenJsonObject(Mapping[str, object]):
+    __slots__ = ("__values",)
+
+    def __init__(self, values: Mapping[str, object]) -> None:
+        self.__values = MappingProxyType(dict(values))
+
+    def __getitem__(self, key: str) -> object:
+        return self.__values[key]
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self.__values)
+
+    def __len__(self) -> int:
+        return len(self.__values)
+
+    def __repr__(self) -> str:
+        return repr(dict(self.__values))
+
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, Mapping) and dict(self.__values) == dict(other)
+
+    def __deepcopy__(self, memo: dict[int, object]) -> _FrozenJsonObject:
+        return self
+
+
+def _freeze_json_snapshot(value: object) -> object:
+    if isinstance(value, dict):
+        return _FrozenJsonObject(
+            {key: _freeze_json_snapshot(item) for key, item in value.items()}
+        )
+    if isinstance(value, list):
+        return _FrozenJsonArray(_freeze_json_snapshot(item) for item in value)
+    return value
+
+
+def _thaw_json_snapshot(value: object) -> object:
+    if isinstance(value, Mapping):
+        return {
+            key: _thaw_json_snapshot(item)
+            for key, item in value.items()
+        }
+    if isinstance(value, tuple):
+        return [_thaw_json_snapshot(item) for item in value]
+    return value
+
+
+def _stable_non_empty_string(label: str, field_name: str, value: object) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{label} {field_name} must be a non-empty string")
+    if value != value.strip() or any(
+            ord(character) < 0x20
+            or ord(character) == 0x7F
+            or "\ud800" <= character <= "\udfff"
+            for character in value
+    ):
+        raise ValueError(
+            f"{label} {field_name} must not contain surrounding whitespace or control characters"
+        )
+    return value
+
+
 @dataclass(frozen=True, slots=True)
 class RunGraphCommand:
     graph: dict[str, object]
@@ -100,16 +173,14 @@ class RunGraphCommand:
             ("policy_snapshot_id", self.policy_snapshot_id),
             ("response_mode", self.response_mode),
         ):
-            if not isinstance(value, str) or not value.strip():
-                raise ValueError(f"run graph command {field_name} must be a non-empty string")
+            _stable_non_empty_string("run graph command", field_name, value)
         if self.response_mode not in {"sync", "accepted", "background"}:
             raise ValueError("run graph command response_mode must be one of sync, accepted, or background")
-        if self.turn_id is not None and (not isinstance(self.turn_id, str) or not self.turn_id.strip()):
-            raise ValueError("run graph command turn_id must be a non-empty string")
+        if self.turn_id is not None:
+            _stable_non_empty_string("run graph command", "turn_id", self.turn_id)
         if not isinstance(self.occurred_at, str):
             raise ValueError("run graph command occurred_at must be a string")
-        if not self.occurred_at.strip():
-            raise ValueError("run graph command occurred_at must be a non-empty string")
+        _stable_non_empty_string("run graph command", "occurred_at", self.occurred_at)
         object.__setattr__(self, "graph", graph)
         object.__setattr__(self, "inputs", inputs)
 
@@ -129,11 +200,14 @@ class RunGraphResponse:
     def __post_init__(self) -> None:
         for field_name in ("run_id", "status"):
             value = getattr(self, field_name)
-            if not isinstance(value, str) or not value.strip():
-                raise ValueError(f"run graph response {field_name} must be a non-empty string")
+            _stable_non_empty_string("run graph response", field_name, value)
         if not isinstance(self.outputs, Mapping):
             raise ValueError("run graph response outputs must be a JSON object")
-        object.__setattr__(self, "outputs", deepcopy(dict(self.outputs)))
+        object.__setattr__(
+            self,
+            "outputs",
+            _canonical_json_mapping("run graph response", "outputs", self.outputs),
+        )
         object.__setattr__(self, "events", tuple(self.events))
         for field_name in ("event_stream_url", "websocket_url", "cancel_url", "initial_cursor"):
             value = getattr(self, field_name)
@@ -141,8 +215,7 @@ class RunGraphResponse:
                 if self.status in {"accepted", "background"}:
                     raise ValueError(f"run graph response {self.status} requires {field_name}")
                 continue
-            if not isinstance(value, str) or not value.strip():
-                raise ValueError(f"run graph response {field_name} must be a non-empty string")
+            _stable_non_empty_string("run graph response", field_name, value)
             if field_name == "initial_cursor":
                 _validate_run_cursor("run graph response", field_name, self.run_id, value)
 
@@ -155,7 +228,12 @@ class RunStreamSnapshot:
     event_stream: ApplicationEventStreamState
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "stream", deepcopy(self.stream))
+        _stable_non_empty_string("run stream snapshot", "run_id", self.run_id)
+        object.__setattr__(
+            self,
+            "stream",
+            _canonical_json_mapping("run stream snapshot", "stream", self.stream),
+        )
         object.__setattr__(self, "events", tuple(self.events))
 
 
@@ -168,7 +246,7 @@ class GraphBlocksHttpError(RuntimeError):
         raw_body: bytes | None = None,
     ) -> None:
         self.status_code = status_code
-        self.payload = deepcopy(payload)
+        self.payload = _canonical_json_mapping("GraphBlocks HTTP error", "payload", payload)
         self.raw_body = bytes(raw_body) if raw_body is not None else None
         super().__init__(f"GraphBlocks HTTP request failed with status {status_code}")
 
@@ -554,7 +632,13 @@ def remote_tool_result_artifact_ready(
     else:
         if not isinstance(artifact, Mapping):
             raise RemoteToolAdapterError("remote tool result artifact must be an ArtifactRef or object")
-        artifact_id = artifact.get("artifact_id", artifact.get("artifactId"))
+        artifact_id = _remote_alias_value(
+            artifact,
+            "remote tool result artifact",
+            "artifact_id",
+            "artifact_id",
+            "artifactId",
+        )
         uri = artifact.get("uri")
         if not isinstance(artifact_id, str) or not isinstance(uri, str):
             raise RemoteToolAdapterError("remote tool result artifact requires artifact_id and uri")
@@ -572,23 +656,36 @@ def remote_tool_result_artifact_ready(
             "filename": ("filename",),
         }.items():
             optional_strings[target_name] = None
-            for name in names:
-                if name in artifact:
-                    value = artifact[name]
-                    if value is None or isinstance(value, str):
-                        optional_strings[target_name] = value
-                        break
-                    raise RemoteToolAdapterError(f"remote tool result artifact {name} must be a string")
-        size_bytes = None
-        for name in ("size_bytes", "sizeBytes"):
-            if name in artifact:
-                value = artifact[name]
-                if value is None:
-                    break
-                if isinstance(value, int) and not isinstance(value, bool):
-                    size_bytes = value
-                    break
-                raise RemoteToolAdapterError(f"remote tool result artifact {name} must be an integer")
+            value = _remote_alias_value(
+                artifact,
+                "remote tool result artifact",
+                target_name,
+                *names,
+            )
+            if value is None or isinstance(value, str):
+                optional_strings[target_name] = value
+            else:
+                raise RemoteToolAdapterError(
+                    f"remote tool result artifact {target_name} must be a string"
+                )
+        size_bytes_value = _remote_alias_value(
+            artifact,
+            "remote tool result artifact",
+            "size_bytes",
+            "size_bytes",
+            "sizeBytes",
+        )
+        if size_bytes_value is None:
+            size_bytes = None
+        elif isinstance(size_bytes_value, int) and not isinstance(
+            size_bytes_value,
+            bool,
+        ):
+            size_bytes = size_bytes_value
+        else:
+            raise RemoteToolAdapterError(
+                "remote tool result artifact size_bytes must be an integer"
+            )
         try:
             artifact_ref = ArtifactRef(
                 artifact_id=artifact_id,
@@ -813,7 +910,15 @@ class LocalGraphBlocksClient:
     def run_graph(self, command: RunGraphCommand) -> RunGraphResponse:
         if command.response_mode != "sync":
             raise ValueError("LocalGraphBlocksClient supports only sync response_mode")
-        result = InProcessRuntime(self.registry).run(command.graph, command.inputs, run_id=command.run_id)
+        graph = _thaw_json_snapshot(command.graph)
+        inputs = _thaw_json_snapshot(command.inputs)
+        assert isinstance(graph, dict)
+        assert isinstance(inputs, dict)
+        result = InProcessRuntime(self.registry).run(
+            graph,
+            inputs,
+            run_id=command.run_id,
+        )
         start_payload = result.journal.records[0].payload if result.journal.records else {}
         start_event = ApplicationEvent.new(
             "RunStarted",
@@ -1035,7 +1140,11 @@ class HttpGraphBlocksClient:
             headers["Authorization"] = f"Bearer {self.bearer_token}"
         request = Request(
             f"{self.base_url.rstrip('/')}/runs/{run_id}/{action}",
-            data=json.dumps(dict(body), separators=(",", ":"), sort_keys=True).encode("utf-8"),
+            data=json.dumps(
+                _thaw_json_snapshot(body),
+                separators=(",", ":"),
+                sort_keys=True,
+            ).encode("utf-8"),
             headers=headers,
             method="POST",
         )
@@ -1104,7 +1213,11 @@ class HttpGraphBlocksClient:
             headers["Authorization"] = f"Bearer {self.bearer_token}"
         request = Request(
             f"{self.base_url.rstrip('/')}/callbacks/{operation_id}",
-            data=json.dumps(body, separators=(",", ":"), sort_keys=True).encode("utf-8"),
+            data=json.dumps(
+                _thaw_json_snapshot(body),
+                separators=(",", ":"),
+                sort_keys=True,
+            ).encode("utf-8"),
             headers=headers,
             method="POST",
         )
@@ -1309,7 +1422,11 @@ class HttpGraphBlocksClient:
             headers["Authorization"] = f"Bearer {self.bearer_token}"
         request = Request(
             f"{self.base_url.rstrip('/')}/runs/{run_id}/attach",
-            data=json.dumps(body, separators=(",", ":"), sort_keys=True).encode("utf-8"),
+            data=json.dumps(
+                _thaw_json_snapshot(body),
+                separators=(",", ":"),
+                sort_keys=True,
+            ).encode("utf-8"),
             headers=headers,
             method="POST",
         )
@@ -1353,7 +1470,11 @@ class HttpGraphBlocksClient:
             headers["Authorization"] = f"Bearer {self.bearer_token}"
         request = Request(
             f"{self.base_url.rstrip('/')}/runs/{run_id}/detach",
-            data=json.dumps(body, separators=(",", ":"), sort_keys=True).encode("utf-8"),
+            data=json.dumps(
+                _thaw_json_snapshot(body),
+                separators=(",", ":"),
+                sort_keys=True,
+            ).encode("utf-8"),
             headers=headers,
             method="POST",
         )
@@ -1395,7 +1516,11 @@ class HttpGraphBlocksClient:
             headers["Authorization"] = f"Bearer {self.bearer_token}"
         request = Request(
             f"{self.base_url.rstrip('/')}/runs/{run_id}/subscriptions",
-            data=json.dumps(body, separators=(",", ":"), sort_keys=True).encode("utf-8"),
+            data=json.dumps(
+                _thaw_json_snapshot(body),
+                separators=(",", ":"),
+                sort_keys=True,
+            ).encode("utf-8"),
             headers=headers,
             method="POST",
         )
@@ -1478,7 +1603,11 @@ class HttpGraphBlocksClient:
             headers["Authorization"] = f"Bearer {self.bearer_token}"
         request = Request(
             f"{self.base_url.rstrip('/')}/runs/{run_id}/subscriptions/{subscription_id}/ack",
-            data=json.dumps(body, separators=(",", ":"), sort_keys=True).encode("utf-8"),
+            data=json.dumps(
+                _thaw_json_snapshot(body),
+                separators=(",", ":"),
+                sort_keys=True,
+            ).encode("utf-8"),
             headers=headers,
             method="POST",
         )
@@ -1541,7 +1670,11 @@ class HttpGraphBlocksClient:
             headers["Authorization"] = f"Bearer {self.bearer_token}"
         request = Request(
             f"{self.base_url.rstrip('/')}/callbacks/register",
-            data=json.dumps(body, separators=(",", ":"), sort_keys=True).encode("utf-8"),
+            data=json.dumps(
+                _thaw_json_snapshot(body),
+                separators=(",", ":"),
+                sort_keys=True,
+            ).encode("utf-8"),
             headers=headers,
             method="POST",
         )
@@ -1657,7 +1790,11 @@ class HttpGraphBlocksClient:
             headers["Authorization"] = f"Bearer {self.bearer_token}"
         request = Request(
             f"{self.base_url.rstrip('/')}/callbacks/deliveries/{delivery_id}/{action}",
-            data=json.dumps(body, separators=(",", ":"), sort_keys=True).encode("utf-8"),
+            data=json.dumps(
+                _thaw_json_snapshot(body),
+                separators=(",", ":"),
+                sort_keys=True,
+            ).encode("utf-8"),
             headers=headers,
             method="POST",
         )
@@ -1669,7 +1806,7 @@ class HttpGraphBlocksClient:
 
     def run_graph(self, command: RunGraphCommand) -> RunGraphResponse:
         body = json.dumps(
-            {
+            _thaw_json_snapshot({
                 "graph": command.graph,
                 "inputs": command.inputs,
                 "runId": command.run_id,
@@ -1679,7 +1816,7 @@ class HttpGraphBlocksClient:
                 "policySnapshotId": command.policy_snapshot_id,
                 "responseMode": command.response_mode,
                 "occurredAt": command.occurred_at,
-            },
+            }),
             separators=(",", ":"),
             sort_keys=True,
         ).encode("utf-8")
@@ -1747,9 +1884,7 @@ def _http_path_segment(field_name: str, value: object) -> str:
 
 
 def _http_non_empty_string(field_name: str, value: object) -> str:
-    if not isinstance(value, str) or not value.strip():
-        raise ValueError(f"GraphBlocks HTTP {field_name} must be a non-empty string")
-    return value
+    return _stable_non_empty_string("GraphBlocks HTTP", field_name, value)
 
 
 def _validate_run_cursor(label: str, field_name: str, run_id: str, value: str) -> str:
@@ -1778,26 +1913,41 @@ def _http_canonical_json_mapping(field_name: str, value: object) -> dict[str, ob
     return _canonical_json_mapping("GraphBlocks HTTP", field_name, value)
 
 
-def _canonical_json_mapping(label: str, field_name: str, value: object) -> dict[str, object]:
+def _canonical_json_mapping(label: str, field_name: str, value: object) -> _FrozenJsonObject:
     if not isinstance(value, Mapping):
         raise ValueError(f"{label} {field_name} must be a JSON object")
-    pending_values: list[object] = [value]
+    try:
+        canonical = canonical_dumps(value, _reject_tuples=True)
+        snapshot = canonical_loads(canonical)
+    except TypeError as error:
+        if "arrays must be lists" in str(error):
+            raise ValueError(f"{label} {field_name} arrays must be lists") from None
+        if "object keys must be strings" in str(error):
+            raise ValueError(
+                f"{label} {field_name} object keys must be non-empty strings"
+            ) from None
+        raise ValueError(
+            f"{label} {field_name} must contain canonical JSON values"
+        ) from None
+    except ValueError:
+        raise ValueError(
+            f"{label} {field_name} must contain canonical JSON values"
+        ) from None
+    if not isinstance(snapshot, dict):
+        raise ValueError(f"{label} {field_name} must be a JSON object")
+    pending_values: list[object] = [snapshot]
     while pending_values:
         current_value = pending_values.pop()
-        if isinstance(current_value, Mapping):
+        if isinstance(current_value, dict):
             for key, child_value in current_value.items():
                 if not isinstance(key, str) or not key.strip():
                     raise ValueError(f"{label} {field_name} object keys must be non-empty strings")
                 pending_values.append(child_value)
-        elif isinstance(current_value, tuple):
-            raise ValueError(f"{label} {field_name} arrays must be lists")
         elif isinstance(current_value, list):
             pending_values.extend(current_value)
-    try:
-        canonical_dumps(dict(value))
-    except (TypeError, ValueError):
-        raise ValueError(f"{label} {field_name} must contain canonical JSON values") from None
-    return deepcopy(dict(value))
+    frozen = _freeze_json_snapshot(snapshot)
+    assert isinstance(frozen, _FrozenJsonObject)
+    return frozen
 
 
 def _read_json_response(response: object, label: str) -> dict[str, object]:
@@ -1831,25 +1981,63 @@ def _read_json_response(response: object, label: str) -> dict[str, object]:
 
 
 def _payload_string(payload: Mapping[str, object], label: str, field_name: str, *keys: str) -> str:
-    value: object = None
-    for key in keys:
-        if key in payload:
-            value = payload[key]
-            break
+    value = _payload_alias_value(payload, label, field_name, *keys)
     if not isinstance(value, str) or not value.strip():
         raise ValueError(f"{label} {field_name} must be a non-empty string")
+    if value != value.strip() or any(
+        ord(character) < 0x20
+        or ord(character) == 0x7F
+        or "\ud800" <= character <= "\udfff"
+        for character in value
+    ):
+        raise ValueError(
+            f"{label} {field_name} must not contain surrounding whitespace or control characters"
+        )
     return value
 
 
 def _payload_object(payload: Mapping[str, object], label: str, field_name: str, *keys: str) -> dict[str, object]:
-    value: object = {}
-    for key in keys:
-        if key in payload:
-            value = payload[key]
-            break
+    value = _payload_alias_value(payload, label, field_name, *keys, default={})
     if not isinstance(value, Mapping):
         raise ValueError(f"{label} {field_name} must be a JSON object")
     return dict(value)
+
+
+def _payload_alias_value(
+    payload: Mapping[str, object],
+    label: str,
+    field_name: str,
+    *keys: str,
+    default: object = None,
+) -> object:
+    unique_keys = tuple(dict.fromkeys(keys))
+    present = tuple(key for key in unique_keys if key in payload)
+    if len(present) > 1:
+        raise ValueError(
+            f"{label} {field_name} must not contain multiple field aliases"
+        )
+    if not present:
+        return default
+    return payload[present[0]]
+
+
+def _remote_alias_value(
+    payload: Mapping[str, object],
+    label: str,
+    field_name: str,
+    *keys: str,
+    default: object = None,
+) -> object:
+    try:
+        return _payload_alias_value(
+            payload,
+            label,
+            field_name,
+            *keys,
+            default=default,
+        )
+    except ValueError as error:
+        raise RemoteToolAdapterError(str(error)) from error
 
 
 def _events_from_payload(
@@ -1963,15 +2151,48 @@ def _application_events_from_payloads(event_payloads: object) -> tuple[Applicati
         metadata_payload = event_payload.get("metadata")
         if not isinstance(metadata_payload, dict):
             raise ValueError("GraphBlocks HTTP event metadata must be a JSON object")
-        event_id = metadata_payload.get("eventId", metadata_payload.get("event_id"))
-        run_id = metadata_payload.get("runId", metadata_payload.get("run_id"))
-        response_id = metadata_payload.get("responseId", metadata_payload.get("response_id"))
-        release_id = metadata_payload.get("releaseId", metadata_payload.get("release_id"))
-        policy_snapshot_id = metadata_payload.get(
-            "policySnapshotId",
-            metadata_payload.get("policy_snapshot_id"),
+        event_id = _payload_alias_value(
+            metadata_payload,
+            "GraphBlocks HTTP event metadata",
+            "event_id",
+            "eventId",
+            "event_id",
         )
-        occurred_at = metadata_payload.get("occurredAt", metadata_payload.get("occurred_at"))
+        run_id = _payload_alias_value(
+            metadata_payload,
+            "GraphBlocks HTTP event metadata",
+            "run_id",
+            "runId",
+            "run_id",
+        )
+        response_id = _payload_alias_value(
+            metadata_payload,
+            "GraphBlocks HTTP event metadata",
+            "response_id",
+            "responseId",
+            "response_id",
+        )
+        release_id = _payload_alias_value(
+            metadata_payload,
+            "GraphBlocks HTTP event metadata",
+            "release_id",
+            "releaseId",
+            "release_id",
+        )
+        policy_snapshot_id = _payload_alias_value(
+            metadata_payload,
+            "GraphBlocks HTTP event metadata",
+            "policy_snapshot_id",
+            "policySnapshotId",
+            "policy_snapshot_id",
+        )
+        occurred_at = _payload_alias_value(
+            metadata_payload,
+            "GraphBlocks HTTP event metadata",
+            "occurred_at",
+            "occurredAt",
+            "occurred_at",
+        )
         for field_name, value in (
             ("event_id", event_id),
             ("run_id", run_id),
@@ -1979,25 +2200,65 @@ def _application_events_from_payloads(event_payloads: object) -> tuple[Applicati
             ("release_id", release_id),
             ("policy_snapshot_id", policy_snapshot_id),
         ):
-            if not isinstance(value, str) or not value.strip():
-                raise ValueError(f"GraphBlocks HTTP event metadata {field_name} must be a non-empty string")
+            _stable_non_empty_string(
+                "GraphBlocks HTTP event metadata",
+                field_name,
+                value,
+            )
         if not isinstance(occurred_at, str):
             raise ValueError("GraphBlocks HTTP event metadata occurred_at must be a string")
-        turn_id = metadata_payload.get("turnId", metadata_payload.get("turn_id"))
-        if turn_id is not None and (not isinstance(turn_id, str) or not turn_id.strip()):
-            raise ValueError("GraphBlocks HTTP event metadata turn_id must be a non-empty string")
+        _stable_non_empty_string(
+            "GraphBlocks HTTP event metadata",
+            "occurred_at",
+            occurred_at,
+        )
+        turn_id = _payload_alias_value(
+            metadata_payload,
+            "GraphBlocks HTTP event metadata",
+            "turn_id",
+            "turnId",
+            "turn_id",
+        )
+        if turn_id is not None:
+            _stable_non_empty_string(
+                "GraphBlocks HTTP event metadata",
+                "turn_id",
+                turn_id,
+            )
         cursor = metadata_payload.get("cursor")
-        graph_id = metadata_payload.get("graphId", metadata_payload.get("graph_id"))
-        node_id = metadata_payload.get("nodeId", metadata_payload.get("node_id"))
-        operation_id = metadata_payload.get("operationId", metadata_payload.get("operation_id"))
+        graph_id = _payload_alias_value(
+            metadata_payload,
+            "GraphBlocks HTTP event metadata",
+            "graph_id",
+            "graphId",
+            "graph_id",
+        )
+        node_id = _payload_alias_value(
+            metadata_payload,
+            "GraphBlocks HTTP event metadata",
+            "node_id",
+            "nodeId",
+            "node_id",
+        )
+        operation_id = _payload_alias_value(
+            metadata_payload,
+            "GraphBlocks HTTP event metadata",
+            "operation_id",
+            "operationId",
+            "operation_id",
+        )
         for field_name, value in (
             ("cursor", cursor),
             ("graph_id", graph_id),
             ("node_id", node_id),
             ("operation_id", operation_id),
         ):
-            if value is not None and (not isinstance(value, str) or not value.strip()):
-                raise ValueError(f"GraphBlocks HTTP event metadata {field_name} must be a non-empty string")
+            if value is not None:
+                _stable_non_empty_string(
+                    "GraphBlocks HTTP event metadata",
+                    field_name,
+                    value,
+                )
         visibility = metadata_payload.get("visibility", "client")
         if visibility not in {"client", "operator", "internal", "audit_only"}:
             raise ValueError("GraphBlocks HTTP event metadata visibility must be a valid visibility value")
@@ -2023,10 +2284,19 @@ def _application_events_from_payloads(event_payloads: object) -> tuple[Applicati
         if not isinstance(event_body_payload, Mapping):
             raise ValueError("GraphBlocks HTTP event payload must be a JSON object")
         event_body = dict(event_body_payload)
-        tool_call_id = event_payload.get("toolCallId", event_payload.get("tool_call_id"))
+        tool_call_id = _payload_alias_value(
+            event_payload,
+            "GraphBlocks HTTP event",
+            "tool_call_id",
+            "toolCallId",
+            "tool_call_id",
+        )
         if tool_call_id is not None:
-            if not isinstance(tool_call_id, str) or not tool_call_id.strip():
-                raise ValueError("GraphBlocks HTTP event tool_call_id must be a non-empty string")
+            _stable_non_empty_string(
+                "GraphBlocks HTTP event",
+                "tool_call_id",
+                tool_call_id,
+            )
             events.append(
                 ApplicationEvent.tool(
                     kind,

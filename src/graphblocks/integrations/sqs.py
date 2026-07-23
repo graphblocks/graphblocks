@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from copy import deepcopy
 from dataclasses import dataclass, field
 
 from graphblocks.durable import SinkCommitRequest, SourceCursor, SourceEvent
+from graphblocks.integrations._wire import (
+    FrozenWireJsonObject,
+    snapshot_wire_json,
+    thaw_wire_json,
+)
 
 
 class SqsAdapterError(ValueError):
@@ -22,15 +26,27 @@ def _stable_string(field_name: str, value: object) -> str:
     return value
 
 
-def _string_mapping(field_name: str, value: object) -> dict[str, str]:
+def _string_mapping(field_name: str, value: object) -> Mapping[str, str]:
     if not isinstance(value, Mapping):
         raise SqsAdapterError(f"{field_name} must be a mapping")
     normalized: dict[str, str] = {}
-    for key, item in value.items():
+    for key, item in tuple(value.items()):
         if not isinstance(item, str):
             raise SqsAdapterError(f"{field_name} values must be strings")
-        normalized[_stable_string(f"{field_name} key", key)] = item
-    return dict(sorted(normalized.items()))
+        normalized_key = _stable_string(f"{field_name} key", key)
+        if normalized_key in normalized:
+            raise SqsAdapterError(
+                f"{field_name} must not contain duplicate key {normalized_key!r}"
+            )
+        normalized[normalized_key] = item
+    return FrozenWireJsonObject(dict(sorted(normalized.items())))
+
+
+def _wire_value(field_name: str, value: object) -> object:
+    try:
+        return snapshot_wire_json(value, field_name=field_name)
+    except ValueError as error:
+        raise SqsAdapterError(str(error)) from error
 
 
 def _positive_int(field_name: str, value: object) -> int:
@@ -63,8 +79,8 @@ class SqsMessage:
     receipt_handle: str
     body: object
     sent_timestamp_unix_ms: int | None = None
-    attributes: dict[str, str] = field(default_factory=dict)
-    message_attributes: dict[str, str] = field(default_factory=dict)
+    attributes: Mapping[str, str] = field(default_factory=dict)
+    message_attributes: Mapping[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         _stable_string("queue", self.queue)
@@ -76,7 +92,7 @@ class SqsMessage:
             "sent_timestamp_unix_ms",
             _optional_non_negative_int("sent_timestamp_unix_ms", self.sent_timestamp_unix_ms),
         )
-        object.__setattr__(self, "body", deepcopy(self.body))
+        object.__setattr__(self, "body", _wire_value("body", self.body))
         object.__setattr__(self, "attributes", _string_mapping("attributes", self.attributes))
         object.__setattr__(
             self,
@@ -90,7 +106,7 @@ class SqsMessage:
             {
                 "message_id": self.message_id,
                 "receipt_handle": self.receipt_handle,
-                "body": self.body,
+                "body": thaw_wire_json(self.body),
                 "attributes": dict(self.attributes),
                 "message_attributes": dict(self.message_attributes),
             },
@@ -127,7 +143,7 @@ class SqsReceiveCursor:
 class SqsSendMessage:
     queue: str
     body: object
-    message_attributes: dict[str, str] = field(default_factory=dict)
+    message_attributes: Mapping[str, str] = field(default_factory=dict)
     message_group_id: str | None = None
     message_deduplication_id: str | None = None
 
@@ -137,7 +153,7 @@ class SqsSendMessage:
             _stable_string("message_group_id", self.message_group_id)
         if self.message_deduplication_id is not None:
             _stable_string("message_deduplication_id", self.message_deduplication_id)
-        object.__setattr__(self, "body", deepcopy(self.body))
+        object.__setattr__(self, "body", _wire_value("body", self.body))
         object.__setattr__(
             self,
             "message_attributes",

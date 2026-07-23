@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -9,6 +9,7 @@ import hmac
 import math
 import socket
 from threading import RLock
+from types import MappingProxyType
 from typing import Protocol
 from urllib.parse import urlparse
 
@@ -60,30 +61,29 @@ class _FrozenJsonArray(tuple[object, ...]):
     pass
 
 
-class _FrozenJsonObject(dict[str, object]):
-    def __setitem__(self, key: str, value: object) -> None:
-        raise TypeError("frozen JSON object cannot be mutated")
+class _FrozenJsonObject(Mapping[str, object]):
+    __slots__ = ("__values",)
 
-    def __delitem__(self, key: str) -> None:
-        raise TypeError("frozen JSON object cannot be mutated")
+    def __init__(self, values: Mapping[str, object]) -> None:
+        self.__values = MappingProxyType(dict(values))
 
-    def clear(self) -> None:
-        raise TypeError("frozen JSON object cannot be mutated")
+    def __getitem__(self, key: str) -> object:
+        return self.__values[key]
 
-    def pop(self, key: str, default: object = None) -> object:
-        raise TypeError("frozen JSON object cannot be mutated")
+    def __iter__(self) -> Iterator[str]:
+        return iter(self.__values)
 
-    def popitem(self) -> tuple[str, object]:
-        raise TypeError("frozen JSON object cannot be mutated")
+    def __len__(self) -> int:
+        return len(self.__values)
 
-    def setdefault(self, key: str, default: object = None) -> object:
-        raise TypeError("frozen JSON object cannot be mutated")
+    def __repr__(self) -> str:
+        return repr(dict(self.__values))
 
-    def update(self, *args: object, **kwargs: object) -> None:
-        raise TypeError("frozen JSON object cannot be mutated")
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, Mapping) and dict(self.__values) == dict(other)
 
-    def __ior__(self, other: object) -> _FrozenJsonObject:
-        raise TypeError("frozen JSON object cannot be mutated")
+    def __deepcopy__(self, memo: dict[int, object]) -> _FrozenJsonObject:
+        return self
 
 
 def _utc_now_iso() -> str:
@@ -158,6 +158,13 @@ def _require_stable_string(field_name: str, value: str) -> None:
     _require_non_empty_string(field_name, value)
     if value != value.strip():
         raise ValueError(f"{field_name} must not contain surrounding whitespace")
+    if any(
+        ord(character) < 0x20
+        or ord(character) == 0x7F
+        or "\ud800" <= character <= "\udfff"
+        for character in value
+    ):
+        raise ValueError(f"{field_name} must not contain control characters")
 
 
 def _require_sha256_digest(field_name: str, value: str) -> None:
@@ -187,7 +194,7 @@ def _validate_http_status_code(value: object) -> int:
     return value
 
 
-def _string_headers(headers: Mapping[str, str] | None) -> dict[str, str]:
+def _string_headers(headers: Mapping[str, str] | None) -> Mapping[str, str]:
     if headers is None:
         return {}
     if not isinstance(headers, Mapping):
@@ -195,13 +202,41 @@ def _string_headers(headers: Mapping[str, str] | None) -> dict[str, str]:
     normalized: dict[str, str] = {}
     for key, value in headers.items():
         _require_stable_string("headers keys", key)
-        if not isinstance(value, str):
+        if not all(
+            character.isascii()
+            and (
+                character.isalnum()
+                or character in "!#$%&'*+-.^_`|~"
+            )
+            for character in key
+        ):
+            raise ValueError("headers keys must be HTTP token strings")
+        if not isinstance(value, str) or any(
+            (ord(character) < 0x20 and character != "\t")
+            or ord(character) == 0x7F
+            for character in value
+        ):
             raise ValueError("headers values must be strings")
         normalized_key = key.lower()
         if normalized_key in normalized:
             raise ValueError("headers must not contain duplicate case-insensitive keys")
         normalized[normalized_key] = value
-    return normalized
+    return MappingProxyType(normalized)
+
+
+def _webhook_alias_value(
+    value: Mapping[str, object],
+    snake: str,
+    camel: str,
+    *,
+    owner: str,
+    default: object = None,
+) -> object:
+    if snake in value and camel in value:
+        raise ValueError(
+            f"{owner} {snake} must not contain multiple field aliases"
+        )
+    return value.get(snake, value.get(camel, default))
 
 
 def _freeze_json_value(
@@ -383,8 +418,16 @@ class WebhookResponseDecision:
             raise ValueError("retry must be a boolean")
         if not isinstance(self.terminal, bool):
             raise ValueError("terminal must be a boolean")
+        if self.retry == self.terminal:
+            raise ValueError(
+                "webhook response decision must be either retryable or terminal"
+            )
         _require_non_empty_string("reason", self.reason)
         if self.retry_after is not None:
+            if not self.retry:
+                raise ValueError(
+                    "retry_after requires a retryable webhook response decision"
+                )
             _require_non_empty_string("retry_after", self.retry_after)
             _parse_field_timestamp("retry_after", self.retry_after)
 
@@ -1347,6 +1390,20 @@ class RegisteredSecretWebhookDispatcher:
     delivered_at_factory: Callable[[], str] = _utc_now_iso
     hostname_resolver: Callable[[str, int], tuple[str, ...]] | None = None
 
+    def __post_init__(self) -> None:
+        if not callable(getattr(self.secret_resolver, "resolve", None)):
+            raise ValueError(
+                "secret_resolver must provide a callable resolve method"
+            )
+        if not callable(getattr(self.transport, "post", None)):
+            raise ValueError("transport must provide a callable post method")
+        if not callable(self.delivered_at_factory):
+            raise ValueError("delivered_at_factory must be callable")
+        if self.hostname_resolver is not None and not callable(
+            self.hostname_resolver
+        ):
+            raise ValueError("hostname_resolver must be callable")
+
     def deliver(
         self,
         registration: ServerCallbackRegistration,
@@ -1443,7 +1500,12 @@ class RegisteredSecretWebhookDispatcher:
         signing = delivery.get("signing")
         if not isinstance(signing, Mapping):
             raise ValueError("webhook delivery signing must be a mapping")
-        secret_ref = signing.get("secret_ref", signing.get("secretRef"))
+        secret_ref = _webhook_alias_value(
+            signing,
+            "secret_ref",
+            "secretRef",
+            owner="webhook delivery signing",
+        )
         if not isinstance(secret_ref, str):
             raise ValueError("webhook delivery secret_ref must be a string")
         _require_stable_string("secret_ref", secret_ref)
@@ -1510,7 +1572,12 @@ class RegisteredSecretWebhookDispatcher:
                 else None
             ),
         )
-        key_id = signing.get("key_id", signing.get("keyId"))
+        key_id = _webhook_alias_value(
+            signing,
+            "key_id",
+            "keyId",
+            owner="webhook delivery signing",
+        )
         if key_id is not None and not isinstance(key_id, str):
             raise ValueError("webhook delivery key_id must be a string")
         try:

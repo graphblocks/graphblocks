@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+import json
 
 import pytest
 
@@ -133,6 +134,37 @@ def test_pubsub_message_snapshots_data_and_rejects_non_string_ordering_key(monke
     with pytest.raises(graphblocks_pubsub.PubsubAdapterError, match="ordering key"):
         graphblocks_pubsub.PubsubPublishMessage.from_sink_commit(
             topic="orders", request=request, ordering_key_field="orderId"
+        )
+
+
+def test_pubsub_messages_expose_immutable_strict_json_snapshots(monkeypatch) -> None:
+    graphblocks_pubsub = _import_pubsub(monkeypatch)
+    message = graphblocks_pubsub.PubsubMessage(
+        subscription="orders-sub",
+        receive_sequence=1,
+        message_id="msg-1",
+        ack_id="ack-1",
+        data={"items": [{"state": "created"}]},
+        attributes={"tenant": "acme"},
+    )
+
+    with pytest.raises(TypeError):
+        message.data["items"][0]["state"] = "cancelled"
+    with pytest.raises(TypeError):
+        dict.__setitem__(message.data, "items", [])
+    with pytest.raises(TypeError):
+        message.attributes["tenant"] = "other"
+    projected = message.to_source_event()
+    json.dumps(projected.payload)
+    projected.payload["data"]["items"][0]["state"] = "mutated"
+
+    assert message.to_source_event().payload["data"] == {
+        "items": [{"state": "created"}]
+    }
+    with pytest.raises(graphblocks_pubsub.PubsubAdapterError, match="strict JSON"):
+        graphblocks_pubsub.PubsubPublishMessage(
+            "orders",
+            {"items": ("not", "json")},
         )
 
 

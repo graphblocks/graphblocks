@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from copy import deepcopy
 from dataclasses import dataclass, field
 
 from graphblocks.durable import SinkCommitRequest, SourceCursor, SourceEvent
+from graphblocks.integrations._wire import (
+    FrozenWireJsonObject,
+    snapshot_wire_json,
+    thaw_wire_json,
+)
 
 
 class PubsubAdapterError(ValueError):
@@ -22,15 +26,27 @@ def _stable_string(field_name: str, value: object) -> str:
     return value
 
 
-def _string_mapping(field_name: str, value: object) -> dict[str, str]:
+def _string_mapping(field_name: str, value: object) -> Mapping[str, str]:
     if not isinstance(value, Mapping):
         raise PubsubAdapterError(f"{field_name} must be a mapping")
     normalized: dict[str, str] = {}
-    for key, item in value.items():
+    for key, item in tuple(value.items()):
         if not isinstance(item, str):
             raise PubsubAdapterError(f"{field_name} values must be strings")
-        normalized[_stable_string(f"{field_name} key", key)] = item
-    return dict(sorted(normalized.items()))
+        normalized_key = _stable_string(f"{field_name} key", key)
+        if normalized_key in normalized:
+            raise PubsubAdapterError(
+                f"{field_name} must not contain duplicate key {normalized_key!r}"
+            )
+        normalized[normalized_key] = item
+    return FrozenWireJsonObject(dict(sorted(normalized.items())))
+
+
+def _wire_value(field_name: str, value: object) -> object:
+    try:
+        return snapshot_wire_json(value, field_name=field_name)
+    except ValueError as error:
+        raise PubsubAdapterError(str(error)) from error
 
 
 def _positive_int(field_name: str, value: object) -> int:
@@ -69,7 +85,7 @@ class PubsubMessage:
     ack_id: str
     data: object
     publish_time_unix_ms: int | None = None
-    attributes: dict[str, str] = field(default_factory=dict)
+    attributes: Mapping[str, str] = field(default_factory=dict)
     ordering_key: str | None = None
     delivery_attempt: int | None = None
 
@@ -90,7 +106,7 @@ class PubsubMessage:
             "delivery_attempt",
             _optional_positive_int("delivery_attempt", self.delivery_attempt),
         )
-        object.__setattr__(self, "data", deepcopy(self.data))
+        object.__setattr__(self, "data", _wire_value("data", self.data))
         object.__setattr__(self, "attributes", _string_mapping("attributes", self.attributes))
 
     def to_source_event(self) -> SourceEvent:
@@ -99,7 +115,7 @@ class PubsubMessage:
             {
                 "message_id": self.message_id,
                 "ack_id": self.ack_id,
-                "data": self.data,
+                "data": thaw_wire_json(self.data),
                 "attributes": dict(self.attributes),
                 "ordering_key": self.ordering_key,
                 "delivery_attempt": self.delivery_attempt,
@@ -137,14 +153,14 @@ class PubsubSubscriptionCursor:
 class PubsubPublishMessage:
     topic: str
     data: object
-    attributes: dict[str, str] = field(default_factory=dict)
+    attributes: Mapping[str, str] = field(default_factory=dict)
     ordering_key: str | None = None
 
     def __post_init__(self) -> None:
         _stable_string("topic", self.topic)
         if self.ordering_key is not None:
             _stable_string("ordering_key", self.ordering_key)
-        object.__setattr__(self, "data", deepcopy(self.data))
+        object.__setattr__(self, "data", _wire_value("data", self.data))
         object.__setattr__(self, "attributes", _string_mapping("attributes", self.attributes))
 
     @classmethod
@@ -161,7 +177,7 @@ class PubsubPublishMessage:
             ordering_key = None
         else:
             _stable_string("ordering_key_field", ordering_key_field)
-            if not isinstance(request.payload, dict) or ordering_key_field not in request.payload:
+            if not isinstance(request.payload, Mapping) or ordering_key_field not in request.payload:
                 raise PubsubAdapterError(f"payload does not contain ordering key field {ordering_key_field!r}")
             ordering_key = _stable_string(
                 "payload ordering key", request.payload[ordering_key_field]

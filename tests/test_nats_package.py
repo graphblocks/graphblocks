@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+import json
 
 import pytest
 
@@ -119,6 +120,44 @@ def test_nats_message_snapshots_payload(monkeypatch) -> None:
     assert message.to_source_event().payload["payload"] == {
         "order": {"state": "created"}
     }
+
+
+def test_nats_messages_expose_immutable_strict_json_snapshots(monkeypatch) -> None:
+    graphblocks_nats = _import_nats(monkeypatch)
+    message = graphblocks_nats.NatsMessage(
+        "ORDERS",
+        "orders.created",
+        1,
+        {"items": [{"state": "created"}]},
+        headers={"tenant": "acme"},
+    )
+
+    with pytest.raises(TypeError):
+        message.payload["items"][0]["state"] = "cancelled"
+    with pytest.raises(TypeError):
+        dict.__setitem__(message.payload, "items", [])
+    with pytest.raises(TypeError):
+        message.headers["tenant"] = "other"
+    projected = message.to_source_event()
+    json.dumps(projected.payload)
+    projected.payload["payload"]["items"][0]["state"] = "mutated"
+
+    assert message.to_source_event().payload["payload"] == {
+        "items": [{"state": "created"}]
+    }
+    with pytest.raises(graphblocks_nats.NatsAdapterError, match="strict JSON"):
+        graphblocks_nats.NatsPublishMessage(
+            "orders.created",
+            {"items": ("not", "json")},
+        )
+    with pytest.raises(graphblocks_nats.NatsAdapterError, match="headers"):
+        graphblocks_nats.NatsMessage(
+            "ORDERS",
+            "orders.created",
+            1,
+            {},
+            headers={"trace": "ok\r\ninjected: yes"},
+        )
 
 
 def test_nats_publish_message_projects_durable_sink_commit(monkeypatch) -> None:
