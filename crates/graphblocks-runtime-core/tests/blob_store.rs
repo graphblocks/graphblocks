@@ -144,6 +144,50 @@ fn local_blob_store_rejects_metadata_with_incorrect_content_size()
 }
 
 #[test]
+fn local_blob_store_rejects_malformed_or_unknown_metadata_fields()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = temp_root("metadata-schema-integrity");
+    let store = LocalBlobStore::new(&root)?;
+    let key = BlobKey::new("docs/policy.txt");
+    store.put(&key, b"alpha policy", PutOptions::new())?;
+    let metadata_path = root.join(".graphblocks-metadata/docs/policy.txt.json");
+    let mut payload: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&metadata_path)?)?;
+
+    payload["artifact"]["media_type"] = serde_json::json!(42);
+    fs::write(&metadata_path, serde_json::to_string_pretty(&payload)?)?;
+    assert!(matches!(
+        store.head(&key),
+        Err(BlobStoreError::Metadata { message, .. })
+            if message.contains("media_type") && message.contains("string")
+    ));
+
+    payload["artifact"]["media_type"] = serde_json::Value::Null;
+    payload["artifact"]["unexpected"] = serde_json::json!(true);
+    fs::write(&metadata_path, serde_json::to_string_pretty(&payload)?)?;
+    assert!(matches!(
+        store.head(&key),
+        Err(BlobStoreError::Metadata { message, .. })
+            if message.contains("unknown artifact field unexpected")
+    ));
+
+    payload["artifact"]
+        .as_object_mut()
+        .expect("artifact is an object")
+        .remove("unexpected");
+    payload["unexpected"] = serde_json::json!(true);
+    fs::write(&metadata_path, serde_json::to_string_pretty(&payload)?)?;
+    assert!(matches!(
+        store.head(&key),
+        Err(BlobStoreError::Metadata { message, .. })
+            if message.contains("unknown metadata field unexpected")
+    ));
+
+    fs::remove_dir_all(root)?;
+    Ok(())
+}
+
+#[test]
 fn local_blob_store_supports_range_reads() -> Result<(), Box<dyn std::error::Error>> {
     let root = temp_root("range");
     let store = LocalBlobStore::new(&root)?;

@@ -552,6 +552,13 @@ impl LocalBlobStore {
                     key: key.key.clone(),
                     message: error.to_string(),
                 })?;
+            let payload = payload
+                .as_object()
+                .ok_or_else(|| BlobStoreError::Metadata {
+                    key: key.key.clone(),
+                    message: "metadata payload must be an object".to_owned(),
+                })?;
+            reject_unknown_fields(key, payload, "metadata", &["artifact", "etag"])?;
             let artifact_payload = payload
                 .get("artifact")
                 .and_then(Value::as_object)
@@ -559,15 +566,31 @@ impl LocalBlobStore {
                     key: key.key.clone(),
                     message: "missing artifact object".to_owned(),
                 })?;
+            reject_unknown_fields(
+                key,
+                artifact_payload,
+                "artifact",
+                &[
+                    "artifact_id",
+                    "uri",
+                    "media_type",
+                    "size_bytes",
+                    "checksum",
+                    "etag",
+                    "version",
+                    "filename",
+                    "metadata",
+                ],
+            )?;
             let artifact = ArtifactRef {
                 artifact_id: required_string(key, artifact_payload, "artifact_id")?,
                 uri: required_string(key, artifact_payload, "uri")?,
-                media_type: optional_string(artifact_payload, "media_type"),
+                media_type: optional_string(key, artifact_payload, "media_type")?,
                 size_bytes: optional_usize(key, artifact_payload, "size_bytes")?,
-                checksum: optional_string(artifact_payload, "checksum"),
-                etag: optional_string(artifact_payload, "etag"),
-                version: optional_string(artifact_payload, "version"),
-                filename: optional_string(artifact_payload, "filename"),
+                checksum: optional_string(key, artifact_payload, "checksum")?,
+                etag: optional_string(key, artifact_payload, "etag")?,
+                version: optional_string(key, artifact_payload, "version")?,
+                filename: optional_string(key, artifact_payload, "filename")?,
                 metadata: optional_string_map(key, artifact_payload, "metadata")?,
             };
             let checksum = sha256_digest(data);
@@ -586,10 +609,7 @@ impl LocalBlobStore {
             return Ok(BlobMetadata {
                 key: key.clone(),
                 artifact,
-                etag: payload
-                    .get("etag")
-                    .and_then(Value::as_str)
-                    .map(str::to_owned),
+                etag: optional_string(key, payload, "etag")?,
             });
         }
         let checksum = sha256_digest(data);
@@ -938,11 +958,25 @@ fn required_string(
         })
 }
 
-fn optional_string(payload: &Map<String, Value>, field: &str) -> Option<String> {
-    payload
-        .get(field)
-        .and_then(Value::as_str)
+fn optional_string(
+    key: &BlobKey,
+    payload: &Map<String, Value>,
+    field: &str,
+) -> Result<Option<String>, BlobStoreError> {
+    let Some(value) = payload.get(field) else {
+        return Ok(None);
+    };
+    if value.is_null() {
+        return Ok(None);
+    }
+    value
+        .as_str()
         .map(str::to_owned)
+        .map(Some)
+        .ok_or_else(|| BlobStoreError::Metadata {
+            key: key.key.clone(),
+            message: format!("field {field} must be a string"),
+        })
 }
 
 fn optional_usize(
@@ -998,4 +1032,22 @@ fn optional_string_map(
         output.insert(name.clone(), value.to_owned());
     }
     Ok(output)
+}
+
+fn reject_unknown_fields(
+    key: &BlobKey,
+    payload: &Map<String, Value>,
+    scope: &str,
+    known_fields: &[&str],
+) -> Result<(), BlobStoreError> {
+    if let Some(field) = payload
+        .keys()
+        .find(|field| !known_fields.contains(&field.as_str()))
+    {
+        return Err(BlobStoreError::Metadata {
+            key: key.key.clone(),
+            message: format!("unknown {scope} field {field}"),
+        });
+    }
+    Ok(())
 }
