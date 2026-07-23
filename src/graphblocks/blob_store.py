@@ -36,6 +36,31 @@ def _validate_exact_non_empty_string(owner: str, field_name: str, value: object)
     return value
 
 
+def _validate_list_limit(value: object) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError("limit must be an integer")
+    if value < 1:
+        raise ValueError("limit must be at least 1")
+    return value
+
+
+def _reject_duplicate_json_keys(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    result: dict[str, object] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"duplicate JSON object key {key!r}")
+        result[key] = value
+    return result
+
+
+def _loads_strict_json(value: str) -> object:
+    return json.loads(
+        value,
+        parse_constant=lambda constant: (_ for _ in ()).throw(ValueError(constant)),
+        object_pairs_hook=_reject_duplicate_json_keys,
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class BlobKey:
     key: str
@@ -180,7 +205,12 @@ def _validate_blob_prefix(prefix: str) -> None:
 def _normalise_etag(value: object) -> str | None:
     if value is None:
         return None
-    return str(value).strip('"')
+    if not isinstance(value, str):
+        raise BlobStoreError("s3 ETag must be a string")
+    normalized = value.strip('"')
+    if not normalized:
+        raise BlobStoreError("s3 ETag must not be empty")
+    return normalized
 
 
 def _is_not_found_error(error: BaseException) -> bool:
@@ -270,14 +300,13 @@ class LocalBlobStore:
         metadata: BlobMetadata | None = None
         if pending_metadata_path.exists() and not pending_metadata_path.is_symlink():
             try:
-                pending_payload = json.loads(
-                    pending_metadata_path.read_text(encoding="utf-8"),
-                    parse_constant=lambda constant: (_ for _ in ()).throw(
-                        ValueError(constant)
-                    ),
+                pending_payload = _loads_strict_json(
+                    pending_metadata_path.read_text(encoding="utf-8")
                 )
                 if not isinstance(pending_payload, Mapping):
                     raise TypeError("pending metadata must be a mapping")
+                if set(pending_payload) != {"artifact", "etag"}:
+                    raise TypeError("pending metadata has invalid fields")
                 pending_artifact_payload = pending_payload["artifact"]
                 if not isinstance(pending_artifact_payload, Mapping):
                     raise TypeError("pending artifact must be a mapping")
@@ -291,22 +320,32 @@ class LocalBlobStore:
                 if (
                     pending_artifact.checksum == checksum
                     and pending_artifact.size_bytes == len(data)
+                    and pending_artifact.artifact_id == f"blob:{key.key}"
+                    and pending_artifact.uri == path.as_uri()
                 ):
                     pending_metadata_path.replace(metadata_path)
                     metadata = pending_metadata
-            except (KeyError, OSError, TypeError, UnicodeError, ValueError):
+            except (
+                KeyError,
+                OSError,
+                RecursionError,
+                TypeError,
+                UnicodeError,
+                ValueError,
+            ):
                 pass
         if metadata is None and metadata_path.exists():
             try:
-                payload = json.loads(
-                    metadata_path.read_text(encoding="utf-8"),
-                    parse_constant=lambda constant: (_ for _ in ()).throw(ValueError(constant)),
+                payload = _loads_strict_json(
+                    metadata_path.read_text(encoding="utf-8")
                 )
-            except (OSError, UnicodeError, ValueError) as error:
+            except (OSError, RecursionError, UnicodeError, ValueError) as error:
                 raise BlobStoreError("local blob metadata must be valid strict JSON") from error
             if not isinstance(payload, Mapping):
                 raise BlobStoreError("local blob metadata must be a JSON object")
             try:
+                if set(payload) != {"artifact", "etag"}:
+                    raise TypeError("metadata has invalid fields")
                 artifact_payload = payload["artifact"]
                 if not isinstance(artifact_payload, Mapping):
                     raise TypeError("artifact must be a mapping")
@@ -319,6 +358,10 @@ class LocalBlobStore:
                 raise BlobStoreError(f"blob {key.key!r} does not match recorded checksum")
             if artifact.size_bytes != len(data):
                 raise BlobStoreError(f"blob {key.key!r} does not match recorded size")
+            if artifact.artifact_id != f"blob:{key.key}" or artifact.uri != path.as_uri():
+                raise BlobStoreError(
+                    f"blob {key.key!r} metadata identity does not match local blob"
+                )
             return metadata
         if metadata is not None:
             return metadata
@@ -396,8 +439,7 @@ class LocalBlobStore:
                 pending_path.unlink(missing_ok=True)
 
     def list(self, prefix: str = "", cursor: str | None = None, limit: int = 100) -> ListPage:
-        if limit < 1:
-            raise ValueError("limit must be at least 1")
+        limit = _validate_list_limit(limit)
         _validate_blob_prefix(prefix)
         if cursor is None:
             start = 0
@@ -518,10 +560,18 @@ class S3CompatibleBlobStore:
         checksum = metadata.get(_GRAPHBLOCKS_CHECKSUM_METADATA)
         filename = metadata.get(_GRAPHBLOCKS_FILENAME_METADATA)
         etag = _normalise_etag(response.get("ETag")) or checksum
+        content_type = response.get("ContentType")
+        if content_type is not None:
+            if not isinstance(content_type, str) or not content_type.strip():
+                raise BlobStoreError("s3 ContentType must be a non-empty string")
+            if content_type != content_type.strip():
+                raise BlobStoreError(
+                    "s3 ContentType must not contain surrounding whitespace"
+                )
         artifact = ArtifactRef(
             artifact_id=self._artifact_id(key),
             uri=self._uri(key),
-            media_type=str(response["ContentType"]) if response.get("ContentType") is not None else None,
+            media_type=content_type,
             size_bytes=self._content_length(response.get("ContentLength")),
             checksum=checksum,
             etag=etag,
@@ -541,8 +591,7 @@ class S3CompatibleBlobStore:
         self._invoke("delete_object", Bucket=self.bucket, Key=key.key)
 
     def list(self, prefix: str = "", cursor: str | None = None, limit: int = 100) -> ListPage:
-        if limit < 1:
-            raise ValueError("limit must be at least 1")
+        limit = _validate_list_limit(limit)
         _validate_blob_prefix(prefix)
         kwargs: dict[str, object] = {
             "Bucket": self.bucket,
@@ -550,7 +599,11 @@ class S3CompatibleBlobStore:
             "MaxKeys": limit,
         }
         if cursor is not None:
-            kwargs["ContinuationToken"] = cursor
+            kwargs["ContinuationToken"] = _validate_exact_non_empty_string(
+                "list",
+                "cursor",
+                cursor,
+            )
         response = self._invoke("list_objects_v2", **kwargs)
         if not isinstance(response, Mapping):
             raise BlobStoreError("s3 list_objects_v2 response must be a mapping")
@@ -564,11 +617,32 @@ class S3CompatibleBlobStore:
             if not isinstance(item, Mapping) or not isinstance(item.get("Key"), str):
                 raise BlobStoreError(f"s3 list_objects_v2 Contents[{index}] must include string Key")
             item_key = BlobKey(item["Key"])
+            if not item_key.key.startswith(prefix):
+                raise BlobStoreError(
+                    "s3 list_objects_v2 returned a key outside the requested prefix"
+                )
             items.append(BlobListItem(key=item_key, metadata=self.head(item_key)))
         next_cursor = response.get("NextContinuationToken")
+        if next_cursor is not None:
+            next_cursor = _validate_exact_non_empty_string(
+                "s3 list response",
+                "next cursor",
+                next_cursor,
+            )
+        is_truncated = response.get("IsTruncated")
+        if is_truncated is not None and not isinstance(is_truncated, bool):
+            raise BlobStoreError("s3 list response IsTruncated must be a boolean")
+        if is_truncated is True and next_cursor is None:
+            raise BlobStoreError(
+                "truncated s3 list response must include a next cursor"
+            )
+        if is_truncated is False and next_cursor is not None:
+            raise BlobStoreError(
+                "non-truncated s3 list response must not include a next cursor"
+            )
         return ListPage(
             items=items,
-            next_cursor=str(next_cursor) if next_cursor is not None else None,
+            next_cursor=next_cursor,
         )
 
     def _validate_key(self, key: BlobKey) -> None:
@@ -608,15 +682,26 @@ class S3CompatibleBlobStore:
             return {}
         if not isinstance(metadata, Mapping):
             raise BlobStoreError("s3 response Metadata must be a mapping")
-        return {str(name).lower(): str(value) for name, value in metadata.items()}
+        normalized: dict[str, str] = {}
+        for name, value in metadata.items():
+            if not isinstance(name, str) or not isinstance(value, str):
+                raise BlobStoreError("s3 response Metadata keys and values must be strings")
+            normalized_name = name.lower()
+            if normalized_name in normalized:
+                raise BlobStoreError(
+                    "s3 response Metadata keys collide after normalization"
+                )
+            normalized[normalized_name] = value
+        return normalized
 
     def _content_length(self, value: object) -> int | None:
         if value is None:
             return None
-        try:
-            return int(value)
-        except (TypeError, ValueError) as error:
-            raise BlobStoreError("s3 ContentLength must be an integer") from error
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise BlobStoreError("s3 ContentLength must be an integer")
+        if value < 0:
+            raise BlobStoreError("s3 ContentLength must be non-negative")
+        return value
 
     def _range_header(self, byte_range: ByteRange) -> str:
         if byte_range.length is None:

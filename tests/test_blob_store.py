@@ -123,6 +123,30 @@ def test_local_blob_store_rejects_metadata_with_incorrect_content_size(tmp_path)
         store.get(key)
 
 
+def test_local_blob_store_rejects_duplicate_and_forged_metadata_identity(
+    tmp_path,
+) -> None:
+    store = LocalBlobStore(tmp_path)
+    key = BlobKey("docs/policy.txt")
+    store.put(key, b"alpha policy", PutOptions(media_type="text/plain"))
+    metadata_path = store._metadata_path_for(key)
+    encoded = metadata_path.read_text(encoding="utf-8")
+    metadata_path.write_text(
+        encoded[:-1] + ',"etag":"sha256:duplicate"}',
+        encoding="utf-8",
+    )
+
+    with pytest.raises(BlobStoreError, match="strict JSON"):
+        store.head(key)
+
+    payload = json.loads(encoded)
+    payload["artifact"]["artifact_id"] = "blob:docs/other.txt"
+    metadata_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(BlobStoreError, match="metadata identity"):
+        store.head(key)
+
+
 def test_put_options_rejects_invalid_metadata() -> None:
     with pytest.raises(ValueError, match="put media_type must be a string"):
         PutOptions(media_type=object())  # type: ignore[arg-type]
@@ -496,6 +520,37 @@ def test_s3_compatible_blob_store_rejects_case_colliding_metadata_keys() -> None
             b"alpha",
             PutOptions(metadata={"Tenant": "acme", "tenant": "other"}),
         )
+
+
+@pytest.mark.parametrize("limit", (True, 1.5, "1"))
+def test_blob_store_backends_reject_non_integer_list_limits(
+    tmp_path,
+    limit: object,
+) -> None:
+    stores = (
+        LocalBlobStore(tmp_path),
+        S3CompatibleBlobStore(bucket="kb-artifacts", client=_FakeS3Client()),
+    )
+
+    for store in stores:
+        with pytest.raises(ValueError, match="limit must be an integer"):
+            store.list(limit=limit)  # type: ignore[arg-type]
+
+
+def test_s3_compatible_blob_store_rejects_malformed_response_metadata() -> None:
+    client = _FakeS3Client()
+    store = S3CompatibleBlobStore(bucket="kb-artifacts", client=client)
+    key = BlobKey("docs/policy.txt")
+    store.put(key, b"alpha policy", PutOptions())
+    stored = client.objects[("kb-artifacts", key.key)]
+    stored["Metadata"] = {"Tenant": "acme", "tenant": "other"}
+
+    with pytest.raises(BlobStoreError, match="collide after normalization"):
+        store.head(key)
+
+    stored["Metadata"] = {"tenant": object()}
+    with pytest.raises(BlobStoreError, match="keys and values must be strings"):
+        store.head(key)
 
 
 def test_s3_compatible_blob_store_supports_range_reads_and_pagination() -> None:

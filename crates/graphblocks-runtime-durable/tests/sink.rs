@@ -239,4 +239,13 @@ fn sink_commit_rejects_whitespace_identity_fields() {
         )),
         Err(SinkCommitError::MissingIdempotencyKey),
     );
+
+    assert_eq!(
+        sink.commit(
+            SinkCommitRequest::new("run", "load", "attempt", "tx", json!({}),)
+                .with_precondition_digest(" "),
+        ),
+        Err(SinkCommitError::MissingPreconditionDigest),
+    );
+    assert_eq!(sink.committed_count(), 0);
 }

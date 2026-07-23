@@ -216,6 +216,36 @@ def test_lease_renewal_extends_expiration_and_rotates_fencing_token() -> None:
         pool.renew(lease.lease_id, stale_token, expires_at=30, renewed_at=13)
 
 
+def test_stale_lease_handle_cannot_release_renewed_authority() -> None:
+    pool = InMemoryLeasePool({"licensed-tool": 1})
+    current = pool.acquire(
+        "licensed-tool",
+        owner="run-1",
+        expires_at=20,
+        acquired_at=10,
+    )
+    stale = Lease(
+        pool,
+        current.lease_id,
+        current.resource,
+        current.owner,
+        current.units,
+        current.fencing_token,
+    )
+    current.renew(expires_at=30, renewed_at=11)
+
+    with pytest.raises(StaleFencingTokenError):
+        stale.release()
+    with pytest.raises(
+        InvalidLeaseRequestError,
+        match="fencing_token is required",
+    ):
+        pool.release(current.lease_id)
+
+    pool.validate_fencing_token(current.lease_id, current.fencing_token)
+    assert current.release() is True
+
+
 def test_lease_renewal_rejects_inactive_or_non_extending_authority() -> None:
     pool = InMemoryLeasePool({"licensed-tool": 2})
     bounded = pool.acquire(
@@ -491,10 +521,17 @@ def test_lease_pool_rejects_invalid_attributes_and_release_inputs() -> None:
 
     with pytest.raises(InvalidLeaseRequestError, match="lease attributes must be a mapping"):
         pool.acquire("model", owner="run-1", attributes=object())  # type: ignore[arg-type]
+    with pytest.raises(InvalidLeaseRequestError, match="lease attributes must be a mapping"):
+        pool.acquire("model", owner="run-1", attributes=[])  # type: ignore[arg-type]
     with pytest.raises(InvalidLeaseRequestError, match="lease attribute keys must be strings"):
         pool.acquire("model", owner="run-1", attributes={object(): "value"})  # type: ignore[dict-item]
     with pytest.raises(InvalidLeaseRequestError, match="lease attribute keys must be strings"):
         pool.acquire("model", owner="run-1", attributes={"scope": {object(): "value"}})
+    with pytest.raises(
+        InvalidLeaseRequestError,
+        match="attribute keys must not contain surrounding whitespace",
+    ):
+        pool.acquire("model", owner="run-1", attributes={" scope": "value"})
     with pytest.raises(InvalidLeaseRequestError, match="lease attribute values must be JSON-compatible"):
         pool.acquire("model", owner="run-1", attributes={"scope": object()})
     with pytest.raises(InvalidLeaseRequestError, match="lease attribute values must be JSON-compatible"):
@@ -505,3 +542,13 @@ def test_lease_pool_rejects_invalid_attributes_and_release_inputs() -> None:
         pool.release_all(" ")
     with pytest.raises(InvalidLeaseRequestError, match="lease fencing_token must be a non-negative integer"):
         pool.validate_fencing_token("lease-1", True)  # type: ignore[arg-type]
+
+
+def test_lease_pool_capacity_snapshot_is_read_only() -> None:
+    capacities = {"model": 1}
+    pool = InMemoryLeasePool(capacities)
+    capacities["model"] = 10
+
+    assert pool.available("model") == 1
+    with pytest.raises(TypeError):
+        pool.capacities["model"] = 10  # type: ignore[index]

@@ -280,6 +280,64 @@ def test_durable_source_snapshots_payloads_at_ingress_and_egress(monkeypatch) ->
     assert replay.events[0].payload == {"order": {"status": "created"}}
 
 
+def test_durable_source_snapshots_event_sequence_and_validates_restored_shape(
+    monkeypatch,
+) -> None:
+    graphblocks_durable = _import_durable(monkeypatch)
+    events = [_order_event(graphblocks_durable, 10)]
+    source = graphblocks_durable.InMemoryDurableSource(
+        "at_least_once",
+        events,
+        paused=False,
+    )
+    events.append(_order_event(graphblocks_durable, 11))
+
+    assert len(source.poll(None, demand=10).events) == 1
+    assert isinstance(source.events, tuple)
+    with pytest.raises(graphblocks_durable.DurableError, match="paused must be a boolean"):
+        graphblocks_durable.InMemoryDurableSource(
+            "at_least_once",
+            [],
+            paused=1,
+        )
+    with pytest.raises(graphblocks_durable.DurableError, match="events must be SourceEvent"):
+        graphblocks_durable.SourceBatch(
+            "at_least_once",
+            (object(),),
+        )
+    with pytest.raises(graphblocks_durable.DurableError, match="cursor must be a SourceCursor"):
+        graphblocks_durable.SourceEvent(object(), {})
+
+
+def test_durable_batch_and_window_snapshot_event_payloads(monkeypatch) -> None:
+    graphblocks_durable = _import_durable(monkeypatch)
+    event = graphblocks_durable.SourceEvent(
+        graphblocks_durable.SourceCursor("orders", 0, 1),
+        {"order": {"status": "created"}},
+        event_time_unix_ms=100,
+    )
+    batch = graphblocks_durable.SourceBatch(
+        "at_least_once",
+        (event,),
+    )
+    windows = graphblocks_durable.WindowAccumulator(
+        graphblocks_durable.WindowPolicy.tumbling_event_time(
+            size_ms=100,
+            allowed_lateness_ms=0,
+            accumulation_mode="discarding",
+        )
+    )
+    windows.ingest(event)
+    event.payload["order"]["status"] = "mutated"
+
+    panes = windows.advance_watermark(
+        graphblocks_durable.Watermark.event_time(200)
+    )
+
+    assert batch.events[0].payload == {"order": {"status": "created"}}
+    assert panes[0].events[0].payload == {"order": {"status": "created"}}
+
+
 @pytest.mark.parametrize(
     ("args", "message"),
     [
@@ -527,6 +585,91 @@ def test_durable_sink_commit_snapshots_payload_for_idempotent_replay(monkeypatch
     assert replay.metadata == {"order": {"id": "ord-1"}}
 
 
+def test_durable_sink_validates_and_detaches_restored_commits(monkeypatch) -> None:
+    graphblocks_durable = _import_durable(monkeypatch)
+    request = graphblocks_durable.SinkCommitRequest(
+        run_id="run-1",
+        node_id="write-order",
+        node_attempt_id="attempt-1",
+        idempotency_key="idem-1",
+        payload={"order": {"id": "ord-1"}},
+    )
+    result = graphblocks_durable.SinkCommitResult(
+        sink_id="orders-sink",
+        idempotency_key="idem-1",
+        precondition_digest=None,
+        sequence=8,
+        metadata={"order": {"id": "ord-1"}},
+        replayed=False,
+    )
+    restored_mapping = {"idem-1": (request, result)}
+    sink = graphblocks_durable.InMemoryDurableSink(
+        "orders-sink",
+        next_sequence=1,
+        commits_by_idempotency_key=restored_mapping,
+    )
+    restored_mapping.clear()
+    result.metadata["order"]["id"] = "mutated"
+
+    replay = sink.commit(request)
+
+    assert replay.sequence == 8
+    assert replay.metadata == {"order": {"id": "ord-1"}}
+    assert sink.next_sequence == 9
+    sink.next_sequence = 1
+    next_commit = sink.commit(
+        replace(
+            request,
+            idempotency_key="idem-2",
+            payload={"order": {"id": "ord-2"}},
+        )
+    )
+    assert next_commit.sequence == 9
+    with pytest.raises(
+        graphblocks_durable.SinkCommitError,
+        match="metadata must match request payload",
+    ):
+        graphblocks_durable.InMemoryDurableSink(
+            "orders-sink",
+            commits_by_idempotency_key={
+                "idem-1": (
+                    request,
+                    replace(result, metadata={"order": {"id": "other"}}),
+                )
+            },
+        )
+
+
+def test_durable_sink_serializes_concurrent_idempotent_commits(monkeypatch) -> None:
+    graphblocks_durable = _import_durable(monkeypatch)
+    sink = graphblocks_durable.InMemoryDurableSink("orders-sink")
+    reads = Barrier(2)
+
+    class CoordinatedCommits(dict):
+        def __contains__(self, key: object) -> bool:
+            try:
+                reads.wait(timeout=0.2)
+            except BrokenBarrierError:
+                pass
+            return super().__contains__(key)
+
+    sink.commits_by_idempotency_key = CoordinatedCommits()
+    request = graphblocks_durable.SinkCommitRequest(
+        run_id="run-1",
+        node_id="write-order",
+        node_attempt_id="attempt-1",
+        idempotency_key="idem-1",
+        payload={"order": {"id": "ord-1"}},
+    )
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        commits = list(executor.map(lambda _: sink.commit(request), range(2)))
+
+    assert sorted(commit.replayed for commit in commits) == [False, True]
+    assert {commit.sequence for commit in commits} == {1}
+    assert sink.committed_count() == 1
+
+
 def test_durable_tool_terminal_store_replays_incomplete_terminal_record(monkeypatch) -> None:
     graphblocks_durable = _import_durable(monkeypatch)
     store = graphblocks_durable.InMemoryDurableToolTerminalStore()
@@ -586,6 +729,54 @@ def test_durable_tool_terminal_store_detaches_restored_records_and_advances_sequ
 
     assert store.tool_terminal_count() == 2
     assert committed.sequence == 51
+
+
+def test_durable_tool_terminal_store_rejects_restored_policy_stop_after_committed_result(
+    monkeypatch,
+) -> None:
+    graphblocks_durable = _import_durable(monkeypatch)
+    terminal_record = graphblocks_durable.DurableToolTerminalRecord(
+        run_id="run-000001",
+        response_id="response-1",
+        tool_call_id="call-1",
+        revision=1,
+        terminal_state="completed",
+        arguments_digest="sha256:arguments",
+        completed_at_unix_ms=1_820_000_000_000,
+        output_digest="sha256:output",
+        durable_result_committed=True,
+    )
+    policy_stop_record = graphblocks_durable.DurableResponsePolicyStopRecord(
+        response_id="response-1",
+        policy_decision_id="decision-abort",
+        last_policy_accepted_sequence=7,
+        occurred_at_unix_ms=1_820_000_000_100,
+        last_generated_sequence=7,
+        last_client_delivered_sequence=7,
+    )
+
+    with pytest.raises(
+        graphblocks_durable.ToolTerminalStoreError,
+        match="restored durable result cannot coexist with a policy-stopped response",
+    ):
+        graphblocks_durable.InMemoryDurableToolTerminalStore(
+            terminal_records={
+                ("response-1", "call-1", 1): (
+                    graphblocks_durable.DurableToolTerminalCommit(
+                        sequence=1,
+                        record=terminal_record,
+                        replayed=False,
+                    )
+                )
+            },
+            policy_stopped_responses={
+                "response-1": graphblocks_durable.DurableResponsePolicyStopCommit(
+                    sequence=2,
+                    record=policy_stop_record,
+                    replayed=False,
+                )
+            },
+        )
 
 
 def test_durable_tool_terminal_store_serializes_concurrent_conflicting_commits(
@@ -663,6 +854,55 @@ def test_durable_tool_terminal_record_rejects_committed_effect_for_expired_state
             arguments_digest="sha256:arguments-expired",
             completed_at_unix_ms=1_820_000_000_000,
             effect_committed=True,
+        )
+
+
+def test_durable_terminal_records_reject_boolean_and_malformed_commit_state(
+    monkeypatch,
+) -> None:
+    graphblocks_durable = _import_durable(monkeypatch)
+    base = {
+        "run_id": "run-000001",
+        "response_id": "response-1",
+        "tool_call_id": "call-1",
+        "revision": 1,
+        "terminal_state": "completed",
+        "arguments_digest": "sha256:arguments",
+        "completed_at_unix_ms": 1_820_000_000_000,
+    }
+
+    with pytest.raises(
+        graphblocks_durable.ToolTerminalStoreError,
+        match="effect_committed must be a boolean",
+    ):
+        graphblocks_durable.DurableToolTerminalRecord(
+            **base,
+            effect_committed=1,
+        )
+    record = graphblocks_durable.DurableToolTerminalRecord(**base)
+    with pytest.raises(
+        graphblocks_durable.ToolTerminalStoreError,
+        match="replayed must be a boolean",
+    ):
+        graphblocks_durable.DurableToolTerminalCommit(
+            sequence=1,
+            record=record,
+            replayed=1,
+        )
+    with pytest.raises(
+        graphblocks_durable.ToolTerminalStoreError,
+        match="must not be replay projections",
+    ):
+        graphblocks_durable.InMemoryDurableToolTerminalStore(
+            terminal_records={
+                ("response-1", "call-1", 1): (
+                    graphblocks_durable.DurableToolTerminalCommit(
+                        sequence=1,
+                        record=record,
+                        replayed=True,
+                    )
+                )
+            }
         )
 
 
@@ -1113,6 +1353,10 @@ def test_durable_checkpoint_barrier_detaches_and_protects_mapping_snapshots(monk
     assert barrier.operator_state == {"dedupe": {"seen": [1]}}
     with pytest.raises(TypeError):
         barrier.operator_state["other"] = {}  # type: ignore[index]
+    with pytest.raises(TypeError):
+        barrier.operator_state["dedupe"]["seen"].append(2)  # type: ignore[union-attr]
+    with pytest.raises(TypeError):
+        barrier.operator_state["dedupe"]["other"] = True  # type: ignore[index]
 
 
 def test_durable_checkpoint_barrier_validate_rejects_non_schema_reference(monkeypatch) -> None:
@@ -1168,6 +1412,39 @@ def test_durable_checkpoint_store_rejects_stale_state_revision(monkeypatch) -> N
     assert error.value.run_id == "run-000001"
     assert error.value.current == 2
     assert error.value.attempted == 1
+
+
+def test_durable_checkpoint_store_rejects_inconsistent_restored_history(
+    monkeypatch,
+) -> None:
+    graphblocks_durable = _import_durable(monkeypatch)
+    first = _checkpoint(
+        graphblocks_durable,
+        "checkpoint-000001",
+        1,
+        "sha256:plan",
+    )
+    second = _checkpoint(
+        graphblocks_durable,
+        "checkpoint-000002",
+        2,
+        "sha256:plan",
+    )
+
+    with pytest.raises(
+        graphblocks_durable.CheckpointStoreError,
+        match="strictly increasing",
+    ):
+        graphblocks_durable.InMemoryCheckpointStore(
+            {"run-000001": [second, first]}
+        )
+    with pytest.raises(
+        graphblocks_durable.CheckpointStoreError,
+        match="match mapping key",
+    ):
+        graphblocks_durable.InMemoryCheckpointStore(
+            {"run-other": [first]}
+        )
 
 
 def test_durable_package_is_cataloged_as_optional_extension(monkeypatch) -> None:

@@ -561,6 +561,7 @@ pub enum SinkCommitError {
     MissingNodeId,
     MissingNodeAttemptId,
     MissingIdempotencyKey,
+    MissingPreconditionDigest,
     SequenceOverflow,
     IdempotencyConflict { idempotency_key: String },
 }
@@ -603,6 +604,13 @@ impl InMemoryDurableSink {
         }
         if invalid_identity(&request.idempotency_key) {
             return Err(SinkCommitError::MissingIdempotencyKey);
+        }
+        if request
+            .precondition_digest
+            .as_deref()
+            .is_some_and(invalid_identity)
+        {
+            return Err(SinkCommitError::MissingPreconditionDigest);
         }
         if let Some(record) = self
             .commits_by_idempotency_key

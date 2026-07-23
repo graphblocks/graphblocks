@@ -1323,6 +1323,67 @@ def test_async_operation_rejects_direct_wait_states_without_required_refs() -> N
         )
 
 
+def test_async_operation_rejects_unreachable_restored_lifecycle_states() -> None:
+    base = {
+        "operation_id": "op-restored-1",
+        "run_id": "run-1",
+        "node_id": "waitExternal",
+        "attempt_id": "attempt-1",
+        "kind": "external_provider_job",
+        "expected_schema": "schemas/ExternalResult@1",
+        "resume_token_hash": VALID_RESUME_TOKEN_HASH,
+        "idempotency_key": "idem-restored-1",
+        "created_at": "2026-07-02T00:00:00Z",
+        "submitted_at": "2026-07-02T00:00:01Z",
+    }
+
+    for state in ("completed", "failed"):
+        with raises_value_error(
+            f"async operation {state} state requires callback_ref or polling_ref"
+        ):
+            graphblocks.AsyncOperation(
+                **base,
+                state=state,
+                completed_at="2026-07-02T00:10:00Z",
+            )
+    with raises_value_error("async operation resuming state requires callback_ref"):
+        graphblocks.AsyncOperation(
+            **base,
+            state="resuming",
+            callback_received_at="2026-07-02T00:09:00Z",
+        )
+    with raises_value_error(
+        "async operation non-terminal state must not have completed_at"
+    ):
+        graphblocks.AsyncOperation(
+            **base,
+            state="polling",
+            polling_ref="poll-restored-1",
+            expires_at="2026-07-02T00:30:00Z",
+            completed_at="2026-07-02T00:10:00Z",
+        )
+    with raises_value_error(
+        "async operation callback_received_at requires callback_ref"
+    ):
+        graphblocks.AsyncOperation(
+            **base,
+            state="completed",
+            polling_ref="poll-restored-1",
+            expires_at="2026-07-02T00:30:00Z",
+            callback_received_at="2026-07-02T00:09:00Z",
+            completed_at="2026-07-02T00:10:00Z",
+        )
+    with raises_value_error(
+        "async operation polling state requires expires_at or explicit infinite_wait_policy"
+    ):
+        graphblocks.AsyncOperation(
+            **base,
+            state="completed",
+            polling_ref="poll-restored-1",
+            completed_at="2026-07-02T00:10:00Z",
+        )
+
+
 def test_async_operation_rejects_direct_unbounded_wait_states() -> None:
     with raises_value_error("async operation waiting_callback state requires expires_at or explicit infinite_wait_policy"):
         graphblocks.AsyncOperation(

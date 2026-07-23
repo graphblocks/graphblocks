@@ -94,6 +94,27 @@ def test_callback_subscription_rejects_invalid_scope_status_and_expiration() -> 
         graphblocks.EventFilter(visibility=["private"])
 
 
+def test_event_filter_rejects_duplicate_constraints() -> None:
+    for construct, message in (
+        (
+            lambda: graphblocks.EventFilter(types=["RunStarted", "RunStarted"]),
+            "event filter types must not contain duplicates",
+        ),
+        (
+            lambda: graphblocks.EventFilter(visibility=["client", "client"]),
+            "event filter visibility must not contain duplicates",
+        ),
+        (
+            lambda: graphblocks.EventFilter().authorized_for_visibility(
+                ["client", "client"]
+            ),
+            "event filter authorized visibility must not contain duplicates",
+        ),
+    ):
+        with raises_value_error(message):
+            construct()
+
+
 def test_callback_schema_rejects_whitespace_wrapped_subscription_and_filter_values() -> None:
     filter_cases = (
         (lambda: graphblocks.EventFilter(types=[" RunStarted"]), "event filter types must not contain surrounding whitespace"),

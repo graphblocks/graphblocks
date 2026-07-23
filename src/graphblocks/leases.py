@@ -93,6 +93,10 @@ def _freeze_attributes(value: object) -> MappingProxyType[str, object]:
             raise InvalidLeaseRequestError("lease attribute keys must be strings")
         if not key.strip():
             raise InvalidLeaseRequestError("lease attribute keys must not be empty")
+        if key != key.strip():
+            raise InvalidLeaseRequestError(
+                "lease attribute keys must not contain surrounding whitespace"
+            )
         attributes[key] = _freeze_attribute_value(item)
     return MappingProxyType(attributes)
 
@@ -175,7 +179,7 @@ class Lease:
         return self.fencing_token
 
     def release(self) -> bool:
-        return self.pool.release(self.lease_id)
+        return self.pool.release(self.lease_id, self.fencing_token)
 
     def __enter__(self) -> Lease:
         return self
@@ -190,13 +194,15 @@ class Lease:
 
 @dataclass(slots=True)
 class InMemoryLeasePool:
-    capacities: dict[str, int]
+    capacities: Mapping[str, int]
     active: dict[str, ActiveLease] = field(default_factory=dict)
     next_id: int = 1
     next_fencing_token: int = 1
     _lock: RLock = field(default_factory=RLock, init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
+        if not isinstance(self.capacities, Mapping):
+            raise InvalidLeaseRequestError("lease capacities must be a mapping")
         capacities = dict(self.capacities)
         for resource, capacity in capacities.items():
             _validate_non_empty_string("resource name", resource)
@@ -204,8 +210,10 @@ class InMemoryLeasePool:
                 raise InvalidLeaseRequestError(
                     f"lease capacity for {resource} must be a positive integer"
                 )
+        if not isinstance(self.active, Mapping):
+            raise InvalidLeaseRequestError("lease active records must be a mapping")
         active_leases = dict(self.active)
-        self.capacities = capacities
+        self.capacities = MappingProxyType(capacities)
         max_restored_id = 0
         max_restored_fencing_token = 0
         restored_units: dict[str, int] = {}
@@ -283,15 +291,16 @@ class InMemoryLeasePool:
         acquired_at: LeaseTime = 0,
     ) -> Lease:
         self._capacity(resource)
-        if not isinstance(owner, str) or not owner.strip():
-            raise InvalidLeaseRequestError("lease owner must be a non-empty string")
+        owner = _validate_non_empty_string("owner", owner)
         if not isinstance(units, int) or isinstance(units, bool) or units <= 0:
             raise InvalidLeaseRequestError("lease units must be a positive integer")
         acquired_at = _validate_time("acquired_at", acquired_at)
         expires_at = _validate_optional_time("expires_at", expires_at)
         if expires_at is not None and expires_at <= acquired_at:
             raise InvalidLeaseRequestError("lease expires_at must be after acquisition")
-        frozen_attributes = _freeze_attributes(attributes or {})
+        frozen_attributes = _freeze_attributes(
+            {} if attributes is None else attributes
+        )
 
         self.reap_expired(acquired_at)
         available = self.available(resource)
@@ -389,20 +398,39 @@ class InMemoryLeasePool:
         return len(expired_ids)
 
     @_with_lease_pool_lock
-    def release(self, lease_id: str) -> bool:
+    def release(
+        self,
+        lease_id: str,
+        fencing_token: int | None = None,
+    ) -> bool:
         Lease._validate_lease_id(lease_id)
-        return self.active.pop(lease_id, None) is not None
+        active = self.active.get(lease_id)
+        if active is None:
+            return False
+        if fencing_token is None:
+            raise InvalidLeaseRequestError(
+                "lease fencing_token is required to release an active lease"
+            )
+        fencing_token = _validate_non_negative_integer(
+            "fencing_token",
+            fencing_token,
+        )
+        if active.fencing_token != fencing_token:
+            raise StaleFencingTokenError(
+                f"lease {lease_id} fencing token is stale"
+            )
+        self.active.pop(lease_id)
+        return True
 
     @_with_lease_pool_lock
     def release_all(self, owner: str) -> None:
         owner = _validate_non_empty_string("owner", owner)
         for lease_id, active in list(self.active.items()):
             if active.owner == owner:
-                self.release(lease_id)
+                self.active.pop(lease_id, None)
 
     def _capacity(self, resource: str) -> int:
-        if not isinstance(resource, str) or not resource.strip():
-            raise InvalidLeaseRequestError("lease resource name must be a non-empty string")
+        resource = _validate_non_empty_string("resource name", resource)
         try:
             return self.capacities[resource]
         except KeyError as error:

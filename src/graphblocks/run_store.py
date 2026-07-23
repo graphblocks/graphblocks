@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Mapping
 from copy import deepcopy
 from dataclasses import dataclass, field
 from functools import wraps
@@ -81,6 +81,7 @@ VALID_RUN_INVOCATION_MODES = frozenset({"sync", "accepted", "background"})
 _P = ParamSpec("_P")
 _R = TypeVar("_R")
 _MAX_RUN_JSON_DEPTH = 64
+_MAX_SQLITE_INTEGER = (1 << 63) - 1
 
 
 def _with_in_memory_run_store_lock(
@@ -210,7 +211,7 @@ def _loads_strict_json(owner: str, field_name: str, value: object) -> Any:
             parse_constant=lambda constant: (_ for _ in ()).throw(ValueError(constant)),
             object_pairs_hook=_reject_duplicate_json_keys,
         )
-    except ValueError as error:
+    except (RecursionError, ValueError) as error:
         raise ValueError(f"{owner} {field_name} must be valid strict JSON") from error
 
 
@@ -304,6 +305,14 @@ class RunDeploymentProvenance:
     def from_mapping(cls, value: dict[str, Any]) -> RunDeploymentProvenance:
         if not isinstance(value, dict):
             raise ValueError("run deployment provenance mapping must be an object")
+        allowed_fields = {
+            "release_digest",
+            "deployment_revision_id",
+            "physical_plan_hash",
+            "release_signature_digest",
+        }
+        if set(value) - allowed_fields:
+            raise ValueError("run deployment provenance mapping has unknown fields")
         return cls(
             release_digest=_validate_optional_non_empty_string(
                 "run deployment provenance",
@@ -354,10 +363,29 @@ class RunRecord:
             raise ValueError("run record state_revision must be an integer")
         if self.state_revision < 0:
             raise ValueError("run record state_revision must be non-negative")
+        if self.state_revision > _MAX_SQLITE_INTEGER:
+            raise ValueError("run record state_revision exceeds storage range")
         tools = tuple(self.model_visible_tools)
         if any(not isinstance(tool, ModelVisibleToolRef) for tool in tools):
             raise ValueError("run record model_visible_tools must be ModelVisibleToolRef")
+        tool_names = [tool.tool_name for tool in tools]
+        if len(set(tool_names)) != len(tool_names):
+            raise ValueError("run record model_visible_tools must use unique tool_name")
         object.__setattr__(self, "model_visible_tools", tuple(sorted(tools)))
+
+
+def _copy_run_record(record: RunRecord) -> RunRecord:
+    return RunRecord(
+        run_id=record.run_id,
+        graph_hash=record.graph_hash,
+        inputs=record.inputs,
+        deployment_provenance=record.deployment_provenance,
+        invocation_mode=record.invocation_mode,
+        status=record.status,
+        state=record.state,
+        state_revision=record.state_revision,
+        model_visible_tools=record.model_visible_tools,
+    )
 
 
 @dataclass(slots=True)
@@ -367,7 +395,10 @@ class InMemoryRunStore:
     _lock: RLock = field(default_factory=RLock, init=False, repr=False)
 
     def __post_init__(self) -> None:
+        if not isinstance(self.runs, Mapping):
+            raise ValueError("run store runs must be a mapping")
         runs = dict(self.runs)
+        restored_runs: dict[str, RunRecord] = {}
         highest_generated_id = 0
         for run_id, record in runs.items():
             run_id = _validate_non_empty_string("run store", "run_id", run_id)
@@ -375,12 +406,18 @@ class InMemoryRunStore:
                 raise ValueError("run store runs values must be RunRecord")
             if record.run_id != run_id:
                 raise ValueError("run store runs key must match RunRecord run_id")
+            restored_runs[run_id] = _copy_run_record(record)
             suffix = run_id.removeprefix("run-")
             if run_id.startswith("run-") and suffix.isascii() and suffix.isdecimal():
-                highest_generated_id = max(highest_generated_id, int(suffix))
+                generated_id = int(suffix)
+                if generated_id > _MAX_SQLITE_INTEGER:
+                    raise ValueError("run store generated run_id exceeds storage range")
+                highest_generated_id = max(highest_generated_id, generated_id)
         if not isinstance(self.next_id, int) or isinstance(self.next_id, bool) or self.next_id <= 0:
             raise ValueError("run store next_id must be a positive integer")
-        self.runs = deepcopy(runs)
+        if self.next_id > _MAX_SQLITE_INTEGER + 1:
+            raise ValueError("run store next_id exceeds storage range")
+        self.runs = restored_runs
         self.next_id = max(self.next_id, highest_generated_id + 1)
 
     @_with_in_memory_run_store_lock
@@ -400,9 +437,15 @@ class InMemoryRunStore:
         if deployment_provenance is not None and not isinstance(deployment_provenance, RunDeploymentProvenance):
             raise ValueError("run store deployment_provenance must be RunDeploymentProvenance")
         invocation_mode = _validate_invocation_mode("run", invocation_mode)
+        if self.next_id > _MAX_SQLITE_INTEGER:
+            raise OverflowError("run store sequence exhausted")
         if requested_run_id is None:
             while f"run-{self.next_id:06d}" in self.runs:
+                if self.next_id >= _MAX_SQLITE_INTEGER:
+                    raise OverflowError("run store sequence exhausted")
                 self.next_id += 1
+            if self.next_id > _MAX_SQLITE_INTEGER:
+                raise OverflowError("run store sequence exhausted")
             run_id = f"run-{self.next_id:06d}"
         else:
             run_id = requested_run_id
@@ -437,6 +480,8 @@ class InMemoryRunStore:
             raise RunTerminalStateError(run_id, current.status)
         if current.state_revision != expected_revision:
             raise StateConflictError(run_id, expected_revision, current.state_revision)
+        if current.state_revision >= _MAX_SQLITE_INTEGER:
+            raise OverflowError("run store state revision exhausted")
 
         next_state = deepcopy(current.state)
         stack: list[tuple[dict[str, Any], dict[str, Any]]] = [(next_state, patch)]
@@ -589,6 +634,8 @@ class SQLiteRunStore:
                 "SELECT COALESCE(MAX(sequence), 0) + 1 FROM runs"
             ).fetchone()
             sequence = int(row[0])
+            if sequence > _MAX_SQLITE_INTEGER:
+                raise OverflowError("run store sequence exhausted")
             if requested_run_id is None:
                 while True:
                     run_id = f"run-{sequence:06d}"
@@ -598,6 +645,8 @@ class SQLiteRunStore:
                     ).fetchone()
                     if existing is None:
                         break
+                    if sequence >= _MAX_SQLITE_INTEGER:
+                        raise OverflowError("run store sequence exhausted")
                     sequence += 1
             else:
                 run_id = requested_run_id
@@ -700,6 +749,8 @@ class SQLiteRunStore:
             raise RunTerminalStateError(run_id, current.status)
         if current.state_revision != expected_revision:
             raise StateConflictError(run_id, expected_revision, current.state_revision)
+        if current.state_revision >= _MAX_SQLITE_INTEGER:
+            raise OverflowError("run store state revision exhausted")
 
         next_state = deepcopy(current.state)
         stack: list[tuple[dict[str, Any], dict[str, Any]]] = [(next_state, patch)]
@@ -796,6 +847,12 @@ def _deployment_provenance_json(provenance: RunDeploymentProvenance) -> str:
 
 
 def _model_visible_tools_json(tools: Iterable[ModelVisibleToolRef]) -> str:
+    tools = tuple(tools)
+    if any(not isinstance(tool, ModelVisibleToolRef) for tool in tools):
+        raise ValueError("run record model_visible_tools must be ModelVisibleToolRef")
+    tool_names = [tool.tool_name for tool in tools]
+    if len(set(tool_names)) != len(tool_names):
+        raise ValueError("run record model_visible_tools must use unique tool_name")
     return _dumps_strict_json(
         [
             {
@@ -824,9 +881,20 @@ def _parse_model_visible_tools_json(value: object) -> tuple[ModelVisibleToolRef,
     if not isinstance(parsed, list):
         raise ValueError("run model visible tools must be a list")
     tools: list[ModelVisibleToolRef] = []
+    allowed_fields = {
+        "tool_name",
+        "resolved_tool_id",
+        "definition_digest",
+        "binding_digest",
+        "effective_policy_snapshot_id",
+        "allowed_for_principal",
+        "valid_until",
+    }
     for index, item in enumerate(parsed):
         if not isinstance(item, dict):
             raise ValueError("run model visible tools items must be objects")
+        if set(item) - allowed_fields:
+            raise ValueError("run model visible tools items have unknown fields")
         allowed_for_principal = item.get("allowed_for_principal")
         if not isinstance(allowed_for_principal, bool):
             raise ValueError("run model visible tools allowed_for_principal must be a boolean")
@@ -865,4 +933,7 @@ def _parse_model_visible_tools_json(value: object) -> tuple[ModelVisibleToolRef,
                 ),
             )
         )
+    tool_names = [tool.tool_name for tool in tools]
+    if len(set(tool_names)) != len(tool_names):
+        raise ValueError("run model visible tools must use unique tool_name")
     return tuple(sorted(tools))

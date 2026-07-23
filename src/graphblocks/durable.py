@@ -7,6 +7,8 @@ from threading import RLock
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Literal
 
+from graphblocks.canonical import canonical_dumps, canonical_loads
+from graphblocks.documents import FrozenDict, FrozenList
 from graphblocks.output_policy import (
     DraftDisposition as OutputCutoffDraftDisposition,
     OutputDurableResult as OutputCutoffDurableResult,
@@ -126,6 +128,18 @@ def _require_tool_terminal_integer(field_name: str, value: object) -> int:
     return value
 
 
+def _require_tool_terminal_string(field_name: str, value: object) -> str:
+    if not isinstance(value, str):
+        raise ToolTerminalStoreError(f"{field_name} must be a string")
+    if not value.strip():
+        raise ToolTerminalStoreError(f"{field_name} must not be empty")
+    if value != value.strip():
+        raise ToolTerminalStoreError(
+            f"{field_name} must not contain surrounding whitespace"
+        )
+    return value
+
+
 class ToolTerminalStateConflictError(ToolTerminalStoreError):
     def __init__(self, response_id: str, tool_call_id: str, revision: int) -> None:
         self.response_id = response_id
@@ -182,7 +196,7 @@ def _require_integer(field_name: str, value: object) -> int:
 
 
 def _require_delivery_guarantee(value: object) -> None:
-    if value not in VALID_DELIVERY_GUARANTEES:
+    if not isinstance(value, str) or value not in VALID_DELIVERY_GUARANTEES:
         raise DurableError(f"unsupported delivery guarantee {value!r}")
 
 
@@ -193,8 +207,12 @@ class SourceCursor:
     offset: int
 
     def __post_init__(self) -> None:
+        if not isinstance(self.stream, str):
+            raise DurableError("stream must be a string")
         if not self.stream.strip():
             raise DurableError("stream must not be empty")
+        if self.stream != self.stream.strip():
+            raise DurableError("stream must not contain surrounding whitespace")
         _require_integer("partition", self.partition)
         if self.partition < 0:
             raise DurableError("partition must be non-negative")
@@ -212,7 +230,10 @@ class Watermark:
     unix_ms: int
 
     def __post_init__(self) -> None:
-        if self.kind not in {"event_time", "processing_time"}:
+        if not isinstance(self.kind, str) or self.kind not in {
+            "event_time",
+            "processing_time",
+        }:
             raise DurableError(f"unsupported watermark kind {self.kind!r}")
         _require_integer("watermark unix_ms", self.unix_ms)
         if self.unix_ms < 0:
@@ -234,6 +255,8 @@ class SourceEvent:
     event_time_unix_ms: int | None = None
 
     def __post_init__(self) -> None:
+        if not isinstance(self.cursor, SourceCursor):
+            raise DurableError("source event cursor must be a SourceCursor")
         object.__setattr__(self, "payload", deepcopy(self.payload))
         if self.event_time_unix_ms is None:
             return
@@ -250,6 +273,26 @@ class SourceBatch:
 
     def __post_init__(self) -> None:
         _require_delivery_guarantee(self.guarantee)
+        try:
+            events = tuple(self.events)
+        except TypeError:
+            raise DurableError("source batch events must be a sequence") from None
+        if any(not isinstance(event, SourceEvent) for event in events):
+            raise DurableError("source batch events must be SourceEvent")
+        if self.watermark is not None and not isinstance(self.watermark, Watermark):
+            raise DurableError("source batch watermark must be a Watermark")
+        object.__setattr__(
+            self,
+            "events",
+            tuple(
+                SourceEvent(
+                    cursor=event.cursor,
+                    payload=event.payload,
+                    event_time_unix_ms=event.event_time_unix_ms,
+                )
+                for event in events
+            ),
+        )
 
     @classmethod
     def new(
@@ -276,7 +319,7 @@ class SourceBatch:
 @dataclass(slots=True)
 class InMemoryDurableSource:
     guarantee: DeliveryGuarantee
-    events: list[SourceEvent]
+    events: list[SourceEvent] | tuple[SourceEvent, ...]
     committed_cursor: SourceCursor | None = None
     paused: bool = False
     _known_streams: frozenset[str] = field(init=False, repr=False)
@@ -291,29 +334,39 @@ class InMemoryDurableSource:
 
     def __post_init__(self) -> None:
         _require_delivery_guarantee(self.guarantee)
+        if not isinstance(self.paused, bool):
+            raise DurableError("source paused must be a boolean")
+        try:
+            events = tuple(self.events)
+        except TypeError:
+            raise DurableError("source events must be a sequence") from None
+        if any(not isinstance(event, SourceEvent) for event in events):
+            raise DurableError("source events must be SourceEvent")
         events_by_cursor: dict[SourceCursor, SourceEvent] = {}
-        for event in self.events:
+        for event in events:
             existing = events_by_cursor.get(event.cursor)
             if existing is not None and existing != event:
                 raise ConflictingSourceOffsetError(event.cursor)
             events_by_cursor[event.cursor] = event
-        self.events = sorted(
+        self.events = tuple(sorted(
             (
                 SourceEvent(
                     cursor=event.cursor,
                     payload=event.payload,
                     event_time_unix_ms=event.event_time_unix_ms,
                 )
-                for event in self.events
+                for event in events
             ),
             key=lambda event: event.cursor,
-        )
+        ))
         self._known_streams = frozenset(event.cursor.stream for event in self.events)
         self._known_partitions = frozenset(
             (event.cursor.stream, event.cursor.partition) for event in self.events
         )
         self._known_cursors = frozenset(event.cursor for event in self.events)
         if self.committed_cursor is not None:
+            if not isinstance(self.committed_cursor, SourceCursor):
+                raise DurableError("source committed_cursor must be a SourceCursor")
             self._validate_cursor(self.committed_cursor)
             self._committed_cursors[
                 (self.committed_cursor.stream, self.committed_cursor.partition)
@@ -409,7 +462,10 @@ class WindowPolicy:
         _require_integer("allowed_lateness_ms", self.allowed_lateness_ms)
         if self.allowed_lateness_ms < 0:
             raise DurableError("allowed_lateness_ms must be non-negative")
-        if self.accumulation_mode not in {"discarding", "accumulating"}:
+        if (
+            not isinstance(self.accumulation_mode, str)
+            or self.accumulation_mode not in {"discarding", "accumulating"}
+        ):
             raise DurableError(f"unsupported accumulation mode {self.accumulation_mode!r}")
 
     @classmethod
@@ -440,6 +496,8 @@ class WindowAccumulator:
     _on_time_emitted: set[int] = field(default_factory=set, init=False, repr=False)
 
     def ingest(self, event: SourceEvent) -> None:
+        if not isinstance(event, SourceEvent):
+            raise DurableError("window event must be a SourceEvent")
         if event.event_time_unix_ms is None:
             raise MissingEventTimeError(event.cursor)
         event_time_unix_ms = event.event_time_unix_ms
@@ -456,7 +514,13 @@ class WindowAccumulator:
                 self.watermark.unix_ms,
                 self.policy.allowed_lateness_ms,
             )
-        self.windows.setdefault(start_unix_ms, []).append(event)
+        self.windows.setdefault(start_unix_ms, []).append(
+            SourceEvent(
+                cursor=event.cursor,
+                payload=event.payload,
+                event_time_unix_ms=event.event_time_unix_ms,
+            )
+        )
 
     def advance_watermark(self, watermark: Watermark) -> list[WindowPane]:
         if watermark.kind != "event_time":
@@ -520,6 +584,30 @@ class SinkCommitRequest:
     payload: object
     precondition_digest: str | None = None
 
+    def __post_init__(self) -> None:
+        for field_name, error_type in (
+            ("run_id", MissingRunIdError),
+            ("node_id", MissingNodeIdError),
+            ("node_attempt_id", MissingNodeAttemptIdError),
+            ("idempotency_key", MissingIdempotencyKeyError),
+        ):
+            value = getattr(self, field_name)
+            if not isinstance(value, str) or not value.strip():
+                raise error_type(f"{field_name} must not be empty")
+            if value != value.strip():
+                raise error_type(f"{field_name} must not contain surrounding whitespace")
+        if self.precondition_digest is not None:
+            if (
+                not isinstance(self.precondition_digest, str)
+                or not self.precondition_digest.strip()
+            ):
+                raise SinkCommitError("precondition_digest must not be empty")
+            if self.precondition_digest != self.precondition_digest.strip():
+                raise SinkCommitError(
+                    "precondition_digest must not contain surrounding whitespace"
+                )
+        object.__setattr__(self, "payload", deepcopy(self.payload))
+
     def with_precondition_digest(self, precondition_digest: str) -> SinkCommitRequest:
         return SinkCommitRequest(
             run_id=self.run_id,
@@ -540,53 +628,152 @@ class SinkCommitResult:
     metadata: object
     replayed: bool
 
+    def __post_init__(self) -> None:
+        for field_name in ("sink_id", "idempotency_key"):
+            value = getattr(self, field_name)
+            if not isinstance(value, str) or not value.strip():
+                raise SinkCommitError(f"{field_name} must not be empty")
+            if value != value.strip():
+                raise SinkCommitError(
+                    f"{field_name} must not contain surrounding whitespace"
+                )
+        if self.precondition_digest is not None and (
+            not isinstance(self.precondition_digest, str)
+            or not self.precondition_digest.strip()
+        ):
+            raise SinkCommitError("precondition_digest must not be empty")
+        if (
+            self.precondition_digest is not None
+            and self.precondition_digest != self.precondition_digest.strip()
+        ):
+            raise SinkCommitError(
+                "precondition_digest must not contain surrounding whitespace"
+            )
+        sequence = _require_integer("sink commit sequence", self.sequence)
+        if sequence <= 0:
+            raise SinkCommitError("sink commit sequence must be positive")
+        if not isinstance(self.replayed, bool):
+            raise SinkCommitError("sink commit replayed must be a boolean")
+        object.__setattr__(self, "metadata", deepcopy(self.metadata))
+
 
 @dataclass(slots=True)
 class InMemoryDurableSink:
     sink_id: str
     next_sequence: int = 1
     commits_by_idempotency_key: dict[str, tuple[SinkCommitRequest, SinkCommitResult]] = field(default_factory=dict)
+    _lock: RLock = field(default_factory=RLock, init=False, repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.sink_id, str) or not self.sink_id.strip():
+            raise SinkCommitError("sink_id must not be empty")
+        if self.sink_id != self.sink_id.strip():
+            raise SinkCommitError("sink_id must not contain surrounding whitespace")
+        next_sequence = _require_integer("sink next_sequence", self.next_sequence)
+        if next_sequence <= 0:
+            raise SinkCommitError("sink next_sequence must be positive")
+        if not isinstance(self.commits_by_idempotency_key, Mapping):
+            raise SinkCommitError("restored sink commits must be a mapping")
+        commits = dict(self.commits_by_idempotency_key)
+        restored: dict[str, tuple[SinkCommitRequest, SinkCommitResult]] = {}
+        seen_sequences: set[int] = set()
+        highest_sequence = 0
+        for idempotency_key, pair in commits.items():
+            if (
+                not isinstance(pair, tuple)
+                or len(pair) != 2
+                or not isinstance(pair[0], SinkCommitRequest)
+                or not isinstance(pair[1], SinkCommitResult)
+            ):
+                raise SinkCommitError(
+                    "restored sink commits must contain request/result pairs"
+                )
+            request, result = pair
+            if (
+                idempotency_key != request.idempotency_key
+                or idempotency_key != result.idempotency_key
+            ):
+                raise SinkCommitError(
+                    "restored sink commit key must match idempotency_key"
+                )
+            if result.sink_id != self.sink_id:
+                raise SinkCommitError("restored sink commit must match sink_id")
+            if result.precondition_digest != request.precondition_digest:
+                raise SinkCommitError(
+                    "restored sink commit precondition must match request"
+                )
+            if result.replayed:
+                raise SinkCommitError("restored sink commits must not be replay projections")
+            if result.sequence in seen_sequences:
+                raise SinkCommitError("restored sink commit sequences must be unique")
+            seen_sequences.add(result.sequence)
+            highest_sequence = max(highest_sequence, result.sequence)
+            request_snapshot = replace(request, payload=deepcopy(request.payload))
+            result_snapshot = replace(
+                result,
+                metadata=deepcopy(result.metadata),
+                replayed=False,
+            )
+            if result_snapshot.metadata != request_snapshot.payload:
+                raise SinkCommitError(
+                    "restored sink commit metadata must match request payload"
+                )
+            restored[idempotency_key] = (request_snapshot, result_snapshot)
+        self.commits_by_idempotency_key = restored
+        self.next_sequence = max(next_sequence, highest_sequence + 1)
 
     def commit(self, request: SinkCommitRequest) -> SinkCommitResult:
-        if not request.run_id.strip():
-            raise MissingRunIdError("run_id must not be empty")
-        if not request.node_id.strip():
-            raise MissingNodeIdError("node_id must not be empty")
-        if not request.node_attempt_id.strip():
-            raise MissingNodeAttemptIdError("node_attempt_id must not be empty")
-        if not request.idempotency_key.strip():
-            raise MissingIdempotencyKeyError("idempotency_key must not be empty")
-        if request.idempotency_key in self.commits_by_idempotency_key:
-            existing_request, existing_result = self.commits_by_idempotency_key[request.idempotency_key]
-            if existing_request != request:
-                raise IdempotencyConflictError(request.idempotency_key)
-            return SinkCommitResult(
-                sink_id=existing_result.sink_id,
-                idempotency_key=existing_result.idempotency_key,
-                precondition_digest=existing_result.precondition_digest,
-                sequence=existing_result.sequence,
-                metadata=deepcopy(existing_result.metadata),
-                replayed=True,
+        if not isinstance(request, SinkCommitRequest):
+            raise SinkCommitError("request must be a SinkCommitRequest")
+        with self._lock:
+            if request.idempotency_key in self.commits_by_idempotency_key:
+                existing_request, existing_result = self.commits_by_idempotency_key[
+                    request.idempotency_key
+                ]
+                if existing_request != request:
+                    raise IdempotencyConflictError(request.idempotency_key)
+                return SinkCommitResult(
+                    sink_id=existing_result.sink_id,
+                    idempotency_key=existing_result.idempotency_key,
+                    precondition_digest=existing_result.precondition_digest,
+                    sequence=existing_result.sequence,
+                    metadata=deepcopy(existing_result.metadata),
+                    replayed=True,
+                )
+            payload_snapshot = deepcopy(request.payload)
+            stored_request = replace(request, payload=payload_snapshot)
+            result = SinkCommitResult(
+                sink_id=self.sink_id,
+                idempotency_key=request.idempotency_key,
+                precondition_digest=request.precondition_digest,
+                sequence=self._allocate_sequence(),
+                metadata=deepcopy(payload_snapshot),
+                replayed=False,
             )
-        payload_snapshot = deepcopy(request.payload)
-        stored_request = replace(request, payload=payload_snapshot)
-        result = SinkCommitResult(
-            sink_id=self.sink_id,
-            idempotency_key=request.idempotency_key,
-            precondition_digest=request.precondition_digest,
-            sequence=self.next_sequence,
-            metadata=deepcopy(payload_snapshot),
-            replayed=False,
-        )
-        self.next_sequence += 1
-        self.commits_by_idempotency_key[request.idempotency_key] = (
-            stored_request,
-            result,
-        )
-        return replace(result, metadata=deepcopy(result.metadata))
+            self.commits_by_idempotency_key[request.idempotency_key] = (
+                stored_request,
+                result,
+            )
+            return replace(result, metadata=deepcopy(result.metadata))
 
     def committed_count(self) -> int:
-        return len(self.commits_by_idempotency_key)
+        with self._lock:
+            return len(self.commits_by_idempotency_key)
+
+    def _allocate_sequence(self) -> int:
+        next_sequence = _require_integer("sink next_sequence", self.next_sequence)
+        if next_sequence <= 0:
+            raise SinkCommitError("sink next_sequence must be positive")
+        highest_sequence = max(
+            (
+                result.sequence
+                for _request, result in self.commits_by_idempotency_key.values()
+            ),
+            default=0,
+        )
+        sequence = max(next_sequence, highest_sequence + 1)
+        self.next_sequence = sequence + 1
+        return sequence
 
 
 @dataclass(frozen=True, slots=True)
@@ -633,19 +820,18 @@ class DurableToolTerminalRecord:
         )
 
     def __post_init__(self) -> None:
-        if not self.run_id.strip():
-            raise ToolTerminalStoreError("run_id must not be empty")
-        if not self.response_id.strip():
-            raise ToolTerminalStoreError("response_id must not be empty")
-        if not self.tool_call_id.strip():
-            raise ToolTerminalStoreError("tool_call_id must not be empty")
+        _require_tool_terminal_string("run_id", self.run_id)
+        _require_tool_terminal_string("response_id", self.response_id)
+        _require_tool_terminal_string("tool_call_id", self.tool_call_id)
         revision = _require_tool_terminal_integer("revision", self.revision)
         if revision <= 0:
             raise ToolTerminalStoreError("revision must be positive")
-        if self.terminal_state not in VALID_DURABLE_TOOL_TERMINAL_STATES:
+        if (
+            not isinstance(self.terminal_state, str)
+            or self.terminal_state not in VALID_DURABLE_TOOL_TERMINAL_STATES
+        ):
             raise ToolTerminalStoreError(f"invalid terminal_state {self.terminal_state}")
-        if not self.arguments_digest.strip():
-            raise ToolTerminalStoreError("arguments_digest must not be empty")
+        _require_tool_terminal_string("arguments_digest", self.arguments_digest)
         completed_at_unix_ms = _require_tool_terminal_integer(
             "completed_at_unix_ms",
             self.completed_at_unix_ms,
@@ -654,10 +840,16 @@ class DurableToolTerminalRecord:
             raise ToolTerminalStoreError("completed_at_unix_ms must be positive")
         object.__setattr__(self, "revision", revision)
         object.__setattr__(self, "completed_at_unix_ms", completed_at_unix_ms)
-        if self.output_digest is not None and not self.output_digest.strip():
-            raise ToolTerminalStoreError("output_digest must not be empty")
-        if self.idempotency_key is not None and not self.idempotency_key.strip():
-            raise ToolTerminalStoreError("idempotency_key must not be empty")
+        if self.output_digest is not None:
+            _require_tool_terminal_string("output_digest", self.output_digest)
+        if self.idempotency_key is not None:
+            _require_tool_terminal_string("idempotency_key", self.idempotency_key)
+        if not isinstance(self.effect_committed, bool):
+            raise ToolTerminalStoreError("effect_committed must be a boolean")
+        if not isinstance(self.durable_result_committed, bool):
+            raise ToolTerminalStoreError(
+                "durable_result_committed must be a boolean"
+            )
         if self.terminal_state == "denied" and self.effect_committed:
             raise ToolTerminalStoreError("denied terminal records cannot have committed effects")
         if self.terminal_state == "expired" and self.effect_committed:
@@ -669,6 +861,18 @@ class DurableToolTerminalCommit:
     sequence: int
     record: DurableToolTerminalRecord
     replayed: bool
+
+    def __post_init__(self) -> None:
+        sequence = _require_tool_terminal_integer("sequence", self.sequence)
+        if sequence <= 0:
+            raise ToolTerminalStoreError("sequence must be positive")
+        if not isinstance(self.record, DurableToolTerminalRecord):
+            raise ToolTerminalStoreError(
+                "record must be a DurableToolTerminalRecord"
+            )
+        if not isinstance(self.replayed, bool):
+            raise ToolTerminalStoreError("replayed must be a boolean")
+        object.__setattr__(self, "sequence", sequence)
 
 
 @dataclass(frozen=True, slots=True)
@@ -686,16 +890,16 @@ class DurableResponsePolicyStopRecord:
     turn_id: str | None = None
 
     def __post_init__(self) -> None:
-        if not self.response_id.strip():
-            raise ToolTerminalStoreError("response_id must not be empty")
-        if not self.policy_decision_id.strip():
-            raise ToolTerminalStoreError("policy_decision_id must not be empty")
+        _require_tool_terminal_string("response_id", self.response_id)
+        _require_tool_terminal_string(
+            "policy_decision_id",
+            self.policy_decision_id,
+        )
         if self.stream_id is None:
             object.__setattr__(self, "stream_id", self.response_id)
-        if not self.stream_id.strip():
-            raise ToolTerminalStoreError("stream_id must not be empty")
-        if self.turn_id is not None and not self.turn_id.strip():
-            raise ToolTerminalStoreError("turn_id must not be empty")
+        _require_tool_terminal_string("stream_id", self.stream_id)
+        if self.turn_id is not None:
+            _require_tool_terminal_string("turn_id", self.turn_id)
         last_generated_sequence = _require_tool_terminal_integer(
             "last_generated_sequence",
             self.last_generated_sequence,
@@ -722,11 +926,20 @@ class DurableResponsePolicyStopRecord:
             raise ToolTerminalStoreError("last_policy_accepted_sequence cannot exceed last_generated_sequence")
         if last_client_delivered_sequence > last_generated_sequence:
             raise ToolTerminalStoreError("last_client_delivered_sequence cannot exceed last_generated_sequence")
-        if self.terminal_reason not in VALID_OUTPUT_CUTOFF_TERMINAL_REASONS:
+        if (
+            not isinstance(self.terminal_reason, str)
+            or self.terminal_reason not in VALID_OUTPUT_CUTOFF_TERMINAL_REASONS
+        ):
             raise ToolTerminalStoreError(f"invalid terminal_reason {self.terminal_reason}")
-        if self.draft_disposition not in VALID_OUTPUT_CUTOFF_DRAFT_DISPOSITIONS:
+        if (
+            not isinstance(self.draft_disposition, str)
+            or self.draft_disposition not in VALID_OUTPUT_CUTOFF_DRAFT_DISPOSITIONS
+        ):
             raise ToolTerminalStoreError(f"invalid draft_disposition {self.draft_disposition}")
-        if self.durable_result not in VALID_OUTPUT_CUTOFF_DURABLE_RESULTS:
+        if (
+            not isinstance(self.durable_result, str)
+            or self.durable_result not in VALID_OUTPUT_CUTOFF_DURABLE_RESULTS
+        ):
             raise ToolTerminalStoreError(f"invalid durable_result {self.durable_result}")
         if occurred_at_unix_ms <= 0:
             raise ToolTerminalStoreError("occurred_at_unix_ms must be positive")
@@ -762,6 +975,18 @@ class DurableResponsePolicyStopCommit:
     record: DurableResponsePolicyStopRecord
     replayed: bool
 
+    def __post_init__(self) -> None:
+        sequence = _require_tool_terminal_integer("sequence", self.sequence)
+        if sequence <= 0:
+            raise ToolTerminalStoreError("sequence must be positive")
+        if not isinstance(self.record, DurableResponsePolicyStopRecord):
+            raise ToolTerminalStoreError(
+                "record must be a DurableResponsePolicyStopRecord"
+            )
+        if not isinstance(self.replayed, bool):
+            raise ToolTerminalStoreError("replayed must be a boolean")
+        object.__setattr__(self, "sequence", sequence)
+
 
 @dataclass(slots=True)
 class InMemoryDurableToolTerminalStore:
@@ -771,6 +996,12 @@ class InMemoryDurableToolTerminalStore:
     _lock: RLock = field(default_factory=RLock, init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
+        if not isinstance(self.terminal_records, Mapping):
+            raise ToolTerminalStoreError("terminal_records must be a mapping")
+        if not isinstance(self.policy_stopped_responses, Mapping):
+            raise ToolTerminalStoreError(
+                "policy_stopped_responses must be a mapping"
+            )
         terminal_records = dict(self.terminal_records)
         policy_stopped_responses = dict(self.policy_stopped_responses)
         seen_sequences: set[int] = set()
@@ -787,6 +1018,10 @@ class InMemoryDurableToolTerminalStore:
             )
             if key != expected_key:
                 raise ToolTerminalStoreError("terminal_records key does not match record")
+            if commit.replayed:
+                raise ToolTerminalStoreError(
+                    "restored terminal records must not be replay projections"
+                )
             sequence = _require_tool_terminal_integer("sequence", commit.sequence)
             if sequence <= 0 or sequence in seen_sequences:
                 raise ToolTerminalStoreError("restored terminal sequence must be unique and positive")
@@ -801,11 +1036,29 @@ class InMemoryDurableToolTerminalStore:
                 raise ToolTerminalStoreError(
                     "policy_stopped_responses key does not match record"
                 )
+            if commit.replayed:
+                raise ToolTerminalStoreError(
+                    "restored policy stops must not be replay projections"
+                )
             sequence = _require_tool_terminal_integer("sequence", commit.sequence)
             if sequence <= 0 or sequence in seen_sequences:
                 raise ToolTerminalStoreError("restored terminal sequence must be unique and positive")
             seen_sequences.add(sequence)
             highest_sequence = max(highest_sequence, sequence)
+        committed_result_response_ids = {
+            commit.record.response_id
+            for commit in terminal_records.values()
+            if commit.record.durable_result_committed
+        }
+        conflicting_response_ids = (
+            committed_result_response_ids & policy_stopped_responses.keys()
+        )
+        if conflicting_response_ids:
+            response_id = min(conflicting_response_ids)
+            raise ToolTerminalStoreError(
+                "restored durable result cannot coexist with a policy-stopped "
+                f"response {response_id!r}"
+            )
         next_sequence = _require_tool_terminal_integer("next_sequence", self.next_sequence)
         if next_sequence <= 0:
             raise ToolTerminalStoreError("next_sequence must be positive")
@@ -936,7 +1189,41 @@ class SourceCursorCommitPlan:
     cursors: tuple[tuple[str, SourceCursor], ...]
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "cursors", tuple(sorted(self.cursors, key=lambda item: item[0])))
+        if isinstance(self.cursors, (str, bytes, bytearray)):
+            raise DurableError("source cursor commit plan cursors must be a sequence")
+        try:
+            cursors = tuple(self.cursors)
+        except TypeError:
+            raise DurableError(
+                "source cursor commit plan cursors must be a sequence"
+            ) from None
+        source_ids: set[str] = set()
+        for item in cursors:
+            if not isinstance(item, tuple) or len(item) != 2:
+                raise DurableError("source cursor commit plan entries must be pairs")
+            source_id, cursor = item
+            if not isinstance(source_id, str) or not source_id.strip():
+                raise DurableError(
+                    "source cursor commit plan source ids must be non-empty strings"
+                )
+            if source_id != source_id.strip():
+                raise DurableError(
+                    "source cursor commit plan source ids must not contain surrounding whitespace"
+                )
+            if source_id in source_ids:
+                raise DurableError(
+                    "source cursor commit plan source ids must be unique"
+                )
+            if not isinstance(cursor, SourceCursor):
+                raise DurableError(
+                    "source cursor commit plan cursors must be SourceCursor"
+                )
+            source_ids.add(source_id)
+        object.__setattr__(
+            self,
+            "cursors",
+            tuple(sorted(cursors, key=lambda item: item[0])),
+        )
 
 
 def _copy_checkpoint_mapping(
@@ -945,12 +1232,35 @@ def _copy_checkpoint_mapping(
 ) -> dict[str, object]:
     if not isinstance(value, Mapping):
         raise DurableError(f"{field_name} must be a mapping")
+    try:
+        snapshot = canonical_loads(canonical_dumps(value))
+    except (TypeError, ValueError) as error:
+        raise DurableError(f"{field_name} must contain strict JSON values") from error
+    if not isinstance(snapshot, dict):
+        raise DurableError(f"{field_name} must be a mapping")
     copied: dict[str, object] = {}
-    for key, item in value.items():
+    for key, item in snapshot.items():
         if not isinstance(key, str) or not key.strip():
             raise DurableError(f"{field_name} keys must be non-empty strings")
-        copied[key] = deepcopy(item)
+        if key != key.strip():
+            raise DurableError(
+                f"{field_name} keys must not contain surrounding whitespace"
+            )
+        copied[key] = _freeze_checkpoint_value(item)
     return dict(sorted(copied.items()))
+
+
+def _freeze_checkpoint_value(value: object) -> object:
+    if isinstance(value, dict):
+        return FrozenDict(
+            {
+                key: _freeze_checkpoint_value(item)
+                for key, item in value.items()
+            }
+        )
+    if isinstance(value, list):
+        return FrozenList(_freeze_checkpoint_value(item) for item in value)
+    return value
 
 
 @dataclass(frozen=True, slots=True)
@@ -977,10 +1287,16 @@ class CheckpointBarrier:
         created_at_unix_ms = _require_integer("created_at_unix_ms", self.created_at_unix_ms)
         if created_at_unix_ms < 0:
             raise DurableError("created_at_unix_ms must be non-negative")
+        if not isinstance(self.schema_versions, Mapping):
+            raise DurableError("schema_versions must be a mapping")
         schema_versions: dict[str, int] = {}
-        for key, value in dict(self.schema_versions).items():
+        for key, value in self.schema_versions.items():
             if not isinstance(key, str) or not key.strip():
                 raise DurableError("schema_versions keys must be non-empty strings")
+            if key != key.strip():
+                raise DurableError(
+                    "schema_versions keys must not contain surrounding whitespace"
+                )
             schema_key = key
             schema_version = _require_integer(f"schema_versions {schema_key}", value)
             if schema_version < 0:
@@ -988,11 +1304,30 @@ class CheckpointBarrier:
             schema_versions[schema_key] = schema_version
         object.__setattr__(self, "state_revision", state_revision)
         object.__setattr__(self, "created_at_unix_ms", created_at_unix_ms)
-        completed_nodes = tuple(self.completed_nodes)
-        pending_nodes = tuple(self.pending_nodes)
-        if any(not isinstance(node, str) or not node.strip() for node in completed_nodes):
+        if isinstance(self.completed_nodes, (str, bytes, bytearray)):
+            raise DurableError("completed_nodes must be a sequence")
+        if isinstance(self.pending_nodes, (str, bytes, bytearray)):
+            raise DurableError("pending_nodes must be a sequence")
+        try:
+            completed_nodes = tuple(self.completed_nodes)
+            pending_nodes = tuple(self.pending_nodes)
+        except TypeError:
+            raise DurableError(
+                "completed_nodes and pending_nodes must be sequences"
+            ) from None
+        if any(
+            not isinstance(node, str)
+            or not node.strip()
+            or node != node.strip()
+            for node in completed_nodes
+        ):
             raise DurableError("completed_nodes must contain non-empty strings")
-        if any(not isinstance(node, str) or not node.strip() for node in pending_nodes):
+        if any(
+            not isinstance(node, str)
+            or not node.strip()
+            or node != node.strip()
+            for node in pending_nodes
+        ):
             raise DurableError("pending_nodes must contain non-empty strings")
         if len(set(completed_nodes)) != len(completed_nodes):
             raise DurableError("completed_nodes must not contain duplicates")
@@ -1002,10 +1337,16 @@ class CheckpointBarrier:
             raise DurableError("completed_nodes and pending_nodes must not overlap")
         object.__setattr__(self, "completed_nodes", completed_nodes)
         object.__setattr__(self, "pending_nodes", pending_nodes)
+        if not isinstance(self.source_cursors, Mapping):
+            raise DurableError("source_cursors must be a mapping")
         source_cursors: dict[str, SourceCursor] = {}
-        for source_id, cursor in dict(self.source_cursors).items():
+        for source_id, cursor in self.source_cursors.items():
             if not isinstance(source_id, str) or not source_id.strip():
                 raise DurableError("source_cursors keys must be non-empty strings")
+            if source_id != source_id.strip():
+                raise DurableError(
+                    "source_cursors keys must not contain surrounding whitespace"
+                )
             if not isinstance(cursor, SourceCursor):
                 raise DurableError("source_cursors values must be SourceCursor")
             source_cursors[source_id] = cursor
@@ -1047,19 +1388,44 @@ class CheckpointBarrier:
         return replace(self, source_cursors=source_cursors)
 
     def validate(self) -> CheckpointBarrier:
-        if not self.checkpoint_id.strip():
+        if (
+            not isinstance(self.checkpoint_id, str)
+            or not self.checkpoint_id.strip()
+            or self.checkpoint_id != self.checkpoint_id.strip()
+        ):
             raise CheckpointBarrierError("missing_checkpoint_id")
-        if not self.run_id.strip():
+        if (
+            not isinstance(self.run_id, str)
+            or not self.run_id.strip()
+            or self.run_id != self.run_id.strip()
+        ):
             raise CheckpointBarrierError("missing_run_id")
-        if not self.release_id.strip():
+        if (
+            not isinstance(self.release_id, str)
+            or not self.release_id.strip()
+            or self.release_id != self.release_id.strip()
+        ):
             raise CheckpointBarrierError("missing_release_id")
-        if not self.deployment_revision_id.strip():
+        if (
+            not isinstance(self.deployment_revision_id, str)
+            or not self.deployment_revision_id.strip()
+            or self.deployment_revision_id != self.deployment_revision_id.strip()
+        ):
             raise CheckpointBarrierError("missing_deployment_revision_id")
-        if not self.plan_hash.strip():
+        if (
+            not isinstance(self.plan_hash, str)
+            or not self.plan_hash.strip()
+            or self.plan_hash != self.plan_hash.strip()
+        ):
             raise CheckpointBarrierError("missing_plan_hash")
         if not isinstance(self.checkpoint_schema, SchemaRef):
             raise CheckpointBarrierError("invalid_checkpoint_schema")
-        if not self.checkpoint_schema.schema_id.strip() or self.checkpoint_schema.schema_version <= 0:
+        if (
+            not self.checkpoint_schema.schema_id.strip()
+            or self.checkpoint_schema.schema_id
+            != self.checkpoint_schema.schema_id.strip()
+            or self.checkpoint_schema.schema_version <= 0
+        ):
             raise CheckpointBarrierError("invalid_checkpoint_schema")
         if not self.schema_versions:
             raise CheckpointBarrierError("missing_schema_versions")
@@ -1092,7 +1458,57 @@ def _copy_checkpoint_barrier(barrier: CheckpointBarrier) -> CheckpointBarrier:
 class InMemoryCheckpointStore:
     _checkpoints_by_run: dict[str, list[CheckpointBarrier]] = field(default_factory=dict)
 
+    def __post_init__(self) -> None:
+        if not isinstance(self._checkpoints_by_run, Mapping):
+            raise CheckpointStoreError("restored checkpoints must be a mapping")
+        restored_items = tuple(self._checkpoints_by_run.items())
+        restored: dict[str, list[CheckpointBarrier]] = {}
+        for run_id, checkpoints_value in restored_items:
+            if not isinstance(run_id, str) or not run_id.strip():
+                raise CheckpointStoreError(
+                    "restored checkpoint run ids must be non-empty strings"
+                )
+            if run_id != run_id.strip():
+                raise CheckpointStoreError(
+                    "restored checkpoint run ids must not contain surrounding whitespace"
+                )
+            if isinstance(checkpoints_value, (str, bytes, bytearray)):
+                raise CheckpointStoreError(
+                    "restored checkpoints must be sequences"
+                )
+            try:
+                checkpoints = tuple(checkpoints_value)
+            except TypeError:
+                raise CheckpointStoreError(
+                    "restored checkpoints must be sequences"
+                ) from None
+            copied: list[CheckpointBarrier] = []
+            previous_revision: int | None = None
+            for checkpoint in checkpoints:
+                if not isinstance(checkpoint, CheckpointBarrier):
+                    raise CheckpointStoreError(
+                        "restored checkpoints must be CheckpointBarrier"
+                    )
+                checkpoint.validate()
+                if checkpoint.run_id != run_id:
+                    raise CheckpointStoreError(
+                        "restored checkpoint run id must match mapping key"
+                    )
+                if (
+                    previous_revision is not None
+                    and checkpoint.state_revision <= previous_revision
+                ):
+                    raise CheckpointStoreError(
+                        "restored checkpoint revisions must be strictly increasing"
+                    )
+                copied.append(_copy_checkpoint_barrier(checkpoint))
+                previous_revision = checkpoint.state_revision
+            restored[run_id] = copied
+        self._checkpoints_by_run = restored
+
     def put(self, barrier: CheckpointBarrier) -> InMemoryCheckpointStore:
+        if not isinstance(barrier, CheckpointBarrier):
+            raise CheckpointStoreError("barrier must be a CheckpointBarrier")
         barrier.validate()
         checkpoints = self._checkpoints_by_run.setdefault(barrier.run_id, [])
         current = max((checkpoint.state_revision for checkpoint in checkpoints), default=None)

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Literal
 
@@ -159,6 +159,8 @@ def _string_tuple(owner: str, field_name: str, value: Iterable[str] | None) -> t
     except TypeError:
         raise ValueError(f"{owner} {field_name} must be a sequence") from None
     normalized = tuple(_validate_non_empty_string(owner, field_name, item) for item in items)
+    if len(set(normalized)) != len(normalized):
+        raise ValueError(f"{owner} {field_name} must not contain duplicates")
     return normalized
 
 
@@ -411,7 +413,7 @@ class CallbackDelivery:
 
 
 from .webhooks import *  # noqa: E402,F403
-from .webhooks import __all__ as _webhook_exports
+from .webhooks import __all__ as _webhook_exports  # noqa: E402
 
 
 __all__ = [

@@ -395,6 +395,13 @@ class AsyncOperation:
             raise ValueError("async operation created state must not have wait boundary")
         if self.callback_ref is not None and self.polling_ref is not None:
             raise ValueError("async operation must not define both callback_ref and polling_ref")
+        if (
+            self.state not in TERMINAL_ASYNC_OPERATION_STATES
+            and self.completed_at is not None
+        ):
+            raise ValueError(
+                "async operation non-terminal state must not have completed_at"
+            )
         if self.state in {
             "submitted",
             "waiting_callback",
@@ -411,23 +418,68 @@ class AsyncOperation:
             raise ValueError("async operation terminal state requires completed_at")
         if self.state in {"callback_received", "resuming"} and self.callback_received_at is None:
             raise ValueError("async operation callback_received state requires callback_received_at")
-        if self.state in {"completed", "failed"} and self.callback_ref is not None and self.callback_received_at is None:
-            raise ValueError(f"async operation {self.state} state requires callback_received_at")
         if self.state in {"waiting_callback", "callback_received"} and self.callback_ref is None:
             raise ValueError(f"async operation {self.state} state requires callback_ref")
         if self.state == "polling" and self.polling_ref is None:
             raise ValueError("async operation polling state requires polling_ref")
+        if self.state == "resuming" and self.callback_ref is None:
+            raise ValueError("async operation resuming state requires callback_ref")
+        if self.state in {"completed", "failed"} and self.callback_ref is not None and self.callback_received_at is None:
+            raise ValueError(f"async operation {self.state} state requires callback_received_at")
         if (
-            self.state in {"waiting_callback", "callback_received", "polling"}
+            self.state in {"completed", "failed"}
+            and self.callback_ref is None
+            and self.polling_ref is None
+        ):
+            raise ValueError(
+                f"async operation {self.state} state requires callback_ref or polling_ref"
+            )
+        if self.callback_received_at is not None and self.callback_ref is None:
+            raise ValueError(
+                "async operation callback_received_at requires callback_ref"
+            )
+        if self.callback_received_at is not None and self.state in {
+            "created",
+            "submitted",
+            "waiting_callback",
+            "polling",
+        }:
+            raise ValueError(
+                f"async operation {self.state} state must not have callback_received_at"
+            )
+        if (
+            self.state
+            in {
+                "waiting_callback",
+                "callback_received",
+                "polling",
+                "resuming",
+                "completed",
+                "failed",
+            }
+            and (self.callback_ref is not None or self.polling_ref is not None)
             and self.expires_at is None
             and self.infinite_wait_policy is None
         ):
-            wait_kind = "polling" if self.state == "polling" else self.state
+            wait_kind = (
+                "polling"
+                if self.polling_ref is not None
+                else self.state
+            )
             raise ValueError(
                 f"async operation {wait_kind} state requires expires_at or explicit infinite_wait_policy"
             )
         if (
-            self.state in {"waiting_callback", "callback_received", "polling"}
+            self.state
+            in {
+                "waiting_callback",
+                "callback_received",
+                "polling",
+                "resuming",
+                "completed",
+                "failed",
+            }
+            and (self.callback_ref is not None or self.polling_ref is not None)
             and self.expires_at is not None
             and self.infinite_wait_policy is not None
         ):

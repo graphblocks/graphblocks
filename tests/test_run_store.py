@@ -173,6 +173,31 @@ def test_run_records_validate_identity_status_revision_and_payload_shapes() -> N
         RunRecord("run-1", "sha256:test", {}, state={"value": math.nan})
 
 
+def test_run_records_reject_duplicate_model_visible_tool_names() -> None:
+    first = _model_visible_tool("knowledge.search", "resolved-search", True)
+    conflicting = _model_visible_tool(
+        "knowledge.search",
+        "resolved-search-other",
+        False,
+    )
+
+    with pytest.raises(ValueError, match="unique tool_name"):
+        RunRecord(
+            "run-1",
+            "sha256:test",
+            {},
+            model_visible_tools=(first, conflicting),
+        )
+
+    for store in (InMemoryRunStore(), SQLiteRunStore(":memory:")):
+        record = store.create_run("sha256:test", {})
+        with pytest.raises(ValueError, match="unique tool_name"):
+            store.record_model_visible_tools(
+                record.run_id,
+                (first, conflicting),
+            )
+
+
 def test_run_records_reject_cyclic_and_excessively_deep_json_values() -> None:
     cyclic: dict[str, object] = {}
     cyclic["self"] = cyclic
@@ -591,6 +616,49 @@ def test_sqlite_run_store_rejects_malformed_deployment_provenance_field_on_repla
         store.get_run(record.run_id)
 
 
+def test_sqlite_run_store_rejects_unknown_persisted_contract_fields(
+    tmp_path,
+) -> None:
+    store = SQLiteRunStore(tmp_path / "runs.sqlite3")
+    record = store.create_run(
+        "sha256:test",
+        {},
+        model_visible_tools=(
+            _model_visible_tool("knowledge.search", "resolved-search", True),
+        ),
+    )
+    store.connection.execute(
+        "UPDATE runs SET deployment_provenance_json = ? WHERE run_id = ?",
+        ('{"release_digest":null,"unexpected":true}', record.run_id),
+    )
+    store.connection.commit()
+
+    with pytest.raises(ValueError, match="unknown fields"):
+        store.get_run(record.run_id)
+
+    store.connection.execute(
+        "UPDATE runs SET deployment_provenance_json = ?, model_visible_tools_json = ? WHERE run_id = ?",
+        (
+            '{"release_digest":null}',
+            (
+                '[{"tool_name":"knowledge.search",'
+                '"resolved_tool_id":"resolved-search",'
+                '"definition_digest":"sha256:definition",'
+                '"binding_digest":"sha256:binding",'
+                '"effective_policy_snapshot_id":"policy-snapshot-1",'
+                '"allowed_for_principal":true,'
+                '"valid_until":null,'
+                '"unexpected":true}]'
+            ),
+            record.run_id,
+        ),
+    )
+    store.connection.commit()
+
+    with pytest.raises(ValueError, match="unknown fields"):
+        store.get_run(record.run_id)
+
+
 def test_sqlite_run_store_rejects_malformed_model_visible_tools_on_replay(tmp_path) -> None:
     database = tmp_path / "runs.sqlite3"
     store = SQLiteRunStore(database)
@@ -866,3 +934,35 @@ def test_sqlite_run_store_allocates_monotonic_run_ids_after_reopen(tmp_path) -> 
 
     second = SQLiteRunStore(database)
     assert second.create_run("sha256:two", {}).run_id == "run-000002"
+
+
+def test_run_store_rejects_sequence_and_state_revision_overflow(
+    tmp_path,
+) -> None:
+    maximum = (1 << 63) - 1
+    in_memory = InMemoryRunStore(next_id=maximum + 1)
+    with pytest.raises(OverflowError, match="sequence exhausted"):
+        in_memory.create_run("sha256:test", {})
+
+    max_revision = RunRecord(
+        "run-max-revision",
+        "sha256:test",
+        {},
+        state_revision=maximum,
+    )
+    restored = InMemoryRunStore(runs={max_revision.run_id: max_revision})
+    with pytest.raises(OverflowError, match="state revision exhausted"):
+        restored.patch_state(max_revision.run_id, {"value": 1}, maximum)
+
+    sqlite_store = SQLiteRunStore(tmp_path / "overflow.sqlite3")
+    record = sqlite_store.create_run("sha256:test", {})
+    sqlite_store.connection.execute(
+        "UPDATE runs SET sequence = ?, state_revision = ? WHERE run_id = ?",
+        (maximum, maximum, record.run_id),
+    )
+    sqlite_store.connection.commit()
+
+    with pytest.raises(OverflowError, match="sequence exhausted"):
+        sqlite_store.create_run("sha256:other", {})
+    with pytest.raises(OverflowError, match="state revision exhausted"):
+        sqlite_store.patch_state(record.run_id, {"value": 1}, maximum)
