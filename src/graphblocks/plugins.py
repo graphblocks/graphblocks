@@ -16,7 +16,7 @@ from jsonschema import Draft202012Validator
 from jsonschema.exceptions import SchemaError
 import yaml
 
-from .canonical import _reject_duplicate_keys
+from .canonical import MAX_CANONICAL_JSON_DEPTH, _reject_duplicate_keys
 from .diagnostics import Diagnostic, DiagnosticSet
 from .loader import _DuplicateKeySafeLoader
 from .migration import (
@@ -316,24 +316,48 @@ def _validate_json_pointer(pointer: object) -> str:
 
 
 def _canonical_json(value: object) -> str:
-    def validate_json_value(item: object) -> None:
+    pending: list[tuple[object, int, bool]] = [(value, 0, False)]
+    active_containers: set[int] = set()
+    while pending:
+        item, depth, leaving = pending.pop()
+        if leaving:
+            active_containers.remove(id(item))
+            continue
+        if depth > MAX_CANONICAL_JSON_DEPTH:
+            raise ValueError(
+                "configEquals.value nesting must not exceed "
+                f"{MAX_CANONICAL_JSON_DEPTH} levels"
+            )
         if item is None or isinstance(item, (str, bool, int)):
-            return
-        if isinstance(item, float):
+            if isinstance(item, str) and any(
+                "\ud800" <= character <= "\udfff" for character in item
+            ):
+                raise ValueError(
+                    "configEquals.value strings must contain only Unicode scalar values"
+                )
+            continue
+        elif isinstance(item, float):
             if math.isfinite(item):
-                return
+                continue
             raise ValueError("configEquals.value must be a finite JSON value")
-        if isinstance(item, list):
-            for child in item:
-                validate_json_value(child)
-            return
-        if isinstance(item, dict) and all(isinstance(key, str) for key in item):
-            for child in item.values():
-                validate_json_value(child)
-            return
+        elif isinstance(item, (list, dict)):
+            identity = id(item)
+            if identity in active_containers:
+                raise ValueError("configEquals.value must not be recursive")
+            active_containers.add(identity)
+            pending.append((item, depth, True))
+            if isinstance(item, list):
+                pending.extend((child, depth + 1, False) for child in item)
+            else:
+                if not all(isinstance(key, str) for key in item):
+                    raise ValueError(
+                        "configEquals.value object keys must be strings"
+                    )
+                pending.extend((child, depth + 1, False) for child in item.values())
+                pending.extend((key, depth + 1, False) for key in item)
+            continue
         raise ValueError("configEquals.value must be a finite JSON value")
 
-    validate_json_value(value)
     try:
         return json.dumps(
             value,
@@ -342,7 +366,7 @@ def _canonical_json(value: object) -> str:
             separators=(",", ":"),
             sort_keys=True,
         )
-    except (TypeError, ValueError) as error:
+    except (RecursionError, TypeError, ValueError) as error:
         raise ValueError("configEquals.value must be a finite JSON value") from error
 
 
@@ -365,7 +389,7 @@ class OutputRequirednessPredicate:
             _validate_json_pointer(self.pointer)
             try:
                 expected = json.loads(self.expected_json)
-            except (TypeError, json.JSONDecodeError) as error:
+            except (RecursionError, TypeError, json.JSONDecodeError) as error:
                 raise ValueError("configEquals expected_json must be canonical JSON") from error
             if _canonical_json(expected) != self.expected_json:
                 raise ValueError("configEquals expected_json must be canonical JSON")

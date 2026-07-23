@@ -542,6 +542,22 @@ def test_plugin_manifest_validates_output_requiredness_predicates() -> None:
     ]
 
 
+@pytest.mark.parametrize("recursive", (False, True), ids=("too-deep", "recursive"))
+def test_output_requiredness_rejects_unbounded_config_values(recursive: bool) -> None:
+    if recursive:
+        value: object = []
+        value.append(value)  # type: ignore[attr-defined]
+    else:
+        value = None
+        for _ in range(1_500):
+            value = [value]
+
+    with pytest.raises(ValueError, match="configEquals.value"):
+        plugins_module.parse_output_requiredness_predicate(
+            {"configEquals": {"pointer": "/mode", "value": value}}
+        )
+
+
 def test_plugin_manifest_rejects_required_when_on_input() -> None:
     diagnostics = validate_plugin_manifest(
         {

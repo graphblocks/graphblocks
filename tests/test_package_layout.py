@@ -319,6 +319,25 @@ def test_load_package_catalog_rejects_invalid_artifact_and_component_shapes(
             load_package_catalog(catalog_path)
 
 
+def test_load_package_catalog_rejects_duplicate_yaml_keys(tmp_path) -> None:
+    catalog_path = tmp_path / "package-catalog.yaml"
+    catalog_path.write_text(
+        "catalogVersion: 1\n"
+        "specVersion: '1.0'\n"
+        "artifacts:\n"
+        "- distribution: trusted-package\n"
+        "  distribution: replaced-package\n"
+        "components: []\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="duplicate YAML mapping key 'distribution'",
+    ):
+        load_package_catalog(catalog_path)
+
+
 def test_catalog_declares_three_python_artifacts_and_operator_delivery_artifact() -> None:
     catalog = load_package_catalog()
     artifacts = {
@@ -665,6 +684,29 @@ def test_package_lock_prefers_an_exact_component_over_an_artifact_alias() -> Non
     assert [entry.component for entry in lock.entries] == ["Foo_Bar"]
 
 
+def test_package_lock_rejects_non_boolean_component_default() -> None:
+    catalog = {
+        "catalogVersion": 1,
+        "specVersion": "1.0",
+        "artifacts": [{"distribution": "graphblocks", "dependsOn": []}],
+        "components": [
+            {
+                "name": "graphblocks-core",
+                "artifact": "graphblocks",
+                "default": "false",
+                "dependsOn": [],
+            }
+        ],
+    }
+
+    with pytest.raises(ValueError, match="component default must be a boolean"):
+        build_package_lock(
+            catalog,
+            requested=("graphblocks-core",),
+            include_default=False,
+        )
+
+
 def test_package_lock_rejects_unknown_selection_and_component_artifact() -> None:
     catalog = {
         "catalogVersion": 1,
@@ -781,6 +823,95 @@ def test_package_lock_rejects_forbidden_and_excluded_component_closures() -> Non
         )
     with pytest.raises(ValueError, match="excluded category"):
         build_package_lock(excluded_catalog)
+
+
+def test_package_lock_rejects_scalar_forbidden_dependencies() -> None:
+    catalog = {
+        "catalogVersion": 1,
+        "specVersion": "1.0",
+        "artifacts": [{"distribution": "graphblocks", "dependsOn": []}],
+        "components": [
+            {
+                "name": "root",
+                "artifact": "graphblocks",
+                "default": False,
+                "dependsOn": ["blocked-component"],
+                "forbiddenDependencies": "blocked-component",
+            },
+            {
+                "name": "blocked-component",
+                "artifact": "graphblocks",
+                "default": False,
+                "dependsOn": [],
+            },
+        ],
+    }
+
+    with pytest.raises(
+        ValueError,
+        match="component forbiddenDependencies must be a list",
+    ):
+        build_package_lock(
+            catalog,
+            requested=("root",),
+            include_default=False,
+        )
+
+
+def test_package_lock_rejects_scalar_excluded_categories() -> None:
+    catalog = {
+        "catalogVersion": 1,
+        "specVersion": "1.0",
+        "defaultSelection": {
+            "artifacts": ["graphblocks"],
+            "components": ["graphblocks-openai"],
+            "excludedCategories": "model_provider",
+        },
+        "artifacts": [{"distribution": "graphblocks", "dependsOn": []}],
+        "components": [
+            {
+                "name": "graphblocks-openai",
+                "artifact": "graphblocks",
+                "default": True,
+                "dependsOn": [],
+                "categories": ["model_provider"],
+            }
+        ],
+    }
+
+    with pytest.raises(
+        ValueError,
+        match="defaultSelection excludedCategories must be a list",
+    ):
+        build_package_lock(catalog)
+
+
+def test_package_lock_rejects_scalar_component_categories() -> None:
+    catalog = {
+        "catalogVersion": 1,
+        "specVersion": "1.0",
+        "defaultSelection": {
+            "artifacts": ["graphblocks"],
+            "components": ["graphblocks-openai"],
+            "excludedCategories": ["model_provider"],
+        },
+        "artifacts": [{"distribution": "graphblocks", "dependsOn": []}],
+        "components": [
+            {
+                "name": "graphblocks-openai",
+                "artifact": "graphblocks",
+                "default": True,
+                "dependsOn": [],
+                "categories": "model_provider",
+            }
+        ],
+    }
+
+    with pytest.raises(
+        ValueError,
+        match="component categories must be a list",
+    ):
+        build_package_lock(catalog)
 
 
 def test_package_lock_records_validate_component_artifact_and_uniqueness() -> None:
@@ -1378,6 +1509,52 @@ requires-python = ">=3.11"
     assert not matrix.ok
     assert [(item.code, item.path) for item in matrix.diagnostics] == [
         ("WheelBuildTargetMissing", "$.packages/broken-wheel/pyproject.toml.tool")
+    ]
+
+
+@pytest.mark.parametrize("source_path", ("../../../outside", "/tmp/outside"))
+def test_wheel_matrix_rejects_hatch_source_outside_root(
+    tmp_path,
+    source_path: str,
+) -> None:
+    manifest = tmp_path / "packages" / "unsafe" / "pyproject.toml"
+    manifest.parent.mkdir(parents=True)
+    manifest.write_text(
+        f"""
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[project]
+name = "unsafe"
+version = "0.1.0"
+requires-python = ">=3.11"
+
+[tool.hatch.build.targets.wheel]
+packages = ["{source_path}"]
+""".strip(),
+        encoding="utf-8",
+    )
+
+    matrix = build_wheel_matrix(
+        tmp_path,
+        catalog={
+            "artifacts": [
+                {
+                    "distribution": "unsafe",
+                    "kind": "pure_python",
+                    "manifest": "packages/unsafe/pyproject.toml",
+                }
+            ]
+        },
+    )
+
+    assert matrix.targets == ()
+    assert [(item.code, item.path) for item in matrix.diagnostics] == [
+        (
+            "WheelBuildTargetOutsideRoot",
+            "$.packages/unsafe/pyproject.toml.tool.hatch.build.targets.wheel.packages[0]",
+        )
     ]
 
 

@@ -23,6 +23,7 @@ from graphblocks.workspace import (
     InMemoryWorkspaceStore,
     WorkspaceCommit,
     WorkspaceCommitAuthorizationError,
+    WorkspaceError,
     WorkspaceMutationDecision,
     WorkspaceMutationDeniedError,
     WorkspaceMutationPolicy,
@@ -446,6 +447,77 @@ def test_workspace_store_compare_and_swap_commit_updates_revision() -> None:
 
     assert error.value.expected_snapshot_id == "snapshot-1"
     assert error.value.actual_snapshot_id == "snapshot-2"
+
+
+def test_workspace_store_rejects_reused_snapshot_identity() -> None:
+    store = InMemoryWorkspaceStore().put_snapshot(
+        WorkspaceSnapshot("workspace-1", "snapshot-1", 1)
+    )
+    store.compare_and_swap_commit(
+        workspace_id="workspace-1",
+        expected_snapshot_id="snapshot-1",
+        new_snapshot_id="snapshot-2",
+        resources=(),
+        committed_by=PrincipalRef("author-1"),
+        committed_at="2026-06-24T00:05:00Z",
+        change_set_id="change-1",
+    )
+
+    with pytest.raises(WorkspaceError, match="snapshot identity 'snapshot-1' has already been used"):
+        store.compare_and_swap_commit(
+            workspace_id="workspace-1",
+            expected_snapshot_id="snapshot-2",
+            new_snapshot_id="snapshot-1",
+            resources=(),
+            committed_by=PrincipalRef("author-1"),
+            committed_at="2026-06-24T00:06:00Z",
+            change_set_id="change-2",
+        )
+
+    assert store.current("workspace-1").snapshot_id == "snapshot-2"
+    assert store.current("workspace-1").revision == 2
+
+
+def test_workspace_store_rejects_snapshot_head_overwrite() -> None:
+    original = WorkspaceSnapshot("workspace-1", "snapshot-1", 1)
+    store = InMemoryWorkspaceStore().put_snapshot(original)
+
+    assert store.put_snapshot(original) is store
+    with pytest.raises(WorkspaceError, match="workspace 'workspace-1' is already initialized"):
+        store.put_snapshot(WorkspaceSnapshot("workspace-1", "snapshot-2", 2))
+
+    assert store.current("workspace-1") == original
+
+
+def test_workspace_store_rejects_reused_commit_identity() -> None:
+    store = InMemoryWorkspaceStore().put_snapshot(
+        WorkspaceSnapshot("workspace-1", "snapshot-1", 1)
+    )
+    store.compare_and_swap_commit(
+        workspace_id="workspace-1",
+        expected_snapshot_id="snapshot-1",
+        new_snapshot_id="snapshot-2",
+        resources=(),
+        committed_by=PrincipalRef("author-1"),
+        committed_at="2026-06-24T00:05:00Z",
+        change_set_id="change-1",
+        commit_id="commit-1",
+    )
+
+    with pytest.raises(WorkspaceError, match="commit identity 'commit-1' has already been used"):
+        store.compare_and_swap_commit(
+            workspace_id="workspace-1",
+            expected_snapshot_id="snapshot-2",
+            new_snapshot_id="snapshot-3",
+            resources=(),
+            committed_by=PrincipalRef("author-1"),
+            committed_at="2026-06-24T00:06:00Z",
+            change_set_id="change-2",
+            commit_id="commit-1",
+        )
+
+    assert store.current("workspace-1").snapshot_id == "snapshot-2"
+    assert store.current("workspace-1").revision == 2
 
 
 def test_workspace_store_compare_and_swap_commit_is_atomic(monkeypatch: pytest.MonkeyPatch) -> None:

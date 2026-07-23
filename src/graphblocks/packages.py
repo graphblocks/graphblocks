@@ -16,6 +16,7 @@ import yaml
 
 from .canonical import canonical_hash
 from .diagnostics import Diagnostic, DiagnosticSet
+from .loader import _DuplicateKeySafeLoader
 
 WheelBuildKind = Literal["pure_python", "native_extension"]
 
@@ -288,10 +289,10 @@ class PackageManifestAuditPolicy:
 def load_package_catalog(path: str | Path | None = None) -> dict[str, Any]:
     if path is None:
         with resources.files("graphblocks").joinpath("data/package-catalog.yaml").open("r", encoding="utf-8") as stream:
-            catalog = yaml.safe_load(stream)
+            catalog = yaml.load(stream, Loader=_DuplicateKeySafeLoader)
     else:
         with Path(path).open("r", encoding="utf-8") as stream:
-            catalog = yaml.safe_load(stream)
+            catalog = yaml.load(stream, Loader=_DuplicateKeySafeLoader)
     if not isinstance(catalog, dict):
         raise ValueError("package catalog must be a mapping")
     catalog_version = catalog.get("catalogVersion")
@@ -318,6 +319,8 @@ def load_package_catalog(path: str | Path | None = None) -> dict[str, Any]:
         name = component.get("name")
         if not isinstance(name, str) or not name.strip():
             raise ValueError("package catalog component name must be a non-empty string")
+        if not isinstance(component.get("default", False), bool):
+            raise ValueError("package catalog component default must be a boolean")
     return catalog
 
 
@@ -408,6 +411,16 @@ def build_package_lock(
         distribution = artifact.get("distribution")
         if not isinstance(distribution, str) or not distribution.strip():
             continue
+        raw_dependencies = artifact.get("dependsOn", [])
+        if not isinstance(raw_dependencies, list):
+            raise ValueError("package artifact dependsOn must be a list")
+        if any(
+            not isinstance(dependency, str) or not dependency.strip()
+            for dependency in raw_dependencies
+        ):
+            raise ValueError(
+                "package artifact dependsOn must contain non-empty strings"
+            )
         canonical_distribution = canonicalize_name(distribution.strip())
         if canonical_distribution in artifacts_by_distribution:
             raise ValueError(
@@ -425,9 +438,61 @@ def build_package_lock(
         exact_name = name.strip()
         if exact_name in components_by_name:
             raise ValueError(f"duplicate package component name {name.strip()!r}")
+        if not isinstance(component.get("default", False), bool):
+            raise ValueError("package component default must be a boolean")
+        raw_dependencies = component.get("dependsOn", [])
+        if not isinstance(raw_dependencies, list):
+            raise ValueError("package component dependsOn must be a list")
+        if any(
+            not isinstance(dependency, str) or not dependency.strip()
+            for dependency in raw_dependencies
+        ):
+            raise ValueError(
+                "package component dependsOn must contain non-empty strings"
+            )
+        raw_forbidden_dependencies = component.get("forbiddenDependencies", [])
+        if not isinstance(raw_forbidden_dependencies, list):
+            raise ValueError("package component forbiddenDependencies must be a list")
+        if any(
+            not isinstance(dependency, str) or not dependency.strip()
+            for dependency in raw_forbidden_dependencies
+        ):
+            raise ValueError(
+                "package component forbiddenDependencies must contain non-empty strings"
+            )
+        raw_category = component.get("category")
+        if raw_category is not None and (
+            not isinstance(raw_category, str) or not raw_category.strip()
+        ):
+            raise ValueError("package component category must be a non-empty string")
+        raw_categories = component.get("categories", [])
+        if not isinstance(raw_categories, list):
+            raise ValueError("package component categories must be a list")
+        if any(
+            not isinstance(category, str) or not category.strip()
+            for category in raw_categories
+        ):
+            raise ValueError(
+                "package component categories must contain non-empty strings"
+            )
         components_by_name[exact_name] = component
-    default_selection = catalog.get("defaultSelection")
-    default_selection = default_selection if isinstance(default_selection, dict) else {}
+    raw_default_selection = catalog.get("defaultSelection", {})
+    if not isinstance(raw_default_selection, dict):
+        raise ValueError("package defaultSelection must be a mapping")
+    default_selection = raw_default_selection
+    for field_name in ("artifacts", "components", "excludedCategories"):
+        values = default_selection.get(field_name, [])
+        if not isinstance(values, list):
+            raise ValueError(
+                f"package defaultSelection {field_name} must be a list"
+            )
+        if any(
+            not isinstance(value, str) or not value.strip()
+            for value in values
+        ):
+            raise ValueError(
+                f"package defaultSelection {field_name} must contain non-empty strings"
+            )
 
     artifact_roots: list[str] = []
     component_roots: list[str] = []
@@ -598,7 +663,7 @@ def build_package_lock(
                 import_package=(
                     component.get("import") if isinstance(component.get("import"), str) else None
                 ),
-                default=bool(component.get("default", False)),
+                default=component.get("default", False),
                 layer=component.get("layer") if isinstance(component.get("layer"), str) else None,
                 kind=component.get("kind") if isinstance(component.get("kind"), str) else None,
                 stability=(
@@ -1003,17 +1068,21 @@ def build_wheel_matrix(
             wheel = targets_config.get("wheel")
             wheel = wheel if isinstance(wheel, dict) else {}
             source_layout: str | None = None
+            source_field: str | None = None
+            source_paths: list[str] = []
             packages = wheel.get("packages")
             only_include = wheel.get("only-include")
             if isinstance(packages, list) and packages and all(isinstance(item, str) and item.strip() for item in packages):
-                source_layout = ",".join(packages)
+                source_field = "packages"
+                source_paths = packages
             elif (
                 isinstance(only_include, list)
                 and only_include
                 and all(isinstance(item, str) and item.strip() for item in only_include)
             ):
-                source_layout = ",".join(only_include)
-            if source_layout is None:
+                source_field = "only-include"
+                source_paths = only_include
+            if source_field is None:
                 diagnostics.append(
                     Diagnostic(
                         "WheelBuildTargetMissing",
@@ -1022,6 +1091,34 @@ def build_wheel_matrix(
                     )
                 )
                 continue
+            source_path_invalid = False
+            resolved_root = root_path.resolve()
+            for source_index, source_path in enumerate(source_paths):
+                reference = Path(source_path)
+                try:
+                    candidate = (manifest_path.parent / reference).resolve()
+                except (OSError, RuntimeError, ValueError):
+                    diagnostics.append(
+                        Diagnostic(
+                            "WheelBuildTargetInvalid",
+                            f"hatchling wheel target {distribution!r} declares an invalid source path",
+                            f"{path_prefix}.tool.hatch.build.targets.wheel.{source_field}[{source_index}]",
+                        )
+                    )
+                    source_path_invalid = True
+                    continue
+                if reference.is_absolute() or not candidate.is_relative_to(resolved_root):
+                    diagnostics.append(
+                        Diagnostic(
+                            "WheelBuildTargetOutsideRoot",
+                            f"hatchling wheel target {distribution!r} source path must remain beneath root",
+                            f"{path_prefix}.tool.hatch.build.targets.wheel.{source_field}[{source_index}]",
+                        )
+                    )
+                    source_path_invalid = True
+            if source_path_invalid:
+                continue
+            source_layout = ",".join(source_paths)
             targets.append(
                 WheelBuildTarget(
                     distribution=distribution,

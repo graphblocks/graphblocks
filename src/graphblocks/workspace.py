@@ -564,7 +564,15 @@ class InMemoryWorkspaceStore:
 
     @_with_workspace_lock
     def put_snapshot(self, snapshot: WorkspaceSnapshot) -> InMemoryWorkspaceStore:
-        self._snapshots[snapshot.workspace_id] = _copy_workspace_snapshot(snapshot)
+        stored = _copy_workspace_snapshot(snapshot)
+        existing = self._snapshots.get(stored.workspace_id)
+        if existing is not None:
+            if existing == stored:
+                return self
+            raise WorkspaceError(
+                f"workspace {stored.workspace_id!r} is already initialized"
+            )
+        self._snapshots[stored.workspace_id] = stored
         return self
 
     @_with_workspace_lock
@@ -593,6 +601,24 @@ class InMemoryWorkspaceStore:
         current = self.current(workspace_id)
         if current.snapshot_id != expected_snapshot_id:
             raise WorkspaceSnapshotConflictError(expected_snapshot_id, current.snapshot_id)
+        _validate_non_empty_string("workspace snapshot", "snapshot_id", new_snapshot_id)
+        if new_snapshot_id == current.snapshot_id or any(
+            commit.workspace_id == workspace_id
+            and new_snapshot_id
+            in {commit.previous_snapshot_id, commit.snapshot.snapshot_id}
+            for commit in self._commits
+        ):
+            raise WorkspaceError(
+                f"workspace snapshot identity {new_snapshot_id!r} has already been used"
+            )
+        actual_commit_id = (
+            f"{workspace_id}:{new_snapshot_id}" if commit_id is None else commit_id
+        )
+        _validate_non_empty_string("workspace commit", "commit_id", actual_commit_id)
+        if any(commit.commit_id == actual_commit_id for commit in self._commits):
+            raise WorkspaceError(
+                f"workspace commit identity {actual_commit_id!r} has already been used"
+            )
 
         candidate = WorkspaceSnapshot(
             workspace_id=workspace_id,
@@ -621,7 +647,7 @@ class InMemoryWorkspaceStore:
                 raise WorkspaceMutationDeniedError(decision.reason_codes)
 
         commit = WorkspaceCommit(
-            commit_id=f"{workspace_id}:{new_snapshot_id}" if commit_id is None else commit_id,
+            commit_id=actual_commit_id,
             workspace_id=workspace_id,
             previous_snapshot_id=current.snapshot_id,
             snapshot=candidate,
