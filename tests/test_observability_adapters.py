@@ -1030,6 +1030,8 @@ def test_otel_projection_contracts_reject_non_standard_json_constants(monkeypatc
         span.span_contract()
     with pytest.raises(graphblocks_otel.OtelCollectorTemplateError, match="strict JSON"):
         template.config_contract()
+    with pytest.raises(graphblocks_otel.OtelCollectorTemplateError, match="strict JSON"):
+        template.render_json()
 
 
 def test_otel_contracts_reject_duplicate_json_keys_and_coerced_booleans(
@@ -1054,6 +1056,28 @@ def test_otel_contracts_reject_duplicate_json_keys_and_coerced_booleans(
             "collector.example:4317",
             resource_attributes={1: "production"},  # type: ignore[dict-item]
         )
+
+
+def test_otel_template_rejects_malformed_direct_construction_boundaries(
+    monkeypatch,
+) -> None:
+    graphblocks_otel = importlib.import_module("graphblocks.integrations.otel")
+
+    with pytest.raises(graphblocks_otel.OtelCollectorTemplateError, match="mapping"):
+        graphblocks_otel.OtelCollectorTemplate.from_config(
+            name="collector",
+            config=[],  # type: ignore[arg-type]
+        )
+    with pytest.raises(graphblocks_otel.OtelCollectorTemplateError, match="name"):
+        graphblocks_otel.OtelCollectorTemplate(
+            name=" ",
+            config_json="{}",
+        ).template_contract()
+    with pytest.raises(
+        graphblocks_otel.OtelCollectorTemplateError,
+        match="surrounding whitespace",
+    ):
+        graphblocks_otel.otlp_collector_template(" collector.example:4317")
 
 
 def test_otel_span_projection_requires_schema_url(monkeypatch) -> None:

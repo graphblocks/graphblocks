@@ -4,13 +4,41 @@ from collections.abc import Iterable, Mapping, Sequence
 from copy import deepcopy
 from dataclasses import dataclass, field
 import math
+from uuid import UUID
 
+from graphblocks import SourceRef, canonical_dumps
 from graphblocks.rag import KnowledgeItemRef, SearchHit, SearchRequest
-from graphblocks import SourceRef
 
 
 class QdrantAdapterError(ValueError):
     """Raised when a Qdrant adapter contract is invalid."""
+
+
+_VALID_SOURCE_TRUSTS = frozenset(
+    {
+        "authoritative",
+        "verified",
+        "application",
+        "user_supplied",
+        "retrieved_untrusted",
+        "generated",
+        "unknown",
+    }
+)
+
+
+def _strict_json_mapping(
+    field_name: str,
+    value: Mapping[object, object],
+) -> dict[str, object]:
+    materialized = dict(value)
+    try:
+        canonical_dumps(materialized)
+    except (TypeError, ValueError) as error:
+        raise QdrantAdapterError(
+            f"{field_name} must be a strict JSON object"
+        ) from error
+    return deepcopy(materialized)  # type: ignore[return-value]
 
 
 @dataclass(frozen=True, slots=True)
@@ -24,6 +52,10 @@ class QdrantCollectionRef:
         collection = self.collection.strip()
         if not collection:
             raise QdrantAdapterError("collection must not be empty")
+        if collection != self.collection:
+            raise QdrantAdapterError(
+                "collection must not contain surrounding whitespace"
+            )
         if any(separator in collection for separator in ("/", "?", "#")):
             raise QdrantAdapterError(f"collection contains an invalid separator: {self.collection!r}")
         if self.vector_name is not None and not isinstance(self.vector_name, str):
@@ -31,6 +63,10 @@ class QdrantCollectionRef:
         vector_name = self.vector_name.strip() if self.vector_name is not None else None
         if vector_name == "":
             raise QdrantAdapterError("vector_name must not be empty")
+        if vector_name is not None and vector_name != self.vector_name:
+            raise QdrantAdapterError(
+                "vector_name must not contain surrounding whitespace"
+            )
         object.__setattr__(self, "collection", collection)
         object.__setattr__(self, "vector_name", vector_name)
 
@@ -43,17 +79,23 @@ class QdrantSearchRequest:
     metadata: Mapping[str, object] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        if not isinstance(self.collection, str) or not self.collection.strip():
-            raise QdrantAdapterError("collection must not be empty")
-        if not isinstance(self.body, Mapping) or not self.body:
+        collection = QdrantCollectionRef(self.collection).collection
+        if not isinstance(self.body, Mapping):
+            raise QdrantAdapterError("body must be a mapping")
+        body = dict(self.body)
+        if not body:
             raise QdrantAdapterError("body must not be empty")
         if not isinstance(self.query_text, str) or not self.query_text.strip():
             raise QdrantAdapterError("query_text must not be empty")
         if not isinstance(self.metadata, Mapping):
             raise QdrantAdapterError("metadata must be a mapping")
-        object.__setattr__(self, "collection", self.collection.strip())
-        object.__setattr__(self, "body", deepcopy(dict(self.body)))
-        object.__setattr__(self, "metadata", deepcopy(dict(self.metadata)))
+        object.__setattr__(self, "collection", collection)
+        object.__setattr__(self, "body", _strict_json_mapping("body", body))
+        object.__setattr__(
+            self,
+            "metadata",
+            _strict_json_mapping("metadata", self.metadata),
+        )
 
     def request_contract(self) -> dict[str, object]:
         return {
@@ -71,6 +113,10 @@ def qdrant_search_request(
     vector: Sequence[float],
     score_threshold: float | None = None,
 ) -> QdrantSearchRequest:
+    if not isinstance(request, SearchRequest):
+        raise QdrantAdapterError("request must be a SearchRequest")
+    if not isinstance(collection, QdrantCollectionRef):
+        raise QdrantAdapterError("collection must be a QdrantCollectionRef")
     if request.top_k < 1:
         raise QdrantAdapterError("top_k must be at least 1")
     if isinstance(vector, (str, bytes)) or not vector:
@@ -98,27 +144,31 @@ def qdrant_search_request(
     for key, value in sorted(request.filters.items()):
         if not isinstance(key, str) or not key.strip():
             raise QdrantAdapterError("filter keys must be non-empty strings")
+        if key != key.strip():
+            raise QdrantAdapterError(
+                "filter keys must not contain surrounding whitespace"
+            )
         if value is None:
-            null_condition: dict[str, object] = {"is_null": {"key": key.strip()}}
+            null_condition: dict[str, object] = {"is_null": {"key": key}}
             filter_terms.append(null_condition)
             continue
         if isinstance(value, Mapping):
             if "key" in value:
                 raise QdrantAdapterError(
-                    f"filter {key.strip()!r} mapping must not override its key"
+                    f"filter {key!r} mapping must not override its key"
                 )
-            condition = {"key": key.strip()}
+            condition = {"key": key}
             condition.update(deepcopy(dict(value)))
             filter_terms.append(condition)
         elif isinstance(value, (list, tuple, set, frozenset)):
             filter_terms.append(
                 {
-                    "key": key.strip(),
+                    "key": key,
                     "match": {"any": sorted(deepcopy(list(value)), key=repr)},
                 }
             )
         else:
-            filter_terms.append({"key": key.strip(), "match": {"value": deepcopy(value)}})
+            filter_terms.append({"key": key, "match": {"value": deepcopy(value)}})
     if filter_terms:
         body["filter"] = {"must": filter_terms}
     if score_threshold is not None:
@@ -146,6 +196,10 @@ def qdrant_hits_from_points(
 ) -> list[SearchHit]:
     if not isinstance(retriever_id, str) or not retriever_id.strip():
         raise QdrantAdapterError("retriever_id must not be empty")
+    if retriever_id != retriever_id.strip():
+        raise QdrantAdapterError(
+            "retriever_id must not contain surrounding whitespace"
+        )
     if not isinstance(score_kind, str):
         raise QdrantAdapterError("score_kind must be a string")
     score_kind = score_kind.strip()
@@ -156,20 +210,39 @@ def qdrant_hits_from_points(
     for rank, point in enumerate(points, start=1):
         if not isinstance(point, Mapping):
             raise QdrantAdapterError("Qdrant point must be a mapping")
+        point = _strict_json_mapping("Qdrant point", point)
+        if "id" in point and "point_id" in point:
+            raise QdrantAdapterError(
+                "Qdrant point must not contain both id and point_id"
+            )
         point_id = point.get("id", point.get("point_id"))
         if point_id is None:
             raise QdrantAdapterError("Qdrant point is missing id")
         if isinstance(point_id, bool) or not isinstance(point_id, (str, int)):
             raise QdrantAdapterError("Qdrant point id must be a string or integer")
-        if isinstance(point_id, int) and point_id < 0:
-            raise QdrantAdapterError("Qdrant integer point id must be non-negative")
-        if isinstance(point_id, str) and not point_id.strip():
-            raise QdrantAdapterError("Qdrant string point id must not be empty")
+        if isinstance(point_id, int) and not 0 <= point_id <= (1 << 64) - 1:
+            raise QdrantAdapterError(
+                "Qdrant integer point id must be an unsigned 64-bit integer"
+            )
+        if isinstance(point_id, str):
+            if not point_id.strip():
+                raise QdrantAdapterError("Qdrant string point id must not be empty")
+            if point_id != point_id.strip():
+                raise QdrantAdapterError(
+                    "Qdrant string point id must not contain surrounding whitespace"
+                )
+            try:
+                UUID(point_id)
+            except ValueError as error:
+                raise QdrantAdapterError(
+                    "Qdrant string point id must be a UUID"
+                ) from error
         payload = point.get("payload", {})
         if payload is None:
             payload = {}
         if not isinstance(payload, Mapping):
             raise QdrantAdapterError("Qdrant point payload must be a mapping")
+        payload = _strict_json_mapping("Qdrant point payload", payload)
         score = point.get("score")
         raw_score: float | None = None
         normalized_score: float | None = None
@@ -183,6 +256,8 @@ def qdrant_hits_from_points(
                 normalized_score = raw_score
 
         source_payload = payload.get("source")
+        if "source" in payload and not isinstance(source_payload, Mapping):
+            raise QdrantAdapterError("Qdrant source payload must be a mapping")
         if isinstance(source_payload, Mapping):
             source_id = source_payload.get("source_id")
             source_kind = source_payload.get("source_kind")
@@ -190,6 +265,10 @@ def qdrant_hits_from_points(
                 raise QdrantAdapterError("Qdrant source payload requires source_id")
             if not isinstance(source_kind, str) or not source_kind.strip():
                 raise QdrantAdapterError("Qdrant source payload requires source_kind")
+            if source_id != source_id.strip() or source_kind != source_kind.strip():
+                raise QdrantAdapterError(
+                    "Qdrant source identity fields must not contain surrounding whitespace"
+                )
             source_metadata = source_payload.get("metadata", {})
             if source_metadata is None:
                 source_metadata = {}
@@ -198,36 +277,48 @@ def qdrant_hits_from_points(
             source_access_policy = source_payload.get("access_policy")
             if source_access_policy is not None and not isinstance(source_access_policy, Mapping):
                 raise QdrantAdapterError("Qdrant source access_policy must be a mapping")
-            source = SourceRef(
-                source_id=source_id,
-                source_kind=source_kind,
-                revision=source_payload.get("revision") if isinstance(source_payload.get("revision"), str) else None,
-                digest=source_payload.get("digest") if isinstance(source_payload.get("digest"), str) else None,
-                observed_at=(
-                    source_payload.get("observed_at") if isinstance(source_payload.get("observed_at"), str) else None
-                ),
-                relevant_as_of=(
-                    source_payload.get("relevant_as_of")
-                    if isinstance(source_payload.get("relevant_as_of"), str)
-                    else None
-                ),
-                trust=(
-                    source_payload.get("trust")
-                    if source_payload.get("trust")
-                    in {
-                        "authoritative",
-                        "verified",
-                        "application",
-                        "user_supplied",
-                        "retrieved_untrusted",
-                        "generated",
-                        "unknown",
-                    }
-                    else "retrieved_untrusted"
-                ),
-                access_policy=deepcopy(dict(source_access_policy)) if isinstance(source_access_policy, Mapping) else None,
-                metadata=deepcopy(dict(source_metadata)),
-            )
+            for optional_field in (
+                "revision",
+                "digest",
+                "observed_at",
+                "relevant_as_of",
+            ):
+                optional_value = source_payload.get(optional_field)
+                if optional_value is not None and (
+                    not isinstance(optional_value, str)
+                    or not optional_value.strip()
+                    or optional_value != optional_value.strip()
+                ):
+                    raise QdrantAdapterError(
+                        f"Qdrant source {optional_field} must be a non-empty string"
+                    )
+            source_trust = source_payload.get("trust", "retrieved_untrusted")
+            if source_trust not in _VALID_SOURCE_TRUSTS:
+                raise QdrantAdapterError("Qdrant source trust is invalid")
+            try:
+                source = SourceRef(
+                    source_id=source_id,
+                    source_kind=source_kind,
+                    revision=source_payload.get("revision"),  # type: ignore[arg-type]
+                    digest=source_payload.get("digest"),  # type: ignore[arg-type]
+                    observed_at=source_payload.get("observed_at"),  # type: ignore[arg-type]
+                    relevant_as_of=source_payload.get("relevant_as_of"),  # type: ignore[arg-type]
+                    trust=source_trust,  # type: ignore[arg-type]
+                    access_policy=(
+                        _strict_json_mapping(
+                            "Qdrant source access_policy",
+                            source_access_policy,
+                        )
+                        if isinstance(source_access_policy, Mapping)
+                        else None
+                    ),
+                    metadata=_strict_json_mapping(
+                        "Qdrant source metadata",
+                        source_metadata,
+                    ),
+                )
+            except (TypeError, ValueError) as error:
+                raise QdrantAdapterError(str(error)) from error
         else:
             source = SourceRef(
                 source_id=f"qdrant:{point_id}",
@@ -241,8 +332,14 @@ def qdrant_hits_from_points(
             preview = []
         if isinstance(preview, str):
             preview = [preview]
-        if not isinstance(preview, Sequence):
+        if not isinstance(preview, list | tuple):
             raise QdrantAdapterError("Qdrant preview must be a sequence")
+        if any(not isinstance(part, str) for part in preview):
+            raise QdrantAdapterError("Qdrant preview parts must be strings")
+        if any(not part.strip() or part != part.strip() for part in preview):
+            raise QdrantAdapterError(
+                "Qdrant preview parts must be stable non-empty strings"
+            )
         acl = payload.get("acl")
         if acl is not None and not isinstance(acl, Mapping):
             raise QdrantAdapterError("Qdrant ACL must be a mapping")
@@ -251,17 +348,65 @@ def qdrant_hits_from_points(
             item_metadata = {}
         if not isinstance(item_metadata, Mapping):
             raise QdrantAdapterError("Qdrant item metadata must be a mapping")
+        item_id = payload.get("item_id")
+        if item_id is None:
+            item_id = str(point_id)
+        elif (
+            not isinstance(item_id, str)
+            or not item_id.strip()
+            or item_id != item_id.strip()
+        ):
+            raise QdrantAdapterError(
+                "Qdrant item_id must be a non-empty string"
+            )
+        item_kind = payload.get("item_kind", "document_chunk")
+        if (
+            not isinstance(item_kind, str)
+            or not item_kind.strip()
+            or item_kind != item_kind.strip()
+        ):
+            raise QdrantAdapterError(
+                "Qdrant item_kind must be a non-empty string"
+            )
+        schema_ref = payload.get("schema_ref")
+        if schema_ref is not None and (
+            not isinstance(schema_ref, str)
+            or not schema_ref.strip()
+            or schema_ref != schema_ref.strip()
+        ):
+            raise QdrantAdapterError(
+                "Qdrant schema_ref must be a non-empty string"
+            )
+        payload_ref = payload.get("payload_ref")
+        if payload_ref is not None and (
+            not isinstance(payload_ref, str)
+            or not payload_ref.strip()
+            or payload_ref != payload_ref.strip()
+        ):
+            raise QdrantAdapterError(
+                "Qdrant payload_ref must be a non-empty string"
+            )
 
-        item = KnowledgeItemRef(
-            item_id=str(payload.get("item_id", point_id)),
-            item_kind=str(payload.get("item_kind", "document_chunk")),
-            source=source,
-            schema_ref=payload.get("schema_ref") if isinstance(payload.get("schema_ref"), str) else None,
-            payload_ref=payload.get("payload_ref") if isinstance(payload.get("payload_ref"), str) else None,
-            preview=[str(part) for part in preview],
-            acl=deepcopy(dict(acl)) if isinstance(acl, Mapping) else None,
-            metadata=deepcopy(dict(item_metadata)),
-        )
+        try:
+            item = KnowledgeItemRef(
+                item_id=item_id,
+                item_kind=item_kind,
+                source=source,
+                schema_ref=schema_ref,  # type: ignore[arg-type]
+                payload_ref=payload_ref,  # type: ignore[arg-type]
+                preview=list(preview),
+                acl=(
+                    _strict_json_mapping("Qdrant ACL", acl)
+                    if isinstance(acl, Mapping)
+                    else None
+                ),
+                metadata=_strict_json_mapping(
+                    "Qdrant item metadata",
+                    item_metadata,
+                ),
+            )
+        except (TypeError, ValueError) as error:
+            raise QdrantAdapterError(str(error)) from error
         hits.append(
             SearchHit(
                 hit_id=f"{retriever_id}:{rank}:{point_id}",

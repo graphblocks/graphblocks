@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from copy import deepcopy
 from dataclasses import dataclass, field
 
 from graphblocks.durable import SinkCommitRequest, SourceCursor, SourceEvent
@@ -11,11 +12,22 @@ class KafkaAdapterError(ValueError):
 
 
 _MAX_KAFKA_OFFSET = (1 << 63) - 1
+_MAX_KAFKA_PARTITION = (1 << 31) - 1
+_MAX_KAFKA_TOPIC_LENGTH = 249
 
 
 def _validate_topic(topic: object) -> None:
     if not isinstance(topic, str) or not topic.strip():
         raise KafkaAdapterError("topic must not be empty")
+    if topic != topic.strip():
+        raise KafkaAdapterError("topic must not contain surrounding whitespace")
+    if len(topic) > _MAX_KAFKA_TOPIC_LENGTH:
+        raise KafkaAdapterError("topic must not exceed 249 characters")
+    if topic in {".", ".."} or any(
+        not (character.isascii() and (character.isalnum() or character in "._-"))
+        for character in topic
+    ):
+        raise KafkaAdapterError("topic contains unsupported characters")
 
 
 def _non_negative_int(field_name: str, value: object) -> int:
@@ -26,17 +38,18 @@ def _non_negative_int(field_name: str, value: object) -> int:
     return value
 
 
-def _optional_non_negative_int(field_name: str, value: object | None) -> int | None:
-    if value is None:
-        return None
-    return _non_negative_int(field_name, value)
-
-
 def _offset(field_name: str, value: object) -> int:
     offset = _non_negative_int(field_name, value)
     if offset > _MAX_KAFKA_OFFSET:
         raise KafkaAdapterError(f"{field_name} must not exceed signed 64-bit range")
     return offset
+
+
+def _partition(value: object) -> int:
+    partition = _non_negative_int("partition", value)
+    if partition > _MAX_KAFKA_PARTITION:
+        raise KafkaAdapterError("partition must not exceed signed 32-bit range")
+    return partition
 
 
 def _headers(value: object) -> dict[str, str]:
@@ -63,14 +76,15 @@ class KafkaRecord:
 
     def __post_init__(self) -> None:
         _validate_topic(self.topic)
-        object.__setattr__(self, "partition", _non_negative_int("partition", self.partition))
+        object.__setattr__(self, "partition", _partition(self.partition))
         object.__setattr__(self, "offset", _offset("offset", self.offset))
-        object.__setattr__(
-            self,
-            "timestamp_unix_ms",
-            _optional_non_negative_int("timestamp_unix_ms", self.timestamp_unix_ms),
-        )
+        timestamp_unix_ms = self.timestamp_unix_ms
+        if timestamp_unix_ms is not None:
+            timestamp_unix_ms = _offset("timestamp_unix_ms", timestamp_unix_ms)
+        object.__setattr__(self, "timestamp_unix_ms", timestamp_unix_ms)
         object.__setattr__(self, "headers", _headers(self.headers))
+        object.__setattr__(self, "value", deepcopy(self.value))
+        object.__setattr__(self, "key", deepcopy(self.key))
 
     def to_source_event(self) -> SourceEvent:
         return SourceEvent(
@@ -88,10 +102,14 @@ class KafkaConsumerCursor:
     next_offset: int
 
     def __post_init__(self) -> None:
-        if not isinstance(self.group_id, str) or not self.group_id.strip():
+        if (
+            not isinstance(self.group_id, str)
+            or not self.group_id.strip()
+            or self.group_id != self.group_id.strip()
+        ):
             raise KafkaAdapterError("group_id must not be empty")
         _validate_topic(self.topic)
-        object.__setattr__(self, "partition", _non_negative_int("partition", self.partition))
+        object.__setattr__(self, "partition", _partition(self.partition))
         object.__setattr__(self, "next_offset", _offset("next_offset", self.next_offset))
 
     @classmethod
@@ -118,8 +136,13 @@ class KafkaSinkRecord:
 
     def __post_init__(self) -> None:
         _validate_topic(self.topic)
-        object.__setattr__(self, "partition", _optional_non_negative_int("partition", self.partition))
+        partition = self.partition
+        if partition is not None:
+            partition = _partition(partition)
+        object.__setattr__(self, "partition", partition)
         object.__setattr__(self, "headers", _headers(self.headers))
+        object.__setattr__(self, "value", deepcopy(self.value))
+        object.__setattr__(self, "key", deepcopy(self.key))
 
     @classmethod
     def from_sink_commit(
@@ -130,10 +153,18 @@ class KafkaSinkRecord:
         key_field: str | None = None,
         partition: int | None = None,
     ) -> KafkaSinkRecord:
+        if not isinstance(request, SinkCommitRequest):
+            raise KafkaAdapterError("request must be a SinkCommitRequest")
         if key_field is None:
             key: object | None = request.idempotency_key
         else:
-            if not isinstance(request.payload, dict) or key_field not in request.payload:
+            if (
+                not isinstance(key_field, str)
+                or not key_field.strip()
+                or key_field != key_field.strip()
+            ):
+                raise KafkaAdapterError("key_field must be a stable non-empty string")
+            if not isinstance(request.payload, Mapping) or key_field not in request.payload:
                 raise KafkaAdapterError(f"payload does not contain key field {key_field!r}")
             key = request.payload[key_field]
         headers = {

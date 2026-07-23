@@ -95,6 +95,62 @@ def test_kafka_adapter_rejects_offset_overflow_and_malformed_headers(
         graphblocks_kafka.KafkaRecord(object(), 0, 1, {})  # type: ignore[arg-type]
 
 
+def test_kafka_adapter_rejects_wire_range_and_topic_violations(monkeypatch) -> None:
+    graphblocks_kafka = _import_kafka(monkeypatch)
+
+    for topic in (" orders", "orders/out", ".", "a" * 250):
+        with pytest.raises(graphblocks_kafka.KafkaAdapterError, match="topic"):
+            graphblocks_kafka.KafkaRecord(topic, 0, 1, {})
+    with pytest.raises(graphblocks_kafka.KafkaAdapterError, match="signed 32-bit"):
+        graphblocks_kafka.KafkaRecord("orders", 1 << 31, 1, {})
+    with pytest.raises(graphblocks_kafka.KafkaAdapterError, match="signed 64-bit"):
+        graphblocks_kafka.KafkaRecord(
+            "orders",
+            0,
+            1,
+            {},
+            timestamp_unix_ms=1 << 63,
+        )
+    with pytest.raises(graphblocks_kafka.KafkaAdapterError, match="group_id"):
+        graphblocks_kafka.KafkaConsumerCursor(" group", "orders", 0, 1)
+
+
+def test_kafka_records_own_mutable_values_and_validate_sink_boundaries(
+    monkeypatch,
+) -> None:
+    graphblocks_kafka = _import_kafka(monkeypatch)
+    value = {"items": ["original"]}
+    key = ["key"]
+    record = graphblocks_kafka.KafkaRecord("orders", 0, 1, value, key=key)
+    sink_record = graphblocks_kafka.KafkaSinkRecord("orders-out", value, key=key)
+
+    value["items"][0] = "mutated"
+    key[0] = "mutated"
+
+    assert record.value == {"items": ["original"]}
+    assert record.key == ["key"]
+    assert sink_record.value == {"items": ["original"]}
+    assert sink_record.key == ["key"]
+    with pytest.raises(graphblocks_kafka.KafkaAdapterError, match="SinkCommitRequest"):
+        graphblocks_kafka.KafkaSinkRecord.from_sink_commit(
+            topic="orders-out",
+            request=object(),  # type: ignore[arg-type]
+        )
+    request = graphblocks_kafka.SinkCommitRequest(
+        run_id="run-1",
+        node_id="write-order",
+        node_attempt_id="attempt-1",
+        idempotency_key="idem-1",
+        payload={"orderId": "ord-1"},
+    )
+    with pytest.raises(graphblocks_kafka.KafkaAdapterError, match="key_field"):
+        graphblocks_kafka.KafkaSinkRecord.from_sink_commit(
+            topic="orders-out",
+            request=request,
+            key_field=" orderId",
+        )
+
+
 def test_kafka_sink_record_projects_durable_sink_commit(monkeypatch) -> None:
     graphblocks_kafka = _import_kafka(monkeypatch)
     request = graphblocks_kafka.SinkCommitRequest(

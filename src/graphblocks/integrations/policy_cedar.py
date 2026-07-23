@@ -24,6 +24,52 @@ class CedarPolicyAdapterError(RuntimeError):
     pass
 
 
+def _exact_non_empty(field_name: str, value: object) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise CedarPolicyAdapterError(
+            f"{field_name} must be a non-empty string"
+        )
+    if value != value.strip():
+        raise CedarPolicyAdapterError(
+            f"{field_name} must not contain surrounding whitespace"
+        )
+    return value
+
+
+def _alias_value(
+    value: Mapping[str, object],
+    snake_case: str,
+    camel_case: str,
+    default: object,
+) -> object:
+    if snake_case in value and camel_case in value:
+        raise CedarPolicyAdapterError(
+            f"Cedar result must not contain both {snake_case} and {camel_case}"
+        )
+    if snake_case in value:
+        return value[snake_case]
+    if camel_case in value:
+        return value[camel_case]
+    return default
+
+
+def _strict_result(
+    result: object,
+    *,
+    contract_name: str,
+) -> Mapping[str, object]:
+    if not isinstance(result, Mapping):
+        raise CedarPolicyAdapterError(f"{contract_name} must be an object")
+    materialized = dict(result)
+    try:
+        canonical_dumps(materialized)
+    except (TypeError, ValueError) as error:
+        raise CedarPolicyAdapterError(
+            f"{contract_name} must be valid strict JSON"
+        ) from error
+    return materialized
+
+
 def _cedar_decision(value: object) -> Literal["allow", "deny"]:
     if isinstance(value, str):
         decision = value.casefold()
@@ -65,6 +111,8 @@ def prepare_cedar_authorization_request(
     *,
     schema_ref: str | None = None,
 ) -> CedarAuthorizationRequest:
+    if not isinstance(request, PolicyRequest):
+        raise CedarPolicyAdapterError("request must be a PolicyRequest")
     if request.principal is None:
         raise CedarPolicyAdapterError("Cedar authorization requires a principal")
 
@@ -124,10 +172,11 @@ def policy_decision_from_cedar_result(
     result: Mapping[str, object],
     evaluated_at: str,
 ) -> PolicyDecision:
-    if not isinstance(decision_id, str) or not decision_id.strip():
-        raise CedarPolicyAdapterError("decision_id must be a non-empty string")
-    if not isinstance(evaluated_at, str) or not evaluated_at.strip():
-        raise CedarPolicyAdapterError("evaluated_at must be a non-empty string")
+    decision_id = _exact_non_empty("decision_id", decision_id)
+    evaluated_at = _exact_non_empty("evaluated_at", evaluated_at)
+    if not isinstance(request, PolicyRequest):
+        raise CedarPolicyAdapterError("request must be a PolicyRequest")
+    result = _strict_result(result, contract_name="Cedar result")
 
     raw_decision = _cedar_decision(result.get("decision"))
     if raw_decision == "allow":
@@ -140,19 +189,26 @@ def policy_decision_from_cedar_result(
         diagnostics = {}
     if not isinstance(diagnostics, Mapping):
         raise CedarPolicyAdapterError("Cedar diagnostics must be an object")
-    reason_codes = _string_tuple(diagnostics.get("reason", diagnostics.get("reasons", ())))
-    policy_refs = _string_tuple(diagnostics.get("policy_refs", diagnostics.get("policyRefs", reason_codes)))
+    reason_codes = _string_tuple(
+        _alias_value(diagnostics, "reason", "reasons", ())
+    )
+    policy_refs = _string_tuple(
+        _alias_value(diagnostics, "policy_refs", "policyRefs", reason_codes)
+    )
     digested_request = request if request.input_digest else request.with_input_digest()
-    valid_until = result.get("valid_until", result.get("validUntil"))
-    if valid_until is not None and (not isinstance(valid_until, str) or not valid_until.strip()):
-        raise CedarPolicyAdapterError("Cedar policy decision valid_until must be a non-empty string")
+    valid_until = _alias_value(result, "valid_until", "validUntil", None)
+    if valid_until is not None:
+        valid_until = _exact_non_empty(
+            "Cedar policy decision valid_until",
+            valid_until,
+        )
     return PolicyDecision(
         decision_id=decision_id,
         effect=effect,
         reason_codes=reason_codes,
         policy_refs=policy_refs,
         evaluated_at=evaluated_at,
-        valid_until=valid_until.strip() if isinstance(valid_until, str) else None,
+        valid_until=valid_until,  # type: ignore[arg-type]
         input_digest=digested_request.input_digest,
     )
 
@@ -164,12 +220,21 @@ def output_policy_decision_from_cedar_result(
     result: Mapping[str, object],
     evaluated_at: str,
 ) -> OutputPolicyDecision:
-    if not isinstance(decision_id, str) or not decision_id.strip():
-        raise CedarPolicyAdapterError("decision_id must be a non-empty string")
-    if not isinstance(evaluated_at, str) or not evaluated_at.strip():
-        raise CedarPolicyAdapterError("evaluated_at must be a non-empty string")
+    decision_id = _exact_non_empty("decision_id", decision_id)
+    evaluated_at = _exact_non_empty("evaluated_at", evaluated_at)
+    if not isinstance(request, PolicyRequest):
+        raise CedarPolicyAdapterError("request must be a PolicyRequest")
+    result = _strict_result(
+        result,
+        contract_name="Cedar output policy result",
+    )
 
-    result_body = result.get("output_policy", result.get("outputPolicy", result))
+    result_body = _alias_value(
+        result,
+        "output_policy",
+        "outputPolicy",
+        result,
+    )
     if not isinstance(result_body, Mapping):
         raise CedarPolicyAdapterError("Cedar output policy result must be an object")
 
@@ -189,14 +254,34 @@ def output_policy_decision_from_cedar_result(
     if not isinstance(diagnostics, Mapping):
         raise CedarPolicyAdapterError("Cedar diagnostics must be an object")
     if "reason_codes" in result_body or "reasonCodes" in result_body:
-        raw_reason_codes = result_body.get("reason_codes", result_body.get("reasonCodes"))
+        raw_reason_codes = _alias_value(
+            result_body,
+            "reason_codes",
+            "reasonCodes",
+            (),
+        )
     else:
-        raw_reason_codes = diagnostics.get("reason", diagnostics.get("reasons", ()))
+        raw_reason_codes = _alias_value(
+            diagnostics,
+            "reason",
+            "reasons",
+            (),
+        )
     reason_codes = _string_tuple(raw_reason_codes)
     if "policy_refs" in result_body or "policyRefs" in result_body:
-        raw_policy_refs = result_body.get("policy_refs", result_body.get("policyRefs"))
+        raw_policy_refs = _alias_value(
+            result_body,
+            "policy_refs",
+            "policyRefs",
+            reason_codes,
+        )
     else:
-        raw_policy_refs = diagnostics.get("policy_refs", diagnostics.get("policyRefs", reason_codes))
+        raw_policy_refs = _alias_value(
+            diagnostics,
+            "policy_refs",
+            "policyRefs",
+            reason_codes,
+        )
     policy_refs = _string_tuple(raw_policy_refs)
     digested_request = request if request.input_digest else request.with_input_digest()
     try:
@@ -204,7 +289,12 @@ def output_policy_decision_from_cedar_result(
             decision_id=decision_id,
             disposition=disposition,
             accepted_through_sequence=_optional_non_negative_int(
-                result_body.get("accepted_through_sequence", result_body.get("acceptedThroughSequence")),
+                _alias_value(
+                    result_body,
+                    "accepted_through_sequence",
+                    "acceptedThroughSequence",
+                    None,
+                ),
                 "accepted_through_sequence",
             ),
             replacement_parts=_content_parts(result_body),
@@ -212,19 +302,34 @@ def output_policy_decision_from_cedar_result(
             reason_codes=reason_codes,
             policy_refs=policy_refs,
             provider_cancellation=_optional_literal(
-                result_body.get("provider_cancellation", result_body.get("providerCancellation")),
+                _alias_value(
+                    result_body,
+                    "provider_cancellation",
+                    "providerCancellation",
+                    None,
+                ),
                 VALID_PROVIDER_CANCELLATIONS,
                 "provider_cancellation",
                 "request",
             ),
             draft_disposition=_optional_literal(
-                result_body.get("draft_disposition", result_body.get("draftDisposition")),
+                _alias_value(
+                    result_body,
+                    "draft_disposition",
+                    "draftDisposition",
+                    None,
+                ),
                 VALID_DRAFT_DISPOSITIONS,
                 "draft_disposition",
                 "retract",
             ),
             pending_tool_calls=_optional_literal(
-                result_body.get("pending_tool_calls", result_body.get("pendingToolCalls")),
+                _alias_value(
+                    result_body,
+                    "pending_tool_calls",
+                    "pendingToolCalls",
+                    None,
+                ),
                 VALID_PENDING_TOOL_CALLS,
                 "pending_tool_calls",
                 "deny",
@@ -240,6 +345,10 @@ def _string_tuple(value: object) -> tuple[str, ...]:
     if isinstance(value, str):
         if not value.strip():
             raise CedarPolicyAdapterError("policy result string collection contains a blank string")
+        if value != value.strip():
+            raise CedarPolicyAdapterError(
+                "policy result string collection contains surrounding whitespace"
+            )
         return (value,)
     if not isinstance(value, list | tuple):
         raise CedarPolicyAdapterError("policy result string collection must be a sequence")
@@ -249,6 +358,10 @@ def _string_tuple(value: object) -> tuple[str, ...]:
             raise CedarPolicyAdapterError("policy result string collection contains a non-string item")
         if not item.strip():
             raise CedarPolicyAdapterError("policy result string collection contains a blank string")
+        if item != item.strip():
+            raise CedarPolicyAdapterError(
+                "policy result string collection contains surrounding whitespace"
+            )
         items.append(item)
     return tuple(items)
 
@@ -270,7 +383,12 @@ def _optional_literal(value: object, valid_values: frozenset[str], field_name: s
 
 
 def _content_parts(result_body: Mapping[str, object]) -> tuple[ContentPart, ...]:
-    raw_parts = result_body.get("replacement_parts", result_body.get("replacementParts", ()))
+    raw_parts = _alias_value(
+        result_body,
+        "replacement_parts",
+        "replacementParts",
+        (),
+    )
     if not isinstance(raw_parts, list | tuple):
         raise CedarPolicyAdapterError("output policy replacement parts must be a sequence")
     parts = [_content_part(raw_part) for raw_part in raw_parts]

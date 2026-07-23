@@ -256,6 +256,26 @@ def test_opa_adapter_rejects_blank_decision_metadata(monkeypatch) -> None:
             result={"result": {"effect": "allow", "valid_until": " "}},
             evaluated_at="2026-06-23T00:00:01Z",
         )
+    with pytest.raises(
+        graphblocks_policy_opa.OpaPolicyAdapterError,
+        match="surrounding whitespace",
+    ):
+        graphblocks_policy_opa.policy_decision_from_opa_result(
+            decision_id=" decision-opa-1",
+            request=_policy_request(),
+            result={"result": {"effect": "allow"}},
+            evaluated_at="2026-06-23T00:00:01Z",
+        )
+    with pytest.raises(
+        graphblocks_policy_opa.OpaPolicyAdapterError,
+        match="surrounding whitespace",
+    ):
+        graphblocks_policy_opa.policy_decision_from_opa_result(
+            decision_id="decision-opa-1",
+            request=_policy_request(),
+            result={"result": {"effect": "allow"}},
+            evaluated_at="2026-06-23T00:00:01Z ",
+        )
 
 
 def test_opa_adapter_rejects_blank_policy_result_strings(monkeypatch) -> None:
@@ -268,6 +288,83 @@ def test_opa_adapter_rejects_blank_policy_result_strings(monkeypatch) -> None:
             result={"result": {"effect": "allow", "reason_codes": ["allow-support", " "]}},
             evaluated_at="2026-06-23T00:00:01Z",
         )
+
+
+def test_opa_adapter_rejects_malformed_or_ambiguous_result_contracts(
+    monkeypatch,
+) -> None:
+    graphblocks_policy_opa = importlib.import_module(
+        "graphblocks.integrations.policy_opa"
+    )
+    request = _policy_request()
+
+    with pytest.raises(
+        graphblocks_policy_opa.OpaPolicyAdapterError,
+        match="object",
+    ):
+        graphblocks_policy_opa.policy_decision_from_opa_result(
+            decision_id="decision-opa-1",
+            request=request,
+            result=[],  # type: ignore[arg-type]
+            evaluated_at="2026-06-23T00:00:01Z",
+        )
+    with pytest.raises(
+        graphblocks_policy_opa.OpaPolicyAdapterError,
+        match="strict JSON",
+    ):
+        graphblocks_policy_opa.policy_decision_from_opa_result(
+            decision_id="decision-opa-1",
+            request=request,
+            result={"result": {"effect": "allow", "unused": float("nan")}},
+            evaluated_at="2026-06-23T00:00:01Z",
+        )
+    with pytest.raises(
+        graphblocks_policy_opa.OpaPolicyAdapterError,
+        match="reason_codes",
+    ):
+        graphblocks_policy_opa.policy_decision_from_opa_result(
+            decision_id="decision-opa-1",
+            request=request,
+            result={
+                "result": {
+                    "effect": "allow",
+                    "reason_codes": [],
+                    "reasonCodes": [],
+                }
+            },
+            evaluated_at="2026-06-23T00:00:01Z",
+        )
+    with pytest.raises(
+        graphblocks_policy_opa.OpaPolicyAdapterError,
+        match="surrounding whitespace",
+    ):
+        graphblocks_policy_opa.policy_decision_from_opa_result(
+            decision_id="decision-opa-1",
+            request=request,
+            result={"result": {"effect": "allow", "reason_codes": [" allow"]}},
+            evaluated_at="2026-06-23T00:00:01Z",
+        )
+    with pytest.raises(
+        graphblocks_policy_opa.OpaPolicyAdapterError,
+        match="replacement_parts",
+    ):
+        graphblocks_policy_opa.output_policy_decision_from_opa_result(
+            decision_id="output-decision-opa-1",
+            request=_output_policy_request(),
+            result={
+                "result": {
+                    "disposition": "replace",
+                    "replacement_parts": [],
+                    "replacementParts": [],
+                }
+            },
+            evaluated_at="2026-06-23T00:00:01Z",
+        )
+    with pytest.raises(
+        graphblocks_policy_opa.OpaPolicyAdapterError,
+        match="PolicyRequest",
+    ):
+        graphblocks_policy_opa.prepare_opa_policy_input(object())  # type: ignore[arg-type]
 
 
 def test_opa_adapter_maps_output_policy_result(monkeypatch) -> None:
@@ -484,6 +581,26 @@ def test_cedar_adapter_rejects_blank_decision_metadata(monkeypatch) -> None:
             result={"decision": "allow", "validUntil": " "},
             evaluated_at="2026-06-23T00:00:01Z",
         )
+    with pytest.raises(
+        graphblocks_policy_cedar.CedarPolicyAdapterError,
+        match="surrounding whitespace",
+    ):
+        graphblocks_policy_cedar.policy_decision_from_cedar_result(
+            decision_id=" decision-cedar-1",
+            request=_policy_request(),
+            result={"decision": "allow"},
+            evaluated_at="2026-06-23T00:00:01Z",
+        )
+    with pytest.raises(
+        graphblocks_policy_cedar.CedarPolicyAdapterError,
+        match="surrounding whitespace",
+    ):
+        graphblocks_policy_cedar.policy_decision_from_cedar_result(
+            decision_id="decision-cedar-1",
+            request=_policy_request(),
+            result={"decision": "allow"},
+            evaluated_at="2026-06-23T00:00:01Z ",
+        )
 
 
 def test_cedar_adapter_rejects_blank_policy_result_strings(monkeypatch) -> None:
@@ -495,6 +612,83 @@ def test_cedar_adapter_rejects_blank_policy_result_strings(monkeypatch) -> None:
             request=_policy_request(),
             result={"decision": "allow", "diagnostics": {"reason": ["policy::support::allow", " "]}},
             evaluated_at="2026-06-23T00:00:01Z",
+        )
+
+
+def test_cedar_adapter_rejects_malformed_or_ambiguous_result_contracts(
+    monkeypatch,
+) -> None:
+    graphblocks_policy_cedar = importlib.import_module(
+        "graphblocks.integrations.policy_cedar"
+    )
+    request = _policy_request()
+
+    with pytest.raises(
+        graphblocks_policy_cedar.CedarPolicyAdapterError,
+        match="object",
+    ):
+        graphblocks_policy_cedar.policy_decision_from_cedar_result(
+            decision_id="decision-cedar-1",
+            request=request,
+            result=[],  # type: ignore[arg-type]
+            evaluated_at="2026-06-23T00:00:01Z",
+        )
+    with pytest.raises(
+        graphblocks_policy_cedar.CedarPolicyAdapterError,
+        match="strict JSON",
+    ):
+        graphblocks_policy_cedar.policy_decision_from_cedar_result(
+            decision_id="decision-cedar-1",
+            request=request,
+            result={"decision": "allow", "unused": float("nan")},
+            evaluated_at="2026-06-23T00:00:01Z",
+        )
+    with pytest.raises(
+        graphblocks_policy_cedar.CedarPolicyAdapterError,
+        match="reason",
+    ):
+        graphblocks_policy_cedar.policy_decision_from_cedar_result(
+            decision_id="decision-cedar-1",
+            request=request,
+            result={
+                "decision": "allow",
+                "diagnostics": {"reason": [], "reasons": []},
+            },
+            evaluated_at="2026-06-23T00:00:01Z",
+        )
+    with pytest.raises(
+        graphblocks_policy_cedar.CedarPolicyAdapterError,
+        match="surrounding whitespace",
+    ):
+        graphblocks_policy_cedar.policy_decision_from_cedar_result(
+            decision_id="decision-cedar-1",
+            request=request,
+            result={
+                "decision": "allow",
+                "diagnostics": {"reason": [" policy::allow"]},
+            },
+            evaluated_at="2026-06-23T00:00:01Z",
+        )
+    with pytest.raises(
+        graphblocks_policy_cedar.CedarPolicyAdapterError,
+        match="output_policy",
+    ):
+        graphblocks_policy_cedar.output_policy_decision_from_cedar_result(
+            decision_id="output-decision-cedar-1",
+            request=_output_policy_request(),
+            result={
+                "decision": "allow",
+                "output_policy": {"disposition": "allow"},
+                "outputPolicy": {"disposition": "allow"},
+            },
+            evaluated_at="2026-06-23T00:00:01Z",
+        )
+    with pytest.raises(
+        graphblocks_policy_cedar.CedarPolicyAdapterError,
+        match="PolicyRequest",
+    ):
+        graphblocks_policy_cedar.prepare_cedar_authorization_request(
+            object()  # type: ignore[arg-type]
         )
 
 

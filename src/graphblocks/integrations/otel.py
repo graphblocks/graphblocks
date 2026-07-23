@@ -41,7 +41,11 @@ class OtelCollectorTemplate:
 
     @classmethod
     def from_config(cls, *, name: str, config: Mapping[str, object]) -> OtelCollectorTemplate:
-        _require_non_empty("collector template name", name)
+        name = _require_non_empty("collector template name", name)
+        if not isinstance(config, Mapping):
+            raise OtelCollectorTemplateError(
+                "collector template config must be a mapping"
+            )
         return cls(name=name, config_json=canonical_dumps(dict(config)))
 
     def config_contract(self) -> dict[str, object]:
@@ -49,11 +53,13 @@ class OtelCollectorTemplate:
 
     def template_contract(self) -> dict[str, object]:
         return {
-            "name": self.name,
+            "name": _require_non_empty("collector template name", self.name),
             "config": self.config_contract(),
         }
 
     def render_json(self) -> str:
+        _require_non_empty("collector template name", self.name)
+        self.config_contract()
         return self.config_json
 
 
@@ -261,6 +267,10 @@ def otlp_span_from_tool_execution(
 def _require_non_empty(field_name: str, value: object) -> str:
     if not isinstance(value, str) or not value.strip():
         raise OtelCollectorTemplateError(f"{field_name} must be a non-empty string")
+    if value != value.strip():
+        raise OtelCollectorTemplateError(
+            f"{field_name} must not contain surrounding whitespace"
+        )
     return value
 
 

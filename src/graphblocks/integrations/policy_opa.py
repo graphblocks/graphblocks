@@ -25,6 +25,57 @@ class OpaPolicyAdapterError(RuntimeError):
     pass
 
 
+def _exact_non_empty(field_name: str, value: object) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise OpaPolicyAdapterError(
+            f"{field_name} must be a non-empty string"
+        )
+    if value != value.strip():
+        raise OpaPolicyAdapterError(
+            f"{field_name} must not contain surrounding whitespace"
+        )
+    return value
+
+
+def _alias_value(
+    value: Mapping[str, object],
+    snake_case: str,
+    camel_case: str,
+    default: object,
+) -> object:
+    if snake_case in value and camel_case in value:
+        raise OpaPolicyAdapterError(
+            f"OPA result must not contain both {snake_case} and {camel_case}"
+        )
+    if snake_case in value:
+        return value[snake_case]
+    if camel_case in value:
+        return value[camel_case]
+    return default
+
+
+def _result_body(
+    result: object,
+    *,
+    contract_name: str,
+) -> Mapping[str, object]:
+    if not isinstance(result, Mapping):
+        raise OpaPolicyAdapterError(f"{contract_name} must be an object")
+    materialized = dict(result)
+    try:
+        canonical_dumps(materialized)
+    except (TypeError, ValueError) as error:
+        raise OpaPolicyAdapterError(
+            f"{contract_name} must be valid strict JSON"
+        ) from error
+    body = materialized.get("result", materialized)
+    if not isinstance(body, Mapping):
+        raise OpaPolicyAdapterError(
+            f"{contract_name} must contain an object result"
+        )
+    return body
+
+
 @dataclass(frozen=True, slots=True)
 class OpaPolicyInput:
     input_json: str
@@ -51,6 +102,8 @@ class OpaPolicyInput:
 
 
 def prepare_opa_policy_input(request: PolicyRequest, *, package_ref: str | None = None) -> OpaPolicyInput:
+    if not isinstance(request, PolicyRequest):
+        raise OpaPolicyAdapterError("request must be a PolicyRequest")
     digested_request = request if request.input_digest else request.with_input_digest()
     atomic_unit = None
     if digested_request.atomic_unit is not None:
@@ -112,21 +165,23 @@ def policy_decision_from_opa_result(
     result: Mapping[str, object],
     evaluated_at: str,
 ) -> PolicyDecision:
-    if not isinstance(decision_id, str) or not decision_id.strip():
-        raise OpaPolicyAdapterError("decision_id must be a non-empty string")
-    if not isinstance(evaluated_at, str) or not evaluated_at.strip():
-        raise OpaPolicyAdapterError("evaluated_at must be a non-empty string")
+    decision_id = _exact_non_empty("decision_id", decision_id)
+    evaluated_at = _exact_non_empty("evaluated_at", evaluated_at)
+    if not isinstance(request, PolicyRequest):
+        raise OpaPolicyAdapterError("request must be a PolicyRequest")
 
-    result_body = result.get("result", result)
-    if not isinstance(result_body, Mapping):
-        raise OpaPolicyAdapterError("OPA result must contain an object result")
+    result_body = _result_body(result, contract_name="OPA result")
 
     effect = result_body.get("effect")
     if not isinstance(effect, str) or effect not in VALID_POLICY_EFFECTS:
         raise OpaPolicyAdapterError(f"unknown policy effect {effect}")
 
-    reason_codes = _string_tuple(result_body.get("reason_codes", result_body.get("reasonCodes", ())))
-    policy_refs = _string_tuple(result_body.get("policy_refs", result_body.get("policyRefs", reason_codes)))
+    reason_codes = _string_tuple(
+        _alias_value(result_body, "reason_codes", "reasonCodes", ())
+    )
+    policy_refs = _string_tuple(
+        _alias_value(result_body, "policy_refs", "policyRefs", reason_codes)
+    )
     obligations = []
     raw_obligations = result_body.get("obligations", ())
     if not isinstance(raw_obligations, list | tuple):
@@ -134,10 +189,27 @@ def policy_decision_from_opa_result(
     for raw_obligation in raw_obligations:
         if not isinstance(raw_obligation, Mapping):
             raise OpaPolicyAdapterError("OPA obligation must be an object")
-        obligation_id = raw_obligation.get("obligation_id", raw_obligation.get("id"))
-        obligation_type = raw_obligation.get("obligation_type", raw_obligation.get("type"))
+        obligation_id = _alias_value(
+            raw_obligation,
+            "obligation_id",
+            "id",
+            None,
+        )
+        obligation_type = _alias_value(
+            raw_obligation,
+            "obligation_type",
+            "type",
+            None,
+        )
         parameters = raw_obligation.get("parameters", {})
-        if not isinstance(obligation_id, str) or not isinstance(obligation_type, str):
+        if (
+            not isinstance(obligation_id, str)
+            or not obligation_id.strip()
+            or obligation_id != obligation_id.strip()
+            or not isinstance(obligation_type, str)
+            or not obligation_type.strip()
+            or obligation_type != obligation_type.strip()
+        ):
             raise OpaPolicyAdapterError("OPA obligation requires string id and type")
         if not isinstance(parameters, Mapping):
             raise OpaPolicyAdapterError("OPA obligation parameters must be an object")
@@ -153,9 +225,17 @@ def policy_decision_from_opa_result(
         advice.append(dict(item))
 
     digested_request = request if request.input_digest else request.with_input_digest()
-    valid_until = result_body.get("valid_until", result_body.get("validUntil"))
-    if valid_until is not None and (not isinstance(valid_until, str) or not valid_until.strip()):
-        raise OpaPolicyAdapterError("OPA policy decision valid_until must be a non-empty string")
+    valid_until = _alias_value(
+        result_body,
+        "valid_until",
+        "validUntil",
+        None,
+    )
+    if valid_until is not None:
+        valid_until = _exact_non_empty(
+            "OPA policy decision valid_until",
+            valid_until,
+        )
     return PolicyDecision(
         decision_id=decision_id,
         effect=effect,
@@ -164,7 +244,7 @@ def policy_decision_from_opa_result(
         obligations=tuple(obligations),
         advice=tuple(advice),
         evaluated_at=evaluated_at,
-        valid_until=valid_until.strip() if isinstance(valid_until, str) else None,
+        valid_until=valid_until,  # type: ignore[arg-type]
         input_digest=digested_request.input_digest,
     )
 
@@ -176,28 +256,43 @@ def output_policy_decision_from_opa_result(
     result: Mapping[str, object],
     evaluated_at: str,
 ) -> OutputPolicyDecision:
-    if not isinstance(decision_id, str) or not decision_id.strip():
-        raise OpaPolicyAdapterError("decision_id must be a non-empty string")
-    if not isinstance(evaluated_at, str) or not evaluated_at.strip():
-        raise OpaPolicyAdapterError("evaluated_at must be a non-empty string")
+    decision_id = _exact_non_empty("decision_id", decision_id)
+    evaluated_at = _exact_non_empty("evaluated_at", evaluated_at)
+    if not isinstance(request, PolicyRequest):
+        raise OpaPolicyAdapterError("request must be a PolicyRequest")
 
-    result_body = result.get("result", result)
-    if not isinstance(result_body, Mapping):
-        raise OpaPolicyAdapterError("OPA output policy result must contain an object result")
+    result_body = _result_body(
+        result,
+        contract_name="OPA output policy result",
+    )
 
-    disposition = result_body.get("disposition", result_body.get("outputDisposition"))
+    disposition = _alias_value(
+        result_body,
+        "disposition",
+        "outputDisposition",
+        None,
+    )
     if not isinstance(disposition, str) or disposition not in VALID_OUTPUT_DISPOSITIONS:
         raise OpaPolicyAdapterError(f"unknown output policy disposition {disposition}")
 
-    reason_codes = _string_tuple(result_body.get("reason_codes", result_body.get("reasonCodes", ())))
-    policy_refs = _string_tuple(result_body.get("policy_refs", result_body.get("policyRefs", reason_codes)))
+    reason_codes = _string_tuple(
+        _alias_value(result_body, "reason_codes", "reasonCodes", ())
+    )
+    policy_refs = _string_tuple(
+        _alias_value(result_body, "policy_refs", "policyRefs", reason_codes)
+    )
     digested_request = request if request.input_digest else request.with_input_digest()
     try:
         return OutputPolicyDecision(
             decision_id=decision_id,
             disposition=disposition,
             accepted_through_sequence=_optional_non_negative_int(
-                result_body.get("accepted_through_sequence", result_body.get("acceptedThroughSequence")),
+                _alias_value(
+                    result_body,
+                    "accepted_through_sequence",
+                    "acceptedThroughSequence",
+                    None,
+                ),
                 "accepted_through_sequence",
             ),
             replacement_parts=_content_parts(result_body),
@@ -205,19 +300,34 @@ def output_policy_decision_from_opa_result(
             reason_codes=reason_codes,
             policy_refs=policy_refs,
             provider_cancellation=_optional_literal(
-                result_body.get("provider_cancellation", result_body.get("providerCancellation")),
+                _alias_value(
+                    result_body,
+                    "provider_cancellation",
+                    "providerCancellation",
+                    None,
+                ),
                 VALID_PROVIDER_CANCELLATIONS,
                 "provider_cancellation",
                 "request",
             ),
             draft_disposition=_optional_literal(
-                result_body.get("draft_disposition", result_body.get("draftDisposition")),
+                _alias_value(
+                    result_body,
+                    "draft_disposition",
+                    "draftDisposition",
+                    None,
+                ),
                 VALID_DRAFT_DISPOSITIONS,
                 "draft_disposition",
                 "retract",
             ),
             pending_tool_calls=_optional_literal(
-                result_body.get("pending_tool_calls", result_body.get("pendingToolCalls")),
+                _alias_value(
+                    result_body,
+                    "pending_tool_calls",
+                    "pendingToolCalls",
+                    None,
+                ),
                 VALID_PENDING_TOOL_CALLS,
                 "pending_tool_calls",
                 "deny",
@@ -233,6 +343,10 @@ def _string_tuple(value: object) -> tuple[str, ...]:
     if isinstance(value, str):
         if not value.strip():
             raise OpaPolicyAdapterError("policy result string collection contains a blank string")
+        if value != value.strip():
+            raise OpaPolicyAdapterError(
+                "policy result string collection contains surrounding whitespace"
+            )
         return (value,)
     if not isinstance(value, list | tuple):
         raise OpaPolicyAdapterError("policy result string collection must be a sequence")
@@ -242,6 +356,10 @@ def _string_tuple(value: object) -> tuple[str, ...]:
             raise OpaPolicyAdapterError("policy result string collection contains a non-string item")
         if not item.strip():
             raise OpaPolicyAdapterError("policy result string collection contains a blank string")
+        if item != item.strip():
+            raise OpaPolicyAdapterError(
+                "policy result string collection contains surrounding whitespace"
+            )
         items.append(item)
     return tuple(items)
 
@@ -263,7 +381,12 @@ def _optional_literal(value: object, valid_values: frozenset[str], field_name: s
 
 
 def _content_parts(result_body: Mapping[str, object]) -> tuple[ContentPart, ...]:
-    raw_parts = result_body.get("replacement_parts", result_body.get("replacementParts", ()))
+    raw_parts = _alias_value(
+        result_body,
+        "replacement_parts",
+        "replacementParts",
+        (),
+    )
     if not isinstance(raw_parts, list | tuple):
         raise OpaPolicyAdapterError("output policy replacement parts must be a sequence")
     parts = [_content_part(raw_part) for raw_part in raw_parts]
