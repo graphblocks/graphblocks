@@ -326,7 +326,7 @@ def test_structured_generate_projects_example_specific_optional_outputs() -> Non
 
 def test_runtime_registry_rejects_undeclared_and_duplicate_blocks() -> None:
     block_id = "example.echo@1"
-    block = lambda inputs, config, context: {"value": inputs.get("value")}
+    block = lambda inputs, config, context: {"value": inputs.get("value")}  # noqa: E731
 
     with pytest.raises(ValueError, match="not declared in the block catalog"):
         RuntimeRegistry().register(block_id, block)

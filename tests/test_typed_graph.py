@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import pickle
 from typing import Any, cast
 
 import pytest
@@ -404,3 +405,27 @@ def test_typed_stdlib_configs_reject_coerced_numbers_and_snapshot_response() -> 
     assert block.response["items"][0]["text"] == "stable"  # type: ignore[index]
     with pytest.raises(TypeError):
         block.response["items"][0]["text"] = "mutated"  # type: ignore[index]
+
+
+def test_typed_stdlib_configs_enforce_wire_bounds_and_pickle_safe_snapshots() -> None:
+    for factory in (
+        lambda: RetrieveExecutePlan(minimum_successful_sources=1 << 64),
+        lambda: RetrieveFuse(k=1 << 64),
+        lambda: ContextBuild(max_tokens=1 << 64),
+    ):
+        with pytest.raises(ValueError, match="unsigned 64-bit"):
+            factory()
+    with pytest.raises(ValueError, match="must not exceed max_tokens"):
+        ContextBuild(max_tokens=10, reserve_output_tokens=11)
+    with pytest.raises(ValueError, match="Unicode scalar"):
+        RankDocuments(reranker_id="\ud800")
+
+    block = StructuredGenerate(
+        output_schema=ANSWER,
+        response={"items": [{"text": "stable"}]},
+    )
+    restored = pickle.loads(pickle.dumps(block))
+
+    assert restored.response == block.response
+    with pytest.raises(TypeError):
+        restored.response["items"][0]["text"] = "mutated"  # type: ignore[index]

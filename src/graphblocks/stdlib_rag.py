@@ -24,12 +24,35 @@ from .rag import (
 )
 
 RagBlockCallable = Callable[[dict[str, Any], dict[str, Any], dict[str, Any]], dict[str, Any]]
+_MAX_U64 = (1 << 64) - 1
+
+
+def _wire_string(value: object, label: str) -> str:
+    if not isinstance(value, str):
+        raise TypeError(f"{label} must be a string")
+    try:
+        value.encode("utf-8")
+    except UnicodeEncodeError as error:
+        raise TypeError(
+            f"{label} must contain only Unicode scalar values"
+        ) from error
+    return value
 
 
 def _mapping(value: object, label: str) -> dict[str, Any]:
     if not isinstance(value, Mapping):
         raise TypeError(f"{label} must be a mapping")
-    return dict(value)
+    try:
+        items = tuple(value.items())
+    except Exception as error:
+        raise TypeError(f"{label} must be a stable mapping") from error
+    snapshot: dict[str, Any] = {}
+    for key, item in items:
+        key = _wire_string(key, f"{label} keys")
+        if key in snapshot:
+            raise TypeError(f"{label} keys must be unique")
+        snapshot[key] = item
+    return snapshot
 
 
 def _sequence(value: object, label: str) -> list[Any]:
@@ -37,7 +60,10 @@ def _sequence(value: object, label: str) -> list[Any]:
         raise TypeError(f"{label} must be a sequence")
     if not isinstance(value, Sequence):
         raise TypeError(f"{label} must be a sequence")
-    return list(value)
+    try:
+        return list(value)
+    except Exception as error:
+        raise TypeError(f"{label} must be a stable sequence") from error
 
 
 def _non_negative_integer(value: object, label: str) -> int:
@@ -45,6 +71,8 @@ def _non_negative_integer(value: object, label: str) -> int:
         raise ValueError(f"{label} must be a non-negative integer")
     if value < 0:
         raise ValueError(f"{label} must be a non-negative integer")
+    if value > _MAX_U64:
+        raise ValueError(f"{label} must fit an unsigned 64-bit integer")
     return value
 
 
@@ -472,7 +500,7 @@ def rank_documents(
     del context
     query = inputs.get("query", "")
     if isinstance(query, Mapping):
-        query_record = dict(query)
+        query_record = _mapping(query, "rank.documents@1 query")
         query_terms = _value(query_record, "queryTerms", "query_terms")
         if query_terms is None:
             query_text = _value(query_record, "queryText", "query_text")
@@ -481,12 +509,40 @@ def rank_documents(
                     "original",
                     query_record.get("text", ""),
                 )
-            query_terms = str(query_text).split()
+            query_terms = _wire_string(
+                query_text,
+                "rank.documents@1 query text",
+            ).split()
+        else:
+            query_terms = [
+                _wire_string(
+                    item,
+                    "rank.documents@1 query term",
+                )
+                for item in _sequence(
+                    query_terms,
+                    "rank.documents@1 query.queryTerms",
+                )
+            ]
+    elif isinstance(query, str):
+        query_terms = _wire_string(
+            query,
+            "rank.documents@1 query",
+        ).split()
     else:
-        query_terms = str(query).split()
+        raise TypeError("rank.documents@1 query must be a string or mapping")
     configured_terms = _value(config, "queryTerms", "query_terms")
     if configured_terms is not None:
-        query_terms = _sequence(configured_terms, "rank.documents@1 config.queryTerms")
+        query_terms = [
+            _wire_string(
+                item,
+                "rank.documents@1 config query term",
+            )
+            for item in _sequence(
+                configured_terms,
+                "rank.documents@1 config.queryTerms",
+            )
+        ]
     hits = [_hit_from_wire(item) for item in _sequence(inputs.get("hits"), "rank.documents@1 inputs.hits")]
     result = rerank_search_hits(
         hits,

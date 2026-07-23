@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Iterator, Mapping
+
 import pytest
 
 from graphblocks.runtime import InProcessRuntime, stdlib_registry
@@ -263,3 +265,34 @@ def test_grounding_block_returns_a_graph_candidate_for_abstention() -> None:
     assert output["validation"]["issues"][0]["code"] == "grounding.insufficient_context"
     assert output["candidate"]["text"] == "I do not have enough retrieved context to answer."
     assert output["candidate"]["abstention"]["reason"] == "insufficient_context"
+
+
+def test_rag_blocks_normalize_hostile_inputs_and_reject_query_coercion() -> None:
+    class ExplodingMapping(Mapping[str, object]):
+        def __getitem__(self, key: str) -> object:
+            raise RuntimeError("mapping changed during snapshot")
+
+        def __iter__(self) -> Iterator[str]:
+            raise RuntimeError("mapping changed during snapshot")
+
+        def __len__(self) -> int:
+            return 1
+
+    with pytest.raises(TypeError, match="must be a stable mapping"):
+        rank_documents(
+            {"query": ExplodingMapping(), "hits": []},
+            {},
+            {},
+        )
+    with pytest.raises(TypeError, match="query must be a string or mapping"):
+        rank_documents(
+            {"query": object(), "hits": []},
+            {},
+            {},
+        )
+    with pytest.raises(ValueError, match="unsigned 64-bit"):
+        retrieve_fuse(
+            {"sources": []},
+            {"topK": 1 << 64},
+            {},
+        )

@@ -9,13 +9,15 @@ that the portable Graph contract uses.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from copy import deepcopy
 from dataclasses import dataclass
-from types import MappingProxyType
 from typing import Generic, Literal, TypeAlias, TypeVar
 
 from .canonical import canonical_dumps, canonical_loads
+from .documents import FrozenDict, FrozenList
 from .typed import BoundBlock, InputRef, NodeOutput, PortType
+
+
+_MAX_U64 = (1 << 64) - 1
 
 
 class SearchRequestValue:
@@ -119,6 +121,10 @@ def _validate_positive_integer(field_name: str, value: object) -> int:
         raise ValueError(f"{field_name} must be an integer")
     if value < 1:
         raise ValueError(f"{field_name} must be positive")
+    if value > _MAX_U64:
+        raise ValueError(
+            f"{field_name} must fit an unsigned 64-bit integer"
+        )
     return value
 
 
@@ -133,6 +139,12 @@ def _validate_optional_exact_string(field_name: str, value: object) -> str | Non
         raise ValueError(
             f"{field_name} must not contain surrounding whitespace"
         )
+    try:
+        value.encode("utf-8")
+    except UnicodeEncodeError as error:
+        raise ValueError(
+            f"{field_name} must contain only Unicode scalar values"
+        ) from error
     return value
 
 
@@ -298,6 +310,14 @@ class ContextBuild:
             raise ValueError("reserve_output_tokens must be an integer")
         if self.reserve_output_tokens < 0:
             raise ValueError("reserve_output_tokens must not be negative")
+        if self.reserve_output_tokens > _MAX_U64:
+            raise ValueError(
+                "reserve_output_tokens must fit an unsigned 64-bit integer"
+            )
+        if self.reserve_output_tokens > self.max_tokens:
+            raise ValueError(
+                "reserve_output_tokens must not exceed max_tokens"
+            )
         if self.deduplicate is not None and not isinstance(
             self.deduplicate,
             bool,
@@ -348,11 +368,12 @@ class StructuredGenerate(Generic[StructuredValueT]):
             raise ValueError("output_schema must be a PortType")
         if not isinstance(self.response, Mapping):
             raise ValueError("response must be a mapping")
-        response = deepcopy(dict(self.response))
         try:
-            canonical_dumps(response)
-        except (TypeError, ValueError) as error:
+            response = canonical_loads(canonical_dumps(self.response))
+        except Exception as error:
             raise ValueError("response must be canonical JSON") from error
+        if not isinstance(response, dict):
+            raise ValueError("response must be a mapping")
         frozen_containers: dict[int, object] = {}
         pending: list[tuple[object, bool]] = [(response, False)]
         while pending:
@@ -367,7 +388,7 @@ class StructuredGenerate(Generic[StructuredValueT]):
                     pending.extend((item, False) for item in value)
                 continue
             if isinstance(value, Mapping):
-                frozen_containers[id(value)] = MappingProxyType(
+                frozen_containers[id(value)] = FrozenDict(
                     {
                         key: (
                             frozen_containers[id(item)]
@@ -378,7 +399,7 @@ class StructuredGenerate(Generic[StructuredValueT]):
                     }
                 )
             else:
-                frozen_containers[id(value)] = tuple(
+                frozen_containers[id(value)] = FrozenList(
                     (
                         frozen_containers[id(item)]
                         if isinstance(item, (Mapping, list, tuple))

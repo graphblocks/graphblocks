@@ -2,7 +2,11 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from types import MappingProxyType
+
+from .documents import FrozenDict
+
+
+_MAX_U64 = (1 << 64) - 1
 
 
 @dataclass(frozen=True, slots=True)
@@ -14,6 +18,12 @@ class ScriptedModelResponse:
     def __post_init__(self) -> None:
         if not isinstance(self.response, str):
             raise ValueError("scripted model response must be a string")
+        try:
+            self.response.encode("utf-8")
+        except UnicodeEncodeError as error:
+            raise ValueError(
+                "scripted model response must contain only Unicode scalar values"
+            ) from error
         if (
             not isinstance(self.finish_reason, str)
             or not self.finish_reason.strip()
@@ -22,10 +32,20 @@ class ScriptedModelResponse:
             raise ValueError(
                 "scripted model finish_reason must be an exact non-empty string"
             )
+        try:
+            self.finish_reason.encode("utf-8")
+        except UnicodeEncodeError as error:
+            raise ValueError(
+                "scripted model finish_reason must contain only Unicode scalar values"
+            ) from error
         if not isinstance(self.usage, Mapping):
             raise ValueError("scripted model usage must be a mapping")
-        usage = dict(self.usage)
-        for key, value in usage.items():
+        try:
+            usage_items = tuple(self.usage.items())
+        except Exception as error:
+            raise ValueError("scripted model usage must be a stable mapping") from error
+        usage: dict[str, int] = {}
+        for key, value in usage_items:
             if (
                 not isinstance(key, str)
                 or not key.strip()
@@ -34,6 +54,14 @@ class ScriptedModelResponse:
                 raise ValueError(
                     "scripted model usage keys must be exact non-empty strings"
                 )
+            try:
+                key.encode("utf-8")
+            except UnicodeEncodeError as error:
+                raise ValueError(
+                    "scripted model usage keys must contain only Unicode scalar values"
+                ) from error
+            if key in usage:
+                raise ValueError("scripted model usage keys must be unique")
             if (
                 not isinstance(value, int)
                 or isinstance(value, bool)
@@ -42,7 +70,12 @@ class ScriptedModelResponse:
                 raise ValueError(
                     "scripted model usage values must be non-negative integers"
                 )
-        object.__setattr__(self, "usage", MappingProxyType(usage))
+            if value > _MAX_U64:
+                raise ValueError(
+                    "scripted model usage values must fit an unsigned 64-bit integer"
+                )
+            usage[key] = value
+        object.__setattr__(self, "usage", FrozenDict(usage))
 
     def response_contract(self) -> dict[str, object]:
         return {
@@ -59,8 +92,29 @@ def scripted_model_generate(
     response: object | None = None,
 ) -> ScriptedModelResponse:
     prompt_text = str(prompt)
-    if script is not None and prompt_text in script:
-        output = str(script[prompt_text])
+    script_snapshot: dict[str, object] | None = None
+    if script is not None:
+        if not isinstance(script, Mapping):
+            raise ValueError("script must be a mapping")
+        try:
+            script_items = tuple(script.items())
+        except Exception as error:
+            raise ValueError("script must be a stable mapping") from error
+        script_snapshot = {}
+        for key, value in script_items:
+            if not isinstance(key, str):
+                raise ValueError("script keys must be strings")
+            try:
+                key.encode("utf-8")
+            except UnicodeEncodeError as error:
+                raise ValueError(
+                    "script keys must contain only Unicode scalar values"
+                ) from error
+            if key in script_snapshot:
+                raise ValueError("script keys must be unique")
+            script_snapshot[key] = value
+    if script_snapshot is not None and prompt_text in script_snapshot:
+        output = str(script_snapshot[prompt_text])
         finish_reason = "scripted"
     elif response is not None:
         output = str(response)

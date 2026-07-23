@@ -5,7 +5,12 @@ from dataclasses import fields, is_dataclass
 from decimal import Decimal
 from typing import Any
 
-from .canonical import canonical_dumps, canonical_hash, canonical_loads
+from .canonical import (
+    MAX_CANONICAL_JSON_DEPTH,
+    canonical_dumps,
+    canonical_hash,
+    canonical_loads,
+)
 from .diagnostics import Diagnostic
 from .documents import ArtifactRef
 from .evaluation import (
@@ -24,44 +29,151 @@ from .policy import PrincipalRef
 from .review import ReviewRequest
 
 
-def _json_value(value: object) -> object:
-    if isinstance(value, Decimal):
-        return str(value)
-    if is_dataclass(value):
-        return {field.name: _json_value(getattr(value, field.name)) for field in fields(value)}
-    if isinstance(value, Mapping):
-        return {str(key): _json_value(item) for key, item in value.items()}
-    if isinstance(value, (list, tuple)):
-        return [_json_value(item) for item in value]
+def _unicode_string(owner: str, value: object) -> str:
+    if not isinstance(value, str):
+        raise TypeError(f"{owner} must be a string")
+    try:
+        value.encode("utf-8")
+    except UnicodeEncodeError as error:
+        raise TypeError(
+            f"{owner} must contain only Unicode scalar values"
+        ) from error
     return value
 
 
 def _mapping(owner: str, value: object) -> dict[str, Any]:
     if not isinstance(value, Mapping):
         raise TypeError(f"{owner} must be a mapping")
-    return dict(value)
+    try:
+        items = tuple(value.items())
+    except Exception as error:
+        raise TypeError(f"{owner} must be a stable mapping") from error
+    snapshot: dict[str, Any] = {}
+    for key, item in items:
+        key = _unicode_string(f"{owner} keys", key)
+        if key in snapshot:
+            raise TypeError(f"{owner} keys must be unique")
+        snapshot[key] = item
+    return snapshot
 
 
 def _sequence(owner: str, value: object) -> list[Any]:
     if isinstance(value, (str, bytes, bytearray, Mapping)) or not isinstance(value, Sequence):
         raise TypeError(f"{owner} must be a sequence")
-    return list(value)
+    try:
+        return list(value)
+    except Exception as error:
+        raise TypeError(f"{owner} must be a stable sequence") from error
 
 
 def _flatten_records(owner: str, value: object) -> list[Any]:
     flattened: list[Any] = []
-    for item in _sequence(owner, value):
-        if isinstance(item, (list, tuple)):
-            flattened.extend(_flatten_records(owner, item))
-        else:
-            flattened.append(item)
+
+    def visit(current: object, depth: int, active: set[int]) -> None:
+        if not isinstance(current, (list, tuple)):
+            flattened.append(current)
+            return
+        if depth > MAX_CANONICAL_JSON_DEPTH:
+            raise TypeError(
+                f"{owner} nesting must not exceed "
+                f"{MAX_CANONICAL_JSON_DEPTH} levels"
+            )
+        identity = id(current)
+        if identity in active:
+            raise TypeError(f"{owner} must not be recursive")
+        active.add(identity)
+        try:
+            for item in _sequence(owner, current):
+                visit(item, depth + 1, active)
+        finally:
+            active.remove(identity)
+
+    visit(value, 0, set())
     return flattened
 
 
 def _exact_string(owner: str, value: object) -> str:
     if not isinstance(value, str) or not value.strip() or value != value.strip():
         raise TypeError(f"{owner} must be an exact non-empty string")
+    value = _unicode_string(owner, value)
+    if any(ord(character) < 32 or ord(character) == 127 for character in value):
+        raise TypeError(f"{owner} must not contain control characters")
     return value
+
+
+def _aliased_value(
+    owner: str,
+    record: Mapping[str, Any],
+    camel_key: str,
+    snake_key: str,
+    default: Any = None,
+) -> Any:
+    if camel_key in record and snake_key in record:
+        raise ValueError(
+            f"{owner} must not contain both {camel_key!r} and {snake_key!r}"
+        )
+    if camel_key in record:
+        return record[camel_key]
+    return record.get(snake_key, default)
+
+
+def _json_value(value: object) -> object:
+    def convert(current: object, depth: int, active: set[int]) -> object:
+        if depth > MAX_CANONICAL_JSON_DEPTH:
+            raise TypeError(
+                "governance JSON nesting must not exceed "
+                f"{MAX_CANONICAL_JSON_DEPTH} levels"
+            )
+        if isinstance(current, Decimal):
+            return str(current)
+        if isinstance(current, str):
+            return _unicode_string("governance JSON string", current)
+        if is_dataclass(current) and not isinstance(current, type):
+            identity = id(current)
+            if identity in active:
+                raise TypeError("governance JSON values must not be recursive")
+            active.add(identity)
+            try:
+                return {
+                    field.name: convert(
+                        getattr(current, field.name),
+                        depth + 1,
+                        active,
+                    )
+                    for field in fields(current)
+                }
+            finally:
+                active.remove(identity)
+        if isinstance(current, Mapping):
+            identity = id(current)
+            if identity in active:
+                raise TypeError("governance JSON values must not be recursive")
+            active.add(identity)
+            try:
+                return {
+                    key: convert(item, depth + 1, active)
+                    for key, item in _mapping(
+                        "governance JSON object",
+                        current,
+                    ).items()
+                }
+            finally:
+                active.remove(identity)
+        if isinstance(current, (list, tuple)):
+            identity = id(current)
+            if identity in active:
+                raise TypeError("governance JSON values must not be recursive")
+            active.add(identity)
+            try:
+                return [
+                    convert(item, depth + 1, active)
+                    for item in _sequence("governance JSON array", current)
+                ]
+            finally:
+                active.remove(identity)
+        return current
+
+    return convert(value, 0, set())
 
 
 def _resource_ref(value: object, *, fallback_id: str) -> ResourceSnapshotRef:
@@ -70,7 +182,7 @@ def _resource_ref(value: object, *, fallback_id: str) -> ResourceSnapshotRef:
     if value is None:
         return ResourceSnapshotRef(fallback_id, canonical_hash({"resource_id": fallback_id}))
     if isinstance(value, Mapping):
-        item = dict(value)
+        item = _mapping("resource", value)
         resource_id = item.get("resource_id", item.get("resourceId", item.get("id", fallback_id)))
         digest = item.get("digest", canonical_hash(_json_value(item)))
         return ResourceSnapshotRef(
@@ -99,8 +211,11 @@ def _check_result(value: object, *, subject: ResourceSnapshotRef) -> CheckResult
             Diagnostic(
                 code=_exact_string("diagnostic code", diagnostic.get("code")),
                 message=_exact_string("diagnostic message", diagnostic.get("message")),
-                path=str(diagnostic.get("path", "$")),
-                severity=str(diagnostic.get("severity", "error")),  # type: ignore[arg-type]
+                path=_exact_string("diagnostic path", diagnostic.get("path", "$")),
+                severity=_exact_string(  # type: ignore[arg-type]
+                    "diagnostic severity",
+                    diagnostic.get("severity", "error"),
+                ),
             )
         )
     return CheckResult(
@@ -121,7 +236,10 @@ def _metric(value: object, *, subject: ResourceSnapshotRef) -> MetricObservation
         name=_exact_string("metric name", item.get("name")),
         value=item.get("value"),
         unit=item.get("unit"),
-        direction=str(item.get("direction", "informational")),  # type: ignore[arg-type]
+        direction=_exact_string(  # type: ignore[arg-type]
+            "metric direction",
+            item.get("direction", "informational"),
+        ),
         baseline_value=item.get("baseline_value", item.get("baselineValue")),
         subject=None if raw_subject is None else _resource_ref(raw_subject, fallback_id=subject.resource_id),
         evaluator=None if item.get("evaluator") is None else _mapping("metric evaluator", item["evaluator"]),
@@ -138,9 +256,17 @@ def structured_generate_block(
     neither is present instead of fabricating a model answer.
     """
 
+    inputs = _mapping("model.structured_generate@1 inputs", inputs)
+    config = _mapping("model.structured_generate@1 config", config)
+    context = _mapping("model.structured_generate@1 context", context)
     output_schema = _exact_string(
         "model.structured_generate@1 config.outputSchema",
-        config.get("outputSchema", config.get("output_schema")),
+        _aliased_value(
+            "model.structured_generate@1 config",
+            config,
+            "outputSchema",
+            "output_schema",
+        ),
     )
     raw = inputs.get("response", config.get("response"))
     if raw is None:
@@ -176,6 +302,9 @@ def check_run_suite_block(
 ) -> dict[str, Any]:
     """Normalize bound check outcomes; omitted outcomes are inconclusive, never passing."""
 
+    inputs = _mapping("check.run_suite@1 inputs", inputs)
+    config = _mapping("check.run_suite@1 config", config)
+    context = _mapping("check.run_suite@1 context", context)
     subject = _resource_ref(inputs.get("subject"), fallback_id=f"run:{context.get('run_id', 'local')}:subject")
     configured = _sequence("check.run_suite@1 config.checks", config.get("checks", []))
     outcomes = _mapping("check.run_suite@1 config.outcomes", config.get("outcomes", {}))
@@ -218,6 +347,9 @@ def check_run_suite_block(
 def gate_evaluate_block(
     inputs: dict[str, Any], config: dict[str, Any], context: dict[str, Any]
 ) -> dict[str, Any]:
+    inputs = _mapping("gate.evaluate@1 inputs", inputs)
+    config = _mapping("gate.evaluate@1 config", config)
+    context = _mapping("gate.evaluate@1 context", context)
     raw_checks = _flatten_records("gate.evaluate@1 inputs.checks", inputs.get("checks", []))
     explicit_subject = inputs.get("subject")
     if explicit_subject is None and raw_checks and isinstance(raw_checks[0], Mapping):
@@ -244,7 +376,16 @@ def gate_evaluate_block(
             )
         )
     result = evaluate_gate(
-        str(config.get("gateId", config.get("gate_id", context.get("node", "gate")))),
+        _exact_string(
+            "gate.evaluate@1 config.gateId",
+            _aliased_value(
+                "gate.evaluate@1 config",
+                config,
+                "gateId",
+                "gate_id",
+                context.get("node", "gate"),
+            ),
+        ),
         subject,
         checks=checks,
         metrics=metrics,
@@ -266,6 +407,9 @@ def review_request_block(
 ) -> dict[str, Any]:
     """Create a deterministic review work item; durable wait/resume belongs to the host application."""
 
+    inputs = _mapping("review.request@1 inputs", inputs)
+    config = _mapping("review.request@1 config", config)
+    context = _mapping("review.request@1 context", context)
     subject = _resource_ref(inputs.get("subject"), fallback_id=f"run:{context.get('run_id', 'local')}:review-subject")
     raw_scopes = config.get("scopes")
     if raw_scopes is None:
@@ -289,8 +433,18 @@ def review_request_block(
                 principal_item.get("principalId", principal_item.get("principal_id", "graphblocks-runtime")),
             ),
             tenant_id=principal_item.get("tenantId", principal_item.get("tenant_id")),
-            groups=tuple(principal_item.get("groups", ())),
-            roles=tuple(principal_item.get("roles", ())),
+            groups=tuple(
+                _sequence(
+                    "review.request@1 requestedBy.groups",
+                    principal_item.get("groups", ()),
+                )
+            ),
+            roles=tuple(
+                _sequence(
+                    "review.request@1 requestedBy.roles",
+                    principal_item.get("roles", ()),
+                )
+            ),
             attributes=_mapping("review.request@1 requestedBy.attributes", principal_item.get("attributes", {})),
         )
     metadata = _mapping("review.request@1 config.metadata", config.get("metadata", {}))
@@ -355,18 +509,29 @@ def review_request_block(
                 reviewer_item.get("principalId", reviewer_item.get("principal_id")),
             ),
             tenant_id=reviewer_item.get("tenantId", reviewer_item.get("tenant_id")),
-            groups=tuple(reviewer_item.get("groups", ())),
-            roles=tuple(reviewer_item.get("roles", ())),
+            groups=tuple(
+                _sequence(
+                    "review.request@1 review reviewer groups",
+                    reviewer_item.get("groups", ()),
+                )
+            ),
+            roles=tuple(
+                _sequence(
+                    "review.request@1 review reviewer roles",
+                    reviewer_item.get("roles", ()),
+                )
+            ),
             attributes=_mapping(
                 "review.request@1 review reviewer attributes",
                 reviewer_item.get("attributes", {}),
             ),
         )
-        credential_refs = list(
+        credential_refs = _sequence(
+            "review.request@1 review credentialRefs",
             review_item.get(
                 "credentialRefs",
                 review_item.get("credential_refs", []),
-            )
+            ),
         )
         required_credential = config.get(
             "requiredCredential",
@@ -389,7 +554,10 @@ def review_request_block(
             scope=review_scope,
             reviewer=reviewer,
             decision=decision,  # type: ignore[arg-type]
-            comments=list(review_item.get("comments", [])),
+            comments=_sequence(
+                "review.request@1 review comments",
+                review_item.get("comments", []),
+            ),
             credential_refs=credential_refs,
             created_at=_exact_string(
                 "review.request@1 review createdAt",
@@ -422,6 +590,9 @@ def review_request_block(
 def result_bundle_block(
     inputs: dict[str, Any], config: dict[str, Any], context: dict[str, Any]
 ) -> dict[str, Any]:
+    inputs = _mapping("result.bundle@1 inputs", inputs)
+    config = _mapping("result.bundle@1 config", config)
+    context = _mapping("result.bundle@1 context", context)
     run_id = _exact_string("result.bundle@1 runId", config.get("runId", context.get("run_id", "local-run")))
     release_id = _exact_string("result.bundle@1 releaseId", config.get("releaseId", "local-release"))
     raw_inputs = _sequence("result.bundle@1 inputs.inputs", inputs.get("inputs", []))
@@ -434,7 +605,11 @@ def result_bundle_block(
         if isinstance(item, TypedValueRef):
             typed_outputs.append(item)
             continue
-        raw_item = dict(item) if isinstance(item, Mapping) else {}
+        raw_item = (
+            _mapping("result bundle output", item)
+            if isinstance(item, Mapping)
+            else {}
+        )
         schema_id = raw_item.get(
             "schemaId",
             raw_item.get("schema_id", config.get("outputSchema", "graphblocks.core/JsonValue@1")),
@@ -521,8 +696,14 @@ def result_bundle_block(
             Diagnostic(
                 code=_exact_string("result bundle diagnostic code", item.get("code")),
                 message=_exact_string("result bundle diagnostic message", item.get("message")),
-                path=str(item.get("path", "$")),
-                severity=str(item.get("severity", "error")),  # type: ignore[arg-type]
+                path=_exact_string(
+                    "result bundle diagnostic path",
+                    item.get("path", "$"),
+                ),
+                severity=_exact_string(  # type: ignore[arg-type]
+                    "result bundle diagnostic severity",
+                    item.get("severity", "error"),
+                ),
             )
         )
     reviews: list[ReviewRecord] = []
@@ -545,8 +726,18 @@ def result_bundle_block(
                     reviewer_item.get("principalId", reviewer_item.get("principal_id")),
                 ),
                 tenant_id=reviewer_item.get("tenantId", reviewer_item.get("tenant_id")),
-                groups=tuple(reviewer_item.get("groups", ())),
-                roles=tuple(reviewer_item.get("roles", ())),
+                groups=tuple(
+                    _sequence(
+                        "result bundle review reviewer groups",
+                        reviewer_item.get("groups", ()),
+                    )
+                ),
+                roles=tuple(
+                    _sequence(
+                        "result bundle review reviewer roles",
+                        reviewer_item.get("roles", ()),
+                    )
+                ),
                 attributes=_mapping("result bundle review reviewer attributes", reviewer_item.get("attributes", {})),
             )
         reviews.append(
@@ -562,8 +753,17 @@ def result_bundle_block(
                 scope=_exact_string("result bundle review scope", item.get("scope")),
                 reviewer=reviewer,
                 decision=_exact_string("result bundle review decision", item.get("decision")),  # type: ignore[arg-type]
-                comments=list(item.get("comments", [])),
-                credential_refs=list(item.get("credentialRefs", item.get("credential_refs", []))),
+                comments=_sequence(
+                    "result bundle review comments",
+                    item.get("comments", []),
+                ),
+                credential_refs=_sequence(
+                    "result bundle review credentialRefs",
+                    item.get(
+                        "credentialRefs",
+                        item.get("credential_refs", []),
+                    ),
+                ),
                 created_at=_exact_string(
                     "result bundle review createdAt", item.get("createdAt", item.get("created_at"))
                 ),

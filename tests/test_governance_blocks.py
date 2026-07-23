@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Iterator, Mapping
+
 import pytest
 
 from graphblocks.runtime import InProcessRuntime, stdlib_registry
@@ -15,6 +17,22 @@ from graphblocks.stdlib_governance import (
 
 CONTEXT = {"run_id": "run-42", "node": "test-node"}
 SUBJECT = {"resourceId": "snapshot-1", "digest": "sha256:subject", "resourceKind": "workspace"}
+
+
+class _ExplodingMapping(Mapping[str, object]):
+    def __getitem__(self, key: str) -> object:
+        raise RuntimeError("mapping changed during snapshot")
+
+    def __iter__(self) -> Iterator[str]:
+        raise RuntimeError("mapping changed during snapshot")
+
+    def __len__(self) -> int:
+        return 1
+
+
+class _DuplicateMapping(dict[str, object]):
+    def items(self):
+        return (("gateId", "first"), ("gateId", "second"))
 
 
 def test_governance_block_catalog_contains_every_executable_identity() -> None:
@@ -301,3 +319,39 @@ def test_result_bundle_adapts_json_outputs_and_preserves_gate_checks() -> None:
     assert bundle["reviews"][0]["decision"] == "accept"
     assert bundle["usage_records"] == ["usage-1"]
     assert str(result["contentDigest"]).startswith("sha256:")
+
+
+def test_governance_blocks_reject_hostile_coercive_and_ambiguous_inputs() -> None:
+    with pytest.raises(TypeError, match="must be a stable mapping"):
+        check_run_suite_block(
+            {"subject": SUBJECT},
+            {"checks": [], "outcomes": _ExplodingMapping()},
+            CONTEXT,
+        )
+    with pytest.raises(TypeError, match="keys must be unique"):
+        gate_evaluate_block(
+            {"checks": []},
+            _DuplicateMapping(),
+            CONTEXT,
+        )
+    with pytest.raises(TypeError, match="gateId must be an exact non-empty string"):
+        gate_evaluate_block(
+            {"checks": []},
+            {"gateId": 7},
+            CONTEXT,
+        )
+    with pytest.raises(TypeError, match="Unicode scalar"):
+        structured_generate_block(
+            {"response": {"value": "ok"}},
+            {"outputSchema": "\ud800"},
+            CONTEXT,
+        )
+    with pytest.raises(ValueError, match="must not contain both"):
+        structured_generate_block(
+            {"response": {"value": "ok"}},
+            {
+                "outputSchema": "company/Output@1",
+                "output_schema": "company/Other@1",
+            },
+            CONTEXT,
+        )

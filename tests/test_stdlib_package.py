@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib
 from pathlib import Path
+import pickle
 import sys
 from types import SimpleNamespace
 
@@ -59,6 +60,35 @@ def test_scripted_model_response_rejects_coerced_usage() -> None:
             "ok",
             "scripted",
             {"output_chars": True},
+        )
+
+
+def test_scripted_model_response_is_pickle_safe_and_rejects_wire_ambiguity() -> None:
+    graphblocks_stdlib = importlib.import_module("graphblocks.stdlib")
+
+    response = graphblocks_stdlib.ScriptedModelResponse(
+        "ok",
+        "scripted",
+        {"output_chars": 2},
+    )
+    restored = pickle.loads(pickle.dumps(response))
+
+    assert restored == response
+    assert restored.usage == {"output_chars": 2}
+    with pytest.raises(TypeError):
+        restored.usage["output_chars"] = 3
+    with pytest.raises(ValueError, match="Unicode scalar"):
+        graphblocks_stdlib.ScriptedModelResponse("\ud800", "scripted")
+    with pytest.raises(ValueError, match="unsigned 64-bit"):
+        graphblocks_stdlib.ScriptedModelResponse(
+            "ok",
+            "scripted",
+            {"output_chars": 1 << 64},
+        )
+    with pytest.raises(ValueError, match="script must be a mapping"):
+        graphblocks_stdlib.scripted_model_generate(
+            "prompt",
+            script=0,  # type: ignore[arg-type]
         )
 
 
