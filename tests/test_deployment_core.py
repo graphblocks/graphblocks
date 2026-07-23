@@ -97,6 +97,32 @@ def test_graph_release_digest_is_bound_to_release_name() -> None:
     assert left.content_digest() != right.content_digest()
 
 
+def test_release_evidence_maps_cannot_be_mutated_after_construction() -> None:
+    release = GraphRelease(
+        name="enterprise-rag",
+        version="2026.06.23.1",
+        graphs={"chat": GraphReleaseGraph("sha256:graph-chat", "sha256:plan-chat")},
+    )
+    bundle = ReleaseBundle(
+        bundle_id="bundle-1",
+        release=release,
+        artifacts={"sbom": "sha256:sbom"},
+        signatures={"cosign": "sha256:signature"},
+    )
+    release_digest = release.content_digest()
+    bundle_digest = bundle.content_digest()
+
+    with pytest.raises(TypeError):
+        release.graphs["chat"] = GraphReleaseGraph("sha256:tampered", "sha256:tampered")
+    with pytest.raises(TypeError):
+        bundle.artifacts["sbom"] = "sha256:tampered"
+    with pytest.raises(TypeError):
+        bundle.signatures["cosign"] = "sha256:tampered"
+
+    assert release.content_digest() == release_digest
+    assert bundle.content_digest() == bundle_digest
+
+
 def test_graph_release_validation_rejects_mutable_production_references() -> None:
     release = (
         GraphRelease(name="enterprise-rag", version="2026.06.23.1")

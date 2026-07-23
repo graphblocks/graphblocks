@@ -6,6 +6,7 @@ from decimal import Decimal
 from enum import Enum
 import hmac
 import math
+from types import MappingProxyType
 from typing import Literal
 
 from .canonical import canonical_dumps, canonical_hash
@@ -160,11 +161,11 @@ class GraphRelease:
     supply_chain: SupplyChainLock | None = None
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "graphs", dict(self.graphs))
-        object.__setattr__(self, "images", dict(self.images))
-        object.__setattr__(self, "locks", dict(self.locks))
-        object.__setattr__(self, "prompt_locks", dict(self.prompt_locks))
-        object.__setattr__(self, "knowledge", dict(self.knowledge))
+        object.__setattr__(self, "graphs", MappingProxyType(dict(self.graphs)))
+        object.__setattr__(self, "images", MappingProxyType(dict(self.images)))
+        object.__setattr__(self, "locks", MappingProxyType(dict(self.locks)))
+        object.__setattr__(self, "prompt_locks", MappingProxyType(dict(self.prompt_locks)))
+        object.__setattr__(self, "knowledge", MappingProxyType(dict(self.knowledge)))
 
     def with_bundle(self, digest: str, media_type: str) -> GraphRelease:
         return replace(self, bundle_digest=digest, bundle_media_type=media_type)
@@ -290,8 +291,16 @@ class ReleaseBundle:
     signatures: dict[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "artifacts", {str(key): str(value) for key, value in self.artifacts.items()})
-        object.__setattr__(self, "signatures", {str(key): str(value) for key, value in self.signatures.items()})
+        object.__setattr__(
+            self,
+            "artifacts",
+            MappingProxyType({str(key): str(value) for key, value in self.artifacts.items()}),
+        )
+        object.__setattr__(
+            self,
+            "signatures",
+            MappingProxyType({str(key): str(value) for key, value in self.signatures.items()}),
+        )
 
     def bundle_manifest(self) -> dict[str, object]:
         return {
