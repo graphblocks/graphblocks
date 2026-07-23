@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Iterator, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
 from dataclasses import asdict, replace
@@ -2945,3 +2946,57 @@ def test_tool_result_delta_becomes_draft_projection_application_event() -> None:
         "tool_result_sequence": 7,
         "output": [{"kind": "text", "text": "draft", "data": None, "metadata": {}}],
     }
+
+
+def test_application_metadata_rejects_non_wire_integer_and_unicode_values() -> None:
+    maximum = (1 << 64) - 1
+    with pytest.raises(ApplicationEventError, match="must not exceed"):
+        replace(_metadata(), sequence=maximum + 1)
+    with pytest.raises(ApplicationEventError, match="Unicode scalar"):
+        replace(_metadata(), event_id="\ud800")
+    command = ApplicationCommandMetadata(
+        command_id="command-1",
+        protocol_version="graphblocks.app.v1",
+        run_id="run-1",
+        sequence=0,
+        issued_at_unix_ms=0,
+    )
+    with pytest.raises(ApplicationProtocolError, match="must not exceed"):
+        replace(command, issued_at_unix_ms=maximum + 1)
+
+
+def test_application_boundaries_normalize_hostile_external_collections() -> None:
+    class ExplodingMapping(Mapping[str, object]):
+        def __getitem__(self, key: str) -> object:
+            raise KeyError(key)
+
+        def __iter__(self) -> Iterator[str]:
+            raise RuntimeError("mapping changed during iteration")
+
+        def __len__(self) -> int:
+            return 1
+
+    class ExplodingEvents:
+        def __iter__(self):
+            raise RuntimeError("events changed during iteration")
+
+    with pytest.raises(ApplicationEventError, match="payload must be a stable mapping"):
+        ApplicationEvent.new("RunStarted", _metadata(), payload=ExplodingMapping())  # type: ignore[arg-type]
+    with pytest.raises(ApplicationProtocolError, match="events must be iterable"):
+        ApplicationProtocolLog(ExplodingEvents())
+
+
+def test_application_stream_states_reject_non_event_inputs_without_mutation() -> None:
+    application_state = ApplicationEventStreamState()
+    protocol_state = ApplicationProtocolStreamState()
+
+    with pytest.raises(ApplicationEventError, match="must be ApplicationEvent"):
+        application_state.accept(object())  # type: ignore[arg-type]
+    with pytest.raises(
+        ApplicationProtocolError,
+        match="must be ApplicationProtocolEvent",
+    ):
+        protocol_state.accept(object())  # type: ignore[arg-type]
+
+    assert application_state.accepted_events == []
+    assert protocol_state.accepted_events == []

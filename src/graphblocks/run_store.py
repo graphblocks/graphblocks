@@ -11,6 +11,7 @@ import sqlite3
 from threading import RLock
 from typing import Any, Literal, ParamSpec, TypeVar, cast
 
+from .canonical import _has_unicode_surrogate
 from .evaluation import ModelVisibleToolRef
 
 
@@ -103,6 +104,8 @@ def _validate_non_empty_string(owner: str, field_name: str, value: object) -> st
         raise ValueError(f"{owner} {field_name} must not be empty")
     if value != value.strip():
         raise ValueError(f"{owner} {field_name} must not contain surrounding whitespace")
+    if _has_unicode_surrogate(value):
+        raise ValueError(f"{owner} {field_name} must contain only Unicode scalar values")
     return value
 
 
@@ -132,7 +135,11 @@ def _validate_json_object(
     active_containers.add(container_id)
     try:
         snapshot: dict[str, Any] = {}
-        for key, item in value.items():
+        try:
+            items = tuple(value.items())
+        except (RuntimeError, ValueError) as error:
+            raise ValueError(f"{owner} {field_name} must be a stable object") from error
+        for key, item in items:
             key_text = _validate_non_empty_string(owner, f"{field_name} key", key)
             snapshot[key_text] = _validate_json_value(
                 owner,
@@ -156,7 +163,11 @@ def _validate_json_value(
 ) -> Any:
     if depth > _MAX_RUN_JSON_DEPTH:
         raise ValueError(f"{owner} {path} exceeds maximum JSON depth {_MAX_RUN_JSON_DEPTH}")
-    if value is None or isinstance(value, str) or isinstance(value, bool):
+    if isinstance(value, str):
+        if _has_unicode_surrogate(value):
+            raise ValueError(f"{owner} {path} must contain only Unicode scalar values")
+        return value
+    if value is None or isinstance(value, bool):
         return value
     if isinstance(value, int) and not isinstance(value, bool):
         return value
@@ -221,7 +232,9 @@ def _dumps_strict_json(value: object) -> str:
 
 def _validate_invocation_mode(owner: str, value: object) -> RunInvocationMode:
     if not isinstance(value, str):
-        raise ValueError(f"{owner} invocation_mode must be a string")
+        if owner == "run":
+            raise ValueError(f"invalid run invocation mode {value}")
+        raise ValueError(f"invalid {owner} invocation_mode {value}")
     if value not in VALID_RUN_INVOCATION_MODES:
         if owner == "run":
             raise ValueError(f"invalid run invocation mode {value}")
@@ -480,6 +493,8 @@ class InMemoryRunStore:
             raise ValueError("run store expected_revision must be an integer")
         if expected_revision < 0:
             raise ValueError("run store expected_revision must be non-negative")
+        if expected_revision > _MAX_SQLITE_INTEGER:
+            raise ValueError("run store expected_revision exceeds storage range")
         current = self.runs[run_id]
         if current.status in TERMINAL_RUN_STATUSES:
             raise RunTerminalStateError(run_id, current.status)
@@ -727,13 +742,13 @@ class SQLiteRunStore:
         if row is None:
             raise KeyError(run_id)
         return RunRecord(
-            run_id=str(row["run_id"]),
-            graph_hash=str(row["graph_hash"]),
+            run_id=row["run_id"],
+            graph_hash=row["graph_hash"],
             inputs=_loads_strict_json("run store", "stored inputs_json", row["inputs_json"]),
             deployment_provenance=_parse_deployment_provenance_json(
                 row["deployment_provenance_json"]
             ),
-            invocation_mode=str(row["invocation_mode"]),
+            invocation_mode=row["invocation_mode"],
             model_visible_tools=_parse_model_visible_tools_json(
                 row["model_visible_tools_json"]
             ),
@@ -749,6 +764,8 @@ class SQLiteRunStore:
             raise ValueError("run store expected_revision must be an integer")
         if expected_revision < 0:
             raise ValueError("run store expected_revision must be non-negative")
+        if expected_revision > _MAX_SQLITE_INTEGER:
+            raise ValueError("run store expected_revision exceeds storage range")
         current = self.get_run(run_id)
         if current.status in TERMINAL_RUN_STATUSES:
             raise RunTerminalStateError(run_id, current.status)

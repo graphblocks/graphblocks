@@ -989,3 +989,39 @@ def test_run_store_rejects_sequence_and_state_revision_overflow(
         sqlite_store.create_run("sha256:other", {})
     with pytest.raises(OverflowError, match="state revision exhausted"):
         sqlite_store.patch_state(record.run_id, {"value": 1}, maximum)
+
+
+def test_run_store_rejects_non_scalar_json_and_hostile_mapping_inputs() -> None:
+    class ExplodingItems(dict[str, object]):
+        def items(self):
+            raise RuntimeError("mapping changed during iteration")
+
+    with pytest.raises(ValueError, match="Unicode scalar"):
+        RunRecord("run-1", "sha256:test", {"text": "\ud800"})
+    with pytest.raises(ValueError, match="inputs must be a stable object"):
+        InMemoryRunStore().create_run("sha256:test", ExplodingItems())
+
+
+def test_run_store_rejects_expected_revision_outside_storage_range(tmp_path) -> None:
+    maximum = (1 << 63) - 1
+    stores = (
+        InMemoryRunStore(),
+        SQLiteRunStore(tmp_path / "revision-range.sqlite3"),
+    )
+    for store in stores:
+        record = store.create_run("sha256:test", {})
+        with pytest.raises(ValueError, match="expected_revision exceeds storage range"):
+            store.patch_state(record.run_id, {}, maximum + 1)
+
+
+def test_sqlite_run_store_rejects_non_string_persisted_identity(tmp_path) -> None:
+    store = SQLiteRunStore(tmp_path / "identity.sqlite3")
+    record = store.create_run("sha256:test", {})
+    store.connection.execute(
+        "UPDATE runs SET graph_hash = ? WHERE run_id = ?",
+        (sqlite3.Binary(b"sha256:forged"), record.run_id),
+    )
+    store.connection.commit()
+
+    with pytest.raises(ValueError, match="run record graph_hash must be a string"):
+        store.get_run(record.run_id)

@@ -7,7 +7,7 @@ from threading import RLock
 from types import MappingProxyType
 from typing import Literal, ParamSpec, TypeVar, cast
 
-from .canonical import canonical_dumps, canonical_loads
+from .canonical import _has_unicode_surrogate, canonical_dumps, canonical_loads
 from .output_policy import (
     VALID_DRAFT_DISPOSITIONS,
     VALID_TERMINAL_REASONS,
@@ -28,6 +28,7 @@ from .tools import (
 
 _P = ParamSpec("_P")
 _R = TypeVar("_R")
+_MAX_U64 = (1 << 64) - 1
 
 
 def _with_application_protocol_log_lock(
@@ -584,6 +585,8 @@ def _validate_non_empty_string(error_type: type[RuntimeError], label: str, value
         raise error_type(f"{label} must be a string")
     if not value.strip():
         raise error_type(f"{label} must not be empty")
+    if _has_unicode_surrogate(value):
+        raise error_type(f"{label} must contain only Unicode scalar values")
 
 
 def _validate_exact_non_empty_string(error_type: type[RuntimeError], label: str, value: object) -> None:
@@ -615,6 +618,8 @@ def _validate_non_negative_integer(error_type: type[RuntimeError], label: str, v
         raise error_type(f"{label} must be an integer")
     if value < 0:
         raise error_type(f"{label} must be non-negative")
+    if value > _MAX_U64:
+        raise error_type(f"{label} must not exceed {_MAX_U64}")
 
 
 def _copy_payload_value(error_type: type[RuntimeError], label: str, value: object) -> object:
@@ -637,7 +642,10 @@ def _copy_payload_value(error_type: type[RuntimeError], label: str, value: objec
 def _freeze_payload(error_type: type[RuntimeError], label: str, payload: object) -> _FrozenPayloadMapping:
     if not isinstance(payload, Mapping):
         raise error_type(f"{label} must be a mapping")
-    normalized = dict(payload)
+    try:
+        normalized = dict(payload)
+    except (RuntimeError, TypeError, ValueError) as error:
+        raise error_type(f"{label} must be a stable mapping") from error
     if any(not isinstance(key, str) or not key.strip() for key in normalized):
         raise error_type(f"{label} keys must be non-empty strings")
     if any(key != key.strip() for key in normalized):
@@ -854,7 +862,7 @@ class ApplicationProtocolLog:
         self._lock = RLock()
         try:
             initial_events = tuple(events)
-        except TypeError as error:
+        except (RuntimeError, TypeError, ValueError) as error:
             raise ApplicationProtocolError(
                 "application protocol log events must be iterable"
             ) from error
@@ -1005,6 +1013,10 @@ class ApplicationProtocolStreamState:
             )
 
     def accept(self, event: ApplicationProtocolEvent) -> ApplicationProtocolEvent | None:
+        if not isinstance(event, ApplicationProtocolEvent):
+            raise ApplicationProtocolError(
+                "application protocol stream state event must be ApplicationProtocolEvent"
+            )
         existing_event = self.accepted_events_by_id.get(event.metadata.event_id)
         if existing_event is not None:
             return existing_event if existing_event == event else None
@@ -1645,6 +1657,10 @@ class ApplicationEventStreamState:
                 )
 
     def accept(self, event: ApplicationEvent) -> ApplicationEvent | None:
+        if not isinstance(event, ApplicationEvent):
+            raise ApplicationEventError(
+                "application event stream state event must be ApplicationEvent"
+            )
         existing_event = self.accepted_events_by_id.get(event.metadata.event_id)
         if existing_event is not None:
             if existing_event == event:

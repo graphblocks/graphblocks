@@ -31,6 +31,8 @@ DurableToolTerminalState = ToolResultStatus | Literal["expired"]
 
 VALID_DELIVERY_GUARANTEES = frozenset({"best_effort", "at_most_once", "at_least_once"})
 VALID_DURABLE_TOOL_TERMINAL_STATES = VALID_TOOL_RESULT_STATUSES | frozenset({"expired"})
+_MAX_U32 = (1 << 32) - 1
+_MAX_U64 = (1 << 64) - 1
 
 
 class DurableError(ValueError):
@@ -122,9 +124,18 @@ class ToolTerminalStoreError(DurableError):
     pass
 
 
-def _require_tool_terminal_integer(field_name: str, value: object) -> int:
+def _require_tool_terminal_integer(
+    field_name: str,
+    value: object,
+    *,
+    maximum: int = _MAX_U64,
+) -> int:
     if not isinstance(value, int) or isinstance(value, bool):
         raise ToolTerminalStoreError(f"{field_name} must be an integer")
+    if value > maximum:
+        raise ToolTerminalStoreError(
+            f"{field_name} must not exceed {maximum}"
+        )
     return value
 
 
@@ -189,9 +200,16 @@ class StaleCheckpointError(CheckpointStoreError):
         )
 
 
-def _require_integer(field_name: str, value: object) -> int:
+def _require_integer(
+    field_name: str,
+    value: object,
+    *,
+    maximum: int = _MAX_U64,
+) -> int:
     if not isinstance(value, int) or isinstance(value, bool):
         raise DurableError(f"{field_name} must be an integer")
+    if value > maximum:
+        raise DurableError(f"{field_name} must not exceed {maximum}")
     return value
 
 
@@ -213,7 +231,7 @@ class SourceCursor:
             raise DurableError("stream must not be empty")
         if self.stream != self.stream.strip():
             raise DurableError("stream must not contain surrounding whitespace")
-        _require_integer("partition", self.partition)
+        _require_integer("partition", self.partition, maximum=_MAX_U32)
         if self.partition < 0:
             raise DurableError("partition must be non-negative")
         _require_integer("offset", self.offset)
@@ -443,6 +461,8 @@ class InMemoryDurableSource:
             raise UnknownSourceCursorError(cursor)
 
     def _validate_cursor_partition(self, cursor: SourceCursor) -> None:
+        if not isinstance(cursor, SourceCursor):
+            raise DurableError("cursor must be a SourceCursor")
         if cursor.stream not in self._known_streams:
             raise UnknownSourceCursorError(cursor)
         if (cursor.stream, cursor.partition) not in self._known_partitions:
@@ -669,7 +689,11 @@ class InMemoryDurableSink:
             raise SinkCommitError("sink_id must not be empty")
         if self.sink_id != self.sink_id.strip():
             raise SinkCommitError("sink_id must not contain surrounding whitespace")
-        next_sequence = _require_integer("sink next_sequence", self.next_sequence)
+        next_sequence = _require_integer(
+            "sink next_sequence",
+            self.next_sequence,
+            maximum=_MAX_U64 + 1,
+        )
         if next_sequence <= 0:
             raise SinkCommitError("sink next_sequence must be positive")
         if not isinstance(self.commits_by_idempotency_key, Mapping):
@@ -750,18 +774,27 @@ class InMemoryDurableSink:
                 metadata=deepcopy(payload_snapshot),
                 replayed=False,
             )
+            returned_result = replace(
+                result,
+                metadata=deepcopy(result.metadata),
+            )
             self.commits_by_idempotency_key[request.idempotency_key] = (
                 stored_request,
                 result,
             )
-            return replace(result, metadata=deepcopy(result.metadata))
+            self.next_sequence = result.sequence + 1
+            return returned_result
 
     def committed_count(self) -> int:
         with self._lock:
             return len(self.commits_by_idempotency_key)
 
     def _allocate_sequence(self) -> int:
-        next_sequence = _require_integer("sink next_sequence", self.next_sequence)
+        next_sequence = _require_integer(
+            "sink next_sequence",
+            self.next_sequence,
+            maximum=_MAX_U64 + 1,
+        )
         if next_sequence <= 0:
             raise SinkCommitError("sink next_sequence must be positive")
         highest_sequence = max(
@@ -772,7 +805,8 @@ class InMemoryDurableSink:
             default=0,
         )
         sequence = max(next_sequence, highest_sequence + 1)
-        self.next_sequence = sequence + 1
+        if sequence > _MAX_U64:
+            raise SinkCommitError("sink commit sequence exhausted")
         return sequence
 
 
@@ -823,7 +857,11 @@ class DurableToolTerminalRecord:
         _require_tool_terminal_string("run_id", self.run_id)
         _require_tool_terminal_string("response_id", self.response_id)
         _require_tool_terminal_string("tool_call_id", self.tool_call_id)
-        revision = _require_tool_terminal_integer("revision", self.revision)
+        revision = _require_tool_terminal_integer(
+            "revision",
+            self.revision,
+            maximum=_MAX_U32,
+        )
         if revision <= 0:
             raise ToolTerminalStoreError("revision must be positive")
         if (
@@ -1059,7 +1097,11 @@ class InMemoryDurableToolTerminalStore:
                 "restored durable result cannot coexist with a policy-stopped "
                 f"response {response_id!r}"
             )
-        next_sequence = _require_tool_terminal_integer("next_sequence", self.next_sequence)
+        next_sequence = _require_tool_terminal_integer(
+            "next_sequence",
+            self.next_sequence,
+            maximum=_MAX_U64 + 1,
+        )
         if next_sequence <= 0:
             raise ToolTerminalStoreError("next_sequence must be positive")
         self.terminal_records = terminal_records
@@ -1168,6 +1210,8 @@ class InMemoryDurableToolTerminalStore:
         )
         self.next_sequence = max(self.next_sequence, highest_sequence + 1)
         sequence = self.next_sequence
+        if sequence > _MAX_U64:
+            raise ToolTerminalStoreError("terminal sequence exhausted")
         self.next_sequence += 1
         return sequence
 
@@ -1180,7 +1224,11 @@ class SchemaRef:
     def __post_init__(self) -> None:
         if not isinstance(self.schema_id, str):
             raise DurableError("schema_id must be a string")
-        schema_version = _require_integer("schema_version", self.schema_version)
+        schema_version = _require_integer(
+            "schema_version",
+            self.schema_version,
+            maximum=_MAX_U32,
+        )
         object.__setattr__(self, "schema_version", schema_version)
 
 
@@ -1298,7 +1346,11 @@ class CheckpointBarrier:
                     "schema_versions keys must not contain surrounding whitespace"
                 )
             schema_key = key
-            schema_version = _require_integer(f"schema_versions {schema_key}", value)
+            schema_version = _require_integer(
+                f"schema_versions {schema_key}",
+                value,
+                maximum=_MAX_U32,
+            )
             if schema_version < 0:
                 raise DurableError(f"schema_versions {schema_key} must be non-negative")
             schema_versions[schema_key] = schema_version
@@ -1381,6 +1433,8 @@ class CheckpointBarrier:
     def with_source_cursor(self, source_id: str, cursor: SourceCursor) -> CheckpointBarrier:
         if not isinstance(source_id, str) or not source_id.strip():
             raise DurableError("source_id must not be empty")
+        if source_id != source_id.strip():
+            raise DurableError("source_id must not contain surrounding whitespace")
         if not isinstance(cursor, SourceCursor):
             raise DurableError("cursor must be a SourceCursor")
         source_cursors = dict(self.source_cursors)

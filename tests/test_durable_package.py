@@ -1476,3 +1476,122 @@ def test_durable_package_is_cataloged_as_optional_extension(monkeypatch) -> None
         "implementationPhase": 7,
         "stability": "experimental-extension",
     }
+
+
+def test_durable_contracts_reject_values_outside_native_integer_widths(monkeypatch) -> None:
+    graphblocks_durable = _import_durable(monkeypatch)
+    maximum_u32 = (1 << 32) - 1
+    maximum_u64 = (1 << 64) - 1
+
+    with pytest.raises(graphblocks_durable.DurableError, match="partition must not exceed"):
+        graphblocks_durable.SourceCursor("orders", maximum_u32 + 1, 0)
+    with pytest.raises(graphblocks_durable.DurableError, match="offset must not exceed"):
+        graphblocks_durable.SourceCursor("orders", 0, maximum_u64 + 1)
+    with pytest.raises(graphblocks_durable.DurableError, match="watermark unix_ms must not exceed"):
+        graphblocks_durable.Watermark.event_time(maximum_u64 + 1)
+    with pytest.raises(graphblocks_durable.ToolTerminalStoreError, match="revision must not exceed"):
+        graphblocks_durable.DurableToolTerminalRecord(
+            run_id="run-1",
+            response_id="response-1",
+            tool_call_id="call-1",
+            revision=maximum_u32 + 1,
+            terminal_state="completed",
+            arguments_digest="sha256:arguments",
+            completed_at_unix_ms=1,
+        )
+    with pytest.raises(graphblocks_durable.DurableError, match="schema_version must not exceed"):
+        graphblocks_durable.SchemaRef("graphblocks.ai/Checkpoint", maximum_u32 + 1)
+    with pytest.raises(graphblocks_durable.DurableError, match="state_revision must not exceed"):
+        replace(
+            _checkpoint(graphblocks_durable, "checkpoint-overflow", 1, "sha256:plan"),
+            state_revision=maximum_u64 + 1,
+        )
+
+
+def test_durable_sequence_allocators_emit_u64_maximum_once_then_stop(monkeypatch) -> None:
+    graphblocks_durable = _import_durable(monkeypatch)
+    maximum = (1 << 64) - 1
+    sink = graphblocks_durable.InMemoryDurableSink("orders", next_sequence=maximum)
+    request = graphblocks_durable.SinkCommitRequest(
+        run_id="run-1",
+        node_id="write",
+        node_attempt_id="attempt-1",
+        idempotency_key="key-1",
+        payload={},
+    )
+
+    assert sink.commit(request).sequence == maximum
+    with pytest.raises(graphblocks_durable.SinkCommitError, match="sequence exhausted"):
+        sink.commit(replace(request, idempotency_key="key-2"))
+    assert sink.committed_count() == 1
+
+    store = graphblocks_durable.InMemoryDurableToolTerminalStore(next_sequence=maximum)
+    record = graphblocks_durable.DurableToolTerminalRecord(
+        run_id="run-1",
+        response_id="response-1",
+        tool_call_id="call-1",
+        revision=1,
+        terminal_state="completed",
+        arguments_digest="sha256:arguments",
+        completed_at_unix_ms=1,
+    )
+    assert store.record_tool_terminal(record).sequence == maximum
+    with pytest.raises(
+        graphblocks_durable.ToolTerminalStoreError,
+        match="sequence exhausted",
+    ):
+        store.record_tool_terminal(replace(record, tool_call_id="call-2"))
+    assert store.tool_terminal_count() == 1
+
+
+def test_durable_sink_does_not_consume_sequence_when_result_building_fails(
+    monkeypatch,
+) -> None:
+    graphblocks_durable = _import_durable(monkeypatch)
+    sink = graphblocks_durable.InMemoryDurableSink("orders")
+    request = graphblocks_durable.SinkCommitRequest(
+        run_id="run-1",
+        node_id="write",
+        node_attempt_id="attempt-1",
+        idempotency_key="key-1",
+        payload={},
+    )
+    result_type = graphblocks_durable.SinkCommitResult
+
+    def fail_result(*args, **kwargs):
+        del args, kwargs
+        raise RuntimeError("result snapshot failed")
+
+    monkeypatch.setattr(graphblocks_durable, "SinkCommitResult", fail_result)
+    with pytest.raises(RuntimeError, match="result snapshot failed"):
+        sink.commit(request)
+
+    assert sink.next_sequence == 1
+    assert sink.committed_count() == 0
+    monkeypatch.setattr(graphblocks_durable, "SinkCommitResult", result_type)
+    assert sink.commit(request).sequence == 1
+
+
+def test_durable_source_and_checkpoint_identity_failures_are_domain_errors(monkeypatch) -> None:
+    graphblocks_durable = _import_durable(monkeypatch)
+    source = graphblocks_durable.InMemoryDurableSource(
+        "at_least_once",
+        [_order_event(graphblocks_durable, 1)],
+    )
+    with pytest.raises(graphblocks_durable.DurableError, match="cursor must be a SourceCursor"):
+        source.commit(object())
+
+    barrier = _checkpoint(
+        graphblocks_durable,
+        "checkpoint-000001",
+        1,
+        "sha256:plan",
+    )
+    with pytest.raises(
+        graphblocks_durable.DurableError,
+        match="source_id must not contain surrounding whitespace",
+    ):
+        barrier.with_source_cursor(
+            " orders ",
+            graphblocks_durable.SourceCursor("orders", 0, 1),
+        )
