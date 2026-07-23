@@ -720,6 +720,25 @@ fn worker_protocol_message_rejects_invalid_kind_specific_payload() {
 }
 
 #[test]
+fn worker_protocol_message_deserialization_requires_explicit_version() {
+    let error = serde_json::from_value::<WorkerProtocolMessage>(json!({
+        "messageId": "message-000001",
+        "kind": "error",
+        "sequence": 1,
+        "correlationId": null,
+        "causationId": null,
+        "payload": {
+            "code": "worker.failed",
+            "message": "failed",
+            "retryable": false
+        }
+    }))
+    .expect_err("an unversioned worker message must be rejected");
+
+    assert!(error.to_string().contains("protocolVersion"), "{error}");
+}
+
+#[test]
 fn worker_protocol_message_validation_rejects_kind_payload_mismatch() {
     let mut message = WorkerProtocolMessage::advertisement(
         "message-000001",
@@ -1541,6 +1560,65 @@ fn run_ownership_lease_validation_rejects_blank_checkpoint() {
     assert_eq!(
         lease.validate(),
         Err(RunOwnershipLeaseError::EmptyLastCheckpoint),
+    );
+}
+
+#[test]
+fn worker_protocol_rejects_zero_ownership_fencing_epochs() {
+    let lease = RunOwnershipLease {
+        run_id: "run-000001".to_owned(),
+        owner_instance_id: "control-plane-a".to_owned(),
+        lease_epoch: 0,
+        expires_at_unix_ms: 1_820_000_000_000,
+        last_checkpoint: None,
+    };
+    assert_eq!(
+        lease.validate(),
+        Err(RunOwnershipLeaseError::NonPositiveLeaseEpoch),
+    );
+
+    let request = WorkerInvokeRequest {
+        invocation_id: "invoke-000001".to_owned(),
+        run_id: "run-000001".to_owned(),
+        node_id: "render".to_owned(),
+        node_attempt_id: "render-attempt-1".to_owned(),
+        lease_epoch: 0,
+        block: "prompt.render@1".to_owned(),
+        context: WorkerInvocationContext::new("release-1", "rev-1"),
+        inputs: json!({}),
+        config: json!({}),
+    };
+    assert_eq!(
+        request.validate(),
+        Err(WorkerInvokeRequestError::NonPositiveLeaseEpoch),
+    );
+
+    let result = WorkerInvokeResult {
+        invocation_id: "invoke-000001".to_owned(),
+        node_attempt_id: "render-attempt-1".to_owned(),
+        lease_epoch: 0,
+        outputs: BTreeMap::new(),
+    };
+    assert_eq!(
+        result.validate(),
+        Err(WorkerInvokeResultError::NonPositiveLeaseEpoch),
+    );
+
+    let decision = WorkerDrainDecision {
+        workload: WorkerDrainWorkloadKind::OnlineRequest,
+        run_id: "run-000001".to_owned(),
+        invocation_id: "invoke-000001".to_owned(),
+        node_attempt_id: "render-attempt-1".to_owned(),
+        lease_epoch: 0,
+        release_id: "release-1".to_owned(),
+        deployment_revision_id: "rev-1".to_owned(),
+        disposition: WorkerDrainDisposition::Cancel,
+        deadline_unix_ms: 30_000,
+        reason: "deadline_reached".to_owned(),
+    };
+    assert_eq!(
+        decision.validate(),
+        Err(WorkerDrainError::NonPositiveLeaseEpoch),
     );
 }
 

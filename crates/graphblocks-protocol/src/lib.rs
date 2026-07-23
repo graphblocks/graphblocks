@@ -552,7 +552,6 @@ impl<'de> Deserialize<'de> for WorkerProtocolMessage {
         #[derive(Deserialize)]
         #[serde(rename_all = "camelCase")]
         struct WireWorkerProtocolMessage {
-            #[serde(default = "default_worker_protocol_version")]
             protocol_version: u16,
             message_id: String,
             kind: WorkerProtocolMessageKind,
@@ -579,10 +578,6 @@ impl<'de> Deserialize<'de> for WorkerProtocolMessage {
         message.validate().map_err(serde::de::Error::custom)?;
         Ok(message)
     }
-}
-
-fn default_worker_protocol_version() -> u16 {
-    WORKER_PROTOCOL_VERSION
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -886,6 +881,7 @@ pub enum RunOwnershipLeaseError {
     EmptyRunId,
     EmptyOwnerInstanceId,
     EmptyLastCheckpoint,
+    NonPositiveLeaseEpoch,
 }
 
 impl RunOwnershipLease {
@@ -895,6 +891,9 @@ impl RunOwnershipLease {
         }
         if self.owner_instance_id.trim().is_empty() {
             return Err(RunOwnershipLeaseError::EmptyOwnerInstanceId);
+        }
+        if self.lease_epoch == 0 {
+            return Err(RunOwnershipLeaseError::NonPositiveLeaseEpoch);
         }
         if let Some(last_checkpoint) = &self.last_checkpoint
             && last_checkpoint.trim().is_empty()
@@ -1152,6 +1151,7 @@ pub enum WorkerInvokeRequestError {
     EmptyField {
         field: String,
     },
+    NonPositiveLeaseEpoch,
     InvalidContext {
         source: WorkerInvocationContextError,
     },
@@ -1186,6 +1186,9 @@ impl WorkerInvokeRequest {
             return Err(WorkerInvokeRequestError::EmptyField {
                 field: "block".to_owned(),
             });
+        }
+        if self.lease_epoch == 0 {
+            return Err(WorkerInvokeRequestError::NonPositiveLeaseEpoch);
         }
         self.context
             .validate()
@@ -1310,6 +1313,7 @@ pub enum WorkerDrainError {
     EmptyDecisionField {
         field: &'static str,
     },
+    NonPositiveLeaseEpoch,
     EmptyPlanField {
         field: &'static str,
     },
@@ -1406,6 +1410,9 @@ impl WorkerDrainDecision {
             if value.trim().is_empty() {
                 return Err(WorkerDrainError::EmptyDecisionField { field });
             }
+        }
+        if self.lease_epoch == 0 {
+            return Err(WorkerDrainError::NonPositiveLeaseEpoch);
         }
         Ok(())
     }
@@ -1553,6 +1560,7 @@ pub struct WorkerInvokeResult {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum WorkerInvokeResultError {
     EmptyField { field: String },
+    NonPositiveLeaseEpoch,
     EmptyOutputKey,
     InvalidJson { field: String },
 }
@@ -1568,6 +1576,9 @@ impl WorkerInvokeResult {
             return Err(WorkerInvokeResultError::EmptyField {
                 field: "node_attempt_id".to_owned(),
             });
+        }
+        if self.lease_epoch == 0 {
+            return Err(WorkerInvokeResultError::NonPositiveLeaseEpoch);
         }
         if self.outputs.keys().any(|key| key.trim().is_empty()) {
             return Err(WorkerInvokeResultError::EmptyOutputKey);

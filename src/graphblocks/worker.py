@@ -196,7 +196,11 @@ class WorkerAdvertisement:
                 BlockCapability.from_wire(item)
                 for item in supported_blocks
             ),
-            protocol_version=payload.get("protocolVersion", WORKER_PROTOCOL_VERSION),
+            protocol_version=_require_worker_wire_field(
+                payload,
+                "protocolVersion",
+                "worker advertisement",
+            ),
             state=payload.get("state", "ready"),
         )
 
@@ -601,7 +605,11 @@ class WorkerProtocolMessage:
             kind=kind,
             sequence=_require_worker_wire_field(payload, "sequence", "worker protocol message"),
             payload=message_payload,
-            protocol_version=payload.get("protocolVersion", WORKER_PROTOCOL_VERSION),
+            protocol_version=_require_worker_wire_field(
+                payload,
+                "protocolVersion",
+                "worker protocol message",
+            ),
             correlation_id=payload.get("correlationId"),
             causation_id=payload.get("causationId"),
         )
@@ -752,11 +760,21 @@ class _FrozenWorkerJsonObject(Mapping[str, object]):
     def __eq__(self, other: object) -> bool:
         return isinstance(other, Mapping) and self.__values == dict(other)
 
+    def __copy__(self) -> _FrozenWorkerJsonObject:
+        return self
+
     def __deepcopy__(self, memo: dict[int, object]) -> dict[str, object]:
         return {
             key: _worker_json_projection(value)
             for key, value in self.__values.items()
         }
+
+    def __reduce_ex__(
+        self,
+        protocol: int,
+    ) -> tuple[type[_FrozenWorkerJsonObject], tuple[dict[str, object]]]:
+        del protocol
+        return type(self), (dict(self.__values),)
 
 
 class _FrozenWorkerJsonArray(tuple[object, ...]):
@@ -767,6 +785,16 @@ class _FrozenWorkerJsonArray(tuple[object, ...]):
 
     def __deepcopy__(self, memo: dict[int, object]) -> list[object]:
         return [_worker_json_projection(value) for value in self]
+
+    def __copy__(self) -> _FrozenWorkerJsonArray:
+        return self
+
+    def __reduce_ex__(
+        self,
+        protocol: int,
+    ) -> tuple[type[_FrozenWorkerJsonArray], tuple[tuple[object, ...]]]:
+        del protocol
+        return type(self), (tuple(self),)
 
 
 def _worker_json_projection(value: object) -> object:
@@ -849,6 +877,17 @@ def _validate_worker_unsigned_64_integer(
         raise WorkerProtocolError(
             f"{owner} {field_name} must fit an unsigned 64-bit integer"
         )
+    return value
+
+
+def _validate_worker_positive_unsigned_64_integer(
+    owner: str,
+    field_name: str,
+    value: object,
+) -> int:
+    value = _validate_worker_unsigned_64_integer(owner, field_name, value)
+    if value == 0:
+        raise WorkerProtocolError(f"{owner} {field_name} must be positive")
     return value
 
 
@@ -1005,7 +1044,7 @@ class RunOwnershipLease:
         object.__setattr__(
             self,
             "lease_epoch",
-            _validate_worker_unsigned_64_integer(
+            _validate_worker_positive_unsigned_64_integer(
                 "run ownership lease",
                 "lease_epoch",
                 self.lease_epoch,
@@ -1415,7 +1454,7 @@ class WorkerInvokeRequest:
         object.__setattr__(
             self,
             "lease_epoch",
-            _validate_worker_unsigned_64_integer(
+            _validate_worker_positive_unsigned_64_integer(
                 "worker invoke request",
                 "lease_epoch",
                 self.lease_epoch,
@@ -1622,7 +1661,7 @@ class WorkerDrainDecision:
         object.__setattr__(
             self,
             "lease_epoch",
-            _validate_worker_non_negative_integer(
+            _validate_worker_positive_unsigned_64_integer(
                 "worker drain decision",
                 "lease_epoch",
                 self.lease_epoch,
@@ -1872,7 +1911,7 @@ class WorkerInvokeResult:
         object.__setattr__(
             self,
             "lease_epoch",
-            _validate_worker_unsigned_64_integer(
+            _validate_worker_positive_unsigned_64_integer(
                 "worker invoke result",
                 "lease_epoch",
                 self.lease_epoch,

@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from dataclasses import asdict
 import json
 from pathlib import Path
+import pickle
 
 import pytest
 
@@ -47,6 +49,25 @@ from graphblocks.worker import (
 )
 
 
+def test_worker_result_snapshots_support_standard_serialization() -> None:
+    result = WorkerInvokeResult(
+        invocation_id="invocation-1",
+        node_attempt_id="attempt-1",
+        lease_epoch=1,
+        outputs={"nested": {"items": [1]}},
+    )
+
+    assert json.loads(json.dumps(asdict(result)))["outputs"] == {
+        "nested": {"items": [1]}
+    }
+
+    restored = pickle.loads(pickle.dumps(result))
+
+    assert restored == result
+    with pytest.raises(AttributeError):
+        restored.outputs["nested"]["items"].append(2)
+
+
 def test_worker_advertisement_round_trips_and_admits_current_protocol() -> None:
     advertisement = WorkerAdvertisement.new(
         "worker-local-1",
@@ -86,6 +107,14 @@ def test_worker_advertisement_rejects_invalid_wire_payloads() -> None:
         [BlockCapability("prompt.render@1")],
     ).to_wire()
     invalid_advertisements = (
+        (
+            {
+                key: value
+                for key, value in base.items()
+                if key != "protocolVersion"
+            },
+            "worker advertisement is missing required field 'protocolVersion'",
+        ),
         (
             {**base, "workerId": object()},
             "worker advertisement worker_id must be a string",
@@ -642,6 +671,14 @@ def test_worker_protocol_message_rejects_invalid_wire_shapes() -> None:
     base = WorkerProtocolMessage.advertisement("msg-1", 1, advertisement).to_wire()
     invalid_messages = (
         (
+            {
+                key: value
+                for key, value in base.items()
+                if key != "protocolVersion"
+            },
+            "worker protocol message is missing required field 'protocolVersion'",
+        ),
+        (
             {**base, "messageId": " "},
             "worker protocol message message_id must not be empty",
         ),
@@ -858,6 +895,10 @@ def test_worker_invoke_request_rejects_invalid_envelope_fields() -> None:
             "worker invoke request lease_epoch must not be negative",
         ),
         (
+            {**base_request, "lease_epoch": 0},
+            "worker invoke request lease_epoch must be positive",
+        ),
+        (
             {**base_request, "lease_epoch": 1 << 64},
             "worker invoke request lease_epoch must fit an unsigned 64-bit integer",
         ),
@@ -919,6 +960,10 @@ def test_worker_invoke_result_rejects_invalid_envelope_fields() -> None:
         (
             {**base_result, "lease_epoch": -1},
             "worker invoke result lease_epoch must not be negative",
+        ),
+        (
+            {**base_result, "lease_epoch": 0},
+            "worker invoke result lease_epoch must be positive",
         ),
         (
             {**base_result, "lease_epoch": 1 << 64},
@@ -1257,6 +1302,36 @@ def test_worker_drain_payloads_reject_invalid_wire_shapes() -> None:
                 run_id=request.run_id,
                 invocation_id=request.invocation_id,
                 node_attempt_id=request.node_attempt_id,
+                lease_epoch=0,
+                release_id=request.context.release_id,
+                deployment_revision_id=request.context.deployment_revision_id,
+                disposition="cancel",
+                deadline_unix_ms=30_000,
+                reason="deadline_reached",
+            ),
+            "worker drain decision lease_epoch must be positive",
+        ),
+        (
+            lambda: WorkerDrainDecision(
+                workload="online_request",
+                run_id=request.run_id,
+                invocation_id=request.invocation_id,
+                node_attempt_id=request.node_attempt_id,
+                lease_epoch=1 << 64,
+                release_id=request.context.release_id,
+                deployment_revision_id=request.context.deployment_revision_id,
+                disposition="cancel",
+                deadline_unix_ms=30_000,
+                reason="deadline_reached",
+            ),
+            "worker drain decision lease_epoch must fit an unsigned 64-bit integer",
+        ),
+        (
+            lambda: WorkerDrainDecision(
+                workload="online_request",
+                run_id=request.run_id,
+                invocation_id=request.invocation_id,
+                node_attempt_id=request.node_attempt_id,
                 lease_epoch=request.lease_epoch,
                 release_id=request.context.release_id,
                 deployment_revision_id=request.context.deployment_revision_id,
@@ -1581,6 +1656,10 @@ def test_run_ownership_lease_rejects_invalid_wire_payloads() -> None:
         (
             {**base, "leaseEpoch": False},
             "run ownership lease lease_epoch must be an integer",
+        ),
+        (
+            {**base, "leaseEpoch": 0},
+            "run ownership lease lease_epoch must be positive",
         ),
         (
             {**base, "leaseEpoch": 1 << 64},
