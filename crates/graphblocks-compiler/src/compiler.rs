@@ -2,8 +2,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
 use graphblocks_schema::{
-    ResourceSchemaViolation, SchemaId, parse_duration_milliseconds, parse_duration_seconds,
-    resource_depth_violation, resource_schema_errors,
+    MAX_CANONICAL_JSON_DEPTH, ResourceSchemaViolation, SchemaId, parse_duration_milliseconds,
+    parse_duration_seconds, resource_depth_violation, resource_schema_errors,
+    validate_canonical_json_depth,
 };
 use serde_json::{Map, Value};
 
@@ -127,6 +128,7 @@ const PRIMITIVE_TYPE_REFS: [&str; 7] = [
     "Any", "Boolean", "Bytes", "Integer", "Number", "Null", "String",
 ];
 const MAX_TYPE_REF_DEPTH: usize = 32;
+const MAX_CONFIG_SCHEMA_NODES: usize = 10_000;
 
 /// Returns whether a JSON integer is greater than an unsigned bound, including
 /// arbitrary-precision integer tokens that do not fit in `u64`.
@@ -314,11 +316,19 @@ fn validate_config_schema(schema: &Value) -> Result<(), String> {
     if !schema.is_object() {
         return Err("configSchema must be an object".to_owned());
     }
-    jsonschema::draft202012::meta::validate(schema)
-        .map_err(|error| format!("configSchema is not valid JSON Schema Draft 2020-12: {error}"))?;
+    validate_canonical_json_depth(schema).map_err(|_| {
+        format!("configSchema nesting must not exceed {MAX_CANONICAL_JSON_DEPTH} levels")
+    })?;
 
     let mut pending = vec![schema];
+    let mut node_count = 0_usize;
     while let Some(value) = pending.pop() {
+        node_count += 1;
+        if node_count > MAX_CONFIG_SCHEMA_NODES {
+            return Err(format!(
+                "configSchema must not contain more than {MAX_CONFIG_SCHEMA_NODES} JSON nodes"
+            ));
+        }
         match value {
             Value::Object(object) => {
                 for (key, child) in object {
@@ -339,6 +349,9 @@ fn validate_config_schema(schema: &Value) -> Result<(), String> {
         }
     }
 
+    jsonschema::draft202012::meta::validate(schema)
+        .map_err(|error| format!("configSchema is not valid JSON Schema Draft 2020-12: {error}"))?;
+
     jsonschema::draft202012::new(schema)
         .map(|_| ())
         .map_err(|error| format!("configSchema could not be compiled: {error}"))
@@ -348,6 +361,15 @@ fn validate_endpoint_identifier(value: &str) -> bool {
     let mut bytes = value.bytes();
     bytes.next().is_some_and(|byte| byte.is_ascii_alphabetic())
         && bytes.all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+}
+
+fn validate_descriptor_name(value: &str, field: &str) -> Result<(), String> {
+    if value.is_empty() || value.chars().any(char::is_whitespace) {
+        return Err(format!(
+            "{field} must be a non-empty name without whitespace"
+        ));
+    }
+    Ok(())
 }
 
 fn parse_output_requiredness(
@@ -382,6 +404,11 @@ fn parse_output_requiredness(
                 .and_then(Value::as_str)
                 .ok_or_else(|| "configEquals.pointer must be a string".to_owned())?;
             validate_json_pointer(pointer)?;
+            validate_canonical_json_depth(&operand["value"]).map_err(|_| {
+                format!(
+                    "configEquals.value nesting must not exceed {MAX_CANONICAL_JSON_DEPTH} levels"
+                )
+            })?;
             Ok(OutputRequirednessPredicate::ConfigEquals {
                 pointer: pointer.to_owned(),
                 expected: operand["value"].clone(),
@@ -461,16 +488,23 @@ impl BlockCatalog {
             let block = block
                 .as_object()
                 .ok_or_else(|| format!("block catalog entry {index} must be an object"))?;
-            let mut type_id = block
-                .get("typeId")
-                .or_else(|| block.get("type_id"))
-                .or_else(|| block.get("block"))
+            let identity_fields = ["typeId", "type_id", "block"]
+                .into_iter()
+                .filter(|field| block.contains_key(*field))
+                .collect::<Vec<_>>();
+            if identity_fields.len() > 1 {
+                return Err(format!(
+                    "block catalog entry {index} must declare exactly one of typeId, type_id, or block"
+                ));
+            }
+            let mut type_id = identity_fields
+                .first()
+                .and_then(|field| block.get(*field))
                 .and_then(Value::as_str)
                 .ok_or_else(|| format!("block catalog entry {index} is missing typeId"))?
                 .to_owned();
-            if type_id.is_empty() {
-                return Err(format!("block catalog entry {index} is missing typeId"));
-            }
+            validate_descriptor_name(&type_id, "block typeId")
+                .map_err(|error| format!("block catalog entry {index} {error}"))?;
             let mut version = block
                 .get("version")
                 .map(|version| parse_block_catalog_version(version, index))
@@ -480,6 +514,13 @@ impl BlockCatalog {
             {
                 version = Some(parse_block_catalog_version_string(parsed_version, index)?);
                 type_id = parsed_type_id.to_owned();
+            }
+            validate_descriptor_name(&type_id, "block typeId")
+                .map_err(|error| format!("block catalog entry {index} {error}"))?;
+            if type_id.contains('@') {
+                return Err(format!(
+                    "block catalog entry {index} block typeId must not include a version suffix"
+                ));
             }
             let version =
                 version.ok_or_else(|| format!("block catalog entry {index} is missing version"))?;
@@ -605,6 +646,8 @@ impl BlockCatalog {
                                     "block catalog entry {index} resource slot {slot_index} requires a non-empty name"
                                 )
                             })?;
+                        validate_descriptor_name(name, "resource slot name")
+                            .map_err(|error| format!("block catalog entry {index} {error}"))?;
                         if !names.insert(name) {
                             return Err(format!(
                                 "block catalog entry {index} has duplicate resource slot {name:?}"
@@ -627,16 +670,18 @@ impl BlockCatalog {
                 Some(Value::Object(slots)) => {
                     let mut descriptors = Vec::new();
                     for (slot_name, slot) in slots {
-                        if slot_name.trim().is_empty() {
-                            return Err(format!(
-                                "block catalog entry {index} resource slot requires a non-empty name"
-                            ));
-                        }
+                        validate_descriptor_name(slot_name, "resource slot name")
+                            .map_err(|error| format!("block catalog entry {index} {error}"))?;
                         let slot = slot.as_object().ok_or_else(|| {
                             format!(
                                 "block catalog entry {index} resource slot {slot_name:?} must be an object"
                             )
                         })?;
+                        if slot.contains_key("name") {
+                            return Err(format!(
+                                "block catalog entry {index} mapping resource slot {slot_name:?} must not declare name; its mapping key defines the name"
+                            ));
+                        }
                         let context =
                             format!("block catalog entry {index} resource slot {slot_name}");
                         descriptors.push(ResourceSlotDescriptor {

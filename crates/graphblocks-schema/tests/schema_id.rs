@@ -28,6 +28,14 @@ fn schema_id_rejects_missing_or_invalid_version() {
         SchemaId::parse("schemas/Message@01"),
         Err(SchemaIdError::NonCanonicalVersion),
     );
+    assert_eq!(
+        SchemaId::parse("schemas/Chat Message@1"),
+        Err(SchemaIdError::InvalidName),
+    );
+    assert_eq!(
+        SchemaId::parse("schemas/Chat\tMessage@1"),
+        Err(SchemaIdError::InvalidName),
+    );
 }
 
 #[test]

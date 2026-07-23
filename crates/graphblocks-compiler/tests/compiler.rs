@@ -4,7 +4,7 @@ use graphblocks_compiler::compiler::{
 };
 use graphblocks_compiler::diagnostics::Severity;
 use graphblocks_compiler::graph::GRAPH_API_VERSION;
-use serde_json::json;
+use serde_json::{Value, json};
 
 #[test]
 fn compile_graph_returns_normalized_plan_hash() {
@@ -374,6 +374,97 @@ fn block_catalog_rejects_missing_or_empty_descriptor_names() {
             "unexpected error: {error}"
         );
     }
+}
+
+#[test]
+fn block_catalog_rejects_noncanonical_block_and_resource_slot_names() {
+    let cases = [
+        json!([{"typeId": "test block", "version": 1}]),
+        json!([{"typeId": "test.block@1", "version": 1}]),
+        json!([{
+            "typeId": "test.block",
+            "version": 1,
+            "resourceSlots": [{"name": "model slot"}]
+        }]),
+        json!([{
+            "typeId": "test.block",
+            "version": 1,
+            "resourceSlots": {"model slot": {}}
+        }]),
+    ];
+
+    for blocks in cases {
+        let error = BlockCatalog::from_blocks(&blocks).expect_err("catalog must be rejected");
+        assert!(
+            error.contains("without whitespace") || error.contains("version suffix"),
+            "unexpected error: {error}"
+        );
+    }
+}
+
+#[test]
+fn block_catalog_rejects_name_inside_mapping_resource_slot() {
+    let error = BlockCatalog::from_blocks(&json!([{
+        "typeId": "test.block",
+        "version": 1,
+        "resourceSlots": {"model": {"name": "other"}}
+    }]))
+    .expect_err("mapping resource slot name must come from its key");
+
+    assert!(error.contains("must not declare name"), "{error}");
+}
+
+#[test]
+fn block_catalog_rejects_ambiguous_identity_aliases() {
+    for blocks in [
+        json!([{"typeId": "test.left", "type_id": "test.right", "version": 1}]),
+        json!([{"typeId": "test.left", "block": "test.right", "version": 1}]),
+        json!([{"type_id": "test.left", "block": "test.right", "version": 1}]),
+    ] {
+        let error =
+            BlockCatalog::from_blocks(&blocks).expect_err("identity aliases must be exclusive");
+        assert!(
+            error.contains("must declare exactly one of typeId, type_id, or block"),
+            "{error}"
+        );
+    }
+}
+
+#[test]
+fn block_catalog_rejects_excessively_nested_config_schema() {
+    let mut config_schema = json!({});
+    for _ in 0..65 {
+        config_schema = json!({"allOf": [config_schema]});
+    }
+
+    let error = BlockCatalog::from_blocks(&json!([{
+        "typeId": "test.block",
+        "version": 1,
+        "configSchema": config_schema
+    }]))
+    .expect_err("deep config schema must be rejected before recursive validation");
+
+    assert!(
+        error.contains("configSchema nesting must not exceed"),
+        "{error}"
+    );
+}
+
+#[test]
+fn block_catalog_rejects_oversized_config_schema_before_compilation() {
+    let config_schema = json!({"enum": vec![Value::Null; 10_000]});
+
+    let error = BlockCatalog::from_blocks(&json!([{
+        "typeId": "test.block",
+        "version": 1,
+        "configSchema": config_schema
+    }]))
+    .expect_err("oversized config schema must be rejected");
+
+    assert!(
+        error.contains("configSchema must not contain more than 10000 JSON nodes"),
+        "{error}"
+    );
 }
 
 #[test]
@@ -2348,6 +2439,30 @@ fn block_catalog_rejects_invalid_output_requiredness_predicates() {
         .expect_err("invalid requiredWhen must fail catalog construction");
         assert!(error.contains("invalid requiredWhen"), "{error}");
     }
+}
+
+#[test]
+fn block_catalog_rejects_excessively_nested_requiredness_values() {
+    let mut expected = json!(null);
+    for _ in 0..65 {
+        expected = json!([expected]);
+    }
+
+    let error = BlockCatalog::from_blocks(&json!([{
+        "typeId": "branch.invalid",
+        "version": 1,
+        "outputs": [{
+            "name": "value",
+            "required": false,
+            "requiredWhen": {"configEquals": {"pointer": "", "value": expected}}
+        }]
+    }]))
+    .expect_err("deep configEquals value must be rejected");
+
+    assert!(
+        error.contains("configEquals.value nesting must not exceed"),
+        "{error}"
+    );
 }
 
 #[test]

@@ -187,7 +187,7 @@ impl SchemaId {
         if raw.is_empty() {
             return Err(SchemaIdError::Empty);
         }
-        if raw.trim() != raw {
+        if raw.trim() != raw || raw.chars().any(char::is_whitespace) {
             return Err(SchemaIdError::InvalidName);
         }
 

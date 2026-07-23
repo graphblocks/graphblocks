@@ -1,4 +1,4 @@
-use graphblocks_schema::CanonicalJsonError;
+pub use graphblocks_schema::{CanonicalJsonError, validate_canonical_json_depth};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
