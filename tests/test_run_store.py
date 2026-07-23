@@ -173,6 +173,36 @@ def test_run_records_validate_identity_status_revision_and_payload_shapes() -> N
         RunRecord("run-1", "sha256:test", {}, state={"value": math.nan})
 
 
+def test_run_records_reject_cyclic_and_excessively_deep_json_values() -> None:
+    cyclic: dict[str, object] = {}
+    cyclic["self"] = cyclic
+
+    with pytest.raises(ValueError, match="must not contain cyclic values"):
+        RunRecord("run-1", "sha256:test", cyclic)
+
+    deeply_nested: dict[str, object] = {}
+    cursor = deeply_nested
+    for _ in range(66):
+        child: dict[str, object] = {}
+        cursor["nested"] = child
+        cursor = child
+
+    with pytest.raises(ValueError, match="exceeds maximum JSON depth 64"):
+        RunRecord("run-1", "sha256:test", deeply_nested)
+
+
+def test_in_memory_run_store_detaches_restored_state_and_advances_generated_ids() -> None:
+    record = RunRecord("run-000042", "sha256:test", {"nested": {"value": 1}})
+    restored = {record.run_id: record}
+
+    store = InMemoryRunStore(runs=restored, next_id=1)
+    restored.clear()
+    record.inputs["nested"]["value"] = 99
+
+    assert store.get_run("run-000042").inputs == {"nested": {"value": 1}}
+    assert store.create_run("sha256:test", {}).run_id == "run-000043"
+
+
 def test_run_store_validates_create_patch_status_and_copies_inputs() -> None:
     store = InMemoryRunStore()
     inputs = {"message": {"text": "hello"}}
@@ -601,6 +631,32 @@ def test_sqlite_run_store_rejects_non_standard_json_constants_on_replay(
     store.connection.commit()
 
     with pytest.raises(ValueError, match=f"run store {field_name} must be valid strict JSON"):
+        store.get_run(record.run_id)
+
+
+def test_sqlite_run_store_rejects_duplicate_json_keys_on_replay(tmp_path) -> None:
+    store = SQLiteRunStore(tmp_path / "runs.sqlite3")
+    record = store.create_run("sha256:test", {})
+    store.connection.execute(
+        "UPDATE runs SET state_json = ? WHERE run_id = ?",
+        ('{"value": 1, "value": 2}', record.run_id),
+    )
+    store.connection.commit()
+
+    with pytest.raises(ValueError, match="stored state_json must be valid strict JSON"):
+        store.get_run(record.run_id)
+
+
+def test_sqlite_run_store_rejects_fractional_state_revision_on_replay(tmp_path) -> None:
+    store = SQLiteRunStore(tmp_path / "runs.sqlite3")
+    record = store.create_run("sha256:test", {})
+    store.connection.execute(
+        "UPDATE runs SET state_revision = ? WHERE run_id = ?",
+        (1.5, record.run_id),
+    )
+    store.connection.commit()
+
+    with pytest.raises(ValueError, match="run record state_revision must be an integer"):
         store.get_run(record.run_id)
 
 

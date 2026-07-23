@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 import importlib
 from pathlib import Path
 import sys
+from threading import Barrier, BrokenBarrierError
 from types import SimpleNamespace
 
 import pytest
@@ -551,6 +554,80 @@ def test_durable_tool_terminal_store_replays_incomplete_terminal_record(monkeypa
     assert store.tool_terminal_count() == 1
 
 
+def test_durable_tool_terminal_store_detaches_restored_records_and_advances_sequence(
+    monkeypatch,
+) -> None:
+    graphblocks_durable = _import_durable(monkeypatch)
+    record = graphblocks_durable.DurableToolTerminalRecord(
+        run_id="run-000001",
+        response_id="response-1",
+        tool_call_id="call-1",
+        revision=1,
+        terminal_state="incomplete",
+        arguments_digest="sha256:arguments",
+        completed_at_unix_ms=1_820_000_000_000,
+    )
+    restored = {
+        ("response-1", "call-1", 1): graphblocks_durable.DurableToolTerminalCommit(
+            sequence=50,
+            record=record,
+            replayed=False,
+        )
+    }
+
+    store = graphblocks_durable.InMemoryDurableToolTerminalStore(
+        next_sequence=1,
+        terminal_records=restored,
+    )
+    restored.clear()
+    committed = store.record_tool_terminal(
+        replace(record, tool_call_id="call-2", arguments_digest="sha256:arguments-2")
+    )
+
+    assert store.tool_terminal_count() == 2
+    assert committed.sequence == 51
+
+
+def test_durable_tool_terminal_store_serializes_concurrent_conflicting_commits(
+    monkeypatch,
+) -> None:
+    graphblocks_durable = _import_durable(monkeypatch)
+    store = graphblocks_durable.InMemoryDurableToolTerminalStore()
+    reads = Barrier(2)
+
+    class CoordinatedRecords(dict):
+        def get(self, key, default=None):
+            try:
+                reads.wait(timeout=0.2)
+            except BrokenBarrierError:
+                pass
+            return super().get(key, default)
+
+    store.terminal_records = CoordinatedRecords()
+
+    def record(state: str) -> str:
+        terminal = graphblocks_durable.DurableToolTerminalRecord(
+            run_id="run-000001",
+            response_id="response-1",
+            tool_call_id="call-1",
+            revision=1,
+            terminal_state=state,
+            arguments_digest="sha256:arguments",
+            completed_at_unix_ms=1_820_000_000_000,
+        )
+        try:
+            store.record_tool_terminal(terminal)
+        except graphblocks_durable.ToolTerminalStateConflictError:
+            return "conflict"
+        return "committed"
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        outcomes = list(executor.map(record, ("incomplete", "failed")))
+
+    assert sorted(outcomes) == ["committed", "conflict"]
+    assert store.tool_terminal_count() == 1
+
+
 def test_durable_tool_terminal_record_rejects_committed_effect_for_denied_state(monkeypatch) -> None:
     graphblocks_durable = _import_durable(monkeypatch)
 
@@ -1003,6 +1080,53 @@ def test_durable_checkpoint_barrier_rejects_boolean_integer_fields(
 
     with pytest.raises(graphblocks_durable.DurableError, match=message):
         graphblocks_durable.CheckpointBarrier(**config)
+
+
+def test_durable_checkpoint_barrier_rejects_invalid_mapping_and_node_shapes(monkeypatch) -> None:
+    graphblocks_durable = _import_durable(monkeypatch)
+    base = _checkpoint(graphblocks_durable, "checkpoint-000001", 1, "sha256:plan")
+
+    with pytest.raises(graphblocks_durable.DurableError, match="schema_versions keys"):
+        replace(base, schema_versions={1: 1})
+    with pytest.raises(graphblocks_durable.DurableError, match="source_cursors keys"):
+        replace(
+            base,
+            source_cursors={1: graphblocks_durable.SourceCursor("orders", 0, 1)},
+        )
+    with pytest.raises(graphblocks_durable.DurableError, match="source_cursors values"):
+        replace(base, source_cursors={"orders": object()})
+    with pytest.raises(graphblocks_durable.DurableError, match="must not overlap"):
+        replace(base, completed_nodes=("load",), pending_nodes=("load",))
+    with pytest.raises(graphblocks_durable.DurableError, match="source_id must not be empty"):
+        base.with_source_cursor(1, graphblocks_durable.SourceCursor("orders", 0, 1))
+
+
+def test_durable_checkpoint_barrier_detaches_and_protects_mapping_snapshots(monkeypatch) -> None:
+    graphblocks_durable = _import_durable(monkeypatch)
+    operator_state = {"dedupe": {"seen": [1]}}
+    barrier = replace(
+        _checkpoint(graphblocks_durable, "checkpoint-000001", 1, "sha256:plan"),
+        operator_state=operator_state,
+    )
+    operator_state["dedupe"]["seen"].append(2)
+
+    assert barrier.operator_state == {"dedupe": {"seen": [1]}}
+    with pytest.raises(TypeError):
+        barrier.operator_state["other"] = {}  # type: ignore[index]
+
+
+def test_durable_checkpoint_barrier_validate_rejects_non_schema_reference(monkeypatch) -> None:
+    graphblocks_durable = _import_durable(monkeypatch)
+    barrier = replace(
+        _checkpoint(graphblocks_durable, "checkpoint-000001", 1, "sha256:plan"),
+        checkpoint_schema=object(),
+    )
+
+    with pytest.raises(
+        graphblocks_durable.CheckpointBarrierError,
+        match="invalid_checkpoint_schema",
+    ):
+        barrier.validate()
 
 
 def test_durable_checkpoint_store_replays_latest_compatible_checkpoint(monkeypatch) -> None:

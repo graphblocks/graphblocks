@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
+from threading import Barrier, BrokenBarrierError
 
 import pytest
 
@@ -9,7 +11,6 @@ from graphblocks import ArtifactRef, AssetRevision, SourceAsset
 from graphblocks.ingestion import (
     IngestionError,
     IngestionManifest,
-    IngestionStatus,
     InMemoryIngestionManifestStore,
     IndexRecordRef,
     ProcessorRef,
@@ -302,19 +303,23 @@ def test_ingestion_manifest_store_copies_manifests_and_index_metadata_at_boundar
     store = InMemoryIngestionManifestStore()
     manifest = replace(
         _manifest("manifest-1", "rev-1"),
-        parser=ProcessorRef("plain-text", "1", metadata={"profile": "initial"}),
-        metadata={"phase": "initial"},
+        parser=ProcessorRef(
+            "plain-text",
+            "1",
+            metadata={"profile": {"formats": ["text"]}},
+        ),
+        metadata={"phase": {"history": ["initial"]}},
     )
 
     processing = store.create_processing(manifest, "2026-06-22T00:01:00Z")
-    manifest.metadata["phase"] = "manifest-mutated"
-    manifest.parser.metadata["profile"] = "manifest-mutated"
-    processing.metadata["phase"] = "returned-mutated"
-    processing.parser.metadata["profile"] = "returned-mutated"
+    manifest.metadata["phase"]["history"].append("manifest-mutated")  # type: ignore[index, union-attr]
+    manifest.parser.metadata["profile"]["formats"].append("manifest-mutated")  # type: ignore[index, union-attr]
+    processing.metadata["phase"]["history"].append("returned-mutated")  # type: ignore[index, union-attr]
+    processing.parser.metadata["profile"]["formats"].append("returned-mutated")  # type: ignore[index, union-attr]
 
     fresh_processing = store.get("manifest-1")
-    assert fresh_processing.metadata == {"phase": "initial"}
-    assert fresh_processing.parser.metadata == {"profile": "initial"}
+    assert fresh_processing.metadata == {"phase": {"history": ["initial"]}}
+    assert fresh_processing.parser.metadata == {"profile": {"formats": ["text"]}}
 
     index_record = IndexRecordRef(
         index_id="knowledge-local",
@@ -322,14 +327,87 @@ def test_ingestion_manifest_store_copies_manifests_and_index_metadata_at_boundar
         asset_id="asset-1",
         revision_id="rev-1",
         chunk_ids=("chunk-rev-1",),
-        metadata={"source": "initial"},
+        metadata={"source": {"labels": ["initial"]}},
     )
     committed = store.commit("manifest-1", None, None, (index_record,), "2026-06-22T00:02:00Z")
-    index_record.metadata["source"] = "index-mutated"
-    committed.index_records[0].metadata["source"] = "returned-mutated"
+    index_record.metadata["source"]["labels"].append("index-mutated")  # type: ignore[index, union-attr]
+    committed.index_records[0].metadata["source"]["labels"].append("returned-mutated")  # type: ignore[index, union-attr]
 
     fresh_ready = store.get("manifest-1")
-    assert fresh_ready.index_records[0].metadata == {"source": "initial"}
+    assert fresh_ready.index_records[0].metadata == {"source": {"labels": ["initial"]}}
+
+
+def test_ingestion_manifest_store_materializes_one_shot_index_records() -> None:
+    store = InMemoryIngestionManifestStore()
+    store.create_processing(_manifest("manifest-1", "rev-1"), "2026-06-22T00:01:00Z")
+
+    records = (record for record in (_index_record("rev-1"),))
+    committed = store.commit(
+        "manifest-1",
+        None,
+        None,
+        records,  # type: ignore[arg-type]
+        "2026-06-22T00:02:00Z",
+    )
+
+    assert committed.index_records == (_index_record("rev-1"),)
+
+
+def test_ingestion_manifest_store_serializes_duplicate_concurrent_creates() -> None:
+    store = InMemoryIngestionManifestStore()
+    reads = Barrier(2)
+
+    class CoordinatedManifests(dict[str, IngestionManifest]):
+        def __contains__(self, key: object) -> bool:
+            try:
+                reads.wait(timeout=0.2)
+            except BrokenBarrierError:
+                pass
+            return super().__contains__(key)
+
+    store._manifests = CoordinatedManifests()
+
+    def create() -> str:
+        try:
+            store.create_processing(
+                _manifest("manifest-1", "rev-1"),
+                "2026-06-22T00:01:00Z",
+            )
+        except IngestionError:
+            return "duplicate"
+        return "created"
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        outcomes = list(executor.map(lambda _: create(), range(2)))
+
+    assert sorted(outcomes) == ["created", "duplicate"]
+    assert store.get("manifest-1").status == "processing"
+
+
+def test_ingestion_manifest_store_detaches_and_validates_restored_state() -> None:
+    source = InMemoryIngestionManifestStore()
+    source.create_processing(_manifest("manifest-1", "rev-1"), "2026-06-22T00:01:00Z")
+    ready = source.commit(
+        "manifest-1",
+        None,
+        None,
+        (_index_record("rev-1"),),
+        "2026-06-22T00:02:00Z",
+    )
+    manifests = {ready.manifest_id: ready}
+    current_by_asset = {ready.asset_id: ready.manifest_id}
+
+    restored = InMemoryIngestionManifestStore(manifests, current_by_asset)
+    manifests.clear()
+    current_by_asset.clear()
+
+    assert restored.current_for_asset("asset-1") == ready
+
+    with pytest.raises(ValueError, match="current pointer must reference a ready manifest"):
+        InMemoryIngestionManifestStore(
+            {ready.manifest_id: ready},
+            {ready.asset_id: "manifest-missing"},
+        )
 
 
 def test_ingestion_manifest_store_tombstone_marks_deleted_and_clears_current() -> None:

@@ -3,6 +3,8 @@ from __future__ import annotations
 from collections.abc import Mapping
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
+from threading import RLock
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Literal
 
 from graphblocks.output_policy import (
@@ -766,33 +768,80 @@ class InMemoryDurableToolTerminalStore:
     next_sequence: int = 1
     terminal_records: dict[tuple[str, str, int], DurableToolTerminalCommit] = field(default_factory=dict)
     policy_stopped_responses: dict[str, DurableResponsePolicyStopCommit] = field(default_factory=dict)
+    _lock: RLock = field(default_factory=RLock, init=False, repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        terminal_records = dict(self.terminal_records)
+        policy_stopped_responses = dict(self.policy_stopped_responses)
+        seen_sequences: set[int] = set()
+        highest_sequence = 0
+        for key, commit in terminal_records.items():
+            if not isinstance(commit, DurableToolTerminalCommit):
+                raise ToolTerminalStoreError(
+                    "terminal_records values must be DurableToolTerminalCommit"
+                )
+            expected_key = (
+                commit.record.response_id,
+                commit.record.tool_call_id,
+                commit.record.revision,
+            )
+            if key != expected_key:
+                raise ToolTerminalStoreError("terminal_records key does not match record")
+            sequence = _require_tool_terminal_integer("sequence", commit.sequence)
+            if sequence <= 0 or sequence in seen_sequences:
+                raise ToolTerminalStoreError("restored terminal sequence must be unique and positive")
+            seen_sequences.add(sequence)
+            highest_sequence = max(highest_sequence, sequence)
+        for response_id, commit in policy_stopped_responses.items():
+            if not isinstance(commit, DurableResponsePolicyStopCommit):
+                raise ToolTerminalStoreError(
+                    "policy_stopped_responses values must be DurableResponsePolicyStopCommit"
+                )
+            if response_id != commit.record.response_id:
+                raise ToolTerminalStoreError(
+                    "policy_stopped_responses key does not match record"
+                )
+            sequence = _require_tool_terminal_integer("sequence", commit.sequence)
+            if sequence <= 0 or sequence in seen_sequences:
+                raise ToolTerminalStoreError("restored terminal sequence must be unique and positive")
+            seen_sequences.add(sequence)
+            highest_sequence = max(highest_sequence, sequence)
+        next_sequence = _require_tool_terminal_integer("next_sequence", self.next_sequence)
+        if next_sequence <= 0:
+            raise ToolTerminalStoreError("next_sequence must be positive")
+        self.terminal_records = terminal_records
+        self.policy_stopped_responses = policy_stopped_responses
+        self.next_sequence = max(next_sequence, highest_sequence + 1)
 
     def record_tool_terminal(self, record: DurableToolTerminalRecord) -> DurableToolTerminalCommit:
-        key = (record.response_id, record.tool_call_id, record.revision)
-        existing = self.terminal_records.get(key)
-        if existing is not None:
-            if existing.record != record:
-                raise ToolTerminalStateConflictError(record.response_id, record.tool_call_id, record.revision)
-            return DurableToolTerminalCommit(
-                sequence=existing.sequence,
-                record=existing.record,
-                replayed=True,
+        if not isinstance(record, DurableToolTerminalRecord):
+            raise ToolTerminalStoreError("record must be a DurableToolTerminalRecord")
+        with self._lock:
+            key = (record.response_id, record.tool_call_id, record.revision)
+            existing = self.terminal_records.get(key)
+            if existing is not None:
+                if existing.record != record:
+                    raise ToolTerminalStateConflictError(record.response_id, record.tool_call_id, record.revision)
+                return DurableToolTerminalCommit(
+                    sequence=existing.sequence,
+                    record=existing.record,
+                    replayed=True,
+                )
+
+            if record.durable_result_committed and record.response_id in self.policy_stopped_responses:
+                raise ResponsePolicyStoppedError(record.response_id)
+
+            committed = DurableToolTerminalCommit(
+                sequence=self._allocate_sequence(),
+                record=record,
+                replayed=False,
             )
-
-        if record.durable_result_committed and record.response_id in self.policy_stopped_responses:
-            raise ResponsePolicyStoppedError(record.response_id)
-
-        committed = DurableToolTerminalCommit(
-            sequence=self.next_sequence,
-            record=record,
-            replayed=False,
-        )
-        self.next_sequence += 1
-        self.terminal_records[key] = committed
-        return committed
+            self.terminal_records[key] = committed
+            return committed
 
     def tool_terminal_count(self) -> int:
-        return len(self.terminal_records)
+        with self._lock:
+            return len(self.terminal_records)
 
     def record_response_policy_stopped(
         self,
@@ -829,35 +878,57 @@ class InMemoryDurableToolTerminalStore:
             durable_result=durable_result,
             turn_id=turn_id,
         )
-        existing = self.policy_stopped_responses.get(record.response_id)
-        if existing is not None:
-            if existing.record != record:
-                raise ResponsePolicyStopConflictError(record.response_id)
-            return DurableResponsePolicyStopCommit(
-                sequence=existing.sequence,
-                record=existing.record,
-                replayed=True,
-            )
-        if any(
-            commit.record.response_id == record.response_id and commit.record.durable_result_committed
-            for commit in self.terminal_records.values()
-        ):
-            raise DurableResultAlreadyCommittedError(record.response_id)
+        with self._lock:
+            existing = self.policy_stopped_responses.get(record.response_id)
+            if existing is not None:
+                if existing.record != record:
+                    raise ResponsePolicyStopConflictError(record.response_id)
+                return DurableResponsePolicyStopCommit(
+                    sequence=existing.sequence,
+                    record=existing.record,
+                    replayed=True,
+                )
+            if any(
+                commit.record.response_id == record.response_id and commit.record.durable_result_committed
+                for commit in self.terminal_records.values()
+            ):
+                raise DurableResultAlreadyCommittedError(record.response_id)
 
-        committed = DurableResponsePolicyStopCommit(
-            sequence=self.next_sequence,
-            record=record,
-            replayed=False,
+            committed = DurableResponsePolicyStopCommit(
+                sequence=self._allocate_sequence(),
+                record=record,
+                replayed=False,
+            )
+            self.policy_stopped_responses[record.response_id] = committed
+            return committed
+
+    def _allocate_sequence(self) -> int:
+        highest_sequence = max(
+            (
+                commit.sequence
+                for commit in (
+                    *self.terminal_records.values(),
+                    *self.policy_stopped_responses.values(),
+                )
+            ),
+            default=0,
         )
+        self.next_sequence = max(self.next_sequence, highest_sequence + 1)
+        sequence = self.next_sequence
         self.next_sequence += 1
-        self.policy_stopped_responses[record.response_id] = committed
-        return committed
+        return sequence
 
 
 @dataclass(frozen=True, slots=True)
 class SchemaRef:
     schema_id: str
     schema_version: int
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.schema_id, str):
+            raise DurableError("schema_id must be a string")
+        schema_version = _require_integer("schema_version", self.schema_version)
+        object.__setattr__(self, "schema_version", schema_version)
 
 
 @dataclass(frozen=True, slots=True)
@@ -866,6 +937,20 @@ class SourceCursorCommitPlan:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "cursors", tuple(sorted(self.cursors, key=lambda item: item[0])))
+
+
+def _copy_checkpoint_mapping(
+    field_name: str,
+    value: object,
+) -> dict[str, object]:
+    if not isinstance(value, Mapping):
+        raise DurableError(f"{field_name} must be a mapping")
+    copied: dict[str, object] = {}
+    for key, item in value.items():
+        if not isinstance(key, str) or not key.strip():
+            raise DurableError(f"{field_name} keys must be non-empty strings")
+        copied[key] = deepcopy(item)
+    return dict(sorted(copied.items()))
 
 
 @dataclass(frozen=True, slots=True)
@@ -893,40 +978,70 @@ class CheckpointBarrier:
         if created_at_unix_ms < 0:
             raise DurableError("created_at_unix_ms must be non-negative")
         schema_versions: dict[str, int] = {}
-        for key, value in sorted(dict(self.schema_versions).items()):
-            schema_key = str(key)
+        for key, value in dict(self.schema_versions).items():
+            if not isinstance(key, str) or not key.strip():
+                raise DurableError("schema_versions keys must be non-empty strings")
+            schema_key = key
             schema_version = _require_integer(f"schema_versions {schema_key}", value)
             if schema_version < 0:
                 raise DurableError(f"schema_versions {schema_key} must be non-negative")
             schema_versions[schema_key] = schema_version
         object.__setattr__(self, "state_revision", state_revision)
         object.__setattr__(self, "created_at_unix_ms", created_at_unix_ms)
-        object.__setattr__(self, "completed_nodes", tuple(str(node) for node in self.completed_nodes))
-        object.__setattr__(self, "pending_nodes", tuple(str(node) for node in self.pending_nodes))
+        completed_nodes = tuple(self.completed_nodes)
+        pending_nodes = tuple(self.pending_nodes)
+        if any(not isinstance(node, str) or not node.strip() for node in completed_nodes):
+            raise DurableError("completed_nodes must contain non-empty strings")
+        if any(not isinstance(node, str) or not node.strip() for node in pending_nodes):
+            raise DurableError("pending_nodes must contain non-empty strings")
+        if len(set(completed_nodes)) != len(completed_nodes):
+            raise DurableError("completed_nodes must not contain duplicates")
+        if len(set(pending_nodes)) != len(pending_nodes):
+            raise DurableError("pending_nodes must not contain duplicates")
+        if set(completed_nodes) & set(pending_nodes):
+            raise DurableError("completed_nodes and pending_nodes must not overlap")
+        object.__setattr__(self, "completed_nodes", completed_nodes)
+        object.__setattr__(self, "pending_nodes", pending_nodes)
+        source_cursors: dict[str, SourceCursor] = {}
+        for source_id, cursor in dict(self.source_cursors).items():
+            if not isinstance(source_id, str) or not source_id.strip():
+                raise DurableError("source_cursors keys must be non-empty strings")
+            if not isinstance(cursor, SourceCursor):
+                raise DurableError("source_cursors values must be SourceCursor")
+            source_cursors[source_id] = cursor
         object.__setattr__(
             self,
             "source_cursors",
-            {str(source_id): cursor for source_id, cursor in sorted(dict(self.source_cursors).items())},
+            MappingProxyType(dict(sorted(source_cursors.items()))),
         )
         object.__setattr__(
             self,
             "operator_state",
-            {str(key): deepcopy(value) for key, value in sorted(dict(self.operator_state).items())},
+            MappingProxyType(
+                _copy_checkpoint_mapping("operator_state", self.operator_state)
+            ),
         )
         object.__setattr__(
             self,
             "sink_commit_metadata",
-            {str(key): deepcopy(value) for key, value in sorted(dict(self.sink_commit_metadata).items())},
+            MappingProxyType(
+                _copy_checkpoint_mapping(
+                    "sink_commit_metadata",
+                    self.sink_commit_metadata,
+                )
+            ),
         )
         object.__setattr__(
             self,
             "schema_versions",
-            schema_versions,
+            MappingProxyType(dict(sorted(schema_versions.items()))),
         )
 
     def with_source_cursor(self, source_id: str, cursor: SourceCursor) -> CheckpointBarrier:
-        if not source_id.strip():
+        if not isinstance(source_id, str) or not source_id.strip():
             raise DurableError("source_id must not be empty")
+        if not isinstance(cursor, SourceCursor):
+            raise DurableError("cursor must be a SourceCursor")
         source_cursors = dict(self.source_cursors)
         source_cursors[source_id] = cursor
         return replace(self, source_cursors=source_cursors)
@@ -942,6 +1057,8 @@ class CheckpointBarrier:
             raise CheckpointBarrierError("missing_deployment_revision_id")
         if not self.plan_hash.strip():
             raise CheckpointBarrierError("missing_plan_hash")
+        if not isinstance(self.checkpoint_schema, SchemaRef):
+            raise CheckpointBarrierError("invalid_checkpoint_schema")
         if not self.checkpoint_schema.schema_id.strip() or self.checkpoint_schema.schema_version <= 0:
             raise CheckpointBarrierError("invalid_checkpoint_schema")
         if not self.schema_versions:

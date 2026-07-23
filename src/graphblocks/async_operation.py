@@ -87,6 +87,7 @@ VALID_ASYNC_OPERATION_KINDS = frozenset({
     "research_task",
     "custom",
 })
+_MAX_ASYNC_JSON_DEPTH = 64
 
 
 class _FrozenJsonArray(tuple[object, ...]):
@@ -156,7 +157,15 @@ def _freeze_json_value(
     value: object,
     *,
     key_field_name: str | None = None,
+    active_containers: set[int] | None = None,
+    depth: int = 0,
 ) -> object:
+    if depth > _MAX_ASYNC_JSON_DEPTH:
+        raise ValueError(
+            f"{owner} {field_name} exceeds maximum JSON depth {_MAX_ASYNC_JSON_DEPTH}"
+        )
+    if active_containers is None:
+        active_containers = set()
     if value is None or isinstance(value, str) or isinstance(value, bool):
         return value
     if isinstance(value, int) and not isinstance(value, bool):
@@ -166,30 +175,69 @@ def _freeze_json_value(
             raise ValueError(f"{owner} {field_name} must not contain non-finite numbers")
         return value
     if isinstance(value, _FrozenJsonArray):
-        return _FrozenJsonArray(
-            _freeze_json_value(owner, field_name, item, key_field_name=key_field_name) for item in value
-        )
+        container_id = id(value)
+        if container_id in active_containers:
+            raise ValueError(f"{owner} {field_name} must not contain cyclic values")
+        active_containers.add(container_id)
+        try:
+            return _FrozenJsonArray(
+                _freeze_json_value(
+                    owner,
+                    field_name,
+                    item,
+                    key_field_name=key_field_name,
+                    active_containers=active_containers,
+                    depth=depth + 1,
+                )
+                for item in value
+            )
+        finally:
+            active_containers.remove(container_id)
     if isinstance(value, list):
-        return _FrozenJsonArray(
-            _freeze_json_value(owner, field_name, item, key_field_name=key_field_name) for item in value
-        )
+        container_id = id(value)
+        if container_id in active_containers:
+            raise ValueError(f"{owner} {field_name} must not contain cyclic values")
+        active_containers.add(container_id)
+        try:
+            return _FrozenJsonArray(
+                _freeze_json_value(
+                    owner,
+                    field_name,
+                    item,
+                    key_field_name=key_field_name,
+                    active_containers=active_containers,
+                    depth=depth + 1,
+                )
+                for item in value
+            )
+        finally:
+            active_containers.remove(container_id)
     if isinstance(value, tuple):
         raise ValueError(f"{owner} {field_name} must contain only JSON values")
     if isinstance(value, Mapping):
+        container_id = id(value)
+        if container_id in active_containers:
+            raise ValueError(f"{owner} {field_name} must not contain cyclic values")
+        active_containers.add(container_id)
         key_label = field_name if key_field_name is None else key_field_name
-        frozen: dict[str, object] = {}
-        for key, item in value.items():
-            if not isinstance(key, str) or not key.strip():
-                raise ValueError(f"{owner} {key_label} keys must be non-empty strings")
-            if key != key.strip():
-                raise ValueError(f"{owner} {key_label} keys must not contain surrounding whitespace")
-            frozen[key] = _freeze_json_value(
-                owner,
-                field_name,
-                item,
-                key_field_name=f"{key_label}.{key}",
-            )
-        return MappingProxyType(frozen)
+        try:
+            frozen: dict[str, object] = {}
+            for key, item in value.items():
+                if not isinstance(key, str) or not key.strip():
+                    raise ValueError(f"{owner} {key_label} keys must be non-empty strings")
+                if key != key.strip():
+                    raise ValueError(f"{owner} {key_label} keys must not contain surrounding whitespace")
+                frozen[key] = _freeze_json_value(
+                    owner,
+                    field_name,
+                    item,
+                    key_field_name=f"{key_label}.{key}",
+                    active_containers=active_containers,
+                    depth=depth + 1,
+                )
+            return MappingProxyType(frozen)
+        finally:
+            active_containers.remove(container_id)
     raise ValueError(f"{owner} {field_name} must contain only JSON values")
 
 

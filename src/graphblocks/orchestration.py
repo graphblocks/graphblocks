@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
+from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from typing import Literal
@@ -30,6 +32,23 @@ class TaskPlanIdentityError(TaskPlanError):
 def _validate_task_identity(entity: str, field_name: str, value: str) -> None:
     if not isinstance(value, str) or not value.strip():
         raise TaskPlanIdentityError(entity, field_name)
+
+
+def _copy_metadata(owner: str, value: object) -> dict[str, object]:
+    if not isinstance(value, Mapping):
+        raise ValueError(f"{owner} metadata must be a mapping")
+    copied: dict[str, object] = {}
+    for key, item in value.items():
+        if not isinstance(key, str) or not key.strip():
+            raise ValueError(f"{owner} metadata keys must be non-empty strings")
+        copied[key] = deepcopy(item)
+    return copied
+
+
+def _validate_positive_lease_integer(field_name: str, value: object) -> int:
+    if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
+        raise LeasePoolCapacityError(field_name, value)  # type: ignore[arg-type]
+    return value
 
 
 def _parse_lease_datetime(field_name: str, value: object) -> datetime:
@@ -83,7 +102,7 @@ class TaskStep:
         for dependency_id in self.depends_on:
             _validate_task_identity("step", "depends_on", dependency_id)
         object.__setattr__(self, "depends_on", tuple(self.depends_on))
-        object.__setattr__(self, "metadata", dict(self.metadata))
+        object.__setattr__(self, "metadata", _copy_metadata("task step", self.metadata))
 
     def canonical_value(self) -> dict[str, object]:
         return {
@@ -111,7 +130,7 @@ class TaskPlanPatch:
         for step_id in self.remove_step_ids:
             _validate_task_identity("patch", "remove_step_ids", step_id)
         object.__setattr__(self, "remove_step_ids", tuple(sorted(set(self.remove_step_ids))))
-        object.__setattr__(self, "metadata", dict(self.metadata))
+        object.__setattr__(self, "metadata", _copy_metadata("task plan patch", self.metadata))
 
 
 @dataclass(frozen=True, slots=True)
@@ -226,7 +245,7 @@ class TaskPlan:
         _validate_task_identity("plan", "plan_id", self.plan_id)
         _validate_task_identity("plan", "objective", self.objective)
         object.__setattr__(self, "steps", tuple(sorted(self.steps, key=lambda step: step.step_id)))
-        object.__setattr__(self, "metadata", dict(self.metadata))
+        object.__setattr__(self, "metadata", _copy_metadata("task plan", self.metadata))
         for resource_id in self.context_resources:
             _validate_task_identity("plan", "context_resources", resource_id)
         object.__setattr__(self, "context_resources", tuple(sorted(set(self.context_resources))))
@@ -731,9 +750,12 @@ class LeaseRequest:
     metadata: dict[str, object] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        if self.units <= 0:
-            raise LeasePoolCapacityError("units", self.units)
-        object.__setattr__(self, "metadata", dict(self.metadata))
+        _validate_task_identity("lease request", "request_id", self.request_id)
+        _validate_task_identity("lease request", "resource_kind", self.resource_kind)
+        if not isinstance(self.holder, ResourceRef):
+            raise LeasePoolError("lease request holder must be a ResourceRef")
+        object.__setattr__(self, "units", _validate_positive_lease_integer("units", self.units))
+        object.__setattr__(self, "metadata", _copy_metadata("lease request", self.metadata))
 
 
 @dataclass(frozen=True, slots=True)
@@ -750,13 +772,21 @@ class LeaseGrant:
     metadata: dict[str, object] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        if self.units <= 0:
-            raise LeasePoolCapacityError("units", self.units)
+        for field_name in ("lease_id", "request_id", "pool_id", "resource_kind"):
+            _validate_task_identity("lease grant", field_name, getattr(self, field_name))
+        if not isinstance(self.holder, ResourceRef):
+            raise LeasePoolError("lease grant holder must be a ResourceRef")
+        object.__setattr__(self, "units", _validate_positive_lease_integer("units", self.units))
+        object.__setattr__(
+            self,
+            "fencing_epoch",
+            _validate_positive_lease_integer("fencing_epoch", self.fencing_epoch),
+        )
         acquired_at = _parse_lease_datetime("acquired_at", self.acquired_at)
         expires_at = _parse_lease_datetime("expires_at", self.expires_at)
         if expires_at <= acquired_at:
             raise ValueError("lease expires_at must be later than acquired_at")
-        object.__setattr__(self, "metadata", dict(self.metadata))
+        object.__setattr__(self, "metadata", _copy_metadata("lease grant", self.metadata))
 
     def is_active_at(self, now: str) -> bool:
         try:
@@ -779,11 +809,23 @@ class LeasePool:
     metadata: dict[str, object] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        if self.capacity_units <= 0:
-            raise LeasePoolCapacityError("capacity_units", self.capacity_units)
+        _validate_task_identity("lease pool", "pool_id", self.pool_id)
+        _validate_task_identity("lease pool", "resource_kind", self.resource_kind)
+        object.__setattr__(
+            self,
+            "capacity_units",
+            _validate_positive_lease_integer("capacity_units", self.capacity_units),
+        )
+        next_fencing_epoch = _validate_positive_lease_integer(
+            "next_fencing_epoch",
+            self.next_fencing_epoch,
+        )
+        unsorted_active_leases = tuple(self.active_leases)
+        if any(not isinstance(lease, LeaseGrant) for lease in unsorted_active_leases):
+            raise LeasePoolError("active_leases must contain LeaseGrant records")
         active_leases = tuple(
             sorted(
-                self.active_leases,
+                unsorted_active_leases,
                 key=lambda lease: (lease.expires_at, lease.lease_id),
             )
         )
@@ -803,8 +845,8 @@ class LeasePool:
         if used_units > self.capacity_units:
             raise LeasePoolExhaustedError(self.pool_id, used_units, self.capacity_units)
         object.__setattr__(self, "active_leases", active_leases)
-        object.__setattr__(self, "next_fencing_epoch", max(self.next_fencing_epoch, highest_epoch + 1))
-        object.__setattr__(self, "metadata", dict(self.metadata))
+        object.__setattr__(self, "next_fencing_epoch", max(next_fencing_epoch, highest_epoch + 1))
+        object.__setattr__(self, "metadata", _copy_metadata("lease pool", self.metadata))
 
     @property
     def used_units(self) -> int:
@@ -829,6 +871,9 @@ class LeasePool:
         acquired_at: str,
         expires_at: str,
     ) -> tuple[LeasePool, LeaseGrant]:
+        if not isinstance(request, LeaseRequest):
+            raise LeasePoolError("lease request must be a LeaseRequest")
+        _validate_task_identity("lease", "lease_id", lease_id)
         _parse_lease_datetime("acquired_at", acquired_at)
         _parse_lease_datetime("expires_at", expires_at)
         if request.resource_kind != self.resource_kind:
@@ -893,6 +938,8 @@ class LeasePool:
         )
 
     def release(self, lease_id: str, *, fencing_epoch: int) -> LeasePool:
+        _validate_task_identity("lease", "lease_id", lease_id)
+        fencing_epoch = _validate_positive_lease_integer("fencing_epoch", fencing_epoch)
         active_leases = list(self.active_leases)
         for index, lease in enumerate(active_leases):
             if lease.lease_id == lease_id:

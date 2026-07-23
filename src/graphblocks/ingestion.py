@@ -1,8 +1,11 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
+from copy import deepcopy
 from dataclasses import dataclass, field, replace
-from typing import Literal
+from functools import wraps
+from threading import RLock
+from typing import Literal, ParamSpec, TypeVar, cast
 
 from .documents import ArtifactRef, AssetRevision, SourceAsset
 
@@ -13,10 +16,22 @@ JsonObject = dict[str, object]
 VALID_INGESTION_STATUSES = frozenset(
     {"discovered", "processing", "ready", "failed", "superseded", "deleted"}
 )
+_P = ParamSpec("_P")
+_R = TypeVar("_R")
 
 
 class IngestionError(RuntimeError):
     pass
+
+
+def _with_ingestion_store_lock(method: Callable[_P, _R]) -> Callable[_P, _R]:
+    @wraps(method)
+    def locked(*args: _P.args, **kwargs: _P.kwargs) -> _R:
+        store = cast("InMemoryIngestionManifestStore", args[0])
+        with store._lock:
+            return method(*args, **kwargs)
+
+    return locked
 
 
 def _validate_non_empty_string(owner: str, field_name: str, value: object) -> str:
@@ -43,7 +58,7 @@ def _validate_optional_non_empty_string(owner: str, field_name: str, value: obje
 def _copy_metadata(owner: str, value: object) -> JsonObject:
     if not isinstance(value, Mapping):
         raise ValueError(f"{owner} metadata must be a mapping")
-    metadata = dict(value)
+    metadata = deepcopy(dict(value))
     for key in metadata:
         if not isinstance(key, str):
             raise ValueError(f"{owner} metadata keys must be strings")
@@ -295,14 +310,43 @@ def _copy_ingestion_manifest(manifest: IngestionManifest) -> IngestionManifest:
 class InMemoryIngestionManifestStore:
     _manifests: dict[str, IngestionManifest] = field(default_factory=dict)
     _current_by_asset: dict[str, str] = field(default_factory=dict)
+    _lock: RLock = field(default_factory=RLock, init=False, repr=False, compare=False)
 
+    def __post_init__(self) -> None:
+        manifests: dict[str, IngestionManifest] = {}
+        for manifest_id, manifest in dict(self._manifests).items():
+            _validate_non_empty_string("ingestion manifest store", "manifest_id", manifest_id)
+            if not isinstance(manifest, IngestionManifest):
+                raise ValueError(
+                    "ingestion manifest store manifests must be IngestionManifest records"
+                )
+            if manifest.manifest_id != manifest_id:
+                raise ValueError("ingestion manifest store manifest key must match manifest_id")
+            manifests[manifest_id] = _copy_ingestion_manifest(manifest)
+        current_by_asset: dict[str, str] = {}
+        for asset_id, manifest_id in dict(self._current_by_asset).items():
+            _validate_non_empty_string("ingestion manifest store", "asset_id", asset_id)
+            _validate_non_empty_string("ingestion manifest store", "manifest_id", manifest_id)
+            manifest = manifests.get(manifest_id)
+            if manifest is None or manifest.asset_id != asset_id or manifest.status != "ready":
+                raise ValueError(
+                    "ingestion manifest store current pointer must reference a ready manifest for the asset"
+                )
+            current_by_asset[asset_id] = manifest_id
+        self._manifests = manifests
+        self._current_by_asset = current_by_asset
+
+    @_with_ingestion_store_lock
     def create_processing(self, manifest: IngestionManifest, updated_at: str) -> IngestionManifest:
+        if not isinstance(manifest, IngestionManifest):
+            raise ValueError("ingestion manifest store manifest must be an IngestionManifest")
         if manifest.manifest_id in self._manifests:
             raise IngestionError(f"ingestion manifest {manifest.manifest_id!r} already exists")
         processing = _copy_ingestion_manifest(replace(manifest, status="processing", updated_at=updated_at))
         self._manifests[processing.manifest_id] = processing
         return _copy_ingestion_manifest(processing)
 
+    @_with_ingestion_store_lock
     def commit(
         self,
         manifest_id: str,
@@ -311,6 +355,12 @@ class InMemoryIngestionManifestStore:
         index_records: tuple[IndexRecordRef, ...],
         updated_at: str,
     ) -> IngestionManifest:
+        try:
+            index_records = tuple(index_records)
+        except TypeError as error:
+            raise ValueError("ingestion manifest index_records must be IndexRecordRef records") from error
+        if any(not isinstance(record, IndexRecordRef) for record in index_records):
+            raise ValueError("ingestion manifest index_records must be IndexRecordRef records")
         manifest = self._require_manifest(manifest_id)
         if manifest.status == "ready":
             if (
@@ -368,6 +418,7 @@ class InMemoryIngestionManifestStore:
                 )
         return _copy_ingestion_manifest(ready)
 
+    @_with_ingestion_store_lock
     def fail(self, manifest_id: str, error: str, updated_at: str) -> IngestionManifest:
         manifest = self._require_manifest(manifest_id)
         if manifest.status in {"ready", "superseded", "deleted"}:
@@ -378,11 +429,13 @@ class InMemoryIngestionManifestStore:
         self._manifests[manifest_id] = failed
         return _copy_ingestion_manifest(failed)
 
+    @_with_ingestion_store_lock
     def tombstone(self, manifest_id: str, updated_at: str) -> IngestionManifest:
         deleted = self.delete(manifest_id, policy="tombstone", updated_at=updated_at)
         assert deleted is not None
         return deleted
 
+    @_with_ingestion_store_lock
     def delete(
         self,
         manifest_id: str,
@@ -406,9 +459,11 @@ class InMemoryIngestionManifestStore:
             self._current_by_asset.pop(deleted.asset_id, None)
         return _copy_ingestion_manifest(deleted)
 
+    @_with_ingestion_store_lock
     def get(self, manifest_id: str) -> IngestionManifest:
         return _copy_ingestion_manifest(self._require_manifest(manifest_id))
 
+    @_with_ingestion_store_lock
     def current_for_asset(self, asset_id: str) -> IngestionManifest | None:
         manifest_id = self._current_by_asset.get(asset_id)
         if manifest_id is None:
@@ -416,6 +471,7 @@ class InMemoryIngestionManifestStore:
         manifest = self._manifests.get(manifest_id)
         return None if manifest is None else _copy_ingestion_manifest(manifest)
 
+    @_with_ingestion_store_lock
     def list_by_status(self, status: IngestionStatus) -> list[IngestionManifest]:
         return [
             _copy_ingestion_manifest(self._manifests[manifest_id])

@@ -80,6 +80,7 @@ VALID_RUN_STATUSES = frozenset({
 VALID_RUN_INVOCATION_MODES = frozenset({"sync", "accepted", "background"})
 _P = ParamSpec("_P")
 _R = TypeVar("_R")
+_MAX_RUN_JSON_DEPTH = 64
 
 
 def _with_in_memory_run_store_lock(
@@ -110,17 +111,50 @@ def _validate_optional_non_empty_string(owner: str, field_name: str, value: obje
     return _validate_non_empty_string(owner, field_name, value)
 
 
-def _validate_json_object(owner: str, field_name: str, value: object) -> dict[str, Any]:
+def _validate_json_object(
+    owner: str,
+    field_name: str,
+    value: object,
+    *,
+    active_containers: set[int] | None = None,
+    depth: int = 0,
+) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise ValueError(f"{owner} {field_name} must be an object")
-    snapshot: dict[str, Any] = {}
-    for key, item in value.items():
-        key_text = _validate_non_empty_string(owner, f"{field_name} key", key)
-        snapshot[key_text] = _validate_json_value(owner, f"{field_name}.{key_text}", item)
-    return snapshot
+    if depth > _MAX_RUN_JSON_DEPTH:
+        raise ValueError(f"{owner} {field_name} exceeds maximum JSON depth {_MAX_RUN_JSON_DEPTH}")
+    if active_containers is None:
+        active_containers = set()
+    container_id = id(value)
+    if container_id in active_containers:
+        raise ValueError(f"{owner} {field_name} must not contain cyclic values")
+    active_containers.add(container_id)
+    try:
+        snapshot: dict[str, Any] = {}
+        for key, item in value.items():
+            key_text = _validate_non_empty_string(owner, f"{field_name} key", key)
+            snapshot[key_text] = _validate_json_value(
+                owner,
+                f"{field_name}.{key_text}",
+                item,
+                active_containers=active_containers,
+                depth=depth + 1,
+            )
+        return snapshot
+    finally:
+        active_containers.remove(container_id)
 
 
-def _validate_json_value(owner: str, path: str, value: object) -> Any:
+def _validate_json_value(
+    owner: str,
+    path: str,
+    value: object,
+    *,
+    active_containers: set[int],
+    depth: int,
+) -> Any:
+    if depth > _MAX_RUN_JSON_DEPTH:
+        raise ValueError(f"{owner} {path} exceeds maximum JSON depth {_MAX_RUN_JSON_DEPTH}")
     if value is None or isinstance(value, str) or isinstance(value, bool):
         return value
     if isinstance(value, int) and not isinstance(value, bool):
@@ -130,17 +164,51 @@ def _validate_json_value(owner: str, path: str, value: object) -> Any:
             raise ValueError(f"{owner} {path} must not contain non-finite numbers")
         return value
     if isinstance(value, list):
-        return [_validate_json_value(owner, path, item) for item in value]
+        container_id = id(value)
+        if container_id in active_containers:
+            raise ValueError(f"{owner} {path} must not contain cyclic values")
+        active_containers.add(container_id)
+        try:
+            return [
+                _validate_json_value(
+                    owner,
+                    path,
+                    item,
+                    active_containers=active_containers,
+                    depth=depth + 1,
+                )
+                for item in value
+            ]
+        finally:
+            active_containers.remove(container_id)
     if isinstance(value, dict):
-        return _validate_json_object(owner, path, value)
+        return _validate_json_object(
+            owner,
+            path,
+            value,
+            active_containers=active_containers,
+            depth=depth,
+        )
     raise ValueError(f"{owner} {path} must contain only JSON values")
 
 
-def _loads_strict_json(owner: str, field_name: str, value: str) -> Any:
+def _reject_duplicate_json_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"duplicate JSON object key {key!r}")
+        result[key] = value
+    return result
+
+
+def _loads_strict_json(owner: str, field_name: str, value: object) -> Any:
+    if not isinstance(value, str):
+        raise ValueError(f"{owner} {field_name} must be valid strict JSON")
     try:
         return json.loads(
             value,
             parse_constant=lambda constant: (_ for _ in ()).throw(ValueError(constant)),
+            object_pairs_hook=_reject_duplicate_json_keys,
         )
     except ValueError as error:
         raise ValueError(f"{owner} {field_name} must be valid strict JSON") from error
@@ -297,6 +365,23 @@ class InMemoryRunStore:
     runs: dict[str, RunRecord] = field(default_factory=dict)
     next_id: int = 1
     _lock: RLock = field(default_factory=RLock, init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        runs = dict(self.runs)
+        highest_generated_id = 0
+        for run_id, record in runs.items():
+            run_id = _validate_non_empty_string("run store", "run_id", run_id)
+            if not isinstance(record, RunRecord):
+                raise ValueError("run store runs values must be RunRecord")
+            if record.run_id != run_id:
+                raise ValueError("run store runs key must match RunRecord run_id")
+            suffix = run_id.removeprefix("run-")
+            if run_id.startswith("run-") and suffix.isascii() and suffix.isdecimal():
+                highest_generated_id = max(highest_generated_id, int(suffix))
+        if not isinstance(self.next_id, int) or isinstance(self.next_id, bool) or self.next_id <= 0:
+            raise ValueError("run store next_id must be a positive integer")
+        self.runs = deepcopy(runs)
+        self.next_id = max(self.next_id, highest_generated_id + 1)
 
     @_with_in_memory_run_store_lock
     def create_run(
@@ -590,17 +675,17 @@ class SQLiteRunStore:
         return RunRecord(
             run_id=str(row["run_id"]),
             graph_hash=str(row["graph_hash"]),
-            inputs=_loads_strict_json("run store", "stored inputs_json", str(row["inputs_json"])),
+            inputs=_loads_strict_json("run store", "stored inputs_json", row["inputs_json"]),
             deployment_provenance=_parse_deployment_provenance_json(
-                str(row["deployment_provenance_json"])
+                row["deployment_provenance_json"]
             ),
             invocation_mode=str(row["invocation_mode"]),
             model_visible_tools=_parse_model_visible_tools_json(
-                str(row["model_visible_tools_json"])
+                row["model_visible_tools_json"]
             ),
             status=row["status"],
-            state=_loads_strict_json("run store", "stored state_json", str(row["state_json"])),
-            state_revision=int(row["state_revision"]),
+            state=_loads_strict_json("run store", "stored state_json", row["state_json"]),
+            state_revision=row["state_revision"],
         )
 
     def patch_state(self, run_id: str, patch: dict[str, Any], expected_revision: int) -> RunRecord:
@@ -727,14 +812,14 @@ def _model_visible_tools_json(tools: Iterable[ModelVisibleToolRef]) -> str:
     )
 
 
-def _parse_deployment_provenance_json(value: str) -> RunDeploymentProvenance:
+def _parse_deployment_provenance_json(value: object) -> RunDeploymentProvenance:
     parsed = _loads_strict_json("run store", "stored deployment_provenance_json", value)
     if not isinstance(parsed, dict):
         raise ValueError("run deployment provenance mapping must be an object")
     return RunDeploymentProvenance.from_mapping(parsed)
 
 
-def _parse_model_visible_tools_json(value: str) -> tuple[ModelVisibleToolRef, ...]:
+def _parse_model_visible_tools_json(value: object) -> tuple[ModelVisibleToolRef, ...]:
     parsed = _loads_strict_json("run store", "stored model_visible_tools_json", value)
     if not isinstance(parsed, list):
         raise ValueError("run model visible tools must be a list")

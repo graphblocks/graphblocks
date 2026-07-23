@@ -280,6 +280,24 @@ def test_async_operation_result_rejects_non_json_output_and_projection_values() 
             graphblocks.AsyncOperationResult.completed("op-1").with_projections(**projection)  # type: ignore[arg-type]
 
 
+def test_async_operation_result_rejects_cyclic_and_excessively_deep_json_values() -> None:
+    cyclic: dict[str, object] = {}
+    cyclic["self"] = cyclic
+
+    with raises_value_error("async operation result output must not contain cyclic values"):
+        graphblocks.AsyncOperationResult.completed("op-1", output=cyclic)
+
+    deeply_nested: dict[str, object] = {}
+    cursor = deeply_nested
+    for _ in range(66):
+        child: dict[str, object] = {}
+        cursor["nested"] = child
+        cursor = child
+
+    with raises_value_error("async operation result output exceeds maximum JSON depth 64"):
+        graphblocks.AsyncOperationResult.completed("op-1", output=deeply_nested)
+
+
 def test_async_operation_result_projects_from_terminal_operation_state() -> None:
     completed_operation = graphblocks.AsyncOperation.created(
         operation_id="op-ci-1",

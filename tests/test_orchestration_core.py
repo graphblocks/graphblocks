@@ -10,7 +10,9 @@ from graphblocks.orchestration import (
     ChildBudgetDelegationError,
     LeaseBudgetPermitError,
     LeaseEpochMismatchError,
+    LeaseGrant,
     LeasePool,
+    LeasePoolCapacityError,
     LeasePoolExhaustedError,
     LeaseRequest,
     ModelPool,
@@ -64,6 +66,23 @@ def test_task_plan_patch_is_order_stable_and_revises_steps() -> None:
     assert [step.step_id for step in updated.steps] == ["draft", "verify"]
     assert updated.step("draft").description == "Draft response with citations"
     assert updated.content_digest() == updated.apply_patch(TaskPlanPatch("noop", "plan-1", 2)).content_digest()
+
+
+def test_task_plan_records_detach_nested_metadata_from_callers() -> None:
+    step_metadata = {"labels": ["draft"]}
+    plan_metadata = {"audit": {"reviewers": ["alice"]}}
+    patch_metadata = {"reason": {"codes": ["clarify"]}}
+    step = TaskStep("draft", "Draft response", metadata=step_metadata)
+    plan = TaskPlan("plan-1", "answer", steps=(step,), metadata=plan_metadata)
+    patch = TaskPlanPatch("patch-1", "plan-1", 1, metadata=patch_metadata)
+
+    step_metadata["labels"].append("mutated")
+    plan_metadata["audit"]["reviewers"].append("mutated")
+    patch_metadata["reason"]["codes"].append("mutated")
+
+    assert step.metadata == {"labels": ["draft"]}
+    assert plan.metadata == {"audit": {"reviewers": ["alice"]}}
+    assert patch.metadata == {"reason": {"codes": ["clarify"]}}
 
 
 def test_task_plan_rejects_missing_dependencies_and_patch_cycles() -> None:
@@ -552,6 +571,76 @@ def test_lease_pool_acquires_capacity_with_fencing_and_expiration() -> None:
     assert renewed_grant.fencing_epoch == 2
 
 
+def test_lease_records_reject_boolean_and_fractional_integer_fields() -> None:
+    holder = ResourceRef("trial:formal")
+
+    for units in (True, 1.5):
+        with pytest.raises(LeasePoolCapacityError, match="units must be positive"):
+            LeaseRequest("formal-check", holder, "eda.formal", units=units)  # type: ignore[arg-type]
+
+    with pytest.raises(LeasePoolCapacityError, match="capacity_units must be positive"):
+        LeasePool("formal-license", "eda.formal", capacity_units=True)
+    with pytest.raises(LeasePoolCapacityError, match="next_fencing_epoch must be positive"):
+        LeasePool(
+            "formal-license",
+            "eda.formal",
+            capacity_units=1,
+            next_fencing_epoch=True,
+        )
+    with pytest.raises(LeasePoolCapacityError, match="fencing_epoch must be positive"):
+        LeaseGrant(
+            lease_id="lease-1",
+            request_id="formal-check",
+            pool_id="formal-license",
+            holder=holder,
+            resource_kind="eda.formal",
+            units=1,
+            fencing_epoch=True,
+            acquired_at="2026-06-24T00:00:00Z",
+            expires_at="2026-06-24T00:05:00Z",
+        )
+
+
+def test_lease_pool_rejects_invalid_restored_lease_entries() -> None:
+    with pytest.raises(ValueError, match="active_leases must contain LeaseGrant records"):
+        LeasePool(
+            "formal-license",
+            "eda.formal",
+            capacity_units=1,
+            active_leases=(object(),),  # type: ignore[arg-type]
+        )
+
+
+def test_lease_records_detach_nested_metadata_from_callers() -> None:
+    request_metadata = {"labels": ["formal"]}
+    pool_metadata = {"owner": {"teams": ["verification"]}}
+    request = LeaseRequest(
+        "formal-check",
+        ResourceRef("trial:formal"),
+        "eda.formal",
+        metadata=request_metadata,
+    )
+    pool = LeasePool(
+        "formal-license",
+        "eda.formal",
+        capacity_units=1,
+        metadata=pool_metadata,
+    )
+    leased, grant = pool.acquire(
+        request,
+        lease_id="lease-1",
+        acquired_at="2026-06-24T00:00:00Z",
+        expires_at="2026-06-24T00:05:00Z",
+    )
+
+    request_metadata["labels"].append("caller-mutated")
+    pool_metadata["owner"]["teams"].append("caller-mutated")
+    request.metadata["labels"].append("request-mutated")
+
+    assert grant.metadata == {"labels": ["formal"]}
+    assert leased.metadata == {"owner": {"teams": ["verification"]}}
+
+
 @pytest.mark.parametrize(
     "expires_at",
     ("2026-06-24T00:00:00Z", "2026-06-23T23:59:59Z"),
@@ -697,4 +786,7 @@ def test_lease_pool_release_requires_matching_fencing_epoch() -> None:
 
     assert mismatch.value.expected_epoch == grant.fencing_epoch
     assert mismatch.value.actual_epoch == grant.fencing_epoch + 1
+    with pytest.raises(LeasePoolCapacityError, match="fencing_epoch must be positive"):
+        pool.release("lease-1", fencing_epoch=True)
+    assert pool.active_leases == (grant,)
     assert pool.release("lease-1", fencing_epoch=grant.fencing_epoch).available_units == 1
