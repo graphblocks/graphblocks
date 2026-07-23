@@ -2124,6 +2124,10 @@ impl CliError {
                         "code": "daemon.checkpoint.invalid_recovery_claim",
                         "field": field,
                     }),
+                    CheckpointStoreError::FencingEpochOverflow { run_id } => json!({
+                        "code": "daemon.checkpoint.fencing_epoch_overflow",
+                        "runId": run_id,
+                    }),
                     CheckpointStoreError::ActiveRecoveryClaim {
                         run_id,
                         worker_id,
@@ -2485,5 +2489,33 @@ fn worker_message_kind_name(kind: WorkerProtocolMessageKind) -> &'static str {
         WorkerProtocolMessageKind::InvokeResult => "invoke_result",
         WorkerProtocolMessageKind::DrainPlan => "drain_plan",
         WorkerProtocolMessageKind::Error => "error",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use graphblocks_runtime_durable::CheckpointStoreError;
+
+    use super::CliError;
+
+    #[test]
+    fn checkpoint_fencing_overflow_has_structured_error_json() {
+        let payload = CliError::CheckpointStore(CheckpointStoreError::FencingEpochOverflow {
+            run_id: "run-1".to_owned(),
+        })
+        .to_json();
+
+        assert_eq!(
+            payload
+                .pointer("/error/code")
+                .and_then(|value| value.as_str()),
+            Some("daemon.checkpoint.fencing_epoch_overflow"),
+        );
+        assert_eq!(
+            payload
+                .pointer("/error/runId")
+                .and_then(|value| value.as_str()),
+            Some("run-1"),
+        );
     }
 }

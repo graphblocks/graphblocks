@@ -261,6 +261,37 @@ fn std_webhook_http_client_rejects_header_injection_before_network_io() {
 }
 
 #[test]
+fn std_webhook_http_client_rejects_caller_controlled_framing_headers() {
+    let mut client = StdWebhookHttpClient::new(Duration::from_secs(2));
+    for (name, value) in [
+        ("Host", "attacker.example"),
+        ("Content-Length", "0"),
+        ("Transfer-Encoding", "chunked"),
+        ("Connection", "keep-alive"),
+        ("Proxy-Connection", "keep-alive"),
+        ("Keep-Alive", "timeout=5"),
+        ("TE", "trailers"),
+        ("Trailer", "X-Checksum"),
+        ("Upgrade", "websocket"),
+    ] {
+        let mut headers = BTreeMap::new();
+        headers.insert(name.to_owned(), value.to_owned());
+        let request = WebhookHttpRequest {
+            url: "http://127.0.0.1:9/callbacks".to_owned(),
+            method: "POST".to_owned(),
+            headers,
+            body: json!({"delivery": "del-1"}),
+        };
+
+        assert_eq!(
+            client.send(request, &VALIDATED_TEST_ADDRESSES),
+            Err(WebhookHttpClientError::InvalidHeader),
+            "reserved header {name:?} should be rejected before connect",
+        );
+    }
+}
+
+#[test]
 fn std_webhook_http_client_rejects_malformed_authority_before_network_io() {
     let mut client = StdWebhookHttpClient::new(Duration::from_secs(2));
 

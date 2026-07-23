@@ -143,7 +143,7 @@ impl WorkerRegistry {
                 self.admitted_workers.remove(&decision.worker_id);
                 self.admitted_advertisements.remove(&decision.worker_id);
             }
-            self.rejected_workers += 1;
+            self.rejected_workers = self.rejected_workers.saturating_add(1);
         }
         decision
     }
@@ -352,16 +352,26 @@ impl WebhookHttpClient for StdWebhookHttpClient {
         let endpoint = parse_http_url(&request.url)?;
         let body = request.canonical_body();
         let mut has_content_type = false;
-        let mut has_content_length = false;
-        let mut has_connection = false;
         for (name, value) in &request.headers {
             validate_header(name, value)?;
+            if [
+                "host",
+                "content-length",
+                "transfer-encoding",
+                "connection",
+                "proxy-connection",
+                "keep-alive",
+                "te",
+                "trailer",
+                "upgrade",
+            ]
+            .iter()
+            .any(|reserved| name.eq_ignore_ascii_case(reserved))
+            {
+                return Err(WebhookHttpClientError::InvalidHeader);
+            }
             if name.eq_ignore_ascii_case("content-type") {
                 has_content_type = true;
-            } else if name.eq_ignore_ascii_case("content-length") {
-                has_content_length = true;
-            } else if name.eq_ignore_ascii_case("connection") {
-                has_connection = true;
             }
         }
 
@@ -408,14 +418,10 @@ impl WebhookHttpClient for StdWebhookHttpClient {
         if !has_content_type {
             wire.push_str("Content-Type: application/json\r\n");
         }
-        if !has_content_length {
-            wire.push_str("Content-Length: ");
-            wire.push_str(&body.len().to_string());
-            wire.push_str("\r\n");
-        }
-        if !has_connection {
-            wire.push_str("Connection: close\r\n");
-        }
+        wire.push_str("Content-Length: ");
+        wire.push_str(&body.len().to_string());
+        wire.push_str("\r\n");
+        wire.push_str("Connection: close\r\n");
         wire.push_str("\r\n");
         wire.push_str(&body);
 
@@ -761,6 +767,33 @@ mod webhook_http_client_tests {
                 "response should be rejected: {response:?}",
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod worker_registry_tests {
+    use graphblocks_protocol::{BlockCapability, WORKER_PROTOCOL_VERSION, WorkerAdvertisement};
+
+    use super::{DaemonConfig, WorkerRegistry};
+
+    #[test]
+    fn rejected_worker_counter_saturates_at_usize_max() {
+        let mut registry = WorkerRegistry::new(DaemonConfig::new("daemon-1", "127.0.0.1:8080"))
+            .expect("daemon config is valid");
+        registry.rejected_workers = usize::MAX;
+        let mut advertisement = WorkerAdvertisement::new(
+            "worker-1",
+            "doc-cpu",
+            "sha256:package-lock",
+            "sha256:image",
+            [BlockCapability::new("document.parse@1")],
+        );
+        advertisement.protocol_version = WORKER_PROTOCOL_VERSION + 1;
+
+        let decision = registry.admit_worker(advertisement);
+
+        assert!(!decision.admitted);
+        assert_eq!(registry.status().rejected_workers, usize::MAX);
     }
 }
 
