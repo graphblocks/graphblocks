@@ -15,6 +15,7 @@ from graphblocks.telemetry import (
 
 
 VALID_COLLECTOR_PIPELINES = frozenset({"traces", "metrics", "logs"})
+_MAX_U64 = (1 << 64) - 1
 
 DEFAULT_OTLP_CAPTURE_POLICY = TelemetryCapturePolicy(
     redacted_attribute_keys=DEFAULT_SENSITIVE_TELEMETRY_ATTRIBUTE_KEYS,
@@ -46,7 +47,13 @@ class OtelCollectorTemplate:
             raise OtelCollectorTemplateError(
                 "collector template config must be a mapping"
             )
-        return cls(name=name, config_json=canonical_dumps(dict(config)))
+        try:
+            config_json = canonical_dumps(config)
+        except (TypeError, ValueError) as error:
+            raise OtelCollectorTemplateError(
+                "collector template config must contain strict JSON values"
+            ) from error
+        return cls(name=name, config_json=config_json)
 
     def config_contract(self) -> dict[str, object]:
         return _strict_json_contract("OTel collector template", self.config_json)
@@ -83,7 +90,20 @@ def otlp_collector_template(
     _require_non_empty("batch timeout", batch_timeout)
     if not isinstance(insecure, bool):
         raise OtelCollectorTemplateError("insecure must be a boolean")
-    if not isinstance(memory_limit_mib, int) or isinstance(memory_limit_mib, bool) or memory_limit_mib <= 0:
+    if (
+        not isinstance(memory_limit_mib, int)
+        or isinstance(memory_limit_mib, bool)
+        or memory_limit_mib <= 0
+        or memory_limit_mib > _MAX_U64
+    ):
+        if (
+            isinstance(memory_limit_mib, int)
+            and not isinstance(memory_limit_mib, bool)
+            and memory_limit_mib > _MAX_U64
+        ):
+            raise OtelCollectorTemplateError(
+                "memory_limit_mib must fit an unsigned 64-bit integer"
+            )
         raise OtelCollectorTemplateError("memory_limit_mib must be a positive integer")
     if isinstance(pipelines, (str, bytes)) or not isinstance(pipelines, Sequence) or not pipelines:
         raise OtelCollectorTemplateError("collector pipelines must be a non-empty sequence")
@@ -107,18 +127,29 @@ def otlp_collector_template(
     processor_names = ["memory_limiter", "batch"]
     if resource_attributes is not None and not isinstance(resource_attributes, Mapping):
         raise OtelCollectorTemplateError("resource_attributes must be a mapping")
-    if resource_attributes:
-        if any(
-            not isinstance(key, str) or not key.strip() or key != key.strip()
-            for key in resource_attributes
-        ):
-            raise OtelCollectorTemplateError(
-                "resource attribute keys must be stable non-empty strings"
-            )
+    resource_items = (
+        tuple(resource_attributes.items())
+        if resource_attributes is not None
+        else ()
+    )
+    if resource_items:
+        seen_resource_keys: set[str] = set()
+        for key, _value in resource_items:
+            try:
+                key = _require_non_empty("resource attribute key", key)
+            except OtelCollectorTemplateError as error:
+                raise OtelCollectorTemplateError(
+                    "resource attribute keys must be stable non-empty strings"
+                ) from error
+            if key in seen_resource_keys:
+                raise OtelCollectorTemplateError(
+                    f"resource_attributes must not contain duplicate key {key!r}"
+                )
+            seen_resource_keys.add(key)
         processors["resource/graphblocks"] = {
             "attributes": [
                 {"action": "upsert", "key": key, "value": value}
-                for key, value in sorted(resource_attributes.items())
+                for key, value in sorted(resource_items)
             ]
         }
         processor_names = ["memory_limiter", "resource/graphblocks", "batch"]
@@ -159,8 +190,12 @@ def otlp_span_from_generation(
     schema_url: str,
     capture_policy: TelemetryCapturePolicy | None = None,
 ) -> OtlpSpanProjection:
+    if not isinstance(observation, GenerationTelemetryRecord):
+        raise OtelCollectorTemplateError(
+            "generation observation must be GenerationTelemetryRecord"
+        )
     schema_url = _require_non_empty("schema_url", schema_url)
-    observation = (capture_policy or DEFAULT_OTLP_CAPTURE_POLICY).apply_generation(observation)
+    observation = _capture_policy(capture_policy).apply_generation(observation)
     attributes = {
         "gen_ai.request.model": observation.model,
         "gen_ai.system": observation.provider,
@@ -188,8 +223,12 @@ def otlp_span_from_output_policy(
     schema_url: str,
     capture_policy: TelemetryCapturePolicy | None = None,
 ) -> OtlpSpanProjection:
+    if not isinstance(observation, OutputPolicyTelemetryRecord):
+        raise OtelCollectorTemplateError(
+            "output-policy observation must be OutputPolicyTelemetryRecord"
+        )
     schema_url = _require_non_empty("schema_url", schema_url)
-    observation = (capture_policy or DEFAULT_OTLP_CAPTURE_POLICY).apply_output_policy(observation)
+    observation = _capture_policy(capture_policy).apply_output_policy(observation)
     attributes: dict[str, object] = {
         "graphblocks.disposition": observation.disposition,
         "graphblocks.enforcement_point": observation.enforcement_point,
@@ -231,8 +270,12 @@ def otlp_span_from_tool_execution(
     schema_url: str,
     capture_policy: TelemetryCapturePolicy | None = None,
 ) -> OtlpSpanProjection:
+    if not isinstance(observation, ToolExecutionTelemetryRecord):
+        raise OtelCollectorTemplateError(
+            "tool-execution observation must be ToolExecutionTelemetryRecord"
+        )
     schema_url = _require_non_empty("schema_url", schema_url)
-    observation = (capture_policy or DEFAULT_OTLP_CAPTURE_POLICY).apply_tool_execution(observation)
+    observation = _capture_policy(capture_policy).apply_tool_execution(observation)
     attributes: dict[str, object] = {
         "graphblocks.record_id": observation.record_id,
         "graphblocks.run_id": observation.run_id,
@@ -271,7 +314,29 @@ def _require_non_empty(field_name: str, value: object) -> str:
         raise OtelCollectorTemplateError(
             f"{field_name} must not contain surrounding whitespace"
         )
+    if any(ord(character) < 32 or ord(character) == 127 for character in value):
+        raise OtelCollectorTemplateError(
+            f"{field_name} must not contain control characters"
+        )
+    try:
+        value.encode("utf-8")
+    except UnicodeEncodeError as error:
+        raise OtelCollectorTemplateError(
+            f"{field_name} must contain valid Unicode scalar values"
+        ) from error
     return value
+
+
+def _capture_policy(
+    capture_policy: TelemetryCapturePolicy | None,
+) -> TelemetryCapturePolicy:
+    if capture_policy is None:
+        return DEFAULT_OTLP_CAPTURE_POLICY
+    if not isinstance(capture_policy, TelemetryCapturePolicy):
+        raise OtelCollectorTemplateError(
+            "capture_policy must be TelemetryCapturePolicy"
+        )
+    return capture_policy
 
 
 def _strict_json_contract(contract_name: str, payload: str) -> dict[str, object]:

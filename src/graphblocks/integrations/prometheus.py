@@ -7,6 +7,7 @@ import hashlib
 import json
 import math
 
+from graphblocks.documents import FrozenDict
 from graphblocks.telemetry import (
     GenerationTelemetryRecord,
     MetricCardinalityLinter,
@@ -27,15 +28,44 @@ def _canonical_dumps(value: object) -> str:
 def _required_string(field_name: str, value: object) -> str:
     if not isinstance(value, str) or not value.strip():
         raise PrometheusProjectionError(f"{field_name} must not be empty")
+    if value != value.strip():
+        raise PrometheusProjectionError(
+            f"{field_name} must not contain surrounding whitespace"
+        )
+    if any(ord(character) < 32 or ord(character) == 127 for character in value):
+        raise PrometheusProjectionError(
+            f"{field_name} must not contain control characters"
+        )
+    try:
+        value.encode("utf-8")
+    except UnicodeEncodeError as error:
+        raise PrometheusProjectionError(
+            f"{field_name} must contain valid Unicode scalar values"
+        ) from error
     return value
 
 
-def _sorted_str_mapping(field_name: str, values: object) -> dict[str, str]:
+def _sorted_str_mapping(field_name: str, values: object) -> Mapping[str, str]:
     if not isinstance(values, Mapping):
         raise PrometheusProjectionError(f"{field_name} must be a mapping")
-    if any(not isinstance(key, str) or not isinstance(value, str) for key, value in values.items()):
-        raise PrometheusProjectionError(f"{field_name} must map strings to strings")
-    return dict(sorted(values.items()))
+    normalized: dict[str, str] = {}
+    for key, value in tuple(values.items()):
+        if not isinstance(key, str) or not isinstance(value, str):
+            raise PrometheusProjectionError(
+                f"{field_name} must map strings to strings"
+            )
+        try:
+            key = _required_string(f"{field_name} key", key)
+        except PrometheusProjectionError as error:
+            raise PrometheusProjectionError(
+                f"{field_name} must use stable non-empty keys"
+            ) from error
+        if key in normalized:
+            raise PrometheusProjectionError(
+                f"{field_name} must not contain duplicate key {key!r}"
+            )
+        normalized[key] = value
+    return FrozenDict(dict(sorted(normalized.items())))
 
 
 @dataclass(frozen=True, slots=True)
@@ -99,7 +129,11 @@ class PrometheusRule:
         expr: str,
         labels: Mapping[str, str] | None = None,
     ) -> PrometheusRule:
-        return cls(record=record, expr=expr, labels=labels or {})
+        return cls(
+            record=record,
+            expr=expr,
+            labels={} if labels is None else labels,
+        )
 
     @classmethod
     def alerting(
@@ -115,8 +149,8 @@ class PrometheusRule:
             alert=alert,
             expr=expr,
             for_duration=for_duration,
-            labels=labels or {},
-            annotations=annotations or {},
+            labels={} if labels is None else labels,
+            annotations={} if annotations is None else annotations,
         )
 
     def rule_contract(self) -> dict[str, object]:
@@ -297,7 +331,14 @@ def lint_prometheus_samples(
         raise PrometheusProjectionError(
             "sample entries must be PrometheusSample values"
         )
-    cardinality_linter = linter or MetricCardinalityLinter()
+    if linter is None:
+        cardinality_linter = MetricCardinalityLinter()
+    elif isinstance(linter, MetricCardinalityLinter):
+        cardinality_linter = linter
+    else:
+        raise PrometheusProjectionError(
+            "linter must be a MetricCardinalityLinter"
+        )
     return cardinality_linter.lint_samples(
         sample.sample_contract() for sample in normalized_samples
     )

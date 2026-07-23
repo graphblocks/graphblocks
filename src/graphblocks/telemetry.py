@@ -96,6 +96,7 @@ _TOKEN_USAGE_ATTRIBUTE_KEYS = frozenset(
     }
 )
 _MAX_TELEMETRY_ATTRIBUTE_DEPTH = 64
+_MAX_U64 = (1 << 64) - 1
 
 
 class TelemetryProjectionError(RuntimeError):
@@ -137,7 +138,31 @@ def _attribute_key_matches(key: str, protected_keys: Iterable[str]) -> bool:
 def _require_non_empty_string(owner: str, field_name: str, value: object) -> str:
     if not isinstance(value, str) or not value.strip():
         raise TelemetryProjectionError(f"{owner} {field_name} must be a non-empty string")
+    if value != value.strip():
+        raise TelemetryProjectionError(
+            f"{owner} {field_name} must not contain surrounding whitespace"
+        )
+    if any(ord(character) < 32 or ord(character) == 127 for character in value):
+        raise TelemetryProjectionError(
+            f"{owner} {field_name} must not contain control characters"
+        )
+    try:
+        value.encode("utf-8")
+    except UnicodeEncodeError as error:
+        raise TelemetryProjectionError(
+            f"{owner} {field_name} must contain valid Unicode scalar values"
+        ) from error
     return value
+
+
+def _optional_non_empty_string(
+    owner: str,
+    field_name: str,
+    value: object | None,
+) -> str | None:
+    if value is None:
+        return None
+    return _require_non_empty_string(owner, field_name, value)
 
 
 def _require_literal(owner: str, field_name: str, value: object, valid_values: frozenset[str]) -> str:
@@ -165,6 +190,10 @@ def _optional_non_negative_integer(owner: str, field_name: str, value: object | 
         raise TelemetryProjectionError(f"{owner} {field_name} must be an integer")
     if value < 0:
         raise TelemetryProjectionError(f"{owner} {field_name} must be non-negative")
+    if value > _MAX_U64:
+        raise TelemetryProjectionError(
+            f"{owner} {field_name} must fit an unsigned 64-bit integer"
+        )
     return value
 
 
@@ -195,6 +224,13 @@ def _freeze_telemetry_attributes(
         ) from error
     if not isinstance(snapshot, dict):
         raise TelemetryProjectionError(f"{owner} attributes must be a mapping")
+    for key in snapshot:
+        try:
+            _require_non_empty_string(owner, "attribute key", key)
+        except TelemetryProjectionError as error:
+            raise TelemetryProjectionError(
+                f"{owner} attribute keys must be exact non-empty strings"
+            ) from error
     frozen = _freeze_telemetry_json_value(snapshot)
     assert isinstance(frozen, FrozenDict)
     return frozen
@@ -208,7 +244,7 @@ def _freeze_telemetry_integer_mapping(
     if not isinstance(value, Mapping):
         raise TelemetryProjectionError(f"{owner} {field_name} must be a mapping")
     normalized: dict[str, int] = {}
-    for key, item in value.items():
+    for key, item in tuple(value.items()):
         if (
             not isinstance(key, str)
             or not key.strip()
@@ -225,8 +261,43 @@ def _freeze_telemetry_integer_mapping(
             raise TelemetryProjectionError(
                 f"{owner} {field_name} values must be non-negative integers"
             )
+        if item > _MAX_U64:
+            raise TelemetryProjectionError(
+                f"{owner} {field_name} values must fit unsigned 64-bit integers"
+            )
+        if key in normalized:
+            raise TelemetryProjectionError(
+                f"{owner} {field_name} must not contain duplicate keys"
+            )
         normalized[key] = item
     return FrozenDict(normalized)
+
+
+def _freeze_telemetry_string_set(
+    owner: str,
+    field_name: str,
+    value: object,
+) -> tuple[str, ...]:
+    if isinstance(value, (str, bytes, bytearray)):
+        raise TelemetryProjectionError(f"{owner} {field_name} must be a collection")
+    try:
+        items = tuple(value)  # type: ignore[arg-type]
+    except TypeError as error:
+        raise TelemetryProjectionError(
+            f"{owner} {field_name} must be a collection"
+        ) from error
+    if any(not isinstance(item, str) for item in items):
+        raise TelemetryProjectionError(
+            f"{owner} {field_name} must contain strings"
+        )
+    return tuple(
+        sorted(
+            {
+                _require_non_empty_string(owner, f"{field_name} entry", item)
+                for item in items
+            }
+        )
+    )
 
 
 def _telemetry_json_projection(value: Mapping[str, object]) -> dict[str, object]:
@@ -272,6 +343,16 @@ class GenerationTelemetryRecord:
                 self,
                 field_name,
                 _require_non_empty_string(
+                    "generation telemetry record",
+                    field_name,
+                    getattr(self, field_name),
+                ),
+            )
+        for field_name in ("release_id", "input_digest", "output_digest"):
+            object.__setattr__(
+                self,
+                field_name,
+                _optional_non_empty_string(
                     "generation telemetry record",
                     field_name,
                     getattr(self, field_name),
@@ -370,6 +451,16 @@ class OutputPolicyTelemetryRecord:
                 VALID_OUTPUT_DISPOSITIONS,
             ),
         )
+        for field_name in ("release_id", "policy_snapshot_id"):
+            object.__setattr__(
+                self,
+                field_name,
+                _optional_non_empty_string(
+                    "output policy telemetry record",
+                    field_name,
+                    getattr(self, field_name),
+                ),
+            )
         object.__setattr__(
             self,
             "terminal_reason",
@@ -428,6 +519,19 @@ class OutputPolicyTelemetryRecord:
                 self.last_client_delivered_sequence,
             ),
         )
+        if self.accepted_through_sequence == 0:
+            raise TelemetryProjectionError(
+                "output policy telemetry record accepted_through_sequence must be positive"
+            )
+        if (
+            self.accepted_through_sequence is not None
+            and self.last_client_delivered_sequence is not None
+            and self.last_client_delivered_sequence > self.accepted_through_sequence
+        ):
+            raise TelemetryProjectionError(
+                "output policy telemetry record last_client_delivered_sequence "
+                "must not exceed accepted_through_sequence"
+            )
         object.__setattr__(
             self,
             "attributes",
@@ -494,6 +598,15 @@ class ToolExecutionTelemetryRecord:
         )
         object.__setattr__(
             self,
+            "release_id",
+            _optional_non_empty_string(
+                "tool execution telemetry record",
+                "release_id",
+                self.release_id,
+            ),
+        )
+        object.__setattr__(
+            self,
             "result_mode",
             _optional_literal(
                 "tool execution telemetry record",
@@ -521,7 +634,21 @@ class ToolExecutionTelemetryRecord:
                 self.duration_ms,
             ),
         )
-        effects = tuple(sorted(str(effect) for effect in self.effects))
+        if isinstance(self.effects, (str, bytes, bytearray)):
+            raise TelemetryProjectionError(
+                "tool execution telemetry record effects must be a collection"
+            )
+        try:
+            raw_effects = tuple(self.effects)
+        except TypeError as error:
+            raise TelemetryProjectionError(
+                "tool execution telemetry record effects must be a collection"
+            ) from error
+        if any(not isinstance(effect, str) for effect in raw_effects):
+            raise TelemetryProjectionError(
+                "tool execution telemetry record effects must contain strings"
+            )
+        effects = tuple(sorted(set(raw_effects)))
         for effect in effects:
             if effect not in VALID_TOOL_EFFECTS:
                 raise TelemetryProjectionError(
@@ -631,8 +758,33 @@ class TelemetryCapturePolicy:
     capture_output_digest: bool = True
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "redacted_attribute_keys", tuple(sorted(set(self.redacted_attribute_keys))))
-        object.__setattr__(self, "dropped_attribute_keys", tuple(sorted(set(self.dropped_attribute_keys))))
+        object.__setattr__(
+            self,
+            "redacted_attribute_keys",
+            _freeze_telemetry_string_set(
+                "telemetry capture policy",
+                "redacted_attribute_keys",
+                self.redacted_attribute_keys,
+            ),
+        )
+        object.__setattr__(
+            self,
+            "dropped_attribute_keys",
+            _freeze_telemetry_string_set(
+                "telemetry capture policy",
+                "dropped_attribute_keys",
+                self.dropped_attribute_keys,
+            ),
+        )
+        if not isinstance(self.replacement, str):
+            raise TelemetryProjectionError(
+                "telemetry capture policy replacement must be a string"
+            )
+        for field_name in ("capture_input_digest", "capture_output_digest"):
+            if not isinstance(getattr(self, field_name), bool):
+                raise TelemetryProjectionError(
+                    f"telemetry capture policy {field_name} must be a boolean"
+                )
 
     def apply_generation(self, record: GenerationTelemetryRecord) -> GenerationTelemetryRecord:
         return replace(
@@ -715,10 +867,30 @@ class TelemetryCapturePolicyLinter:
     content_attribute_keys: tuple[str, ...] = DEFAULT_CONTENT_TELEMETRY_ATTRIBUTE_KEYS
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "sensitive_attribute_keys", tuple(sorted(set(self.sensitive_attribute_keys))))
-        object.__setattr__(self, "content_attribute_keys", tuple(sorted(set(self.content_attribute_keys))))
+        object.__setattr__(
+            self,
+            "sensitive_attribute_keys",
+            _freeze_telemetry_string_set(
+                "telemetry capture policy linter",
+                "sensitive_attribute_keys",
+                self.sensitive_attribute_keys,
+            ),
+        )
+        object.__setattr__(
+            self,
+            "content_attribute_keys",
+            _freeze_telemetry_string_set(
+                "telemetry capture policy linter",
+                "content_attribute_keys",
+                self.content_attribute_keys,
+            ),
+        )
 
     def lint_policy(self, policy: TelemetryCapturePolicy) -> TelemetryCapturePolicyLintResult:
+        if not isinstance(policy, TelemetryCapturePolicy):
+            raise TelemetryProjectionError(
+                "telemetry capture policy linter policy must be TelemetryCapturePolicy"
+            )
         issues: list[TelemetryCapturePolicyIssue] = []
         for attribute_key in self.sensitive_attribute_keys:
             if not (
@@ -1146,21 +1318,59 @@ class MetricCardinalityLinter:
     blocked_labels: tuple[str, ...] = DEFAULT_BLOCKED_METRIC_LABELS
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "blocked_labels", tuple(sorted(set(self.blocked_labels))))
+        if (
+            not isinstance(self.max_distinct_values_per_label, int)
+            or isinstance(self.max_distinct_values_per_label, bool)
+            or self.max_distinct_values_per_label < 0
+        ):
+            raise TelemetryProjectionError(
+                "metric cardinality linter max_distinct_values_per_label "
+                "must be a non-negative integer"
+            )
+        object.__setattr__(
+            self,
+            "blocked_labels",
+            _freeze_telemetry_string_set(
+                "metric cardinality linter",
+                "blocked_labels",
+                self.blocked_labels,
+            ),
+        )
 
     def lint_samples(self, samples: Iterable[Mapping[str, object]]) -> MetricCardinalityLintResult:
         label_values: dict[tuple[str, str], set[str]] = {}
         blocked_label_values: dict[tuple[str, str], set[str]] = {}
-        for sample in samples:
+        if isinstance(samples, (str, bytes, bytearray, Mapping)):
+            raise TelemetryProjectionError("metric samples must be an iterable of mappings")
+        try:
+            normalized_samples = tuple(samples)
+        except TypeError as error:
+            raise TelemetryProjectionError(
+                "metric samples must be an iterable of mappings"
+            ) from error
+        for sample in normalized_samples:
+            if not isinstance(sample, Mapping):
+                raise TelemetryProjectionError("metric sample must be a mapping")
             metric_name = sample.get("name")
-            if not isinstance(metric_name, str) or not metric_name.strip():
-                raise TelemetryProjectionError("metric sample name must be a non-empty string")
+            metric_name = _require_non_empty_string(
+                "metric sample",
+                "name",
+                metric_name,
+            )
             labels = sample.get("labels", {})
             if not isinstance(labels, Mapping):
                 raise TelemetryProjectionError("metric sample labels must be a mapping")
             for raw_label, raw_value in labels.items():
-                label = str(raw_label)
-                value = str(raw_value)
+                if not isinstance(raw_label, str) or not isinstance(raw_value, str):
+                    raise TelemetryProjectionError(
+                        "metric sample label keys and values must be strings"
+                    )
+                label = _require_non_empty_string(
+                    "metric sample",
+                    "label key",
+                    raw_label,
+                )
+                value = raw_value
                 key = (metric_name, label)
                 if _attribute_key_matches(label, self.blocked_labels):
                     blocked_label_values.setdefault(key, set()).add(value)

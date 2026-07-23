@@ -68,7 +68,12 @@ def langfuse_generation_from_observation(
     trace_id: str | None = None,
     capture_policy: TelemetryCapturePolicy | None = None,
 ) -> LangfuseGenerationProjection:
-    observation = (capture_policy or DEFAULT_LANGFUSE_CAPTURE_POLICY).apply_generation(observation)
+    if not isinstance(observation, GenerationTelemetryRecord):
+        raise ValueError(
+            "Langfuse generation observation must be GenerationTelemetryRecord"
+        )
+    trace_id = _trace_id(trace_id, observation.run_id)
+    observation = _capture_policy(capture_policy).apply_generation(observation)
     metadata = {
         "node_id": observation.node_id,
         "record_id": observation.record_id,
@@ -83,7 +88,7 @@ def langfuse_generation_from_observation(
     if observation.attributes:
         metadata["attributes"] = dict(sorted(observation.attributes.items()))
     generation = {
-        "trace_id": trace_id or observation.run_id,
+        "trace_id": trace_id,
         "generation_id": observation.span_id,
         "name": observation.node_id,
         "model": observation.model,
@@ -100,7 +105,12 @@ def langfuse_event_from_output_policy(
     trace_id: str | None = None,
     capture_policy: TelemetryCapturePolicy | None = None,
 ) -> LangfuseEventProjection:
-    observation = (capture_policy or DEFAULT_LANGFUSE_CAPTURE_POLICY).apply_output_policy(observation)
+    if not isinstance(observation, OutputPolicyTelemetryRecord):
+        raise ValueError(
+            "Langfuse output-policy observation must be OutputPolicyTelemetryRecord"
+        )
+    trace_id = _trace_id(trace_id, observation.run_id)
+    observation = _capture_policy(capture_policy).apply_output_policy(observation)
     metadata = {
         "disposition": observation.disposition,
         "enforcement_point": observation.enforcement_point,
@@ -124,7 +134,7 @@ def langfuse_event_from_output_policy(
     if observation.attributes:
         metadata["attributes"] = dict(sorted(observation.attributes.items()))
     event = {
-        "trace_id": trace_id or observation.run_id,
+        "trace_id": trace_id,
         "event_id": observation.record_id,
         "name": "graphblocks.output_policy",
         "metadata": dict(sorted(metadata.items())),
@@ -138,7 +148,12 @@ def langfuse_event_from_tool_execution(
     trace_id: str | None = None,
     capture_policy: TelemetryCapturePolicy | None = None,
 ) -> LangfuseEventProjection:
-    observation = (capture_policy or DEFAULT_LANGFUSE_CAPTURE_POLICY).apply_tool_execution(observation)
+    if not isinstance(observation, ToolExecutionTelemetryRecord):
+        raise ValueError(
+            "Langfuse tool-execution observation must be ToolExecutionTelemetryRecord"
+        )
+    trace_id = _trace_id(trace_id, observation.run_id)
+    observation = _capture_policy(capture_policy).apply_tool_execution(observation)
     metadata = {
         "record_id": observation.record_id,
         "run_id": observation.run_id,
@@ -159,7 +174,7 @@ def langfuse_event_from_tool_execution(
     if observation.attributes:
         metadata["attributes"] = dict(sorted(observation.attributes.items()))
     event = {
-        "trace_id": trace_id or observation.run_id,
+        "trace_id": trace_id,
         "event_id": observation.record_id,
         "name": "graphblocks.tool_execution",
         "metadata": dict(sorted(metadata.items())),
@@ -247,6 +262,18 @@ def langfuse_dataset_item_from_snapshots(
 
 def _snapshot_contract(snapshot: object) -> dict[str, object]:
     if isinstance(snapshot, Mapping):
+        for snake_case, camel_case in (
+            ("resource_id", "resourceId"),
+            ("resource_kind", "resourceKind"),
+        ):
+            if (
+                snake_case in snapshot
+                and camel_case in snapshot
+                and snapshot[snake_case] != snapshot[camel_case]
+            ):
+                raise ValueError(
+                    f"Langfuse snapshot has conflicting {snake_case} aliases"
+                )
         resource_id = snapshot.get("resource_id", snapshot.get("resourceId"))
         digest = snapshot.get("digest")
         resource_kind = snapshot.get("resource_kind", snapshot.get("resourceKind"))
@@ -311,7 +338,35 @@ def _require_non_empty(field_name: str, value: object) -> str:
         or value != value.strip()
     ):
         raise ValueError(f"Langfuse {field_name} must be a non-empty string")
+    if any(ord(character) < 32 or ord(character) == 127 for character in value):
+        raise ValueError(
+            f"Langfuse {field_name} must not contain control characters"
+        )
+    try:
+        value.encode("utf-8")
+    except UnicodeEncodeError as error:
+        raise ValueError(
+            f"Langfuse {field_name} must contain valid Unicode scalar values"
+        ) from error
     return value
+
+
+def _trace_id(trace_id: object | None, default: str) -> str:
+    if trace_id is None:
+        return default
+    return _require_non_empty("trace_id", trace_id)
+
+
+def _capture_policy(
+    capture_policy: TelemetryCapturePolicy | None,
+) -> TelemetryCapturePolicy:
+    if capture_policy is None:
+        return DEFAULT_LANGFUSE_CAPTURE_POLICY
+    if not isinstance(capture_policy, TelemetryCapturePolicy):
+        raise ValueError(
+            "Langfuse capture_policy must be TelemetryCapturePolicy"
+        )
+    return capture_policy
 
 
 def _strict_json_contract(contract_name: str, payload: str) -> dict[str, object]:

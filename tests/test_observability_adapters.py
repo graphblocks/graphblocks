@@ -340,6 +340,156 @@ def test_telemetry_records_validate_policy_and_tool_literal_fields(monkeypatch) 
         )
 
 
+def test_telemetry_records_enforce_native_u64_and_cursor_invariants(monkeypatch) -> None:
+    graphblocks_telemetry = importlib.import_module("graphblocks.telemetry")
+    maximum_u64 = (1 << 64) - 1
+
+    for field_name, value in (
+        ("usage", {"input_tokens": maximum_u64 + 1}),
+        ("timing_ms", {"execution": maximum_u64 + 1}),
+    ):
+        with pytest.raises(
+            graphblocks_telemetry.TelemetryProjectionError,
+            match="unsigned 64-bit",
+        ):
+            graphblocks_telemetry.GenerationTelemetryRecord(
+                record_id="gen-invalid",
+                run_id="run-1",
+                span_id="span-1",
+                node_id="agent",
+                provider="openai-compatible",
+                model="gpt-test",
+                **{field_name: value},
+            )
+
+    for accepted, delivered, message in (
+        (0, None, "must be positive"),
+        (maximum_u64 + 1, None, "unsigned 64-bit"),
+        (4, 5, "must not exceed accepted"),
+    ):
+        with pytest.raises(
+            graphblocks_telemetry.TelemetryProjectionError,
+            match=message,
+        ):
+            graphblocks_telemetry.OutputPolicyTelemetryRecord(
+                record_id="policy-invalid",
+                run_id="run-1",
+                stream_id="stream-1",
+                response_id="response-1",
+                enforcement_point="before_client_delivery",
+                disposition="allow",
+                accepted_through_sequence=accepted,
+                last_client_delivered_sequence=delivered,
+            )
+
+    with pytest.raises(
+        graphblocks_telemetry.TelemetryProjectionError,
+        match="unsigned 64-bit",
+    ):
+        graphblocks_telemetry.ToolExecutionTelemetryRecord(
+            record_id="tool-invalid",
+            run_id="run-1",
+            tool_call_id="call-1",
+            tool_name="knowledge.search",
+            status="completed",
+            duration_ms=maximum_u64 + 1,
+        )
+
+
+def test_telemetry_records_reject_unstable_strings_and_coercive_effects(monkeypatch) -> None:
+    graphblocks_telemetry = importlib.import_module("graphblocks.telemetry")
+
+    class NetworkEffect:
+        def __str__(self) -> str:
+            return "network"
+
+    with pytest.raises(
+        graphblocks_telemetry.TelemetryProjectionError,
+        match="release_id",
+    ):
+        graphblocks_telemetry.GenerationTelemetryRecord(
+            record_id="gen-invalid",
+            run_id="run-1",
+            span_id="span-1",
+            node_id="agent",
+            provider="openai-compatible",
+            model="gpt-test",
+            release_id=7,  # type: ignore[arg-type]
+        )
+    with pytest.raises(
+        graphblocks_telemetry.TelemetryProjectionError,
+        match="surrounding whitespace",
+    ):
+        graphblocks_telemetry.GenerationTelemetryRecord(
+            record_id=" gen-invalid ",
+            run_id="run-1",
+            span_id="span-1",
+            node_id="agent",
+            provider="openai-compatible",
+            model="gpt-test",
+        )
+    with pytest.raises(
+        graphblocks_telemetry.TelemetryProjectionError,
+        match="attribute keys",
+    ):
+        graphblocks_telemetry.GenerationTelemetryRecord(
+            record_id="gen-invalid",
+            run_id="run-1",
+            span_id="span-1",
+            node_id="agent",
+            provider="openai-compatible",
+            model="gpt-test",
+            attributes={"": "value"},
+        )
+    with pytest.raises(
+        graphblocks_telemetry.TelemetryProjectionError,
+        match="effects must contain strings",
+    ):
+        graphblocks_telemetry.ToolExecutionTelemetryRecord(
+            record_id="tool-invalid",
+            run_id="run-1",
+            tool_call_id="call-1",
+            tool_name="knowledge.search",
+            status="completed",
+            effects=(NetworkEffect(),),  # type: ignore[arg-type]
+        )
+
+
+def test_telemetry_policy_and_cardinality_linter_reject_malformed_boundaries(
+    monkeypatch,
+) -> None:
+    graphblocks_telemetry = importlib.import_module("graphblocks.telemetry")
+
+    with pytest.raises(
+        graphblocks_telemetry.TelemetryProjectionError,
+        match="redacted_attribute_keys must contain strings",
+    ):
+        graphblocks_telemetry.TelemetryCapturePolicy(
+            redacted_attribute_keys=(object(),),  # type: ignore[arg-type]
+        )
+    with pytest.raises(
+        graphblocks_telemetry.TelemetryProjectionError,
+        match="capture_input_digest must be a boolean",
+    ):
+        graphblocks_telemetry.TelemetryCapturePolicy(
+            capture_input_digest=1,  # type: ignore[arg-type]
+        )
+    with pytest.raises(
+        graphblocks_telemetry.TelemetryProjectionError,
+        match="max_distinct_values_per_label",
+    ):
+        graphblocks_telemetry.MetricCardinalityLinter(
+            max_distinct_values_per_label=True,  # type: ignore[arg-type]
+        )
+    with pytest.raises(
+        graphblocks_telemetry.TelemetryProjectionError,
+        match="label keys and values",
+    ):
+        graphblocks_telemetry.MetricCardinalityLinter().lint_samples(
+            ({"name": "graphblocks_test_total", "labels": {7: "coerced"}},)
+        )
+
+
 def test_telemetry_capture_policy_redacts_sensitive_observation_fields(monkeypatch) -> None:
     graphblocks_telemetry = importlib.import_module("graphblocks.telemetry")
     observation = graphblocks_telemetry.GenerationTelemetryRecord(
@@ -1416,6 +1566,36 @@ def test_otel_collector_template_rejects_invalid_pipeline(monkeypatch) -> None:
         graphblocks_otel.otlp_collector_template("collector.example:4317", pipelines=("profiles",))
 
 
+def test_otel_projection_rejects_malformed_records_and_capture_policies(monkeypatch) -> None:
+    graphblocks_telemetry = importlib.import_module("graphblocks.telemetry")
+    graphblocks_otel = importlib.import_module("graphblocks.integrations.otel")
+    record = graphblocks_telemetry.GenerationTelemetryRecord(
+        record_id="gen-1",
+        run_id="run-1",
+        span_id="span-1",
+        node_id="agent",
+        provider="openai-compatible",
+        model="gpt-test",
+    )
+
+    with pytest.raises(graphblocks_otel.OtelCollectorTemplateError, match="observation"):
+        graphblocks_otel.otlp_span_from_generation(
+            object(),  # type: ignore[arg-type]
+            schema_url="https://opentelemetry.io/schemas/1.27.0",
+        )
+    with pytest.raises(graphblocks_otel.OtelCollectorTemplateError, match="capture_policy"):
+        graphblocks_otel.otlp_span_from_generation(
+            record,
+            schema_url="https://opentelemetry.io/schemas/1.27.0",
+            capture_policy=[],  # type: ignore[arg-type]
+        )
+    with pytest.raises(graphblocks_otel.OtelCollectorTemplateError, match="unsigned 64-bit"):
+        graphblocks_otel.otlp_collector_template(
+            "collector.example:4317",
+            memory_limit_mib=1 << 64,
+        )
+
+
 def test_langfuse_projection_uses_trace_generation_contract(monkeypatch) -> None:
     graphblocks_telemetry = importlib.import_module("graphblocks.telemetry")
     graphblocks_langfuse = importlib.import_module("graphblocks.integrations.langfuse")
@@ -1519,6 +1699,45 @@ def test_langfuse_rejects_coercive_metadata_and_snapshot_fields(monkeypatch) -> 
                 "digest": "sha256:resource",
                 "metadata": "not-a-mapping",
             },
+        )
+    with pytest.raises(ValueError, match="conflicting resource_id aliases"):
+        graphblocks_langfuse.langfuse_dataset_item_from_snapshots(
+            "support",
+            "item-1",
+            input_snapshot={
+                "resource_id": "resource-1",
+                "resourceId": "resource-2",
+                "digest": "sha256:resource",
+            },
+        )
+
+
+def test_langfuse_projection_rejects_invalid_trace_and_capture_boundaries(monkeypatch) -> None:
+    graphblocks_telemetry = importlib.import_module("graphblocks.telemetry")
+    graphblocks_langfuse = importlib.import_module("graphblocks.integrations.langfuse")
+    record = graphblocks_telemetry.GenerationTelemetryRecord(
+        record_id="gen-1",
+        run_id="run-1",
+        span_id="span-1",
+        node_id="agent",
+        provider="openai-compatible",
+        model="gpt-test",
+    )
+
+    for trace_id in (0, "", " trace-1 "):
+        with pytest.raises(ValueError, match="trace_id"):
+            graphblocks_langfuse.langfuse_generation_from_observation(
+                record,
+                trace_id=trace_id,  # type: ignore[arg-type]
+            )
+    with pytest.raises(ValueError, match="observation"):
+        graphblocks_langfuse.langfuse_generation_from_observation(
+            object(),  # type: ignore[arg-type]
+        )
+    with pytest.raises(ValueError, match="capture_policy"):
+        graphblocks_langfuse.langfuse_generation_from_observation(
+            record,
+            capture_policy=[],  # type: ignore[arg-type]
         )
 
 

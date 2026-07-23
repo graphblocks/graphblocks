@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib
 import math
+import pickle
 
 import pytest
 
@@ -291,6 +292,54 @@ def test_prometheus_contracts_reject_coercive_labels_and_rule_entries(monkeypatc
         )
     with pytest.raises(graphblocks_prometheus.PrometheusProjectionError, match="sample entries"):
         graphblocks_prometheus.lint_prometheus_samples((object(),))
+
+
+def test_prometheus_contracts_freeze_mappings_and_reject_collapsed_inputs(monkeypatch) -> None:
+    graphblocks_prometheus = _import_prometheus(monkeypatch)
+
+    class DuplicateItemsDict(dict):
+        def items(self):
+            return (("tenant", "first"), ("tenant", "second"))
+
+    sample = graphblocks_prometheus.PrometheusSample(
+        "graphblocks_test_total",
+        {"tenant": "acme"},
+        1,
+    )
+    restored = pickle.loads(pickle.dumps(sample))
+
+    assert restored == sample
+    with pytest.raises(TypeError):
+        restored.labels["tenant"] = "mutated"
+    with pytest.raises(
+        graphblocks_prometheus.PrometheusProjectionError,
+        match="duplicate key",
+    ):
+        graphblocks_prometheus.PrometheusSample(
+            "graphblocks_test_total",
+            DuplicateItemsDict(),
+            1,
+        )
+    with pytest.raises(
+        graphblocks_prometheus.PrometheusProjectionError,
+        match="stable non-empty keys",
+    ):
+        graphblocks_prometheus.PrometheusSample(
+            "graphblocks_test_total",
+            {" tenant ": "acme"},
+            1,
+        )
+    with pytest.raises(graphblocks_prometheus.PrometheusProjectionError, match="rule labels"):
+        graphblocks_prometheus.PrometheusRule.recording(
+            record="graphblocks:test",
+            expr="sum(graphblocks_test_total)",
+            labels=[],  # type: ignore[arg-type]
+        )
+    with pytest.raises(graphblocks_prometheus.PrometheusProjectionError, match="linter"):
+        graphblocks_prometheus.lint_prometheus_samples(
+            (sample,),
+            linter=[],  # type: ignore[arg-type]
+        )
 
 
 def test_prometheus_rule_group_builds_rule_file_contract(monkeypatch) -> None:
