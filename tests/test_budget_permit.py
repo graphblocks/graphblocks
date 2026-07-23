@@ -613,7 +613,8 @@ def test_budget_ledger_returned_permit_mutation_does_not_expand_authorization() 
         expires_at=PERMIT_EXPIRES_AT,
     )
 
-    permit.authorized_amounts.append(_tokens("1000"))
+    with pytest.raises(AttributeError):
+        permit.authorized_amounts.append(_tokens("1000"))
 
     with pytest.raises(BudgetExceededError):
         ledger.commit_with_permit(
@@ -640,7 +641,8 @@ def test_budget_ledger_returned_reservation_mutation_does_not_corrupt_release() 
         expires_at="later",
     )
 
-    reservation.amounts.append(_tokens("60"))
+    with pytest.raises(AttributeError):
+        reservation.amounts.append(_tokens("60"))
     settlement = ledger.release(reservation.reservation_id)
 
     assert settlement.released == [_tokens("40")]

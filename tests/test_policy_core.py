@@ -10,6 +10,7 @@ from graphblocks.policy import (
     PolicyDecision,
     PolicyEnforcer,
     PolicyEnforcementRecord,
+    PolicyEnforcementResult,
     PolicyObligation,
     PolicyRequest,
     PolicyRule,
@@ -22,6 +23,81 @@ from graphblocks.policy import (
     run_policy_tests,
     unavailable_policy_decision,
 )
+
+
+def test_policy_request_recomputes_untrusted_or_stale_input_digest() -> None:
+    request = PolicyRequest(
+        request_id="req-forged",
+        enforcement_point="before_provider_call",
+        action="model.generate",
+        resource=ResourceRef("model:support", resource_kind="model"),
+        occurred_at="2026-06-23T00:00:00Z",
+        input_digest="sha256:forged",
+    )
+
+    assert request.input_digest != "sha256:forged"
+    assert request.input_digest == replace(request, input_digest="").with_input_digest().input_digest
+    changed = replace(request, action="tool.run")
+    assert changed.input_digest != request.input_digest
+
+
+def test_static_policy_evaluator_snapshots_rules_and_results_bind_records() -> None:
+    rules = [
+        PolicyRule(
+            "allow-model",
+            "allow",
+            actions=("model.generate",),
+            resource_selectors=("model",),
+        ),
+        PolicyRule(
+            "redact-model",
+            "obligate",
+            actions=("model.generate",),
+            resource_selectors=("model",),
+            obligations=(
+                PolicyObligation(
+                    "obl-redact",
+                    "redact",
+                    {"redaction": {"fields": ["secret"]}},
+                ),
+            ),
+        ),
+    ]
+    evaluator = StaticPolicyEvaluator(rules)
+    rules.clear()
+    request = PolicyRequest(
+        request_id="req-1",
+        enforcement_point="before_provider_call",
+        action="model.generate",
+        resource=ResourceRef("model:support", resource_kind="model"),
+        occurred_at="2026-06-23T00:00:00Z",
+    )
+    decision = evaluator.evaluate(
+        request,
+        evaluated_at="2026-06-23T00:00:01Z",
+    )
+
+    assert decision.effect == "allow_with_obligations"
+    assert isinstance(evaluator.rules, tuple)
+    parameters = evaluator.rules[1].obligations[0].parameters
+    nested_mapping = parameters["redaction"]
+    fields = nested_mapping["fields"]  # type: ignore[index]
+    with pytest.raises(TypeError):
+        dict.__setitem__(nested_mapping, "fields", ["credentials"])  # type: ignore[arg-type]
+    with pytest.raises(TypeError):
+        list.__setitem__(fields, 0, "credentials")  # type: ignore[arg-type]
+    assert parameters == {"redaction": {"fields": ["secret"]}}
+    with pytest.raises(ValueError, match="must reference its decision"):
+        PolicyEnforcementResult(
+            decision,
+            PolicyEnforcementRecord(
+                record_id="enforcement-other",
+                decision_id="decision:other",
+                enforcement_point="before_provider_call",
+                status="enforced",
+                occurred_at="2026-06-23T00:00:01Z",
+            ),
+        )
 
 
 def test_policy_request_exposes_output_streaming_enforcement_points() -> None:

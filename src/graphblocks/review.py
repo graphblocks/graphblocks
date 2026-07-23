@@ -17,6 +17,10 @@ _P = ParamSpec("_P")
 _R = TypeVar("_R")
 
 
+def _contains_forbidden_control(value: str) -> bool:
+    return any(ord(character) < 0x20 or ord(character) == 0x7F for character in value)
+
+
 def _with_review_workflow_lock(method: Callable[_P, _R]) -> Callable[_P, _R]:
     @wraps(method)
     def locked(*args: _P.args, **kwargs: _P.kwargs) -> _R:
@@ -34,6 +38,8 @@ def _validate_non_empty_string(owner: str, field_name: str, value: object) -> st
         raise ValueError(f"{owner} {field_name} must not be empty")
     if value != value.strip():
         raise ValueError(f"{owner} {field_name} must not contain surrounding whitespace")
+    if _contains_forbidden_control(value):
+        raise ValueError(f"{owner} {field_name} must not contain control characters")
     return value
 
 
@@ -363,12 +369,40 @@ class ReviewWorkflow:
             ) from error
         if any(not isinstance(review, ReviewRecord) for review in reviews):
             raise ValueError("review workflow reviews must be ReviewRecord records")
+        for review in reviews:
+            self._validate_review_for_request(review)
         self.reviews = reviews
+
+    def _validate_review_for_request(self, review: ReviewRecord) -> None:
+        if review.scope not in self.request.required_scopes:
+            raise ReviewScopeNotRequestedError(review.scope)
+        if (
+            review.subject.resource_id != self.request.subject.resource_id
+            or review.subject.digest != self.request.subject.digest
+            or review.subject_digest != self.request.subject.digest
+        ):
+            raise ReviewSubjectChangedError(
+                self.request.subject.digest,
+                review.subject_digest,
+            )
+        if _parse_review_datetime(
+            review.created_at,
+            owner="review",
+            field_name="created_at",
+        ) < _parse_review_datetime(
+            self.request.created_at,
+            owner="review request",
+            field_name="created_at",
+        ):
+            raise ValueError(
+                "review created_at must not precede request created_at"
+            )
 
     @_with_review_workflow_lock
     def with_review(self, review: ReviewRecord) -> ReviewWorkflow:
         if not isinstance(review, ReviewRecord):
             raise ValueError("review workflow review must be a ReviewRecord")
+        self._validate_review_for_request(review)
         reviews = tuple(existing for existing in self.reviews if existing.review_id != review.review_id)
         return replace(self, reviews=(*reviews, review))
 
@@ -396,6 +430,8 @@ class ReviewWorkflow:
         if review_created_at < request_created_at:
             raise ValueError("review created_at must not precede request created_at")
         subject = self.request.subject if subject is None else subject
+        if not isinstance(subject, ResourceSnapshotRef):
+            raise ValueError("review subject must be a ResourceSnapshotRef")
         if subject.resource_id != self.request.subject.resource_id or subject.digest != self.request.subject.digest:
             raise ReviewSubjectChangedError(self.request.subject.digest, subject.digest)
         if scope not in self.request.required_scopes:
@@ -418,7 +454,8 @@ class ReviewWorkflow:
         credentials = tuple(
             credential
             for credential in provided_credentials
-            if credential.is_active_at(created_at)
+            if credential.allows(reviewer, scope)
+            and credential.is_active_at(created_at)
         )
         if not credentials:
             raise ReviewCredentialMissingError(reviewer, scope)

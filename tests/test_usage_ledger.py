@@ -23,6 +23,32 @@ def _tokens(value: str) -> UsageAmount:
     return UsageAmount(kind="model_output_tokens", amount=Decimal(value), unit="tokens")
 
 
+def test_usage_ledger_seals_restored_state_and_validates_record_boundaries() -> None:
+    with pytest.raises(TypeError):
+        InMemoryUsageLedger(_order=["usage-forged"])  # type: ignore[call-arg]
+
+    ledger = InMemoryUsageLedger()
+    with pytest.raises(ValueError, match="record must be a UsageRecord"):
+        ledger.append(object())  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="control characters"):
+        UsageRecord(
+            record_id="usage\u0000hidden",
+            source="runtime_measured",
+            confidence="estimated",
+            amounts=[_tokens("1")],
+            occurred_at="2026-06-22T00:00:00Z",
+        )
+    with pytest.raises(ValueError, match="surrounding whitespace"):
+        UsageRecord(
+            record_id="usage-1",
+            source="runtime_measured",
+            confidence="estimated",
+            amounts=[_tokens("1")],
+            occurred_at="2026-06-22T00:00:00Z",
+            metadata={" tenant ": "acme"},
+        )
+
+
 def test_usage_ledger_appends_immutable_records_and_queries_by_run() -> None:
     ledger = InMemoryUsageLedger()
     record = UsageRecord(

@@ -14,6 +14,66 @@ from graphblocks.approval import VALID_APPROVAL_STATUSES
 ROOT = Path(__file__).parents[1]
 
 
+def test_tool_effect_audit_record_validates_identity_and_deep_freezes_payload() -> None:
+    graphblocks_audit = importlib.import_module("graphblocks.audit")
+    record = graphblocks_audit.ToolEffectAuditRecord(
+        event_id="event-1",
+        target_kind="tool_effect",
+        occurred_at="2026-06-23T00:00:00Z",
+        actor=graphblocks_audit.PrincipalRef("worker-1"),
+        resource=graphblocks_audit.ResourceRef("tool:search", resource_kind="tool"),
+        reason_codes=("tool_effect.applied",),
+        payload={"items": ["initial"]},
+    )
+
+    with pytest.raises(TypeError):
+        list.__setitem__(record.payload["items"], 0, "mutated")
+    with pytest.raises(graphblocks_audit.ToolEffectAuditError, match="actor must be"):
+        graphblocks_audit.ToolEffectAuditRecord(
+            event_id="event-2",
+            target_kind="tool_effect",
+            occurred_at="2026-06-23T00:00:00Z",
+            actor=object(),
+            resource=graphblocks_audit.ResourceRef("tool:search"),
+            reason_codes=("tool_effect.applied",),
+        )
+    with pytest.raises(
+        graphblocks_audit.ToolEffectAuditError,
+        match="reason_codes must not contain duplicates",
+    ):
+        graphblocks_audit.ToolEffectAuditRecord(
+            event_id="event-3",
+            target_kind="tool_effect",
+            occurred_at="2026-06-23T00:00:00Z",
+            actor=graphblocks_audit.PrincipalRef("worker-1"),
+            resource=graphblocks_audit.ResourceRef("tool:search"),
+            reason_codes=("tool_effect.applied", "tool_effect.applied"),
+        )
+
+
+def test_audit_outbox_rejects_attempt_counter_overflow() -> None:
+    graphblocks_audit = importlib.import_module("graphblocks.audit")
+    outbox = graphblocks_audit.SQLiteAuditOutbox.in_memory()
+    outbox.append(
+        "application_event",
+        {"event_id": "event-1"},
+        occurred_at="2026-06-23T00:00:00Z",
+        record_id="audit-overflow",
+    )
+    outbox._connection.execute(
+        """
+        UPDATE audit_outbox_records
+        SET status = 'failed', attempts = ?, last_error = 'still unavailable'
+        WHERE record_id = 'audit-overflow'
+        """,
+        ((1 << 63) - 1,),
+    )
+    outbox._connection.commit()
+
+    with pytest.raises(graphblocks_audit.AuditOutboxError, match="exhausted"):
+        outbox.mark_failed("audit-overflow", error="still unavailable")
+
+
 def test_audit_package_exposes_append_only_event_and_enforcement_records(monkeypatch) -> None:
     graphblocks_audit = importlib.import_module("graphblocks.audit")
 

@@ -47,6 +47,20 @@ class UsageRecordConflictError(UsageLedgerError):
     pass
 
 
+def _validate_usage_identity(field_name: str, value: object) -> str:
+    if not isinstance(value, str):
+        raise ValueError(f"usage {field_name} must be a string")
+    if not value.strip():
+        raise ValueError(f"usage {field_name} must not be empty")
+    if value != value.strip():
+        raise ValueError(
+            f"usage {field_name} must not contain surrounding whitespace"
+        )
+    if any(ord(character) < 0x20 or ord(character) == 0x7F for character in value):
+        raise ValueError(f"usage {field_name} must not contain control characters")
+    return value
+
+
 class _FrozenUsageMetadataList(tuple[object, ...]):
     def __eq__(self, other: object) -> bool:
         if isinstance(other, list):
@@ -248,12 +262,7 @@ class UsageRecord:
     metadata: dict[str, object] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        if not isinstance(self.record_id, str):
-            raise ValueError("usage record_id must be a string")
-        if not self.record_id.strip():
-            raise ValueError("usage record_id must not be empty")
-        if self.record_id != self.record_id.strip():
-            raise ValueError("usage record_id must not contain surrounding whitespace")
+        _validate_usage_identity("record_id", self.record_id)
         if self.source not in VALID_USAGE_SOURCES:
             raise ValueError(f"invalid usage source {self.source}")
         if self.confidence not in VALID_USAGE_CONFIDENCES:
@@ -271,14 +280,7 @@ class UsageRecord:
             value = getattr(self, field_name)
             if value is None:
                 continue
-            if not isinstance(value, str):
-                raise ValueError(f"usage {field_name} must be a string")
-            if not value.strip():
-                raise ValueError(f"usage {field_name} must not be empty")
-            if value != value.strip():
-                raise ValueError(
-                    f"usage {field_name} must not contain surrounding whitespace"
-                )
+            _validate_usage_identity(field_name, value)
         if self.source == "reconciled":
             if self.reconciliation_of is None:
                 raise ValueError(
@@ -310,6 +312,8 @@ class UsageRecord:
             raise ValueError("usage metadata must be a mapping")
         if any(not isinstance(key, str) or not key.strip() for key in self.metadata):
             raise ValueError("usage metadata keys must be non-empty strings")
+        for key in self.metadata:
+            _validate_usage_identity("metadata key", key)
         try:
             metadata = _mutable_usage_metadata(self.metadata)
             canonical_dumps(metadata)
@@ -321,12 +325,14 @@ class UsageRecord:
 
 @dataclass(slots=True)
 class InMemoryUsageLedger:
-    _records: dict[str, UsageRecord] = field(default_factory=dict)
-    _order: list[str] = field(default_factory=list)
-    _provider_dedupe: dict[tuple[str, str | None], str] = field(default_factory=dict)
+    _records: dict[str, UsageRecord] = field(default_factory=dict, init=False)
+    _order: list[str] = field(default_factory=list, init=False)
+    _provider_dedupe: dict[tuple[str, str | None], str] = field(default_factory=dict, init=False)
     _lock: RLock = field(default_factory=RLock, init=False, repr=False, compare=False)
 
     def append(self, record: UsageRecord) -> UsageRecord:
+        if not isinstance(record, UsageRecord):
+            raise ValueError("usage ledger record must be a UsageRecord")
         with self._lock:
             existing = self._records.get(record.record_id)
             if existing is not None:
@@ -369,6 +375,7 @@ class InMemoryUsageLedger:
         return None
 
     def get(self, record_id: str) -> UsageRecord:
+        record_id = _validate_usage_identity("record_id", record_id)
         with self._lock:
             record = self._records.get(record_id)
             if record is None:
@@ -376,6 +383,7 @@ class InMemoryUsageLedger:
             return record
 
     def records_for_run(self, run_id: str) -> list[UsageRecord]:
+        run_id = _validate_usage_identity("run_id", run_id)
         with self._lock:
             return [
                 self._records[record_id]
@@ -499,6 +507,8 @@ class SQLiteUsageLedger:
         self._connection.close()
 
     def append(self, record: UsageRecord) -> UsageRecord:
+        if not isinstance(record, UsageRecord):
+            raise ValueError("usage ledger record must be a UsageRecord")
         try:
             existing = self.get(record.record_id)
         except UsageRecordNotFoundError:
@@ -597,6 +607,7 @@ class SQLiteUsageLedger:
         return record
 
     def get(self, record_id: str) -> UsageRecord:
+        record_id = _validate_usage_identity("record_id", record_id)
         row = self._connection.execute(
             "SELECT * FROM usage_records WHERE record_id = ?",
             (record_id,),
@@ -606,6 +617,7 @@ class SQLiteUsageLedger:
         return self._record_from_row(row)
 
     def records_for_run(self, run_id: str) -> list[UsageRecord]:
+        run_id = _validate_usage_identity("run_id", run_id)
         rows = self._connection.execute(
             "SELECT * FROM usage_records WHERE run_id = ? ORDER BY sequence",
             (run_id,),

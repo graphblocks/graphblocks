@@ -8,11 +8,48 @@ from graphblocks.admission import (
     AdmissionIdempotencyConflictError,
     AdmissionQueueFullError,
     AdmissionStaleFencingTokenError,
+    AdmissionSubmission,
     AdmissionTicket,
     AdmissionTicketNotFoundError,
     AdmissionTicketStateError,
     AdmissionTicketQueue,
 )
+
+
+def test_admission_models_reject_controls_coerced_flags_and_counter_overflow() -> None:
+    ticket = _ticket()
+    with pytest.raises(AdmissionError, match="control characters"):
+        _ticket(request_id="request\u0000hidden")
+    with pytest.raises(AdmissionError, match="duplicate must be a boolean"):
+        AdmissionSubmission(ticket, duplicate=1)  # type: ignore[arg-type]
+
+    queue = AdmissionTicketQueue(
+        limiter_id="interactive",
+        max_concurrent=1,
+        rate_limit=1,
+        window_ms=1_000,
+        max_pending=1,
+        ticket_ttl_ms=1_000,
+    )
+    queue._next_ticket = (1 << 64) - 1
+    with pytest.raises(AdmissionError, match="ticket counter is exhausted"):
+        queue.submit("run-1", "request-1", "owner-1", now_ms=0)
+    assert queue._tickets == {}
+
+    with pytest.raises(AdmissionError, match="expiry exceeds"):
+        AdmissionTicketQueue(
+            limiter_id="overflow",
+            max_concurrent=1,
+            rate_limit=1,
+            window_ms=1,
+            max_pending=1,
+            ticket_ttl_ms=2,
+        ).submit(
+            "run-1",
+            "request-1",
+            "owner-1",
+            now_ms=(1 << 64) - 2,
+        )
 
 
 def _ticket(**overrides: object) -> AdmissionTicket:

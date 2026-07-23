@@ -30,6 +30,14 @@ VALID_RESERVATION_PURPOSES = frozenset(get_args(ReservationPurpose))
 VALID_RESERVATION_STATUSES = frozenset(get_args(ReservationStatus))
 VALID_COMPLETION_RESERVE_PURPOSES = frozenset(get_args(CompletionReservePurpose))
 VALID_COMPLETION_RESERVE_STATUSES = frozenset(get_args(CompletionReserveStatus))
+_MAX_BUDGET_COUNTER = (1 << 64) - 1
+
+
+class _FrozenUsageAmounts(tuple[object, ...]):
+    def __eq__(self, other: object) -> bool:
+        if isinstance(other, list):
+            return tuple(self) == tuple(other)
+        return super().__eq__(other)
 
 
 def _with_in_memory_budget_ledger_lock(
@@ -135,6 +143,8 @@ def _validate_non_empty_string(owner: str, field_name: str, value: object) -> st
         raise ValueError(f"{owner} {field_name} must not be empty")
     if value != value.strip():
         raise ValueError(f"{owner} {field_name} must not contain surrounding whitespace")
+    if any(ord(character) < 0x20 or ord(character) == 0x7F for character in value):
+        raise ValueError(f"{owner} {field_name} must not contain control characters")
     return value
 
 
@@ -187,6 +197,10 @@ def _validate_non_negative_integer(owner: str, field_name: str, value: object) -
         raise ValueError(f"{owner} {field_name} must be an integer")
     if value < 0:
         raise ValueError(f"{owner} {field_name} must be non-negative")
+    if value > _MAX_BUDGET_COUNTER:
+        raise ValueError(
+            f"{owner} {field_name} exceeds the supported integer range"
+        )
     return value
 
 
@@ -196,7 +210,7 @@ def _validate_resource_ref(owner: str, field_name: str, value: object) -> Resour
     return value
 
 
-def _validate_usage_amounts(owner: str, field_name: str, values: object) -> list[UsageAmount]:
+def _validate_usage_amounts(owner: str, field_name: str, values: object) -> _FrozenUsageAmounts:
     if isinstance(values, str):
         raise ValueError(f"{owner} {field_name} must be a collection of UsageAmount")
     try:
@@ -205,7 +219,7 @@ def _validate_usage_amounts(owner: str, field_name: str, values: object) -> list
         raise ValueError(f"{owner} {field_name} must be a collection of UsageAmount") from error
     if any(not isinstance(amount, UsageAmount) for amount in amounts):
         raise ValueError(f"{owner} {field_name} must contain UsageAmount records")
-    return list(amounts)
+    return _FrozenUsageAmounts(amounts)
 
 
 def _loads_strict_json(field_name: str, value: str) -> object:
@@ -261,25 +275,24 @@ class UsageAmount:
     dimensions: dict[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        if not isinstance(self.kind, str):
-            raise ValueError("usage amount kind must be a string")
-        if not self.kind.strip():
-            raise ValueError("usage amount kind must not be empty")
-        if not isinstance(self.unit, str):
-            raise ValueError("usage amount unit must be a string")
-        if not self.unit.strip():
-            raise ValueError("usage amount unit must not be empty")
+        _validate_non_empty_string("usage amount", "kind", self.kind)
+        _validate_non_empty_string("usage amount", "unit", self.unit)
         if not isinstance(self.dimensions, Mapping):
             raise ValueError("usage amount dimensions must be a mapping")
         dimensions = dict(self.dimensions)
         if any(
             not isinstance(key, str)
             or not key.strip()
+            or key != key.strip()
             or not isinstance(value, str)
             or not value.strip()
+            or value != value.strip()
             for key, value in dimensions.items()
         ):
             raise ValueError("usage amount dimensions must be string keys and values")
+        for key, value in dimensions.items():
+            _validate_non_empty_string("usage amount", "dimension key", key)
+            _validate_non_empty_string("usage amount", "dimension value", value)
         amount = self.amount
         if not isinstance(self.amount, Decimal):
             try:
@@ -317,6 +330,12 @@ class BudgetAccount:
             raise ValueError(f"unknown budget status {self.status!r}")
         if not isinstance(self.policy_ref, str):
             raise ValueError("budget account policy_ref must be a string")
+        if self.policy_ref:
+            _validate_non_empty_string(
+                "budget account",
+                "policy_ref",
+                self.policy_ref,
+            )
         _validate_non_negative_integer("budget account", "revision", self.revision)
 
 
@@ -429,8 +448,11 @@ class BudgetPermit:
             "authorized_amounts",
             _validate_usage_amounts("budget permit", "authorized_amounts", self.authorized_amounts),
         )
-        if self.continuation_profile is not None:
-            _validate_non_empty_string("budget permit", "continuation_profile", self.continuation_profile)
+        _validate_non_empty_string(
+            "budget permit",
+            "continuation_profile",
+            self.continuation_profile,
+        )
         _validate_non_empty_string("budget permit", "policy_snapshot_digest", self.policy_snapshot_digest)
         _parse_budget_permit_datetime("expires_at", self.expires_at)
         object.__setattr__(
@@ -438,6 +460,10 @@ class BudgetPermit:
             "low_watermark",
             _validate_usage_amounts("budget permit", "low_watermark", self.low_watermark),
         )
+        if not self.allows(self.low_watermark):
+            raise ValueError(
+                "budget permit low_watermark must not exceed authorized_amounts"
+            )
         if not isinstance(self.fencing_tokens, Mapping):
             raise ValueError("budget permit fencing_tokens must be a mapping")
         fencing_tokens = dict(self.fencing_tokens)
@@ -445,9 +471,20 @@ class BudgetPermit:
             raise ValueError("budget permit fencing_tokens must not be empty")
         for reference, token in fencing_tokens.items():
             if not isinstance(reference, str) or not reference.strip():
-                raise ValueError("budget permit fencing token references must be non-empty strings")
+                raise ValueError(
+                    "budget permit fencing token references must be non-empty strings"
+                )
+            _validate_non_empty_string(
+                "budget permit",
+                "fencing token reference",
+                reference,
+            )
             if not isinstance(token, int) or isinstance(token, bool) or token <= 0:
                 raise ValueError("budget permit fencing token values must be positive integers")
+            if token > _MAX_BUDGET_COUNTER:
+                raise ValueError(
+                    "budget permit fencing token values exceed the supported range"
+                )
         object.__setattr__(self, "fencing_tokens", MappingProxyType(fencing_tokens))
 
     def allows(self, amounts: list[UsageAmount]) -> bool:
@@ -499,6 +536,14 @@ class CompletionReserve:
             raise ValueError(f"unknown completion reserve status {self.status!r}")
         _validate_optional_non_empty_string("completion reserve", "reservation_id", self.reservation_id)
         _validate_non_negative_integer("completion reserve", "fencing_token", self.fencing_token)
+        if self.status == "spent" and self.reservation_id is None:
+            raise ValueError(
+                "spent completion reserve requires reservation_id"
+            )
+        if self.status != "spent" and self.reservation_id is not None:
+            raise ValueError(
+                "unspent completion reserve must not define reservation_id"
+            )
 
 
 BudgetRecord = TypeVar("BudgetRecord", BudgetAccount, BudgetReservation, BudgetPermit, CompletionReserve)
@@ -513,8 +558,9 @@ def _copy_usage_amount(amount: UsageAmount) -> UsageAmount:
     )
 
 
-def _copy_usage_amounts(amounts: list[UsageAmount]) -> list[UsageAmount]:
-    return [_copy_usage_amount(amount) for amount in amounts]
+def _copy_usage_amounts(amounts: object) -> list[UsageAmount]:
+    normalized = _validate_usage_amounts("budget", "amounts", amounts)
+    return [_copy_usage_amount(amount) for amount in normalized]  # type: ignore[arg-type]
 
 
 def _copy_resource_ref(resource: ResourceRef) -> ResourceRef:
@@ -599,9 +645,11 @@ def _amount_key(amount: UsageAmount) -> AmountKey:
     return (amount.kind, amount.unit, tuple(sorted(amount.dimensions.items())))
 
 
-def _amounts_to_dict(amounts: list[UsageAmount]) -> dict[AmountKey, Decimal]:
+def _amounts_to_dict(amounts: object) -> dict[AmountKey, Decimal]:
+    normalized = _validate_usage_amounts("budget", "amounts", amounts)
     values: dict[AmountKey, Decimal] = {}
-    for amount in amounts:
+    for amount in normalized:
+        assert isinstance(amount, UsageAmount)
         key = _amount_key(amount)
         values[key] = values.get(key, Decimal("0")) + amount.amount
     return {key: value for key, value in values.items() if value != 0}
@@ -618,19 +666,19 @@ def _dict_to_amounts(values: dict[AmountKey, Decimal]) -> list[UsageAmount]:
 
 @dataclass(slots=True)
 class InMemoryBudgetLedger:
-    _accounts: dict[str, BudgetAccount] = field(default_factory=dict)
-    _allocated: dict[str, dict[AmountKey, Decimal]] = field(default_factory=dict)
-    _reserved: dict[str, dict[AmountKey, Decimal]] = field(default_factory=dict)
-    _committed: dict[str, dict[AmountKey, Decimal]] = field(default_factory=dict)
-    _overdraft: dict[str, dict[AmountKey, Decimal]] = field(default_factory=dict)
-    _reservations: dict[str, BudgetReservation] = field(default_factory=dict)
-    _reservation_holds: dict[str, tuple[str, ...]] = field(default_factory=dict)
-    _permits: dict[str, BudgetPermit] = field(default_factory=dict)
-    _permit_spent: dict[str, dict[AmountKey, Decimal]] = field(default_factory=dict)
-    _completion_reserves: dict[str, CompletionReserve] = field(default_factory=dict)
-    _completion_reserve_holds: dict[str, tuple[str, ...]] = field(default_factory=dict)
-    _reservation_counter: int = 0
-    _fencing_counter: int = 0
+    _accounts: dict[str, BudgetAccount] = field(default_factory=dict, init=False)
+    _allocated: dict[str, dict[AmountKey, Decimal]] = field(default_factory=dict, init=False)
+    _reserved: dict[str, dict[AmountKey, Decimal]] = field(default_factory=dict, init=False)
+    _committed: dict[str, dict[AmountKey, Decimal]] = field(default_factory=dict, init=False)
+    _overdraft: dict[str, dict[AmountKey, Decimal]] = field(default_factory=dict, init=False)
+    _reservations: dict[str, BudgetReservation] = field(default_factory=dict, init=False)
+    _reservation_holds: dict[str, tuple[str, ...]] = field(default_factory=dict, init=False)
+    _permits: dict[str, BudgetPermit] = field(default_factory=dict, init=False)
+    _permit_spent: dict[str, dict[AmountKey, Decimal]] = field(default_factory=dict, init=False)
+    _completion_reserves: dict[str, CompletionReserve] = field(default_factory=dict, init=False)
+    _completion_reserve_holds: dict[str, tuple[str, ...]] = field(default_factory=dict, init=False)
+    _reservation_counter: int = field(default=0, init=False)
+    _fencing_counter: int = field(default=0, init=False)
     _lock: RLock = field(default_factory=RLock, init=False, repr=False, compare=False)
 
     @_with_in_memory_budget_ledger_lock
@@ -643,11 +691,35 @@ class InMemoryBudgetLedger:
         policy_ref: str,
         parent_budget_id: str | None = None,
     ) -> BudgetAccount:
+        budget_id = _validate_non_empty_string(
+            "budget account",
+            "budget_id",
+            budget_id,
+        )
+        _validate_resource_ref("budget account", "scope", scope)
+        normalized_amounts = _validate_usage_amounts(
+            "budget account",
+            "allocated",
+            amounts,
+        )
+        _validate_optional_non_empty_string(
+            "budget account",
+            "parent_budget_id",
+            parent_budget_id,
+        )
+        if not isinstance(policy_ref, str):
+            raise ValueError("budget account policy_ref must be a string")
+        if policy_ref:
+            _validate_non_empty_string(
+                "budget account",
+                "policy_ref",
+                policy_ref,
+            )
         if budget_id in self._accounts:
             raise BudgetConflictError(f"budget {budget_id!r} already exists")
         if parent_budget_id is not None and parent_budget_id not in self._accounts:
             raise BudgetNotFoundError(f"parent budget {parent_budget_id!r} does not exist")
-        allocated = _amounts_to_dict(amounts)
+        allocated = _amounts_to_dict(normalized_amounts)
         account = BudgetAccount(
             budget_id=budget_id,
             parent_budget_id=parent_budget_id,
@@ -674,9 +746,33 @@ class InMemoryBudgetLedger:
         expires_at: str,
         reservation_id: str | None = None,
     ) -> BudgetReservation:
+        budget_id = _validate_non_empty_string(
+            "budget reservation",
+            "budget_id",
+            budget_id,
+        )
+        _validate_resource_ref("budget reservation", "owner", owner)
+        normalized_amounts = _validate_usage_amounts(
+            "budget reservation",
+            "amounts",
+            amounts,
+        )
+        if purpose not in VALID_RESERVATION_PURPOSES:
+            raise ValueError(f"unknown reservation purpose {purpose!r}")
+        expires_at = _validate_non_empty_string(
+            "budget reservation",
+            "expires_at",
+            expires_at,
+        )
+        if reservation_id is not None:
+            reservation_id = _validate_non_empty_string(
+                "budget reservation",
+                "reservation_id",
+                reservation_id,
+            )
         if budget_id not in self._accounts:
             raise BudgetNotFoundError(f"budget {budget_id!r} does not exist")
-        requested = _amounts_to_dict(amounts)
+        requested = _amounts_to_dict(normalized_amounts)
         held_budget_ids = self._budget_chain(budget_id)
         self._ensure_accounts_active(held_budget_ids)
         for held_budget_id in held_budget_ids:
@@ -686,21 +782,27 @@ class InMemoryBudgetLedger:
                     raise BudgetExceededError(
                         f"budget {held_budget_id!r} has insufficient available {key[0]} {key[1]}"
                     )
-        self._reservation_counter += 1
-        self._fencing_counter += 1
-        actual_reservation_id = reservation_id or f"reservation-{self._reservation_counter:06d}"
+        next_reservation_counter = _increment_budget_counter(
+            "reservation",
+            self._reservation_counter,
+        )
+        next_fencing_counter = _increment_budget_counter(
+            "fencing",
+            self._fencing_counter,
+        )
+        actual_reservation_id = (
+            reservation_id
+            or f"reservation-{next_reservation_counter:06d}"
+        )
         if actual_reservation_id in self._reservations:
             raise BudgetConflictError(f"reservation {actual_reservation_id!r} already exists")
-        self._reservation_counter = max(
-            self._reservation_counter,
-            _numeric_record_suffix(actual_reservation_id, "reservation-"),
+        numeric_suffix = _numeric_record_suffix(
+            actual_reservation_id,
+            "reservation-",
         )
-        for held_budget_id in held_budget_ids:
-            for key, amount in requested.items():
-                self._reserved[held_budget_id][key] = self._reserved[held_budget_id].get(key, Decimal("0")) + amount
-            self._accounts[held_budget_id] = replace(
-                self._accounts[held_budget_id],
-                revision=self._accounts[held_budget_id].revision + 1,
+        if numeric_suffix > _MAX_BUDGET_COUNTER:
+            raise BudgetConflictError(
+                "reservation id exceeds the supported counter range"
             )
         reservation = BudgetReservation(
             reservation_id=actual_reservation_id,
@@ -709,8 +811,27 @@ class InMemoryBudgetLedger:
             amounts=_dict_to_amounts(requested),
             purpose=purpose,
             expires_at=expires_at,
-            fencing_token=self._fencing_counter,
+            fencing_token=next_fencing_counter,
         )
+        next_revisions = {
+            held_budget_id: _increment_budget_counter(
+                "account revision",
+                self._accounts[held_budget_id].revision,
+            )
+            for held_budget_id in held_budget_ids
+        }
+        self._reservation_counter = max(
+            next_reservation_counter,
+            numeric_suffix,
+        )
+        self._fencing_counter = next_fencing_counter
+        for held_budget_id in held_budget_ids:
+            for key, amount in requested.items():
+                self._reserved[held_budget_id][key] = self._reserved[held_budget_id].get(key, Decimal("0")) + amount
+            self._accounts[held_budget_id] = replace(
+                self._accounts[held_budget_id],
+                revision=next_revisions[held_budget_id],
+            )
         self._reservations[actual_reservation_id] = _copy_budget_record(reservation)
         self._reservation_holds[actual_reservation_id] = held_budget_ids
         return _copy_budget_record(reservation)
@@ -741,6 +862,13 @@ class InMemoryBudgetLedger:
                     raise BudgetExceededError(
                         f"reservation {reservation_id!r} overdraft exceeds allowed {key[0]} {key[1]}"
                     )
+        next_revisions = {
+            held_budget_id: _increment_budget_counter(
+                "account revision",
+                self._accounts[held_budget_id].revision,
+            )
+            for held_budget_id in held_budget_ids
+        }
         released: dict[AmountKey, Decimal] = {}
         overdraft: dict[AmountKey, Decimal] = {}
         for held_budget_id in held_budget_ids:
@@ -760,7 +888,7 @@ class InMemoryBudgetLedger:
                     self._overdraft[held_budget_id][key] = self._overdraft[held_budget_id].get(key, Decimal("0")) + extra
             self._accounts[held_budget_id] = replace(
                 self._accounts[held_budget_id],
-                revision=self._accounts[held_budget_id].revision + 1,
+                revision=next_revisions[held_budget_id],
             )
         updated = replace(reservation, status="committed")
         self._reservations[reservation_id] = updated
@@ -784,6 +912,13 @@ class InMemoryBudgetLedger:
         budget_id = reservation.budget_id
         held_budget_ids = self._reservation_holds.get(reservation_id, (budget_id,))
         reserved = _amounts_to_dict(reservation.amounts)
+        next_revisions = {
+            held_budget_id: _increment_budget_counter(
+                "account revision",
+                self._accounts[held_budget_id].revision,
+            )
+            for held_budget_id in held_budget_ids
+        }
         for held_budget_id in held_budget_ids:
             for key, amount in reserved.items():
                 self._reserved[held_budget_id][key] = self._reserved[held_budget_id].get(key, Decimal("0")) - amount
@@ -791,7 +926,7 @@ class InMemoryBudgetLedger:
                     del self._reserved[held_budget_id][key]
             self._accounts[held_budget_id] = replace(
                 self._accounts[held_budget_id],
-                revision=self._accounts[held_budget_id].revision + 1,
+                revision=next_revisions[held_budget_id],
             )
         self._reservations[reservation_id] = replace(reservation, status="released")
         return BudgetSettlement(
@@ -812,6 +947,13 @@ class InMemoryBudgetLedger:
         budget_id = reservation.budget_id
         held_budget_ids = self._reservation_holds.get(reservation_id, (budget_id,))
         reserved = _amounts_to_dict(reservation.amounts)
+        next_revisions = {
+            held_budget_id: _increment_budget_counter(
+                "account revision",
+                self._accounts[held_budget_id].revision,
+            )
+            for held_budget_id in held_budget_ids
+        }
         for held_budget_id in held_budget_ids:
             for key, amount in reserved.items():
                 self._reserved[held_budget_id][key] = self._reserved[held_budget_id].get(key, Decimal("0")) - amount
@@ -819,7 +961,7 @@ class InMemoryBudgetLedger:
                     del self._reserved[held_budget_id][key]
             self._accounts[held_budget_id] = replace(
                 self._accounts[held_budget_id],
-                revision=self._accounts[held_budget_id].revision + 1,
+                revision=next_revisions[held_budget_id],
             )
         self._reservations[reservation_id] = replace(reservation, status="expired")
         return BudgetSettlement(
@@ -844,11 +986,29 @@ class InMemoryBudgetLedger:
         expires_at: str,
         low_watermark: list[UsageAmount] | None = None,
     ) -> BudgetPermit:
+        permit_id = _validate_non_empty_string(
+            "budget permit",
+            "permit_id",
+            permit_id,
+        )
+        normalized_reservation_ids = _validate_string_tuple(
+            "budget permit",
+            "reservation_refs",
+            reservation_ids,
+        )
+        if not normalized_reservation_ids:
+            raise ValueError("budget permit reservation_refs must not be empty")
+        if len(set(normalized_reservation_ids)) != len(
+            normalized_reservation_ids
+        ):
+            raise ValueError(
+                "budget permit reservation_refs must not contain duplicates"
+            )
         if permit_id in self._permits:
             raise BudgetConflictError(f"permit {permit_id!r} already exists")
         authorized: dict[AmountKey, Decimal] = {}
         fencing_tokens: dict[str, int] = {}
-        for reservation_id in reservation_ids:
+        for reservation_id in normalized_reservation_ids:
             reservation = self._reservations.get(reservation_id)
             if reservation is None:
                 raise BudgetReservationNotFoundError(f"reservation {reservation_id!r} does not exist")
@@ -863,12 +1023,12 @@ class InMemoryBudgetLedger:
                 )
         permit = BudgetPermit(
             permit_id=permit_id,
-            reservation_refs=tuple(reservation_ids),
+            reservation_refs=normalized_reservation_ids,
             owner=owner,
             atomic_unit=atomic_unit,
             admission_epoch=admission_epoch,
             authorized_amounts=_dict_to_amounts(authorized),
-            low_watermark=list(low_watermark or []),
+            low_watermark=() if low_watermark is None else low_watermark,  # type: ignore[arg-type]
             continuation_profile=continuation_profile,
             policy_snapshot_digest=policy_snapshot_digest,
             expires_at=expires_at,
@@ -960,6 +1120,16 @@ class InMemoryBudgetLedger:
         spendable_by: tuple[str, ...],
         expires_at: str | None = None,
     ) -> CompletionReserve:
+        reserve_id = _validate_non_empty_string(
+            "completion reserve",
+            "reserve_id",
+            reserve_id,
+        )
+        budget_id = _validate_non_empty_string(
+            "completion reserve",
+            "budget_id",
+            budget_id,
+        )
         if reserve_id in self._completion_reserves:
             raise BudgetCompletionReserveConflictError(f"completion reserve {reserve_id!r} already exists")
         if budget_id not in self._accounts:
@@ -974,23 +1144,34 @@ class InMemoryBudgetLedger:
                     raise BudgetExceededError(
                         f"budget {held_budget_id!r} has insufficient available {key[0]} {key[1]}"
                     )
-        self._fencing_counter += 1
-        for held_budget_id in held_budget_ids:
-            for key, amount in requested.items():
-                self._reserved[held_budget_id][key] = self._reserved[held_budget_id].get(key, Decimal("0")) + amount
-            self._accounts[held_budget_id] = replace(
-                self._accounts[held_budget_id],
-                revision=self._accounts[held_budget_id].revision + 1,
-            )
+        next_fencing_counter = _increment_budget_counter(
+            "fencing",
+            self._fencing_counter,
+        )
         reserve = CompletionReserve(
             reserve_id=reserve_id,
             budget_id=budget_id,
             purpose=purpose,
             amounts=_dict_to_amounts(requested),
-            spendable_by=frozenset(spendable_by),
+            spendable_by=spendable_by,  # type: ignore[arg-type]
             expires_at=expires_at,
-            fencing_token=self._fencing_counter,
+            fencing_token=next_fencing_counter,
         )
+        next_revisions = {
+            held_budget_id: _increment_budget_counter(
+                "account revision",
+                self._accounts[held_budget_id].revision,
+            )
+            for held_budget_id in held_budget_ids
+        }
+        self._fencing_counter = next_fencing_counter
+        for held_budget_id in held_budget_ids:
+            for key, amount in requested.items():
+                self._reserved[held_budget_id][key] = self._reserved[held_budget_id].get(key, Decimal("0")) + amount
+            self._accounts[held_budget_id] = replace(
+                self._accounts[held_budget_id],
+                revision=next_revisions[held_budget_id],
+            )
         self._completion_reserves[reserve_id] = _copy_budget_record(reserve)
         self._completion_reserve_holds[reserve_id] = held_budget_ids
         return _copy_budget_record(reserve)
@@ -1010,6 +1191,21 @@ class InMemoryBudgetLedger:
         *,
         expires_at: str,
     ) -> BudgetReservation:
+        reserve_id = _validate_non_empty_string(
+            "completion reserve",
+            "reserve_id",
+            reserve_id,
+        )
+        spender = _validate_non_empty_string(
+            "completion reserve",
+            "spender",
+            spender,
+        )
+        expires_at = _validate_non_empty_string(
+            "budget reservation",
+            "expires_at",
+            expires_at,
+        )
         reserve = self._completion_reserves.get(reserve_id)
         if reserve is None:
             raise BudgetCompletionReserveNotFoundError(f"completion reserve {reserve_id!r} does not exist")
@@ -1020,8 +1216,11 @@ class InMemoryBudgetLedger:
         if spender not in reserve.spendable_by:
             raise BudgetCompletionReserveUnauthorizedError(reserve_id, spender)
 
-        self._reservation_counter += 1
-        reservation_id = f"reservation-{self._reservation_counter:06d}"
+        next_reservation_counter = _increment_budget_counter(
+            "reservation",
+            self._reservation_counter,
+        )
+        reservation_id = f"reservation-{next_reservation_counter:06d}"
         if reservation_id in self._reservations:
             raise BudgetConflictError(f"reservation {reservation_id!r} already exists")
         reservation = BudgetReservation(
@@ -1033,6 +1232,7 @@ class InMemoryBudgetLedger:
             expires_at=expires_at,
             fencing_token=reserve.fencing_token,
         )
+        self._reservation_counter = next_reservation_counter
         self._reservations[reservation_id] = _copy_budget_record(reservation)
         self._reservation_holds[reservation_id] = held_budget_ids
         self._completion_reserves[reserve_id] = replace(
@@ -1062,14 +1262,25 @@ class InMemoryBudgetLedger:
             raise BudgetCompletionReserveStateError(f"completion reserve {reserve_id!r} is {reserve.status}")
 
         amounts = _amounts_to_dict(reserve.amounts)
-        for held_budget_id in self._completion_reserve_holds.get(reserve_id, (reserve.budget_id,)):
+        held_budget_ids = self._completion_reserve_holds.get(
+            reserve_id,
+            (reserve.budget_id,),
+        )
+        next_revisions = {
+            held_budget_id: _increment_budget_counter(
+                "account revision",
+                self._accounts[held_budget_id].revision,
+            )
+            for held_budget_id in held_budget_ids
+        }
+        for held_budget_id in held_budget_ids:
             for key, amount in amounts.items():
                 self._reserved[held_budget_id][key] = self._reserved[held_budget_id].get(key, Decimal("0")) - amount
                 if self._reserved[held_budget_id][key] == 0:
                     del self._reserved[held_budget_id][key]
             self._accounts[held_budget_id] = replace(
                 self._accounts[held_budget_id],
-                revision=self._accounts[held_budget_id].revision + 1,
+                revision=next_revisions[held_budget_id],
             )
         updated = replace(reserve, status=status)
         self._completion_reserves[reserve_id] = updated
@@ -1241,10 +1452,20 @@ def _amount_map_from_json(entries: object) -> dict[AmountKey, Decimal]:
             raise ValueError("budget ledger amount map entries must be objects")
         kind = entry.get("kind")
         unit = entry.get("unit")
-        if not isinstance(kind, str) or not kind.strip():
+        if (
+            not isinstance(kind, str)
+            or not kind.strip()
+            or kind != kind.strip()
+        ):
             raise ValueError("budget ledger amount map kinds must be non-empty strings")
-        if not isinstance(unit, str) or not unit.strip():
+        if (
+            not isinstance(unit, str)
+            or not unit.strip()
+            or unit != unit.strip()
+        ):
             raise ValueError("budget ledger amount map units must be non-empty strings")
+        _validate_non_empty_string("budget ledger amount map", "kind", kind)
+        _validate_non_empty_string("budget ledger amount map", "unit", unit)
         raw_dimensions = entry.get("dimensions", {})
         if not isinstance(raw_dimensions, Mapping):
             raise ValueError("budget ledger amount map dimensions must be objects")
@@ -1252,17 +1473,24 @@ def _amount_map_from_json(entries: object) -> dict[AmountKey, Decimal]:
         if any(
             not isinstance(key, str)
             or not key.strip()
+            or key != key.strip()
             or not isinstance(value, str)
             or not value.strip()
+            or value != value.strip()
             for key, value in dimensions_map.items()
         ):
             raise ValueError(
                 "budget ledger amount map dimensions must have non-empty string keys and values"
             )
         dimensions = tuple(sorted(dimensions_map.items()))
+        raw_amount = entry.get("amount")
+        if not isinstance(raw_amount, str):
+            raise ValueError(
+                "budget ledger amount map values must be decimal strings"
+            )
         try:
-            amount = Decimal(str(entry.get("amount")))
-        except (InvalidOperation, ValueError) as error:
+            amount = Decimal(raw_amount)
+        except InvalidOperation as error:
             raise ValueError("budget ledger amount map values must be decimals") from error
         if not amount.is_finite():
             raise ValueError("budget ledger amount map values must be finite")
@@ -1500,7 +1728,11 @@ def _snapshot_string_array_map(
 
 def _snapshot_counter(snapshot: Mapping[str, object], field_name: str) -> int:
     value = snapshot.get(field_name, 0)
-    if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+    if (
+        not isinstance(value, int)
+        or isinstance(value, bool)
+        or not 0 <= value <= _MAX_BUDGET_COUNTER
+    ):
         raise ValueError(
             f"budget ledger snapshot {field_name} must be a non-negative integer"
         )
@@ -1550,6 +1782,14 @@ def _numeric_record_suffix(record_id: str, prefix: str) -> int:
     return 0
 
 
+def _increment_budget_counter(field_name: str, value: int) -> int:
+    if value >= _MAX_BUDGET_COUNTER:
+        raise BudgetConflictError(
+            f"budget ledger {field_name} counter is exhausted"
+        )
+    return value + 1
+
+
 def _validate_budget_ledger_snapshot_consistency(
     ledger: InMemoryBudgetLedger,
 ) -> None:
@@ -1597,6 +1837,40 @@ def _validate_budget_ledger_snapshot_consistency(
             raise ValueError(
                 "budget ledger snapshot permits must reference existing reservations"
             )
+        referenced_reservations = tuple(
+            ledger._reservations[reservation_id]
+            for reservation_id in permit.reservation_refs
+        )
+        expected_authorized: dict[AmountKey, Decimal] = {}
+        expected_fencing_tokens: dict[str, int] = {}
+        for reservation in referenced_reservations:
+            for key, amount in _amounts_to_dict(reservation.amounts).items():
+                expected_authorized[key] = (
+                    expected_authorized.get(key, Decimal("0")) + amount
+                )
+            for held_budget_id in ledger._reservation_holds[
+                reservation.reservation_id
+            ]:
+                expected_fencing_tokens[held_budget_id] = max(
+                    expected_fencing_tokens.get(held_budget_id, 0),
+                    reservation.fencing_token,
+                )
+        if _amounts_to_dict(permit.authorized_amounts) != expected_authorized:
+            raise ValueError(
+                "budget ledger snapshot permit authorization must match its reservations"
+            )
+        if dict(permit.fencing_tokens) != expected_fencing_tokens:
+            raise ValueError(
+                "budget ledger snapshot permit fencing tokens must match its reservations"
+            )
+        spent = ledger._permit_spent[permit.permit_id]
+        if any(
+            amount > expected_authorized.get(key, Decimal("0"))
+            for key, amount in spent.items()
+        ):
+            raise ValueError(
+                "budget ledger snapshot permit spent amounts exceed authorization"
+            )
 
     if set(ledger._completion_reserve_holds) != set(
         ledger._completion_reserves
@@ -1617,6 +1891,48 @@ def _validate_budget_ledger_snapshot_consistency(
             raise ValueError(
                 "budget ledger snapshot completion reserve references unknown reservation"
             )
+        if reserve.status == "spent":
+            assert reserve.reservation_id is not None
+            reservation = ledger._reservations[reserve.reservation_id]
+            if (
+                reservation.budget_id != reserve.budget_id
+                or reservation.fencing_token != reserve.fencing_token
+                or _amounts_to_dict(reservation.amounts)
+                != _amounts_to_dict(reserve.amounts)
+            ):
+                raise ValueError(
+                    "budget ledger snapshot spent completion reserve must match its reservation"
+                )
+
+    expected_reserved: dict[str, dict[AmountKey, Decimal]] = {
+        budget_id: {} for budget_id in account_ids
+    }
+    for reservation in ledger._reservations.values():
+        if reservation.status != "reserved":
+            continue
+        for held_budget_id in ledger._reservation_holds[
+            reservation.reservation_id
+        ]:
+            for key, amount in _amounts_to_dict(reservation.amounts).items():
+                expected_reserved[held_budget_id][key] = (
+                    expected_reserved[held_budget_id].get(key, Decimal("0"))
+                    + amount
+                )
+    for reserve in ledger._completion_reserves.values():
+        if reserve.status != "available":
+            continue
+        for held_budget_id in ledger._completion_reserve_holds[
+            reserve.reserve_id
+        ]:
+            for key, amount in _amounts_to_dict(reserve.amounts).items():
+                expected_reserved[held_budget_id][key] = (
+                    expected_reserved[held_budget_id].get(key, Decimal("0"))
+                    + amount
+                )
+    if ledger._reserved != expected_reserved:
+        raise ValueError(
+            "budget ledger snapshot reserved amounts must match active holds"
+        )
 
     max_reservation_counter = max(
         (
@@ -1625,6 +1941,10 @@ def _validate_budget_ledger_snapshot_consistency(
         ),
         default=0,
     )
+    if max_reservation_counter > _MAX_BUDGET_COUNTER:
+        raise ValueError(
+            "budget ledger snapshot reservation id exceeds the supported counter range"
+        )
     ledger._reservation_counter = max(
         ledger._reservation_counter,
         max_reservation_counter,

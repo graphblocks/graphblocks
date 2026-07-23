@@ -45,6 +45,67 @@ def test_review_request_digest_is_bound_to_subject_and_required_scopes() -> None
     assert left.required_scopes == ("quality", "safety")
 
 
+def test_review_workflow_rechecks_provider_credential_identity_and_scope() -> None:
+    request = ReviewRequest(
+        request_id="request-credential-boundary",
+        subject=ResourceSnapshotRef("candidate-1", "sha256:subject"),
+        requested_by=PrincipalRef("author-1"),
+        required_scopes=("quality",),
+        created_at="2026-06-24T00:00:00Z",
+    )
+    requested_reviewer = PrincipalRef("reviewer-1")
+    unrelated_credential = ReviewerCredential(
+        "cred-unrelated",
+        PrincipalRef("reviewer-2"),
+        scopes=("safety",),
+        issued_at="2026-06-24T00:00:00Z",
+    )
+
+    class MisbehavingProvider:
+        def credentials_for(
+            self,
+            reviewer: PrincipalRef,
+            scope: str,
+        ) -> tuple[ReviewerCredential, ...]:
+            return (unrelated_credential,)
+
+    workflow = ReviewWorkflow(request, MisbehavingProvider())
+    with pytest.raises(ReviewCredentialMissingError):
+        workflow.record_review(
+            review_id="review-1",
+            reviewer=requested_reviewer,
+            scope="quality",
+            decision="accept",
+            created_at="2026-06-24T00:01:00Z",
+        )
+
+
+def test_review_workflow_rejects_restored_reviews_outside_request() -> None:
+    request = ReviewRequest(
+        request_id="request-restore",
+        subject=ResourceSnapshotRef("candidate-1", "sha256:subject"),
+        requested_by=PrincipalRef("author-1"),
+        required_scopes=("quality",),
+        created_at="2026-06-24T00:01:00Z",
+    )
+    restored = ReviewRecord(
+        review_id="review-1",
+        subject=request.subject,
+        subject_digest=request.subject.digest,
+        scope="quality",
+        reviewer=PrincipalRef("reviewer-1"),
+        decision="accept",
+        created_at="2026-06-24T00:00:59Z",
+    )
+
+    with pytest.raises(ValueError, match="must not precede request"):
+        ReviewWorkflow(
+            request,
+            InMemoryReviewerCredentialProvider(),
+            reviews=(restored,),
+        )
+
+
 def test_review_request_rejects_invalid_created_at() -> None:
     with pytest.raises(ValueError, match="review request created_at must be an ISO datetime"):
         ReviewRequest(

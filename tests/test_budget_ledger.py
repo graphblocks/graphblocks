@@ -35,6 +35,118 @@ def _tokens(value: str) -> UsageAmount:
     return UsageAmount(kind="model_total_tokens", amount=Decimal(value), unit="tokens")
 
 
+def test_budget_records_are_immutable_and_reject_ambiguous_accounting_keys() -> None:
+    amount = _tokens("1")
+    account = BudgetAccount(
+        "budget-1",
+        ResourceRef("tenant:acme"),
+        [amount],
+    )
+
+    with pytest.raises(AttributeError):
+        account.allocated.append(_tokens("2"))
+    with pytest.raises(ValueError, match="surrounding whitespace"):
+        UsageAmount(" model_total_tokens", Decimal("1"), "tokens")
+    with pytest.raises(ValueError, match="dimensions must be string keys and values"):
+        UsageAmount(
+            "model_total_tokens",
+            Decimal("1"),
+            "tokens",
+            dimensions={"model ": "small"},
+        )
+    with pytest.raises(ValueError, match="supported integer range"):
+        BudgetAccount(
+            "budget-overflow",
+            ResourceRef("tenant:acme"),
+            [amount],
+            revision=1 << 64,
+        )
+
+
+def test_completion_reserve_rejects_inconsistent_restored_lifecycle() -> None:
+    with pytest.raises(ValueError, match="spent completion reserve requires"):
+        CompletionReserve(
+            "reserve-1",
+            "budget-1",
+            purpose="finalization",
+            amounts=[_tokens("1")],
+            spendable_by=frozenset(("worker.finalize",)),
+            status="spent",
+        )
+    with pytest.raises(ValueError, match="unspent completion reserve"):
+        CompletionReserve(
+            "reserve-1",
+            "budget-1",
+            purpose="finalization",
+            amounts=[_tokens("1")],
+            spendable_by=frozenset(("worker.finalize",)),
+            reservation_id="reservation-1",
+        )
+
+
+def test_in_memory_budget_ledger_does_not_accept_unvalidated_restored_state() -> None:
+    with pytest.raises(TypeError):
+        InMemoryBudgetLedger(_reservation_counter=10)  # type: ignore[call-arg]
+
+
+@pytest.mark.parametrize(
+    ("field", "message"),
+    (
+        ("reserved", "reserved amounts must match active holds"),
+        ("permit_authorization", "permit authorization must match"),
+    ),
+)
+def test_sqlite_budget_ledger_reconciles_authoritative_snapshot_state(
+    tmp_path,
+    field: str,
+    message: str,
+) -> None:
+    path = tmp_path / f"budget-reconcile-{field}.sqlite3"
+    ledger = SQLiteBudgetLedger(path)
+    ledger.allocate(
+        "budget-1",
+        ResourceRef("tenant:acme"),
+        [_tokens("100")],
+        policy_ref="policy-1",
+    )
+    reservation = ledger.reserve(
+        "budget-1",
+        ResourceRef("run:1"),
+        [_tokens("40")],
+        purpose="provider_call",
+        expires_at="later",
+    )
+    if field == "permit_authorization":
+        ledger.issue_permit(
+            "permit-1",
+            reservation_ids=[reservation.reservation_id],
+            owner=ResourceRef("worker:1"),
+            atomic_unit=ResourceRef("turn:1"),
+            admission_epoch=1,
+            continuation_profile="finish_current_turn",
+            policy_snapshot_digest="sha256:policy",
+            expires_at="2026-06-22T01:00:00Z",
+        )
+    row = ledger._connection.execute(
+        "SELECT state_json FROM budget_ledger_snapshots WHERE snapshot_id = ?",
+        ("default",),
+    ).fetchone()
+    snapshot = json.loads(row["state_json"])
+    if field == "reserved":
+        snapshot["reserved"]["budget-1"] = []
+    else:
+        snapshot["permits"]["permit-1"]["authorized_amounts"][0]["amount"] = "100"
+    ledger._connection.execute(
+        "UPDATE budget_ledger_snapshots SET state_json = ? WHERE snapshot_id = ?",
+        (json.dumps(snapshot), "default"),
+    )
+    ledger._connection.commit()
+    ledger.close()
+
+    with pytest.raises(ValueError, match=message):
+        SQLiteBudgetLedger(path)
+
+
 def _set_budget_status(
     ledger: InMemoryBudgetLedger,
     budget_id: str,

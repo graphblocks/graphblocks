@@ -30,11 +30,17 @@ _MAX_METADATA_DEPTH = 64
 _MAX_METADATA_NODES = 10_000
 
 
+def _contains_forbidden_control(value: str) -> bool:
+    return any(ord(character) < 0x20 or ord(character) == 0x7F for character in value)
+
+
 def _validate_non_empty_string(owner: str, field_name: str, value: object) -> str:
     if not isinstance(value, str):
         raise ValueError(f"{owner} {field_name} must be a string")
     if not value.strip():
         raise ValueError(f"{owner} {field_name} must not be empty")
+    if _contains_forbidden_control(value):
+        raise ValueError(f"{owner} {field_name} must not contain control characters")
     return value
 
 
@@ -253,7 +259,12 @@ class Readiness:
                 raise ValueError("readiness inputs must not contain duplicate normalized keys")
             inputs[normalized_key] = _validate_resolved_input(value)
         object.__setattr__(self, "inputs", MappingProxyType(inputs))
-        missing = tuple(self.missing)
+        try:
+            missing = tuple(self.missing)
+        except TypeError as error:
+            raise ValueError(
+                "readiness missing entries must be PortRef"
+            ) from error
         if any(not isinstance(port, PortRef) for port in missing):
             raise ValueError("readiness missing entries must be PortRef")
         object.__setattr__(self, "missing", missing)
@@ -294,7 +305,22 @@ class Readiness:
 
 @dataclass(slots=True)
 class ReadinessTracker:
-    signals: dict[PortRef, Outcome] = field(default_factory=dict)
+    signals: Mapping[PortRef, Outcome] = field(default_factory=dict)
+
+    def __setattr__(self, name: str, value: object) -> None:
+        if name == "signals" and hasattr(self, "signals"):
+            raise AttributeError("readiness signals cannot be replaced")
+        object.__setattr__(self, name, value)
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.signals, Mapping):
+            raise ValueError("readiness signals must be a mapping")
+        signals = dict(self.signals)
+        if any(not isinstance(port, PortRef) for port in signals):
+            raise ValueError("readiness signal keys must be PortRef")
+        if any(not isinstance(outcome, Outcome) for outcome in signals.values()):
+            raise ValueError("readiness signal values must be Outcome")
+        object.__setattr__(self, "signals", MappingProxyType(signals))
 
     def publish(self, port: PortRef, outcome: Outcome) -> Outcome | None:
         if not isinstance(port, PortRef):
@@ -302,7 +328,9 @@ class ReadinessTracker:
         if not isinstance(outcome, Outcome):
             raise ValueError("readiness signal outcome must be Outcome")
         previous = self.signals.get(port)
-        self.signals[port] = outcome
+        signals = dict(self.signals)
+        signals[port] = outcome
+        object.__setattr__(self, "signals", MappingProxyType(signals))
         return previous
 
     def signal(self, port: PortRef) -> Outcome | None:

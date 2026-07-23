@@ -46,9 +46,15 @@ class AuditOutboxRecordNotFoundError(AuditOutboxError):
 
 AuditOutboxStatus = Literal["pending", "published", "failed"]
 _AUDIT_OUTBOX_STATUSES = frozenset({"pending", "published", "failed"})
+_MAX_AUDIT_ATTEMPTS = (1 << 63) - 1
 
 
-class _FrozenAuditList(list[object]):
+class _FrozenAuditList(tuple[object, ...]):
+    def __eq__(self, other: object) -> bool:
+        if isinstance(other, list):
+            return tuple(self) == tuple(other)
+        return super().__eq__(other)
+
     def __setitem__(self, index: object, value: object) -> None:
         raise TypeError("frozen audit list cannot be mutated")
 
@@ -175,6 +181,8 @@ def _validate_audit_string(field_name: str, value: object) -> str:
         raise ValueError(f"audit outbox {field_name} must be a non-empty string")
     if value != value.strip():
         raise ValueError(f"audit outbox {field_name} must not contain surrounding whitespace")
+    if any(ord(character) < 0x20 or ord(character) == 0x7F for character in value):
+        raise ValueError(f"audit outbox {field_name} must not contain control characters")
     return value
 
 
@@ -261,7 +269,11 @@ class AuditOutboxRecord:
         occurred_at = _validate_audit_string("occurred_at", self.occurred_at)
         if not isinstance(self.status, str) or self.status not in _AUDIT_OUTBOX_STATUSES:
             raise ValueError("audit outbox status must be pending, published, or failed")
-        if not isinstance(self.attempts, int) or isinstance(self.attempts, bool) or self.attempts < 0:
+        if (
+            not isinstance(self.attempts, int)
+            or isinstance(self.attempts, bool)
+            or not 0 <= self.attempts <= _MAX_AUDIT_ATTEMPTS
+        ):
             raise ValueError("audit outbox attempts must be a non-negative integer")
         published_at = (
             None
@@ -443,12 +455,18 @@ class SQLiteAuditOutbox:
             """
             UPDATE audit_outbox_records
             SET status = ?, attempts = attempts + 1, last_error = ?
-            WHERE record_id = ? AND status IN ('pending', 'failed')
+            WHERE record_id = ?
+              AND status IN ('pending', 'failed')
+              AND attempts < ?
             """,
-            ("failed", error, record_id),
+            ("failed", error, record_id, _MAX_AUDIT_ATTEMPTS),
         ).rowcount == 0:
             self._connection.rollback()
-            self.get(record_id)
+            current = self.get(record_id)
+            if current.attempts == _MAX_AUDIT_ATTEMPTS:
+                raise AuditOutboxError(
+                    f"audit outbox record {record_id!r} exhausted its attempt counter"
+                )
             raise AuditOutboxError(f"audit outbox record {record_id!r} is already published")
         self._connection.commit()
         return self.get(record_id)
@@ -482,13 +500,18 @@ class ToolEffectPrecondition:
             payload = _snapshot_audit_payload(self.payload, field_name="precondition payload")
         except ValueError as error:
             raise ToolEffectAuditError("tool effect precondition payload must be strict JSON") from error
-        if not isinstance(self.digest, str) or not self.digest.strip():
-            raise ToolEffectAuditError("tool effect precondition digest must be a non-empty string")
-        if canonical_hash(payload) != self.digest:
+        try:
+            digest = _validate_audit_string("precondition digest", self.digest)
+        except ValueError as error:
+            raise ToolEffectAuditError(
+                "tool effect precondition digest must be an exact non-empty string"
+            ) from error
+        if canonical_hash(payload) != digest:
             raise ToolEffectAuditError(
                 "tool effect precondition digest does not match payload"
             )
         object.__setattr__(self, "payload", _freeze_audit_snapshot(payload))
+        object.__setattr__(self, "digest", digest)
 
     @classmethod
     def from_admitted_call(
@@ -541,7 +564,53 @@ class ToolEffectAuditRecord:
     payload: Mapping[str, object] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "reason_codes", tuple(self.reason_codes))
+        try:
+            event_id = _validate_audit_string("event_id", self.event_id)
+            target_kind = _validate_audit_string("target_kind", self.target_kind)
+            occurred_at = _validate_audit_string("occurred_at", self.occurred_at)
+        except ValueError as error:
+            raise ToolEffectAuditError(str(error)) from error
+        if target_kind not in {"tool_effect", "destructive_effect"}:
+            raise ToolEffectAuditError(
+                "tool effect audit target_kind must be tool_effect or destructive_effect"
+            )
+        if not isinstance(self.actor, PrincipalRef):
+            raise ToolEffectAuditError(
+                "tool effect audit actor must be a PrincipalRef"
+            )
+        if not isinstance(self.resource, ResourceRef):
+            raise ToolEffectAuditError(
+                "tool effect audit resource must be a ResourceRef"
+            )
+        if isinstance(self.reason_codes, str):
+            raise ToolEffectAuditError(
+                "tool effect audit reason_codes must be a collection of strings"
+            )
+        try:
+            reason_codes = tuple(self.reason_codes)
+        except TypeError as error:
+            raise ToolEffectAuditError(
+                "tool effect audit reason_codes must be a collection of strings"
+            ) from error
+        if not reason_codes:
+            raise ToolEffectAuditError(
+                "tool effect audit reason_codes must not be empty"
+            )
+        try:
+            normalized_reason_codes = tuple(
+                _validate_audit_string("reason_codes item", reason_code)
+                for reason_code in reason_codes
+            )
+        except ValueError as error:
+            raise ToolEffectAuditError(str(error)) from error
+        if len(set(normalized_reason_codes)) != len(normalized_reason_codes):
+            raise ToolEffectAuditError(
+                "tool effect audit reason_codes must not contain duplicates"
+            )
+        object.__setattr__(self, "event_id", event_id)
+        object.__setattr__(self, "target_kind", target_kind)
+        object.__setattr__(self, "occurred_at", occurred_at)
+        object.__setattr__(self, "reason_codes", normalized_reason_codes)
         object.__setattr__(self, "payload", _freeze_audit_payload(self.payload))
 
     @classmethod

@@ -40,38 +40,18 @@ class PolicyUnavailableError(RuntimeError):
     pass
 
 
-class _FrozenPolicyMapping(dict[str, object]):
-    def __setitem__(self, key: str, value: object) -> None:
-        raise TypeError("frozen policy mapping cannot be mutated")
-
-    def __delitem__(self, key: str) -> None:
-        raise TypeError("frozen policy mapping cannot be mutated")
-
-    def clear(self) -> None:
-        raise TypeError("frozen policy mapping cannot be mutated")
-
-    def pop(self, key: str, default: object = None) -> object:
-        raise TypeError("frozen policy mapping cannot be mutated")
-
-    def popitem(self) -> tuple[str, object]:
-        raise TypeError("frozen policy mapping cannot be mutated")
-
-    def setdefault(self, key: str, default: object = None) -> object:
-        raise TypeError("frozen policy mapping cannot be mutated")
-
-    def update(self, *args: object, **kwargs: object) -> None:
-        raise TypeError("frozen policy mapping cannot be mutated")
-
-    def __ior__(self, other: object) -> _FrozenPolicyMapping:
-        raise TypeError("frozen policy mapping cannot be mutated")
+def _contains_forbidden_control(value: str) -> bool:
+    return any(ord(character) < 0x20 or ord(character) == 0x7F for character in value)
 
 
-class _FrozenPolicyList(list[object]):
-    def __setitem__(self, index: object, value: object) -> None:
-        raise TypeError("frozen policy list cannot be mutated")
+class _FrozenPolicyTuple(tuple[object, ...]):
+    def __eq__(self, other: object) -> bool:
+        if isinstance(other, (list, tuple)):
+            return tuple.__eq__(self, tuple(other))
+        return False
 
-    def __delitem__(self, index: object) -> None:
-        raise TypeError("frozen policy list cannot be mutated")
+    def __ne__(self, other: object) -> bool:
+        return not self == other
 
     def append(self, item: object) -> None:
         raise TypeError("frozen policy list cannot be mutated")
@@ -97,10 +77,10 @@ class _FrozenPolicyList(list[object]):
     def sort(self, *args: object, **kwargs: object) -> None:
         raise TypeError("frozen policy list cannot be mutated")
 
-    def __iadd__(self, items: object) -> _FrozenPolicyList:
+    def __iadd__(self, items: object) -> _FrozenPolicyTuple:
         raise TypeError("frozen policy list cannot be mutated")
 
-    def __imul__(self, multiplier: int) -> _FrozenPolicyList:
+    def __imul__(self, multiplier: int) -> _FrozenPolicyTuple:
         raise TypeError("frozen policy list cannot be mutated")
 
 
@@ -111,6 +91,8 @@ def _validate_non_empty_string(owner: str, field_name: str, value: object) -> st
         raise ValueError(f"{owner} {field_name} must not be empty")
     if value != value.strip():
         raise ValueError(f"{owner} {field_name} must not contain surrounding whitespace")
+    if _contains_forbidden_control(value):
+        raise ValueError(f"{owner} {field_name} must not contain control characters")
     return value
 
 
@@ -197,14 +179,12 @@ def _freeze_policy_value(
             f"{MAX_CANONICAL_JSON_DEPTH} levels"
         )
     if isinstance(value, Mapping):
-        return _FrozenPolicyMapping(
-            _freeze_mapping(
-                owner,
-                field_name,
-                value,
-                active_containers=active_containers,
-                depth=depth,
-            )
+        return _freeze_mapping(
+            owner,
+            field_name,
+            value,
+            active_containers=active_containers,
+            depth=depth,
         )
     if isinstance(value, (list, tuple)):
         identity = id(value)
@@ -224,8 +204,8 @@ def _freeze_policy_value(
             )
         finally:
             active_containers.remove(identity)
-        if isinstance(value, list):
-            return _FrozenPolicyList(frozen)
+        if isinstance(value, (list, _FrozenPolicyTuple)):
+            return _FrozenPolicyTuple(frozen)
         return frozen
     try:
         canonical_dumps(value)
@@ -751,17 +731,51 @@ class PolicyRequest:
         if self.enforcement_point not in VALID_ENFORCEMENT_POINTS:
             raise ValueError(f"unknown enforcement point {self.enforcement_point!r}")
         object.__setattr__(self, "data_labels", _validate_string_tuple("policy request", "data_labels", self.data_labels))
+        try:
+            requested_usage = tuple(self.requested_usage)
+        except TypeError as error:
+            raise ValueError(
+                "policy request requested_usage must contain mappings"
+            ) from error
         object.__setattr__(
             self,
             "requested_usage",
             tuple(
                 _freeze_mapping("policy request", "requested_usage item", usage)
-                for usage in self.requested_usage
+                for usage in requested_usage
             ),
         )
         object.__setattr__(self, "attributes", _freeze_mapping("policy request", "attributes", self.attributes))
+        for field_name in (
+            "release_id",
+            "deployment_revision_id",
+            "run_id",
+            "policy_snapshot_id",
+        ):
+            object.__setattr__(
+                self,
+                field_name,
+                _validate_optional_non_empty_string(
+                    "policy request",
+                    field_name,
+                    getattr(self, field_name),
+                ),
+            )
+        if not isinstance(self.input_digest, str):
+            raise ValueError("policy request input_digest must be a string")
+        if self.input_digest:
+            object.__setattr__(
+                self,
+                "input_digest",
+                _validate_non_empty_string(
+                    "policy request",
+                    "input_digest",
+                    self.input_digest,
+                ),
+            )
+            object.__setattr__(self, "input_digest", self._computed_input_digest())
 
-    def with_input_digest(self) -> PolicyRequest:
+    def _computed_input_digest(self) -> str:
         principal = None
         if self.principal is not None:
             principal = {
@@ -807,7 +821,10 @@ class PolicyRequest:
             "attributes": self.attributes,
             "policy_snapshot_id": self.policy_snapshot_id,
         }
-        return replace(self, input_digest=canonical_hash(_policy_value(payload)))
+        return canonical_hash(_policy_value(payload))
+
+    def with_input_digest(self) -> PolicyRequest:
+        return replace(self, input_digest=self._computed_input_digest())
 
 
 @dataclass(frozen=True, slots=True)
@@ -853,6 +870,10 @@ class PolicyDecision:
         if any(not isinstance(item, Mapping) for item in advice_items):
             raise ValueError("policy decision advice must contain mappings")
         object.__setattr__(self, "obligations", obligations)
+        if self.effect == "allow_with_obligations" and not obligations:
+            raise ValueError(
+                "allow_with_obligations policy decision requires obligations"
+            )
         object.__setattr__(
             self,
             "advice",
@@ -867,7 +888,11 @@ class PolicyDecision:
             object.__setattr__(
                 self,
                 "valid_until",
-                _validate_policy_datetime("policy decision", "valid_until", self.valid_until),
+                _validate_policy_datetime(
+                    "policy decision",
+                    "valid_until",
+                    self.valid_until,
+                ),
             )
 
 
@@ -950,18 +975,35 @@ class PolicyEnforcementRecord:
         )
 
 
-@dataclass(slots=True)
+@dataclass(frozen=True, slots=True)
 class StaticPolicyEvaluator:
-    rules: list[PolicyRule] = field(default_factory=list)
+    rules: tuple[PolicyRule, ...] = field(default_factory=tuple)
+
+    def __post_init__(self) -> None:
+        try:
+            rules = tuple(self.rules)
+        except TypeError as error:
+            raise ValueError(
+                "static policy evaluator rules must be PolicyRule records"
+            ) from error
+        if any(not isinstance(rule, PolicyRule) for rule in rules):
+            raise ValueError(
+                "static policy evaluator rules must be PolicyRule records"
+            )
+        object.__setattr__(self, "rules", rules)
 
     @classmethod
     def from_bundles(cls, bundles: list[PolicyBundle]) -> StaticPolicyEvaluator:
         rules: list[PolicyRule] = []
         for bundle in sorted(bundles, key=lambda item: item.ref):
             rules.extend(bundle.rules)
-        return cls(rules)
+        return cls(tuple(rules))
 
     def evaluate(self, request: PolicyRequest, evaluated_at: str) -> PolicyDecision:
+        if not isinstance(request, PolicyRequest):
+            raise ValueError(
+                "static policy evaluator request must be a PolicyRequest"
+            )
         digested_request = request.with_input_digest()
         matching_deny: list[PolicyRule] = []
         matching_allow: list[PolicyRule] = []
@@ -1039,6 +1081,30 @@ class PolicyEnforcementResult:
     decision: PolicyDecision
     record: PolicyEnforcementRecord
 
+    def __post_init__(self) -> None:
+        if not isinstance(self.decision, PolicyDecision):
+            raise ValueError(
+                "policy enforcement result decision must be a PolicyDecision"
+            )
+        if not isinstance(self.record, PolicyEnforcementRecord):
+            raise ValueError(
+                "policy enforcement result record must be a PolicyEnforcementRecord"
+            )
+        if self.record.decision_id != self.decision.decision_id:
+            raise ValueError(
+                "policy enforcement result record must reference its decision"
+            )
+        expected_statuses = {
+            "allow": frozenset(("enforced", "failed")),
+            "allow_with_obligations": frozenset(("enforced", "failed")),
+            "deny": frozenset(("blocked",)),
+            "defer": frozenset(("deferred",)),
+        }
+        if self.record.status not in expected_statuses[self.decision.effect]:
+            raise ValueError(
+                "policy enforcement result status is inconsistent with its decision"
+            )
+
     @property
     def allowed(self) -> bool:
         return self.record.status == "enforced" and self.decision.effect in {"allow", "allow_with_obligations"}
@@ -1047,6 +1113,12 @@ class PolicyEnforcementResult:
 @dataclass(frozen=True, slots=True)
 class PolicyEnforcer:
     evaluator: StaticPolicyEvaluator
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.evaluator, StaticPolicyEvaluator):
+            raise ValueError(
+                "policy enforcer evaluator must be a StaticPolicyEvaluator"
+            )
 
     def enforce(
         self,
@@ -1109,7 +1181,9 @@ def unavailable_policy_decision(
 ) -> PolicyDecision:
     if fail_mode not in VALID_POLICY_FAIL_MODES:
         raise ValueError(f"unknown policy fail mode {fail_mode!r}")
-    digested_request = request if request.input_digest else request.with_input_digest()
+    if not isinstance(request, PolicyRequest):
+        raise ValueError("policy request must be a PolicyRequest")
+    digested_request = request.with_input_digest()
 
     if fail_mode == "use_cached_decision":
         if cached_decision is None:

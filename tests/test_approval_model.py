@@ -7,6 +7,51 @@ from graphblocks.evaluation import ResourceSnapshotRef
 from graphblocks.policy import PrincipalRef
 
 
+def test_approval_record_rejects_inconsistent_restored_lifecycle() -> None:
+    request = ApprovalRequest.from_arguments(
+        "approval-1",
+        run_id="run-1",
+        subject=ResourceSnapshotRef("tool-call-1", "sha256:subject"),
+        action="process.execute",
+        arguments={"cmd": ["echo", "hello"]},
+        risk="external_process",
+        summary="Run a process",
+    )
+    approver = PrincipalRef("admin-1")
+
+    with pytest.raises(ValueError, match="must not define decision fields"):
+        ApprovalRecord(
+            "approval-1",
+            request,
+            "requested",
+            approver=approver,
+        )
+    with pytest.raises(ValueError, match="must not contain duplicates"):
+        ApprovalRecord.approve(
+            request,
+            approver=approver,
+            decided_at="2026-06-22T00:00:00Z",
+            credential_refs=("credential-1", "credential-1"),
+        )
+    approved = ApprovalRecord.approve(
+        request,
+        approver=approver,
+        decided_at="2026-06-22T00:05:00Z",
+    )
+    with pytest.raises(ValueError, match="must not precede decided_at"):
+        approved.invalidate("2026-06-22T00:04:59Z")
+    with pytest.raises(ValueError, match="control characters"):
+        ApprovalRequest.from_arguments(
+            "approval\u0000hidden",
+            run_id="run-1",
+            subject=request.subject,
+            action="process.execute",
+            arguments={},
+            risk="external_process",
+            summary="Run a process",
+        )
+
+
 def test_approval_request_hashes_arguments_without_storing_payload() -> None:
     subject = ResourceSnapshotRef("tool-call-1", "sha256:subject")
 

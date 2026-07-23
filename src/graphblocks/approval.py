@@ -15,6 +15,10 @@ ApprovalStatus = Literal["requested", "approved", "denied", "expired", "cancelle
 VALID_APPROVAL_STATUSES = frozenset(("requested", "approved", "denied", "expired", "cancelled", "invalidated"))
 
 
+def _contains_forbidden_control(value: str) -> bool:
+    return any(ord(character) < 0x20 or ord(character) == 0x7F for character in value)
+
+
 def _validate_non_empty_string(owner: str, field_name: str, value: object) -> str:
     if not isinstance(value, str):
         raise ValueError(f"{owner} {field_name} must be a string")
@@ -33,6 +37,8 @@ def _validate_exact_non_empty_string(owner: str, field_name: str, value: object)
     value = _validate_non_empty_string(owner, field_name, value)
     if value != value.strip():
         raise ValueError(f"{owner} {field_name} must not contain surrounding whitespace")
+    if _contains_forbidden_control(value):
+        raise ValueError(f"{owner} {field_name} must not contain control characters")
     return value
 
 
@@ -60,6 +66,8 @@ def _freeze_metadata(
             raise ValueError(f"{owner} metadata keys must be non-empty strings")
         if any(key != key.strip() for key in metadata_copy):
             raise ValueError(f"{owner} metadata keys must not contain surrounding whitespace")
+        if any(_contains_forbidden_control(key) for key in metadata_copy):
+            raise ValueError(f"{owner} metadata keys must not contain control characters")
         return MappingProxyType(
             {
                 key: _freeze_metadata_value(
@@ -259,6 +267,32 @@ class ApprovalRecord:
             raise ValueError("denied approval record requires reason")
         if self.status == "invalidated" and self.invalidated_at is None:
             raise ValueError("invalidated approval record requires invalidated_at")
+        if self.status != "invalidated" and self.invalidated_at is not None:
+            raise ValueError(
+                "only invalidated approval records may define invalidated_at"
+            )
+        if self.status in {"requested", "expired", "cancelled"} and any(
+            value is not None
+            for value in (self.approver, self.decided_at, self.reason)
+        ):
+            raise ValueError(
+                f"{self.status} approval record must not define decision fields"
+            )
+        if self.status == "invalidated" and (
+            (self.approver is None) != (self.decided_at is None)
+        ):
+            raise ValueError(
+                "invalidated approval record approver and decided_at must be provided together"
+            )
+        if (
+            self.invalidated_at is not None
+            and self.decided_at is not None
+            and _parse_datetime(self.invalidated_at)
+            < _parse_datetime(self.decided_at)
+        ):
+            raise ValueError(
+                "approval record invalidated_at must not precede decided_at"
+            )
 
         if isinstance(self.credential_refs, str):
             raise ValueError("approval credential_refs must be a collection of strings")
@@ -273,6 +307,16 @@ class ApprovalRecord:
                 raise ValueError("approval credential_refs item must not be empty")
             if credential_ref != credential_ref.strip():
                 raise ValueError("approval credential_refs item must not contain surrounding whitespace")
+            if _contains_forbidden_control(credential_ref):
+                raise ValueError(
+                    "approval credential_refs item must not contain control characters"
+                )
+        if len(set(credential_refs)) != len(credential_refs):
+            raise ValueError("approval credential_refs must not contain duplicates")
+        if self.status in {"requested", "expired", "cancelled"} and credential_refs:
+            raise ValueError(
+                f"{self.status} approval record must not define credential_refs"
+            )
         object.__setattr__(self, "credential_refs", credential_refs)
         object.__setattr__(self, "metadata", _freeze_metadata("approval record", self.metadata))
 
@@ -321,6 +365,16 @@ class ApprovalRecord:
         )
 
     def is_valid_for(self, subject: ResourceSnapshotRef, arguments_digest: str, *, now: str | None = None) -> bool:
+        if not isinstance(subject, ResourceSnapshotRef):
+            return False
+        try:
+            _validate_exact_non_empty_string(
+                "approval",
+                "arguments_digest",
+                arguments_digest,
+            )
+        except ValueError:
+            return False
         if self.request.expires_at is not None:
             if now is None:
                 return False
@@ -338,4 +392,8 @@ class ApprovalRecord:
         )
 
     def invalidate(self, invalidated_at: str) -> ApprovalRecord:
+        if self.status not in {"requested", "approved"}:
+            raise ValueError(
+                f"{self.status} approval record cannot be invalidated"
+            )
         return replace(self, status="invalidated", invalidated_at=invalidated_at)

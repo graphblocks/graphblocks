@@ -18,6 +18,7 @@ AdmissionTicketState = Literal[
 TERMINAL_ADMISSION_TICKET_STATES = frozenset(
     {"completed", "failed", "cancelled", "expired"}
 )
+_MAX_ADMISSION_INTEGER = (1 << 64) - 1
 
 
 class AdmissionError(ValueError):
@@ -77,14 +78,20 @@ def _non_empty_string(owner: str, field_name: str, value: object) -> str:
         raise AdmissionError(
             f"{owner} {field_name} must not contain surrounding whitespace"
         )
+    if any(ord(character) < 0x20 or ord(character) == 0x7F for character in value):
+        raise AdmissionError(
+            f"{owner} {field_name} must not contain control characters"
+        )
     return value
 
 
 def _non_negative_integer(owner: str, field_name: str, value: object) -> int:
     if not isinstance(value, int) or isinstance(value, bool):
         raise AdmissionError(f"{owner} {field_name} must be an integer")
-    if value < 0:
-        raise AdmissionError(f"{owner} {field_name} must be non-negative")
+    if not 0 <= value <= _MAX_ADMISSION_INTEGER:
+        raise AdmissionError(
+            f"{owner} {field_name} must be between 0 and {_MAX_ADMISSION_INTEGER}"
+        )
     return value
 
 
@@ -228,6 +235,16 @@ class AdmissionSubmission:
     ticket: AdmissionTicket
     duplicate: bool = False
 
+    def __post_init__(self) -> None:
+        if not isinstance(self.ticket, AdmissionTicket):
+            raise AdmissionError(
+                "admission submission ticket must be an AdmissionTicket"
+            )
+        if not isinstance(self.duplicate, bool):
+            raise AdmissionError(
+                "admission submission duplicate must be a boolean"
+            )
+
 
 @dataclass(slots=True)
 class AdmissionTicketQueue:
@@ -283,6 +300,10 @@ class AdmissionTicketQueue:
         units = _positive_integer("admission request", "units", units)
         if units > self.rate_limit:
             raise AdmissionError("admission request units must not exceed rate_limit")
+        if now_ms > _MAX_ADMISSION_INTEGER - self.ticket_ttl_ms:
+            raise AdmissionError(
+                "admission request expiry exceeds the supported integer range"
+            )
 
         with self._lock:
             request_key = (owner_id, request_id)
@@ -315,9 +336,15 @@ class AdmissionTicketQueue:
                 raise AdmissionQueueFullError(self.limiter_id, self.max_pending)
 
             ticket_id = f"{self.limiter_id}-ticket-{self._next_ticket:06d}"
-            self._next_ticket += 1
+            next_ticket = _increment_admission_counter(
+                "ticket",
+                self._next_ticket,
+            )
             sequence = self._next_sequence
-            self._next_sequence += 1
+            next_sequence = _increment_admission_counter(
+                "sequence",
+                self._next_sequence,
+            )
             fencing_token = None
             state: AdmissionTicketState = "queued"
             retry_after_ms = None
@@ -326,7 +353,11 @@ class AdmissionTicketQueue:
                 state = "admitted"
                 queue_position = None
                 fencing_token = self._next_fencing_token
-                self._next_fencing_token += 1
+                next_fencing_token = _increment_admission_counter(
+                    "fencing token",
+                    self._next_fencing_token,
+                )
+                self._next_fencing_token = next_fencing_token
                 self._active.add(ticket_id)
                 self._window_used += units
             elif self._window_used + units > self.rate_limit:
@@ -336,6 +367,8 @@ class AdmissionTicketQueue:
                     self._window_start_ms + self.window_ms - now_ms,
                 )
 
+            self._next_ticket = next_ticket
+            self._next_sequence = next_sequence
             ticket = AdmissionTicket(
                 ticket_id=ticket_id,
                 run_id=run_id,
@@ -401,7 +434,10 @@ class AdmissionTicketQueue:
             running = replace(
                 ticket,
                 state="running",
-                state_version=ticket.state_version + 1,
+                state_version=_increment_admission_counter(
+                    "state version",
+                    ticket.state_version,
+                ),
                 started_at_ms=now_ms,
             )
             self._tickets[ticket_id] = running
@@ -434,7 +470,10 @@ class AdmissionTicketQueue:
             terminal = replace(
                 ticket,
                 state=state,
-                state_version=ticket.state_version + 1,
+                state_version=_increment_admission_counter(
+                    "state version",
+                    ticket.state_version,
+                ),
                 completed_at_ms=now_ms,
             )
             self._tickets[ticket_id] = terminal
@@ -477,6 +516,10 @@ class AdmissionTicketQueue:
                         "cancel without a post-worker fencing token",
                     )
                 self._validate_fencing_locked(ticket, fencing_token)
+            state_version = _increment_admission_counter(
+                "state version",
+                ticket.state_version,
+            )
             if ticket.state == "queued":
                 self._pending.remove(ticket_id)
             else:
@@ -484,7 +527,7 @@ class AdmissionTicketQueue:
             cancelled = replace(
                 ticket,
                 state=state,
-                state_version=ticket.state_version + 1,
+                state_version=state_version,
                 queue_position=None,
                 retry_after_ms=None,
                 completed_at_ms=now_ms,
@@ -549,13 +592,21 @@ class AdmissionTicketQueue:
                 break
             if self._window_used + ticket.units > self.rate_limit:
                 break
-            self._pending.popleft()
+            state_version = _increment_admission_counter(
+                "state version",
+                ticket.state_version,
+            )
             fencing_token = self._next_fencing_token
-            self._next_fencing_token += 1
+            next_fencing_token = _increment_admission_counter(
+                "fencing token",
+                self._next_fencing_token,
+            )
+            self._pending.popleft()
+            self._next_fencing_token = next_fencing_token
             admitted = replace(
                 ticket,
                 state="admitted",
-                state_version=ticket.state_version + 1,
+                state_version=state_version,
                 queue_position=None,
                 retry_after_ms=None,
                 fencing_token=fencing_token,
@@ -572,6 +623,10 @@ class AdmissionTicketQueue:
         for ticket_id, ticket in tuple(self._tickets.items()):
             if ticket.state not in {"queued", "admitted", "running"} or ticket.expires_at_ms > now_ms:
                 continue
+            state_version = _increment_admission_counter(
+                "state version",
+                ticket.state_version,
+            )
             if ticket.state == "queued":
                 self._pending.remove(ticket_id)
             else:
@@ -579,7 +634,7 @@ class AdmissionTicketQueue:
             terminal = replace(
                 ticket,
                 state="expired",
-                state_version=ticket.state_version + 1,
+                state_version=state_version,
                 queue_position=None,
                 retry_after_ms=None,
                 completed_at_ms=now_ms,
@@ -650,8 +705,19 @@ class AdmissionTicketQueue:
             ):
                 self._tickets[ticket_id] = replace(
                     ticket,
-                    state_version=ticket.state_version + 1,
+                    state_version=_increment_admission_counter(
+                        "state version",
+                        ticket.state_version,
+                    ),
                     queue_position=position,
                     retry_after_ms=retry_after_ms,
                 )
             projected_used += ticket.units
+
+
+def _increment_admission_counter(field_name: str, value: int) -> int:
+    if value >= _MAX_ADMISSION_INTEGER:
+        raise AdmissionError(
+            f"admission queue {field_name} counter is exhausted"
+        )
+    return value + 1

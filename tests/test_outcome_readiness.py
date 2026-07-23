@@ -5,6 +5,21 @@ import pytest
 from graphblocks.outcome import InputDependency, Outcome, PortRef, Readiness, ReadinessTracker, ResolvedInput
 
 
+def test_readiness_tracker_validates_and_freezes_restored_signals() -> None:
+    source = PortRef("source", "value")
+    signals = {source: Outcome.value("initial")}
+    tracker = ReadinessTracker(signals)
+    signals[source] = Outcome.value("mutated")
+
+    assert tracker.signal(source) == Outcome.value("initial")
+    with pytest.raises(TypeError):
+        tracker.signals[source] = Outcome.value("direct")  # type: ignore[index]
+    with pytest.raises(AttributeError, match="cannot be replaced"):
+        tracker.signals = {}  # type: ignore[assignment]
+    with pytest.raises(ValueError, match="values must be Outcome"):
+        ReadinessTracker({source: object()})  # type: ignore[dict-item]
+
+
 def test_missing_dependency_waits_but_null_value_is_ready() -> None:
     source = PortRef("source", "value")
     dependency = InputDependency.value("message", source)
