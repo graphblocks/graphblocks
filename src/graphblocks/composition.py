@@ -145,7 +145,7 @@ class CompositionReport:
         try:
             sources = tuple(sorted(self.sources))
             instances = tuple(sorted(self.instances))
-        except (AttributeError, TypeError) as error:
+        except (AttributeError, TypeError, RuntimeError) as error:
             raise TypeError(
                 "composition report records must be sortable sequences"
             ) from error
@@ -198,19 +198,29 @@ class CompositionReport:
         sources: tuple[CompositionSource, ...],
         instances: tuple[CompositionInstance, ...],
     ) -> CompositionReport:
-        if any(not isinstance(source, CompositionSource) for source in sources):
+        try:
+            source_records = tuple(sources)
+            instance_records = tuple(instances)
+        except (TypeError, RuntimeError) as error:
+            raise TypeError(
+                "composition report records must be sortable sequences"
+            ) from error
+        if any(
+            not isinstance(source, CompositionSource)
+            for source in source_records
+        ):
             raise TypeError(
                 "composition report sources must contain CompositionSource values"
             )
         if any(
             not isinstance(instance, CompositionInstance)
-            for instance in instances
+            for instance in instance_records
         ):
             raise TypeError(
                 "composition report instances must contain CompositionInstance values"
             )
-        ordered_sources = tuple(sorted(sources))
-        ordered_instances = tuple(sorted(instances))
+        ordered_sources = tuple(sorted(source_records))
+        ordered_instances = tuple(sorted(instance_records))
         digest = canonical_hash(
             {
                 "apiVersion": COMPOSITION_API_VERSION,
@@ -878,6 +888,7 @@ class _Composer:
         import_path = PurePosixPath(raw_path)
         invalid = (
             raw_path == ""
+            or "\x00" in raw_path
             or "\\" in raw_path
             or import_path.is_absolute()
             or any(part in {"", ".", ".."} for part in import_path.parts)

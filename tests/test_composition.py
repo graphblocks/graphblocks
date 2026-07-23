@@ -425,6 +425,31 @@ def test_composition_report_rejects_tampered_restored_state() -> None:
         CompositionReport.create((graph_source,), (instance,))
 
 
+def test_composition_report_snapshots_one_shot_record_collections() -> None:
+    graph_source = CompositionSource(
+        "graph.yaml",
+        "sha256:" + "0" * 64,
+    )
+    fragment_source = CompositionSource(
+        "fragment.yaml",
+        "sha256:" + "1" * 64,
+    )
+    instance = CompositionInstance(
+        graph="graph",
+        node="prompt",
+        fragment="prompt-fragment",
+        source="fragment.yaml",
+    )
+
+    report = CompositionReport.create(
+        iter((graph_source, fragment_source)),  # type: ignore[arg-type]
+        iter((instance,)),  # type: ignore[arg-type]
+    )
+
+    assert report.sources == (fragment_source, graph_source)
+    assert report.instances == (instance,)
+
+
 def test_composition_result_snapshots_documents_and_validates_report() -> None:
     report = CompositionReport.create((), ())
     document = {"kind": "Binding", "spec": {"values": [1]}}
@@ -464,6 +489,18 @@ def test_composition_rejects_url_imports(tmp_path: Path, unsafe_path: str) -> No
 
     with pytest.raises(CompositionError) as captured:
         compose_documents(graph_path)
+    assert captured.value.code == "CompositionInvalidImport"
+
+
+def test_composition_rejects_nul_import_path_with_stable_diagnostic(
+    tmp_path: Path,
+) -> None:
+    graph_path = tmp_path / "graph.yaml"
+    _write_yaml(graph_path, _composed_graph(fragment_path="fragment\0.yaml"))
+
+    with pytest.raises(CompositionError) as captured:
+        compose_documents(graph_path)
+
     assert captured.value.code == "CompositionInvalidImport"
 
 

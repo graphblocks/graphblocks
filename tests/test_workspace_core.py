@@ -103,6 +103,27 @@ def test_workspace_snapshot_validates_identity_revision_resources_and_metadata()
         )
 
 
+def test_workspace_records_reject_unicode_surrogates_and_hostile_iterables() -> None:
+    class ExplodingIterable:
+        def __iter__(self):
+            raise RuntimeError("iteration exploded")
+
+    with pytest.raises(ValueError, match="Unicode scalar values"):
+        WorkspaceSnapshot("\ud800", "snapshot-1", 1)
+    with pytest.raises(ValueError, match="resources must be a collection"):
+        WorkspaceSnapshot(
+            "workspace-1",
+            "snapshot-1",
+            1,
+            resources=ExplodingIterable(),  # type: ignore[arg-type]
+        )
+    with pytest.raises(ValueError, match="reason_codes must be a collection"):
+        WorkspaceMutationDecision(
+            True,
+            reason_codes=ExplodingIterable(),  # type: ignore[arg-type]
+        )
+
+
 @pytest.mark.parametrize(
     ("factory", "expected_error"),
     (
@@ -979,7 +1000,16 @@ def test_workspace_trial_plan_materializes_and_enforces_verified_commit_request(
         reviews=(review,),
     )
 
+    with pytest.raises(ValueError, match="unique lease_id"):
+        replace(plan, leases=(lease, lease))
+    with pytest.raises(ValueError, match="unique review_id"):
+        replace(plan, reviews=(review, review))
+
     request = plan.to_commit_request("commit-rtl-1", now="2026-07-02T00:25:00Z")
+    with pytest.raises(ValueError, match="unique lease_id"):
+        replace(request, leases=(lease, lease))
+    with pytest.raises(ValueError, match="unique review_id"):
+        replace(request, reviews=(review, review))
     committed = InMemoryWorkspaceStore().put_snapshot(base).compare_and_swap_commit_request(
         workspace_id="workspace-rtl",
         request=request,
@@ -1038,6 +1068,74 @@ def test_workspace_trial_plan_materializes_and_enforces_verified_commit_request(
             committed_by=PrincipalRef("optimizer-1"),
             committed_at="2026-07-02T00:30:00Z",
         )
+
+
+def test_authorized_workspace_commit_snapshots_one_shot_resources_once() -> None:
+    base = WorkspaceSnapshot(
+        "workspace-1",
+        "snapshot-1",
+        1,
+        created_at="2026-07-02T00:00:00Z",
+    )
+    resources = (
+        ResourceSnapshotRef(
+            "design.v",
+            "sha256:candidate",
+            resource_kind="file",
+        ),
+    )
+    candidate = WorkspaceSnapshot(
+        "workspace-1",
+        "snapshot-2",
+        2,
+        resources=resources,
+        created_at="2026-07-02T00:05:00Z",
+        base_snapshot_id=base.snapshot_id,
+        base_snapshot_digest=base.content_digest(),
+    )
+    candidate_ref = ResourceSnapshotRef(
+        "workspace-1",
+        candidate.content_digest(),
+        resource_kind="workspace",
+    )
+    change_set = ChangeSet(
+        "change-1",
+        ResourceSnapshotRef(
+            "workspace-1",
+            base.content_digest(),
+            resource_kind="workspace",
+        ),
+        candidate_ref,
+    )
+    request = WorkspaceTrialPlan(
+        "trial-1",
+        change_set,
+        1,
+        gate=evaluate_gate(
+            "quality",
+            candidate_ref,
+            checks=[],
+            required_check_ids=[],
+        ),
+        mutation_decision=WorkspaceMutationDecision(True),
+    ).to_commit_request(
+        "commit-1",
+        now="2026-07-02T00:04:00Z",
+    )
+
+    committed = InMemoryWorkspaceStore().put_snapshot(
+        base
+    ).compare_and_swap_commit_request(
+        workspace_id="workspace-1",
+        request=request,
+        new_snapshot_id="snapshot-2",
+        resources=iter(resources),  # type: ignore[arg-type]
+        committed_by=PrincipalRef("author-1"),
+        committed_at="2026-07-02T00:05:00Z",
+    )
+
+    assert committed.snapshot.resources == resources
+    assert committed.snapshot.content_digest() == candidate_ref.digest
 
 
 def test_workspace_trial_binds_complete_candidate_evidence() -> None:

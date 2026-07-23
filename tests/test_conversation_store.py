@@ -172,6 +172,58 @@ def test_conversation_records_validate_identity_literals_and_nested_types() -> N
         ContentPart(kind="text", text="hello", metadata={"value": "\ud800"})
 
 
+def test_conversation_records_reject_non_scalar_wire_strings_and_u64_overflow() -> None:
+    with pytest.raises(ValueError, match="Unicode scalar values"):
+        Message(message_id="\ud800", role="user")
+    with pytest.raises(ValueError, match="Unicode scalar values"):
+        ContentPart(kind="text", text="\udfff")
+    with pytest.raises(ValueError, match="storage range"):
+        Message(message_id="msg-1", role="user", revision=1 << 64)
+    with pytest.raises(ValueError, match="storage range"):
+        ContentPart(
+            kind="artifact_ref",
+            data={
+                "artifact_id": "artifact-1",
+                "uri": "blob://artifact-1",
+                "size_bytes": 1 << 64,
+            },
+        )
+    with pytest.raises(ValueError, match="storage range"):
+        CompactionRecord(
+            "compact-1",
+            ("msg-1",),
+            "msg-summary",
+            "summary",
+            1 << 64,
+            1,
+        )
+
+
+def test_conversation_records_normalize_hostile_collection_failures() -> None:
+    class ExplodingMapping(dict[str, object]):
+        def items(self):
+            raise RuntimeError("mapping exploded")
+
+    class ExplodingIterable:
+        def __iter__(self):
+            raise RuntimeError("iteration exploded")
+
+    with pytest.raises(ValueError, match="json content part data must be a mapping"):
+        ContentPart(kind="json", data=ExplodingMapping(answer=42))
+    with pytest.raises(
+        ValueError,
+        match="compaction record source_message_ids must be a collection",
+    ):
+        CompactionRecord(
+            "compact-1",
+            ExplodingIterable(),  # type: ignore[arg-type]
+            "msg-summary",
+            "summary",
+            10,
+            5,
+        )
+
+
 def test_conversation_request_compaction_and_turn_records_validate_contracts() -> None:
     with pytest.raises(ValueError, match="branch request include_attachments must be a boolean"):
         BranchRequest("conv-1", "msg-1", 0, include_attachments="yes")  # type: ignore[arg-type]
@@ -215,6 +267,11 @@ def test_conversation_request_compaction_and_turn_records_validate_contracts() -
             committed_revision=2,
             committed_message_ids=("msg-1",),
         )
+    draft = Message("msg-draft", "assistant", status="draft")
+    with pytest.raises(ValueError, match="created turn must not carry messages"):
+        Turn("turn-1", "conv-1", 0, messages=(draft,))
+    with pytest.raises(ValueError, match="cancelled turn messages must be retracted"):
+        Turn("turn-1", "conv-1", 0, status="cancelled", messages=(draft,))
 
 
 def test_conversation_rejects_restored_compactions_with_dangling_messages() -> None:
@@ -239,6 +296,17 @@ def test_conversation_rejects_restored_compactions_with_dangling_messages() -> N
         )
 
 
+def test_conversation_rejects_inconsistent_restored_lineage() -> None:
+    message = Message("msg-1", "user")
+    with pytest.raises(ValueError, match="branch lineage fields must be provided together"):
+        Conversation("conv-1", messages=(message,), branch_of="parent")
+    with pytest.raises(ValueError, match="branched_from_message_id must reference"):
+        Conversation(
+            "conv-1",
+            messages=(message,),
+            branch_of="parent",
+            branched_from_message_id="missing",
+        )
 def test_conversation_store_validates_and_detaches_restored_state() -> None:
     conversation = Conversation("conv-1", metadata={"state": {"phase": "initial"}})
     restored = InMemoryConversationStore({"conv-1": conversation})
@@ -262,6 +330,33 @@ def test_conversation_store_validates_and_detaches_restored_state() -> None:
             {"conv-1": conversation},
             {"turn-1": Turn("turn-1", "conv-1", 1)},
         )
+
+    committed_message = Message("msg-1", "assistant")
+    stored = Conversation("conv-1", messages=(committed_message,), revision=1)
+    forged_turn = Turn(
+        "turn-1",
+        "conv-1",
+        0,
+        status="completed",
+        messages=(Message("msg-1", "user"),),
+        committed_revision=1,
+        committed_message_ids=("msg-1",),
+    )
+    with pytest.raises(ValueError, match="must match stored conversation messages"):
+        InMemoryConversationStore(
+            {"conv-1": stored},
+            {"turn-1": forged_turn},
+        )
+
+    snapshot_source = Conversation(
+        "snapshot-conv",
+        metadata={"state": {"phase": "initial"}},
+    )
+    direct_snapshot = ConversationSnapshot(snapshot_source, 0)
+    snapshot_source.metadata["state"]["phase"] = "mutated"  # type: ignore[index]
+    assert direct_snapshot.conversation.metadata == {
+        "state": {"phase": "initial"}
+    }
 
 
 def test_all_conversation_mutations_reject_stale_revisions_atomically() -> None:

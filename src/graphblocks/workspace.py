@@ -7,7 +7,7 @@ from functools import wraps
 from threading import RLock
 from typing import ParamSpec, TypeVar, cast
 
-from .canonical import canonical_dumps, canonical_hash
+from .canonical import _has_unicode_surrogate, canonical_dumps, canonical_hash
 from .evaluation import ChangeSet, CheckResult, GateResult, ResourceSnapshotRef, ReviewRecord
 from .orchestration import LeaseGrant
 from .policy import PrincipalRef
@@ -35,6 +35,10 @@ def _validate_non_empty_string(owner: str, field_name: str, value: object) -> st
         raise ValueError(f"{owner} {field_name} must not be empty")
     if value != value.strip():
         raise ValueError(f"{owner} {field_name} must not contain surrounding whitespace")
+    if _has_unicode_surrogate(value):
+        raise ValueError(
+            f"{owner} {field_name} must contain only Unicode scalar values"
+        )
     return value
 
 
@@ -49,11 +53,24 @@ def _validate_string_tuple(owner: str, field_name: str, value: object) -> tuple[
         raise ValueError(f"{owner} {field_name} must be a collection of strings")
     try:
         items = tuple(value)  # type: ignore[arg-type]
-    except TypeError as error:
+    except (TypeError, RuntimeError) as error:
         raise ValueError(f"{owner} {field_name} must be a collection of strings") from error
     for item in items:
         _validate_non_empty_string(owner, f"{field_name} item", item)
     return tuple(sorted(set(items)))
+
+
+def _snapshot_collection(
+    owner: str,
+    field_name: str,
+    value: object,
+) -> tuple[object, ...]:
+    if isinstance(value, (str, bytes, bytearray, Mapping)):
+        raise ValueError(f"{owner} {field_name} must be a collection")
+    try:
+        return tuple(value)  # type: ignore[arg-type]
+    except (TypeError, RuntimeError) as error:
+        raise ValueError(f"{owner} {field_name} must be a collection") from error
 
 
 def _copy_resource_snapshot_ref(resource: ResourceSnapshotRef) -> ResourceSnapshotRef:
@@ -111,6 +128,10 @@ class WorkspaceSnapshot:
             )
         if not isinstance(self.created_at, str):
             raise ValueError("workspace snapshot created_at must be a string")
+        if _has_unicode_surrogate(self.created_at):
+            raise ValueError(
+                "workspace snapshot created_at must contain only Unicode scalar values"
+            )
         _validate_optional_non_empty_string("workspace snapshot", "base_snapshot_id", self.base_snapshot_id)
         _validate_optional_non_empty_string("workspace snapshot", "base_snapshot_digest", self.base_snapshot_digest)
         if (self.base_snapshot_id is None) != (
@@ -136,9 +157,14 @@ class WorkspaceSnapshot:
             raise ValueError(
                 "workspace snapshot metadata must contain canonical JSON values"
             ) from error
+        raw_resources = _snapshot_collection(
+            "workspace snapshot",
+            "resources",
+            self.resources,
+        )
         resources = tuple(
             sorted(
-                (_copy_resource_snapshot_ref(resource) for resource in self.resources),
+                (_copy_resource_snapshot_ref(resource) for resource in raw_resources),
                 key=lambda resource: resource.resource_id,
             )
         )
@@ -419,9 +445,17 @@ class WorkspaceCommitRequest:
             raise ValueError("workspace commit request mutation_decision must be a WorkspaceMutationDecision")
         if not isinstance(self.gate, GateResult):
             raise ValueError("workspace commit request gate must be a GateResult")
-        reviews = tuple(self.reviews)
+        reviews = _snapshot_collection(
+            "workspace commit request",
+            "reviews",
+            self.reviews,
+        )
         if not all(isinstance(review, ReviewRecord) for review in reviews):
             raise ValueError("workspace commit request reviews must contain ReviewRecord values")
+        if len({review.review_id for review in reviews}) != len(reviews):
+            raise ValueError(
+                "workspace commit request reviews must have unique review_id values"
+            )
         trial_id = _validate_optional_non_empty_string(
             "workspace commit request",
             "trial_id",
@@ -442,9 +476,17 @@ class WorkspaceCommitRequest:
             "required_review_scopes",
             self.required_review_scopes,
         )
-        leases = tuple(self.leases)
+        leases = _snapshot_collection(
+            "workspace commit request",
+            "leases",
+            self.leases,
+        )
         if not all(isinstance(lease, LeaseGrant) for lease in leases):
             raise ValueError("workspace commit request leases must contain LeaseGrant values")
+        if len({lease.lease_id for lease in leases}) != len(leases):
+            raise ValueError(
+                "workspace commit request leases must have unique lease_id values"
+            )
         if required_lease_kinds and trial_id is None:
             raise ValueError("workspace commit request trial_id is required for lease validation")
         if not isinstance(self.metadata, Mapping):
@@ -515,9 +557,21 @@ class WorkspaceTrialPlan:
             "required_review_scopes",
             _validate_string_tuple("workspace trial plan", "required_review_scopes", self.required_review_scopes),
         )
-        checks = tuple(self.checks)
-        leases = tuple(self.leases)
-        reviews = tuple(self.reviews)
+        checks = _snapshot_collection(
+            "workspace trial plan",
+            "checks",
+            self.checks,
+        )
+        leases = _snapshot_collection(
+            "workspace trial plan",
+            "leases",
+            self.leases,
+        )
+        reviews = _snapshot_collection(
+            "workspace trial plan",
+            "reviews",
+            self.reviews,
+        )
         if not all(isinstance(check, CheckResult) for check in checks):
             raise ValueError("workspace trial plan checks must contain CheckResult values")
         if len({check.check_id for check in checks}) != len(checks):
@@ -531,8 +585,16 @@ class WorkspaceTrialPlan:
             raise ValueError("workspace trial plan mutation_decision must be a WorkspaceMutationDecision")
         if not all(isinstance(lease, LeaseGrant) for lease in leases):
             raise ValueError("workspace trial plan leases must contain LeaseGrant values")
+        if len({lease.lease_id for lease in leases}) != len(leases):
+            raise ValueError(
+                "workspace trial plan leases must have unique lease_id values"
+            )
         if not all(isinstance(review, ReviewRecord) for review in reviews):
             raise ValueError("workspace trial plan reviews must contain ReviewRecord values")
+        if len({review.review_id for review in reviews}) != len(reviews):
+            raise ValueError(
+                "workspace trial plan reviews must have unique review_id values"
+            )
         object.__setattr__(self, "checks", checks)
         object.__setattr__(self, "leases", leases)
         object.__setattr__(self, "reviews", reviews)
@@ -884,6 +946,16 @@ class InMemoryWorkspaceStore:
     ) -> WorkspaceCommit:
         if not isinstance(request, WorkspaceCommitRequest):
             raise WorkspaceCommitAuthorizationError("workspace commit requires an authorized request")
+        if isinstance(resources, (str, bytes, bytearray, Mapping)):
+            raise WorkspaceCommitAuthorizationError(
+                "workspace commit resources must be a collection"
+            )
+        try:
+            normalized_resources = tuple(resources)
+        except (TypeError, RuntimeError) as error:
+            raise WorkspaceCommitAuthorizationError(
+                "workspace commit resources must be a collection"
+            ) from error
         current = self.current(workspace_id)
         if current.revision != request.expected_base_revision:
             raise WorkspaceCommitAuthorizationError(
@@ -948,7 +1020,7 @@ class InMemoryWorkspaceStore:
             workspace_id=workspace_id,
             snapshot_id=new_snapshot_id,
             revision=_next_workspace_revision(current.revision),
-            resources=resources,
+            resources=normalized_resources,
             created_at=committed_at,
             base_snapshot_id=current.snapshot_id,
             base_snapshot_digest=current.content_digest(),
@@ -962,7 +1034,7 @@ class InMemoryWorkspaceStore:
             workspace_id=workspace_id,
             expected_snapshot_id=current.snapshot_id,
             new_snapshot_id=new_snapshot_id,
-            resources=resources,
+            resources=candidate.resources,
             committed_by=committed_by,
             committed_at=committed_at,
             change_set_id=request.change_set.change_set_id,

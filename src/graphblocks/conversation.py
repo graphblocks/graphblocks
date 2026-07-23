@@ -7,7 +7,7 @@ import math
 from threading import RLock
 from typing import Literal, ParamSpec, TypeVar, cast
 
-from .canonical import MAX_CANONICAL_JSON_DEPTH, canonical_dumps
+from .canonical import MAX_CANONICAL_JSON_DEPTH, _has_unicode_surrogate, canonical_dumps
 from .documents import ArtifactRef
 
 MessageRole = Literal["system", "developer", "user", "assistant", "tool"]
@@ -71,6 +71,10 @@ def _validate_non_empty_string(owner: str, field_name: str, value: object) -> st
         raise ValueError(f"{owner} {field_name} must not be empty")
     if value != value.strip():
         raise ValueError(f"{owner} {field_name} must not contain surrounding whitespace")
+    if _has_unicode_surrogate(value):
+        raise ValueError(
+            f"{owner} {field_name} must contain only Unicode scalar values"
+        )
     return value
 
 
@@ -120,29 +124,23 @@ def _require_expected_revision(
 def _copy_mapping(owner: str, field_name: str, value: object) -> dict[str, object]:
     if not isinstance(value, Mapping):
         raise ValueError(f"{owner} {field_name} must be a mapping")
-    for key in value:
-        _validate_non_empty_string(owner, f"{field_name} key", key)
     try:
-        canonical_dumps(value)
-    except (TypeError, ValueError) as error:
-        try:
-            _copy_mapping_value(
-                owner,
-                field_name,
-                value,
-                active_containers=set(),
-                depth=0,
-            )
-        except ValueError:
-            raise
+        copied = _copy_mapping_value(
+            owner,
+            field_name,
+            value,
+            active_containers=set(),
+            depth=0,
+        )
+    except ValueError:
+        raise
+    except (RuntimeError, TypeError, RecursionError) as error:
+        raise ValueError(f"{owner} {field_name} must be a mapping") from error
+    try:
+        canonical_dumps(copied)
+    except (TypeError, ValueError, RuntimeError, RecursionError) as error:
         raise ValueError(f"{owner} {field_name} must contain strict canonical JSON") from error
-    return _copy_mapping_value(
-        owner,
-        field_name,
-        value,
-        active_containers=set(),
-        depth=0,
-    )
+    return copied
 
 
 def _copy_mapping_value(
@@ -165,16 +163,26 @@ def _copy_mapping_value(
         )
     active_containers.add(identity)
     try:
-        return {
-            _validate_non_empty_string(owner, f"{path} key", key): _copy_json_value(
+        items = tuple(value.items())
+        copied: dict[str, object] = {}
+        for key, item in items:
+            normalized_key = _validate_non_empty_string(
                 owner,
-                f"{path}.{key}",
+                f"{path} key",
+                key,
+            )
+            if normalized_key in copied:
+                raise ValueError(
+                    f"{owner} {path} keys must be unique"
+                )
+            copied[normalized_key] = _copy_json_value(
+                owner,
+                f"{path}.{normalized_key}",
                 item,
                 active_containers=active_containers,
                 depth=depth + 1,
             )
-            for key, item in value.items()
-        }
+        return copied
     finally:
         active_containers.remove(identity)
 
@@ -232,15 +240,28 @@ def _copy_json_value(
 
 
 def _validate_string_tuple(owner: str, field_name: str, value: object) -> tuple[str, ...]:
-    if isinstance(value, str):
+    if isinstance(value, (str, bytes, bytearray, Mapping)):
         raise ValueError(f"{owner} {field_name} must be a collection of strings")
     try:
         items = tuple(value)  # type: ignore[arg-type]
-    except TypeError as error:
+    except (TypeError, RuntimeError) as error:
         raise ValueError(f"{owner} {field_name} must be a collection of strings") from error
     for item in items:
         _validate_non_empty_string(owner, f"{field_name} item", item)
     return items
+
+
+def _snapshot_collection(
+    owner: str,
+    field_name: str,
+    value: object,
+) -> tuple[object, ...]:
+    if isinstance(value, (str, bytes, bytearray, Mapping)):
+        raise ValueError(f"{owner} {field_name} must be a collection")
+    try:
+        return tuple(value)  # type: ignore[arg-type]
+    except (TypeError, RuntimeError) as error:
+        raise ValueError(f"{owner} {field_name} must be a collection") from error
 
 
 class ConversationError(RuntimeError):
@@ -279,13 +300,17 @@ class ContentPart:
     metadata: dict[str, object] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        if self.kind not in {"text", "json", "artifact_ref"}:
+        if not isinstance(self.kind, str) or self.kind not in {"text", "json", "artifact_ref"}:
             raise ValueError(f"invalid content part kind {self.kind}")
         if self.kind == "text":
             if self.text is None:
                 raise ValueError("text content part requires text")
             if not isinstance(self.text, str):
                 raise ValueError("text content part text must be a string")
+            if _has_unicode_surrogate(self.text):
+                raise ValueError(
+                    "text content part text must contain only Unicode scalar values"
+                )
             if self.data is not None:
                 raise ValueError("text content part must not carry data")
         elif self.kind == "json":
@@ -325,6 +350,10 @@ class ContentPart:
                     raise ValueError("artifact_ref content part size_bytes must be an integer")
                 if size_bytes < 0:
                     raise ValueError("artifact_ref content part size_bytes must be non-negative")
+                if size_bytes > _MAX_CONVERSATION_REVISION:
+                    raise ValueError(
+                        "artifact_ref content part size_bytes exceeds storage range"
+                    )
             object.__setattr__(self, "data", data)
             if self.text is not None:
                 raise ValueError("artifact_ref content part must not carry text")
@@ -344,15 +373,23 @@ class Message:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "message_id", _validate_non_empty_string("message", "message_id", self.message_id).strip())
-        if self.role not in VALID_MESSAGE_ROLES:
+        if not isinstance(self.role, str) or self.role not in VALID_MESSAGE_ROLES:
             raise ValueError(f"invalid message role {self.role}")
-        parts = tuple(self.parts)
-        if any(not isinstance(part, ContentPart) for part in parts):
+        raw_parts = _snapshot_collection("message", "parts", self.parts)
+        if any(not isinstance(part, ContentPart) for part in raw_parts):
             raise ValueError("message parts must be ContentPart")
+        parts = tuple(_copy_content_part(part) for part in raw_parts)
         object.__setattr__(self, "parts", parts)
         object.__setattr__(self, "parent_message_id", _validate_optional_non_empty_string("message", "parent_message_id", self.parent_message_id))
-        object.__setattr__(self, "revision", _validate_non_negative_int("message", "revision", self.revision))
-        if self.status not in VALID_MESSAGE_STATUSES:
+        object.__setattr__(
+            self,
+            "revision",
+            _validate_revision("message", "revision", self.revision),
+        )
+        if (
+            not isinstance(self.status, str)
+            or self.status not in VALID_MESSAGE_STATUSES
+        ):
             raise ValueError(f"invalid message status {self.status}")
         object.__setattr__(self, "created_at", _validate_optional_non_empty_string("message", "created_at", self.created_at))
         object.__setattr__(self, "metadata", _copy_mapping("message", "metadata", self.metadata))
@@ -377,11 +414,20 @@ class FileAttachment:
         object.__setattr__(self, "attachment_id", _validate_non_empty_string("file attachment", "attachment_id", self.attachment_id).strip())
         if not isinstance(self.asset, ArtifactRef):
             raise ValueError("file attachment asset must be ArtifactRef")
-        if self.scope not in VALID_ATTACHMENT_SCOPES:
+        if (
+            not isinstance(self.scope, str)
+            or self.scope not in VALID_ATTACHMENT_SCOPES
+        ):
             raise ValueError(f"invalid file attachment scope {self.scope}")
-        if self.purpose not in VALID_ATTACHMENT_PURPOSES:
+        if (
+            not isinstance(self.purpose, str)
+            or self.purpose not in VALID_ATTACHMENT_PURPOSES
+        ):
             raise ValueError(f"invalid file attachment purpose {self.purpose}")
-        if self.ingestion_status not in VALID_ATTACHMENT_INGESTION_STATUSES:
+        if (
+            not isinstance(self.ingestion_status, str)
+            or self.ingestion_status not in VALID_ATTACHMENT_INGESTION_STATUSES
+        ):
             raise ValueError(f"invalid file attachment ingestion_status {self.ingestion_status}")
         object.__setattr__(self, "retention_policy", _validate_optional_non_empty_string("file attachment", "retention_policy", self.retention_policy))
         object.__setattr__(self, "message_id", _validate_optional_non_empty_string("file attachment", "message_id", self.message_id))
@@ -412,8 +458,24 @@ class CompactionRecord:
             )
         object.__setattr__(self, "output_message_id", _validate_non_empty_string("compaction record", "output_message_id", self.output_message_id).strip())
         object.__setattr__(self, "method", _validate_non_empty_string("compaction record", "method", self.method).strip())
-        object.__setattr__(self, "token_before", _validate_non_negative_int("compaction record", "token_before", self.token_before))
-        object.__setattr__(self, "token_after", _validate_non_negative_int("compaction record", "token_after", self.token_after))
+        object.__setattr__(
+            self,
+            "token_before",
+            _validate_revision(
+                "compaction record",
+                "token_before",
+                self.token_before,
+            ),
+        )
+        object.__setattr__(
+            self,
+            "token_after",
+            _validate_revision(
+                "compaction record",
+                "token_after",
+                self.token_after,
+            ),
+        )
         if self.token_after > self.token_before:
             raise ValueError("compaction record token_after must not exceed token_before")
         object.__setattr__(self, "model", _validate_optional_non_empty_string("compaction record", "model", self.model))
@@ -434,16 +496,31 @@ class Conversation:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "conversation_id", _validate_non_empty_string("conversation", "conversation_id", self.conversation_id).strip())
-        messages = tuple(self.messages)
-        if any(not isinstance(message, Message) for message in messages):
+        raw_messages = _snapshot_collection(
+            "conversation",
+            "messages",
+            self.messages,
+        )
+        if any(not isinstance(message, Message) for message in raw_messages):
             raise ValueError("conversation messages must be Message")
+        messages = tuple(_copy_message(message) for message in raw_messages)
         message_ids = [message.message_id for message in messages]
         if len(set(message_ids)) != len(message_ids):
             raise ValueError("conversation message_id values must be unique")
         object.__setattr__(self, "messages", messages)
-        attachments = tuple(self.attachments)
-        if any(not isinstance(attachment, FileAttachment) for attachment in attachments):
+        raw_attachments = _snapshot_collection(
+            "conversation",
+            "attachments",
+            self.attachments,
+        )
+        if any(
+            not isinstance(attachment, FileAttachment)
+            for attachment in raw_attachments
+        ):
             raise ValueError("conversation attachments must be FileAttachment")
+        attachments = tuple(
+            _copy_attachment(attachment) for attachment in raw_attachments
+        )
         attachment_ids = [attachment.attachment_id for attachment in attachments]
         if len(set(attachment_ids)) != len(attachment_ids):
             raise ValueError("conversation attachment_id values must be unique")
@@ -455,9 +532,19 @@ class Conversation:
                 "message-scoped conversation attachment must reference a conversation message"
             )
         object.__setattr__(self, "attachments", attachments)
-        compactions = tuple(self.compactions)
-        if any(not isinstance(record, CompactionRecord) for record in compactions):
+        raw_compactions = _snapshot_collection(
+            "conversation",
+            "compactions",
+            self.compactions,
+        )
+        if any(
+            not isinstance(record, CompactionRecord)
+            for record in raw_compactions
+        ):
             raise ValueError("conversation compactions must be CompactionRecord")
+        compactions = tuple(
+            _copy_compaction(record) for record in raw_compactions
+        )
         compaction_ids = [record.compaction_id for record in compactions]
         if len(set(compaction_ids)) != len(compaction_ids):
             raise ValueError("conversation compaction_id values must be unique")
@@ -486,6 +573,18 @@ class Conversation:
             "branched_from_message_id",
             _validate_optional_non_empty_string("conversation", "branched_from_message_id", self.branched_from_message_id),
         )
+        if (self.branch_of is None) != (self.branched_from_message_id is None):
+            raise ValueError(
+                "conversation branch lineage fields must be provided together"
+            )
+        if (
+            self.branched_from_message_id is not None
+            and self.branched_from_message_id not in message_ids
+            and not (self.archived and not messages)
+        ):
+            raise ValueError(
+                "conversation branched_from_message_id must reference a conversation message"
+            )
         object.__setattr__(self, "metadata", _copy_mapping("conversation", "metadata", self.metadata))
 
 
@@ -508,6 +607,11 @@ class ConversationSnapshot:
         )
         if self.revision != self.conversation.revision:
             raise ValueError("conversation snapshot revision must match conversation revision")
+        object.__setattr__(
+            self,
+            "conversation",
+            _copy_conversation(self.conversation),
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -589,11 +693,12 @@ class Turn:
             "base_revision",
             _validate_revision("turn", "base_revision", self.base_revision),
         )
-        if self.status not in VALID_TURN_STATUSES:
+        if not isinstance(self.status, str) or self.status not in VALID_TURN_STATUSES:
             raise ValueError(f"invalid turn status {self.status}")
-        messages = tuple(self.messages)
-        if any(not isinstance(message, Message) for message in messages):
+        raw_messages = _snapshot_collection("turn", "messages", self.messages)
+        if any(not isinstance(message, Message) for message in raw_messages):
             raise ValueError("turn messages must be Message")
+        messages = tuple(_copy_message(message) for message in raw_messages)
         message_ids = [message.message_id for message in messages]
         if len(message_ids) != len(set(message_ids)):
             raise ValueError("turn message_id values must be unique")
@@ -628,6 +733,23 @@ class Turn:
                 raise ValueError("completed turn messages must be committed")
         elif self.committed_revision is not None or self.committed_message_ids:
             raise ValueError("non-completed turn must not carry committed revision data")
+        if self.status == "created" and messages:
+            raise ValueError("created turn must not carry messages")
+        if self.status in {"cancelled", "policy_stopped"} and any(
+            message.status != "retracted" for message in messages
+        ):
+            raise ValueError(
+                f"{self.status} turn messages must be retracted"
+            )
+        if self.status in {
+            "context_building",
+            "model_running",
+            "tool_waiting",
+            "approval_waiting",
+            "finalizing",
+            "failed",
+        } and any(message.status != "draft" for message in messages):
+            raise ValueError(f"{self.status} turn messages must be drafts")
         object.__setattr__(self, "metadata", _copy_mapping("turn", "metadata", self.metadata))
 
 
@@ -757,15 +879,23 @@ class InMemoryConversationStore:
                     "conversation store completed turn revision must not exceed conversation revision"
                 )
             if turn.status == "completed":
-                stored_message_ids = {
-                    message.message_id for message in conversation.messages
+                stored_messages = {
+                    message.message_id: message for message in conversation.messages
                 }
                 if any(
-                    message_id not in stored_message_ids
+                    message_id not in stored_messages
                     for message_id in turn.committed_message_ids
                 ):
                     raise ValueError(
                         "conversation store completed turn messages must exist in conversation"
+                    )
+                if any(
+                    stored_messages[message.message_id] != message
+                    for message in turn.messages
+                ):
+                    raise ValueError(
+                        "conversation store completed turn messages must match "
+                        "stored conversation messages"
                     )
             turns[turn_id] = _copy_turn(turn)
         self._conversations = conversations
@@ -1346,7 +1476,7 @@ class InMemoryConversationStore:
             "conversation_id",
             conversation_id,
         )
-        if policy not in VALID_DELETE_POLICIES:
+        if not isinstance(policy, str) or policy not in VALID_DELETE_POLICIES:
             raise ValueError("policy must be tombstone or hard")
         conversation = self._conversations.get(conversation_id)
         if conversation is None:
