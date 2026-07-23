@@ -761,7 +761,7 @@ def _main(argv: list[str] | None = None) -> int:
                     {
                         "runId": result.run_id,
                         "status": result.status,
-                        "outputs": result.outputs,
+                        "outputs": canonical_loads(canonical_dumps(result.outputs)),
                         "journal": [record.to_dict() for record in result.journal.records],
                     },
                     indent=2,
@@ -861,7 +861,13 @@ def _main(argv: list[str] | None = None) -> int:
             registry = discover_plugins(args.path, include_installed=not args.no_installed)
             for manifest in registry.manifests:
                 if manifest.plugin_id == args.plugin_id:
-                    print(json.dumps(manifest.raw, indent=2, sort_keys=True))
+                    print(
+                        json.dumps(
+                            canonical_loads(canonical_dumps(manifest.raw)),
+                            indent=2,
+                            sort_keys=True,
+                        )
+                    )
                     return 0 if registry.ok else 1
             print(f"plugin not found: {args.plugin_id}")
             return 1

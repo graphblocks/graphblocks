@@ -360,6 +360,12 @@ def test_validate_and_plan_ignore_installed_plugins_without_explicit_opt_in(
         plugin["pluginId"] for plugin in plugins_payload["plugins"]
     }
 
+    assert main(["plugins", "inspect", "com.example.ambient"]) == 0
+    inspected_payload = json.loads(capsys.readouterr().out)
+    assert inspected_payload["spec"]["pluginId"] == "com.example.ambient"
+    assert inspected_payload["spec"]["blocks"][0]["capabilities"] == []
+    assert inspected_payload["spec"]["blocks"][0]["configSchema"] == {"type": "object"}
+
 
 def test_packages_cli_lists_catalog(capsys) -> None:
     assert main(["packages", "list"]) == 0
