@@ -592,17 +592,28 @@ fn evaluate_tool_admission_json(request_json: &str) -> PyResult<String> {
     let call_value = request
         .get("call")
         .ok_or_else(|| PyValueError::new_err("tool admission request.call is required"))?;
-    let resolved_tool_value = alias_value(request, "resolvedTool", "resolved_tool")
-        .ok_or_else(|| PyValueError::new_err("tool admission request.resolvedTool is required"))?;
-    let schema_registry_value = alias_value(request, "schemaRegistry", "schema_registry")
-        .or_else(|| request.get("schemas"))
-        .ok_or_else(|| {
-            PyValueError::new_err("tool admission request.schemaRegistry is required")
-        })?;
-    let policy_decision_value = alias_value(request, "policyDecision", "policy_decision")
-        .ok_or_else(|| {
-            PyValueError::new_err("tool admission request.policyDecision is required")
-        })?;
+    let resolved_tool_value = checked_alias_value(
+        request,
+        "resolvedTool",
+        "resolved_tool",
+        "tool admission request",
+    )?
+    .ok_or_else(|| PyValueError::new_err("tool admission request.resolvedTool is required"))?;
+    let schema_registry_value = checked_alias_value(
+        request,
+        "schemaRegistry",
+        "schema_registry",
+        "tool admission request",
+    )?
+    .or_else(|| request.get("schemas"))
+    .ok_or_else(|| PyValueError::new_err("tool admission request.schemaRegistry is required"))?;
+    let policy_decision_value = checked_alias_value(
+        request,
+        "policyDecision",
+        "policy_decision",
+        "tool admission request",
+    )?
+    .ok_or_else(|| PyValueError::new_err("tool admission request.policyDecision is required"))?;
 
     let call = parse_tool_call(call_value, "tool admission request.call")?;
     let resolved_tool =
@@ -633,8 +644,13 @@ fn evaluate_tool_admission_json(request_json: &str) -> PyResult<String> {
         "tool admission request",
     )?
     .unwrap_or(&policy_decision.input_digest);
-    let output_policy_state = alias_value(request, "outputPolicyState", "output_policy_state")
-        .filter(|value| !value.is_null());
+    let output_policy_state = checked_alias_value(
+        request,
+        "outputPolicyState",
+        "output_policy_state",
+        "tool admission request",
+    )?
+    .filter(|value| !value.is_null());
     let approval = alias_value(request, "approval", "approval")
         .filter(|value| !value.is_null())
         .map(|value| parse_tool_approval_record(value, "tool admission request.approval"))
@@ -909,7 +925,7 @@ fn evaluate_readiness_json(signals_json: &str, dependencies_json: &str) -> PyRes
         let label = format!("readiness signals[{signal_index}]");
         let signal_object = json_object(signal, &label)?;
         let port = parse_port_ref(
-            alias_value(signal_object, "portRef", "port_ref").unwrap_or(signal),
+            checked_alias_value(signal_object, "portRef", "port_ref", &label)?.unwrap_or(signal),
             &format!("{label}.portRef"),
         )?;
         let outcome_value = alias_value(signal_object, "outcome", "outcome")
@@ -1035,7 +1051,8 @@ fn evaluate_scheduler_json(nodes_json: &str, operations_json: &str) -> PyResult<
                 }));
             }
             "publish_signal" | "publishSignal" | "publish" => {
-                let port_value = alias_value(object, "portRef", "port_ref").unwrap_or(operation);
+                let port_value = checked_alias_value(object, "portRef", "port_ref", &label)?
+                    .unwrap_or(operation);
                 let port = parse_port_ref(port_value, &format!("{label}.portRef"))?;
                 let outcome_value = alias_value(object, "outcome", "outcome")
                     .ok_or_else(|| PyValueError::new_err(format!("{label}.outcome is required")))?;
@@ -1074,7 +1091,7 @@ fn evaluate_scheduler_json(nodes_json: &str, operations_json: &str) -> PyResult<
                     let output_label = format!("{label}.outputs[{output_index}]");
                     let output_object = json_object(output, &output_label)?;
                     let port = if let Some(port_value) =
-                        alias_value(output_object, "portRef", "port_ref")
+                        checked_alias_value(output_object, "portRef", "port_ref", &output_label)?
                     {
                         parse_port_ref(port_value, &format!("{output_label}.portRef"))?
                     } else {
@@ -1121,9 +1138,10 @@ fn evaluate_scheduler_json(nodes_json: &str, operations_json: &str) -> PyResult<
                     .ok_or_else(|| PyValueError::new_err(format!("{label}.reason is required")))?;
                 let reason = parse_cancel_reason(reason_value, &format!("{label}.reason"))?;
                 let ports_value =
-                    alias_value(object, "outputPorts", "output_ports").ok_or_else(|| {
-                        PyValueError::new_err(format!("{label}.outputPorts is required"))
-                    })?;
+                    checked_alias_value(object, "outputPorts", "output_ports", &label)?
+                        .ok_or_else(|| {
+                            PyValueError::new_err(format!("{label}.outputPorts is required"))
+                        })?;
                 let ports_array = ports_value.as_array().ok_or_else(|| {
                     PyValueError::new_err(format!("{label}.outputPorts must be an array"))
                 })?;
@@ -1899,10 +1917,12 @@ fn evaluate_tool_result_stream_json(state_json: &str, operations_json: &str) -> 
     let operations_value = parse_json_argument(operations_json, "tool result stream operations")?;
     let state_object = json_object(&state_value, "tool result stream state")?;
     let mut stream = ToolResultStreamState::new();
-    if let Some(events) = state_object
-        .get("acceptedEvents")
-        .or_else(|| state_object.get("accepted_events"))
-    {
+    if let Some(events) = checked_alias_value(
+        state_object,
+        "acceptedEvents",
+        "accepted_events",
+        "tool result stream state",
+    )? {
         let Some(events) = events.as_array() else {
             return Err(PyValueError::new_err(
                 "tool result stream state.acceptedEvents must be an array",
@@ -1998,10 +2018,12 @@ fn evaluate_application_event_stream_json(
         parse_json_argument(operations_json, "application event stream operations")?;
     let state_object = json_object(&state_value, "application event stream state")?;
     let mut stream = ApplicationEventStreamState::default();
-    if let Some(events) = state_object
-        .get("acceptedEvents")
-        .or_else(|| state_object.get("accepted_events"))
-    {
+    if let Some(events) = checked_alias_value(
+        state_object,
+        "acceptedEvents",
+        "accepted_events",
+        "application event stream state",
+    )? {
         let Some(events) = events.as_array() else {
             return Err(PyValueError::new_err(
                 "application event stream state.acceptedEvents must be an array",
@@ -2099,10 +2121,12 @@ fn evaluate_application_protocol_stream_json(
         parse_json_argument(operations_json, "application protocol stream operations")?;
     let state_object = json_object(&state_value, "application protocol stream state")?;
     let mut stream = ApplicationProtocolStreamState::default();
-    if let Some(events) = state_object
-        .get("acceptedEvents")
-        .or_else(|| state_object.get("accepted_events"))
-    {
+    if let Some(events) = checked_alias_value(
+        state_object,
+        "acceptedEvents",
+        "accepted_events",
+        "application protocol stream state",
+    )? {
         let Some(events) = events.as_array() else {
             return Err(PyValueError::new_err(
                 "application protocol stream state.acceptedEvents must be an array",
@@ -2200,6 +2224,16 @@ fn evaluate_application_protocol_log_json(
         parse_json_argument(operations_json, "application protocol log operations")?;
     let state_object = json_object(&state_value, "application protocol log state")?;
     let mut log = ApplicationProtocolLog::new();
+    let state_event_fields = ["events", "acceptedEvents", "accepted_events"]
+        .into_iter()
+        .filter(|field| state_object.contains_key(*field))
+        .collect::<Vec<_>>();
+    if state_event_fields.len() > 1 {
+        return Err(PyValueError::new_err(format!(
+            "application protocol log state must define only one event collection, found {}",
+            state_event_fields.join(", ")
+        )));
+    }
     if let Some(events) = state_object
         .get("events")
         .or_else(|| state_object.get("acceptedEvents"))
@@ -2260,8 +2294,9 @@ fn evaluate_application_protocol_log_json(
             "replay_after" | "replayAfter" => {
                 let cursor = optional_nullable_alias_string(operation, "cursor", "cursor", &label)?;
                 let limit = optional_alias_u64(operation, "limit", "limit", &label)?.unwrap_or(100);
+                let limit = u64_to_usize(limit, &format!("{label}.limit"))?;
                 let replay = log
-                    .replay_after(cursor, limit as usize)
+                    .replay_after(cursor, limit)
                     .iter()
                     .map(serialize_application_protocol_event)
                     .collect::<Vec<_>>();
@@ -2405,9 +2440,7 @@ fn required_alias_string<'a>(
     alternate: &str,
     label: &str,
 ) -> PyResult<&'a str> {
-    object
-        .get(primary)
-        .or_else(|| object.get(alternate))
+    checked_alias_value(object, primary, alternate, label)?
         .and_then(Value::as_str)
         .ok_or_else(|| PyValueError::new_err(format!("{label}.{primary} must be a string")))
 }
@@ -2428,9 +2461,7 @@ fn required_alias_u64(
     alternate: &str,
     label: &str,
 ) -> PyResult<u64> {
-    object
-        .get(primary)
-        .or_else(|| object.get(alternate))
+    checked_alias_value(object, primary, alternate, label)?
         .and_then(Value::as_u64)
         .ok_or_else(|| {
             PyValueError::new_err(format!("{label}.{primary} must be an unsigned integer"))
@@ -2443,9 +2474,7 @@ fn optional_alias_string<'a>(
     alternate: &str,
     label: &str,
 ) -> PyResult<Option<&'a str>> {
-    object
-        .get(primary)
-        .or_else(|| object.get(alternate))
+    checked_alias_value(object, primary, alternate, label)?
         .map(|value| {
             value
                 .as_str()
@@ -2460,9 +2489,7 @@ fn optional_alias_u64(
     alternate: &str,
     label: &str,
 ) -> PyResult<Option<u64>> {
-    object
-        .get(primary)
-        .or_else(|| object.get(alternate))
+    checked_alias_value(object, primary, alternate, label)?
         .map(|value| {
             value.as_u64().ok_or_else(|| {
                 PyValueError::new_err(format!("{label}.{primary} must be an unsigned integer"))
@@ -2479,13 +2506,28 @@ fn alias_value<'a>(
     object.get(primary).or_else(|| object.get(alternate))
 }
 
+fn checked_alias_value<'a>(
+    object: &'a serde_json::Map<String, Value>,
+    primary: &str,
+    alternate: &str,
+    label: &str,
+) -> PyResult<Option<&'a Value>> {
+    let primary_value = object.get(primary);
+    if primary != alternate && primary_value.is_some() && object.contains_key(alternate) {
+        return Err(PyValueError::new_err(format!(
+            "{label} must not define both {primary} and {alternate}"
+        )));
+    }
+    Ok(primary_value.or_else(|| object.get(alternate)))
+}
+
 fn optional_nullable_alias_string<'a>(
     object: &'a serde_json::Map<String, Value>,
     primary: &str,
     alternate: &str,
     label: &str,
 ) -> PyResult<Option<&'a str>> {
-    alias_value(object, primary, alternate)
+    checked_alias_value(object, primary, alternate, label)?
         .filter(|value| !value.is_null())
         .map(|value| {
             value
@@ -2501,7 +2543,7 @@ fn optional_nullable_alias_u64(
     alternate: &str,
     label: &str,
 ) -> PyResult<Option<u64>> {
-    alias_value(object, primary, alternate)
+    checked_alias_value(object, primary, alternate, label)?
         .filter(|value| !value.is_null())
         .map(|value| {
             value.as_u64().ok_or_else(|| {
@@ -2517,7 +2559,7 @@ fn optional_nullable_alias_bool(
     alternate: &str,
     label: &str,
 ) -> PyResult<Option<bool>> {
-    alias_value(object, primary, alternate)
+    checked_alias_value(object, primary, alternate, label)?
         .filter(|value| !value.is_null())
         .map(|value| {
             value.as_bool().ok_or_else(|| {
@@ -3035,11 +3077,11 @@ fn parse_policy_decision(value: &Value, label: &str) -> PyResult<PolicyDecision>
         decision_id: required_alias_string(object, "decisionId", "decision_id", label)?.to_owned(),
         effect: parse_policy_effect(required_string(object, "effect", label)?, label)?,
         reason_codes: parse_string_vec(
-            alias_value(object, "reasonCodes", "reason_codes"),
+            checked_alias_value(object, "reasonCodes", "reason_codes", label)?,
             &format!("{label}.reasonCodes"),
         )?,
         policy_refs: parse_string_vec(
-            alias_value(object, "policyRefs", "policy_refs"),
+            checked_alias_value(object, "policyRefs", "policy_refs", label)?,
             &format!("{label}.policyRefs"),
         )?,
         obligations,
@@ -3115,7 +3157,7 @@ fn parse_tool_call(value: &Value, label: &str) -> PyResult<ToolCall> {
         .get("arguments")
         .cloned()
         .ok_or_else(|| PyValueError::new_err(format!("{label}.arguments is required")))?;
-    let depends_on = alias_value(object, "dependsOn", "depends_on")
+    let depends_on = checked_alias_value(object, "dependsOn", "depends_on", label)?
         .map(|value| {
             let Some(values) = value.as_array() else {
                 return Err(PyValueError::new_err(format!(
@@ -3219,11 +3261,11 @@ fn parse_tool_implementation(value: &Value, label: &str) -> PyResult<ToolImpleme
             let mut implementation =
                 BlockToolImplementation::new(required_string(object, "block", label)?);
             implementation.input_mapping = parse_string_map(
-                alias_value(object, "inputMapping", "input_mapping"),
+                checked_alias_value(object, "inputMapping", "input_mapping", label)?,
                 &format!("{label}.inputMapping"),
             )?;
             implementation.output_mapping = parse_string_map(
-                alias_value(object, "outputMapping", "output_mapping"),
+                checked_alias_value(object, "outputMapping", "output_mapping", label)?,
                 &format!("{label}.outputMapping"),
             )?;
             Ok(ToolImplementation::Block(implementation))
@@ -3232,11 +3274,11 @@ fn parse_tool_implementation(value: &Value, label: &str) -> PyResult<ToolImpleme
             let mut implementation =
                 GraphToolImplementation::new(required_string(object, "graph", label)?);
             implementation.input_mapping = parse_string_map(
-                alias_value(object, "inputMapping", "input_mapping"),
+                checked_alias_value(object, "inputMapping", "input_mapping", label)?,
                 &format!("{label}.inputMapping"),
             )?;
             implementation.output_mapping = parse_string_map(
-                alias_value(object, "outputMapping", "output_mapping"),
+                checked_alias_value(object, "outputMapping", "output_mapping", label)?,
                 &format!("{label}.outputMapping"),
             )?;
             Ok(ToolImplementation::Graph(implementation))
@@ -3396,7 +3438,7 @@ fn parse_scope_tool_list(
     alternate: &str,
     label: &str,
 ) -> PyResult<Option<Vec<String>>> {
-    alias_value(object, primary, alternate)
+    checked_alias_value(object, primary, alternate, label)?
         .filter(|value| !value.is_null())
         .map(|value| parse_string_vec(Some(value), &format!("{label}.{primary}")))
         .transpose()
@@ -3629,7 +3671,7 @@ fn tool_approval_error_json(error: &ToolApprovalError) -> Value {
 
 fn parse_json_schema_node(value: &Value, label: &str) -> PyResult<JsonSchemaNode> {
     let object = json_object(value, label)?;
-    let expected_type = alias_value(object, "expectedType", "expected_type")
+    let expected_type = checked_alias_value(object, "expectedType", "expected_type", label)?
         .or_else(|| object.get("type"))
         .filter(|value| !value.is_null())
         .map(|value| {
@@ -4334,7 +4376,7 @@ fn parse_tool_result(value: &Value, label: &str) -> PyResult<ToolResult> {
             label,
         )?,
         effect_outcome: parse_tool_effect_outcome(
-            alias_value(object, "effectOutcome", "effect_outcome"),
+            checked_alias_value(object, "effectOutcome", "effect_outcome", label)?,
             &format!("{label}.effectOutcome"),
         )?,
     };
@@ -6020,7 +6062,7 @@ fn parse_required_usage_amounts(
     alternate: &str,
     label: &str,
 ) -> PyResult<Vec<UsageAmount>> {
-    let value = alias_value(object, primary, alternate)
+    let value = checked_alias_value(object, primary, alternate, label)?
         .ok_or_else(|| PyValueError::new_err(format!("{label}.{primary} is required")))?;
     parse_usage_amount_list(value, &format!("{label}.{primary}"))
 }
@@ -6031,7 +6073,7 @@ fn parse_optional_usage_amounts(
     alternate: &str,
     label: &str,
 ) -> PyResult<Vec<UsageAmount>> {
-    alias_value(object, primary, alternate)
+    checked_alias_value(object, primary, alternate, label)?
         .filter(|value| !value.is_null())
         .map(|value| parse_usage_amount_list(value, &format!("{label}.{primary}")))
         .transpose()
@@ -6303,7 +6345,7 @@ fn test_runtime_run_id_from_options(options: &Value) -> PyResult<&str> {
             "test runtime options JSON must be an object",
         ));
     };
-    let run_id = options.get("runId").or_else(|| options.get("run_id"));
+    let run_id = checked_alias_value(options, "runId", "run_id", "test runtime options")?;
     let Some(run_id) = run_id else {
         return Ok("run-000001");
     };
@@ -6325,7 +6367,7 @@ fn test_runtime_option_string<'a>(
     camel_key: &str,
     snake_key: &str,
 ) -> PyResult<Option<&'a str>> {
-    let value = options.get(camel_key).or_else(|| options.get(snake_key));
+    let value = checked_alias_value(options, camel_key, snake_key, "test runtime options")?;
     let Some(value) = value else {
         return Ok(None);
     };
@@ -6572,13 +6614,16 @@ fn run_test_graph_with_options_json(
         test_runtime_option_string(options_object, "runStorePath", "run_store_path")?;
     let journal_store_path =
         test_runtime_option_string(options_object, "journalStorePath", "journal_store_path")?;
-    let deployment_provenance = options_object
-        .get("deploymentProvenance")
-        .or_else(|| options_object.get("deployment_provenance"))
-        .filter(|value| !value.is_null())
-        .map(RunDeploymentProvenance::from_production_value)
-        .transpose()
-        .map_err(|message| PyValueError::new_err(format!("test runtime options {message}")))?;
+    let deployment_provenance = checked_alias_value(
+        options_object,
+        "deploymentProvenance",
+        "deployment_provenance",
+        "test runtime options",
+    )?
+    .filter(|value| !value.is_null())
+    .map(RunDeploymentProvenance::from_production_value)
+    .transpose()
+    .map_err(|message| PyValueError::new_err(format!("test runtime options {message}")))?;
     let Some(node_outputs) = node_outputs.as_object() else {
         return Err(PyValueError::new_err(
             "node outputs JSON must be an object keyed by node id",
@@ -7717,7 +7762,9 @@ fn evaluate_tool_execution_plan_json(plan_json: &str, operations_json: &str) -> 
                 .map_err(|error| {
                     PyValueError::new_err(format!("{label} could not be finalized: {error:?}"))
                 })?;
-            if let Some(depends_on) = alias_value(object, "dependsOn", "depends_on") {
+            if let Some(depends_on) =
+                checked_alias_value(object, "dependsOn", "depends_on", &label)?
+            {
                 let Some(depends_on) = depends_on.as_array() else {
                     return Err(PyValueError::new_err(format!(
                         "{label}.dependsOn must be an array"
@@ -8541,7 +8588,7 @@ fn evaluate_budget_ledger_json(operations_json: &str) -> PyResult<String> {
                     "actual_amounts",
                     &label,
                 )?;
-                if alias_value(operation, "maxOverdraft", "max_overdraft")
+                if checked_alias_value(operation, "maxOverdraft", "max_overdraft", &label)?
                     .filter(|value| !value.is_null())
                     .is_some()
                 {
@@ -8602,9 +8649,10 @@ fn evaluate_budget_ledger_json(operations_json: &str) -> PyResult<String> {
                 .map(|balance| serialize_budget_balance(&balance)),
             "issue_permit" | "issuePermit" => {
                 let reservation_refs =
-                    alias_value(operation, "reservationRefs", "reservation_refs").ok_or_else(
-                        || PyValueError::new_err(format!("{label}.reservationRefs is required")),
-                    )?;
+                    checked_alias_value(operation, "reservationRefs", "reservation_refs", &label)?
+                        .ok_or_else(|| {
+                            PyValueError::new_err(format!("{label}.reservationRefs is required"))
+                        })?;
                 ledger
                     .issue_permit(
                         required_alias_string(operation, "permitId", "permit_id", &label)?,
@@ -8704,10 +8752,11 @@ fn evaluate_budget_ledger_json(operations_json: &str) -> PyResult<String> {
                 }
             }
             "create_completion_reserve" | "createCompletionReserve" => {
-                let spendable_by = alias_value(operation, "spendableBy", "spendable_by")
-                    .ok_or_else(|| {
-                        PyValueError::new_err(format!("{label}.spendableBy is required"))
-                    })?;
+                let spendable_by =
+                    checked_alias_value(operation, "spendableBy", "spendable_by", &label)?
+                        .ok_or_else(|| {
+                            PyValueError::new_err(format!("{label}.spendableBy is required"))
+                        })?;
                 ledger
                     .create_completion_reserve(
                         required_alias_string(operation, "reserveId", "reserve_id", &label)?,
@@ -8798,6 +8847,42 @@ fn evaluate_budget_ledger_json(operations_json: &str) -> PyResult<String> {
     })
 }
 
+fn durable_tool_terminal_store_error_code(error: &ToolTerminalStoreError) -> &'static str {
+    match error {
+        ToolTerminalStoreError::MissingRunId => "missing_run_id",
+        ToolTerminalStoreError::MissingResponseId => "missing_response_id",
+        ToolTerminalStoreError::MissingToolCallId => "missing_tool_call_id",
+        ToolTerminalStoreError::MissingArgumentsDigest => "missing_arguments_digest",
+        ToolTerminalStoreError::MissingOutputDigest => "missing_output_digest",
+        ToolTerminalStoreError::MissingIdempotencyKey => "missing_idempotency_key",
+        ToolTerminalStoreError::MissingPolicyDecisionId => "missing_policy_decision_id",
+        ToolTerminalStoreError::MissingStreamId => "missing_stream_id",
+        ToolTerminalStoreError::MissingTurnId => "missing_turn_id",
+        ToolTerminalStoreError::InvalidRevision => "invalid_revision",
+        ToolTerminalStoreError::InvalidCompletedAt => "invalid_completed_at",
+        ToolTerminalStoreError::SequenceOverflow => "sequence_overflow",
+        ToolTerminalStoreError::PolicyAcceptedSequenceBeyondGenerated { .. } => {
+            "policy_accepted_sequence_beyond_generated"
+        }
+        ToolTerminalStoreError::ClientDeliveredSequenceBeyondGenerated { .. } => {
+            "client_delivered_sequence_beyond_generated"
+        }
+        ToolTerminalStoreError::DeliveredDraftBeyondPolicyAcceptanceKept { .. } => {
+            "delivered_draft_beyond_policy_acceptance_kept"
+        }
+        ToolTerminalStoreError::DeniedEffectCommitted { .. } => "denied_effect_committed",
+        ToolTerminalStoreError::ExpiredEffectCommitted { .. } => "expired_effect_committed",
+        ToolTerminalStoreError::TerminalStateConflict { .. } => "terminal_state_conflict",
+        ToolTerminalStoreError::ResponsePolicyStopConflict { .. } => {
+            "response_policy_stop_conflict"
+        }
+        ToolTerminalStoreError::DurableResultAlreadyCommitted { .. } => {
+            "durable_result_already_committed"
+        }
+        ToolTerminalStoreError::ResponsePolicyStopped { .. } => "response_policy_stopped",
+    }
+}
+
 #[pyfunction]
 fn evaluate_durable_tool_terminal_store_json(operations_json: &str) -> PyResult<String> {
     let terminal_state_name = |state: DurableToolTerminalState| -> &'static str {
@@ -8834,40 +8919,6 @@ fn evaluate_durable_tool_terminal_store_json(operations_json: &str) -> PyResult<
             DurableOutputCutoffDurableResult::Partial => "partial",
         }
     };
-    let store_error_code = |error: &ToolTerminalStoreError| -> &'static str {
-        match error {
-            ToolTerminalStoreError::MissingRunId => "missing_run_id",
-            ToolTerminalStoreError::MissingResponseId => "missing_response_id",
-            ToolTerminalStoreError::MissingToolCallId => "missing_tool_call_id",
-            ToolTerminalStoreError::MissingArgumentsDigest => "missing_arguments_digest",
-            ToolTerminalStoreError::MissingOutputDigest => "missing_output_digest",
-            ToolTerminalStoreError::MissingIdempotencyKey => "missing_idempotency_key",
-            ToolTerminalStoreError::MissingPolicyDecisionId => "missing_policy_decision_id",
-            ToolTerminalStoreError::MissingStreamId => "missing_stream_id",
-            ToolTerminalStoreError::MissingTurnId => "missing_turn_id",
-            ToolTerminalStoreError::InvalidRevision => "invalid_revision",
-            ToolTerminalStoreError::InvalidCompletedAt => "invalid_completed_at",
-            ToolTerminalStoreError::PolicyAcceptedSequenceBeyondGenerated { .. } => {
-                "policy_accepted_sequence_beyond_generated"
-            }
-            ToolTerminalStoreError::ClientDeliveredSequenceBeyondGenerated { .. } => {
-                "client_delivered_sequence_beyond_generated"
-            }
-            ToolTerminalStoreError::DeliveredDraftBeyondPolicyAcceptanceKept { .. } => {
-                "delivered_draft_beyond_policy_acceptance_kept"
-            }
-            ToolTerminalStoreError::DeniedEffectCommitted { .. } => "denied_effect_committed",
-            ToolTerminalStoreError::ExpiredEffectCommitted { .. } => "expired_effect_committed",
-            ToolTerminalStoreError::TerminalStateConflict { .. } => "terminal_state_conflict",
-            ToolTerminalStoreError::ResponsePolicyStopConflict { .. } => {
-                "response_policy_stop_conflict"
-            }
-            ToolTerminalStoreError::DurableResultAlreadyCommitted { .. } => {
-                "durable_result_already_committed"
-            }
-            ToolTerminalStoreError::ResponsePolicyStopped { .. } => "response_policy_stopped",
-        }
-    };
     let terminal_record_json = |record: &DurableToolTerminalRecord| {
         json!({
             "runId": record.run_id,
@@ -8902,7 +8953,7 @@ fn evaluate_durable_tool_terminal_store_json(operations_json: &str) -> PyResult<
         json!({
             "index": index,
             "op": op,
-            "error": store_error_code(&error),
+            "error": durable_tool_terminal_store_error_code(&error),
             "errorDebug": format!("{error:?}"),
         })
     };
@@ -9317,8 +9368,9 @@ mod tests {
     use serde_json::{Value, json};
 
     use super::{
-        admit_exhaustion_work_json, admit_worker_message_json, capture_telemetry_content_json,
-        compile_graph_json, decide_agent_step_json, evaluate_application_event_stream_json,
+        ToolTerminalStoreError, admit_exhaustion_work_json, admit_worker_message_json,
+        capture_telemetry_content_json, compile_graph_json, decide_agent_step_json,
+        durable_tool_terminal_store_error_code, evaluate_application_event_stream_json,
         evaluate_application_protocol_log_json, evaluate_application_protocol_stream_json,
         evaluate_budget_ledger_json, evaluate_cancellation_scope_json,
         evaluate_connector_capabilities_json, evaluate_declarative_output_policy_json,
@@ -9365,6 +9417,97 @@ mod tests {
                 1_024,
             )
             .is_err(),
+        );
+    }
+
+    #[test]
+    fn typed_alias_admission_rejects_ambiguous_field_spellings() {
+        let error = evaluate_timeout_deadline_json(
+            r#"{"durationMs":1000,"duration_ms":1000}"#,
+            r#"{"nodeId":"node-1","startedAtMs":0,"nowMs":1}"#,
+        )
+        .expect_err("duplicate alias spellings must fail closed");
+
+        assert!(
+            error
+                .to_string()
+                .contains("timeout policy must not define both durationMs and duration_ms"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn tool_scope_and_usage_aliases_reject_ambiguous_field_spellings() {
+        let tool_error =
+            evaluate_tool_admission_json(r#"{"call":{},"resolvedTool":{},"resolved_tool":{}}"#)
+                .expect_err("tool admission aliases must fail closed");
+        assert!(
+            tool_error.to_string().contains(
+                "tool admission request must not define both resolvedTool and resolved_tool"
+            ),
+            "{tool_error}"
+        );
+
+        let scope_error = evaluate_tool_resolution_json(
+            r#"{"definitions":[],"bindings":[]}"#,
+            r#"{"applicationTools":[],"application_tools":[]}"#,
+            "policy-snapshot-1",
+        )
+        .expect_err("tool scope aliases must fail closed");
+        assert!(
+            scope_error.to_string().contains(
+                "tool resolution scope must not define both applicationTools and application_tools"
+            ),
+            "{scope_error}"
+        );
+
+        let usage_error = evaluate_budget_ledger_json(
+            r#"[{"op":"commit","actualAmounts":[],"actual_amounts":[]}]"#,
+        )
+        .expect_err("usage amount aliases must fail closed");
+        assert!(
+            usage_error
+                .to_string()
+                .contains("operations[0] must not define both actualAmounts and actual_amounts"),
+            "{usage_error}"
+        );
+    }
+
+    #[test]
+    fn budget_and_runtime_aliases_reject_ambiguous_field_spellings() {
+        let budget_error = evaluate_budget_ledger_json(
+            r#"[{
+                "op":"commit",
+                "reservationId":"reservation-1",
+                "actualAmounts":[],
+                "maxOverdraft":[],
+                "max_overdraft":[]
+            }]"#,
+        )
+        .expect_err("budget aliases must fail closed");
+        assert!(
+            budget_error
+                .to_string()
+                .contains("operations[0] must not define both maxOverdraft and max_overdraft"),
+            "{budget_error}"
+        );
+
+        let runtime_error =
+            run_test_graph_with_options_json("{}", "{}", "{}", r#"{"runId":"a","run_id":"b"}"#)
+                .expect_err("runtime aliases must fail closed");
+        assert!(
+            runtime_error
+                .to_string()
+                .contains("test runtime options must not define both runId and run_id"),
+            "{runtime_error}"
+        );
+    }
+
+    #[test]
+    fn durable_terminal_store_sequence_overflow_has_stable_python_error_code() {
+        assert_eq!(
+            durable_tool_terminal_store_error_code(&ToolTerminalStoreError::SequenceOverflow),
+            "sequence_overflow"
         );
     }
 
@@ -12418,6 +12561,32 @@ mod tests {
             Some(2)
         );
         Ok(())
+    }
+
+    #[test]
+    fn application_protocol_log_restore_rejects_ambiguous_event_collections() {
+        let error =
+            evaluate_application_protocol_log_json(r#"{"events":[],"acceptedEvents":[]}"#, "[]")
+                .expect_err("ambiguous restored event collections must fail closed");
+
+        assert!(
+            error
+                .to_string()
+                .contains("must define only one event collection"),
+            "{error}"
+        );
+    }
+
+    #[cfg(target_pointer_width = "32")]
+    #[test]
+    fn application_protocol_log_replay_rejects_limit_above_platform_usize() {
+        let error = evaluate_application_protocol_log_json(
+            "{}",
+            r#"[{"kind":"replay_after","limit":4294967296}]"#,
+        )
+        .expect_err("replay limits above usize must fail closed");
+
+        assert!(error.to_string().contains("limit exceeds usize"), "{error}");
     }
 
     #[test]
