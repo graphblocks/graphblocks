@@ -3,7 +3,6 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from datetime import datetime
-from types import MappingProxyType
 from typing import Literal
 
 from .canonical import canonical_hash
@@ -414,11 +413,19 @@ class OutputPolicyDecision:
             raise ValueError("output policy replacement parts must be ContentPart")
         if self.disposition == "replace" and not replacement_parts:
             raise ValueError("replace output policy decisions require replacement content")
-        redactions: list[MappingProxyType[str, object]] = []
+        redactions: list[FrozenDict] = []
         for redaction in self.redactions:
             if not isinstance(redaction, Mapping):
                 raise ValueError("output policy redactions must be mappings")
             redaction_copy = dict(redaction)
+            unknown_fields = set(redaction_copy).difference(
+                {"path", "start", "end", "replacement"}
+            )
+            if unknown_fields:
+                raise ValueError(
+                    "output policy redactions contain unknown fields: "
+                    + ", ".join(sorted(str(field) for field in unknown_fields))
+                )
             path = redaction_copy.get("path")
             if not isinstance(path, str):
                 raise ValueError("redaction path must be a string")
@@ -447,7 +454,7 @@ class OutputPolicyDecision:
                 raise ValueError("redaction replacement must be a string")
             if isinstance(replacement, str) and replacement != replacement.strip():
                 raise ValueError("redaction replacement must not contain surrounding whitespace")
-            redactions.append(MappingProxyType(redaction_copy))
+            redactions.append(FrozenDict(redaction_copy))
         try:
             reason_codes = tuple(self.reason_codes)
         except TypeError as error:

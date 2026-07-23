@@ -796,6 +796,22 @@ def test_review_record_is_invalid_for_changed_subject_digest() -> None:
     assert not review.invalidate("2026-06-22T00:05:00Z").is_valid_for(subject)
 
 
+def test_review_record_rejects_subject_digest_mismatch() -> None:
+    with pytest.raises(
+        ValueError,
+        match="review record subject_digest must match subject digest",
+    ):
+        ReviewRecord(
+            review_id="review-1",
+            subject=ResourceSnapshotRef("candidate-1", "sha256:subject"),
+            subject_digest="sha256:forged",
+            scope="quality",
+            reviewer=PrincipalRef("reviewer-1"),
+            decision="accept",
+            created_at="2026-06-22T00:00:00Z",
+        )
+
+
 def test_review_record_validates_identity_decision_timestamps_and_lists() -> None:
     subject = ResourceSnapshotRef("candidate-1", "sha256:old")
     base = {

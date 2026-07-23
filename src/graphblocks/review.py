@@ -5,10 +5,10 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from functools import wraps
 from threading import RLock
-from types import MappingProxyType
 from typing import ParamSpec, Protocol, TypeVar, cast
 
 from .canonical import MAX_CANONICAL_JSON_DEPTH, canonical_dumps, canonical_hash
+from .documents import FrozenDict
 from .evaluation import ResourceSnapshotRef, ReviewDecision, ReviewRecord
 from .policy import PrincipalRef
 
@@ -87,7 +87,7 @@ def _freeze_metadata(
                 raise ValueError(f"{owner} metadata key must not be empty")
             if key != key.strip():
                 raise ValueError(f"{owner} metadata key must not contain surrounding whitespace")
-        return MappingProxyType(
+        return FrozenDict(
             {
                 key: _freeze_metadata_value(
                     owner,

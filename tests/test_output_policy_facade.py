@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+from dataclasses import asdict
+import json
+import pickle
+
 import pytest
 
 from graphblocks import (
@@ -74,12 +78,54 @@ def test_output_policy_decision_redact_carries_redaction_instructions() -> None:
         decision.redactions[0]["replacement"] = "[direct-mutation]"
 
 
+def test_output_policy_decisions_support_standard_serialization() -> None:
+    decision = OutputPolicyDecision.redact(
+        "decision-redact",
+        accepted_through_sequence=1,
+        redactions=(
+            {
+                "path": "/chunks/1/text",
+                "start": 0,
+                "end": 6,
+                "replacement": "[redacted]",
+            },
+        ),
+        input_digest="sha256:redact",
+    )
+
+    assert json.loads(json.dumps(asdict(decision)))["redactions"] == [
+        {
+            "path": "/chunks/1/text",
+            "start": 0,
+            "end": 6,
+            "replacement": "[redacted]",
+        }
+    ]
+    assert pickle.loads(pickle.dumps(decision)) == decision
+
+
 def test_output_policy_decision_rejects_invalid_redaction_instructions() -> None:
     with pytest.raises(ValueError, match="output policy redactions must be mappings"):
         OutputPolicyDecision.redact(
             "decision-redact",
             accepted_through_sequence=1,
             redactions=(object(),),  # type: ignore[arg-type]
+            input_digest="sha256:redact",
+        )
+
+    with pytest.raises(ValueError, match="redactions contain unknown fields"):
+        OutputPolicyDecision.redact(
+            "decision-redact",
+            accepted_through_sequence=1,
+            redactions=(
+                {
+                    "path": "/chunks/1/text",
+                    "start": 0,
+                    "end": 6,
+                    "replacement": "[redacted]",
+                    "metadata": {"untrusted": True},
+                },
+            ),
             input_digest="sha256:redact",
         )
 

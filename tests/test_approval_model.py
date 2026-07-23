@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+from dataclasses import asdict
+import json
+import pickle
+
 import pytest
 
 from graphblocks.approval import ApprovalRequest, ApprovalRecord
@@ -245,6 +249,24 @@ def test_approval_request_metadata_is_copied_and_read_only() -> None:
             summary="Run a process",
             metadata={" ": "T-1"},
         )
+
+
+def test_approval_evidence_snapshots_support_standard_serialization() -> None:
+    request = ApprovalRequest.from_arguments(
+        "approval-1",
+        run_id="run-1",
+        subject=ResourceSnapshotRef("tool-call-1", "sha256:subject"),
+        action="process.execute",
+        arguments={"cmd": ["echo", "hello"]},
+        risk="external_process",
+        summary="Run a process",
+        metadata={"scope": {"labels": ["approval"]}},
+    )
+
+    assert json.loads(json.dumps(asdict(request)))["metadata"] == {
+        "scope": {"labels": ["approval"]}
+    }
+    assert pickle.loads(pickle.dumps(request)) == request
 
 
 @pytest.mark.parametrize("invalid_value", ({"bad"}, object()))

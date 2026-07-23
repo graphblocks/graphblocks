@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import asdict
+import json
+import pickle
 from threading import Barrier, BrokenBarrierError
 
 import pytest
@@ -154,6 +157,22 @@ def test_review_request_rejects_invalid_identity_and_metadata_fields() -> None:
         request.metadata["scope"]["labels"] = ("mutated",)  # type: ignore[index]
     with pytest.raises(AttributeError):
         request.metadata["scope"]["labels"].append("mutated")  # type: ignore[index, union-attr]
+
+
+def test_review_evidence_snapshots_support_standard_serialization() -> None:
+    request = ReviewRequest(
+        request_id="request-1",
+        subject=ResourceSnapshotRef("candidate-1", "sha256:subject"),
+        requested_by=PrincipalRef("author-1"),
+        required_scopes=("quality",),
+        created_at="2026-06-24T00:00:00Z",
+        metadata={"scope": {"labels": ["quality"]}},
+    )
+
+    assert json.loads(json.dumps(asdict(request)))["metadata"] == {
+        "scope": {"labels": ["quality"]}
+    }
+    assert pickle.loads(pickle.dumps(request)) == request
 
 
 def test_review_request_rejects_non_json_and_cyclic_metadata_values() -> None:

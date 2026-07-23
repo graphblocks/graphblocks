@@ -709,6 +709,8 @@ class ReviewRecord:
         if not isinstance(self.subject, ResourceSnapshotRef):
             raise ValueError("review record subject must be a ResourceSnapshotRef")
         _validate_exact_non_empty_string("review record", "subject_digest", self.subject_digest)
+        if self.subject_digest != self.subject.digest:
+            raise ValueError("review record subject_digest must match subject digest")
         _validate_exact_non_empty_string("review record", "scope", self.scope)
         if not isinstance(self.reviewer, PrincipalRef):
             raise ValueError("review record reviewer must be a PrincipalRef")

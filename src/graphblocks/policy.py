@@ -3,10 +3,10 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, field, fields, is_dataclass, replace
 from datetime import datetime, timezone
-from types import MappingProxyType
 from typing import Literal, get_args
 
 from .canonical import MAX_CANONICAL_JSON_DEPTH, canonical_dumps, canonical_hash
+from .documents import FrozenDict
 
 
 PolicyEffect = Literal["allow", "deny", "allow_with_obligations", "defer"]
@@ -128,7 +128,7 @@ def _freeze_mapping(
     *,
     active_containers: set[int] | None = None,
     depth: int = 0,
-) -> MappingProxyType[str, object]:
+) -> FrozenDict:
     if not isinstance(value, Mapping):
         raise ValueError(f"{owner} {field_name} must be a mapping")
     if depth > MAX_CANONICAL_JSON_DEPTH:
@@ -149,7 +149,7 @@ def _freeze_mapping(
             raise ValueError(
                 f"{owner} {field_name} keys must not contain surrounding whitespace"
             )
-        return MappingProxyType(
+        return FrozenDict(
             {
                 key: _freeze_policy_value(
                     owner,

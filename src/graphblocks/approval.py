@@ -3,10 +3,10 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
-from types import MappingProxyType
 from typing import Literal
 
 from .canonical import MAX_CANONICAL_JSON_DEPTH, canonical_dumps, canonical_hash
+from .documents import FrozenDict
 from .evaluation import ResourceSnapshotRef
 from .policy import PrincipalRef
 
@@ -48,7 +48,7 @@ def _freeze_metadata(
     *,
     active_containers: set[int] | None = None,
     depth: int = 0,
-) -> MappingProxyType[str, object]:
+) -> FrozenDict:
     if not isinstance(metadata, Mapping):
         raise ValueError(f"{owner} metadata must be a mapping")
     if depth > MAX_CANONICAL_JSON_DEPTH:
@@ -68,7 +68,7 @@ def _freeze_metadata(
             raise ValueError(f"{owner} metadata keys must not contain surrounding whitespace")
         if any(_contains_forbidden_control(key) for key in metadata_copy):
             raise ValueError(f"{owner} metadata keys must not contain control characters")
-        return MappingProxyType(
+        return FrozenDict(
             {
                 key: _freeze_metadata_value(
                     owner,

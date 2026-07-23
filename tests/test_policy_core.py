@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from dataclasses import replace
+from dataclasses import asdict, replace
+import json
+import pickle
 from typing import get_args
 
 import pytest
@@ -274,6 +276,22 @@ def test_policy_security_mappings_are_recursively_copied_and_read_only() -> None
         request.requested_usage[0]["limit"]["tokens"] = 999  # type: ignore[index]
     with pytest.raises(TypeError):
         obligation.parameters["redaction"]["fields"].append("credentials")  # type: ignore[index,union-attr]
+
+
+def test_policy_evidence_snapshots_support_standard_serialization() -> None:
+    principal = PrincipalRef(
+        "user-1",
+        attributes={
+            "claims": {"can_execute": True},
+            "scopes": ["read"],
+        },
+    )
+
+    assert json.loads(json.dumps(asdict(principal)))["attributes"] == {
+        "claims": {"can_execute": True},
+        "scopes": ["read"],
+    }
+    assert pickle.loads(pickle.dumps(principal)) == principal
 
 
 def test_policy_models_reject_unknown_typed_values() -> None:
