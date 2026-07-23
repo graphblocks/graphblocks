@@ -50,6 +50,10 @@ def test_sqs_receive_cursor_round_trips_durable_cursor(monkeypatch) -> None:
         graphblocks_sqs.SqsReceiveCursor.from_source_cursor(graphblocks_sqs.SourceCursor("orders", 1, 41))
     with pytest.raises(graphblocks_sqs.SqsAdapterError):
         graphblocks_sqs.SqsReceiveCursor("orders", 0)
+    with pytest.raises(graphblocks_sqs.SqsAdapterError, match="offset must be positive"):
+        graphblocks_sqs.SqsReceiveCursor.from_source_cursor(
+            graphblocks_sqs.SourceCursor("orders", 0, 0)
+        )
 
 
 def test_sqs_adapter_rejects_boolean_cursor_numbers(monkeypatch) -> None:

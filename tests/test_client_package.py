@@ -913,6 +913,43 @@ def test_client_package_rejects_malformed_run_graph_response_fields(
         graphblocks_client.RunGraphResponse(**kwargs)
 
 
+def test_http_client_rejects_unusable_transport_configuration(monkeypatch) -> None:
+    graphblocks_client = importlib.import_module("graphblocks.client")
+
+    for base_url in (
+        "",
+        " https://graphblocks.example/api",
+        "ftp://graphblocks.example/api",
+        "https:///api",
+        "https://graphblocks.example/api?tenant=acme",
+    ):
+        with pytest.raises(ValueError, match="base_url"):
+            graphblocks_client.HttpGraphBlocksClient(base_url)
+
+    for timeout in (True, 0, -1, float("nan"), float("inf"), "30"):
+        with pytest.raises(ValueError, match="timeout"):
+            graphblocks_client.HttpGraphBlocksClient(
+                "https://graphblocks.example/api",
+                timeout=timeout,
+            )
+
+    with pytest.raises(ValueError, match="bearer_token"):
+        graphblocks_client.HttpGraphBlocksClient(
+            "https://graphblocks.example/api",
+            bearer_token=" ",
+        )
+    with pytest.raises(ValueError, match="bearer_token"):
+        graphblocks_client.HttpGraphBlocksClient(
+            "https://graphblocks.example/api",
+            bearer_token="alpha\nbeta",
+        )
+    with pytest.raises(ValueError, match="transport"):
+        graphblocks_client.HttpGraphBlocksClient(
+            "https://graphblocks.example/api",
+            transport=object(),
+        )
+
+
 def test_client_package_posts_run_graph_command_over_http(monkeypatch) -> None:
     graphblocks_client = importlib.import_module("graphblocks.client")
     requests: list[object] = []

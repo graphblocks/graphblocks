@@ -23,6 +23,7 @@ from graphblocks import (
     ToolSchemaValidationError,
     canonical_dumps,
     canonical_hash,
+    canonical_loads,
     validate_tool_result_for_model,
 )
 
@@ -33,9 +34,30 @@ class McpToolAdapterError(RuntimeError):
 
 class McpInlineSchemaRegistry:
     def __init__(self, schemas: Mapping[str, Mapping[str, object]]) -> None:
+        if not isinstance(schemas, Mapping):
+            raise McpToolAdapterError("MCP inline schemas must be a mapping")
         documents: dict[str, dict[str, object]] = {}
-        for schema_ref, schema in sorted(schemas.items()):
-            document = dict(schema)
+        for schema_ref, schema in schemas.items():
+            if (
+                not isinstance(schema_ref, str)
+                or not schema_ref.strip()
+                or schema_ref != schema_ref.strip()
+            ):
+                raise McpToolAdapterError(
+                    "MCP inline schema reference must be a stable non-empty string"
+                )
+            if not isinstance(schema, Mapping):
+                raise McpToolAdapterError(f"MCP inline schema {schema_ref!r} must be an object")
+            try:
+                document = canonical_loads(canonical_dumps(schema))
+            except (TypeError, ValueError) as error:
+                raise McpToolAdapterError(
+                    f"MCP inline schema {schema_ref!r} must be strict JSON"
+                ) from error
+            if not isinstance(document, dict):
+                raise McpToolAdapterError(
+                    f"MCP inline schema {schema_ref!r} must be an object"
+                )
             try:
                 Draft202012Validator.check_schema(document)
             except SchemaError as error:

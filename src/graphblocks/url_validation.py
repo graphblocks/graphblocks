@@ -105,14 +105,16 @@ def validate_webhook_url(
     except ValueError:
         if parsed.netloc.startswith("[") or ":" in host:
             return WebhookUrlValidation(False, "invalid_host", host)
+        host_labels = host.split(".")
         if (
-            any(
+            len(host) > 253
+            or any(
                 not (character.isascii() and (character.isalnum() or character in "-."))
                 for character in host
             )
             or any(
-                not label or label.startswith("-") or label.endswith("-")
-                for label in host.split(".")
+                not label or len(label) > 63 or label.startswith("-") or label.endswith("-")
+                for label in host_labels
             )
         ):
             return WebhookUrlValidation(False, "invalid_host", host)

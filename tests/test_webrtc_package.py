@@ -95,6 +95,39 @@ def test_webrtc_validates_descriptions_and_candidates(monkeypatch) -> None:
         graphblocks_webrtc.WebRtcSession(" ", "browser", graphblocks_webrtc.WebRtcSessionDescription("offer", "v=0\r\n"))
 
 
+def test_webrtc_rejects_non_integer_transport_numbers_and_invalid_components(
+    monkeypatch,
+) -> None:
+    graphblocks_webrtc = _import_webrtc(monkeypatch)
+    offer = graphblocks_webrtc.WebRtcSessionDescription("offer", "v=0\r\n")
+
+    for field, value in (
+        ("sample_rate_hz", True),
+        ("sample_rate_hz", 48_000.5),
+        ("channels", True),
+        ("channels", 1.5),
+    ):
+        with pytest.raises(graphblocks_webrtc.WebRtcAdapterError, match=field):
+            graphblocks_webrtc.WebRtcSession(
+                "session-1",
+                "browser-1",
+                offer,
+                **{field: value},
+            )
+
+    with pytest.raises(graphblocks_webrtc.WebRtcAdapterError, match="offer"):
+        graphblocks_webrtc.WebRtcSession("session-1", "browser-1", object())
+    with pytest.raises(graphblocks_webrtc.WebRtcAdapterError, match="answer"):
+        graphblocks_webrtc.WebRtcSession("session-1", "browser-1", offer, answer=object())
+    with pytest.raises(graphblocks_webrtc.WebRtcAdapterError, match="ICE candidate"):
+        graphblocks_webrtc.WebRtcSession(
+            "session-1",
+            "browser-1",
+            offer,
+            ice_candidates=(object(),),
+        )
+
+
 def test_webrtc_package_is_cataloged_as_optional_voice_adapter(monkeypatch) -> None:
     _import_webrtc(monkeypatch)
     rows = {row["distribution"]: row for row in package_rows(load_package_catalog())}

@@ -175,15 +175,26 @@ def define_openapi_tools_from_spec(
     tags: Iterable[str] = (),
     version: str | None = None,
 ) -> tuple[ToolDefinition, ...]:
+    if not isinstance(spec, Mapping):
+        raise OpenApiToolAdapterError("OpenAPI spec must be an object")
     raw_paths = spec.get("paths")
     if not isinstance(raw_paths, Mapping):
         raise OpenApiToolAdapterError("OpenAPI spec paths must be an object")
+    if any(
+        not isinstance(path, str)
+        or not path
+        or (not path.startswith("/") and not path.startswith("x-"))
+        for path in raw_paths
+    ):
+        raise OpenApiToolAdapterError("OpenAPI spec path keys must be non-empty strings")
 
     discovered: list[ToolDefinition] = []
     seen: set[str] = set()
     generated_schema_owners: dict[str, str] = {}
     base_tags = _string_set(tags, owner="OpenAPI discovery tags")
     for path in sorted(raw_paths):
+        if path.startswith("x-"):
+            continue
         path_item = raw_paths[path]
         if not isinstance(path_item, Mapping):
             continue

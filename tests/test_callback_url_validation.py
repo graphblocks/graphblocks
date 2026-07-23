@@ -24,6 +24,18 @@ def test_webhook_url_validation_rejects_malformed_authorities() -> None:
         assert result.reason == "invalid_host"
 
 
+def test_webhook_url_validation_rejects_oversized_dns_names() -> None:
+    for host in (
+        f"{'a' * 64}.example.com",
+        ".".join(("a" * 63, "b" * 63, "c" * 63, "d" * 62)),
+        f"{'9' * 5_000}.example.com",
+    ):
+        result = validate_webhook_url(f"https://{host}/events")
+
+        assert result.allowed is False
+        assert result.reason == "invalid_host"
+
+
 def test_webhook_url_validation_separates_syntax_from_egress_policy() -> None:
     private = validate_webhook_url("https://10.0.0.7/callback")
     explicitly_allowed = validate_webhook_url(

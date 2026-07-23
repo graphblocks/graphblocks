@@ -49,6 +49,11 @@ def test_nats_consumer_cursor_round_trips_durable_cursor(monkeypatch) -> None:
         )
     with pytest.raises(graphblocks_nats.NatsAdapterError):
         graphblocks_nats.NatsConsumerCursor("orders-durable", "ORDERS", 0)
+    with pytest.raises(graphblocks_nats.NatsAdapterError, match="offset must be positive"):
+        graphblocks_nats.NatsConsumerCursor.from_source_cursor(
+            "orders-durable",
+            graphblocks_nats.SourceCursor("ORDERS", 0, 0),
+        )
 
 
 @pytest.mark.parametrize("invalid_sequence", (True, 1.5))

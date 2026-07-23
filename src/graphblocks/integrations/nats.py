@@ -64,8 +64,12 @@ class NatsConsumerCursor:
 
     @classmethod
     def from_source_cursor(cls, durable_name: str, cursor: SourceCursor) -> NatsConsumerCursor:
+        if not isinstance(cursor, SourceCursor):
+            raise NatsAdapterError("cursor must be a SourceCursor")
         if cursor.partition != 0:
             raise NatsAdapterError("NATS source cursors must use partition 0")
+        if cursor.offset == 0:
+            raise NatsAdapterError("NATS source cursor offset must be positive")
         return cls(durable_name, cursor.stream, cursor.offset + 1)
 
     def to_source_cursor(self) -> SourceCursor | None:

@@ -163,6 +163,24 @@ def test_mcp_adapter_builds_tool_definition_and_binding(monkeypatch) -> None:
     assert binding.binding_contract()["effects"] == ["external_read", "network"]
 
 
+def test_mcp_inline_schema_registry_detaches_nested_schema_inputs(monkeypatch) -> None:
+    graphblocks_mcp = importlib.import_module("graphblocks.integrations.mcp")
+    schema = {
+        "type": "object",
+        "properties": {"query": {"type": "string"}},
+        "required": ["query"],
+    }
+    registry = graphblocks_mcp.McpInlineSchemaRegistry({"schemas/SearchRequest@1": schema})
+
+    schema["properties"]["query"]["type"] = "integer"
+
+    registry.validate("schemas/SearchRequest@1", {"query": "refund"})
+    with pytest.raises(ToolSchemaValidationError):
+        registry.validate("schemas/SearchRequest@1", {"query": 42})
+    with pytest.raises(graphblocks_mcp.McpToolAdapterError, match="schema reference"):
+        graphblocks_mcp.McpInlineSchemaRegistry({" ": {"type": "object"}})
+
+
 def test_mcp_adapter_discovers_tool_definitions_from_capabilities(monkeypatch) -> None:
     graphblocks_mcp = importlib.import_module("graphblocks.integrations.mcp")
 
@@ -965,6 +983,36 @@ def test_openapi_adapter_discovery_rejects_blank_operation_metadata(monkeypatch)
     assert definitions[0].name == "createTicket"
     assert definitions[0].description == "Create a support ticket."
     assert definitions[0].tags == frozenset({"support", "tickets"})
+
+
+def test_openapi_adapter_discovery_rejects_non_string_path_keys(monkeypatch) -> None:
+    graphblocks_openapi = importlib.import_module("graphblocks.integrations.openapi")
+
+    with pytest.raises(graphblocks_openapi.OpenApiToolAdapterError, match="path keys"):
+        graphblocks_openapi.define_openapi_tools_from_spec(
+            {
+                "paths": {
+                    "/tickets": {"get": {"operationId": "listTickets"}},
+                    7: {},
+                }
+            }
+        )
+
+
+def test_openapi_adapter_discovery_rejects_non_path_keys(monkeypatch) -> None:
+    graphblocks_openapi = importlib.import_module("graphblocks.integrations.openapi")
+
+    with pytest.raises(graphblocks_openapi.OpenApiToolAdapterError, match="path keys"):
+        graphblocks_openapi.define_openapi_tools_from_spec(
+            {"paths": {" ": {"get": {"operationId": "listTickets"}}}}
+        )
+
+    assert (
+        graphblocks_openapi.define_openapi_tools_from_spec(
+            {"paths": {"x-vendor-metadata": {"get": {"operationId": "ignored"}}}}
+        )
+        == ()
+    )
 
 
 def test_openapi_adapter_supports_patterned_success_response_codes(monkeypatch) -> None:

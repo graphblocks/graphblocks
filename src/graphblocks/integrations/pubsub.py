@@ -106,8 +106,12 @@ class PubsubSubscriptionCursor:
 
     @classmethod
     def from_source_cursor(cls, cursor: SourceCursor) -> PubsubSubscriptionCursor:
+        if not isinstance(cursor, SourceCursor):
+            raise PubsubAdapterError("cursor must be a SourceCursor")
         if cursor.partition != 0:
             raise PubsubAdapterError("Pub/Sub source cursors must use partition 0")
+        if cursor.offset == 0:
+            raise PubsubAdapterError("Pub/Sub source cursor offset must be positive")
         return cls(cursor.stream, cursor.offset + 1)
 
     def to_source_cursor(self) -> SourceCursor | None:

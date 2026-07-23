@@ -54,6 +54,10 @@ def test_pubsub_subscription_cursor_round_trips_durable_cursor(monkeypatch) -> N
         )
     with pytest.raises(graphblocks_pubsub.PubsubAdapterError):
         graphblocks_pubsub.PubsubSubscriptionCursor("orders-sub", 0)
+    with pytest.raises(graphblocks_pubsub.PubsubAdapterError, match="offset must be positive"):
+        graphblocks_pubsub.PubsubSubscriptionCursor.from_source_cursor(
+            graphblocks_pubsub.SourceCursor("orders-sub", 0, 0)
+        )
 
 
 def test_pubsub_adapter_rejects_boolean_cursor_numbers(monkeypatch) -> None:

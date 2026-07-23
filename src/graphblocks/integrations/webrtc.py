@@ -10,9 +10,16 @@ class WebRtcAdapterError(ValueError):
     """Base error for WebRTC voice adapter contracts."""
 
 
-def _require_non_empty(field_name: str, value: str) -> None:
-    if not value.strip():
+def _require_non_empty(field_name: str, value: object) -> str:
+    if not isinstance(value, str) or not value.strip():
         raise WebRtcAdapterError(f"{field_name} must not be empty")
+    return value
+
+
+def _positive_int(field_name: str, value: object) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        raise WebRtcAdapterError(f"{field_name} must be a positive integer")
+    return value
 
 
 def _non_negative_int(field_name: str, value: object) -> int:
@@ -88,21 +95,39 @@ class WebRtcSession:
     def __post_init__(self) -> None:
         _require_non_empty("session_id", self.session_id)
         _require_non_empty("peer_id", self.peer_id)
+        if not isinstance(self.offer, WebRtcSessionDescription):
+            raise WebRtcAdapterError("offer must be a WebRtcSessionDescription")
         if self.offer.type != "offer":
             raise WebRtcAdapterError("offer must have type 'offer'")
-        if self.answer is not None and self.answer.type not in {"answer", "pranswer"}:
-            raise WebRtcAdapterError("answer must have type 'answer' or 'pranswer'")
+        if self.answer is not None:
+            if not isinstance(self.answer, WebRtcSessionDescription):
+                raise WebRtcAdapterError("answer must be a WebRtcSessionDescription")
+            if self.answer.type not in {"answer", "pranswer"}:
+                raise WebRtcAdapterError("answer must have type 'answer' or 'pranswer'")
         _require_non_empty("codec", self.codec)
-        if self.sample_rate_hz <= 0:
-            raise WebRtcAdapterError("sample_rate_hz must be positive")
-        if self.channels <= 0:
-            raise WebRtcAdapterError("channels must be positive")
+        object.__setattr__(
+            self,
+            "sample_rate_hz",
+            _positive_int("sample_rate_hz", self.sample_rate_hz),
+        )
+        object.__setattr__(self, "channels", _positive_int("channels", self.channels))
+        try:
+            ice_candidates = tuple(self.ice_candidates)
+        except TypeError as error:
+            raise WebRtcAdapterError("ice_candidates must be a sequence") from error
+        if any(
+            not isinstance(candidate, WebRtcIceCandidate)
+            for candidate in ice_candidates
+        ):
+            raise WebRtcAdapterError(
+                "ICE candidate entries must be WebRtcIceCandidate values"
+            )
         object.__setattr__(
             self,
             "ice_candidates",
             tuple(
                 sorted(
-                    self.ice_candidates,
+                    ice_candidates,
                     key=lambda candidate: (
                         candidate.sequence,
                         candidate.candidate,

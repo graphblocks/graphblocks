@@ -5,6 +5,7 @@ from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 import json
+import math
 from urllib.error import HTTPError
 from urllib.parse import quote, urlencode, urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
@@ -862,6 +863,61 @@ class HttpGraphBlocksClient:
     bearer_token: str | None = None
     timeout: float = 30.0
     transport: Callable[..., object] | None = None
+
+    def __post_init__(self) -> None:
+        if (
+            not isinstance(self.base_url, str)
+            or not self.base_url
+            or self.base_url != self.base_url.strip()
+            or any(
+                character.isspace() or ord(character) < 0x20 or ord(character) == 0x7F
+                for character in self.base_url
+            )
+        ):
+            raise ValueError("GraphBlocks HTTP base_url must be a stable non-empty URL")
+        try:
+            parsed_base_url = urlsplit(self.base_url)
+            hostname = parsed_base_url.hostname
+            _ = parsed_base_url.port
+        except ValueError as error:
+            raise ValueError(
+                "GraphBlocks HTTP base_url must be an absolute http(s) URL"
+            ) from error
+        if (
+            parsed_base_url.scheme not in {"http", "https"}
+            or hostname is None
+            or parsed_base_url.username is not None
+            or parsed_base_url.password is not None
+            or parsed_base_url.query
+            or parsed_base_url.fragment
+        ):
+            raise ValueError(
+                "GraphBlocks HTTP base_url must be an absolute http(s) URL without query or fragment"
+            )
+        if self.bearer_token is not None and (
+            not isinstance(self.bearer_token, str)
+            or not self.bearer_token.strip()
+            or self.bearer_token != self.bearer_token.strip()
+            or any(
+                character.isspace()
+                or ord(character) < 0x20
+                or ord(character) == 0x7F
+                for character in self.bearer_token
+            )
+        ):
+            raise ValueError(
+                "GraphBlocks HTTP bearer_token must be a stable non-empty string"
+            )
+        if (
+            isinstance(self.timeout, bool)
+            or not isinstance(self.timeout, (int, float))
+            or not math.isfinite(float(self.timeout))
+            or self.timeout <= 0
+        ):
+            raise ValueError("GraphBlocks HTTP timeout must be a finite positive number")
+        self.timeout = float(self.timeout)
+        if self.transport is not None and not callable(self.transport):
+            raise ValueError("GraphBlocks HTTP transport must be callable")
 
     def _request_json(self, request: Request, label: str) -> dict[str, object]:
         try:
