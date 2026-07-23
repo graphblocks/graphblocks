@@ -130,6 +130,26 @@ def test_haystack_bridge_maps_developer_role_through_system_marker(monkeypatch) 
     assert restored.metadata == {"haystack_meta": {"message_id": "msg-dev"}}
 
 
+def test_haystack_bridge_restores_graphblocks_metadata_on_round_trip(monkeypatch) -> None:
+    graphblocks_haystack = importlib.import_module("graphblocks.integrations.haystack")
+    message = Message(
+        message_id="msg-1",
+        role="user",
+        parts=(ContentPart(kind="text", text="hello"),),
+        metadata={"tenant": "acme"},
+    )
+
+    restored = graphblocks_haystack.haystack_chat_message_to_message(
+        graphblocks_haystack.message_to_haystack_chat_message(message),
+        message_id="msg-restored",
+    )
+
+    assert restored.metadata == {
+        "tenant": "acme",
+        "haystack_meta": {"message_id": "msg-1"},
+    }
+
+
 def test_haystack_bridge_rejects_invalid_descriptors(monkeypatch) -> None:
     graphblocks_haystack = importlib.import_module("graphblocks.integrations.haystack")
 
@@ -147,4 +167,31 @@ def test_haystack_bridge_rejects_invalid_descriptors(monkeypatch) -> None:
             block_type_id="haystack.pipeline.support_rag",
             inputs={"question": "graphblocks.ai/Text@1"},
             outputs={},
+        )
+
+
+def test_haystack_bridge_rejects_coercive_descriptor_values(monkeypatch) -> None:
+    graphblocks_haystack = importlib.import_module("graphblocks.integrations.haystack")
+
+    for kwargs in (
+        {"version": True},
+        {"version": 1.5},
+        {"inputs": object()},
+        {"metadata": {7: "not-a-string-key"}},
+        {"metadata": {"haystack": {"kind": "spoofed"}}},
+    ):
+        with pytest.raises(graphblocks_haystack.HaystackBridgeError):
+            graphblocks_haystack.HaystackComponentBlock(
+                component_ref="support.SearchComponent",
+                block_type_id="haystack.component.support_search",
+                outputs={"documents": "graphblocks.ai/DocumentChunk@1"},
+                **kwargs,
+            )
+
+    with pytest.raises(graphblocks_haystack.HaystackBridgeError, match="async_pipeline"):
+        graphblocks_haystack.HaystackPipelineBlock(
+            pipeline_ref="support.rag",
+            block_type_id="haystack.pipeline.support_rag",
+            outputs={"answer": "graphblocks.ai/Answer@1"},
+            async_pipeline="false",  # type: ignore[arg-type]
         )

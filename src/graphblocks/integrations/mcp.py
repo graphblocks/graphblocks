@@ -148,13 +148,19 @@ class McpToolInvocation:
             "effective_policy_snapshot_id",
         ):
             value = getattr(self, field_name)
-            if not isinstance(value, str) or not value.strip():
+            if (
+                not isinstance(value, str)
+                or not value.strip()
+                or value != value.strip()
+            ):
                 raise McpToolAdapterError(f"MCP invocation {field_name} must not be empty")
-            object.__setattr__(self, field_name, value.strip())
         if self.idempotency_key is not None:
-            if not isinstance(self.idempotency_key, str) or not self.idempotency_key.strip():
+            if (
+                not isinstance(self.idempotency_key, str)
+                or not self.idempotency_key.strip()
+                or self.idempotency_key != self.idempotency_key.strip()
+            ):
                 raise McpToolAdapterError("MCP invocation idempotency_key must not be empty")
-            object.__setattr__(self, "idempotency_key", self.idempotency_key.strip())
         if not isinstance(self.arguments_json, str) or not self.arguments_json.strip():
             raise McpToolAdapterError("MCP invocation arguments_json must not be empty")
         arguments = _mcp_invocation_arguments(self.arguments_json)
@@ -187,11 +193,8 @@ class McpToolInvocation:
 
 def _mcp_invocation_arguments(arguments_json: str) -> dict[str, object]:
     try:
-        arguments = json.loads(
-            arguments_json,
-            parse_constant=lambda constant: (_ for _ in ()).throw(ValueError(constant)),
-        )
-    except ValueError as error:
+        arguments = canonical_loads(arguments_json)
+    except (TypeError, ValueError) as error:
         raise McpToolAdapterError("MCP invocation arguments_json must be valid JSON") from error
     if not isinstance(arguments, Mapping):
         raise McpToolAdapterError("MCP invocation arguments_json must decode to an object")
@@ -256,6 +259,8 @@ def discover_mcp_tool_definitions(
     tags: Iterable[str] = (),
     version: str | None = None,
 ) -> McpToolDiscovery:
+    if not isinstance(capabilities, Mapping):
+        raise McpToolAdapterError("MCP capabilities must be an object")
     raw_tools = capabilities.get("tools")
     if not isinstance(raw_tools, Iterable) or isinstance(raw_tools, (str, bytes, Mapping)):
         raise McpToolAdapterError("MCP capabilities tools must be a sequence")
@@ -676,7 +681,7 @@ def _stream_content_parts(
     *,
     owner: str,
 ) -> tuple[ContentPart, ...]:
-    if isinstance(output, str):
+    if isinstance(output, (str, bytes, Mapping)):
         raise McpToolAdapterError(f"{owner} tool result delta output must be a sequence")
     try:
         raw_parts = tuple(output)
@@ -718,12 +723,22 @@ def _content_part(raw_part: Mapping[str, object], *, owner: str) -> ContentPart:
         text = raw_part.get("text")
         if not isinstance(text, str):
             raise McpToolAdapterError(f"{owner} text delta output requires string text")
-        return ContentPart(kind="text", text=text, metadata=metadata)
+        try:
+            return ContentPart(kind="text", text=text, metadata=metadata)
+        except (TypeError, ValueError) as error:
+            raise McpToolAdapterError(
+                f"{owner} text delta output is invalid"
+            ) from error
     if kind in {"json", "artifact_ref"}:
         data = raw_part.get("data")
         if not isinstance(data, Mapping):
             raise McpToolAdapterError(f"{owner} {kind} delta output requires object data")
-        return ContentPart(kind=kind, data=dict(data), metadata=metadata)  # type: ignore[arg-type]
+        try:
+            return ContentPart(kind=kind, data=dict(data), metadata=metadata)  # type: ignore[arg-type]
+        except (TypeError, ValueError) as error:
+            raise McpToolAdapterError(
+                f"{owner} {kind} delta output is invalid"
+            ) from error
     raise McpToolAdapterError(f"{owner} tool result delta has unknown content kind {kind!r}")
 
 

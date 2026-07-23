@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
+from copy import deepcopy
 from dataclasses import dataclass, field
 
 from graphblocks.durable import SinkCommitRequest, SourceCursor, SourceEvent
@@ -9,14 +11,26 @@ class PubsubAdapterError(ValueError):
     """Base error for Pub/Sub durable adapter contracts."""
 
 
-def _validate_subscription(subscription: str) -> None:
-    if not subscription.strip():
-        raise PubsubAdapterError("subscription must not be empty")
+def _stable_string(field_name: str, value: object) -> str:
+    if (
+        not isinstance(value, str)
+        or not value.strip()
+        or value != value.strip()
+        or any(ord(character) < 0x20 or ord(character) == 0x7F for character in value)
+    ):
+        raise PubsubAdapterError(f"{field_name} must be a stable non-empty string")
+    return value
 
 
-def _validate_topic(topic: str) -> None:
-    if not topic.strip():
-        raise PubsubAdapterError("topic must not be empty")
+def _string_mapping(field_name: str, value: object) -> dict[str, str]:
+    if not isinstance(value, Mapping):
+        raise PubsubAdapterError(f"{field_name} must be a mapping")
+    normalized: dict[str, str] = {}
+    for key, item in value.items():
+        if not isinstance(item, str):
+            raise PubsubAdapterError(f"{field_name} values must be strings")
+        normalized[_stable_string(f"{field_name} key", key)] = item
+    return dict(sorted(normalized.items()))
 
 
 def _positive_int(field_name: str, value: object) -> int:
@@ -60,25 +74,24 @@ class PubsubMessage:
     delivery_attempt: int | None = None
 
     def __post_init__(self) -> None:
-        _validate_subscription(self.subscription)
+        _stable_string("subscription", self.subscription)
         object.__setattr__(self, "receive_sequence", _positive_int("receive_sequence", self.receive_sequence))
-        if not self.message_id.strip():
-            raise PubsubAdapterError("message_id must not be empty")
-        if not self.ack_id.strip():
-            raise PubsubAdapterError("ack_id must not be empty")
+        _stable_string("message_id", self.message_id)
+        _stable_string("ack_id", self.ack_id)
         object.__setattr__(
             self,
             "publish_time_unix_ms",
             _optional_non_negative_int("publish_time_unix_ms", self.publish_time_unix_ms),
         )
-        if self.ordering_key is not None and not self.ordering_key.strip():
-            raise PubsubAdapterError("ordering_key must not be empty")
+        if self.ordering_key is not None:
+            _stable_string("ordering_key", self.ordering_key)
         object.__setattr__(
             self,
             "delivery_attempt",
             _optional_positive_int("delivery_attempt", self.delivery_attempt),
         )
-        object.__setattr__(self, "attributes", dict(sorted(self.attributes.items())))
+        object.__setattr__(self, "data", deepcopy(self.data))
+        object.__setattr__(self, "attributes", _string_mapping("attributes", self.attributes))
 
     def to_source_event(self) -> SourceEvent:
         return SourceEvent(
@@ -101,7 +114,7 @@ class PubsubSubscriptionCursor:
     next_sequence: int
 
     def __post_init__(self) -> None:
-        _validate_subscription(self.subscription)
+        _stable_string("subscription", self.subscription)
         object.__setattr__(self, "next_sequence", _positive_int("next_sequence", self.next_sequence))
 
     @classmethod
@@ -128,10 +141,11 @@ class PubsubPublishMessage:
     ordering_key: str | None = None
 
     def __post_init__(self) -> None:
-        _validate_topic(self.topic)
-        if self.ordering_key is not None and not self.ordering_key.strip():
-            raise PubsubAdapterError("ordering_key must not be empty")
-        object.__setattr__(self, "attributes", dict(sorted(self.attributes.items())))
+        _stable_string("topic", self.topic)
+        if self.ordering_key is not None:
+            _stable_string("ordering_key", self.ordering_key)
+        object.__setattr__(self, "data", deepcopy(self.data))
+        object.__setattr__(self, "attributes", _string_mapping("attributes", self.attributes))
 
     @classmethod
     def from_sink_commit(
@@ -141,12 +155,17 @@ class PubsubPublishMessage:
         request: SinkCommitRequest,
         ordering_key_field: str | None = None,
     ) -> PubsubPublishMessage:
+        if not isinstance(request, SinkCommitRequest):
+            raise PubsubAdapterError("request must be a SinkCommitRequest")
         if ordering_key_field is None:
             ordering_key = None
         else:
+            _stable_string("ordering_key_field", ordering_key_field)
             if not isinstance(request.payload, dict) or ordering_key_field not in request.payload:
                 raise PubsubAdapterError(f"payload does not contain ordering key field {ordering_key_field!r}")
-            ordering_key = str(request.payload[ordering_key_field])
+            ordering_key = _stable_string(
+                "payload ordering key", request.payload[ordering_key_field]
+            )
         attributes = {
             "graphblocks-idempotency-key": request.idempotency_key,
             "graphblocks-node-attempt-id": request.node_attempt_id,

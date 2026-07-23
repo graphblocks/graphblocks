@@ -3,9 +3,9 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 from decimal import Decimal
-import json
+import math
 
-from graphblocks import canonical_dumps
+from graphblocks import canonical_dumps, canonical_loads
 from graphblocks.telemetry import (
     DEFAULT_CONTENT_TELEMETRY_ATTRIBUTE_KEYS,
     DEFAULT_SENSITIVE_TELEMETRY_ATTRIBUTE_KEYS,
@@ -259,46 +259,65 @@ def _snapshot_contract(snapshot: object) -> dict[str, object]:
         uri = getattr(snapshot, "uri", None)
         metadata = getattr(snapshot, "metadata", None)
 
+    if metadata is not None and not isinstance(metadata, Mapping):
+        raise ValueError("Langfuse snapshot metadata must be a mapping")
     return {
         "resource_id": _require_non_empty("resource_id", resource_id),
         "digest": _require_non_empty("digest", digest),
-        "resource_kind": str(resource_kind) if resource_kind is not None else None,
-        "uri": str(uri) if uri is not None else None,
-        "metadata": _metadata_contract(metadata if isinstance(metadata, Mapping) else None),
+        "resource_kind": (
+            _require_non_empty("resource_kind", resource_kind)
+            if resource_kind is not None
+            else None
+        ),
+        "uri": _require_non_empty("uri", uri) if uri is not None else None,
+        "metadata": _metadata_contract(metadata),
     }
 
 
 def _metadata_contract(metadata: Mapping[str, object] | None) -> dict[str, object]:
     if metadata is None:
         return {}
-    return {str(key): _json_value(value) for key, value in sorted(metadata.items(), key=lambda item: str(item[0]))}
+    if not isinstance(metadata, Mapping):
+        raise ValueError("Langfuse metadata must be a mapping")
+    if any(not isinstance(key, str) for key in metadata):
+        raise ValueError("Langfuse metadata keys must be strings")
+    return {key: _json_value(value) for key, value in sorted(metadata.items())}
 
 
 def _json_value(value: object) -> object:
     if isinstance(value, Decimal):
+        if not value.is_finite():
+            raise ValueError("Langfuse decimal values must be finite")
         return str(value)
     if isinstance(value, Mapping):
-        return {str(key): _json_value(item) for key, item in sorted(value.items(), key=lambda item: str(item[0]))}
+        if any(not isinstance(key, str) for key in value):
+            raise ValueError("Langfuse JSON object keys must be strings")
+        return {key: _json_value(item) for key, item in sorted(value.items())}
     if isinstance(value, (list, tuple)):
         return [_json_value(item) for item in value]
-    return value
+    if value is None or isinstance(value, (bool, int, str)):
+        return value
+    if isinstance(value, float):
+        if math.isfinite(value):
+            return value
+        raise ValueError("Langfuse floating-point values must be finite")
+    raise ValueError(f"Langfuse value has unsupported type {type(value).__name__}")
 
 
 def _require_non_empty(field_name: str, value: object) -> str:
-    if not isinstance(value, str) or not value.strip():
+    if (
+        not isinstance(value, str)
+        or not value.strip()
+        or value != value.strip()
+    ):
         raise ValueError(f"Langfuse {field_name} must be a non-empty string")
     return value
 
 
 def _strict_json_contract(contract_name: str, payload: str) -> dict[str, object]:
     try:
-        parsed = json.loads(
-            payload,
-            parse_constant=lambda constant: (_ for _ in ()).throw(
-                ValueError(f"non-standard JSON constant {constant}")
-            ),
-        )
-    except ValueError as error:
+        parsed = canonical_loads(payload)
+    except (TypeError, ValueError) as error:
         raise ValueError(f"{contract_name} must be valid strict JSON") from error
     if not isinstance(parsed, Mapping):
         raise ValueError(f"{contract_name} must be a JSON object")

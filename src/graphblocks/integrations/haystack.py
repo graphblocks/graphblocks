@@ -12,10 +12,31 @@ class HaystackBridgeError(ValueError):
     """Raised when a Haystack bridge contract is invalid."""
 
 
-def _validate_block_type_id(block_type_id: str) -> str:
-    if not isinstance(block_type_id, str) or not block_type_id.strip():
-        raise HaystackBridgeError("block_type_id must not be empty")
-    normalized = block_type_id.strip()
+def _stable_string(field_name: str, value: object) -> str:
+    if not isinstance(value, str) or not value.strip() or value != value.strip():
+        raise HaystackBridgeError(f"{field_name} must be a stable non-empty string")
+    return value
+
+
+def _positive_integer(field_name: str, value: object) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+        raise HaystackBridgeError(f"{field_name} must be a positive integer")
+    return value
+
+
+def _mapping_snapshot(field_name: str, value: object) -> dict[object, object]:
+    if not isinstance(value, Mapping):
+        raise HaystackBridgeError(f"{field_name} must be a mapping")
+    snapshot = deepcopy(dict(value))
+    if field_name == "metadata" and any(not isinstance(key, str) for key in snapshot):
+        raise HaystackBridgeError("metadata keys must be strings")
+    if field_name == "metadata" and "haystack" in snapshot:
+        raise HaystackBridgeError("metadata must not override the reserved haystack field")
+    return snapshot
+
+
+def _validate_block_type_id(block_type_id: object) -> str:
+    normalized = _stable_string("block_type_id", block_type_id)
     if any(character.isspace() for character in normalized) or "@" in normalized:
         raise HaystackBridgeError(f"block_type_id is invalid: {block_type_id!r}")
     return normalized
@@ -26,13 +47,15 @@ def _port_descriptors(owner: str, ports: Mapping[str, str], *, require_output: b
         raise HaystackBridgeError(f"{owner} ports must be a mapping")
     if require_output and not ports:
         raise HaystackBridgeError(f"{owner} outputs must not be empty")
-    descriptors: list[dict[str, object]] = []
-    for name, type_ref in sorted(ports.items()):
-        if not isinstance(name, str) or not name.strip():
-            raise HaystackBridgeError(f"{owner} port names must be non-empty strings")
-        if not isinstance(type_ref, str) or not type_ref.strip():
-            raise HaystackBridgeError(f"{owner} port {name!r} type must not be empty")
-        descriptors.append({"name": name.strip(), "type": type_ref.strip(), "required": True})
+    normalized: list[tuple[str, str]] = []
+    for name, type_ref in ports.items():
+        normalized_name = _stable_string(f"{owner} port name", name)
+        normalized_type = _stable_string(f"{owner} port {name!r} type", type_ref)
+        normalized.append((normalized_name, normalized_type))
+    descriptors = [
+        {"name": name, "type": type_ref, "required": True}
+        for name, type_ref in sorted(normalized)
+    ]
     return descriptors
 
 
@@ -47,17 +70,14 @@ class HaystackComponentBlock:
     metadata: Mapping[str, object] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        if not isinstance(self.component_ref, str) or not self.component_ref.strip():
-            raise HaystackBridgeError("component_ref must not be empty")
-        if self.version < 1:
-            raise HaystackBridgeError("version must be at least 1")
+        _stable_string("component_ref", self.component_ref)
+        _positive_integer("version", self.version)
         if self.descriptor_source not in {"explicit", "introspected"}:
             raise HaystackBridgeError("descriptor_source is invalid")
-        object.__setattr__(self, "component_ref", self.component_ref.strip())
         object.__setattr__(self, "block_type_id", _validate_block_type_id(self.block_type_id))
-        object.__setattr__(self, "inputs", deepcopy(dict(self.inputs)))
-        object.__setattr__(self, "outputs", deepcopy(dict(self.outputs)))
-        object.__setattr__(self, "metadata", deepcopy(dict(self.metadata)))
+        object.__setattr__(self, "inputs", _mapping_snapshot("inputs", self.inputs))
+        object.__setattr__(self, "outputs", _mapping_snapshot("outputs", self.outputs))
+        object.__setattr__(self, "metadata", _mapping_snapshot("metadata", self.metadata))
         _port_descriptors("component", self.inputs)
         _port_descriptors("component", self.outputs, require_output=True)
 
@@ -91,17 +111,16 @@ class HaystackPipelineBlock:
     metadata: Mapping[str, object] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        if not isinstance(self.pipeline_ref, str) or not self.pipeline_ref.strip():
-            raise HaystackBridgeError("pipeline_ref must not be empty")
-        if self.version < 1:
-            raise HaystackBridgeError("version must be at least 1")
+        _stable_string("pipeline_ref", self.pipeline_ref)
+        _positive_integer("version", self.version)
+        if not isinstance(self.async_pipeline, bool):
+            raise HaystackBridgeError("async_pipeline must be a boolean")
         if self.descriptor_source not in {"explicit", "introspected"}:
             raise HaystackBridgeError("descriptor_source is invalid")
-        object.__setattr__(self, "pipeline_ref", self.pipeline_ref.strip())
         object.__setattr__(self, "block_type_id", _validate_block_type_id(self.block_type_id))
-        object.__setattr__(self, "inputs", deepcopy(dict(self.inputs)))
-        object.__setattr__(self, "outputs", deepcopy(dict(self.outputs)))
-        object.__setattr__(self, "metadata", deepcopy(dict(self.metadata)))
+        object.__setattr__(self, "inputs", _mapping_snapshot("inputs", self.inputs))
+        object.__setattr__(self, "outputs", _mapping_snapshot("outputs", self.outputs))
+        object.__setattr__(self, "metadata", _mapping_snapshot("metadata", self.metadata))
         _port_descriptors("pipeline", self.inputs)
         _port_descriptors("pipeline", self.outputs, require_output=True)
 
@@ -114,7 +133,7 @@ class HaystackPipelineBlock:
             "resourceSlots": [{"name": "pipeline", "type": "haystack.pipeline", "optional": False}],
             "metadata": {
                 "haystack": {
-                    "asyncPipeline": bool(self.async_pipeline),
+                    "asyncPipeline": self.async_pipeline,
                     "descriptorSource": self.descriptor_source,
                     "kind": "pipeline",
                     "pipelineRef": self.pipeline_ref,
@@ -131,11 +150,10 @@ class HaystackDescriptorDiagnostic:
     reason: str
 
     def __post_init__(self) -> None:
-        if not self.subject_ref.strip():
-            raise HaystackBridgeError("subject_ref must not be empty")
+        _stable_string("subject_ref", self.subject_ref)
         if self.subject_kind not in {"component", "pipeline"}:
             raise HaystackBridgeError("subject_kind is invalid")
-        if not self.reason.strip():
+        if not isinstance(self.reason, str) or not self.reason.strip():
             raise HaystackBridgeError("reason must not be empty")
 
     def diagnostic_contract(self) -> dict[str, object]:
@@ -224,7 +242,17 @@ def haystack_chat_message_to_message(value: Mapping[str, object], *, message_id:
         if role != "system" or original_role != "developer":
             raise HaystackBridgeError("invalid GraphBlocks role marker in Haystack chat meta")
         role = "developer"
-    metadata: dict[str, object] = {"haystack_meta": normalized_meta} if normalized_meta else {}
+    graphblocks_metadata = normalized_meta.pop("graphblocks_metadata", None)
+    if graphblocks_metadata is None:
+        metadata: dict[str, object] = {}
+    elif isinstance(graphblocks_metadata, Mapping):
+        metadata = deepcopy(dict(graphblocks_metadata))
+    else:
+        raise HaystackBridgeError(
+            "graphblocks_metadata in Haystack chat meta must be a mapping"
+        )
+    if normalized_meta:
+        metadata.setdefault("haystack_meta", normalized_meta)
     return Message(
         message_id=message_id,
         role=role,  # type: ignore[arg-type]

@@ -4,8 +4,10 @@ from collections.abc import Callable, Iterable, Mapping
 from copy import deepcopy
 from dataclasses import dataclass, field
 from io import BytesIO
+import math
 from numbers import Real
 
+from graphblocks import canonical_dumps, canonical_loads
 from graphblocks.document_parsers import DocumentParserError, ParserDescriptor
 from graphblocks.documents import (
     AssetRevision,
@@ -18,6 +20,18 @@ from graphblocks.documents import (
 
 class PdfParserError(DocumentParserError):
     """Raised when a PDF parser adapter contract is invalid."""
+
+
+def _metadata_snapshot(field_name: str, value: object) -> dict[str, object]:
+    if not isinstance(value, Mapping):
+        raise PdfParserError(f"{field_name} must be a mapping")
+    try:
+        snapshot = canonical_loads(canonical_dumps(value))
+    except (TypeError, ValueError) as error:
+        raise PdfParserError(f"{field_name} must be strict JSON") from error
+    if not isinstance(snapshot, dict):
+        raise PdfParserError(f"{field_name} must be a mapping")
+    return snapshot
 
 
 @dataclass(frozen=True, slots=True)
@@ -35,7 +49,9 @@ class PdfPageText:
             raise PdfParserError("page_number must be positive")
         if not isinstance(self.text, str):
             raise PdfParserError("text must be a string")
-        object.__setattr__(self, "metadata", deepcopy(dict(self.metadata)))
+        object.__setattr__(
+            self, "metadata", _metadata_snapshot("page metadata", self.metadata)
+        )
 
 
 PdfTextExtractor = Callable[[bytes], Iterable[PdfPageText]]
@@ -51,9 +67,9 @@ def parse_pdf_pages(
     processor_id: str = "pdf-text",
     version: str = "1",
 ) -> ParsedDocument:
-    if not processor_id.strip():
+    if not isinstance(processor_id, str) or not processor_id.strip():
         raise PdfParserError("processor_id must not be empty")
-    if not version.strip():
+    if not isinstance(version, str) or not version.strip():
         raise PdfParserError("version must not be empty")
 
     elements: list[DocumentElement] = []
@@ -178,10 +194,10 @@ def marker_pdf_parser_descriptor(
                 raise PdfParserError(
                     "marker-pdf is required for Marker HTML text extraction"
                 ) from error
-            marker_html_text_extractor = lambda value: BeautifulSoup(
-                value,
-                "html.parser",
-            ).get_text("\n", strip=True)
+            def extract_marker_html(value: str) -> str:
+                return BeautifulSoup(value, "html.parser").get_text("\n", strip=True)
+
+            marker_html_text_extractor = extract_marker_html
 
         try:
             rendered = marker_converter(BytesIO(body))
@@ -217,7 +233,12 @@ def marker_pdf_parser_descriptor(
             if (
                 not isinstance(bbox, (list, tuple))
                 or len(bbox) != 4
-                or any(isinstance(value, bool) or not isinstance(value, Real) for value in bbox)
+                or any(
+                    isinstance(value, bool)
+                    or not isinstance(value, Real)
+                    or not math.isfinite(float(value))
+                    for value in bbox
+                )
             ):
                 raise PdfParserError("Marker block bbox must contain four numbers")
 
@@ -232,12 +253,29 @@ def marker_pdf_parser_descriptor(
             if section_hierarchy is None:
                 section_path: list[str] = []
             elif isinstance(section_hierarchy, Mapping):
+                normalized_hierarchy: dict[int, str] = {}
+                for key, value in section_hierarchy.items():
+                    if isinstance(key, bool):
+                        normalized_key = -1
+                    elif isinstance(key, int):
+                        normalized_key = key
+                    elif isinstance(key, str) and key.isdecimal():
+                        normalized_key = int(key)
+                    else:
+                        normalized_key = -1
+                    if (
+                        normalized_key < 0
+                        or normalized_key in normalized_hierarchy
+                        or not isinstance(value, str)
+                        or not value.strip()
+                    ):
+                        raise PdfParserError(
+                            "Marker block section hierarchy must map unique non-negative "
+                            "indices to non-empty strings"
+                        )
+                    normalized_hierarchy[normalized_key] = value
                 section_path = [
-                    str(value)
-                    for _, value in sorted(
-                        section_hierarchy.items(),
-                        key=lambda item: str(item[0]),
-                    )
+                    value for _, value in sorted(normalized_hierarchy.items())
                 ]
             else:
                 raise PdfParserError("Marker block section hierarchy must be a mapping")
@@ -264,9 +302,9 @@ def marker_pdf_parser_descriptor(
             if content:
                 plain_text_parts.append(content)
 
-        rendered_metadata = getattr(rendered, "metadata", {})
-        if not isinstance(rendered_metadata, Mapping):
-            raise PdfParserError("Marker chunks output metadata must be a mapping")
+        rendered_metadata = _metadata_snapshot(
+            "Marker chunks output metadata", getattr(rendered, "metadata", {})
+        )
 
         return ParsedDocument(
             document_id="doc:" + revision.revision_id,
@@ -280,7 +318,7 @@ def marker_pdf_parser_descriptor(
             },
             elements=elements,
             plain_text="\n\n".join(plain_text_parts),
-            metadata={"marker": deepcopy(dict(rendered_metadata))},
+            metadata={"marker": rendered_metadata},
         )
 
     return ParserDescriptor(

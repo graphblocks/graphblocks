@@ -79,6 +79,13 @@ def test_pdf_page_text_rejects_invalid_page_number(monkeypatch) -> None:
     with pytest.raises(graphblocks_pdf.PdfParserError, match="page_number"):
         graphblocks_pdf.PdfPageText(page_number=0, text="bad")
 
+    with pytest.raises(graphblocks_pdf.PdfParserError, match="metadata"):
+        graphblocks_pdf.PdfPageText(page_number=1, text="bad", metadata=object())
+    with pytest.raises(graphblocks_pdf.PdfParserError, match="strict JSON"):
+        graphblocks_pdf.PdfPageText(
+            page_number=1, text="bad", metadata={"confidence": float("nan")}
+        )
+
 
 def test_marker_pdf_parser_descriptor_preserves_block_lineage(monkeypatch) -> None:
     graphblocks_pdf = importlib.import_module("graphblocks.integrations.pdf")
@@ -218,3 +225,51 @@ def test_marker_pdf_parser_failure_uses_pdf_text_fallback(monkeypatch) -> None:
     assert result.selected_lock.processor_id == "pdf-text"
     assert [lock.processor_id for lock in result.failed_locks] == ["marker-pdf"]
     assert result.document.plain_text == "Fallback text"
+
+
+@pytest.mark.parametrize(
+    "block_overrides,error_match",
+    (
+        ({"bbox": [0.0, 0.0, float("nan"), 1.0]}, "bbox"),
+        ({"section_hierarchy": {"level": "/page/0/Text/0"}}, "section hierarchy"),
+        ({"section_hierarchy": {1: object()}}, "section hierarchy"),
+    ),
+)
+def test_marker_pdf_parser_rejects_malformed_external_block_values(
+    monkeypatch,
+    block_overrides: dict[str, object],
+    error_match: str,
+) -> None:
+    graphblocks_pdf = importlib.import_module("graphblocks.integrations.pdf")
+    block = {
+        "id": "/page/0/Text/0",
+        "block_type": "Text",
+        "html": "<p>text</p>",
+        "page": 0,
+        "bbox": [0.0, 0.0, 1.0, 1.0],
+        "section_hierarchy": None,
+        **block_overrides,
+    }
+    descriptor = graphblocks_pdf.marker_pdf_parser_descriptor(
+        converter=lambda source: SimpleNamespace(
+            blocks=[SimpleNamespace(**block)], metadata={}
+        ),
+        html_text_extractor=lambda value: value,
+    )
+    artifact = ArtifactRef(
+        "artifact-marker",
+        "file:///tmp/source.pdf",
+        media_type="application/pdf",
+        filename="source.pdf",
+    )
+    asset = SourceAsset("asset-marker", "file:///tmp/source.pdf", "local")
+    revision = AssetRevision(
+        "rev-marker",
+        "asset-marker",
+        "sha256:marker",
+        "2026-07-23T00:00:00Z",
+        artifact,
+    )
+
+    with pytest.raises(graphblocks_pdf.PdfParserError, match=error_match):
+        descriptor.parse(asset, revision, b"%PDF-test")

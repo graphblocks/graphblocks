@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
+from copy import deepcopy
 from dataclasses import dataclass, field
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlsplit
 
+from graphblocks import canonical_dumps, canonical_loads
 from graphblocks.voice import VoiceTransport
 
 
@@ -17,9 +20,53 @@ _OUTPUT_AUDIO_FORMATS = {
 }
 
 
-def _require_non_empty(field_name: str, value: str) -> None:
-    if not value.strip():
+def _require_non_empty(field_name: str, value: object) -> str:
+    if not isinstance(value, str) or not value.strip():
         raise OpenAIRealtimeAdapterError(f"{field_name} must not be empty")
+    return value
+
+
+def _require_positive_integer(field_name: str, value: object) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        raise OpenAIRealtimeAdapterError(f"{field_name} must be a positive integer")
+    return value
+
+
+def _require_base_url(field_name: str, value: object, *, schemes: set[str], query: bool) -> str:
+    url = _require_non_empty(field_name, value)
+    try:
+        parsed = urlsplit(url)
+        hostname = parsed.hostname
+        _ = parsed.port
+    except ValueError as error:
+        raise OpenAIRealtimeAdapterError(f"{field_name} must be an absolute URL") from error
+    if (
+        parsed.scheme not in schemes
+        or hostname is None
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.fragment
+        or (parsed.query and not query)
+        or parsed.netloc.rsplit("@", 1)[-1].endswith(":")
+        or any(character.isspace() or ord(character) < 0x20 for character in url)
+    ):
+        raise OpenAIRealtimeAdapterError(f"{field_name} must be an absolute URL")
+    return url
+
+
+def _string_mapping(field_name: str, value: object) -> dict[str, str]:
+    if not isinstance(value, Mapping):
+        raise OpenAIRealtimeAdapterError(f"{field_name} must be a mapping")
+    normalized: dict[str, str] = {}
+    for key, item in value.items():
+        if not isinstance(key, str) or not key or key != key.strip():
+            raise OpenAIRealtimeAdapterError(
+                f"{field_name} keys must be stable non-empty strings"
+            )
+        if not isinstance(item, str):
+            raise OpenAIRealtimeAdapterError(f"{field_name} values must be strings")
+        normalized[key] = item
+    return dict(sorted(normalized.items()))
 
 
 @dataclass(frozen=True, slots=True)
@@ -44,13 +91,23 @@ class OpenAIRealtimeSessionConfig:
                 "codec must be one of pcm16, g711_ulaw, or g711_alaw"
             )
         expected_sample_rate = _OUTPUT_AUDIO_FORMATS[codec][1]
-        if self.sample_rate_hz != expected_sample_rate:
+        sample_rate_hz = _require_positive_integer("sample_rate_hz", self.sample_rate_hz)
+        if sample_rate_hz != expected_sample_rate:
             raise OpenAIRealtimeAdapterError(
                 f"{codec} sample_rate_hz must be {expected_sample_rate}"
             )
-        if self.channels != 1:
+        channels = _require_positive_integer("channels", self.channels)
+        if channels != 1:
             raise OpenAIRealtimeAdapterError("OpenAI Realtime audio must be mono")
-        modalities = tuple(sorted({str(modality).strip() for modality in self.modalities}))
+        if isinstance(self.modalities, (str, bytes)):
+            raise OpenAIRealtimeAdapterError("modalities must be a sequence of strings")
+        try:
+            raw_modalities = tuple(self.modalities)
+        except TypeError as error:
+            raise OpenAIRealtimeAdapterError("modalities must be a sequence of strings") from error
+        if any(not isinstance(modality, str) for modality in raw_modalities):
+            raise OpenAIRealtimeAdapterError("modalities must be a sequence of strings")
+        modalities = tuple(sorted(set(raw_modalities)))
         if not modalities:
             raise OpenAIRealtimeAdapterError("modalities must not be empty")
         for modality in modalities:
@@ -60,12 +117,10 @@ class OpenAIRealtimeSessionConfig:
                 "output modalities must be exactly ('audio',) or ('text',)"
             )
         object.__setattr__(self, "codec", codec)
+        object.__setattr__(self, "sample_rate_hz", sample_rate_hz)
+        object.__setattr__(self, "channels", channels)
         object.__setattr__(self, "modalities", modalities)
-        object.__setattr__(
-            self,
-            "metadata",
-            {str(key): str(value) for key, value in sorted(dict(self.metadata).items())},
-        )
+        object.__setattr__(self, "metadata", _string_mapping("metadata", self.metadata))
 
     def session_payload(self) -> dict[str, object]:
         format_type = _OUTPUT_AUDIO_FORMATS[self.codec][0]
@@ -104,13 +159,17 @@ class OpenAIRealtimeWebRtcCall:
     safety_identifier: str | None = None
 
     def __post_init__(self) -> None:
+        if not isinstance(self.session_config, OpenAIRealtimeSessionConfig):
+            raise OpenAIRealtimeAdapterError(
+                "session_config must be an OpenAIRealtimeSessionConfig"
+            )
         _require_non_empty("offer_sdp", self.offer_sdp)
-        _require_non_empty("api_base_url", self.api_base_url)
-        if not self.api_base_url.startswith(("http://", "https://")):
-            raise OpenAIRealtimeAdapterError("api_base_url must use http:// or https://")
+        api_base_url = _require_base_url(
+            "api_base_url", self.api_base_url, schemes={"http", "https"}, query=False
+        )
         if self.safety_identifier is not None:
             _require_non_empty("safety_identifier", self.safety_identifier)
-        object.__setattr__(self, "api_base_url", self.api_base_url.rstrip("/"))
+        object.__setattr__(self, "api_base_url", api_base_url.rstrip("/"))
 
     def request_contract(self) -> dict[str, object]:
         headers = {}
@@ -140,12 +199,16 @@ class OpenAIRealtimeClientSecretRequest:
     safety_identifier: str | None = None
 
     def __post_init__(self) -> None:
-        _require_non_empty("api_base_url", self.api_base_url)
-        if not self.api_base_url.startswith(("http://", "https://")):
-            raise OpenAIRealtimeAdapterError("api_base_url must use http:// or https://")
+        if not isinstance(self.session_config, OpenAIRealtimeSessionConfig):
+            raise OpenAIRealtimeAdapterError(
+                "session_config must be an OpenAIRealtimeSessionConfig"
+            )
+        api_base_url = _require_base_url(
+            "api_base_url", self.api_base_url, schemes={"http", "https"}, query=False
+        )
         if self.safety_identifier is not None:
             _require_non_empty("safety_identifier", self.safety_identifier)
-        object.__setattr__(self, "api_base_url", self.api_base_url.rstrip("/"))
+        object.__setattr__(self, "api_base_url", api_base_url.rstrip("/"))
 
     def request_contract(self) -> dict[str, object]:
         headers = {}
@@ -169,13 +232,17 @@ class OpenAIRealtimeWebSocketSession:
     safety_identifier: str | None = None
 
     def __post_init__(self) -> None:
-        _require_non_empty("base_url", self.base_url)
+        if not isinstance(self.session_config, OpenAIRealtimeSessionConfig):
+            raise OpenAIRealtimeAdapterError(
+                "session_config must be an OpenAIRealtimeSessionConfig"
+            )
+        base_url = _require_base_url(
+            "base_url", self.base_url, schemes={"ws", "wss"}, query=True
+        )
         _require_non_empty("protocol", self.protocol)
-        if not self.base_url.startswith(("ws://", "wss://")):
-            raise OpenAIRealtimeAdapterError("base_url must use ws:// or wss://")
         if self.safety_identifier is not None:
             _require_non_empty("safety_identifier", self.safety_identifier)
-        object.__setattr__(self, "base_url", self.base_url.rstrip("?&"))
+        object.__setattr__(self, "base_url", base_url.rstrip("?&"))
 
     def connection_contract(self) -> dict[str, object]:
         headers = {}
@@ -200,13 +267,23 @@ class OpenAIRealtimeEvent:
         _require_non_empty("event_type", self.event_type)
         if self.event_id is not None:
             _require_non_empty("event_id", self.event_id)
+        if not isinstance(self.payload, Mapping):
+            raise OpenAIRealtimeAdapterError("event payload must be a mapping")
         reserved_fields = {"type", "event_id"}.intersection(self.payload)
         if reserved_fields:
             fields = ", ".join(sorted(reserved_fields))
             raise OpenAIRealtimeAdapterError(
                 f"event payload must not contain reserved envelope fields: {fields}"
             )
-        object.__setattr__(self, "payload", dict(self.payload))
+        try:
+            payload = canonical_loads(canonical_dumps(self.payload))
+        except (TypeError, ValueError) as error:
+            raise OpenAIRealtimeAdapterError(
+                "event payload must be a strict JSON object"
+            ) from error
+        if not isinstance(payload, dict):
+            raise OpenAIRealtimeAdapterError("event payload must be a strict JSON object")
+        object.__setattr__(self, "payload", payload)
 
     @classmethod
     def session_update(
@@ -242,7 +319,7 @@ class OpenAIRealtimeEvent:
         if self.event_id is not None:
             contract["event_id"] = self.event_id
         contract["type"] = self.event_type
-        contract.update(self.payload)
+        contract.update(deepcopy(self.payload))
         return contract
 
 

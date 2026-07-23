@@ -45,6 +45,20 @@ def _non_negative_integer(field_name: str, value: object) -> int:
     return value
 
 
+def _strict_json_mapping(field_name: str, value: object) -> dict[str, object]:
+    if not isinstance(value, Mapping):
+        raise OpenAICompatibleAdapterError(f"{field_name} must be a mapping")
+    try:
+        normalized = canonical_loads(canonical_dumps(value))
+    except (TypeError, ValueError) as error:
+        raise OpenAICompatibleAdapterError(
+            f"{field_name} must be a strict JSON object"
+        ) from error
+    if not isinstance(normalized, dict):
+        raise OpenAICompatibleAdapterError(f"{field_name} must be a strict JSON object")
+    return normalized
+
+
 def _validated_inline_json_schema(schema_ref: str, schema: Mapping[str, object]) -> dict[str, object]:
     try:
         normalized_schema = canonical_loads(canonical_dumps(schema))
@@ -80,11 +94,12 @@ class OpenAIChatCompletionRequest:
     endpoint: str = "/chat/completions"
 
     def __post_init__(self) -> None:
-        if not self.body:
+        body = _strict_json_mapping("body", self.body)
+        if not body:
             raise OpenAICompatibleAdapterError("body must not be empty")
         object.__setattr__(self, "endpoint", _strip_required_string("endpoint", self.endpoint))
-        object.__setattr__(self, "body", deepcopy(dict(self.body)))
-        object.__setattr__(self, "metadata", deepcopy(dict(self.metadata)))
+        object.__setattr__(self, "body", body)
+        object.__setattr__(self, "metadata", _strict_json_mapping("metadata", self.metadata))
 
     def request_contract(self) -> dict[str, object]:
         return {
@@ -108,7 +123,7 @@ class OpenAIChatResponse:
         object.__setattr__(self, "model", _strip_required_string("model", self.model))
         object.__setattr__(self, "parts", tuple(self.parts))
         object.__setattr__(self, "tool_calls", [deepcopy(call) for call in self.tool_calls])
-        object.__setattr__(self, "usage", deepcopy(dict(self.usage)))
+        object.__setattr__(self, "usage", _strict_json_mapping("usage", self.usage))
 
     def response_contract(self) -> dict[str, object]:
         parts: list[dict[str, object]] = []
@@ -173,7 +188,11 @@ class OpenAIChatDelta:
                 normalized_delta["arguments_delta"] = arguments_delta
             normalized_tool_call_deltas.append(normalized_delta)
         object.__setattr__(self, "tool_call_deltas", normalized_tool_call_deltas)
-        object.__setattr__(self, "usage_delta", deepcopy(dict(self.usage_delta)))
+        object.__setattr__(
+            self,
+            "usage_delta",
+            _strict_json_mapping("usage_delta", self.usage_delta),
+        )
 
     def delta_contract(self) -> dict[str, object]:
         return {
@@ -299,8 +318,16 @@ def openai_chat_completion_request(
     """Build a request for the adapter's stable single-choice (``n=1``) contract."""
     if not isinstance(model, str) or not model.strip():
         raise OpenAICompatibleAdapterError("model must not be empty")
-    if isinstance(messages, (str, bytes)) or not messages:
+    if (
+        not isinstance(messages, Sequence)
+        or isinstance(messages, (str, bytes))
+        or not messages
+    ):
         raise OpenAICompatibleAdapterError("messages must contain at least one message")
+    if not isinstance(tools, Sequence) or isinstance(tools, (str, bytes)):
+        raise OpenAICompatibleAdapterError("tools must be a sequence")
+    if not isinstance(stream, bool):
+        raise OpenAICompatibleAdapterError("stream must be a boolean")
 
     encoded_messages: list[dict[str, object]] = []
     for message in messages:
@@ -324,7 +351,7 @@ def openai_chat_completion_request(
     body: dict[str, object] = {
         "model": model.strip(),
         "messages": encoded_messages,
-        "stream": bool(stream),
+        "stream": stream,
     }
     if tools:
         if not isinstance(tool_schemas, Mapping):
@@ -547,11 +574,16 @@ def openai_chat_response_from_provider(data: Mapping[str, object]) -> OpenAIChat
     for choice in choices:
         if not isinstance(choice, Mapping):
             raise OpenAICompatibleAdapterError("provider response choice must be a mapping")
-        choice_index = choice.get("index", 0)
-        if isinstance(choice_index, bool) or not isinstance(choice_index, int):
-            raise OpenAICompatibleAdapterError("provider response choice index must be an integer")
-        if finish_reason is None and isinstance(choice.get("finish_reason"), str):
-            finish_reason = choice["finish_reason"]
+        choice_index = _non_negative_integer(
+            "provider response choice index", choice.get("index", 0)
+        )
+        raw_finish_reason = choice.get("finish_reason")
+        if raw_finish_reason is not None and not isinstance(raw_finish_reason, str):
+            raise OpenAICompatibleAdapterError(
+                "provider response finish_reason must be a string"
+            )
+        if finish_reason is None:
+            finish_reason = raw_finish_reason
         message = choice.get("message", {})
         if not isinstance(message, Mapping):
             raise OpenAICompatibleAdapterError("provider response message must be a mapping")
@@ -575,6 +607,10 @@ def openai_chat_response_from_provider(data: Mapping[str, object]) -> OpenAIChat
                             text=item["text"],
                             metadata={"choice_index": choice_index, "provider": "openai-compatible"},
                         )
+                    )
+                else:
+                    raise OpenAICompatibleAdapterError(
+                        "provider response content item is unsupported"
                     )
         raw_tool_calls = message.get("tool_calls", [])
         if raw_tool_calls is None:

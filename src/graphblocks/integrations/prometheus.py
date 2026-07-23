@@ -24,8 +24,18 @@ def _canonical_dumps(value: object) -> str:
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
 
 
-def _sorted_str_mapping(values: Mapping[str, str]) -> dict[str, str]:
-    return {str(key): str(value) for key, value in sorted(dict(values).items())}
+def _required_string(field_name: str, value: object) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise PrometheusProjectionError(f"{field_name} must not be empty")
+    return value
+
+
+def _sorted_str_mapping(field_name: str, values: object) -> dict[str, str]:
+    if not isinstance(values, Mapping):
+        raise PrometheusProjectionError(f"{field_name} must be a mapping")
+    if any(not isinstance(key, str) or not isinstance(value, str) for key, value in values.items()):
+        raise PrometheusProjectionError(f"{field_name} must map strings to strings")
+    return dict(sorted(values.items()))
 
 
 @dataclass(frozen=True, slots=True)
@@ -35,9 +45,8 @@ class PrometheusSample:
     value: float
 
     def __post_init__(self) -> None:
-        if not self.name.strip():
-            raise PrometheusProjectionError("sample name must not be empty")
-        if isinstance(self.value, bool):
+        _required_string("sample name", self.name)
+        if isinstance(self.value, bool) or not isinstance(self.value, (int, float)):
             raise PrometheusProjectionError("sample value must be numeric")
         try:
             value = float(self.value)
@@ -45,7 +54,7 @@ class PrometheusSample:
             raise PrometheusProjectionError("sample value must be numeric") from error
         if not math.isfinite(value):
             raise PrometheusProjectionError("sample value must be finite")
-        object.__setattr__(self, "labels", _sorted_str_mapping(self.labels))
+        object.__setattr__(self, "labels", _sorted_str_mapping("sample labels", self.labels))
         object.__setattr__(self, "value", value)
 
     def sample_contract(self) -> dict[str, object]:
@@ -66,18 +75,21 @@ class PrometheusRule:
     annotations: Mapping[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        if not self.expr.strip():
-            raise PrometheusProjectionError("rule expression must not be empty")
+        _required_string("rule expression", self.expr)
         if (self.record is None) == (self.alert is None):
             raise PrometheusProjectionError("exactly one of record or alert must be provided")
-        if self.record is not None and not self.record.strip():
-            raise PrometheusProjectionError("record name must not be empty")
-        if self.alert is not None and not self.alert.strip():
-            raise PrometheusProjectionError("alert name must not be empty")
-        if self.for_duration is not None and not self.for_duration.strip():
-            raise PrometheusProjectionError("for_duration must not be empty")
-        object.__setattr__(self, "labels", _sorted_str_mapping(self.labels))
-        object.__setattr__(self, "annotations", _sorted_str_mapping(self.annotations))
+        if self.record is not None:
+            _required_string("record name", self.record)
+        if self.alert is not None:
+            _required_string("alert name", self.alert)
+        if self.for_duration is not None:
+            _required_string("for_duration", self.for_duration)
+        object.__setattr__(self, "labels", _sorted_str_mapping("rule labels", self.labels))
+        object.__setattr__(
+            self,
+            "annotations",
+            _sorted_str_mapping("rule annotations", self.annotations),
+        )
 
     @classmethod
     def recording(
@@ -135,9 +147,18 @@ class PrometheusRuleGroup:
     rules: tuple[PrometheusRule, ...]
 
     def __post_init__(self) -> None:
-        if not self.name.strip():
-            raise PrometheusProjectionError("rule group name must not be empty")
-        object.__setattr__(self, "rules", tuple(self.rules))
+        _required_string("rule group name", self.name)
+        if isinstance(self.rules, (str, bytes)):
+            raise PrometheusProjectionError("rule group rules must be a sequence")
+        try:
+            rules = tuple(self.rules)
+        except TypeError as error:
+            raise PrometheusProjectionError("rule group rules must be a sequence") from error
+        if any(not isinstance(rule, PrometheusRule) for rule in rules):
+            raise PrometheusProjectionError(
+                "rule group entries must be PrometheusRule values"
+            )
+        object.__setattr__(self, "rules", rules)
 
     def rule_file_contract(self) -> dict[str, object]:
         return {
@@ -266,8 +287,20 @@ def lint_prometheus_samples(
     *,
     linter: MetricCardinalityLinter | None = None,
 ) -> MetricCardinalityLintResult:
+    if isinstance(samples, (str, bytes, Mapping)):
+        raise PrometheusProjectionError("samples must be a sequence")
+    try:
+        normalized_samples = tuple(samples)
+    except TypeError as error:
+        raise PrometheusProjectionError("samples must be a sequence") from error
+    if any(not isinstance(sample, PrometheusSample) for sample in normalized_samples):
+        raise PrometheusProjectionError(
+            "sample entries must be PrometheusSample values"
+        )
     cardinality_linter = linter or MetricCardinalityLinter()
-    return cardinality_linter.lint_samples(sample.sample_contract() for sample in samples)
+    return cardinality_linter.lint_samples(
+        sample.sample_contract() for sample in normalized_samples
+    )
 
 
 __all__ = [

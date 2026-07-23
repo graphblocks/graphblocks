@@ -97,6 +97,72 @@ def test_openai_chat_request_encodes_messages_tools_and_options(monkeypatch) -> 
     }
 
 
+def test_openai_chat_request_rejects_non_boolean_stream_flag(monkeypatch) -> None:
+    graphblocks_openai = importlib.import_module("graphblocks.integrations.openai")
+
+    with pytest.raises(graphblocks_openai.OpenAICompatibleAdapterError, match="stream"):
+        graphblocks_openai.openai_chat_completion_request(
+            model="gpt-test",
+            messages=(
+                Message(
+                    message_id="msg-user",
+                    role="user",
+                    parts=(ContentPart(kind="text", text="hello"),),
+                ),
+            ),
+            stream="false",  # type: ignore[arg-type]
+        )
+
+    with pytest.raises(graphblocks_openai.OpenAICompatibleAdapterError, match="messages"):
+        graphblocks_openai.openai_chat_completion_request(
+            model="gpt-test", messages=(message for message in ())
+        )
+    with pytest.raises(graphblocks_openai.OpenAICompatibleAdapterError, match="tools"):
+        graphblocks_openai.openai_chat_completion_request(
+            model="gpt-test",
+            messages=(
+                Message(
+                    message_id="msg-user",
+                    role="user",
+                    parts=(ContentPart(kind="text", text="hello"),),
+                ),
+            ),
+            tools=object(),
+        )
+    with pytest.raises(graphblocks_openai.OpenAICompatibleAdapterError, match="strict JSON"):
+        graphblocks_openai.openai_chat_completion_request(
+            model="gpt-test",
+            messages=(
+                Message(
+                    message_id="msg-user",
+                    role="user",
+                    parts=(ContentPart(kind="text", text="hello"),),
+                ),
+            ),
+            extra_body={"custom": object()},
+        )
+
+
+@pytest.mark.parametrize(
+    "choice",
+    (
+        {"index": -1, "message": {"content": "hello"}},
+        {"index": 0, "finish_reason": 7, "message": {"content": "hello"}},
+        {
+            "index": 0,
+            "message": {"content": [{"type": "image_url", "image_url": "https://x"}]},
+        },
+    ),
+)
+def test_openai_response_rejects_malformed_choice_payloads(monkeypatch, choice: object) -> None:
+    graphblocks_openai = importlib.import_module("graphblocks.integrations.openai")
+
+    with pytest.raises(graphblocks_openai.OpenAICompatibleAdapterError):
+        graphblocks_openai.openai_chat_response_from_provider(
+            {"id": "response-1", "model": "gpt-test", "choices": [choice]}
+        )
+
+
 def test_openai_chat_request_rejects_invalid_contract_inputs(monkeypatch) -> None:
     graphblocks_openai = importlib.import_module("graphblocks.integrations.openai")
 

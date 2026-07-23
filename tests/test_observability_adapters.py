@@ -1348,6 +1348,50 @@ def test_langfuse_projection_contracts_reject_non_standard_json_constants(monkey
             getattr(projection, method_name)()
 
 
+def test_langfuse_projection_contract_rejects_duplicate_json_keys(monkeypatch) -> None:
+    graphblocks_langfuse = importlib.import_module("graphblocks.integrations.langfuse")
+
+    projection = graphblocks_langfuse.LangfuseEventProjection(
+        event_json='{"event_id":"ignored","event_id":"event-1"}'
+    )
+
+    with pytest.raises(ValueError, match="strict JSON"):
+        projection.event_contract()
+
+
+def test_langfuse_rejects_coercive_metadata_and_snapshot_fields(monkeypatch) -> None:
+    graphblocks_langfuse = importlib.import_module("graphblocks.integrations.langfuse")
+
+    with pytest.raises(ValueError, match="metadata keys"):
+        graphblocks_langfuse.langfuse_prompt_from_reference(
+            "support-prompt", metadata={7: "coerced"}
+        )
+    with pytest.raises(ValueError, match="unsupported type"):
+        graphblocks_langfuse.langfuse_prompt_from_reference(
+            "support-prompt", metadata={"value": object()}
+        )
+    with pytest.raises(ValueError, match="resource_kind"):
+        graphblocks_langfuse.langfuse_dataset_item_from_snapshots(
+            "support",
+            "item-1",
+            input_snapshot={
+                "resource_id": "resource-1",
+                "digest": "sha256:resource",
+                "resource_kind": 7,
+            },
+        )
+    with pytest.raises(ValueError, match="snapshot metadata"):
+        graphblocks_langfuse.langfuse_dataset_item_from_snapshots(
+            "support",
+            "item-1",
+            input_snapshot={
+                "resource_id": "resource-1",
+                "digest": "sha256:resource",
+                "metadata": "not-a-mapping",
+            },
+        )
+
+
 def test_langfuse_projection_applies_capture_policy_before_export(monkeypatch) -> None:
     graphblocks_telemetry = importlib.import_module("graphblocks.telemetry")
     graphblocks_langfuse = importlib.import_module("graphblocks.integrations.langfuse")

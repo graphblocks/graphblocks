@@ -273,6 +273,24 @@ def test_prometheus_sample_rejects_boolean_value(monkeypatch) -> None:
 
     with pytest.raises(graphblocks_prometheus.PrometheusProjectionError, match="must be numeric"):
         graphblocks_prometheus.PrometheusSample("graphblocks_test_total", {}, True)  # type: ignore[arg-type]
+    with pytest.raises(graphblocks_prometheus.PrometheusProjectionError, match="must be numeric"):
+        graphblocks_prometheus.PrometheusSample("graphblocks_test_total", {}, "1.0")
+
+
+def test_prometheus_contracts_reject_coercive_labels_and_rule_entries(monkeypatch) -> None:
+    graphblocks_prometheus = _import_prometheus(monkeypatch)
+
+    for labels in ({7: "value"}, {"tenant": 7}, object()):
+        with pytest.raises(graphblocks_prometheus.PrometheusProjectionError, match="labels"):
+            graphblocks_prometheus.PrometheusSample(
+                "graphblocks_test_total", labels, 1
+            )
+    with pytest.raises(graphblocks_prometheus.PrometheusProjectionError, match="entries"):
+        graphblocks_prometheus.PrometheusRuleGroup(
+            "graphblocks-runtime", (object(),)
+        )
+    with pytest.raises(graphblocks_prometheus.PrometheusProjectionError, match="sample entries"):
+        graphblocks_prometheus.lint_prometheus_samples((object(),))
 
 
 def test_prometheus_rule_group_builds_rule_file_contract(monkeypatch) -> None:

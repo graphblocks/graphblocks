@@ -95,6 +95,47 @@ def test_pubsub_adapter_rejects_boolean_cursor_numbers(monkeypatch) -> None:
             factory()
 
 
+def test_pubsub_adapter_rejects_malformed_strings_and_attributes(monkeypatch) -> None:
+    graphblocks_pubsub = _import_pubsub(monkeypatch)
+
+    for kwargs in (
+        {"subscription": object()},
+        {"message_id": " msg-41"},
+        {"ack_id": object()},
+        {"attributes": {"tenant": 7}},
+    ):
+        with pytest.raises(graphblocks_pubsub.PubsubAdapterError):
+            graphblocks_pubsub.PubsubMessage(
+                **{
+                    "subscription": "orders-sub",
+                    "receive_sequence": 41,
+                    "message_id": "msg-41",
+                    "ack_id": "ack-41",
+                    "data": {},
+                    **kwargs,
+                }
+            )
+
+
+def test_pubsub_message_snapshots_data_and_rejects_non_string_ordering_key(monkeypatch) -> None:
+    graphblocks_pubsub = _import_pubsub(monkeypatch)
+    data = {"order": {"state": "created"}}
+    message = graphblocks_pubsub.PubsubMessage(
+        "orders-sub", 1, "msg-1", "ack-1", data
+    )
+    data["order"]["state"] = "cancelled"
+
+    assert message.to_source_event().payload["data"] == {"order": {"state": "created"}}
+
+    request = graphblocks_pubsub.SinkCommitRequest(
+        "run-1", "node-1", "attempt-1", "idem-1", {"orderId": 7}
+    )
+    with pytest.raises(graphblocks_pubsub.PubsubAdapterError, match="ordering key"):
+        graphblocks_pubsub.PubsubPublishMessage.from_sink_commit(
+            topic="orders", request=request, ordering_key_field="orderId"
+        )
+
+
 def test_pubsub_publish_message_projects_durable_sink_commit(monkeypatch) -> None:
     graphblocks_pubsub = _import_pubsub(monkeypatch)
     request = graphblocks_pubsub.SinkCommitRequest(

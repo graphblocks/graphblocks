@@ -83,6 +83,48 @@ def test_sqs_adapter_rejects_boolean_cursor_numbers(monkeypatch) -> None:
             factory()
 
 
+def test_sqs_adapter_rejects_malformed_strings_and_attributes(monkeypatch) -> None:
+    graphblocks_sqs = _import_sqs(monkeypatch)
+
+    for kwargs in (
+        {"queue": object()},
+        {"message_id": " msg-41"},
+        {"receipt_handle": object()},
+        {"attributes": {"ApproximateReceiveCount": 1}},
+        {"message_attributes": {7: "tenant"}},
+    ):
+        with pytest.raises(graphblocks_sqs.SqsAdapterError):
+            graphblocks_sqs.SqsMessage(
+                **{
+                    "queue": "orders",
+                    "receive_sequence": 41,
+                    "message_id": "msg-41",
+                    "receipt_handle": "receipt-41",
+                    "body": {},
+                    **kwargs,
+                }
+            )
+
+
+def test_sqs_message_snapshots_body_and_rejects_non_boolean_fifo(monkeypatch) -> None:
+    graphblocks_sqs = _import_sqs(monkeypatch)
+    body = {"order": {"state": "created"}}
+    message = graphblocks_sqs.SqsMessage(
+        "orders", 1, "msg-1", "receipt-1", body
+    )
+    body["order"]["state"] = "cancelled"
+
+    assert message.to_source_event().payload["body"] == {"order": {"state": "created"}}
+
+    request = graphblocks_sqs.SinkCommitRequest(
+        "run-1", "node-1", "attempt-1", "idem-1", {}
+    )
+    with pytest.raises(graphblocks_sqs.SqsAdapterError, match="fifo"):
+        graphblocks_sqs.SqsSendMessage.from_sink_commit(
+            queue="orders", request=request, fifo="false"  # type: ignore[arg-type]
+        )
+
+
 def test_sqs_send_message_projects_durable_sink_commit(monkeypatch) -> None:
     graphblocks_sqs = _import_sqs(monkeypatch)
     request = graphblocks_sqs.SinkCommitRequest(

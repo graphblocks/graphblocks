@@ -191,6 +191,44 @@ def test_openai_realtime_validates_contracts(monkeypatch) -> None:
         graphblocks_openai_realtime.OpenAIRealtimeWebSocketSession(config, base_url="https://api.openai.com")
 
 
+def test_openai_realtime_rejects_malformed_urls_and_numeric_booleans(monkeypatch) -> None:
+    graphblocks_openai_realtime = _import_openai_realtime(monkeypatch)
+    config = graphblocks_openai_realtime.OpenAIRealtimeSessionConfig(
+        model="gpt-realtime-2",
+        instructions="Answer using audio.",
+    )
+
+    for kwargs in ({"sample_rate_hz": True}, {"channels": True}):
+        with pytest.raises(graphblocks_openai_realtime.OpenAIRealtimeAdapterError):
+            graphblocks_openai_realtime.OpenAIRealtimeSessionConfig(
+                model="gpt-realtime-2",
+                instructions="Answer using audio.",
+                **kwargs,
+            )
+    for url in ("https://", "https://user@example.com", "https://example.com?tenant=other"):
+        with pytest.raises(graphblocks_openai_realtime.OpenAIRealtimeAdapterError, match="api_base_url"):
+            graphblocks_openai_realtime.OpenAIRealtimeClientSecretRequest(config, api_base_url=url)
+    for url in ("wss://", "wss://user@example.com/v1/realtime", "wss://example.com/#fragment"):
+        with pytest.raises(graphblocks_openai_realtime.OpenAIRealtimeAdapterError, match="base_url"):
+            graphblocks_openai_realtime.OpenAIRealtimeWebSocketSession(config, base_url=url)
+
+
+def test_openai_realtime_snapshots_event_payload(monkeypatch) -> None:
+    graphblocks_openai_realtime = _import_openai_realtime(monkeypatch)
+    payload = {"item": {"role": "user"}}
+
+    event = graphblocks_openai_realtime.OpenAIRealtimeEvent("conversation.item.create", payload)
+    payload["item"]["role"] = "assistant"
+
+    assert event.event_contract()["item"] == {"role": "user"}
+
+    for malformed_payload in ({7: "coerced"}, {"score": float("nan")}, {"item": object()}):
+        with pytest.raises(graphblocks_openai_realtime.OpenAIRealtimeAdapterError, match="strict JSON"):
+            graphblocks_openai_realtime.OpenAIRealtimeEvent(
+                "conversation.item.create", malformed_payload
+            )
+
+
 def test_openai_realtime_projects_g711_input_and_output_format(monkeypatch) -> None:
     graphblocks_openai_realtime = _import_openai_realtime(monkeypatch)
     config = graphblocks_openai_realtime.OpenAIRealtimeSessionConfig(

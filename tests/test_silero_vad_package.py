@@ -148,6 +148,34 @@ def test_silero_vad_rejects_duplicate_and_out_of_order_frames(monkeypatch) -> No
             )
 
 
+def test_silero_vad_rejects_coercive_numeric_and_state_values(monkeypatch) -> None:
+    graphblocks_silero_vad = _import_silero_vad(monkeypatch)
+
+    for field_name, value in (
+        ("sequence", True),
+        ("start_ms", 0.5),
+        ("duration_ms", True),
+        ("speech_probability", True),
+    ):
+        kwargs = {
+            "stream_id": "mic",
+            "sequence": 1,
+            "start_ms": 0,
+            "duration_ms": 32,
+            "speech_probability": 0.5,
+            field_name: value,
+        }
+        with pytest.raises(graphblocks_silero_vad.SileroVadAdapterError, match=field_name):
+            graphblocks_silero_vad.SileroVadFrame(**kwargs)
+
+    authority = graphblocks_silero_vad.SileroVadAuthority("silero-local")
+    frame = graphblocks_silero_vad.SileroVadFrame("mic", 1, 0, 32, 0.5)
+    with pytest.raises(graphblocks_silero_vad.SileroVadAdapterError, match="already_in_speech"):
+        authority.evaluate(frame, already_in_speech="false")  # type: ignore[arg-type]
+    with pytest.raises(graphblocks_silero_vad.SileroVadAdapterError, match="frame"):
+        authority.evaluate(object())  # type: ignore[arg-type]
+
+
 def test_silero_vad_package_is_cataloged_as_optional_voice_adapter(monkeypatch) -> None:
     _import_silero_vad(monkeypatch)
     rows = {row["distribution"]: row for row in package_rows(load_package_catalog())}

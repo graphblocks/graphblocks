@@ -3,7 +3,6 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
-import json
 
 from graphblocks import (
     AdmittedToolCall,
@@ -20,6 +19,7 @@ from graphblocks import (
     ToolSchemaValidationError,
     canonical_dumps,
     canonical_hash,
+    canonical_loads,
     validate_tool_result_for_model,
 )
 
@@ -66,13 +66,19 @@ class OpenApiOperationInvocation:
             "effective_policy_snapshot_id",
         ):
             value = getattr(self, field_name)
-            if not isinstance(value, str) or not value.strip():
+            if (
+                not isinstance(value, str)
+                or not value.strip()
+                or value != value.strip()
+            ):
                 raise OpenApiToolAdapterError(f"OpenAPI invocation {field_name} must not be empty")
-            object.__setattr__(self, field_name, value.strip())
         if self.idempotency_key is not None:
-            if not isinstance(self.idempotency_key, str) or not self.idempotency_key.strip():
+            if (
+                not isinstance(self.idempotency_key, str)
+                or not self.idempotency_key.strip()
+                or self.idempotency_key != self.idempotency_key.strip()
+            ):
                 raise OpenApiToolAdapterError("OpenAPI invocation idempotency_key must not be empty")
-            object.__setattr__(self, "idempotency_key", self.idempotency_key.strip())
         if not isinstance(self.arguments_json, str) or not self.arguments_json.strip():
             raise OpenApiToolAdapterError("OpenAPI invocation arguments_json must not be empty")
         arguments = _openapi_invocation_arguments(self.arguments_json)
@@ -105,11 +111,8 @@ class OpenApiOperationInvocation:
 
 def _openapi_invocation_arguments(arguments_json: str) -> dict[str, object]:
     try:
-        arguments = json.loads(
-            arguments_json,
-            parse_constant=lambda constant: (_ for _ in ()).throw(ValueError(constant)),
-        )
-    except ValueError as error:
+        arguments = canonical_loads(arguments_json)
+    except (TypeError, ValueError) as error:
         raise OpenApiToolAdapterError("OpenAPI invocation arguments_json must be valid JSON") from error
     if not isinstance(arguments, Mapping):
         raise OpenApiToolAdapterError("OpenAPI invocation arguments_json must decode to an object")
@@ -611,7 +614,7 @@ def _stream_content_parts(
     *,
     owner: str,
 ) -> tuple[ContentPart, ...]:
-    if isinstance(output, str):
+    if isinstance(output, (str, bytes, Mapping)):
         raise OpenApiToolAdapterError(f"{owner} tool result delta output must be a sequence")
     try:
         raw_parts = tuple(output)
@@ -653,12 +656,22 @@ def _content_part(raw_part: Mapping[str, object], *, owner: str) -> ContentPart:
         text = raw_part.get("text")
         if not isinstance(text, str):
             raise OpenApiToolAdapterError(f"{owner} text delta output requires string text")
-        return ContentPart(kind="text", text=text, metadata=metadata)
+        try:
+            return ContentPart(kind="text", text=text, metadata=metadata)
+        except (TypeError, ValueError) as error:
+            raise OpenApiToolAdapterError(
+                f"{owner} text delta output is invalid"
+            ) from error
     if kind in {"json", "artifact_ref"}:
         data = raw_part.get("data")
         if not isinstance(data, Mapping):
             raise OpenApiToolAdapterError(f"{owner} {kind} delta output requires object data")
-        return ContentPart(kind=kind, data=dict(data), metadata=metadata)  # type: ignore[arg-type]
+        try:
+            return ContentPart(kind=kind, data=dict(data), metadata=metadata)  # type: ignore[arg-type]
+        except (TypeError, ValueError) as error:
+            raise OpenApiToolAdapterError(
+                f"{owner} {kind} delta output is invalid"
+            ) from error
     raise OpenApiToolAdapterError(f"{owner} tool result delta has unknown content kind {kind!r}")
 
 

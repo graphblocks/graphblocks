@@ -228,6 +228,9 @@ def test_mcp_adapter_discovers_tool_definitions_from_capabilities(monkeypatch) -
     registry = definitions.schema_registry()
     registry.validate(definitions[1].input_schema, {})
     registry.validate(definitions[1].output_schema, {"ticketId": "ticket-1"})
+
+    with pytest.raises(graphblocks_mcp.McpToolAdapterError, match="capabilities"):
+        graphblocks_mcp.discover_mcp_tool_definitions(object())
     with pytest.raises(ToolSchemaValidationError, match="rejected value"):
         registry.validate(definitions[1].output_schema, {})
     assert "discover_mcp_tool_definitions" in graphblocks_mcp.__all__
@@ -333,10 +336,19 @@ def test_mcp_adapter_prepares_admitted_invocation_contract(monkeypatch) -> None:
         direct.request_contract()
     with pytest.raises(graphblocks_mcp.McpToolAdapterError, match="server must not be empty"):
         graphblocks_mcp.McpToolInvocation(**{**direct_kwargs, "server": " "})
+    with pytest.raises(graphblocks_mcp.McpToolAdapterError, match="server must not be empty"):
+        graphblocks_mcp.McpToolInvocation(**{**direct_kwargs, "server": " support-mcp"})
     with pytest.raises(graphblocks_mcp.McpToolAdapterError, match="must decode to an object"):
         graphblocks_mcp.McpToolInvocation(**{**direct_kwargs, "arguments_json": "[]"})
     with pytest.raises(graphblocks_mcp.McpToolAdapterError, match="arguments_json must be valid JSON"):
         graphblocks_mcp.McpToolInvocation(**{**direct_kwargs, "arguments_json": '{"score": NaN}'})
+    with pytest.raises(graphblocks_mcp.McpToolAdapterError, match="arguments_json must be valid JSON"):
+        graphblocks_mcp.McpToolInvocation(
+            **{
+                **direct_kwargs,
+                "arguments_json": '{"limit":5,"query":"ignored","query":"billing"}',
+            }
+        )
     with pytest.raises(graphblocks_mcp.McpToolAdapterError, match="digest does not match"):
         graphblocks_mcp.McpToolInvocation(**{**direct_kwargs, "arguments_json": '{"query":"changed"}'})
 
@@ -851,6 +863,20 @@ def test_mcp_adapter_rejects_invalid_streaming_tool_result_events(monkeypatch) -
 
     with pytest.raises(graphblocks_mcp.McpToolAdapterError, match="delta output must be a sequence"):
         graphblocks_mcp.mcp_tool_result_delta(admitted, resolved, sequence=1, output="draft")
+    with pytest.raises(graphblocks_mcp.McpToolAdapterError, match="delta output must be a sequence"):
+        graphblocks_mcp.mcp_tool_result_delta(
+            admitted,
+            resolved,
+            sequence=1,
+            output={"kind": "text", "text": "draft"},
+        )
+    with pytest.raises(graphblocks_mcp.McpToolAdapterError, match="output is invalid"):
+        graphblocks_mcp.mcp_tool_result_delta(
+            admitted,
+            resolved,
+            sequence=1,
+            output=({"kind": "text", "text": "draft", "metadata": {7: "bad"}},),
+        )
 
     with pytest.raises(graphblocks_mcp.McpToolAdapterError, match="requires artifact_id and uri"):
         graphblocks_mcp.mcp_tool_result_artifact_ready(
@@ -1193,10 +1219,23 @@ def test_openapi_adapter_prepares_admitted_invocation_contract(monkeypatch) -> N
         direct.request_contract()
     with pytest.raises(graphblocks_openapi.OpenApiToolAdapterError, match="connection must not be empty"):
         graphblocks_openapi.OpenApiOperationInvocation(**{**direct_kwargs, "connection": " "})
+    with pytest.raises(graphblocks_openapi.OpenApiToolAdapterError, match="connection must not be empty"):
+        graphblocks_openapi.OpenApiOperationInvocation(
+            **{**direct_kwargs, "connection": " ticket-system"}
+        )
     with pytest.raises(graphblocks_openapi.OpenApiToolAdapterError, match="must decode to an object"):
         graphblocks_openapi.OpenApiOperationInvocation(**{**direct_kwargs, "arguments_json": "[]"})
     with pytest.raises(graphblocks_openapi.OpenApiToolAdapterError, match="arguments_json must be valid JSON"):
         graphblocks_openapi.OpenApiOperationInvocation(**{**direct_kwargs, "arguments_json": '{"score": NaN}'})
+    with pytest.raises(graphblocks_openapi.OpenApiToolAdapterError, match="arguments_json must be valid JSON"):
+        graphblocks_openapi.OpenApiOperationInvocation(
+            **{
+                **direct_kwargs,
+                "arguments_json": (
+                    '{"priority":"normal","title":"ignored","title":"Need help"}'
+                ),
+            }
+        )
     with pytest.raises(graphblocks_openapi.OpenApiToolAdapterError, match="digest does not match"):
         graphblocks_openapi.OpenApiOperationInvocation(**{**direct_kwargs, "arguments_json": '{"title":"changed"}'})
 
@@ -1703,6 +1742,21 @@ def test_openapi_adapter_rejects_invalid_streaming_tool_result_events(monkeypatc
             resolved,
             sequence=1,
             output=({"kind": "text", "text": "draft", "metadata": "bad"},),
+        )
+
+    with pytest.raises(graphblocks_openapi.OpenApiToolAdapterError, match="delta output must be a sequence"):
+        graphblocks_openapi.openapi_tool_result_delta(
+            admitted,
+            resolved,
+            sequence=1,
+            output={"kind": "text", "text": "draft"},
+        )
+    with pytest.raises(graphblocks_openapi.OpenApiToolAdapterError, match="output is invalid"):
+        graphblocks_openapi.openapi_tool_result_delta(
+            admitted,
+            resolved,
+            sequence=1,
+            output=({"kind": "json", "data": {7: "bad"}},),
         )
 
     with pytest.raises(graphblocks_openapi.OpenApiToolAdapterError, match="sizeBytes must be an integer"):

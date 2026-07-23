@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
+from copy import deepcopy
 from dataclasses import dataclass, field
 
 from graphblocks.durable import SinkCommitRequest, SourceCursor, SourceEvent
@@ -9,14 +11,26 @@ class NatsAdapterError(ValueError):
     """Base error for NATS durable adapter contracts."""
 
 
-def _validate_stream(stream: str) -> None:
-    if not stream.strip():
-        raise NatsAdapterError("stream must not be empty")
+def _stable_string(field_name: str, value: object) -> str:
+    if (
+        not isinstance(value, str)
+        or not value.strip()
+        or value != value.strip()
+        or any(ord(character) < 0x20 or ord(character) == 0x7F for character in value)
+    ):
+        raise NatsAdapterError(f"{field_name} must be a stable non-empty string")
+    return value
 
 
-def _validate_subject(subject: str) -> None:
-    if not subject.strip():
-        raise NatsAdapterError("subject must not be empty")
+def _string_mapping(field_name: str, value: object) -> dict[str, str]:
+    if not isinstance(value, Mapping):
+        raise NatsAdapterError(f"{field_name} must be a mapping")
+    normalized: dict[str, str] = {}
+    for key, item in value.items():
+        if not isinstance(item, str):
+            raise NatsAdapterError(f"{field_name} values must be strings")
+        normalized[_stable_string(f"{field_name} key", key)] = item
+    return dict(sorted(normalized.items()))
 
 
 def _validate_integer(field_name: str, value: object, *, minimum: int) -> None:
@@ -35,12 +49,13 @@ class NatsMessage:
     headers: dict[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        _validate_stream(self.stream)
-        _validate_subject(self.subject)
+        _stable_string("stream", self.stream)
+        _stable_string("subject", self.subject)
         _validate_integer("sequence", self.sequence, minimum=1)
         if self.timestamp_unix_ms is not None:
             _validate_integer("timestamp_unix_ms", self.timestamp_unix_ms, minimum=0)
-        object.__setattr__(self, "headers", dict(sorted(self.headers.items())))
+        object.__setattr__(self, "payload", deepcopy(self.payload))
+        object.__setattr__(self, "headers", _string_mapping("headers", self.headers))
 
     def to_source_event(self) -> SourceEvent:
         return SourceEvent(
@@ -57,9 +72,8 @@ class NatsConsumerCursor:
     next_sequence: int
 
     def __post_init__(self) -> None:
-        if not self.durable_name.strip():
-            raise NatsAdapterError("durable_name must not be empty")
-        _validate_stream(self.stream)
+        _stable_string("durable_name", self.durable_name)
+        _stable_string("stream", self.stream)
         _validate_integer("next_sequence", self.next_sequence, minimum=1)
 
     @classmethod
@@ -85,8 +99,9 @@ class NatsPublishMessage:
     headers: dict[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        _validate_subject(self.subject)
-        object.__setattr__(self, "headers", dict(sorted(self.headers.items())))
+        _stable_string("subject", self.subject)
+        object.__setattr__(self, "payload", deepcopy(self.payload))
+        object.__setattr__(self, "headers", _string_mapping("headers", self.headers))
 
     @classmethod
     def from_sink_commit(
@@ -95,6 +110,8 @@ class NatsPublishMessage:
         subject: str,
         request: SinkCommitRequest,
     ) -> NatsPublishMessage:
+        if not isinstance(request, SinkCommitRequest):
+            raise NatsAdapterError("request must be a SinkCommitRequest")
         headers = {
             "Nats-Msg-Id": request.idempotency_key,
             "graphblocks-idempotency-key": request.idempotency_key,

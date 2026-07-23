@@ -88,6 +88,39 @@ def test_nats_rejects_non_integer_timestamps(monkeypatch, invalid_timestamp: obj
         )
 
 
+def test_nats_rejects_malformed_strings_and_headers(monkeypatch) -> None:
+    graphblocks_nats = _import_nats(monkeypatch)
+
+    for kwargs in (
+        {"stream": object()},
+        {"subject": " orders.created"},
+        {"headers": {"tenant": 7}},
+        {"headers": {7: "acme"}},
+    ):
+        with pytest.raises(graphblocks_nats.NatsAdapterError):
+            graphblocks_nats.NatsMessage(
+                **{
+                    "stream": "ORDERS",
+                    "subject": "orders.created",
+                    "sequence": 1,
+                    "payload": {},
+                    **kwargs,
+                }
+            )
+
+
+def test_nats_message_snapshots_payload(monkeypatch) -> None:
+    graphblocks_nats = _import_nats(monkeypatch)
+    payload = {"order": {"state": "created"}}
+
+    message = graphblocks_nats.NatsMessage("ORDERS", "orders.created", 1, payload)
+    payload["order"]["state"] = "cancelled"
+
+    assert message.to_source_event().payload["payload"] == {
+        "order": {"state": "created"}
+    }
+
+
 def test_nats_publish_message_projects_durable_sink_commit(monkeypatch) -> None:
     graphblocks_nats = _import_nats(monkeypatch)
     request = graphblocks_nats.SinkCommitRequest(

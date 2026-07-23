@@ -99,3 +99,24 @@ def test_scripted_provider_detaches_mutable_script_and_metadata_inputs(monkeypat
 
     assert response.text == "response"
     assert response.metadata["run_id"] == "run-1"
+
+
+def test_scripted_provider_rejects_coercive_runtime_values(monkeypatch) -> None:
+    graphblocks_scripted = importlib.import_module("graphblocks.integrations.scripted")
+    provider = graphblocks_scripted.ScriptedModelProvider(scripts={"known": "response"})
+
+    for chunk_size in (True, 1.5):
+        with pytest.raises(graphblocks_scripted.ScriptedModelProviderError, match="chunk_size"):
+            tuple(provider.stream("known", chunk_size=chunk_size))
+    with pytest.raises(graphblocks_scripted.ScriptedModelProviderError, match="sequence"):
+        graphblocks_scripted.ScriptedModelDelta("response-1", True, "delta")
+    with pytest.raises(graphblocks_scripted.ScriptedModelProviderError, match="finished"):
+        graphblocks_scripted.ScriptedModelDelta(
+            "response-1", 1, "delta", finished="false"  # type: ignore[arg-type]
+        )
+    with pytest.raises(graphblocks_scripted.ScriptedModelProviderError, match="usage"):
+        graphblocks_scripted.ScriptedModelResponse(
+            "response-1", "scripted", "scripted", "text", usage={"tokens": True}
+        )
+    with pytest.raises(graphblocks_scripted.ScriptedModelProviderError, match="metadata"):
+        provider.generate("known", metadata=object())

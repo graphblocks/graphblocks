@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import math
 from threading import RLock
 
 from graphblocks.voice import AudioFrame, VadDecision, VadDecisionKind
@@ -10,9 +11,27 @@ class SileroVadAdapterError(ValueError):
     """Base error for Silero VAD adapter contracts."""
 
 
-def _require_non_empty(field_name: str, value: str) -> None:
-    if not value.strip():
+def _require_non_empty(field_name: str, value: object) -> None:
+    if not isinstance(value, str) or not value.strip():
         raise SileroVadAdapterError(f"{field_name} must not be empty")
+
+
+def _integer(field_name: str, value: object, *, positive: bool = False) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise SileroVadAdapterError(f"{field_name} must be an integer")
+    if (positive and value <= 0) or (not positive and value < 0):
+        requirement = "positive" if positive else "non-negative"
+        raise SileroVadAdapterError(f"{field_name} must be {requirement}")
+    return value
+
+
+def _probability(field_name: str, value: object) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise SileroVadAdapterError(f"{field_name} must be numeric")
+    normalized = float(value)
+    if not math.isfinite(normalized) or not 0 <= normalized <= 1:
+        raise SileroVadAdapterError(f"{field_name} must be between 0 and 1")
+    return normalized
 
 
 def _validate_sample_window(sample_rate_hz: int, window_size_samples: int) -> None:
@@ -43,18 +62,26 @@ class SileroVadFrame:
 
     def __post_init__(self) -> None:
         _require_non_empty("stream_id", self.stream_id)
-        if self.sequence < 0:
-            raise SileroVadAdapterError("sequence must be non-negative")
-        if self.start_ms < 0:
-            raise SileroVadAdapterError("start_ms must be non-negative")
-        if self.duration_ms <= 0:
-            raise SileroVadAdapterError("duration_ms must be positive")
-        if not 0 <= self.speech_probability <= 1:
-            raise SileroVadAdapterError("speech_probability must be between 0 and 1")
-        if self.sample_rate_hz <= 0:
-            raise SileroVadAdapterError("sample_rate_hz must be positive")
-        if self.window_size_samples <= 0:
-            raise SileroVadAdapterError("window_size_samples must be positive")
+        object.__setattr__(self, "sequence", _integer("sequence", self.sequence))
+        object.__setattr__(self, "start_ms", _integer("start_ms", self.start_ms))
+        object.__setattr__(
+            self, "duration_ms", _integer("duration_ms", self.duration_ms, positive=True)
+        )
+        object.__setattr__(
+            self,
+            "speech_probability",
+            _probability("speech_probability", self.speech_probability),
+        )
+        object.__setattr__(
+            self,
+            "sample_rate_hz",
+            _integer("sample_rate_hz", self.sample_rate_hz, positive=True),
+        )
+        object.__setattr__(
+            self,
+            "window_size_samples",
+            _integer("window_size_samples", self.window_size_samples, positive=True),
+        )
         _validate_sample_window(self.sample_rate_hz, self.window_size_samples)
         expected_duration_ms = self.window_size_samples * 1_000 // self.sample_rate_hz
         if self.duration_ms != expected_duration_ms:
@@ -104,16 +131,20 @@ class SileroVadAuthority:
 
     def __post_init__(self) -> None:
         _require_non_empty("authority_id", self.authority_id)
-        if not 0 <= self.speech_threshold <= 1:
-            raise SileroVadAdapterError("speech_threshold must be between 0 and 1")
-        if self.min_speech_ms <= 0:
-            raise SileroVadAdapterError("min_speech_ms must be positive")
-        if self.min_silence_ms <= 0:
-            raise SileroVadAdapterError("min_silence_ms must be positive")
-        if self.sample_rate_hz <= 0:
-            raise SileroVadAdapterError("sample_rate_hz must be positive")
-        if self.window_size_samples <= 0:
-            raise SileroVadAdapterError("window_size_samples must be positive")
+        object.__setattr__(
+            self, "speech_threshold", _probability("speech_threshold", self.speech_threshold)
+        )
+        for field_name in (
+            "min_speech_ms",
+            "min_silence_ms",
+            "sample_rate_hz",
+            "window_size_samples",
+        ):
+            object.__setattr__(
+                self,
+                field_name,
+                _integer(field_name, getattr(self, field_name), positive=True),
+            )
         _validate_sample_window(self.sample_rate_hz, self.window_size_samples)
         _require_non_empty("model_ref", self.model_ref)
 
@@ -123,6 +154,10 @@ class SileroVadAuthority:
         *,
         already_in_speech: bool | None = None,
     ) -> VadDecision:
+        if not isinstance(frame, SileroVadFrame):
+            raise SileroVadAdapterError("frame must be a SileroVadFrame")
+        if already_in_speech is not None and not isinstance(already_in_speech, bool):
+            raise SileroVadAdapterError("already_in_speech must be a boolean")
         if (frame.sample_rate_hz, frame.window_size_samples) != (
             self.sample_rate_hz,
             self.window_size_samples,
@@ -131,7 +166,7 @@ class SileroVadAuthority:
         with self._lock:
             state = self._states.get(frame.stream_id)
             if state is None:
-                state = _SileroVadStreamState(in_speech=bool(already_in_speech))
+                state = _SileroVadStreamState(in_speech=already_in_speech or False)
                 self._states[frame.stream_id] = state
             elif state.last_sequence is not None and frame.sequence <= state.last_sequence:
                 raise SileroVadAdapterError(
