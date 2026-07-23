@@ -251,8 +251,9 @@ def _server_request_json_body(request: ServerRequest, owner: str) -> object:
                 if container_depth > MAX_SERVER_REQUEST_JSON_DEPTH:
                     raise ValueError("JSON nesting exceeds the server request limit")
                 pending.extend((item, container_depth) for item in value)
+        canonical_dumps(decoded)
         return decoded
-    except (RecursionError, ValueError) as error:
+    except (RecursionError, TypeError, ValueError) as error:
         raise ValueError(f"{owner} body must be valid JSON") from error
 
 
@@ -393,11 +394,32 @@ def _validate_string_mapping(
         raise ValueError(f"{owner} {field_name} must be a mapping")
     normalized: dict[str, str] = {}
     for key, item in value.items():
-        key_text = _validate_non_empty_string(owner, f"{field_name} key", key)
+        key_text = _validate_exact_non_empty_string(owner, f"{field_name} key", key)
         if not isinstance(item, str):
             raise ValueError(f"{owner} {field_name} values must be strings")
-        normalized[key_text.lower() if lowercase_keys else key_text] = item
+        normalized_key = key_text.lower() if lowercase_keys else key_text
+        if normalized_key in normalized:
+            raise ValueError(f"{owner} {field_name} contains duplicate key {normalized_key!r}")
+        normalized[normalized_key] = item
     return MappingProxyType(normalized)
+
+
+def _validate_http_headers(owner: str, value: object) -> MappingProxyType[str, str]:
+    headers = _validate_string_mapping(owner, "headers", value, lowercase_keys=True)
+    token_punctuation = frozenset("!#$%&'*+-.^_`|~")
+    for key, item in headers.items():
+        if not all(
+            character.isascii()
+            and (character.isalnum() or character in token_punctuation)
+            for character in key
+        ):
+            raise ValueError(f"{owner} headers key must be an HTTP token")
+        if any(
+            (ord(character) < 32 and character != "\t") or ord(character) == 127
+            for character in item
+        ):
+            raise ValueError(f"{owner} headers values must not contain control characters")
+    return headers
 
 
 def _validate_string_sequence(owner: str, field_name: str, value: object) -> tuple[str, ...]:
@@ -420,16 +442,56 @@ def _validate_string_sequence(owner: str, field_name: str, value: object) -> tup
         raise ValueError(f"{owner} {field_name} must be a sequence") from error
 
 
-def _freeze_json_value(owner: str, field_name: str, value: object) -> object:
+def _freeze_json_value(
+    owner: str,
+    field_name: str,
+    value: object,
+    *,
+    _depth: int = 0,
+    _active_containers: set[int] | None = None,
+) -> object:
+    if _depth > MAX_SERVER_REQUEST_JSON_DEPTH:
+        raise ValueError(f"{owner} {field_name} nesting exceeds the server JSON limit")
+    if _active_containers is None:
+        _active_containers = set()
     if isinstance(value, Mapping):
+        container_id = id(value)
+        if container_id in _active_containers:
+            raise ValueError(f"{owner} {field_name} must not be recursive")
+        _active_containers.add(container_id)
         frozen: dict[str, object] = {}
-        for key, item in value.items():
-            if not isinstance(key, str) or not key.strip():
-                raise ValueError(f"{owner} {field_name} keys must be non-empty strings")
-            frozen[key] = _freeze_json_value(owner, f"{field_name}.{key}", item)
-        return MappingProxyType(frozen)
+        try:
+            for key, item in value.items():
+                if not isinstance(key, str) or not key.strip():
+                    raise ValueError(f"{owner} {field_name} keys must be non-empty strings")
+                frozen[key] = _freeze_json_value(
+                    owner,
+                    f"{field_name}.{key}",
+                    item,
+                    _depth=_depth + 1,
+                    _active_containers=_active_containers,
+                )
+            return MappingProxyType(frozen)
+        finally:
+            _active_containers.remove(container_id)
     if isinstance(value, list | tuple):
-        return tuple(_freeze_json_value(owner, field_name, item) for item in value)
+        container_id = id(value)
+        if container_id in _active_containers:
+            raise ValueError(f"{owner} {field_name} must not be recursive")
+        _active_containers.add(container_id)
+        try:
+            return tuple(
+                _freeze_json_value(
+                    owner,
+                    field_name,
+                    item,
+                    _depth=_depth + 1,
+                    _active_containers=_active_containers,
+                )
+                for item in value
+            )
+        finally:
+            _active_containers.remove(container_id)
     if value is None or isinstance(value, str | bool | int):
         return value
     if isinstance(value, float):
@@ -829,7 +891,7 @@ class ServerAuthRequest:
         object.__setattr__(
             self,
             "headers",
-            _validate_string_mapping("server auth request", "headers", self.headers, lowercase_keys=True),
+            _validate_http_headers("server auth request", self.headers),
         )
         object.__setattr__(self, "query", _validate_string_mapping("server auth request", "query", self.query))
         object.__setattr__(self, "cookies", _validate_string_mapping("server auth request", "cookies", self.cookies))
@@ -862,7 +924,7 @@ class ServerRequest:
         object.__setattr__(
             self,
             "headers",
-            _validate_string_mapping("server request", "headers", self.headers, lowercase_keys=True),
+            _validate_http_headers("server request", self.headers),
         )
         object.__setattr__(self, "query", _validate_string_mapping("server request", "query", self.query))
         object.__setattr__(self, "cookies", _validate_string_mapping("server request", "cookies", self.cookies))
@@ -892,7 +954,7 @@ class ServerResponse:
         object.__setattr__(
             self,
             "headers",
-            _validate_string_mapping("server response", "headers", self.headers, lowercase_keys=True),
+            _validate_http_headers("server response", self.headers),
         )
         if not isinstance(self.body, (bytes, bytearray, memoryview)):
             raise ValueError("server response body must be bytes")
@@ -906,6 +968,7 @@ class ServerResponse:
         if not isinstance(payload, Mapping):
             raise ValueError("server response JSON payload must be a mapping")
         payload_copy = _response_json_object(_freeze_json_value("server response JSON", "payload", payload))
+        canonical_dumps(payload_copy)
         return cls(
             status_code=status_code,
             headers={"content-type": "application/json"},

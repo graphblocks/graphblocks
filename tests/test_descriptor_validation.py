@@ -337,6 +337,34 @@ def test_block_catalog_rejects_non_canonical_inline_block_version() -> None:
         BlockCatalog.from_blocks([{"typeId": "bad.version@01"}])
 
 
+@pytest.mark.parametrize(
+    "block",
+    (
+        {"typeId": "alias.one", "type_id": "alias.two", "version": 1},
+        {"typeId": "alias.one", "block": "alias.two", "version": 1},
+        {"type_id": "alias.one", "block": "alias.two", "version": 1},
+        {
+            "typeId": "alias.one",
+            "type_id": "alias.two",
+            "block": "alias.three",
+            "version": 1,
+        },
+    ),
+)
+def test_block_catalog_rejects_ambiguous_identity_aliases(block: dict[str, object]) -> None:
+    with pytest.raises(
+        ValueError,
+        match="must declare exactly one of typeId, type_id, or block",
+    ):
+        BlockCatalog.from_blocks([block])  # type: ignore[list-item]
+
+
+@pytest.mark.parametrize("blocks", (None, "not-a-sequence", [None]))
+def test_block_catalog_rejects_malformed_block_collections(blocks: object) -> None:
+    with pytest.raises(ValueError, match="block catalog (blocks must be a sequence|entry 0 must be a mapping)"):
+        BlockCatalog.from_blocks(blocks)  # type: ignore[arg-type]
+
+
 def test_compile_rejects_edge_to_unknown_input_port() -> None:
     catalog = BlockCatalog.from_blocks(
         [

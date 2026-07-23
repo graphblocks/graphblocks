@@ -713,9 +713,21 @@ class BlockCatalog:
         *,
         allow_unknown_blocks: bool = False,
     ) -> BlockCatalog:
+        if not isinstance(blocks, (list, tuple)):
+            raise ValueError("block catalog blocks must be a sequence")
         descriptors: dict[str, BlockDescriptor] = {}
         for block_index, block in enumerate(blocks):
-            block_type = block.get("typeId") or block.get("type_id") or block.get("block")
+            if not isinstance(block, Mapping):
+                raise ValueError(f"block catalog entry {block_index} must be a mapping")
+            identity_keys = tuple(
+                key for key in ("typeId", "type_id", "block") if key in block
+            )
+            if len(identity_keys) != 1:
+                raise ValueError(
+                    f"block catalog entry {block_index} must declare exactly one of "
+                    "typeId, type_id, or block"
+                )
+            block_type = block[identity_keys[0]]
             version = block.get("version")
             if isinstance(block_type, str) and "@" in block_type and version is None:
                 block_type, version = block_type.rsplit("@", 1)

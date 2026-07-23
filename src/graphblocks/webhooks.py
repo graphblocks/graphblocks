@@ -6,14 +6,13 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 import hmac
-import json
 import math
 import socket
 from threading import RLock
 from typing import Protocol
 from urllib.parse import urlparse
 
-from .canonical import canonical_dumps, canonical_hash
+from .canonical import MAX_CANONICAL_JSON_DEPTH, canonical_dumps, canonical_hash
 from .documents import ArtifactRef
 from .server import ServerCallbackDeliveryResult, ServerCallbackRegistration
 from .url_validation import validate_webhook_url
@@ -205,7 +204,19 @@ def _string_headers(headers: Mapping[str, str] | None) -> dict[str, str]:
     return normalized
 
 
-def _freeze_json_value(value: object, *, key_path: str = "payload") -> object:
+def _freeze_json_value(
+    value: object,
+    *,
+    key_path: str = "payload",
+    _depth: int = 0,
+    _active_containers: set[int] | None = None,
+) -> object:
+    if _depth > MAX_CANONICAL_JSON_DEPTH:
+        raise ValueError(
+            f"payload nesting must not exceed {MAX_CANONICAL_JSON_DEPTH} levels"
+        )
+    if _active_containers is None:
+        _active_containers = set()
     if value is None or isinstance(value, str) or isinstance(value, bool):
         return value
     if isinstance(value, int):
@@ -215,22 +226,64 @@ def _freeze_json_value(value: object, *, key_path: str = "payload") -> object:
             raise ValueError("payload must not contain non-finite numbers")
         return value
     if isinstance(value, _FrozenJsonArray):
-        return _FrozenJsonArray(_freeze_json_value(item, key_path=key_path) for item in value)
+        container_id = id(value)
+        if container_id in _active_containers:
+            raise ValueError("payload must not be recursive")
+        _active_containers.add(container_id)
+        try:
+            return _FrozenJsonArray(
+                _freeze_json_value(
+                    item,
+                    key_path=key_path,
+                    _depth=_depth + 1,
+                    _active_containers=_active_containers,
+                )
+                for item in value
+            )
+        finally:
+            _active_containers.remove(container_id)
     if isinstance(value, list):
-        return _FrozenJsonArray(_freeze_json_value(item, key_path=key_path) for item in value)
+        container_id = id(value)
+        if container_id in _active_containers:
+            raise ValueError("payload must not be recursive")
+        _active_containers.add(container_id)
+        try:
+            return _FrozenJsonArray(
+                _freeze_json_value(
+                    item,
+                    key_path=key_path,
+                    _depth=_depth + 1,
+                    _active_containers=_active_containers,
+                )
+                for item in value
+            )
+        finally:
+            _active_containers.remove(container_id)
     if isinstance(value, tuple):
         raise ValueError("payload must contain only JSON values")
     if isinstance(value, Mapping):
+        container_id = id(value)
+        if container_id in _active_containers:
+            raise ValueError("payload must not be recursive")
+        _active_containers.add(container_id)
         frozen: dict[str, object] = {}
-        for key, item in value.items():
-            if not isinstance(key, str):
-                raise ValueError("payload must contain only string object keys")
-            if not key.strip():
-                raise ValueError(f"{key_path} keys must be non-empty strings")
-            if key != key.strip():
-                raise ValueError(f"{key_path} keys must not contain surrounding whitespace")
-            frozen[key] = _freeze_json_value(item, key_path=f"{key_path}.{key}")
-        return _FrozenJsonObject(frozen)
+        try:
+            for key, item in value.items():
+                if not isinstance(key, str):
+                    raise ValueError("payload must contain only string object keys")
+                if not key.strip():
+                    raise ValueError(f"{key_path} keys must be non-empty strings")
+                if key != key.strip():
+                    raise ValueError(f"{key_path} keys must not contain surrounding whitespace")
+                frozen[key] = _freeze_json_value(
+                    item,
+                    key_path=f"{key_path}.{key}",
+                    _depth=_depth + 1,
+                    _active_containers=_active_containers,
+                )
+            return _FrozenJsonObject(frozen)
+        finally:
+            _active_containers.remove(container_id)
     raise ValueError("payload must contain only JSON values")
 
 
@@ -253,7 +306,7 @@ def _json_payload(value: Mapping[str, object]) -> _FrozenJsonObject:
     frozen = _freeze_json_value(value)
     if not isinstance(frozen, _FrozenJsonObject):
         raise ValueError("payload must be a JSON object")
-    json.dumps(frozen, allow_nan=False)
+    canonical_dumps(frozen)
     return frozen
 
 
@@ -506,7 +559,11 @@ class CallbackRetryPolicy:
     def delay_ms(self, *, delivery_id: str, attempt: int) -> int:
         _require_stable_string("delivery_id", delivery_id)
         attempt = _positive_int("attempt", attempt)
-        base = min(self.max_delay_ms, self.initial_delay_ms * (2 ** max(0, attempt - 1)))
+        exponent = attempt - 1
+        if exponent >= self.max_delay_ms.bit_length():
+            base = self.max_delay_ms
+        else:
+            base = min(self.max_delay_ms, self.initial_delay_ms << exponent)
         jitter = _deterministic_jitter_ms(f"{delivery_id}:{attempt}", self.jitter_ms)
         return min(self.max_delay_ms, base + jitter)
 

@@ -409,6 +409,16 @@ def test_server_request_auth_and_response_validate_contracts() -> None:
         ServerRequest(method="GET", path="/health", headers={" ": "value"}, query={}, cookies={})
     with pytest.raises(ValueError, match="server request headers values must be strings"):
         ServerRequest(method="GET", path="/health", headers={"x": object()}, query={}, cookies={})  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="server request headers key must be an HTTP token"):
+        ServerRequest(method="GET", path="/health", headers={"Bad Header": "value"}, query={}, cookies={})
+    with pytest.raises(ValueError, match="server request headers values must not contain control characters"):
+        ServerRequest(
+            method="GET",
+            path="/health",
+            headers={"x-value": "safe\r\nX-Injected: true"},
+            query={},
+            cookies={},
+        )
     with pytest.raises(ValueError, match="server request query values must be strings"):
         ServerRequest(method="GET", path="/health", headers={}, query={"cursor": object()}, cookies={})  # type: ignore[arg-type]
     with pytest.raises(ValueError, match="server request cookies values must be strings"):
@@ -439,6 +449,10 @@ def test_server_request_auth_and_response_validate_contracts() -> None:
         ServerResponse(status_code=99, headers={}, body=b"")
     with pytest.raises(ValueError, match="server response headers values must be strings"):
         ServerResponse(status_code=200, headers={"x": object()}, body=b"")  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="server response headers key must be an HTTP token"):
+        ServerResponse(status_code=200, headers={"Bad Header": "value"}, body=b"")
+    with pytest.raises(ValueError, match="server response headers values must not contain control characters"):
+        ServerResponse(status_code=200, headers={"x-value": "safe\0trailer"}, body=b"")
     with pytest.raises(ValueError, match="server response body must be bytes"):
         ServerResponse(status_code=200, headers={}, body=object())  # type: ignore[arg-type]
     with pytest.raises(ValueError, match="server response JSON payload must be a mapping"):
@@ -455,6 +469,8 @@ def test_server_request_auth_and_response_validate_contracts() -> None:
         ServerResponse.json(200, {"nested": {"score": math.inf}})
     with pytest.raises(ValueError, match="server response JSON payload.nested keys must be non-empty strings"):
         ServerResponse.json(200, {"nested": {1: "coerced"}})  # type: ignore[dict-item]
+    with pytest.raises(ValueError, match="Unicode scalar values"):
+        ServerResponse.json(200, {"text": "\ud800"})
 
 
 def test_application_protocol_capabilities_negotiate_intersection() -> None:
@@ -597,6 +613,28 @@ def test_server_app_rejects_non_standard_request_json_constants() -> None:
             query={},
             cookies={},
             body=b'{"graph": NaN}',
+            requested_at="2026-06-24T00:00:02Z",
+        )
+    )
+
+    assert response.status_code == 400
+    assert json.loads(response.body.decode("utf-8")) == {
+        "ok": False,
+        "error": "run request body must be valid JSON",
+    }
+
+
+def test_server_app_rejects_non_unicode_request_json_strings() -> None:
+    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+
+    response = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=b'{"graph":{},"runId":"\\ud800"}',
             requested_at="2026-06-24T00:00:02Z",
         )
     )
@@ -6001,6 +6039,44 @@ def test_server_async_callback_submission_deep_freezes_nested_payload() -> None:
         submission.payload["summary"]["passed"] = False  # type: ignore[index]
     with pytest.raises(TypeError):
         submission.payload["checks"][0]["status"] = "failed"  # type: ignore[index]
+
+
+def test_server_models_reject_recursive_and_overdeep_json_snapshots() -> None:
+    recursive: dict[str, object] = {}
+    recursive["self"] = recursive
+
+    too_deep: dict[str, object] = {}
+    nested = too_deep
+    for _ in range(MAX_SERVER_REQUEST_JSON_DEPTH + 1):
+        child: dict[str, object] = {}
+        nested["child"] = child
+        nested = child
+
+    for payload, message in (
+        (recursive, "server async callback .* must not be recursive"),
+        (too_deep, "server async callback .* nesting exceeds the server JSON limit"),
+    ):
+        with pytest.raises(ValueError, match=message):
+            ServerAsyncCallbackSubmission(
+                operation_id="op-ci-1",
+                callback_id="cb-1",
+                idempotency_key="idem-callback-1",
+                payload=payload,
+            )
+
+
+def test_server_request_rejects_duplicate_case_insensitive_header_names() -> None:
+    with pytest.raises(ValueError, match="server request headers contains duplicate key"):
+        ServerRequest(
+            method="GET",
+            path="/health",
+            headers={
+                "Authorization": "Bearer trusted",
+                "authorization": "Bearer attacker",
+            },
+            query={},
+            cookies={},
+        )
 
 
 def test_server_async_callback_submission_preserves_artifacts() -> None:

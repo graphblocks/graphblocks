@@ -439,6 +439,13 @@ def test_client_package_builds_remote_tool_definition_binding_and_invocation(mon
         graphblocks_client.RemoteToolInvocation(**{**direct_kwargs, "arguments_json": "[]"})
     with pytest.raises(graphblocks_client.RemoteToolAdapterError, match="arguments_json must be valid JSON"):
         graphblocks_client.RemoteToolInvocation(**{**direct_kwargs, "arguments_json": '{"score": NaN}'})
+    with pytest.raises(graphblocks_client.RemoteToolAdapterError, match="arguments_json must be valid JSON"):
+        graphblocks_client.RemoteToolInvocation(
+            **{
+                **direct_kwargs,
+                "arguments_json": '{"query":"ignored","query":"billing","limit":5}',
+            }
+        )
     with pytest.raises(graphblocks_client.RemoteToolAdapterError, match="digest does not match"):
         graphblocks_client.RemoteToolInvocation(**{**direct_kwargs, "arguments_json": '{"query":"changed"}'})
     assert "prepare_remote_tool_invocation" in graphblocks_client.__all__
@@ -1705,6 +1712,37 @@ def test_client_package_rejects_non_standard_http_json_constants(monkeypatch) ->
 
     with pytest.raises(ValueError, match="GraphBlocks health response must be valid JSON"):
         client.health()
+
+
+def test_client_package_rejects_ambiguous_or_overdeep_http_json() -> None:
+    graphblocks_client = importlib.import_module("graphblocks.client")
+
+    too_deep: dict[str, object] = {}
+    nested = too_deep
+    for _ in range(65):
+        child: dict[str, object] = {}
+        nested["child"] = child
+        nested = child
+    bodies = (
+        b'{"ok":true,"ok":false}',
+        json.dumps({"value": too_deep}).encode("utf-8"),
+    )
+
+    class FakeResponse:
+        def __init__(self, body: bytes) -> None:
+            self.body = body
+
+        def read(self) -> bytes:
+            return self.body
+
+    for body in bodies:
+        client = graphblocks_client.HttpGraphBlocksClient(
+            "https://graphblocks.example/api",
+            transport=lambda request, *, timeout, body=body: FakeResponse(body),
+        )
+
+        with pytest.raises(ValueError, match="GraphBlocks health response must be valid JSON"):
+            client.health()
 
 
 @pytest.mark.parametrize("status_code", (True, "500"))

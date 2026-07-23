@@ -57,6 +57,27 @@ def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
 
+def _strict_json_loads(value: str | bytes) -> object:
+    def reject_duplicate_keys(pairs: list[tuple[str, object]]) -> dict[str, object]:
+        decoded: dict[str, object] = {}
+        for key, item in pairs:
+            if key in decoded:
+                raise ValueError(f"duplicate JSON object key {key!r}")
+            decoded[key] = item
+        return decoded
+
+    try:
+        decoded = json.loads(
+            value,
+            parse_constant=lambda constant: (_ for _ in ()).throw(ValueError(constant)),
+            object_pairs_hook=reject_duplicate_keys,
+        )
+        canonical_dumps(decoded)
+    except RecursionError as error:
+        raise ValueError("JSON nesting exceeds the canonical limit") from error
+    return decoded
+
+
 @dataclass(frozen=True, slots=True)
 class RunGraphCommand:
     graph: dict[str, object]
@@ -292,11 +313,8 @@ class RemoteToolInvocation:
 
 def _remote_invocation_arguments(arguments_json: str) -> dict[str, object]:
     try:
-        arguments = json.loads(
-            arguments_json,
-            parse_constant=lambda constant: (_ for _ in ()).throw(ValueError(constant)),
-        )
-    except (ValueError, json.JSONDecodeError) as error:
+        arguments = _strict_json_loads(arguments_json)
+    except (TypeError, ValueError) as error:
         raise RemoteToolAdapterError("remote invocation arguments_json must be valid JSON") from error
     if not isinstance(arguments, Mapping):
         raise RemoteToolAdapterError("remote invocation arguments_json must decode to an object")
@@ -1794,11 +1812,8 @@ def _read_json_response(response: object, label: str) -> dict[str, object]:
         if not isinstance(raw_body, bytes):
             raise ValueError(f"{label} body must be bytes")
         try:
-            payload = json.loads(
-                raw_body.decode("utf-8"),
-                parse_constant=lambda constant: (_ for _ in ()).throw(ValueError(constant)),
-            )
-        except ValueError as error:
+            payload = _strict_json_loads(raw_body)
+        except (TypeError, ValueError) as error:
             if status_code is not None and status_code >= 400:
                 raise GraphBlocksHttpError(status_code, {}, raw_body=raw_body) from error
             raise ValueError(f"{label} must be valid JSON") from error

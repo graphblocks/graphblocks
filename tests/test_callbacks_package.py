@@ -112,6 +112,37 @@ def test_callback_envelope_deep_copies_payload() -> None:
     assert envelope.to_payload()["payload"] == {"summary": {"files": ["a.py"]}}
 
 
+def test_callback_envelope_rejects_recursive_overdeep_and_non_unicode_payloads() -> None:
+    recursive: dict[str, object] = {}
+    recursive["self"] = recursive
+
+    too_deep: dict[str, object] = {}
+    nested = too_deep
+    for _ in range(65):
+        child: dict[str, object] = {}
+        nested["child"] = child
+        nested = child
+
+    envelope_kwargs = {
+        "delivery_id": "del_001",
+        "subscription_id": "sub_001",
+        "event_id": "evt_1042",
+        "run_id": "run_coding_001",
+        "sequence": 1042,
+        "cursor": "evt_1042",
+        "type": "ReviewRequested",
+        "idempotency_key": "sub_001:evt_1042",
+        "occurred_at": "2026-07-02T00:00:00Z",
+    }
+
+    with pytest.raises(ValueError, match="payload must not be recursive"):
+        CallbackEnvelope(payload=recursive, **envelope_kwargs)
+    with pytest.raises(ValueError, match="payload nesting must not exceed 64 levels"):
+        CallbackEnvelope(payload=too_deep, **envelope_kwargs)
+    with pytest.raises(ValueError, match="Unicode scalar values"):
+        CallbackEnvelope(payload={"value": "\ud800"}, **envelope_kwargs)
+
+
 def test_callback_envelope_freezes_internal_payload_snapshot() -> None:
     envelope = CallbackEnvelope(
         delivery_id="del_001",
@@ -729,6 +760,17 @@ def test_callback_retry_policy_normalizes_zero_delay_floor() -> None:
     assert policy.max_delay_ms == 1
     assert policy.delay_ms(delivery_id="del_001", attempt=1) == 1
     assert policy.delay_ms(delivery_id="del_001", attempt=8) == 1
+
+
+def test_callback_retry_policy_caps_hostile_attempt_without_large_integer_growth() -> None:
+    policy = CallbackRetryPolicy(
+        max_attempts=4,
+        initial_delay_ms=100,
+        max_delay_ms=1_000,
+        jitter_ms=0,
+    )
+
+    assert policy.delay_ms(delivery_id="del_001", attempt=10**9) == 1_000
 
 
 def test_callback_delivery_schedule_retry_validates_policy_type() -> None:
