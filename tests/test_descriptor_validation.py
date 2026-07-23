@@ -545,6 +545,32 @@ def test_direct_output_requiredness_predicate_construction_fails_closed(
         OutputRequirednessPredicate(**predicate)  # type: ignore[arg-type]
 
 
+def test_direct_output_requiredness_predicate_snapshots_operands() -> None:
+    phase = OutputRequirednessPredicate(operator="phase", phase="initial")
+    operands = [phase]
+
+    predicate = OutputRequirednessPredicate(
+        operator="all",
+        operands=operands,  # type: ignore[arg-type]
+    )
+    operands.clear()
+
+    assert predicate.operands == (phase,)
+
+
+def test_block_descriptor_normalizes_hostile_collection_failures() -> None:
+    class ExplodingPorts:
+        def __iter__(self):
+            raise RuntimeError("source changed during iteration")
+
+    with pytest.raises(TypeError, match="inputs, outputs, and resource_slots"):
+        BlockDescriptor(
+            "example.hostile",
+            1,
+            inputs=ExplodingPorts(),  # type: ignore[arg-type]
+        )
+
+
 @pytest.mark.parametrize(
     "required_when",
     [

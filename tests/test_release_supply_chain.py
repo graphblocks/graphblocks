@@ -4,7 +4,6 @@ from datetime import datetime, timezone
 from decimal import Decimal
 import importlib.util
 import json
-import os
 from pathlib import Path
 import re
 import subprocess
@@ -1649,9 +1648,9 @@ def test_release_bundle_binds_exact_platform_artifacts_evidence_tools_and_rehear
     }
     graphblocks_ref = f"pkg:pypi/graphblocks@{RELEASE_VERSION}"
     assert {
-        f"pkg:pypi/jsonschema@4.25.1",
-        f"pkg:pypi/packaging@25.0",
-        f"pkg:pypi/PyYAML@6.0.2",
+        "pkg:pypi/jsonschema@4.25.1",
+        "pkg:pypi/packaging@25.0",
+        "pkg:pypi/PyYAML@6.0.2",
     }.issubset(dependency_graph[graphblocks_ref])
 
     provenance = json.loads((bundle / "provenance.intoto.json").read_text(encoding="utf-8"))

@@ -353,6 +353,42 @@ def test_load_package_catalog_rejects_duplicate_yaml_keys(tmp_path) -> None:
         load_package_catalog(catalog_path)
 
 
+@pytest.mark.parametrize(
+    ("entries", "message"),
+    (
+        (
+            "artifacts:\n"
+            "- distribution: same-wheel\n"
+            "- distribution: Same_Wheel\n"
+            "components: []\n",
+            "artifact distributions must be unique",
+        ),
+        (
+            "artifacts: []\n"
+            "components:\n"
+            "- name: same-component\n"
+            "- name: same-component\n",
+            "component names must be unique",
+        ),
+    ),
+)
+def test_load_package_catalog_rejects_duplicate_identities(
+    tmp_path,
+    entries: str,
+    message: str,
+) -> None:
+    catalog_path = tmp_path / "package-catalog.yaml"
+    catalog_path.write_text(
+        "catalogVersion: 1\n"
+        "specVersion: '1.0'\n"
+        f"{entries}",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match=message):
+        load_package_catalog(catalog_path)
+
+
 def test_catalog_declares_three_python_artifacts_and_operator_delivery_artifact() -> None:
     catalog = load_package_catalog()
     artifacts = {
@@ -1082,6 +1118,110 @@ def test_package_lock_records_are_deterministic_and_reject_unstable_collections(
             None,
             None,
             dependencies={"dependency": True},  # type: ignore[arg-type]
+        )
+
+
+def test_package_lock_records_normalize_hostile_collections_and_constraints() -> None:
+    class ExplodingValues:
+        def __iter__(self):
+            raise RuntimeError("source changed during iteration")
+
+    with pytest.raises(ValueError, match="dependencies must be a collection"):
+        PackageLockEntry(
+            "component",
+            "graphblocks",
+            None,
+            None,
+            False,
+            None,
+            None,
+            None,
+            dependencies=ExplodingValues(),  # type: ignore[arg-type]
+        )
+    with pytest.raises(ValueError, match="version_constraint must be a valid specifier"):
+        PackageLockEntry(
+            "component",
+            "graphblocks",
+            "not a specifier",
+            None,
+            False,
+            None,
+            None,
+            None,
+        )
+    with pytest.raises(ValueError, match="entries must be a collection"):
+        PackageLock(
+            1,
+            "1.0",
+            requested=(),
+            entries=ExplodingValues(),  # type: ignore[arg-type]
+        )
+    with pytest.raises(ValueError, match="artifact must be a valid distribution"):
+        PackageLockEntry(
+            "component",
+            "not a distribution",
+            None,
+            None,
+            False,
+            None,
+            None,
+            None,
+        )
+
+
+def test_package_lock_builder_rejects_falsey_and_malformed_contract_inputs() -> None:
+    catalog = load_package_catalog()
+
+    with pytest.raises(ValueError, match="include_default must be a boolean"):
+        build_package_lock(catalog, include_default=0)  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="requested must be a collection"):
+        build_package_lock(catalog, requested="")  # type: ignore[arg-type]
+
+    malformed = dict(catalog)
+    malformed["artifacts"] = {}
+    with pytest.raises(ValueError, match="package catalog artifacts must be a list"):
+        build_package_lock(malformed)
+
+    malformed = dict(catalog)
+    malformed["components"] = [None]
+    with pytest.raises(
+        ValueError,
+        match="package catalog component entries must be mappings",
+    ):
+        build_package_lock(malformed)
+    with pytest.raises(
+        ValueError,
+        match="package catalog components must be a list",
+    ):
+        package_rows({"components": ""})
+    malformed = {
+        "catalogVersion": 1,
+        "specVersion": "1.0",
+        "artifacts": [],
+        "components": [{"name": " component-1"}],
+    }
+    with pytest.raises(
+        ValueError,
+        match="package component name must not contain surrounding whitespace",
+    ):
+        build_package_lock(malformed, include_default=False)
+
+    invalid_constraint_catalog = {
+        "catalogVersion": 1,
+        "specVersion": "1.0",
+        "artifacts": [
+            {
+                "distribution": "example-wheel",
+                "versionConstraint": "not a specifier",
+            }
+        ],
+        "components": [],
+    }
+    with pytest.raises(ValueError, match="versionConstraint must be a valid specifier"):
+        build_package_lock(
+            invalid_constraint_catalog,
+            requested=("example-wheel",),
+            include_default=False,
         )
 
 

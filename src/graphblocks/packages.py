@@ -11,7 +11,7 @@ from typing import Any, Literal
 
 from packaging.requirements import InvalidRequirement, Requirement
 from packaging.specifiers import InvalidSpecifier, SpecifierSet
-from packaging.utils import canonicalize_name
+from packaging.utils import InvalidName, canonicalize_name
 from packaging.version import InvalidVersion, Version
 import yaml
 
@@ -40,12 +40,42 @@ def _validate_optional_non_empty_string(owner: str, field_name: str, value: obje
     return _validate_non_empty_string(owner, field_name, value)
 
 
+def _canonical_distribution(owner: str, field_name: str, value: object) -> str:
+    distribution = _validate_non_empty_string(owner, field_name, value)
+    try:
+        return canonicalize_name(distribution, validate=True)
+    except InvalidName as error:
+        raise ValueError(
+            f"{owner} {field_name} must be a valid distribution name"
+        ) from error
+
+
+def _validate_version_constraint(
+    owner: str,
+    field_name: str,
+    value: object | None,
+) -> str | None:
+    version_constraint = _validate_optional_non_empty_string(
+        owner,
+        field_name,
+        value,
+    )
+    if version_constraint is not None:
+        try:
+            SpecifierSet(version_constraint)
+        except InvalidSpecifier as error:
+            raise ValueError(
+                f"{owner} {field_name} must be a valid specifier"
+            ) from error
+    return version_constraint
+
+
 def _validate_string_tuple(owner: str, field_name: str, value: object) -> tuple[str, ...]:
     if isinstance(value, (str, bytes, bytearray, Mapping)):
         raise ValueError(f"{owner} {field_name} must be a collection of strings")
     try:
         items = tuple(value)  # type: ignore[arg-type]
-    except TypeError as error:
+    except (TypeError, RuntimeError) as error:
         raise ValueError(f"{owner} {field_name} must be a collection of strings") from error
     for item in items:
         _validate_non_empty_string(owner, f"{field_name} item", item)
@@ -81,11 +111,15 @@ class PackageLockEntry:
         _validate_non_empty_string(
             "package lock entry", "distribution", self.distribution
         )
-        artifact = _validate_non_empty_string(
+        artifact = _canonical_distribution(
             "package lock entry", "artifact", self.artifact
         )
-        object.__setattr__(self, "artifact", canonicalize_name(artifact.strip()))
-        _validate_optional_non_empty_string("package lock entry", "version_constraint", self.version_constraint)
+        object.__setattr__(self, "artifact", artifact)
+        _validate_version_constraint(
+            "package lock entry",
+            "version_constraint",
+            self.version_constraint,
+        )
         _validate_optional_non_empty_string("package lock entry", "import_package", self.import_package)
         if not isinstance(self.default, bool):
             raise ValueError("package lock entry default must be a boolean")
@@ -171,7 +205,10 @@ class PackageLock:
                 )
             ),
         )
-        entries = tuple(self.entries)
+        try:
+            entries = tuple(self.entries)
+        except (TypeError, RuntimeError) as error:
+            raise ValueError("package lock entries must be a collection") from error
         if any(not isinstance(entry, PackageLockEntry) for entry in entries):
             raise ValueError("package lock entries must be PackageLockEntry")
         distributions = [entry.distribution for entry in entries]
@@ -179,7 +216,11 @@ class PackageLock:
             raise ValueError("package lock entries must have unique distributions")
         object.__setattr__(self, "entries", entries)
         artifacts = tuple(
-            canonicalize_name(artifact.strip())
+            _canonical_distribution(
+                "package lock",
+                "artifacts item",
+                artifact,
+            )
             for artifact in _validate_string_tuple(
                 "package lock", "artifacts", self.artifacts
             )
@@ -235,6 +276,11 @@ class WheelBuildTarget:
     def __post_init__(self) -> None:
         for field_name in ("distribution", "manifest", "backend", "source_layout"):
             _validate_non_empty_string("wheel build target", field_name, getattr(self, field_name))
+        _canonical_distribution(
+            "wheel build target",
+            "distribution",
+            self.distribution,
+        )
         if "\\" in self.manifest:
             raise ValueError(
                 "wheel build target manifest must be a relative POSIX path"
@@ -287,14 +333,20 @@ class WheelMatrix:
     diagnostics: tuple[Diagnostic, ...] = field(default_factory=tuple)
 
     def __post_init__(self) -> None:
-        targets = tuple(self.targets)
+        try:
+            targets = tuple(self.targets)
+        except (TypeError, RuntimeError) as error:
+            raise ValueError("wheel matrix targets must be a collection") from error
         if any(not isinstance(target, WheelBuildTarget) for target in targets):
             raise ValueError("wheel matrix targets must be WheelBuildTarget")
         distributions = [canonicalize_name(target.distribution) for target in targets]
         if len(set(distributions)) != len(distributions):
             raise ValueError("wheel matrix targets must have unique distributions")
         object.__setattr__(self, "targets", tuple(sorted(targets, key=lambda item: item.distribution)))
-        diagnostics = tuple(self.diagnostics)
+        try:
+            diagnostics = tuple(self.diagnostics)
+        except (TypeError, RuntimeError) as error:
+            raise ValueError("wheel matrix diagnostics must be a collection") from error
         if any(not isinstance(diagnostic, Diagnostic) for diagnostic in diagnostics):
             raise ValueError("wheel matrix diagnostics must be Diagnostic")
         object.__setattr__(
@@ -359,7 +411,7 @@ def _package_catalog_snapshot(catalog: object) -> dict[str, Any]:
         raise ValueError("package catalog must be a mapping")
     try:
         snapshot = canonical_loads(canonical_dumps(catalog))
-    except (TypeError, ValueError) as error:
+    except (TypeError, ValueError, RuntimeError) as error:
         raise ValueError(
             "package catalog must contain only canonical JSON values"
         ) from error
@@ -383,24 +435,58 @@ def load_package_catalog(path: str | Path | None = None) -> dict[str, Any]:
     spec_version = catalog.get("specVersion")
     if not isinstance(spec_version, str) or not spec_version.strip():
         raise ValueError("package catalog specVersion must be a non-empty string")
+    _validate_non_empty_string(
+        "package catalog",
+        "specVersion",
+        spec_version,
+    )
     artifacts = catalog.get("artifacts")
     if not isinstance(artifacts, list):
         raise ValueError("package catalog artifacts must be a list")
+    artifact_distributions: set[str] = set()
     for artifact in artifacts:
         if not isinstance(artifact, dict):
             raise ValueError("package catalog artifact entries must be mappings")
         distribution = artifact.get("distribution")
         if not isinstance(distribution, str) or not distribution.strip():
-            raise ValueError("package catalog artifact distribution must be a non-empty string")
+            raise ValueError(
+                "package catalog artifact distribution must be a non-empty string"
+            )
+        canonical_distribution = _canonical_distribution(
+            "package catalog artifact",
+            "distribution",
+            distribution,
+        )
+        if canonical_distribution in artifact_distributions:
+            raise ValueError(
+                "package catalog artifact distributions must be unique"
+            )
+        artifact_distributions.add(canonical_distribution)
+        _validate_version_constraint(
+            "package catalog artifact",
+            "versionConstraint",
+            artifact.get("versionConstraint"),
+        )
     components = catalog.get("components")
     if not isinstance(components, list):
         raise ValueError("package catalog components must be a list")
+    component_names: set[str] = set()
     for component in components:
         if not isinstance(component, dict):
             raise ValueError("package catalog component entries must be mappings")
         name = component.get("name")
         if not isinstance(name, str) or not name.strip():
-            raise ValueError("package catalog component name must be a non-empty string")
+            raise ValueError(
+                "package catalog component name must be a non-empty string"
+            )
+        exact_name = _validate_non_empty_string(
+            "package catalog component",
+            "name",
+            name,
+        )
+        if exact_name in component_names:
+            raise ValueError("package catalog component names must be unique")
+        component_names.add(exact_name)
         if not isinstance(component.get("default", False), bool):
             raise ValueError("package catalog component default must be a boolean")
     return catalog
@@ -408,29 +494,45 @@ def load_package_catalog(path: str | Path | None = None) -> dict[str, Any]:
 
 def package_rows(catalog: Mapping[str, Any]) -> list[dict[str, Any]]:
     catalog = _package_catalog_snapshot(catalog)
+    raw_components = catalog.get("components", [])
+    if not isinstance(raw_components, list):
+        raise ValueError("package catalog components must be a list")
     rows: list[dict[str, Any]] = []
-    for component in catalog.get("components", []):
-        if isinstance(component, dict):
-            name = component.get("name")
-            raw_artifact = component.get("artifact")
-            artifact = (
-                canonicalize_name(raw_artifact.strip())
-                if isinstance(raw_artifact, str) and raw_artifact.strip()
-                else raw_artifact
+    seen_names: set[str] = set()
+    for component in raw_components:
+        if not isinstance(component, dict):
+            raise ValueError(
+                "package catalog component entries must be mappings"
             )
-            rows.append(
-                {
-                    "component": name,
-                    "artifact": artifact,
-                    "distribution": name,
-                    "import": component.get("import"),
-                    "default": component.get("default", False),
-                    "layer": component.get("layer"),
-                    "kind": component.get("kind"),
-                    "implementationPhase": component.get("implementationPhase"),
-                    "stability": component.get("stability"),
-                }
-            )
+        name = _validate_non_empty_string(
+            "package catalog component",
+            "name",
+            component.get("name"),
+        )
+        if name in seen_names:
+            raise ValueError("package catalog component names must be unique")
+        seen_names.add(name)
+        artifact = _canonical_distribution(
+            "package catalog component",
+            "artifact",
+            component.get("artifact"),
+        )
+        default = component.get("default", False)
+        if not isinstance(default, bool):
+            raise ValueError("package catalog component default must be a boolean")
+        rows.append(
+            {
+                "component": name,
+                "artifact": artifact,
+                "distribution": name,
+                "import": component.get("import"),
+                "default": default,
+                "layer": component.get("layer"),
+                "kind": component.get("kind"),
+                "implementationPhase": component.get("implementationPhase"),
+                "stability": component.get("stability"),
+            }
+        )
     return sorted(rows, key=lambda item: str(item.get("component")))
 
 
@@ -488,6 +590,13 @@ def build_package_lock(
     include_default: bool = True,
 ) -> PackageLock:
     catalog = _package_catalog_snapshot(catalog)
+    if not isinstance(include_default, bool):
+        raise ValueError("package lock include_default must be a boolean")
+    normalized_requested_values = _validate_string_tuple(
+        "package lock",
+        "requested",
+        requested,
+    )
     catalog_version = catalog.get("catalogVersion")
     if (
         not isinstance(catalog_version, int)
@@ -506,13 +615,20 @@ def build_package_lock(
         raise ValueError(
             "package catalog specVersion must be a non-empty string"
         )
+    raw_artifacts = catalog.get("artifacts", [])
+    if not isinstance(raw_artifacts, list):
+        raise ValueError("package catalog artifacts must be a list")
     artifacts_by_distribution: dict[str, dict[str, Any]] = {}
-    for artifact in catalog.get("artifacts", []):
+    for artifact in raw_artifacts:
         if not isinstance(artifact, dict):
-            continue
+            raise ValueError(
+                "package catalog artifact entries must be mappings"
+            )
         distribution = artifact.get("distribution")
         if not isinstance(distribution, str) or not distribution.strip():
-            continue
+            raise ValueError(
+                "package artifact distribution must be a non-empty string"
+            )
         raw_dependencies = artifact.get("dependsOn", [])
         if not isinstance(raw_dependencies, list):
             raise ValueError("package artifact dependsOn must be a list")
@@ -523,21 +639,41 @@ def build_package_lock(
             raise ValueError(
                 "package artifact dependsOn must contain non-empty strings"
             )
-        canonical_distribution = canonicalize_name(distribution.strip())
+        canonical_distribution = _canonical_distribution(
+            "package artifact",
+            "distribution",
+            distribution,
+        )
+        _validate_version_constraint(
+            "package artifact",
+            "versionConstraint",
+            artifact.get("versionConstraint"),
+        )
         if canonical_distribution in artifacts_by_distribution:
             raise ValueError(
                 f"duplicate package artifact distribution {distribution.strip()!r}"
             )
         artifacts_by_distribution[canonical_distribution] = artifact
 
+    raw_components = catalog.get("components", [])
+    if not isinstance(raw_components, list):
+        raise ValueError("package catalog components must be a list")
     components_by_name: dict[str, dict[str, Any]] = {}
-    for component in catalog.get("components", []):
+    for component in raw_components:
         if not isinstance(component, dict):
-            continue
+            raise ValueError(
+                "package catalog component entries must be mappings"
+            )
         name = component.get("name")
         if not isinstance(name, str) or not name.strip():
-            continue
-        exact_name = name.strip()
+            raise ValueError(
+                "package component name must be a non-empty string"
+            )
+        exact_name = _validate_non_empty_string(
+            "package component",
+            "name",
+            name,
+        )
         if exact_name in components_by_name:
             raise ValueError(f"duplicate package component name {name.strip()!r}")
         if not isinstance(component.get("default", False), bool):
@@ -600,7 +736,11 @@ def build_package_lock(
     component_roots: list[str] = []
     if include_default:
         artifact_roots.extend(
-            canonicalize_name(artifact.strip())
+            _canonical_distribution(
+                "package defaultSelection",
+                "artifacts item",
+                artifact,
+            )
             for artifact in default_selection.get("artifacts", [])
             if isinstance(artifact, str) and artifact.strip()
         )
@@ -610,17 +750,18 @@ def build_package_lock(
             if isinstance(component, str) and component.strip()
         )
     normalized_requested: list[str] = []
-    for selection in requested:
-        canonical_selection = (
-            canonicalize_name(selection.strip())
-            if isinstance(selection, str) and selection.strip()
-            else ""
-        )
-        if isinstance(selection, str) and selection in components_by_name:
+    for selection in normalized_requested_values:
+        if selection in components_by_name:
             if selection not in component_roots:
                 component_roots.append(selection)
             normalized_requested.append(selection)
-        elif canonical_selection in artifacts_by_distribution:
+            continue
+        canonical_selection = _canonical_distribution(
+            "package lock",
+            "requested item",
+            selection,
+        )
+        if canonical_selection in artifacts_by_distribution:
             if canonical_selection not in artifact_roots:
                 artifact_roots.append(canonical_selection)
             normalized_requested.append(canonical_selection)
@@ -734,14 +875,22 @@ def build_package_lock(
             artifact_stack.append((artifact_name, True))
             for dependency in reversed(artifact.get("dependsOn", [])):
                 if isinstance(dependency, str) and dependency.strip():
-                    canonical_dependency = canonicalize_name(dependency.strip())
+                    canonical_dependency = _canonical_distribution(
+                        "package artifact",
+                        "dependsOn item",
+                        dependency,
+                    )
                     if canonical_dependency not in selected_artifacts:
                         artifact_stack.append((canonical_dependency, False))
 
     entries: list[PackageLockEntry] = []
     for component_name in sorted(selected):
         component = components_by_name[component_name]
-        artifact_name = canonicalize_name(str(component["artifact"]).strip())
+        artifact_name = _canonical_distribution(
+            "package component",
+            "artifact",
+            component.get("artifact"),
+        )
         artifact = artifacts_by_distribution[artifact_name]
         dependencies = tuple(
             dependency

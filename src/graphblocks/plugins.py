@@ -109,7 +109,7 @@ def _normalized_config_schema(value: object) -> dict[str, Any]:
         raise ValueError("configSchema must be a mapping")
     try:
         normalized = canonical_loads(canonical_dumps(value))
-    except (TypeError, ValueError) as error:
+    except (TypeError, ValueError, RuntimeError) as error:
         if "canonical JSON nesting must not exceed" in str(error):
             raise ValueError(
                 "configSchema nesting must not exceed "
@@ -412,6 +412,13 @@ class OutputRequirednessPredicate:
     operands: tuple[OutputRequirednessPredicate, ...] = ()
 
     def __post_init__(self) -> None:
+        try:
+            operands = tuple(self.operands)
+        except (TypeError, RuntimeError) as error:
+            raise TypeError("requiredWhen operands must be a collection") from error
+        object.__setattr__(self, "operands", operands)
+        if not isinstance(self.operator, str):
+            raise ValueError("requiredWhen operator must be a string")
         if self.operator not in _OUTPUT_REQUIREDNESS_OPERATORS:
             raise ValueError(f"requiredWhen uses unsupported operator {self.operator!r}")
         if self.operator == "configEquals":
@@ -616,7 +623,7 @@ class PluginManifest:
             raise TypeError("plugin manifest raw must be a mapping")
         try:
             raw = canonical_loads(canonical_dumps(self.raw))
-        except (TypeError, ValueError) as error:
+        except (TypeError, ValueError, RuntimeError) as error:
             raise ValueError(
                 "plugin manifest raw must contain canonical JSON"
             ) from error
@@ -662,7 +669,7 @@ class PluginManifest:
         ):
             try:
                 records = canonical_loads(canonical_dumps(supplied))
-            except (TypeError, ValueError) as error:
+            except (TypeError, ValueError, RuntimeError) as error:
                 raise ValueError(
                     f"plugin manifest {field_name} must contain canonical JSON mappings"
                 ) from error
@@ -764,9 +771,14 @@ class BlockDescriptor:
             raise ValueError("block version must be a positive integer")
         if self.version > _MAX_BLOCK_VERSION:
             raise ValueError("block version must not exceed unsigned 64-bit range")
-        inputs = tuple(self.inputs)
-        outputs = tuple(self.outputs)
-        resource_slots = tuple(self.resource_slots)
+        try:
+            inputs = tuple(self.inputs)
+            outputs = tuple(self.outputs)
+            resource_slots = tuple(self.resource_slots)
+        except (TypeError, RuntimeError) as error:
+            raise TypeError(
+                "block inputs, outputs, and resource_slots must be collections"
+            ) from error
         if not all(isinstance(port, PortDescriptor) for port in inputs):
             raise TypeError("block inputs must contain only PortDescriptor values")
         if not all(isinstance(port, PortDescriptor) for port in outputs):
@@ -808,7 +820,14 @@ class BlockCatalog:
     allow_unknown_blocks: bool = False
 
     def __post_init__(self) -> None:
-        descriptors = dict(self.descriptors)
+        if not isinstance(self.descriptors, Mapping):
+            raise TypeError("block catalog descriptors must be a mapping")
+        try:
+            descriptors = dict(self.descriptors)
+        except (TypeError, RuntimeError) as error:
+            raise TypeError(
+                "block catalog descriptors must be a stable mapping"
+            ) from error
         for block_id, descriptor in descriptors.items():
             if not isinstance(descriptor, BlockDescriptor):
                 raise TypeError(
@@ -1015,6 +1034,12 @@ class BlockCatalog:
         *,
         allow_unknown_blocks: bool = False,
     ) -> BlockCatalog:
+        if not isinstance(manifests, (list, tuple)):
+            raise ValueError("block catalog manifests must be a sequence")
+        if any(not isinstance(manifest, PluginManifest) for manifest in manifests):
+            raise TypeError(
+                "block catalog manifests must contain PluginManifest records"
+            )
         blocks: list[dict[str, Any]] = []
         for manifest in manifests:
             blocks.extend(manifest.blocks)
@@ -1028,6 +1053,35 @@ class BlockCatalog:
 class PluginRegistry:
     manifests: tuple[PluginManifest, ...]
     diagnostics: DiagnosticSet
+
+    def __post_init__(self) -> None:
+        try:
+            manifests = tuple(self.manifests)
+        except (TypeError, RuntimeError) as error:
+            raise TypeError("plugin registry manifests must be a collection") from error
+        if any(not isinstance(manifest, PluginManifest) for manifest in manifests):
+            raise TypeError(
+                "plugin registry manifests must contain PluginManifest records"
+            )
+        plugin_keys = [
+            (manifest.plugin_id, manifest.version) for manifest in manifests
+        ]
+        if len(set(plugin_keys)) != len(plugin_keys):
+            raise ValueError(
+                "plugin registry plugin id/version values must be unique"
+            )
+        if not isinstance(self.diagnostics, DiagnosticSet):
+            raise TypeError("plugin registry diagnostics must be a DiagnosticSet")
+        object.__setattr__(
+            self,
+            "manifests",
+            tuple(
+                sorted(
+                    manifests,
+                    key=lambda item: (item.plugin_id, item.version, item.source),
+                )
+            ),
+        )
 
     @property
     def ok(self) -> bool:
@@ -1168,6 +1222,20 @@ def validate_plugin_manifest(document: Any) -> DiagnosticSet:
                         version_path,
                     )
                 )
+        implementation_keys = tuple(
+            key
+            for key in ("implementation", "implementationId")
+            if key in block
+        )
+        if len(implementation_keys) > 1:
+            diagnostics.append(
+                Diagnostic(
+                    "GB2015",
+                    "block descriptor must declare at most one of "
+                    "implementation or implementationId",
+                    f"$.spec.blocks[{index}].implementation",
+                )
+            )
         raw_capabilities = block.get("capabilities", _MISSING)
         capabilities_path = f"$.spec.blocks[{index}].capabilities"
         if raw_capabilities is _MISSING:
@@ -1293,6 +1361,7 @@ def validate_plugin_manifest(document: Any) -> DiagnosticSet:
                         )
         resource_slots = block.get("resourceSlots", [])
         if isinstance(resource_slots, list):
+            seen_resource_slot_names: set[str] = set()
             for slot_index, slot in enumerate(resource_slots):
                 if not isinstance(slot, dict) or not isinstance(slot.get("name"), str) or not slot["name"]:
                     diagnostics.append(
@@ -1303,6 +1372,29 @@ def validate_plugin_manifest(document: Any) -> DiagnosticSet:
                         )
                     )
                     continue
+                slot_name = slot["name"]
+                try:
+                    _validate_descriptor_name(
+                        slot_name,
+                        field_name="resource slot name",
+                    )
+                except ValueError as error:
+                    diagnostics.append(
+                        Diagnostic(
+                            "GB2015",
+                            f"block resource slot name is invalid: {error}",
+                            f"$.spec.blocks[{index}].resourceSlots[{slot_index}].name",
+                        )
+                    )
+                if slot_name in seen_resource_slot_names:
+                    diagnostics.append(
+                        Diagnostic(
+                            "GB2015",
+                            "block resource slot names must be unique",
+                            f"$.spec.blocks[{index}].resourceSlots[{slot_index}].name",
+                        )
+                    )
+                seen_resource_slot_names.add(slot_name)
                 try:
                     _descriptor_bool(slot, "optional", default=False)
                 except ValueError as error:
@@ -1337,6 +1429,19 @@ def validate_plugin_manifest(document: Any) -> DiagnosticSet:
                         )
                     )
                     continue
+                try:
+                    _validate_descriptor_name(
+                        slot_name,
+                        field_name="resource slot name",
+                    )
+                except ValueError as error:
+                    diagnostics.append(
+                        Diagnostic(
+                            "GB2015",
+                            f"block resource slot name is invalid: {error}",
+                            f"$.spec.blocks[{index}].resourceSlots.{slot_name}",
+                        )
+                    )
                 try:
                     _descriptor_bool(slot, "optional", default=False)
                 except ValueError as error:
@@ -1426,6 +1531,23 @@ def validate_plugin_manifest(document: Any) -> DiagnosticSet:
 
 
 def discover_plugins(paths: list[str | Path] | None = None, include_installed: bool = True) -> PluginRegistry:
+    if not isinstance(include_installed, bool):
+        raise ValueError("include_installed must be a boolean")
+    if paths is None:
+        search_paths: tuple[str | Path, ...] = ()
+    else:
+        if isinstance(paths, (str, bytes, bytearray, Mapping)):
+            raise ValueError("plugin discovery paths must be a collection")
+        try:
+            search_paths = tuple(paths)
+        except (TypeError, RuntimeError) as error:
+            raise ValueError(
+                "plugin discovery paths must be a collection"
+            ) from error
+        if any(not isinstance(path, (str, Path)) for path in search_paths):
+            raise ValueError(
+                "plugin discovery paths must contain strings or paths"
+            )
     diagnostics: list[Diagnostic] = []
     manifests: list[PluginManifest] = []
     builtin_source = "graphblocks:data/builtin-plugin.yaml"
@@ -1446,7 +1568,7 @@ def discover_plugins(paths: list[str | Path] | None = None, include_installed: b
             except Exception as exc:
                 diagnostics.append(Diagnostic("GB2012", str(exc), builtin_source))
 
-    for search_path in paths or []:
+    for search_path in search_paths:
         candidate = Path(search_path)
         files = [candidate]
         if candidate.is_dir():

@@ -212,6 +212,115 @@ def test_direct_plugin_manifest_rejects_claims_that_do_not_match_raw() -> None:
         )
 
 
+def test_plugin_registry_validates_and_snapshots_direct_state() -> None:
+    manifest = plugin_manifest_from_document(
+        {
+            "apiVersion": "graphblocks.ai/v1alpha1",
+            "kind": "PluginManifest",
+            "metadata": {"name": "example.registry"},
+            "spec": {
+                "pluginId": "example.registry",
+                "version": "1.0.0",
+                "blocks": [],
+            },
+        }
+    )
+    manifests = [manifest]
+    registry = plugins_module.PluginRegistry(manifests, plugins_module.DiagnosticSet(()))  # type: ignore[arg-type]
+    manifests.clear()
+
+    assert registry.manifests == (manifest,)
+    with pytest.raises(ValueError, match="plugin id/version values must be unique"):
+        plugins_module.PluginRegistry(
+            (manifest, manifest),
+            plugins_module.DiagnosticSet(()),
+        )
+    with pytest.raises(TypeError, match="diagnostics must be a DiagnosticSet"):
+        plugins_module.PluginRegistry((manifest,), ())  # type: ignore[arg-type]
+
+    class ExplodingRaw(dict):
+        def items(self):
+            raise RuntimeError("source changed during iteration")
+
+    with pytest.raises(ValueError, match="raw must contain canonical JSON"):
+        plugins_module.PluginManifest(
+            plugin_id=manifest.plugin_id,
+            version=manifest.version,
+            maturity=manifest.maturity,
+            capabilities=manifest.capabilities,
+            blocks=manifest.blocks,
+            connector_factories=manifest.connector_factories,
+            adapters=manifest.adapters,
+            source="<memory>",
+            raw=ExplodingRaw(manifest.raw),
+        )
+
+
+def test_plugin_discovery_rejects_coercive_control_inputs() -> None:
+    with pytest.raises(ValueError, match="include_installed must be a boolean"):
+        discover_plugins(include_installed=0)  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="paths must be a collection"):
+        discover_plugins("", include_installed=False)  # type: ignore[arg-type]
+
+
+def test_plugin_manifest_rejects_conflicting_implementation_aliases() -> None:
+    diagnostics = validate_plugin_manifest(
+        {
+            "apiVersion": "graphblocks.ai/v1",
+            "kind": "PluginManifest",
+            "metadata": {"name": "example.implementation_aliases"},
+            "spec": {
+                "pluginId": "example.implementation_aliases",
+                "version": "1.0.0",
+                "blocks": [
+                    {
+                        "typeId": "example.echo",
+                        "version": 1,
+                        "implementation": "example.echo.first",
+                        "implementationId": "example.echo.second",
+                        "capabilities": [],
+                        "configSchema": {"type": "object"},
+                    }
+                ],
+            },
+        }
+    )
+
+    assert ("GB2015", "$.spec.blocks[0].implementation") in {
+        (item.code, item.path) for item in diagnostics.diagnostics
+    }
+
+
+def test_plugin_manifest_rejects_duplicate_resource_slot_names() -> None:
+    diagnostics = validate_plugin_manifest(
+        {
+            "apiVersion": "graphblocks.ai/v1",
+            "kind": "PluginManifest",
+            "metadata": {"name": "example.duplicate_slots"},
+            "spec": {
+                "pluginId": "example.duplicate_slots",
+                "version": "1.0.0",
+                "blocks": [
+                    {
+                        "typeId": "example.echo",
+                        "version": 1,
+                        "resourceSlots": [
+                            {"name": "model"},
+                            {"name": "model"},
+                        ],
+                        "capabilities": [],
+                        "configSchema": {"type": "object"},
+                    }
+                ],
+            },
+        }
+    )
+
+    assert ("GB2015", "$.spec.blocks[0].resourceSlots[1].name") in {
+        (item.code, item.path) for item in diagnostics.diagnostics
+    }
+
+
 def test_stable_plugin_blocks_require_capabilities_and_config_schema() -> None:
     diagnostics = validate_plugin_manifest(
         {
