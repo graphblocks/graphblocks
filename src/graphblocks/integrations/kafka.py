@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 
 from graphblocks.durable import SinkCommitRequest, SourceCursor, SourceEvent
@@ -9,8 +10,11 @@ class KafkaAdapterError(ValueError):
     """Base error for Kafka durable adapter contracts."""
 
 
-def _validate_topic(topic: str) -> None:
-    if not topic.strip():
+_MAX_KAFKA_OFFSET = (1 << 63) - 1
+
+
+def _validate_topic(topic: object) -> None:
+    if not isinstance(topic, str) or not topic.strip():
         raise KafkaAdapterError("topic must not be empty")
 
 
@@ -28,6 +32,25 @@ def _optional_non_negative_int(field_name: str, value: object | None) -> int | N
     return _non_negative_int(field_name, value)
 
 
+def _offset(field_name: str, value: object) -> int:
+    offset = _non_negative_int(field_name, value)
+    if offset > _MAX_KAFKA_OFFSET:
+        raise KafkaAdapterError(f"{field_name} must not exceed signed 64-bit range")
+    return offset
+
+
+def _headers(value: object) -> dict[str, str]:
+    if not isinstance(value, Mapping):
+        raise KafkaAdapterError("headers must be a mapping of strings")
+    headers = dict(value)
+    if any(
+        not isinstance(name, str) or not isinstance(header_value, str)
+        for name, header_value in headers.items()
+    ):
+        raise KafkaAdapterError("headers must be a mapping of strings")
+    return dict(sorted(headers.items()))
+
+
 @dataclass(frozen=True, slots=True)
 class KafkaRecord:
     topic: str
@@ -41,13 +64,13 @@ class KafkaRecord:
     def __post_init__(self) -> None:
         _validate_topic(self.topic)
         object.__setattr__(self, "partition", _non_negative_int("partition", self.partition))
-        object.__setattr__(self, "offset", _non_negative_int("offset", self.offset))
+        object.__setattr__(self, "offset", _offset("offset", self.offset))
         object.__setattr__(
             self,
             "timestamp_unix_ms",
             _optional_non_negative_int("timestamp_unix_ms", self.timestamp_unix_ms),
         )
-        object.__setattr__(self, "headers", dict(sorted(self.headers.items())))
+        object.__setattr__(self, "headers", _headers(self.headers))
 
     def to_source_event(self) -> SourceEvent:
         return SourceEvent(
@@ -65,14 +88,18 @@ class KafkaConsumerCursor:
     next_offset: int
 
     def __post_init__(self) -> None:
-        if not self.group_id.strip():
+        if not isinstance(self.group_id, str) or not self.group_id.strip():
             raise KafkaAdapterError("group_id must not be empty")
         _validate_topic(self.topic)
         object.__setattr__(self, "partition", _non_negative_int("partition", self.partition))
-        object.__setattr__(self, "next_offset", _non_negative_int("next_offset", self.next_offset))
+        object.__setattr__(self, "next_offset", _offset("next_offset", self.next_offset))
 
     @classmethod
     def from_source_cursor(cls, group_id: str, cursor: SourceCursor) -> KafkaConsumerCursor:
+        if not isinstance(cursor, SourceCursor):
+            raise KafkaAdapterError("cursor must be a SourceCursor")
+        if cursor.offset == _MAX_KAFKA_OFFSET:
+            raise KafkaAdapterError("source cursor offset cannot advance beyond signed 64-bit range")
         return cls(group_id, cursor.stream, cursor.partition, cursor.offset + 1)
 
     def to_source_cursor(self) -> SourceCursor | None:
@@ -92,7 +119,7 @@ class KafkaSinkRecord:
     def __post_init__(self) -> None:
         _validate_topic(self.topic)
         object.__setattr__(self, "partition", _optional_non_negative_int("partition", self.partition))
-        object.__setattr__(self, "headers", dict(sorted(self.headers.items())))
+        object.__setattr__(self, "headers", _headers(self.headers))
 
     @classmethod
     def from_sink_commit(

@@ -78,6 +78,29 @@ def test_qdrant_search_request_rejects_invalid_inputs(monkeypatch) -> None:
         )
 
 
+def test_qdrant_adapter_rejects_coerced_thresholds_and_invalid_point_ids(
+    monkeypatch,
+) -> None:
+    graphblocks_qdrant = importlib.import_module("graphblocks.integrations.qdrant")
+    collection = graphblocks_qdrant.QdrantCollectionRef(collection="support_chunks")
+    request = SearchRequest(query_text="refund", top_k=1)
+
+    with pytest.raises(graphblocks_qdrant.QdrantAdapterError, match="finite number"):
+        graphblocks_qdrant.qdrant_search_request(
+            request,
+            collection=collection,
+            vector=(0.1,),
+            score_threshold="0.5",  # type: ignore[arg-type]
+        )
+    with pytest.raises(graphblocks_qdrant.QdrantAdapterError, match="point id"):
+        graphblocks_qdrant.qdrant_hits_from_points(
+            [{"id": True, "payload": {}}],
+            retriever_id="qdrant-support",
+        )
+    with pytest.raises(graphblocks_qdrant.QdrantAdapterError, match="collection"):
+        graphblocks_qdrant.QdrantCollectionRef(object())  # type: ignore[arg-type]
+
+
 def test_qdrant_search_request_preserves_null_filter(monkeypatch) -> None:
     graphblocks_qdrant = importlib.import_module("graphblocks.integrations.qdrant")
 

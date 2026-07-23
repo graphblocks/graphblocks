@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-import json
 
 from graphblocks import (
     ContentPart,
@@ -11,6 +10,7 @@ from graphblocks import (
     PolicyObligation,
     PolicyRequest,
     canonical_dumps,
+    canonical_loads,
 )
 from graphblocks.output_policy import (
     VALID_DRAFT_DISPOSITIONS,
@@ -32,6 +32,8 @@ class OpaPolicyInput:
 
     def __post_init__(self) -> None:
         if self.package_ref is not None:
+            if not isinstance(self.package_ref, str):
+                raise OpaPolicyAdapterError("package_ref must be a string")
             package_ref = self.package_ref.strip()
             if not package_ref:
                 raise OpaPolicyAdapterError("package_ref must not be empty")
@@ -39,13 +41,8 @@ class OpaPolicyInput:
 
     def input_contract(self) -> dict[str, object]:
         try:
-            parsed_input = json.loads(
-                self.input_json,
-                parse_constant=lambda constant: (_ for _ in ()).throw(
-                    ValueError(f"non-standard JSON constant {constant}")
-                ),
-            )
-        except ValueError as error:
+            parsed_input = canonical_loads(self.input_json)
+        except (TypeError, ValueError) as error:
             raise OpaPolicyAdapterError("OPA policy input must be valid strict JSON") from error
         return {
             "package_ref": self.package_ref,

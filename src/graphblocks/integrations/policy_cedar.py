@@ -2,10 +2,16 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-import json
 from typing import Literal
 
-from graphblocks import ContentPart, OutputPolicyDecision, PolicyDecision, PolicyRequest, canonical_dumps
+from graphblocks import (
+    ContentPart,
+    OutputPolicyDecision,
+    PolicyDecision,
+    PolicyRequest,
+    canonical_dumps,
+    canonical_loads,
+)
 from graphblocks.output_policy import (
     VALID_DRAFT_DISPOSITIONS,
     VALID_OUTPUT_DISPOSITIONS,
@@ -35,6 +41,8 @@ class CedarAuthorizationRequest:
 
     def __post_init__(self) -> None:
         if self.schema_ref is not None:
+            if not isinstance(self.schema_ref, str):
+                raise CedarPolicyAdapterError("schema_ref must be a string")
             schema_ref = self.schema_ref.strip()
             if not schema_ref:
                 raise CedarPolicyAdapterError("schema_ref must not be empty")
@@ -42,13 +50,8 @@ class CedarAuthorizationRequest:
 
     def authorization_contract(self) -> dict[str, object]:
         try:
-            contract = json.loads(
-                self.authorization_json,
-                parse_constant=lambda constant: (_ for _ in ()).throw(
-                    ValueError(f"non-standard JSON constant {constant}")
-                ),
-            )
-        except ValueError as error:
+            contract = canonical_loads(self.authorization_json)
+        except (TypeError, ValueError) as error:
             raise CedarPolicyAdapterError("Cedar authorization input must be valid strict JSON") from error
         if not isinstance(contract, Mapping):
             raise CedarPolicyAdapterError("Cedar authorization input must be a JSON object")

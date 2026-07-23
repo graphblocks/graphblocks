@@ -19,11 +19,15 @@ class QdrantCollectionRef:
     vector_name: str | None = None
 
     def __post_init__(self) -> None:
+        if not isinstance(self.collection, str):
+            raise QdrantAdapterError("collection must be a string")
         collection = self.collection.strip()
         if not collection:
             raise QdrantAdapterError("collection must not be empty")
         if any(separator in collection for separator in ("/", "?", "#")):
             raise QdrantAdapterError(f"collection contains an invalid separator: {self.collection!r}")
+        if self.vector_name is not None and not isinstance(self.vector_name, str):
+            raise QdrantAdapterError("vector_name must be a string")
         vector_name = self.vector_name.strip() if self.vector_name is not None else None
         if vector_name == "":
             raise QdrantAdapterError("vector_name must not be empty")
@@ -39,10 +43,14 @@ class QdrantSearchRequest:
     metadata: Mapping[str, object] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        if not self.collection.strip():
+        if not isinstance(self.collection, str) or not self.collection.strip():
             raise QdrantAdapterError("collection must not be empty")
-        if not self.body:
+        if not isinstance(self.body, Mapping) or not self.body:
             raise QdrantAdapterError("body must not be empty")
+        if not isinstance(self.query_text, str) or not self.query_text.strip():
+            raise QdrantAdapterError("query_text must not be empty")
+        if not isinstance(self.metadata, Mapping):
+            raise QdrantAdapterError("metadata must be a mapping")
         object.__setattr__(self, "collection", self.collection.strip())
         object.__setattr__(self, "body", deepcopy(dict(self.body)))
         object.__setattr__(self, "metadata", deepcopy(dict(self.metadata)))
@@ -114,8 +122,12 @@ def qdrant_search_request(
     if filter_terms:
         body["filter"] = {"must": filter_terms}
     if score_threshold is not None:
-        if isinstance(score_threshold, bool) or not math.isfinite(float(score_threshold)):
-            raise QdrantAdapterError("score_threshold must be finite")
+        if (
+            isinstance(score_threshold, bool)
+            or not isinstance(score_threshold, (int, float))
+            or not math.isfinite(float(score_threshold))
+        ):
+            raise QdrantAdapterError("score_threshold must be a finite number")
         body["score_threshold"] = float(score_threshold)
 
     return QdrantSearchRequest(
@@ -132,8 +144,10 @@ def qdrant_hits_from_points(
     retriever_id: str,
     score_kind: str = "qdrant_score",
 ) -> list[SearchHit]:
-    if not retriever_id.strip():
+    if not isinstance(retriever_id, str) or not retriever_id.strip():
         raise QdrantAdapterError("retriever_id must not be empty")
+    if not isinstance(score_kind, str):
+        raise QdrantAdapterError("score_kind must be a string")
     score_kind = score_kind.strip()
     if not score_kind:
         raise QdrantAdapterError("score_kind must not be empty")
@@ -145,6 +159,12 @@ def qdrant_hits_from_points(
         point_id = point.get("id", point.get("point_id"))
         if point_id is None:
             raise QdrantAdapterError("Qdrant point is missing id")
+        if isinstance(point_id, bool) or not isinstance(point_id, (str, int)):
+            raise QdrantAdapterError("Qdrant point id must be a string or integer")
+        if isinstance(point_id, int) and point_id < 0:
+            raise QdrantAdapterError("Qdrant integer point id must be non-negative")
+        if isinstance(point_id, str) and not point_id.strip():
+            raise QdrantAdapterError("Qdrant string point id must not be empty")
         payload = point.get("payload", {})
         if payload is None:
             payload = {}

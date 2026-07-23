@@ -37,11 +37,21 @@ def _validate_digest(digest: str) -> None:
 def _payload_bytes(payload: str | bytes) -> bytes:
     if isinstance(payload, bytes):
         return payload
-    return payload.encode("utf-8")
+    if isinstance(payload, str):
+        return payload.encode("utf-8")
+    raise OciContractError("OCI payload must be a string or bytes")
 
 
-def _sorted_annotations(annotations: Mapping[str, str]) -> dict[str, str]:
-    return {str(key): str(value) for key, value in sorted(dict(annotations).items())}
+def _sorted_annotations(annotations: object) -> dict[str, str]:
+    if not isinstance(annotations, Mapping):
+        raise OciContractError("OCI annotations must be a mapping of strings")
+    values = dict(annotations)
+    if any(
+        not isinstance(key, str) or not isinstance(value, str)
+        for key, value in values.items()
+    ):
+        raise OciContractError("OCI annotations must be a mapping of strings")
+    return dict(sorted(values.items()))
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,11 +62,11 @@ class OciDescriptor:
     annotations: Mapping[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        if not self.media_type.strip():
+        if not isinstance(self.media_type, str) or not self.media_type.strip():
             raise OciContractError("descriptor media_type must not be empty")
         _validate_digest(self.digest)
-        if self.size < 0:
-            raise OciContractError("descriptor size must not be negative")
+        if isinstance(self.size, bool) or not isinstance(self.size, int) or self.size < 0:
+            raise OciContractError("descriptor size must be a non-negative integer")
         object.__setattr__(self, "annotations", _sorted_annotations(self.annotations))
 
     def descriptor_contract(self) -> dict[str, object]:
@@ -95,11 +105,19 @@ class OciManifest:
     media_type: str = OCI_IMAGE_MANIFEST_MEDIA_TYPE
 
     def __post_init__(self) -> None:
-        if not self.artifact_type.strip():
+        if not isinstance(self.config, OciDescriptor):
+            raise OciContractError("manifest config must be an OciDescriptor")
+        if not isinstance(self.artifact_type, str) or not self.artifact_type.strip():
             raise OciContractError("artifact_type must not be empty")
-        if not self.media_type.strip():
+        if not isinstance(self.media_type, str) or not self.media_type.strip():
             raise OciContractError("manifest media_type must not be empty")
-        object.__setattr__(self, "layers", tuple(self.layers))
+        try:
+            layers = tuple(self.layers)
+        except TypeError as error:
+            raise OciContractError("manifest layers must contain OciDescriptor values") from error
+        if any(not isinstance(layer, OciDescriptor) for layer in layers):
+            raise OciContractError("manifest layers must contain OciDescriptor values")
+        object.__setattr__(self, "layers", layers)
         object.__setattr__(self, "annotations", _sorted_annotations(self.annotations))
 
     def manifest_contract(self) -> dict[str, object]:

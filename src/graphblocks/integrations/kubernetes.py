@@ -25,7 +25,13 @@ class KubernetesAdapterError(ValueError):
 
 
 def _canonical_dumps(value: object) -> str:
-    return json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+    return json.dumps(
+        value,
+        allow_nan=False,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
 
 
 def _content_digest(value: object) -> str:
@@ -34,6 +40,22 @@ def _content_digest(value: object) -> str:
 
 def _sorted_string_tuple(values: Iterable[str]) -> tuple[str, ...]:
     return tuple(sorted({str(value) for value in values}))
+
+
+def _non_negative_int(field_name: str, value: object) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise KubernetesAdapterError(f"{field_name} must be a non-negative integer")
+    return value
+
+
+def _port_number(field_name: str, value: object) -> int:
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, int)
+        or not 1 <= value <= 65535
+    ):
+        raise KubernetesAdapterError(f"{field_name} must be an integer between 1 and 65535")
+    return value
 
 
 def _selector_labels(name: str, target: ExecutionTarget) -> dict[str, str]:
@@ -130,13 +152,13 @@ class KubernetesPort:
     protocol: KubernetesProtocol = "TCP"
 
     def __post_init__(self) -> None:
-        if not self.name.strip():
+        if not isinstance(self.name, str) or not self.name.strip():
             raise KubernetesAdapterError("port name must not be empty")
         if self.protocol not in {"TCP", "UDP", "SCTP"}:
             raise KubernetesAdapterError(f"unsupported Kubernetes protocol: {self.protocol!r}")
         for field_name, port in (("container_port", self.container_port), ("service_port", self.service_port)):
-            if port is not None and not 1 <= port <= 65535:
-                raise KubernetesAdapterError(f"{field_name} must be between 1 and 65535")
+            if port is not None:
+                _port_number(field_name, port)
 
     def container_contract(self) -> dict[str, object]:
         return {
@@ -182,6 +204,8 @@ class KubernetesSecretEnv:
         ):
             if not value.strip():
                 raise KubernetesAdapterError(f"{field_name} must not be empty")
+        if not isinstance(self.optional, bool):
+            raise KubernetesAdapterError("optional must be a boolean")
 
     def env_contract(self) -> dict[str, object]:
         secret_key_ref: dict[str, object] = {
@@ -240,7 +264,22 @@ class KubernetesManifestSet:
         documents: Iterable[KubernetesManifest],
         prune_targets: Iterable[KubernetesPruneTarget] = (),
     ) -> None:
-        object.__setattr__(self, "_documents", tuple(deepcopy(document) for document in documents))
+        try:
+            materialized_documents = tuple(documents)
+        except TypeError as error:
+            raise KubernetesAdapterError("Kubernetes documents must be mappings") from error
+        if any(not isinstance(document, Mapping) for document in materialized_documents):
+            raise KubernetesAdapterError("Kubernetes documents must be mappings")
+        copied_documents = tuple(
+            deepcopy(dict(document)) for document in materialized_documents
+        )
+        try:
+            _canonical_dumps(copied_documents)
+        except (TypeError, ValueError) as error:
+            raise KubernetesAdapterError(
+                "Kubernetes documents must contain strict JSON values"
+            ) from error
+        object.__setattr__(self, "_documents", copied_documents)
         object.__setattr__(self, "prune_targets", tuple(prune_targets))
         self.__post_init__()
 
@@ -347,6 +386,8 @@ class KubernetesClusterCapability:
             raise KubernetesAdapterError("api_version must not be empty")
         if not self.kind.strip():
             raise KubernetesAdapterError("kind must not be empty")
+        if not isinstance(self.namespaced, bool):
+            raise KubernetesAdapterError("namespaced must be a boolean")
         object.__setattr__(self, "verbs", _sorted_string_tuple(self.verbs))
 
     def canonical_value(self) -> dict[str, object]:
@@ -413,8 +454,7 @@ def render_target_deployment(
 ) -> KubernetesManifest:
     if not name.strip():
         raise KubernetesAdapterError("deployment name must not be empty")
-    if replicas < 0:
-        raise KubernetesAdapterError("replicas must not be negative")
+    replicas = _non_negative_int("replicas", replicas)
     options = options or KubernetesRenderOptions()
     deployment_image = image or target.image
     if deployment_image is None or not deployment_image.strip():
@@ -518,10 +558,12 @@ def render_rollout_manifests(
 ) -> KubernetesManifestSet:
     if not name.strip():
         raise KubernetesAdapterError("rollout name must not be empty")
-    if stable_replicas < 0:
-        raise KubernetesAdapterError("stable_replicas must not be negative")
-    if candidate_replicas is not None and candidate_replicas < 0:
-        raise KubernetesAdapterError("candidate_replicas must not be negative")
+    stable_replicas = _non_negative_int("stable_replicas", stable_replicas)
+    if candidate_replicas is not None:
+        candidate_replicas = _non_negative_int(
+            "candidate_replicas",
+            candidate_replicas,
+        )
     options = options or KubernetesRenderOptions()
     ports = tuple(ports)
     env_contracts = _env_contracts(env)
@@ -732,8 +774,9 @@ def render_callback_ingress_manifests(
         raise KubernetesAdapterError("callback ingress name must not be empty")
     if not service_name.strip():
         raise KubernetesAdapterError("callback ingress service_name must not be empty")
-    if not 1 <= service_port <= 65535:
-        raise KubernetesAdapterError("callback ingress service_port must be between 1 and 65535")
+    service_port = _port_number("callback ingress service_port", service_port)
+    if not isinstance(include_network_policy, bool):
+        raise KubernetesAdapterError("include_network_policy must be a boolean")
     options = options or KubernetesRenderOptions()
     config = _callback_ingress_contract(callback_ingress)
     if not config["enabled"]:

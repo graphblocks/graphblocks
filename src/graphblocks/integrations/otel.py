@@ -2,9 +2,8 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-import json
 
-from graphblocks import canonical_dumps
+from graphblocks import canonical_dumps, canonical_loads
 from graphblocks.telemetry import (
     DEFAULT_CONTENT_TELEMETRY_ATTRIBUTE_KEYS,
     DEFAULT_SENSITIVE_TELEMETRY_ATTRIBUTE_KEYS,
@@ -76,9 +75,11 @@ def otlp_collector_template(
     _require_non_empty("listen http endpoint", listen_http_endpoint)
     _require_non_empty("exporter name", exporter_name)
     _require_non_empty("batch timeout", batch_timeout)
+    if not isinstance(insecure, bool):
+        raise OtelCollectorTemplateError("insecure must be a boolean")
     if not isinstance(memory_limit_mib, int) or isinstance(memory_limit_mib, bool) or memory_limit_mib <= 0:
         raise OtelCollectorTemplateError("memory_limit_mib must be a positive integer")
-    if isinstance(pipelines, str) or not pipelines:
+    if isinstance(pipelines, (str, bytes)) or not isinstance(pipelines, Sequence) or not pipelines:
         raise OtelCollectorTemplateError("collector pipelines must be a non-empty sequence")
 
     normalized_pipelines: list[str] = []
@@ -98,11 +99,20 @@ def otlp_collector_template(
         },
     }
     processor_names = ["memory_limiter", "batch"]
+    if resource_attributes is not None and not isinstance(resource_attributes, Mapping):
+        raise OtelCollectorTemplateError("resource_attributes must be a mapping")
     if resource_attributes:
+        if any(
+            not isinstance(key, str) or not key.strip() or key != key.strip()
+            for key in resource_attributes
+        ):
+            raise OtelCollectorTemplateError(
+                "resource attribute keys must be stable non-empty strings"
+            )
         processors["resource/graphblocks"] = {
             "attributes": [
-                {"action": "upsert", "key": str(key), "value": value}
-                for key, value in sorted(resource_attributes.items(), key=lambda item: str(item[0]))
+                {"action": "upsert", "key": key, "value": value}
+                for key, value in sorted(resource_attributes.items())
             ]
         }
         processor_names = ["memory_limiter", "resource/graphblocks", "batch"]
@@ -120,7 +130,7 @@ def otlp_collector_template(
         "exporters": {
             exporter_name: {
                 "endpoint": exporter_endpoint,
-                "tls": {"insecure": bool(insecure)},
+                "tls": {"insecure": insecure},
             }
         },
         "service": {
@@ -256,13 +266,8 @@ def _require_non_empty(field_name: str, value: object) -> str:
 
 def _strict_json_contract(contract_name: str, payload: str) -> dict[str, object]:
     try:
-        parsed = json.loads(
-            payload,
-            parse_constant=lambda constant: (_ for _ in ()).throw(
-                ValueError(f"non-standard JSON constant {constant}")
-            ),
-        )
-    except ValueError as error:
+        parsed = canonical_loads(payload)
+    except (TypeError, ValueError) as error:
         raise OtelCollectorTemplateError(f"{contract_name} must be valid strict JSON") from error
     if not isinstance(parsed, Mapping):
         raise OtelCollectorTemplateError(f"{contract_name} must be a JSON object")

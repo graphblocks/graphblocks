@@ -12,6 +12,33 @@ def test_postgres_adapters_have_valid_default_schema_names() -> None:
     assert graphblocks_usage_postgres.PostgresUsageSchema().schema == "graphblocks_usage"
 
 
+def test_postgres_statements_detach_nested_parameter_inputs() -> None:
+    graphblocks_budget_postgres = importlib.import_module(
+        "graphblocks.integrations.budget_postgres"
+    )
+    graphblocks_usage_postgres = importlib.import_module(
+        "graphblocks.integrations.usage_postgres"
+    )
+    budget_params = {"payload": {"values": ["original"]}}
+    usage_params = {"payload": {"values": ["original"]}}
+
+    budget_statement = graphblocks_budget_postgres.PostgresStatement(
+        "budget_test",
+        "SELECT %(payload)s",
+        budget_params,
+    )
+    usage_statement = graphblocks_usage_postgres.PostgresStatement(
+        "usage_test",
+        "SELECT %(payload)s",
+        usage_params,
+    )
+    budget_params["payload"]["values"].append("mutated")
+    usage_params["payload"]["values"].append("mutated")
+
+    assert budget_statement.params == {"payload": {"values": ["original"]}}
+    assert usage_statement.params == {"payload": {"values": ["original"]}}
+
+
 def test_budget_postgres_schema_and_account_codec(monkeypatch) -> None:
     graphblocks_budget = importlib.import_module("graphblocks.budget")
     graphblocks_budget_postgres = importlib.import_module("graphblocks.integrations.budget_postgres")

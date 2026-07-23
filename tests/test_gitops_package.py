@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import importlib
 
+import pytest
+
 
 def _import_gitops(monkeypatch):
     return importlib.import_module("graphblocks.integrations.gitops")
@@ -158,3 +160,51 @@ def test_gitops_manifest_set_digest_is_independent_of_document_order(monkeypatch
     left.documents[0]["metadata"]["name"] = "mutated"  # type: ignore[index]
     assert left.content_digest() == digest_before_public_mutation
     assert left.documents[0]["metadata"]["name"] != "mutated"  # type: ignore[index]
+
+
+def test_gitops_rejects_coerced_flags_and_mismatched_release_revision(
+    monkeypatch,
+) -> None:
+    graphblocks_gitops = _import_gitops(monkeypatch)
+    graphblocks_deployment = importlib.import_module("graphblocks.deployment")
+    release = _release(monkeypatch)
+    source = graphblocks_gitops.GitOpsSource(
+        "https://git.example.com/platform.git",
+        "clusters/prod",
+    )
+    destination = graphblocks_gitops.GitOpsDestination(namespace="support")
+
+    with pytest.raises(graphblocks_gitops.GitOpsContractError, match="automated"):
+        graphblocks_gitops.render_argocd_application(
+            "support-agent",
+            release=release,
+            source=source,
+            destination=destination,
+            automated="false",  # type: ignore[arg-type]
+        )
+    with pytest.raises(graphblocks_gitops.GitOpsContractError, match="prune"):
+        graphblocks_gitops.render_flux_kustomization(
+            "support-agent",
+            release=release,
+            source_ref=graphblocks_gitops.FluxSourceRef("GitRepository", "platform"),
+            path="./clusters/prod",
+            namespace="support",
+            prune="false",  # type: ignore[arg-type]
+        )
+
+    revision = graphblocks_deployment.DeploymentRevision(
+        revision_id="revision-foreign",
+        release_digest="sha256:another-release",
+        deployment_spec_hash="sha256:deployment",
+        physical_plan_hash="sha256:plan",
+        resolved_binding_hash="sha256:binding",
+        target_capability_hash="sha256:targets",
+        created_at="2026-06-29T00:00:00Z",
+    )
+    with pytest.raises(graphblocks_gitops.GitOpsContractError, match="release_digest"):
+        graphblocks_gitops.render_graphblocks_desired_state(
+            "support-production",
+            release=release,
+            deployment_revision=revision,
+            desired_state={},
+        )

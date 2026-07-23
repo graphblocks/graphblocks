@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from copy import deepcopy
 from dataclasses import dataclass, field
 
 from graphblocks.usage import UsageAmount, UsageRecord
@@ -10,8 +11,13 @@ class PostgresUsageAdapterError(ValueError):
     """Raised when a Postgres usage SQL contract is invalid."""
 
 
-def _validate_identifier(identifier: str) -> None:
-    if not identifier or not identifier.replace("_", "").isalnum() or identifier[0].isdigit():
+def _validate_identifier(identifier: object) -> None:
+    if (
+        not isinstance(identifier, str)
+        or not identifier
+        or not identifier.replace("_", "").isalnum()
+        or identifier[0].isdigit()
+    ):
         raise PostgresUsageAdapterError(f"invalid SQL identifier: {identifier!r}")
 
 
@@ -31,11 +37,19 @@ class PostgresStatement:
     params: Mapping[str, object] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        if not self.name.strip():
+        if not isinstance(self.name, str) or not self.name.strip():
             raise PostgresUsageAdapterError("statement name must not be empty")
-        if not self.sql.strip():
+        if not isinstance(self.sql, str) or not self.sql.strip():
             raise PostgresUsageAdapterError("statement SQL must not be empty")
-        object.__setattr__(self, "params", dict(sorted(self.params.items())))
+        if not isinstance(self.params, Mapping) or any(
+            not isinstance(name, str) for name in self.params
+        ):
+            raise PostgresUsageAdapterError("statement params must be a string-keyed mapping")
+        object.__setattr__(
+            self,
+            "params",
+            deepcopy(dict(sorted(self.params.items()))),
+        )
 
 
 @dataclass(frozen=True, slots=True)

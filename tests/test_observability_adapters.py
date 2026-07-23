@@ -1032,6 +1032,30 @@ def test_otel_projection_contracts_reject_non_standard_json_constants(monkeypatc
         template.config_contract()
 
 
+def test_otel_contracts_reject_duplicate_json_keys_and_coerced_booleans(
+    monkeypatch,
+) -> None:
+    graphblocks_otel = importlib.import_module("graphblocks.integrations.otel")
+
+    with pytest.raises(graphblocks_otel.OtelCollectorTemplateError, match="strict JSON"):
+        graphblocks_otel.OtlpSpanProjection(
+            span_json='{"span_id":"first","span_id":"second"}'
+        ).span_contract()
+    with pytest.raises(graphblocks_otel.OtelCollectorTemplateError, match="boolean"):
+        graphblocks_otel.otlp_collector_template(
+            "collector.example:4317",
+            insecure="false",  # type: ignore[arg-type]
+        )
+    with pytest.raises(
+        graphblocks_otel.OtelCollectorTemplateError,
+        match="resource attribute keys",
+    ):
+        graphblocks_otel.otlp_collector_template(
+            "collector.example:4317",
+            resource_attributes={1: "production"},  # type: ignore[dict-item]
+        )
+
+
 def test_otel_span_projection_requires_schema_url(monkeypatch) -> None:
     graphblocks_telemetry = importlib.import_module("graphblocks.telemetry")
     graphblocks_otel = importlib.import_module("graphblocks.integrations.otel")

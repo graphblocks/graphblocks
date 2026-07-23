@@ -751,3 +751,59 @@ def test_kubernetes_full_canary_routes_to_safely_sized_candidate(monkeypatch) ->
     assert stable_deployment["spec"]["replicas"] == 10
     assert candidate_deployment["spec"]["replicas"] == 10
     assert service["spec"]["selector"]["graphblocks.ai/rollout-role"] == "candidate"
+
+
+def test_kubernetes_adapter_rejects_coerced_numeric_and_boolean_fields(
+    monkeypatch,
+) -> None:
+    graphblocks_kubernetes = _import_kubernetes(monkeypatch)
+    graphblocks_deployment = importlib.import_module("graphblocks.deployment")
+    target = graphblocks_deployment.ExecutionTarget(
+        "agent-workers",
+        "worker_pool",
+        "rust",
+        image="ghcr.io/acme/support-agent@sha256:runtime",
+    )
+
+    for port in (True, 8080.5):
+        with pytest.raises(
+            graphblocks_kubernetes.KubernetesAdapterError,
+            match="integer between",
+        ):
+            graphblocks_kubernetes.KubernetesPort(
+                "http",
+                port,  # type: ignore[arg-type]
+            )
+    for replicas in (True, 1.5):
+        with pytest.raises(
+            graphblocks_kubernetes.KubernetesAdapterError,
+            match="non-negative integer",
+        ):
+            graphblocks_kubernetes.render_target_deployment(
+                "support-agent",
+                target,
+                replicas=replicas,  # type: ignore[arg-type]
+            )
+    with pytest.raises(graphblocks_kubernetes.KubernetesAdapterError, match="optional"):
+        graphblocks_kubernetes.KubernetesSecretEnv(
+            "TOKEN",
+            "runtime-secrets",
+            "token",
+            optional="false",  # type: ignore[arg-type]
+        )
+    with pytest.raises(graphblocks_kubernetes.KubernetesAdapterError, match="namespaced"):
+        graphblocks_kubernetes.KubernetesClusterCapability(
+            "apps/v1",
+            "Deployment",
+            namespaced="true",  # type: ignore[arg-type]
+        )
+    with pytest.raises(
+        graphblocks_kubernetes.KubernetesAdapterError,
+        match="include_network_policy",
+    ):
+        graphblocks_kubernetes.render_callback_ingress_manifests(
+            "callbacks",
+            {"enabled": False},
+            service_name="callback-worker",
+            include_network_policy="false",  # type: ignore[arg-type]
+        )

@@ -70,6 +70,31 @@ def test_kafka_adapter_rejects_boolean_cursor_numbers(monkeypatch) -> None:
             factory()
 
 
+def test_kafka_adapter_rejects_offset_overflow_and_malformed_headers(
+    monkeypatch,
+) -> None:
+    graphblocks_kafka = _import_kafka(monkeypatch)
+    maximum_offset = (1 << 63) - 1
+
+    with pytest.raises(graphblocks_kafka.KafkaAdapterError, match="signed 64-bit"):
+        graphblocks_kafka.KafkaRecord("orders", 0, maximum_offset + 1, {})
+    with pytest.raises(graphblocks_kafka.KafkaAdapterError, match="cannot advance"):
+        graphblocks_kafka.KafkaConsumerCursor.from_source_cursor(
+            "orders-consumer",
+            graphblocks_kafka.SourceCursor("orders", 0, maximum_offset),
+        )
+    with pytest.raises(graphblocks_kafka.KafkaAdapterError, match="headers"):
+        graphblocks_kafka.KafkaRecord(
+            "orders",
+            0,
+            1,
+            {},
+            headers={"attempt": 1},  # type: ignore[dict-item]
+        )
+    with pytest.raises(graphblocks_kafka.KafkaAdapterError, match="topic"):
+        graphblocks_kafka.KafkaRecord(object(), 0, 1, {})  # type: ignore[arg-type]
+
+
 def test_kafka_sink_record_projects_durable_sink_commit(monkeypatch) -> None:
     graphblocks_kafka = _import_kafka(monkeypatch)
     request = graphblocks_kafka.SinkCommitRequest(

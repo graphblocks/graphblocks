@@ -190,3 +190,51 @@ def test_terraform_bridge_imports_outputs_as_nested_binding_document(monkeypatch
         },
     }
     assert "sk-should-not-leak" not in repr(document)
+
+
+def test_terraform_bridge_detaches_variables_and_fails_closed_on_sensitive_outputs(
+    monkeypatch,
+) -> None:
+    graphblocks_terraform = _import_terraform(monkeypatch)
+    value = {"regions": ["us-east-1"]}
+    variable = graphblocks_terraform.TerraformVariable("deployment", value)
+    bridge = graphblocks_terraform.TerraformBridgeSpec(
+        workspace="support-prod",
+        variables=(variable,),
+        output_bindings=(
+            graphblocks_terraform.TerraformOutputBinding(
+                "api_key",
+                "models.support.apiKey",
+            ),
+        ),
+    )
+    value["regions"].append("caller-mutated")
+
+    assert json.loads(bridge.tfvars_json()) == {
+        "deployment": {"regions": ["us-east-1"]}
+    }
+    with pytest.raises(graphblocks_terraform.TerraformBridgeError, match="requires secret_ref"):
+        bridge.materialize_outputs(
+            {"api_key": {"value": "secret", "sensitive": True}}
+        )
+
+
+def test_terraform_bridge_rejects_nonfinite_values_and_coerced_flags(
+    monkeypatch,
+) -> None:
+    graphblocks_terraform = _import_terraform(monkeypatch)
+
+    with pytest.raises(graphblocks_terraform.TerraformBridgeError, match="JSON-serializable"):
+        graphblocks_terraform.TerraformVariable("threshold", float("nan"))
+    with pytest.raises(graphblocks_terraform.TerraformBridgeError, match="sensitive"):
+        graphblocks_terraform.TerraformVariable(
+            "token",
+            "secret",
+            sensitive="false",  # type: ignore[arg-type]
+        )
+    with pytest.raises(graphblocks_terraform.TerraformBridgeError, match="required"):
+        graphblocks_terraform.TerraformOutputBinding(
+            "url",
+            "service.url",
+            required="true",  # type: ignore[arg-type]
+        )

@@ -17,7 +17,13 @@ class GitOpsContractError(ValueError):
 
 
 def _canonical_dumps(value: object) -> str:
-    return json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+    return json.dumps(
+        value,
+        allow_nan=False,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
 
 
 def _sorted_str_mapping(values: Mapping[str, str]) -> dict[str, str]:
@@ -129,7 +135,18 @@ class GitOpsManifestSet:
     _documents: tuple[GitOpsManifest, ...] = field(repr=False)
 
     def __init__(self, documents: Iterable[GitOpsManifest]) -> None:
-        object.__setattr__(self, "_documents", tuple(deepcopy(document) for document in documents))
+        try:
+            materialized = tuple(documents)
+        except TypeError as error:
+            raise GitOpsContractError("GitOps documents must be mappings") from error
+        if any(not isinstance(document, Mapping) for document in materialized):
+            raise GitOpsContractError("GitOps documents must be mappings")
+        copied = tuple(deepcopy(dict(document)) for document in materialized)
+        try:
+            _canonical_dumps(copied)
+        except (TypeError, ValueError) as error:
+            raise GitOpsContractError("GitOps documents must contain strict JSON values") from error
+        object.__setattr__(self, "_documents", copied)
 
     @property
     def documents(self) -> tuple[GitOpsManifest, ...]:
@@ -162,6 +179,8 @@ def render_argocd_application(
         raise GitOpsContractError("Application name must not be empty")
     if not project.strip():
         raise GitOpsContractError("Application project must not be empty")
+    if not isinstance(automated, bool):
+        raise GitOpsContractError("Application automated must be a boolean")
     spec: dict[str, object] = {
         "project": project,
         "source": source.argocd_contract(),
@@ -197,6 +216,8 @@ def render_flux_kustomization(
     ):
         if not value.strip():
             raise GitOpsContractError(f"{field_name} must not be empty")
+    if not isinstance(prune, bool):
+        raise GitOpsContractError("Kustomization prune must be a boolean")
     return {
         "apiVersion": "kustomize.toolkit.fluxcd.io/v1",
         "kind": "Kustomization",
@@ -223,6 +244,16 @@ def render_graphblocks_desired_state(
 ) -> GitOpsManifest:
     if not name.strip():
         raise GitOpsContractError("GraphBlocks desired state name must not be empty")
+    if not isinstance(release, GraphRelease):
+        raise GitOpsContractError("release must be a GraphRelease")
+    if not isinstance(deployment_revision, DeploymentRevision):
+        raise GitOpsContractError("deployment_revision must be a DeploymentRevision")
+    if deployment_revision.release_digest != release.content_digest():
+        raise GitOpsContractError(
+            "deployment revision release_digest must match the rendered release"
+        )
+    if not isinstance(desired_state, Mapping):
+        raise GitOpsContractError("desired_state must be a mapping")
     release_contract: dict[str, object] = {
         "name": release.name,
         "version": release.version,

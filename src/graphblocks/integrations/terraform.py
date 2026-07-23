@@ -20,7 +20,13 @@ class TerraformOutputMissingError(TerraformBridgeError):
 
 
 def _canonical_dumps(value: object) -> str:
-    return json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+    return json.dumps(
+        value,
+        allow_nan=False,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -30,12 +36,16 @@ class TerraformVariable:
     sensitive: bool = False
 
     def __post_init__(self) -> None:
-        if not self.name.strip():
+        if not isinstance(self.name, str) or not self.name.strip():
             raise TerraformBridgeError("variable name must not be empty")
+        if not isinstance(self.sensitive, bool):
+            raise TerraformBridgeError("variable sensitive must be a boolean")
         try:
-            _canonical_dumps(self.value)
-        except (TypeError, ValueError) as error:
+            value = deepcopy(self.value)
+            _canonical_dumps(value)
+        except (RecursionError, TypeError, ValueError) as error:
             raise TerraformBridgeError(f"variable {self.name!r} must be JSON-serializable") from error
+        object.__setattr__(self, "value", value)
 
     def canonical_value(self) -> dict[str, object]:
         return {
@@ -53,11 +63,15 @@ class TerraformOutputBinding:
     secret_ref: str | None = None
 
     def __post_init__(self) -> None:
-        if not self.output_name.strip():
+        if not isinstance(self.output_name, str) or not self.output_name.strip():
             raise TerraformBridgeError("output_name must not be empty")
-        if not self.graphblocks_key.strip():
+        if not isinstance(self.graphblocks_key, str) or not self.graphblocks_key.strip():
             raise TerraformBridgeError("graphblocks_key must not be empty")
-        if self.secret_ref is not None and not self.secret_ref.strip():
+        if not isinstance(self.required, bool):
+            raise TerraformBridgeError("output binding required must be a boolean")
+        if self.secret_ref is not None and (
+            not isinstance(self.secret_ref, str) or not self.secret_ref.strip()
+        ):
             raise TerraformBridgeError("secret_ref must not be empty")
 
     def canonical_value(self) -> dict[str, object]:
@@ -89,12 +103,17 @@ class TerraformInfrastructureRequirement:
             ("resource_type", self.resource_type),
             ("resource_name", self.resource_name),
         ):
-            if not value.strip():
+            if not isinstance(value, str) or not value.strip():
                 raise TerraformBridgeError(f"{field_name} must not be empty")
-        attributes = {str(key): deepcopy(value) for key, value in sorted(dict(self.attributes).items())}
+        if not isinstance(self.attributes, Mapping):
+            raise TerraformBridgeError("requirement attributes must be a mapping")
+        attributes = {
+            str(key): deepcopy(value)
+            for key, value in sorted(dict(self.attributes).items())
+        }
         try:
             _canonical_dumps(attributes)
-        except (TypeError, ValueError) as error:
+        except (RecursionError, TypeError, ValueError) as error:
             raise TerraformBridgeError("requirement attributes must be JSON-serializable") from error
         object.__setattr__(self, "attributes", attributes)
         object.__setattr__(self, "capabilities", tuple(sorted({str(value) for value in self.capabilities})))
@@ -143,16 +162,37 @@ class TerraformBridgeSpec:
     requirements: tuple[TerraformInfrastructureRequirement, ...] = field(default_factory=tuple)
 
     def __post_init__(self) -> None:
-        if not self.workspace.strip():
+        if not isinstance(self.workspace, str) or not self.workspace.strip():
             raise TerraformBridgeError("workspace must not be empty")
 
-        variables = tuple(sorted(self.variables, key=lambda variable: variable.name))
+        try:
+            variables = tuple(self.variables)
+        except TypeError as error:
+            raise TerraformBridgeError("variables must contain TerraformVariable values") from error
+        if any(not isinstance(variable, TerraformVariable) for variable in variables):
+            raise TerraformBridgeError("variables must contain TerraformVariable values")
+        variables = tuple(sorted(variables, key=lambda variable: variable.name))
         variable_names = [variable.name for variable in variables]
         if len(variable_names) != len(set(variable_names)):
             raise TerraformBridgeError("variable names must be unique")
         object.__setattr__(self, "variables", variables)
 
-        output_bindings = tuple(sorted(self.output_bindings, key=lambda binding: binding.output_name))
+        try:
+            output_bindings = tuple(self.output_bindings)
+        except TypeError as error:
+            raise TerraformBridgeError(
+                "output_bindings must contain TerraformOutputBinding values"
+            ) from error
+        if any(
+            not isinstance(binding, TerraformOutputBinding)
+            for binding in output_bindings
+        ):
+            raise TerraformBridgeError(
+                "output_bindings must contain TerraformOutputBinding values"
+            )
+        output_bindings = tuple(
+            sorted(output_bindings, key=lambda binding: binding.output_name)
+        )
         output_names = [binding.output_name for binding in output_bindings]
         if len(output_names) != len(set(output_names)):
             raise TerraformBridgeError("output binding names must be unique")
@@ -161,10 +201,30 @@ class TerraformBridgeSpec:
             raise TerraformBridgeError("output binding graphblocks_key values must be unique")
         object.__setattr__(self, "output_bindings", output_bindings)
 
+        try:
+            requirements = tuple(self.requirements)
+        except TypeError as error:
+            raise TerraformBridgeError(
+                "requirements must contain TerraformInfrastructureRequirement values"
+            ) from error
+        if any(
+            not isinstance(requirement, TerraformInfrastructureRequirement)
+            for requirement in requirements
+        ):
+            raise TerraformBridgeError(
+                "requirements must contain TerraformInfrastructureRequirement values"
+            )
         object.__setattr__(
             self,
             "requirements",
-            tuple(sorted(self.requirements, key=lambda requirement: _canonical_dumps(requirement.canonical_value()))),
+            tuple(
+                sorted(
+                    requirements,
+                    key=lambda requirement: _canonical_dumps(
+                        requirement.canonical_value()
+                    ),
+                )
+            ),
         )
 
     def tfvars_json(self) -> str:
@@ -174,6 +234,8 @@ class TerraformBridgeSpec:
         return [requirement.canonical_value() for requirement in self.requirements]
 
     def materialize_outputs(self, terraform_outputs: Mapping[str, object]) -> dict[str, object]:
+        if not isinstance(terraform_outputs, Mapping):
+            raise TerraformBridgeError("terraform_outputs must be a mapping")
         materialized: dict[str, object] = {}
         for binding in self.output_bindings:
             if binding.output_name not in terraform_outputs:
@@ -181,6 +243,16 @@ class TerraformBridgeSpec:
                     raise TerraformOutputMissingError(binding.output_name)
                 continue
             raw_value = terraform_outputs[binding.output_name]
+            if isinstance(raw_value, Mapping) and "sensitive" in raw_value:
+                sensitive = raw_value["sensitive"]
+                if not isinstance(sensitive, bool):
+                    raise TerraformBridgeError(
+                        f"Terraform output {binding.output_name!r} sensitive must be a boolean"
+                    )
+                if sensitive and binding.secret_ref is None:
+                    raise TerraformBridgeError(
+                        f"sensitive Terraform output {binding.output_name!r} requires secret_ref"
+                    )
             if binding.secret_ref is not None:
                 materialized[binding.graphblocks_key] = {"secretRef": binding.secret_ref}
                 continue

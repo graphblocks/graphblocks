@@ -526,6 +526,30 @@ def test_oci_contract_rejects_noncanonical_sha256_digests(monkeypatch, digest) -
         graphblocks_oci.OciDescriptor("application/octet-stream", digest, 1)
 
 
+def test_oci_contract_rejects_non_integer_sizes_and_foreign_descriptors(
+    monkeypatch,
+) -> None:
+    graphblocks_oci = _import_oci(monkeypatch)
+    digest = _digest("payload")
+
+    for size in (True, 1.5):
+        with pytest.raises(graphblocks_oci.OciContractError, match="non-negative integer"):
+            graphblocks_oci.OciDescriptor(
+                "application/octet-stream",
+                digest,
+                size,  # type: ignore[arg-type]
+            )
+
+    with pytest.raises(graphblocks_oci.OciContractError, match="manifest config"):
+        graphblocks_oci.OciManifest(config=object())  # type: ignore[arg-type]
+    config = graphblocks_oci.OciDescriptor("application/octet-stream", digest, 1)
+    with pytest.raises(graphblocks_oci.OciContractError, match="manifest layers"):
+        graphblocks_oci.OciManifest(
+            config=config,
+            layers=(object(),),  # type: ignore[arg-type]
+        )
+
+
 def test_oci_manifest_digest_uses_canonical_serialization(monkeypatch) -> None:
     graphblocks_oci = _import_oci(monkeypatch)
     config = graphblocks_oci.OciDescriptor(

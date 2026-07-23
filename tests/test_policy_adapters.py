@@ -146,6 +146,25 @@ def test_opa_adapter_rejects_non_standard_input_json_constants(monkeypatch) -> N
         opa_input.input_contract()
 
 
+def test_policy_adapter_json_contracts_reject_duplicate_keys(monkeypatch) -> None:
+    graphblocks_policy_opa = importlib.import_module("graphblocks.integrations.policy_opa")
+    graphblocks_policy_cedar = importlib.import_module(
+        "graphblocks.integrations.policy_cedar"
+    )
+
+    with pytest.raises(graphblocks_policy_opa.OpaPolicyAdapterError, match="strict JSON"):
+        graphblocks_policy_opa.OpaPolicyInput(
+            input_json='{"action":"read","action":"write"}'
+        ).input_contract()
+    with pytest.raises(
+        graphblocks_policy_cedar.CedarPolicyAdapterError,
+        match="strict JSON",
+    ):
+        graphblocks_policy_cedar.CedarAuthorizationRequest(
+            authorization_json='{"action":"read","action":"write"}'
+        ).authorization_contract()
+
+
 def test_opa_adapter_rejects_blank_package_ref(monkeypatch) -> None:
     graphblocks_policy_opa = importlib.import_module("graphblocks.integrations.policy_opa")
 
