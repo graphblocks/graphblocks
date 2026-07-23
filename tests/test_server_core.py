@@ -10139,6 +10139,79 @@ def test_server_app_deduplicates_repeated_subscription_ack_by_event_identity() -
     )
 
 
+def test_server_app_serializes_concurrent_subscription_acknowledgements() -> None:
+    class CoordinatedAckStore(dict[tuple[str, str], tuple[dict[str, object], ...]]):
+        def __init__(self) -> None:
+            super().__init__()
+            self._calls = 0
+            self._calls_lock = Lock()
+            self._both_reading = Event()
+
+        def get(
+            self,
+            key: tuple[str, str],
+            default: tuple[dict[str, object], ...] | None = None,
+        ) -> tuple[dict[str, object], ...] | None:
+            current = super().get(key, default)
+            with self._calls_lock:
+                self._calls += 1
+                if self._calls == 2:
+                    self._both_reading.set()
+            if self._calls <= 2:
+                self._both_reading.wait(timeout=1)
+            return current
+
+    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+    app._events_by_run_id["run-ack-concurrent-1"] = (
+        {
+            "kind": "RunSucceeded",
+            "metadata": {
+                "eventId": "event-terminal",
+                "runId": "run-ack-concurrent-1",
+                "sequence": 1,
+                "visibility": "client",
+            },
+            "payload": {},
+        },
+    )
+    subscribed = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs/run-ack-concurrent-1/subscriptions",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "subscriptionId": "sub-ack-concurrent-1",
+                    "eventFilter": {"types": ["RunSucceeded"]},
+                    "delivery": {"kind": "local_callback", "callback_name": "ide"},
+                }
+            ).encode("utf-8"),
+        )
+    )
+    assert subscribed.status_code == 201
+    app._acks_by_subscription = CoordinatedAckStore()
+    requests = tuple(
+        ServerRequest(
+            method="POST",
+            path="/runs/run-ack-concurrent-1/subscriptions/sub-ack-concurrent-1/ack",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps({"eventId": "event-terminal"}).encode("utf-8"),
+            requested_at=f"2026-07-03T00:00:0{index}Z",
+        )
+        for index in (1, 2)
+    )
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        responses = tuple(executor.map(app.handle, requests))
+
+    assert sorted(response.status_code for response in responses) == [200, 202]
+    assert len(app.event_acks("run-ack-concurrent-1", "sub-ack-concurrent-1")) == 1
+
+
 def test_server_app_rejects_subscription_ack_with_invalid_timestamp() -> None:
     app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
     app._events_by_run_id["run-ack-invalid-time-1"] = (
@@ -12090,6 +12163,50 @@ def test_server_app_treats_repeated_callback_dead_letter_move_as_idempotent() ->
             "status": "dead_letter_requested",
         },
     )
+
+
+def test_server_app_serializes_concurrent_callback_dead_letter_moves() -> None:
+    class CoordinatedDeadLetterStore(dict[str, tuple[dict[str, object], ...]]):
+        def __init__(self) -> None:
+            super().__init__()
+            self._calls = 0
+            self._calls_lock = Lock()
+            self._both_reading = Event()
+
+        def get(
+            self,
+            key: str,
+            default: tuple[dict[str, object], ...] | None = None,
+        ) -> tuple[dict[str, object], ...] | None:
+            current = super().get(key, default)
+            with self._calls_lock:
+                self._calls += 1
+                if self._calls == 2:
+                    self._both_reading.set()
+            if self._calls <= 2:
+                self._both_reading.wait(timeout=1)
+            return current
+
+    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("operator-1")}))
+    app._callback_delivery_dead_letter_moves = CoordinatedDeadLetterStore()
+    requests = tuple(
+        ServerRequest(
+            method="POST",
+            path="/callbacks/deliveries/del-concurrent/dead-letter",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps({"reason": f"terminal failure {index}"}).encode("utf-8"),
+            requested_at=f"2026-07-03T00:01:0{index}Z",
+        )
+        for index in (1, 2)
+    )
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        responses = tuple(executor.map(app.handle, requests))
+
+    assert sorted(response.status_code for response in responses) == [200, 202]
+    assert len(app.callback_delivery_dead_letter_moves("del-concurrent")) == 1
 
 
 def test_server_app_rejects_malformed_callback_delivery_control_request() -> None:

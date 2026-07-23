@@ -2556,51 +2556,55 @@ class GraphBlocksServerApp:
                             "error": f"run event stream not found for ack run {run_id!r}",
                         },
                     )
-                subscription = self._subscription_for(run_id, subscription_id)
-                if subscription is None:
-                    return ServerResponse.json(
-                        404,
-                        {
-                            "ok": False,
-                            "error": f"subscription {subscription_id!r} not found for run {run_id!r}",
-                        },
+                with self._subscription_registration_condition:
+                    subscription = self._subscription_for(run_id, subscription_id)
+                    if subscription is None:
+                        return ServerResponse.json(
+                            404,
+                            {
+                                "ok": False,
+                                "error": f"subscription {subscription_id!r} not found for run {run_id!r}",
+                            },
+                        )
+                    if subscription.owner is not None and not _principal_matches_owner(
+                        auth_decision.principal,
+                        subscription.owner,
+                    ):
+                        return ServerResponse.json(
+                            403,
+                            {
+                                "ok": False,
+                                "error": (
+                                    f"subscription {subscription_id!r} for run {run_id!r} "
+                                    "belongs to a different principal"
+                                ),
+                            },
+                        )
+                    if subscription.status != "active":
+                        return ServerResponse.json(
+                            409,
+                            {
+                                "ok": False,
+                                "runId": run_id,
+                                "subscriptionId": subscription_id,
+                                "state": subscription.status,
+                                "error": (
+                                    f"subscription {subscription_id!r} for run {run_id!r} "
+                                    f"is {subscription.status}"
+                                ),
+                            },
+                        )
+                    payload = _server_request_json_body(request, "ack request")
+                    if not isinstance(payload, Mapping):
+                        raise ValueError("ack request body must be a JSON object")
+                    return self._ack_event_response(
+                        run_id,
+                        subscription_id,
+                        subscription,
+                        events,
+                        payload,
+                        request.requested_at or _utc_now_iso(),
                     )
-                if subscription.owner is not None and not _principal_matches_owner(
-                    auth_decision.principal,
-                    subscription.owner,
-                ):
-                    return ServerResponse.json(
-                        403,
-                        {
-                            "ok": False,
-                            "error": (
-                                f"subscription {subscription_id!r} for run {run_id!r} "
-                                "belongs to a different principal"
-                            ),
-                        },
-                    )
-                if subscription.status != "active":
-                    return ServerResponse.json(
-                        409,
-                        {
-                            "ok": False,
-                            "runId": run_id,
-                            "subscriptionId": subscription_id,
-                            "state": subscription.status,
-                            "error": f"subscription {subscription_id!r} for run {run_id!r} is {subscription.status}",
-                        },
-                    )
-                payload = _server_request_json_body(request, "ack request")
-                if not isinstance(payload, Mapping):
-                    raise ValueError("ack request body must be a JSON object")
-                return self._ack_event_response(
-                    run_id,
-                    subscription_id,
-                    subscription,
-                    events,
-                    payload,
-                    request.requested_at or _utc_now_iso(),
-                )
             except (TypeError, ValueError, json.JSONDecodeError) as error:
                 return ServerResponse.json(
                     400,
@@ -5197,7 +5201,8 @@ class GraphBlocksServerApp:
             "subscription_id",
             subscription_id,
         )
-        return self._acks_by_subscription.get((run_id, subscription_id), ())
+        with self._subscription_registration_condition:
+            return self._acks_by_subscription.get((run_id, subscription_id), ())
 
     def callback_registrations(self) -> tuple[ServerCallbackRegistration, ...]:
         with self._callback_registration_condition:
@@ -5221,7 +5226,8 @@ class GraphBlocksServerApp:
             "delivery_id",
             delivery_id,
         )
-        return self._callback_delivery_redrives.get(delivery_id, ())
+        with self._callback_registration_condition:
+            return self._callback_delivery_redrives.get(delivery_id, ())
 
     def callback_delivery_dead_letter_moves(self, delivery_id: str) -> tuple[dict[str, object], ...]:
         delivery_id = _validate_exact_non_empty_string(
@@ -5229,7 +5235,8 @@ class GraphBlocksServerApp:
             "delivery_id",
             delivery_id,
         )
-        return self._callback_delivery_dead_letter_moves.get(delivery_id, ())
+        with self._callback_registration_condition:
+            return self._callback_delivery_dead_letter_moves.get(delivery_id, ())
 
     def _run_status_payload(
         self,
@@ -5930,26 +5937,27 @@ class GraphBlocksServerApp:
             "requestedAt": requested_at,
             "status": status,
         })
-        if operation == "redrive_callback_delivery":
-            existing = self._callback_delivery_redrives.get(delivery_id, ())
-            self._callback_delivery_redrives[delivery_id] = (*existing, record)
-        else:
-            existing = self._callback_delivery_dead_letter_moves.get(delivery_id, ())
-            if existing:
-                first = existing[0]
-                return ServerResponse.json(
-                    200,
-                    {
-                        "ok": True,
-                        "deliveryId": delivery_id,
-                        "operator": first.get("operator"),
-                        "reason": first.get("reason"),
-                        "status": first.get("status"),
-                        "requestedAt": first.get("requestedAt"),
-                        "duplicate": True,
-                    },
-                )
-            self._callback_delivery_dead_letter_moves[delivery_id] = (*existing, record)
+        with self._callback_registration_condition:
+            if operation == "redrive_callback_delivery":
+                existing = self._callback_delivery_redrives.get(delivery_id, ())
+                self._callback_delivery_redrives[delivery_id] = (*existing, record)
+            else:
+                existing = self._callback_delivery_dead_letter_moves.get(delivery_id, ())
+                if existing:
+                    first = existing[0]
+                    return ServerResponse.json(
+                        200,
+                        {
+                            "ok": True,
+                            "deliveryId": delivery_id,
+                            "operator": first.get("operator"),
+                            "reason": first.get("reason"),
+                            "status": first.get("status"),
+                            "requestedAt": first.get("requestedAt"),
+                            "duplicate": True,
+                        },
+                    )
+                self._callback_delivery_dead_letter_moves[delivery_id] = (*existing, record)
         return ServerResponse.json(
             202,
             {
