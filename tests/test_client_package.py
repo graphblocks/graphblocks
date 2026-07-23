@@ -962,6 +962,104 @@ def test_client_package_durable_response_validates_initial_cursor(
 
 
 @pytest.mark.parametrize(
+    ("record_type", "field_name", "field_value", "message"),
+    (
+        (
+            "response",
+            "events",
+            1,
+            "run graph response events must be an iterable of ApplicationEvent values",
+        ),
+        (
+            "response",
+            "events",
+            (object(),),
+            "run graph response events must contain only ApplicationEvent values",
+        ),
+        (
+            "response",
+            "event_stream",
+            object(),
+            "run graph response event_stream must be an ApplicationEventStreamState",
+        ),
+        (
+            "snapshot",
+            "events",
+            1,
+            "run stream snapshot events must be an iterable of ApplicationEvent values",
+        ),
+        (
+            "snapshot",
+            "events",
+            (object(),),
+            "run stream snapshot events must contain only ApplicationEvent values",
+        ),
+        (
+            "snapshot",
+            "event_stream",
+            object(),
+            "run stream snapshot event_stream must be an ApplicationEventStreamState",
+        ),
+    ),
+)
+def test_client_package_response_records_reject_malformed_event_state(
+    monkeypatch,
+    record_type: str,
+    field_name: str,
+    field_value: object,
+    message: str,
+) -> None:
+    graphblocks_client = importlib.import_module("graphblocks.client")
+    kwargs: dict[str, object]
+    if record_type == "response":
+        kwargs = {
+            "run_id": "run-1",
+            "status": "succeeded",
+            "outputs": {},
+            "events": (),
+            "event_stream": graphblocks_client.ApplicationEventStreamState(),
+        }
+        constructor = graphblocks_client.RunGraphResponse
+    else:
+        kwargs = {
+            "run_id": "run-1",
+            "stream": {},
+            "events": (),
+            "event_stream": graphblocks_client.ApplicationEventStreamState(),
+        }
+        constructor = graphblocks_client.RunStreamSnapshot
+    kwargs[field_name] = field_value
+
+    with pytest.raises(ValueError, match=message):
+        constructor(**kwargs)
+
+
+@pytest.mark.parametrize(
+    ("status_code", "raw_body", "message"),
+    (
+        (True, None, "status_code must be an integer"),
+        (99, None, "status_code must be a valid HTTP status"),
+        (600, None, "status_code must be a valid HTTP status"),
+        (400, 3, "raw_body must be bytes"),
+    ),
+)
+def test_client_package_http_error_rejects_malformed_transport_state(
+    monkeypatch,
+    status_code: object,
+    raw_body: object,
+    message: str,
+) -> None:
+    graphblocks_client = importlib.import_module("graphblocks.client")
+
+    with pytest.raises(ValueError, match=message):
+        graphblocks_client.GraphBlocksHttpError(
+            status_code,
+            {"error": "invalid"},
+            raw_body=raw_body,
+        )
+
+
+@pytest.mark.parametrize(
     ("response_kwargs", "message"),
     (
         ({"run_id": ""}, "run graph response run_id must be a non-empty string"),
@@ -1001,7 +1099,16 @@ def test_http_client_rejects_unusable_transport_configuration(monkeypatch) -> No
         with pytest.raises(ValueError, match="base_url"):
             graphblocks_client.HttpGraphBlocksClient(base_url)
 
-    for timeout in (True, 0, -1, float("nan"), float("inf"), "30"):
+    for timeout in (
+        True,
+        0,
+        -1,
+        float("nan"),
+        float("inf"),
+        1e300,
+        10**1_000,
+        "30",
+    ):
         with pytest.raises(ValueError, match="timeout"):
             graphblocks_client.HttpGraphBlocksClient(
                 "https://graphblocks.example/api",
@@ -1950,6 +2057,8 @@ def test_client_package_rejects_malformed_http_run_id_arguments(
     (
         ("run_events", "cursor", "other-run:1"),
         ("run_events", "cursor", "run-cursor-http-1:not-a-sequence"),
+        ("run_events", "cursor", "run-cursor-http-1:١"),
+        ("run_events", "cursor", f"run-cursor-http-1:{1 << 64}"),
         ("attach_to_run", "last_cursor", "other-run:1"),
         ("attach_to_run", "last_cursor", "run-cursor-http-1:not-a-sequence"),
         ("subscribe_events", "replay_from_cursor", "other-run:1"),
@@ -1975,14 +2084,15 @@ def test_client_package_rejects_malformed_http_cursor_arguments(
         "https://graphblocks.example/api",
         transport=transport,
     )
-    expected = (
-        f"GraphBlocks HTTP {field_name} must belong to run 'run-cursor-http-1'"
-        if cursor.startswith("other-run:")
-        else (
+    if cursor.startswith("other-run:"):
+        expected = f"GraphBlocks HTTP {field_name} must belong to run 'run-cursor-http-1'"
+    elif cursor.endswith(str(1 << 64)):
+        expected = f"GraphBlocks HTTP {field_name} sequence must be at most {(1 << 64) - 1}"
+    else:
+        expected = (
             f"GraphBlocks HTTP {field_name} must use '<run_id>:<sequence>' "
             "with a non-negative integer sequence"
         )
-    )
 
     with pytest.raises(ValueError, match=re.escape(expected)):
         if method_name == "run_events":

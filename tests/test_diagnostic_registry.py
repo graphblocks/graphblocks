@@ -4,7 +4,10 @@ import ast
 from pathlib import Path
 import re
 
+import pytest
 import yaml
+
+from graphblocks.diagnostics import Diagnostic, DiagnosticSet
 
 
 ROOT = Path(__file__).parents[1]
@@ -22,6 +25,30 @@ TESTING_PACKAGE_PATH = (
     / "graphblocks_testing"
     / "__init__.py"
 )
+
+
+def test_diagnostic_records_validate_and_snapshot_public_values() -> None:
+    source = [Diagnostic("GB0001", "first diagnostic")]
+    diagnostics = DiagnosticSet(source)  # type: ignore[arg-type]
+    source.append(Diagnostic("GB0002", "second diagnostic"))
+
+    assert diagnostics.diagnostics == (Diagnostic("GB0001", "first diagnostic"),)
+    with pytest.raises(ValueError, match="must contain Diagnostic records"):
+        DiagnosticSet((object(),))  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="must be a collection"):
+        DiagnosticSet(object())  # type: ignore[arg-type]
+
+    for field_name, changes in (
+        ("code", {"code": ""}),
+        ("message", {"message": object()}),
+        ("path", {"path": "\ud800"}),
+    ):
+        with pytest.raises(ValueError, match=field_name):
+            Diagnostic(
+                changes.get("code", "GB0001"),  # type: ignore[arg-type]
+                changes.get("message", "diagnostic"),  # type: ignore[arg-type]
+                changes.get("path", "$"),  # type: ignore[arg-type]
+            )
 
 
 def _literal_diagnostics(path: Path, constructors: set[str]) -> dict[str, str]:

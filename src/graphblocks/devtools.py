@@ -11,6 +11,9 @@ from typing import Iterable
 from graphblocks.diagnostics import Diagnostic, DiagnosticSet, Severity
 
 
+_MAX_U64 = (1 << 64) - 1
+
+
 class DevtoolsContractError(ValueError):
     """Raised when a developer tooling contract is invalid."""
 
@@ -32,6 +35,8 @@ def _stable_string(
         raise DevtoolsContractError(
             f"{owner} {field_name} must not contain surrounding whitespace"
         )
+    if "\0" in value:
+        raise DevtoolsContractError(f"{owner} {field_name} must not contain NUL")
     try:
         value.encode("utf-8")
     except UnicodeEncodeError as error:
@@ -50,7 +55,13 @@ def _canonical_content_digest(content: object) -> str:
 
 
 def _dot_quote(value: str) -> str:
-    return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
+    escaped = (
+        value.replace("\\", "\\\\")
+        .replace('"', '\\"')
+        .replace("\r", "\\r")
+        .replace("\n", "\\n")
+    )
+    return '"' + escaped + '"'
 
 
 def _diagnostic_summary(diagnostics: Iterable[Diagnostic]) -> dict[Severity, int]:
@@ -185,6 +196,10 @@ class ProfileSample:
             raise DevtoolsContractError("profile sample elapsed_ms must be an integer")
         if self.elapsed_ms < 0:
             raise DevtoolsContractError("profile sample elapsed_ms must not be negative")
+        if self.elapsed_ms > _MAX_U64:
+            raise DevtoolsContractError(
+                f"profile sample elapsed_ms must not exceed {_MAX_U64}"
+            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -214,7 +229,15 @@ class ProfilingSummary:
                 raise DevtoolsContractError(
                     "profiling summary node totals must not be negative"
                 )
+            if elapsed_ms > _MAX_U64:
+                raise DevtoolsContractError(
+                    f"profiling summary node totals must not exceed {_MAX_U64}"
+                )
             normalized[normalized_node_id] = elapsed_ms
+        if sum(normalized.values()) > _MAX_U64:
+            raise DevtoolsContractError(
+                f"profiling summary total_ms must not exceed {_MAX_U64}"
+            )
         object.__setattr__(
             self,
             "node_totals_ms",
@@ -261,6 +284,7 @@ class CodegenArtifact:
         parsed_path = PurePosixPath(path)
         if (
             parsed_path.is_absolute()
+            or not parsed_path.parts
             or any(part in {".", ".."} for part in parsed_path.parts)
             or parsed_path.as_posix() != path
         ):

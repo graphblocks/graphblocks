@@ -120,6 +120,8 @@ def test_ingestion_records_validate_identity_metadata_and_nested_types() -> None
         replace(manifest, manifest_id=" ")
     with pytest.raises(ValueError, match="invalid ingestion status"):
         replace(manifest, status="paused")  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="invalid ingestion status"):
+        replace(manifest, status=[])  # type: ignore[arg-type]
     with pytest.raises(ValueError, match="ingestion manifest parser must be a ProcessorRef"):
         replace(manifest, parser=object())  # type: ignore[arg-type]
     with pytest.raises(ValueError, match="ingestion manifest normalizer must be a ProcessorRef"):
@@ -152,6 +154,21 @@ def test_ingestion_records_validate_identity_metadata_and_nested_types() -> None
     recursive["self"] = recursive
     with pytest.raises(ValueError, match="strict canonical JSON"):
         ProcessorRef("plain-text", "1", metadata=recursive)
+
+
+@pytest.mark.parametrize(
+    "published_outputs",
+    (
+        {"parsed_document_ref": ArtifactRef("parsed-rev-1", "blob://parsed/rev-1.json")},
+        {"chunk_set_ref": ArtifactRef("chunks-rev-1", "blob://chunks/rev-1.json")},
+        {"index_records": (_index_record("rev-1"),)},
+    ),
+)
+def test_ingestion_manifest_rejects_restored_published_outputs_without_acl(published_outputs: dict[str, object]) -> None:
+    manifest = _manifest("manifest-1", "rev-1")
+
+    with pytest.raises(ValueError, match="published outputs require acl_revision"):
+        replace(manifest, status="ready", acl_revision=None, **published_outputs)
 
 
 def test_ingestion_manifest_new_rejects_mismatched_asset_lineage() -> None:
@@ -520,8 +537,24 @@ def test_ingestion_manifest_store_rejects_invalid_delete_policy() -> None:
 
     with pytest.raises(ValueError, match="policy must be tombstone or hard"):
         store.delete("manifest-1", policy="archive", updated_at="2026-06-22T00:02:00Z")  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="policy must be tombstone or hard"):
+        store.delete("manifest-1", policy=[], updated_at="2026-06-22T00:02:00Z")  # type: ignore[arg-type]
 
     assert store.get("manifest-1").status == "processing"
+
+
+def test_ingestion_manifest_store_rejects_invalid_public_lookup_inputs() -> None:
+    store = InMemoryIngestionManifestStore()
+
+    for invalid_manifest_id in (" ", []):
+        with pytest.raises(ValueError, match="manifest_id"):
+            store.get(invalid_manifest_id)  # type: ignore[arg-type]
+    for invalid_asset_id in (" ", []):
+        with pytest.raises(ValueError, match="asset_id"):
+            store.current_for_asset(invalid_asset_id)  # type: ignore[arg-type]
+    for invalid_status in ("paused", []):
+        with pytest.raises(ValueError, match="status"):
+            store.list_by_status(invalid_status)  # type: ignore[arg-type]
 
 
 def test_ingestion_manifest_store_rejects_commit_after_tombstone() -> None:

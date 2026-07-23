@@ -440,6 +440,27 @@ def test_devtools_package_renders_dot_and_migration_plan(monkeypatch) -> None:
     }
 
 
+def test_devtools_package_escapes_dot_line_breaks(monkeypatch) -> None:
+    graphblocks_devtools = importlib.import_module("graphblocks.devtools")
+    graph = graphblocks_devtools.DevGraph(
+        graph_id="support\nworkflow",
+        nodes=(
+            graphblocks_devtools.DevGraphNode(
+                "begin",
+                label="Begin\r\nhere",
+            ),
+        ),
+    )
+
+    assert graph.to_dot() == "\n".join(
+        [
+            'digraph "support\\nworkflow" {',
+            '  "begin" [label="Begin\\r\\nhere"];',
+            "}",
+        ]
+    )
+
+
 def test_devtools_package_builds_profile_summary_and_codegen_artifact(monkeypatch) -> None:
     graphblocks_devtools = importlib.import_module("graphblocks.devtools")
     profile = graphblocks_devtools.ProfilingSummary.from_samples(
@@ -589,6 +610,19 @@ def test_devtools_profile_values_are_strict_immutable_snapshots(monkeypatch) -> 
             "profile",
             {"agent": True},  # type: ignore[dict-item]
         )
+    with pytest.raises(
+        graphblocks_devtools.DevtoolsContractError,
+        match="elapsed_ms must not exceed",
+    ):
+        graphblocks_devtools.ProfileSample("agent", 2**64)
+    with pytest.raises(
+        graphblocks_devtools.DevtoolsContractError,
+        match="total_ms must not exceed",
+    ):
+        graphblocks_devtools.ProfilingSummary(
+            "profile",
+            {"agent": 2**64 - 1, "tools": 1},
+        )
 
 
 @pytest.mark.parametrize(
@@ -598,6 +632,7 @@ def test_devtools_profile_values_are_strict_immutable_snapshots(monkeypatch) -> 
         "../generated.py",
         "nested/../generated.py",
         r"nested\generated.py",
+        ".",
     ),
 )
 def test_codegen_artifact_rejects_unsafe_paths(monkeypatch, path: str) -> None:
@@ -608,6 +643,16 @@ def test_codegen_artifact_rejects_unsafe_paths(monkeypatch, path: str) -> None:
         match="codegen artifact path must be a relative",
     ):
         graphblocks_devtools.CodegenArtifact("python", path, "pass\n")
+
+
+def test_codegen_artifact_rejects_nul_in_path(monkeypatch) -> None:
+    graphblocks_devtools = importlib.import_module("graphblocks.devtools")
+
+    with pytest.raises(
+        graphblocks_devtools.DevtoolsContractError,
+        match="path must not contain NUL",
+    ):
+        graphblocks_devtools.CodegenArtifact("python", "generated\x00.py", "pass\n")
 
 
 def test_diagnostic_bundle_rejects_invalid_and_duplicate_sections(monkeypatch) -> None:

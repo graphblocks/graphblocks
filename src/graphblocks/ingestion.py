@@ -193,7 +193,7 @@ class IngestionManifest:
             "updated_at",
         ):
             _validate_exact_non_empty_string("ingestion manifest", field_name, getattr(self, field_name))
-        if self.status not in VALID_INGESTION_STATUSES:
+        if not isinstance(self.status, str) or self.status not in VALID_INGESTION_STATUSES:
             raise ValueError(f"invalid ingestion status {self.status!r}")
         _validate_optional_non_empty_string("ingestion manifest", "acl_revision", self.acl_revision)
         _validate_optional_non_empty_string("ingestion manifest", "error", self.error)
@@ -235,6 +235,12 @@ class IngestionManifest:
         index_record_ids = [(record.index_id, record.record_id) for record in index_records]
         if len(index_record_ids) != len(set(index_record_ids)):
             raise ValueError("ingestion manifest index_records must not contain duplicate identities")
+        if (
+            self.parsed_document_ref is not None
+            or self.chunk_set_ref is not None
+            or index_records
+        ) and self.acl_revision is None:
+            raise ValueError("ingestion manifest published outputs require acl_revision")
         object.__setattr__(self, "parser", _copy_processor_ref(self.parser))
         object.__setattr__(self, "chunker", _copy_processor_ref(self.chunker))
         object.__setattr__(self, "ocr", _copy_processor_ref(self.ocr))
@@ -502,7 +508,7 @@ class InMemoryIngestionManifestStore:
         policy: IngestionDeletePolicy = "tombstone",
         updated_at: str,
     ) -> IngestionManifest | None:
-        if policy not in {"tombstone", "hard"}:
+        if not isinstance(policy, str) or policy not in {"tombstone", "hard"}:
             raise ValueError("policy must be tombstone or hard")
         _validate_exact_non_empty_string(
             "ingestion manifest store", "updated_at", updated_at
@@ -527,6 +533,7 @@ class InMemoryIngestionManifestStore:
 
     @_with_ingestion_store_lock
     def current_for_asset(self, asset_id: str) -> IngestionManifest | None:
+        _validate_exact_non_empty_string("ingestion manifest store", "asset_id", asset_id)
         manifest_id = self._current_by_asset.get(asset_id)
         if manifest_id is None:
             return None
@@ -535,6 +542,8 @@ class InMemoryIngestionManifestStore:
 
     @_with_ingestion_store_lock
     def list_by_status(self, status: IngestionStatus) -> list[IngestionManifest]:
+        if not isinstance(status, str) or status not in VALID_INGESTION_STATUSES:
+            raise ValueError(f"invalid ingestion status {status!r}")
         return [
             _copy_ingestion_manifest(self._manifests[manifest_id])
             for manifest_id in sorted(self._manifests)
@@ -542,6 +551,7 @@ class InMemoryIngestionManifestStore:
         ]
 
     def _require_manifest(self, manifest_id: str) -> IngestionManifest:
+        _validate_exact_non_empty_string("ingestion manifest store", "manifest_id", manifest_id)
         try:
             return self._manifests[manifest_id]
         except KeyError as error:

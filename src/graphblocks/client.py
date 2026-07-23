@@ -6,6 +6,7 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 import json
 import math
+from threading import TIMEOUT_MAX
 from types import MappingProxyType
 from urllib.error import HTTPError
 from urllib.parse import quote, urlencode, urlsplit
@@ -54,6 +55,9 @@ from graphblocks.application_event import (
 from graphblocks.canonical import _canonical_dumps
 from graphblocks.runtime import InProcessRuntime, RuntimeRegistry, stdlib_registry
 from graphblocks.server import ApplicationProtocolCapabilities
+
+
+_MAX_RUN_CURSOR_SEQUENCE = (1 << 64) - 1
 
 
 def _utc_now_iso() -> str:
@@ -175,6 +179,21 @@ def _stable_non_empty_string(label: str, field_name: str, value: object) -> str:
     return value
 
 
+def _application_event_snapshot(
+    label: str,
+    value: object,
+) -> tuple[ApplicationEvent, ...]:
+    try:
+        events = tuple(value)  # type: ignore[arg-type]
+    except TypeError:
+        raise ValueError(
+            f"{label} events must be an iterable of ApplicationEvent values"
+        ) from None
+    if not all(isinstance(event, ApplicationEvent) for event in events):
+        raise ValueError(f"{label} events must contain only ApplicationEvent values")
+    return events
+
+
 @dataclass(frozen=True, slots=True)
 class RunGraphCommand:
     graph: dict[str, object]
@@ -232,7 +251,15 @@ class RunGraphResponse:
             "outputs",
             _canonical_json_mapping("run graph response", "outputs", self.outputs),
         )
-        object.__setattr__(self, "events", tuple(self.events))
+        object.__setattr__(
+            self,
+            "events",
+            _application_event_snapshot("run graph response", self.events),
+        )
+        if not isinstance(self.event_stream, ApplicationEventStreamState):
+            raise ValueError(
+                "run graph response event_stream must be an ApplicationEventStreamState"
+            )
         for field_name in ("event_stream_url", "websocket_url", "cancel_url", "initial_cursor"):
             value = getattr(self, field_name)
             if value is None:
@@ -258,7 +285,15 @@ class RunStreamSnapshot:
             "stream",
             _canonical_json_mapping("run stream snapshot", "stream", self.stream),
         )
-        object.__setattr__(self, "events", tuple(self.events))
+        object.__setattr__(
+            self,
+            "events",
+            _application_event_snapshot("run stream snapshot", self.events),
+        )
+        if not isinstance(self.event_stream, ApplicationEventStreamState):
+            raise ValueError(
+                "run stream snapshot event_stream must be an ApplicationEventStreamState"
+            )
 
 
 class GraphBlocksHttpError(RuntimeError):
@@ -269,6 +304,17 @@ class GraphBlocksHttpError(RuntimeError):
         *,
         raw_body: bytes | None = None,
     ) -> None:
+        if isinstance(status_code, bool) or not isinstance(status_code, int):
+            raise ValueError("GraphBlocks HTTP error status_code must be an integer")
+        if status_code < 100 or status_code > 599:
+            raise ValueError(
+                "GraphBlocks HTTP error status_code must be a valid HTTP status"
+            )
+        if raw_body is not None and not isinstance(
+            raw_body,
+            (bytes, bytearray, memoryview),
+        ):
+            raise ValueError("GraphBlocks HTTP error raw_body must be bytes")
         self.status_code = status_code
         self.payload = _canonical_json_mapping("GraphBlocks HTTP error", "payload", payload)
         self.raw_body = bytes(raw_body) if raw_body is not None else None
@@ -1080,14 +1126,17 @@ class HttpGraphBlocksClient:
             raise ValueError(
                 "GraphBlocks HTTP bearer_token must be a stable non-empty string"
             )
-        if (
-            isinstance(self.timeout, bool)
-            or not isinstance(self.timeout, (int, float))
-            or not math.isfinite(float(self.timeout))
-            or self.timeout <= 0
-        ):
+        if isinstance(self.timeout, bool) or not isinstance(self.timeout, (int, float)):
             raise ValueError("GraphBlocks HTTP timeout must be a finite positive number")
-        self.timeout = float(self.timeout)
+        try:
+            timeout = float(self.timeout)
+        except OverflowError:
+            raise ValueError(
+                "GraphBlocks HTTP timeout must be a finite positive number"
+            ) from None
+        if not math.isfinite(timeout) or timeout <= 0 or timeout > TIMEOUT_MAX:
+            raise ValueError("GraphBlocks HTTP timeout must be a finite positive number")
+        self.timeout = timeout
         if self.transport is not None and not callable(self.transport):
             raise ValueError("GraphBlocks HTTP transport must be callable")
 
@@ -1941,8 +1990,12 @@ def _validate_run_cursor(label: str, field_name: str, run_id: str, value: str) -
     if not value.startswith(prefix):
         raise ValueError(f"{label} {field_name} must belong to run {run_id!r}")
     sequence_text = value[len(prefix) :]
-    if not sequence_text.isdecimal():
+    if not sequence_text.isascii() or not sequence_text.isdecimal():
         raise ValueError(f"{label} {field_name} must use '<run_id>:<sequence>' with a non-negative integer sequence")
+    if int(sequence_text) > _MAX_RUN_CURSOR_SEQUENCE:
+        raise ValueError(
+            f"{label} {field_name} sequence must be at most {_MAX_RUN_CURSOR_SEQUENCE}"
+        )
     return value
 
 
