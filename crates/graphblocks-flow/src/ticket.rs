@@ -233,6 +233,11 @@ pub enum AdmissionTicketError {
         request_id: String,
         owner: String,
     },
+    NotYetIssued {
+        ticket_id: String,
+        created_at: SystemTime,
+        attempted_at: SystemTime,
+    },
     InvalidState {
         ticket_id: String,
         expected: &'static str,
@@ -315,6 +320,7 @@ impl AdmissionTicketQueue {
         if let Some(ticket_id) = inner.tickets_by_request.get(&request_key)
             && let Some(ticket) = inner.tickets.get(ticket_id)
         {
+            ensure_ticket_issued(ticket, now)?;
             return Ok(AdmissionTicketReceipt {
                 ticket: ticket.clone(),
                 duplicate: true,
@@ -389,13 +395,13 @@ impl AdmissionTicketQueue {
         let ticket_id = ticket_id.as_ref();
         let mut inner = self.lock();
         inner.maintain_at(now);
-        inner
-            .tickets
-            .get(ticket_id)
-            .cloned()
-            .ok_or_else(|| AdmissionTicketError::UnknownTicket {
+        let ticket = inner.tickets.get(ticket_id).cloned().ok_or_else(|| {
+            AdmissionTicketError::UnknownTicket {
                 ticket_id: ticket_id.to_owned(),
-            })
+            }
+        })?;
+        ensure_ticket_issued(&ticket, now)?;
+        Ok(ticket)
     }
 
     pub fn ticket_for_at(
@@ -417,11 +423,13 @@ impl AdmissionTicketQueue {
                 request_id: request_id.clone(),
                 owner: owner.clone(),
             })?;
-        inner
+        let ticket = inner
             .tickets
             .get(ticket_id)
             .cloned()
-            .ok_or(AdmissionTicketError::UnknownRequest { request_id, owner })
+            .ok_or(AdmissionTicketError::UnknownRequest { request_id, owner })?;
+        ensure_ticket_issued(&ticket, now)?;
+        Ok(ticket)
     }
 
     pub fn claim_next(&self) -> Result<Option<AdmissionTicketClaim>, AdmissionTicketError> {
@@ -440,6 +448,10 @@ impl AdmissionTicketQueue {
             };
             if ticket.state != AdmissionTicketState::Admitted {
                 continue;
+            }
+            if let Err(error) = ensure_ticket_issued(ticket, now) {
+                inner.admitted.push_front(ticket_id);
+                return Err(error);
             }
             let fencing_token = inner.next_fencing_token;
             inner.next_fencing_token = inner
@@ -545,6 +557,9 @@ impl AdmissionTicketQueue {
     ) -> Result<AdmissionTicket, AdmissionTicketError> {
         let ticket_id = ticket_id.as_ref();
         let mut inner = self.lock();
+        if let Some(ticket) = inner.tickets.get(ticket_id) {
+            ensure_ticket_issued(ticket, now)?;
+        }
         inner.maintain_at(now);
         let current_state = inner
             .tickets
@@ -615,6 +630,9 @@ impl AdmissionTicketQueue {
         now: SystemTime,
     ) -> Result<AdmissionTicket, AdmissionTicketError> {
         let mut inner = self.lock();
+        if let Some(ticket) = inner.tickets.get(ticket_id) {
+            ensure_ticket_issued(ticket, now)?;
+        }
         inner.maintain_at(now);
         let ticket =
             inner
@@ -703,6 +721,10 @@ impl Inner {
             if ticket.state != AdmissionTicketState::Queued {
                 continue;
             }
+            if ticket.created_at > now {
+                self.queued.push_front(ticket_id);
+                break;
+            }
             if ticket.expires_at <= now {
                 ticket.state = AdmissionTicketState::Expired;
                 ticket.terminal_at = Some(now);
@@ -774,6 +796,20 @@ impl Inner {
 fn validate_identity(field: &'static str, value: &str) -> Result<(), AdmissionTicketError> {
     if value.trim().is_empty() || value != value.trim() {
         return Err(AdmissionTicketError::InvalidIdentity { field });
+    }
+    Ok(())
+}
+
+fn ensure_ticket_issued(
+    ticket: &AdmissionTicket,
+    attempted_at: SystemTime,
+) -> Result<(), AdmissionTicketError> {
+    if attempted_at < ticket.created_at {
+        return Err(AdmissionTicketError::NotYetIssued {
+            ticket_id: ticket.ticket_id.clone(),
+            created_at: ticket.created_at,
+            attempted_at,
+        });
     }
     Ok(())
 }

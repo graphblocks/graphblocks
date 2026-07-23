@@ -151,6 +151,23 @@ def test_ticket_mutations_are_fenced_by_issuance_and_expiration() -> None:
     assert queue.get(admitted.ticket_id).state == "expired"
 
 
+def test_duplicate_submit_is_fenced_by_original_ticket_issuance() -> None:
+    queue = AdmissionTicketQueue(
+        "time-fenced-submit",
+        max_concurrent=1,
+        rate_limit=10,
+        window_ms=1_000,
+        max_pending=10,
+        ticket_ttl_ms=100,
+    )
+    admitted = queue.submit("run-1", "request-1", "user-1", now_ms=100).ticket
+
+    with pytest.raises(AdmissionTicketStateError, match="resubmit before issuance"):
+        queue.submit("run-1", "request-1", "user-1", now_ms=99)
+
+    assert queue.get(admitted.ticket_id) == admitted
+
+
 def test_expiration_maintenance_fences_running_ticket() -> None:
     queue = AdmissionTicketQueue(
         "running-expiry",

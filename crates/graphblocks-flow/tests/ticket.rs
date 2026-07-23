@@ -568,3 +568,73 @@ fn malformed_or_unknown_identities_are_rejected() {
         }),
     );
 }
+
+#[test]
+fn ticket_cannot_be_observed_or_mutated_before_issuance() {
+    let issued_at = time(10_000);
+    let attempted_at = time(9_999);
+    let queue = AdmissionTicketQueue::new_at(config(1, 100, 60, 1, 300), issued_at);
+    let ticket = queue
+        .admit_at("request-future", "tenant-a", issued_at)
+        .expect("request admitted")
+        .into_ticket();
+    let expected = AdmissionTicketError::NotYetIssued {
+        ticket_id: ticket.ticket_id().to_owned(),
+        created_at: issued_at,
+        attempted_at,
+    };
+
+    assert_eq!(
+        queue.ticket_at(ticket.ticket_id(), attempted_at),
+        Err(expected.clone())
+    );
+    assert_eq!(queue.claim_next_at(attempted_at), Err(expected.clone()));
+    assert_eq!(
+        queue.cancel_at(ticket.ticket_id(), attempted_at),
+        Err(expected.clone())
+    );
+    assert_eq!(
+        queue.admit_at("request-future", "tenant-a", attempted_at),
+        Err(expected),
+    );
+
+    assert_eq!(
+        queue
+            .claim_next_at(issued_at)
+            .expect("claim succeeds at issuance")
+            .expect("ticket remains dispatchable")
+            .ticket_id(),
+        ticket.ticket_id(),
+    );
+}
+
+#[test]
+fn running_ticket_cannot_complete_before_issuance() {
+    let issued_at = time(11_000);
+    let attempted_at = time(10_999);
+    let queue = AdmissionTicketQueue::new_at(config(1, 100, 60, 1, 300), issued_at);
+    let ticket = queue
+        .admit_at("request-future", "tenant-a", issued_at)
+        .expect("request admitted")
+        .into_ticket();
+    let claim = queue
+        .claim_next_at(issued_at)
+        .expect("claim succeeds")
+        .expect("ticket claimable");
+
+    assert_eq!(
+        queue.complete_at(ticket.ticket_id(), claim.fencing_token(), attempted_at),
+        Err(AdmissionTicketError::NotYetIssued {
+            ticket_id: ticket.ticket_id().to_owned(),
+            created_at: issued_at,
+            attempted_at,
+        }),
+    );
+    assert_eq!(
+        queue
+            .complete_at(ticket.ticket_id(), claim.fencing_token(), issued_at)
+            .expect("completion succeeds at issuance")
+            .state(),
+        AdmissionTicketState::Completed,
+    );
+}

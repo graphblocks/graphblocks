@@ -265,6 +265,7 @@ class AdmissionTicketQueue:
                 existing = self._tickets[existing_id]
                 if existing.run_id != run_id or existing.units != units:
                     raise AdmissionIdempotencyConflictError(owner_id, request_id)
+                self._validate_mutation_time_locked(existing, now_ms, "resubmit")
             self._expire_locked(now_ms)
             self._promote_locked(now_ms)
             existing_id = self._request_tickets.get(request_key)
