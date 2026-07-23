@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import importlib
+import math
+
+import pytest
 
 
 def _import_prometheus(monkeypatch):
@@ -255,6 +258,21 @@ def test_prometheus_package_lints_sample_cardinality(monkeypatch) -> None:
         },
     ]
     assert "lint_prometheus_samples" in graphblocks_prometheus.__all__
+
+
+@pytest.mark.parametrize("value", (math.nan, math.inf, -math.inf))
+def test_prometheus_sample_rejects_non_finite_values(monkeypatch, value: float) -> None:
+    graphblocks_prometheus = _import_prometheus(monkeypatch)
+
+    with pytest.raises(graphblocks_prometheus.PrometheusProjectionError, match="must be finite"):
+        graphblocks_prometheus.PrometheusSample("graphblocks_test_total", {}, value)
+
+
+def test_prometheus_sample_rejects_boolean_value(monkeypatch) -> None:
+    graphblocks_prometheus = _import_prometheus(monkeypatch)
+
+    with pytest.raises(graphblocks_prometheus.PrometheusProjectionError, match="must be numeric"):
+        graphblocks_prometheus.PrometheusSample("graphblocks_test_total", {}, True)  # type: ignore[arg-type]
 
 
 def test_prometheus_rule_group_builds_rule_file_contract(monkeypatch) -> None:

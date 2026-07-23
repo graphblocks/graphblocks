@@ -5,6 +5,7 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 import hashlib
 import json
+import math
 
 from graphblocks.telemetry import (
     GenerationTelemetryRecord,
@@ -36,8 +37,16 @@ class PrometheusSample:
     def __post_init__(self) -> None:
         if not self.name.strip():
             raise PrometheusProjectionError("sample name must not be empty")
+        if isinstance(self.value, bool):
+            raise PrometheusProjectionError("sample value must be numeric")
+        try:
+            value = float(self.value)
+        except (TypeError, ValueError, OverflowError) as error:
+            raise PrometheusProjectionError("sample value must be numeric") from error
+        if not math.isfinite(value):
+            raise PrometheusProjectionError("sample value must be finite")
         object.__setattr__(self, "labels", _sorted_str_mapping(self.labels))
-        object.__setattr__(self, "value", float(self.value))
+        object.__setattr__(self, "value", value)
 
     def sample_contract(self) -> dict[str, object]:
         return {
