@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use graphblocks_protocol::{
     ArtifactRef, RemotePayload, RemotePayloadError, RemotePayloadLimits, validate_remote_payload,
 };
-use serde_json::json;
+use serde_json::{Value, json};
 
 #[test]
 fn artifact_ref_round_trips_with_canonical_wire_field_names() -> Result<(), serde_json::Error> {
@@ -68,6 +68,28 @@ fn remote_payload_rejects_blank_schema() {
             }
         ),
         Err(RemotePayloadError::InvalidSchema),
+    );
+}
+
+#[test]
+fn remote_payload_rejects_inline_json_beyond_canonical_depth() {
+    let mut value = Value::Null;
+    for _ in 0..65 {
+        value = Value::Array(vec![value]);
+    }
+    let payload = RemotePayload::Inline {
+        schema: "graphblocks.ai/Message@1".to_owned(),
+        value,
+    };
+
+    assert_eq!(
+        validate_remote_payload(
+            &payload,
+            &RemotePayloadLimits {
+                max_inline_bytes: usize::MAX,
+            },
+        ),
+        Err(RemotePayloadError::InlineJsonEncoding),
     );
 }
 

@@ -51,10 +51,16 @@ impl DaemonConfig {
     }
 
     pub fn validate(&self) -> Result<(), DaemonConfigError> {
-        if self.daemon_id.trim().is_empty() {
+        if self.daemon_id.trim().is_empty()
+            || self.daemon_id.trim() != self.daemon_id
+            || self.daemon_id.chars().any(char::is_whitespace)
+        {
             return Err(DaemonConfigError::EmptyDaemonId);
         }
-        if self.bind_address.trim().is_empty() {
+        if self.bind_address.trim().is_empty()
+            || self.bind_address.trim() != self.bind_address
+            || self.bind_address.chars().any(char::is_whitespace)
+        {
             return Err(DaemonConfigError::EmptyBindAddress);
         }
         if self.protocol_version != WORKER_PROTOCOL_VERSION {
@@ -583,14 +589,35 @@ fn parse_port(port: &str) -> Result<u16, WebhookHttpClientError> {
 
 fn validate_header(name: &str, value: &str) -> Result<(), WebhookHttpClientError> {
     if name.is_empty()
-        || name.contains(':')
-        || name.bytes().any(|byte| byte <= 31 || byte == 127)
-        || value.contains('\r')
-        || value.contains('\n')
+        || !name.bytes().all(is_http_token_byte)
+        || value
+            .bytes()
+            .any(|byte| (byte < 32 && byte != b'\t') || byte == 127)
     {
         return Err(WebhookHttpClientError::InvalidHeader);
     }
     Ok(())
+}
+
+fn is_http_token_byte(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric()
+        || matches!(
+            byte,
+            b'!' | b'#'
+                | b'$'
+                | b'%'
+                | b'&'
+                | b'\''
+                | b'*'
+                | b'+'
+                | b'-'
+                | b'.'
+                | b'^'
+                | b'_'
+                | b'`'
+                | b'|'
+                | b'~'
+        )
 }
 
 fn parse_http_response(response: &str) -> Result<WebhookHttpResponse, WebhookHttpClientError> {
@@ -604,23 +631,59 @@ fn parse_http_response_at(
     let header_end = response
         .find("\r\n\r\n")
         .ok_or(WebhookHttpClientError::MalformedResponse)?;
-    let mut lines = response[..header_end].lines();
+    let mut lines = response[..header_end].split("\r\n");
     let status_line = lines
         .next()
         .ok_or(WebhookHttpClientError::MalformedResponse)?;
-    let status = status_line
-        .split_whitespace()
-        .nth(1)
-        .ok_or(WebhookHttpClientError::MalformedResponse)?
+    if status_line
+        .bytes()
+        .any(|byte| byte < 32 || byte == 127 || !byte.is_ascii())
+    {
+        return Err(WebhookHttpClientError::MalformedResponse);
+    }
+    let mut status_parts = status_line.splitn(3, ' ');
+    let version = status_parts
+        .next()
+        .ok_or(WebhookHttpClientError::MalformedResponse)?;
+    if !matches!(version, "HTTP/1.0" | "HTTP/1.1") {
+        return Err(WebhookHttpClientError::MalformedResponse);
+    }
+    let status_text = status_parts
+        .next()
+        .ok_or(WebhookHttpClientError::MalformedResponse)?;
+    if status_text.len() != 3 || !status_text.bytes().all(|byte| byte.is_ascii_digit()) {
+        return Err(WebhookHttpClientError::MalformedResponse);
+    }
+    let status = status_text
         .parse::<u16>()
         .map_err(|_| WebhookHttpClientError::MalformedResponse)?;
-    let retry_after_ms = lines.find_map(|line| {
-        let (name, value) = line.split_once(':')?;
-        if !name.eq_ignore_ascii_case("retry-after") {
-            return None;
+    if !(100..=599).contains(&status) {
+        return Err(WebhookHttpClientError::MalformedResponse);
+    }
+    let mut retry_after_ms = None;
+    let mut saw_retry_after = false;
+    for line in lines {
+        if line.is_empty()
+            || line
+                .bytes()
+                .any(|byte| (byte < 32 && byte != b'\t') || byte == 127)
+        {
+            return Err(WebhookHttpClientError::MalformedResponse);
         }
-        retry_after_milliseconds(value.trim(), now)
-    });
+        let (name, value) = line
+            .split_once(':')
+            .ok_or(WebhookHttpClientError::MalformedResponse)?;
+        if name.is_empty() || !name.bytes().all(is_http_token_byte) {
+            return Err(WebhookHttpClientError::MalformedResponse);
+        }
+        if name.eq_ignore_ascii_case("retry-after") {
+            if saw_retry_after {
+                return Err(WebhookHttpClientError::MalformedResponse);
+            }
+            saw_retry_after = true;
+            retry_after_ms = retry_after_milliseconds(value.trim(), now);
+        }
+    }
     Ok(WebhookHttpResponse {
         status,
         retry_after_ms,
@@ -679,6 +742,25 @@ mod webhook_http_client_tests {
         )
         .expect("invalid Retry-After does not invalidate the response");
         assert_eq!(invalid.retry_after_ms, None);
+    }
+
+    #[test]
+    fn malformed_status_lines_and_ambiguous_retry_headers_are_rejected() {
+        let now = UNIX_EPOCH + Duration::from_secs(1_445_412_478);
+        for response in [
+            "NOTHTTP 200 OK\r\n\r\n",
+            "HTTP/2 200 OK\r\n\r\n",
+            "HTTP/1.1 99 Continue\r\n\r\n",
+            "HTTP/1.1 600 Invalid\r\n\r\n",
+            "HTTP/1.1 429 Rate Limited\r\nRetry-After: 1\r\nRetry-After: 2\r\n\r\n",
+            "HTTP/1.1 200 OK\nX-Injected: true\r\n\r\n",
+        ] {
+            assert_eq!(
+                parse_http_response_at(response, now),
+                Err(super::WebhookHttpClientError::MalformedResponse),
+                "response should be rejected: {response:?}",
+            );
+        }
     }
 }
 

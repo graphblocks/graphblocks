@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, mem};
 
 use graphblocks_protocol::{
     BlockCapability, RunOwnershipLease, RunOwnershipLeaseError, WORKER_PROTOCOL_VERSION,
@@ -12,6 +12,14 @@ use graphblocks_protocol::{
     evaluate_worker_admission, select_worker_for_block, validate_worker_result,
 };
 use serde_json::{Value, json};
+
+fn nested_json(depth: usize) -> Value {
+    let mut value = Value::Null;
+    for _ in 0..depth {
+        value = Value::Array(vec![value]);
+    }
+    value
+}
 
 #[test]
 fn worker_advertisement_round_trips_and_admits_current_protocol() -> Result<(), serde_json::Error> {
@@ -189,6 +197,37 @@ fn worker_admission_decision_reports_blank_capabilities_and_trimmed_identity_fie
             "worker.empty_image_digest".to_owned(),
             "worker.empty_block_capability".to_owned(),
         ],
+    );
+}
+
+#[test]
+fn worker_admission_decision_rejects_inconsistent_reason_codes() {
+    let advertisement = WorkerAdvertisement::new(
+        "worker-local-1",
+        "doc-cpu",
+        "sha256:package-lock",
+        "sha256:image",
+        [BlockCapability::new("prompt.render@1")],
+    );
+    let mut admitted = evaluate_worker_admission(&WorkerAdmissionPolicy::current(), &advertisement);
+    admitted.reason_codes.push("worker.not_ready".to_owned());
+    let admitted_message =
+        WorkerProtocolMessage::admission_decision("decision-admitted", 1, admitted);
+    assert_eq!(
+        admitted_message.validate(),
+        Err(WorkerProtocolMessageError::InvalidAdmissionDecision {
+            field: "reason_codes",
+        }),
+    );
+
+    let mut denied = evaluate_worker_admission(&WorkerAdmissionPolicy::current(), &advertisement);
+    denied.admitted = false;
+    let denied_message = WorkerProtocolMessage::admission_decision("decision-denied", 2, denied);
+    assert_eq!(
+        denied_message.validate(),
+        Err(WorkerProtocolMessageError::InvalidAdmissionDecision {
+            field: "reason_codes",
+        }),
     );
 }
 
@@ -493,6 +532,66 @@ fn worker_protocol_message_round_trips_typed_invoke_request_payload()
 }
 
 #[test]
+fn worker_protocol_message_digest_rejects_excessive_json_depth_without_panicking() {
+    let request = WorkerInvokeRequest {
+        invocation_id: "invoke-deep".to_owned(),
+        run_id: "run-deep".to_owned(),
+        node_id: "render".to_owned(),
+        node_attempt_id: "render-attempt-1".to_owned(),
+        lease_epoch: 1,
+        block: "prompt.render@1".to_owned(),
+        context: WorkerInvocationContext::new("release-1", "rev-1"),
+        inputs: nested_json(100_000),
+        config: json!({}),
+    };
+    let message = WorkerProtocolMessage::invoke_request("message-deep", 1, request);
+
+    let serialization_error =
+        serde_json::to_value(&message).expect_err("deep message must fail before serialization");
+    assert!(
+        serialization_error.to_string().contains("InvalidJson"),
+        "{serialization_error}"
+    );
+    assert_eq!(
+        message.content_digest(),
+        Err(WorkerProtocolMessageError::InvalidInvokeRequest {
+            source: WorkerInvokeRequestError::InvalidJson {
+                field: "inputs".to_owned(),
+            },
+        }),
+    );
+    mem::forget(message);
+}
+
+#[test]
+fn worker_protocol_message_rejects_payload_that_only_exceeds_wire_depth() {
+    let request = WorkerInvokeRequest {
+        invocation_id: "invoke-wire-depth".to_owned(),
+        run_id: "run-wire-depth".to_owned(),
+        node_id: "render".to_owned(),
+        node_attempt_id: "render-attempt-1".to_owned(),
+        lease_epoch: 1,
+        block: "prompt.render@1".to_owned(),
+        context: WorkerInvocationContext::new("release-1", "rev-1"),
+        inputs: nested_json(64),
+        config: json!({}),
+    };
+    assert_eq!(request.validate(), Ok(()));
+
+    let message = WorkerProtocolMessage::invoke_request("message-wire-depth", 1, request);
+
+    assert!(matches!(
+        message.validate(),
+        Err(WorkerProtocolMessageError::MessageEncoding { .. })
+    ));
+    assert!(serde_json::to_value(&message).is_err());
+    assert!(matches!(
+        message.content_digest(),
+        Err(WorkerProtocolMessageError::MessageEncoding { .. })
+    ));
+}
+
+#[test]
 fn worker_protocol_message_error_payload_is_validated_and_wire_stable()
 -> Result<(), Box<dyn std::error::Error>> {
     let message = WorkerProtocolMessage::new(
@@ -519,6 +618,23 @@ fn worker_protocol_message_error_payload_is_validated_and_wire_stable()
     );
     assert_eq!(decoded, message);
     Ok(())
+}
+
+#[test]
+fn worker_protocol_error_details_reject_excessive_json_depth() {
+    let message = WorkerProtocolMessage::new(
+        "message-error",
+        1,
+        WorkerProtocolMessagePayload::Error(
+            WorkerProtocolErrorPayload::new("worker.failed", "worker failed")
+                .with_detail("deep", nested_json(65)),
+        ),
+    );
+
+    assert_eq!(
+        message.validate(),
+        Err(WorkerProtocolMessageError::InvalidErrorPayload { field: "details" }),
+    );
 }
 
 #[test]
@@ -784,6 +900,28 @@ fn worker_invoke_request_validation_rejects_invalid_context() {
             source: WorkerInvocationContextError::EmptyRequiredField {
                 field: "deployment_revision_id".to_owned(),
             },
+        }),
+    );
+}
+
+#[test]
+fn worker_invoke_request_validation_rejects_excessively_nested_config() {
+    let request = WorkerInvokeRequest {
+        invocation_id: "invoke-000001".to_owned(),
+        run_id: "run-000001".to_owned(),
+        node_id: "render".to_owned(),
+        node_attempt_id: "render-attempt-1".to_owned(),
+        lease_epoch: 7,
+        block: "prompt.render@1".to_owned(),
+        context: WorkerInvocationContext::new("release-1", "rev-1"),
+        inputs: json!({}),
+        config: nested_json(65),
+    };
+
+    assert_eq!(
+        request.validate(),
+        Err(WorkerInvokeRequestError::InvalidJson {
+            field: "config".to_owned(),
         }),
     );
 }
@@ -1125,6 +1263,78 @@ fn worker_drain_validation_rejects_invalid_wire_shapes() {
 }
 
 #[test]
+fn worker_drain_plan_rejects_deadline_overflow() {
+    let worker = WorkerAdvertisement::new(
+        "worker-1",
+        "target-1",
+        "sha256:package-lock",
+        "sha256:image",
+        [BlockCapability::new("prompt.render@1")],
+    );
+    let task = WorkerDrainTask {
+        workload: WorkerDrainWorkloadKind::OnlineRequest,
+        request: WorkerInvokeRequest {
+            invocation_id: "invoke-1".to_owned(),
+            run_id: "run-1".to_owned(),
+            node_id: "render".to_owned(),
+            node_attempt_id: "render-attempt-1".to_owned(),
+            lease_epoch: 1,
+            block: "prompt.render@1".to_owned(),
+            context: WorkerInvocationContext::new("release-1", "rev-1"),
+            inputs: json!({}),
+            config: json!({}),
+        },
+        started_at_unix_ms: 0,
+        checkpointable: false,
+    };
+
+    assert_eq!(
+        WorkerDrainPlan::for_worker(
+            &worker,
+            &WorkerDrainPolicy::default(),
+            [task],
+            u64::MAX,
+            u64::MAX,
+        ),
+        Err(WorkerDrainError::DeadlineOverflow {
+            drain_started_at_unix_ms: u64::MAX,
+            timeout_ms: 30_000,
+        }),
+    );
+}
+
+#[test]
+fn worker_drain_plan_rejects_duplicate_invocation_decisions() {
+    let decision = WorkerDrainDecision {
+        workload: WorkerDrainWorkloadKind::OnlineRequest,
+        run_id: "run-1".to_owned(),
+        invocation_id: "invoke-1".to_owned(),
+        node_attempt_id: "render-attempt-1".to_owned(),
+        lease_epoch: 1,
+        release_id: "release-1".to_owned(),
+        deployment_revision_id: "rev-1".to_owned(),
+        disposition: WorkerDrainDisposition::Cancel,
+        deadline_unix_ms: 30_000,
+        reason: "deadline_reached".to_owned(),
+    };
+    let plan = WorkerDrainPlan {
+        worker_id: "worker-1".to_owned(),
+        target_id: "target-1".to_owned(),
+        worker_state: WorkerState::Draining,
+        admission_closed: true,
+        drain_started_at_unix_ms: 0,
+        decisions: vec![decision.clone(), decision],
+    };
+
+    assert_eq!(
+        plan.validate(),
+        Err(WorkerDrainError::DuplicateDecisionInvocation {
+            invocation_id: "invoke-1".to_owned(),
+        }),
+    );
+}
+
+#[test]
 fn worker_invoke_result_validation_rejects_blank_envelope_fields_and_outputs() {
     let mut outputs = BTreeMap::new();
     outputs.insert("prompt".to_owned(), json!("Echo Hello"));
@@ -1157,6 +1367,23 @@ fn worker_invoke_result_validation_rejects_blank_envelope_fields_and_outputs() {
     assert_eq!(
         result.validate(),
         Err(WorkerInvokeResultError::EmptyOutputKey)
+    );
+}
+
+#[test]
+fn worker_invoke_result_validation_rejects_excessively_nested_output() {
+    let result = WorkerInvokeResult {
+        invocation_id: "invoke-000001".to_owned(),
+        node_attempt_id: "render-attempt-1".to_owned(),
+        lease_epoch: 7,
+        outputs: BTreeMap::from([("value".to_owned(), nested_json(65))]),
+    };
+
+    assert_eq!(
+        result.validate(),
+        Err(WorkerInvokeResultError::InvalidJson {
+            field: "value".to_owned(),
+        }),
     );
 }
 

@@ -237,23 +237,27 @@ fn std_webhook_http_client_rejects_unsupported_scheme_before_network_io() {
 
 #[test]
 fn std_webhook_http_client_rejects_header_injection_before_network_io() {
-    let mut headers = BTreeMap::new();
-    headers.insert(
-        "GraphBlocks-Delivery-Id".to_owned(),
-        "del-1\r\nX-Injected: true".to_owned(),
-    );
-    let request = WebhookHttpRequest {
-        url: "http://127.0.0.1:9/callbacks".to_owned(),
-        method: "POST".to_owned(),
-        headers,
-        body: json!({}),
-    };
     let mut client = StdWebhookHttpClient::new(Duration::from_secs(2));
+    for (name, value) in [
+        ("GraphBlocks-Delivery-Id", "del-1\r\nX-Injected: true"),
+        ("Bad Header", "value"),
+        ("GraphBlocks-Delivery-Id", "del-1\0trailer"),
+    ] {
+        let mut headers = BTreeMap::new();
+        headers.insert(name.to_owned(), value.to_owned());
+        let request = WebhookHttpRequest {
+            url: "http://127.0.0.1:9/callbacks".to_owned(),
+            method: "POST".to_owned(),
+            headers,
+            body: json!({}),
+        };
 
-    assert_eq!(
-        client.send(request, &VALIDATED_TEST_ADDRESSES),
-        Err(WebhookHttpClientError::InvalidHeader)
-    );
+        assert_eq!(
+            client.send(request, &VALIDATED_TEST_ADDRESSES),
+            Err(WebhookHttpClientError::InvalidHeader),
+            "header {name:?}: {value:?} should be rejected before connect",
+        );
+    }
 }
 
 #[test]

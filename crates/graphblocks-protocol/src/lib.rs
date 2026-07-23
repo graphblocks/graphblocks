@@ -1,7 +1,7 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
-use graphblocks_compiler::canonical::canonical_hash;
+use graphblocks_compiler::canonical::{try_canonical_hash, validate_canonical_json_depth};
 use serde::ser::SerializeStruct;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -196,6 +196,14 @@ impl WorkerProtocolErrorPayload {
         }
         if let Some(details) = &self.details
             && details.keys().any(|key| key.trim().is_empty())
+        {
+            return Err(WorkerProtocolMessageError::InvalidErrorPayload { field: "details" });
+        }
+        if self
+            .details
+            .iter()
+            .flat_map(|details| details.values())
+            .any(|value| validate_canonical_json_depth(value).is_err())
         {
             return Err(WorkerProtocolMessageError::InvalidErrorPayload { field: "details" });
         }
@@ -458,18 +466,60 @@ impl WorkerProtocolMessage {
                 payload_kind,
             });
         }
-        self.payload.validate()
+        self.payload.validate()?;
+        validate_canonical_json_depth(&self.to_wire_value_unchecked()?).map_err(|source| {
+            WorkerProtocolMessageError::MessageEncoding {
+                source: source.to_string(),
+            }
+        })
     }
 
     pub fn to_wire_value(&self) -> Result<Value, WorkerProtocolMessageError> {
         self.validate()?;
-        serde_json::to_value(self).map_err(|source| WorkerProtocolMessageError::MessageEncoding {
-            source: source.to_string(),
-        })
+        self.to_wire_value_unchecked()
     }
 
     pub fn content_digest(&self) -> Result<String, WorkerProtocolMessageError> {
-        Ok(canonical_hash(&self.to_wire_value()?))
+        try_canonical_hash(&self.to_wire_value()?).map_err(|source| {
+            WorkerProtocolMessageError::MessageEncoding {
+                source: source.to_string(),
+            }
+        })
+    }
+
+    fn to_wire_value_unchecked(&self) -> Result<Value, WorkerProtocolMessageError> {
+        let mut wire = serde_json::Map::new();
+        wire.insert(
+            "protocolVersion".to_owned(),
+            Value::from(self.protocol_version),
+        );
+        wire.insert(
+            "messageId".to_owned(),
+            Value::String(self.message_id.clone()),
+        );
+        wire.insert(
+            "kind".to_owned(),
+            serde_json::to_value(self.kind).map_err(|source| {
+                WorkerProtocolMessageError::MessageEncoding {
+                    source: source.to_string(),
+                }
+            })?,
+        );
+        wire.insert("sequence".to_owned(), Value::from(self.sequence));
+        wire.insert(
+            "correlationId".to_owned(),
+            self.correlation_id
+                .as_ref()
+                .map_or(Value::Null, |value| Value::String(value.clone())),
+        );
+        wire.insert(
+            "causationId".to_owned(),
+            self.causation_id
+                .as_ref()
+                .map_or(Value::Null, |value| Value::String(value.clone())),
+        );
+        wire.insert("payload".to_owned(), self.payload.to_value()?);
+        Ok(Value::Object(wire))
     }
 }
 
@@ -478,6 +528,7 @@ impl Serialize for WorkerProtocolMessage {
     where
         S: serde::Serializer,
     {
+        self.validate().map_err(serde::ser::Error::custom)?;
         let mut state = serializer.serialize_struct("WorkerProtocolMessage", 7)?;
         state.serialize_field("protocolVersion", &self.protocol_version)?;
         state.serialize_field("messageId", &self.message_id)?;
@@ -605,6 +656,11 @@ fn validate_worker_admission_decision(
         .iter()
         .any(|reason_code| reason_code.trim().is_empty())
     {
+        return Err(WorkerProtocolMessageError::InvalidAdmissionDecision {
+            field: "reason_codes",
+        });
+    }
+    if decision.admitted != decision.reason_codes.is_empty() {
         return Err(WorkerProtocolMessageError::InvalidAdmissionDecision {
             field: "reason_codes",
         });
@@ -876,6 +932,8 @@ pub fn validate_remote_payload(
             if schema.trim().is_empty() {
                 return Err(RemotePayloadError::InvalidSchema);
             }
+            validate_canonical_json_depth(value)
+                .map_err(|_| RemotePayloadError::InlineJsonEncoding)?;
             let actual_inline_bytes = serde_json::to_vec(value)
                 .map_err(|_| RemotePayloadError::InlineJsonEncoding)?
                 .len();
@@ -1075,6 +1133,9 @@ pub enum WorkerInvokeRequestError {
     InvalidContext {
         source: WorkerInvocationContextError,
     },
+    InvalidJson {
+        field: String,
+    },
 }
 
 impl WorkerInvokeRequest {
@@ -1107,6 +1168,13 @@ impl WorkerInvokeRequest {
         self.context
             .validate()
             .map_err(|source| WorkerInvokeRequestError::InvalidContext { source })?;
+        for (field, value) in [("inputs", &self.inputs), ("config", &self.config)] {
+            if validate_canonical_json_depth(value).is_err() {
+                return Err(WorkerInvokeRequestError::InvalidJson {
+                    field: field.to_owned(),
+                });
+            }
+        }
         Ok(())
     }
 }
@@ -1226,6 +1294,13 @@ pub enum WorkerDrainError {
     WorkerStateNotDraining {
         state: WorkerState,
     },
+    DeadlineOverflow {
+        drain_started_at_unix_ms: u64,
+        timeout_ms: u64,
+    },
+    DuplicateDecisionInvocation {
+        invocation_id: String,
+    },
     InvalidPolicy {
         source: Box<WorkerDrainError>,
     },
@@ -1341,6 +1416,7 @@ impl WorkerDrainPlan {
                 state: self.worker_state,
             });
         }
+        let mut invocation_ids = BTreeSet::new();
         for (index, decision) in self.decisions.iter().enumerate() {
             decision
                 .validate()
@@ -1348,6 +1424,11 @@ impl WorkerDrainPlan {
                     index,
                     source: Box::new(source),
                 })?;
+            if !invocation_ids.insert(decision.invocation_id.as_str()) {
+                return Err(WorkerDrainError::DuplicateDecisionInvocation {
+                    invocation_id: decision.invocation_id.clone(),
+                });
+            }
         }
         Ok(())
     }
@@ -1388,7 +1469,12 @@ impl WorkerDrainPlan {
                     policy.on_deadline.realtime_session,
                 ),
             };
-            let deadline_unix_ms = drain_started_at_unix_ms.saturating_add(timeout_ms);
+            let deadline_unix_ms = drain_started_at_unix_ms.checked_add(timeout_ms).ok_or(
+                WorkerDrainError::DeadlineOverflow {
+                    drain_started_at_unix_ms,
+                    timeout_ms,
+                },
+            )?;
             let (disposition, reason) = if now_unix_ms >= deadline_unix_ms {
                 if deadline_disposition == WorkerDrainDisposition::Checkpoint
                     && !task.checkpointable
@@ -1446,6 +1532,7 @@ pub struct WorkerInvokeResult {
 pub enum WorkerInvokeResultError {
     EmptyField { field: String },
     EmptyOutputKey,
+    InvalidJson { field: String },
 }
 
 impl WorkerInvokeResult {
@@ -1462,6 +1549,15 @@ impl WorkerInvokeResult {
         }
         if self.outputs.keys().any(|key| key.trim().is_empty()) {
             return Err(WorkerInvokeResultError::EmptyOutputKey);
+        }
+        if let Some((field, _)) = self
+            .outputs
+            .iter()
+            .find(|(_, value)| validate_canonical_json_depth(value).is_err())
+        {
+            return Err(WorkerInvokeResultError::InvalidJson {
+                field: field.clone(),
+            });
         }
         Ok(())
     }

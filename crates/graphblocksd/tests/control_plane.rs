@@ -726,6 +726,22 @@ fn daemon_config_validates_identity_protocol_and_capacity() {
         Err(DaemonConfigError::EmptyBindAddress)
     );
     assert_eq!(
+        DaemonConfig::new(" daemon-1", "127.0.0.1:8080").validate(),
+        Err(DaemonConfigError::EmptyDaemonId)
+    );
+    assert_eq!(
+        DaemonConfig::new("daemon 1", "127.0.0.1:8080").validate(),
+        Err(DaemonConfigError::EmptyDaemonId)
+    );
+    assert_eq!(
+        DaemonConfig::new("daemon-1", "127.0.0.1:8080 ").validate(),
+        Err(DaemonConfigError::EmptyBindAddress)
+    );
+    assert_eq!(
+        DaemonConfig::new("daemon-1", "127.0.0.1: 8080").validate(),
+        Err(DaemonConfigError::EmptyBindAddress)
+    );
+    assert_eq!(
         DaemonConfig::new("daemon-1", "127.0.0.1:8080")
             .with_max_workers(0)
             .validate(),
