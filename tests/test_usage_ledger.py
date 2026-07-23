@@ -5,7 +5,7 @@ from decimal import Decimal
 import json
 import math
 import sqlite3
-from threading import Barrier
+from threading import Barrier, Event, Lock
 
 import pytest
 
@@ -108,6 +108,47 @@ def test_usage_record_deep_copies_mutable_amounts_and_metadata() -> None:
             occurred_at="2026-06-22T00:00:00Z",
             metadata={"invalid": math.nan},
         )
+    recursive_metadata: dict[str, object] = {}
+    recursive_metadata["self"] = recursive_metadata
+    with pytest.raises(ValueError, match="usage metadata must be valid strict JSON"):
+        UsageRecord(
+            record_id="usage-2",
+            source="runtime_measured",
+            confidence="estimated",
+            amounts=[_tokens("12")],
+            occurred_at="2026-06-22T00:00:00Z",
+            metadata=recursive_metadata,
+        )
+
+
+@pytest.mark.parametrize("ledger_factory", (InMemoryUsageLedger, SQLiteUsageLedger.in_memory))
+def test_usage_ledgers_round_trip_and_reconcile_nested_metadata(ledger_factory) -> None:
+    ledger = ledger_factory()
+    source = ledger.append(
+        UsageRecord(
+            record_id="usage-nested-source",
+            source="tokenizer_estimated",
+            confidence="estimated",
+            amounts=[_tokens("12")],
+            occurred_at="2026-06-22T00:00:00Z",
+            run_id="run-nested",
+            metadata={"context": {"tags": ["initial"]}},
+        )
+    )
+
+    assert ledger.get(source.record_id).metadata == {
+        "context": {"tags": ["initial"]}
+    }
+    reconciled = ledger.reconcile(
+        source.record_id,
+        amounts=[_tokens("13")],
+        occurred_at="2026-06-22T00:01:00Z",
+        record_id="usage-nested-reconciled",
+    )
+    assert reconciled.metadata == {"context": {"tags": ["initial"]}}
+    assert ledger.totals_for_run("run-nested") == [_tokens("13")]
+    if isinstance(ledger, SQLiteUsageLedger):
+        ledger.close()
 
 
 def test_usage_record_rejects_invalid_identity_source_and_confidence() -> None:
@@ -145,6 +186,35 @@ def test_usage_record_rejects_invalid_identity_source_and_confidence() -> None:
             confidence="guessed",  # type: ignore[arg-type]
             amounts=[_tokens("12")],
             occurred_at="2026-06-22T00:00:00Z",
+        )
+
+    with pytest.raises(ValueError, match="must identify reconciliation_of"):
+        UsageRecord(
+            record_id="usage-1",
+            source="reconciled",
+            confidence="exact",
+            amounts=[_tokens("12")],
+            occurred_at="2026-06-22T00:00:00Z",
+        )
+
+    with pytest.raises(ValueError, match="must have exact confidence"):
+        UsageRecord(
+            record_id="usage-1",
+            source="reconciled",
+            confidence="estimated",
+            amounts=[_tokens("12")],
+            occurred_at="2026-06-22T00:00:00Z",
+            reconciliation_of="usage-source",
+        )
+
+    with pytest.raises(ValueError, match="reconciliation_of requires reconciled source"):
+        UsageRecord(
+            record_id="usage-1",
+            source="runtime_measured",
+            confidence="exact",
+            amounts=[_tokens("12")],
+            occurred_at="2026-06-22T00:00:00Z",
+            reconciliation_of="usage-source",
         )
 
     with pytest.raises(ValueError, match="usage occurred_at must not be empty"):
@@ -295,7 +365,7 @@ def test_usage_ledger_deduplicates_provider_response_for_same_attempt() -> None:
         source="provider_reported",
         confidence="provider_exact",
         amounts=[_tokens("20")],
-        occurred_at="2026-06-22T00:00:01Z",
+        occurred_at="2026-06-22T00:00:00Z",
         run_id="run-1",
         attempt_id="attempt-1",
         provider_response_id="resp-1",
@@ -304,6 +374,88 @@ def test_usage_ledger_deduplicates_provider_response_for_same_attempt() -> None:
     assert ledger.append(first) == first
     assert ledger.append(duplicate) == first
     assert ledger.records_for_run("run-1") == [first]
+
+
+@pytest.mark.parametrize("ledger_factory", (InMemoryUsageLedger, SQLiteUsageLedger.in_memory))
+def test_usage_ledgers_reject_conflicting_provider_response_replay(ledger_factory) -> None:
+    ledger = ledger_factory()
+    first = ledger.append(
+        UsageRecord(
+            record_id="usage-provider-first",
+            source="provider_reported",
+            confidence="provider_exact",
+            amounts=[_tokens("20")],
+            occurred_at="2026-06-22T00:00:00Z",
+            run_id="run-provider",
+            attempt_id="attempt-1",
+            provider_response_id="response-1",
+        )
+    )
+    conflicting = UsageRecord(
+        record_id="usage-provider-conflict",
+        source="provider_reported",
+        confidence="provider_exact",
+        amounts=[_tokens("21")],
+        occurred_at="2026-06-22T00:00:01Z",
+        run_id="run-provider",
+        attempt_id="attempt-1",
+        provider_response_id="response-1",
+    )
+
+    with pytest.raises(UsageRecordConflictError, match="provider response .* conflicts"):
+        ledger.append(conflicting)
+
+    assert ledger.records_for_run("run-provider") == [first]
+    assert ledger.totals_for_run("run-provider") == [_tokens("20")]
+    if isinstance(ledger, SQLiteUsageLedger):
+        ledger.close()
+
+
+def test_in_memory_usage_ledger_serializes_provider_deduplication() -> None:
+    class CoordinatedDedupe(dict[tuple[str, str | None], str]):
+        def __init__(self) -> None:
+            super().__init__()
+            self._calls = 0
+            self._calls_lock = Lock()
+            self._both_reading = Event()
+
+        def get(
+            self,
+            key: tuple[str, str | None],
+            default: str | None = None,
+        ) -> str | None:
+            current = super().get(key, default)
+            with self._calls_lock:
+                self._calls += 1
+                call = self._calls
+                if call == 2:
+                    self._both_reading.set()
+            if call <= 2:
+                self._both_reading.wait(timeout=0.1)
+            return current
+
+    ledger = InMemoryUsageLedger()
+    ledger._provider_dedupe = CoordinatedDedupe()
+    records = tuple(
+        UsageRecord(
+            record_id=f"usage-concurrent-{index}",
+            source="provider_reported",
+            confidence="provider_exact",
+            amounts=[_tokens("12")],
+            occurred_at="2026-06-22T00:00:00Z",
+            run_id="run-concurrent",
+            attempt_id="attempt-1",
+            provider_response_id="response-1",
+        )
+        for index in (1, 2)
+    )
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        appended = tuple(executor.map(ledger.append, records))
+
+    assert appended[0] == appended[1]
+    assert ledger.records_for_run("run-concurrent") == [appended[0]]
+    assert ledger.totals_for_run("run-concurrent") == [_tokens("12")]
 
 
 def test_usage_ledger_reconcile_writes_new_record_for_late_final_usage() -> None:
@@ -409,6 +561,40 @@ def test_usage_ledger_rejects_multiple_reconciliations_for_same_source_record() 
 
     assert ledger.records_for_run("run-1") == [provisional, first]
     assert ledger.totals_for_run("run-1") == [_tokens("21")]
+
+
+@pytest.mark.parametrize("ledger_factory", (InMemoryUsageLedger, SQLiteUsageLedger.in_memory))
+def test_usage_ledgers_reject_reconciliation_chains(ledger_factory) -> None:
+    ledger = ledger_factory()
+    source = ledger.append(
+        UsageRecord(
+            record_id="usage-chain-source",
+            source="tokenizer_estimated",
+            confidence="estimated",
+            amounts=[_tokens("18")],
+            occurred_at="2026-06-22T00:00:00Z",
+            run_id="run-chain",
+        )
+    )
+    reconciled = ledger.reconcile(
+        source.record_id,
+        amounts=[_tokens("21")],
+        occurred_at="2026-06-22T00:01:00Z",
+        record_id="usage-chain-first",
+    )
+
+    with pytest.raises(UsageRecordConflictError, match="cannot itself be reconciled"):
+        ledger.reconcile(
+            reconciled.record_id,
+            amounts=[_tokens("22")],
+            occurred_at="2026-06-22T00:02:00Z",
+            record_id="usage-chain-second",
+        )
+
+    assert ledger.records_for_run("run-chain") == [source, reconciled]
+    assert ledger.totals_for_run("run-chain") == [_tokens("21")]
+    if isinstance(ledger, SQLiteUsageLedger):
+        ledger.close()
 
 
 def test_usage_ledger_rejects_reconciliation_before_source_record() -> None:
@@ -596,10 +782,13 @@ def test_sqlite_usage_ledger_deduplicates_and_reconciles_late_usage() -> None:
         source="provider_reported",
         confidence="provider_exact",
         amounts=[_tokens("20")],
-        occurred_at="2026-06-22T00:00:01Z",
+        occurred_at="2026-06-22T00:00:00Z",
         run_id="run-1",
         attempt_id="attempt-1",
         provider_response_id="resp-1",
+        quota_window_id="tenant-a:2026-06",
+        execution_scope="turn:turn-1/tool:call-1",
+        metadata={"tool_call_id": "call-1", "tool_name": "ticket.create"},
     )
 
     assert ledger.append(first) == first
@@ -716,6 +905,46 @@ def test_sqlite_usage_ledger_rejects_non_standard_json_constants_on_replay(
 
     with pytest.raises(ValueError, match=f"usage ledger {field_name} must be valid strict JSON"):
         ledger.records_for_run("run-1")
+    ledger.close()
+
+
+@pytest.mark.parametrize(
+    ("column", "payload", "message"),
+    (
+        ("amounts_json", "{}", "amounts_json must be an array"),
+        ("amounts_json", "[null]", "amounts_json items must be objects"),
+        (
+            "amounts_json",
+            '[{"kind":"tokens","amount":"1","unit":"tokens","dimensions":[]}]',
+            "amounts_json dimensions must be an object",
+        ),
+        ("metadata_json", "[]", "metadata_json must be an object"),
+    ),
+)
+def test_sqlite_usage_ledger_rejects_invalid_json_shapes_on_replay(
+    column: str,
+    payload: str,
+    message: str,
+) -> None:
+    ledger = SQLiteUsageLedger.in_memory()
+    ledger.append(
+        UsageRecord(
+            record_id="usage-1",
+            source="runtime_measured",
+            confidence="estimated",
+            amounts=[_tokens("12")],
+            occurred_at="2026-06-22T00:00:00Z",
+            run_id="run-1",
+        )
+    )
+    ledger._connection.execute(
+        f"UPDATE usage_records SET {column} = ? WHERE record_id = ?",
+        (payload, "usage-1"),
+    )
+    ledger._connection.commit()
+
+    with pytest.raises(ValueError, match=message):
+        ledger.get("usage-1")
     ledger.close()
 
 

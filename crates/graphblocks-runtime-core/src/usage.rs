@@ -217,11 +217,12 @@ impl InMemoryUsageLedger {
         }
 
         if let Some(reconciliation_of) = &record.reconciliation_of {
-            if !self.records.contains_key(reconciliation_of) {
-                return Err(UsageLedgerError::RecordNotFound {
+            let original = self.records.get(reconciliation_of).ok_or_else(|| {
+                UsageLedgerError::RecordNotFound {
                     record_id: reconciliation_of.clone(),
-                });
-            }
+                }
+            })?;
+            validate_usage_reconciliation(&record, original)?;
             if self.reconciliation_for(reconciliation_of).is_some() {
                 return Err(UsageLedgerError::RecordConflict {
                     record_id: reconciliation_of.clone(),
@@ -438,22 +439,29 @@ impl SqliteUsageLedger {
     pub fn append(&mut self, record: UsageRecord) -> Result<UsageRecord, UsageLedgerError> {
         validate_usage_record(&record)?;
 
-        match self.get(&record.record_id) {
-            Ok(existing) => {
-                if existing == record {
-                    return Ok(existing);
-                }
-                return Err(UsageLedgerError::RecordConflict {
-                    record_id: record.record_id,
-                });
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(usage_storage_error)?;
+
+        if let Some(existing) = sqlite_usage_record(&transaction, &record.record_id)? {
+            if existing == record {
+                return Ok(existing);
             }
-            Err(UsageLedgerError::RecordNotFound { .. }) => {}
-            Err(error) => return Err(error),
+            return Err(UsageLedgerError::RecordConflict {
+                record_id: record.record_id,
+            });
         }
 
         if let Some(reconciliation_of) = &record.reconciliation_of {
-            self.get(reconciliation_of)?;
-            if self.reconciliation_for(reconciliation_of)?.is_some() {
+            let original =
+                sqlite_usage_record(&transaction, reconciliation_of)?.ok_or_else(|| {
+                    UsageLedgerError::RecordNotFound {
+                        record_id: reconciliation_of.clone(),
+                    }
+                })?;
+            validate_usage_reconciliation(&record, &original)?;
+            if sqlite_usage_reconciliation_for(&transaction, reconciliation_of)?.is_some() {
                 return Err(UsageLedgerError::RecordConflict {
                     record_id: reconciliation_of.clone(),
                 });
@@ -462,8 +470,11 @@ impl SqliteUsageLedger {
 
         if record.reconciliation_of.is_none()
             && let Some(provider_response_id) = &record.provider_response_id
-            && let Some(existing) =
-                self.provider_duplicate(provider_response_id, record.attempt_id.as_deref())?
+            && let Some(existing) = sqlite_usage_provider_duplicate(
+                &transaction,
+                provider_response_id,
+                record.attempt_id.as_deref(),
+            )?
         {
             if usage_provider_duplicate_conflict(&existing, &record) {
                 return Err(UsageLedgerError::RecordConflict {
@@ -473,10 +484,6 @@ impl SqliteUsageLedger {
             return Ok(existing);
         }
 
-        let transaction = self
-            .connection
-            .transaction_with_behavior(TransactionBehavior::Immediate)
-            .map_err(usage_storage_error)?;
         if let Some(run_id) = record.run_id.as_deref() {
             let mut records = sqlite_usage_records_for_run(&transaction, run_id)?;
             records.push(record.clone());
@@ -534,36 +541,11 @@ impl SqliteUsageLedger {
 
     pub fn get(&self, record_id: impl AsRef<str>) -> Result<UsageRecord, UsageLedgerError> {
         let record_id = record_id.as_ref();
-        self.connection
-            .query_row(
-                "
-                SELECT
-                    record_id,
-                    source,
-                    confidence,
-                    amounts_json,
-                    occurred_at_unix_ms,
-                    run_id,
-                    attempt_id,
-                    provider_response_id,
-                    pricing_ref,
-                    quota_window_id,
-                    execution_scope,
-                    reconciliation_of,
-                    metadata_json
-                FROM usage_records
-                WHERE record_id = ?
-                ",
-                params![record_id],
-                stored_usage_record_from_row,
-            )
-            .optional()
-            .map_err(usage_storage_error)?
-            .map(usage_record_from_storage)
-            .transpose()?
-            .ok_or_else(|| UsageLedgerError::RecordNotFound {
+        sqlite_usage_record(&self.connection, record_id)?.ok_or_else(|| {
+            UsageLedgerError::RecordNotFound {
                 record_id: record_id.to_string(),
-            })
+            }
+        })
     }
 
     pub fn records_for_run(
@@ -613,79 +595,41 @@ impl SqliteUsageLedger {
 
         self.append(reconciled)
     }
+}
 
-    fn reconciliation_for(
-        &self,
-        source_record_id: &str,
-    ) -> Result<Option<UsageRecord>, UsageLedgerError> {
-        self.connection
-            .query_row(
-                "
-                SELECT
-                    record_id,
-                    source,
-                    confidence,
-                    amounts_json,
-                    occurred_at_unix_ms,
-                    run_id,
-                    attempt_id,
-                    provider_response_id,
-                    pricing_ref,
-                    quota_window_id,
-                    execution_scope,
-                    reconciliation_of,
-                    metadata_json
-                FROM usage_records
-                WHERE reconciliation_of = ?
-                ORDER BY sequence
-                LIMIT 1
-                ",
-                params![source_record_id],
-                stored_usage_record_from_row,
-            )
-            .optional()
-            .map_err(usage_storage_error)?
-            .map(usage_record_from_storage)
-            .transpose()
+fn validate_usage_reconciliation(
+    record: &UsageRecord,
+    source: &UsageRecord,
+) -> Result<(), UsageLedgerError> {
+    if source.source == UsageSource::Reconciled || source.reconciliation_of.is_some() {
+        return Err(UsageLedgerError::RecordConflict {
+            record_id: source.record_id.clone(),
+        });
     }
-
-    fn provider_duplicate(
-        &self,
-        provider_response_id: &str,
-        attempt_id: Option<&str>,
-    ) -> Result<Option<UsageRecord>, UsageLedgerError> {
-        self.connection
-            .query_row(
-                "
-                SELECT
-                    record_id,
-                    source,
-                    confidence,
-                    amounts_json,
-                    occurred_at_unix_ms,
-                    run_id,
-                    attempt_id,
-                    provider_response_id,
-                    pricing_ref,
-                    quota_window_id,
-                    execution_scope,
-                    reconciliation_of,
-                    metadata_json
-                FROM usage_records
-                WHERE provider_response_id = ?
-                    AND ((attempt_id IS NULL AND ? IS NULL) OR attempt_id = ?)
-                    AND reconciliation_of IS NULL
-                ORDER BY sequence
-                LIMIT 1
-                ",
-                params![provider_response_id, attempt_id, attempt_id],
-                stored_usage_record_from_row,
-            )
-            .optional()
-            .map_err(usage_storage_error)?
-            .map(usage_record_from_storage)
-            .transpose()
+    if record.source != UsageSource::Reconciled || record.confidence != UsageConfidence::Exact {
+        return Err(UsageLedgerError::InvalidRecord {
+            message: "usage reconciliation must have reconciled source and exact confidence"
+                .to_string(),
+        });
     }
+    if record.run_id != source.run_id
+        || record.attempt_id != source.attempt_id
+        || record.provider_response_id != source.provider_response_id
+        || record.pricing_ref != source.pricing_ref
+        || record.quota_window_id != source.quota_window_id
+        || record.execution_scope != source.execution_scope
+        || record.metadata != source.metadata
+    {
+        return Err(UsageLedgerError::RecordConflict {
+            record_id: source.record_id.clone(),
+        });
+    }
+    if record.occurred_at_unix_ms < source.occurred_at_unix_ms {
+        return Err(UsageLedgerError::InvalidRecord {
+            message: "usage reconciliation occurred_at must not precede source usage".to_string(),
+        });
+    }
+    Ok(())
 }
 
 fn validate_usage_record(record: &UsageRecord) -> Result<(), UsageLedgerError> {
@@ -836,6 +780,112 @@ fn usage_totals(records: &[UsageRecord]) -> Result<Vec<UsageAmount>, UsageLedger
             })
         })
         .collect())
+}
+
+fn sqlite_usage_record(
+    connection: &Connection,
+    record_id: &str,
+) -> Result<Option<UsageRecord>, UsageLedgerError> {
+    connection
+        .query_row(
+            "
+            SELECT
+                record_id,
+                source,
+                confidence,
+                amounts_json,
+                occurred_at_unix_ms,
+                run_id,
+                attempt_id,
+                provider_response_id,
+                pricing_ref,
+                quota_window_id,
+                execution_scope,
+                reconciliation_of,
+                metadata_json
+            FROM usage_records
+            WHERE record_id = ?
+            ",
+            params![record_id],
+            stored_usage_record_from_row,
+        )
+        .optional()
+        .map_err(usage_storage_error)?
+        .map(usage_record_from_storage)
+        .transpose()
+}
+
+fn sqlite_usage_reconciliation_for(
+    connection: &Connection,
+    source_record_id: &str,
+) -> Result<Option<UsageRecord>, UsageLedgerError> {
+    connection
+        .query_row(
+            "
+            SELECT
+                record_id,
+                source,
+                confidence,
+                amounts_json,
+                occurred_at_unix_ms,
+                run_id,
+                attempt_id,
+                provider_response_id,
+                pricing_ref,
+                quota_window_id,
+                execution_scope,
+                reconciliation_of,
+                metadata_json
+            FROM usage_records
+            WHERE reconciliation_of = ?
+            ORDER BY sequence
+            LIMIT 1
+            ",
+            params![source_record_id],
+            stored_usage_record_from_row,
+        )
+        .optional()
+        .map_err(usage_storage_error)?
+        .map(usage_record_from_storage)
+        .transpose()
+}
+
+fn sqlite_usage_provider_duplicate(
+    connection: &Connection,
+    provider_response_id: &str,
+    attempt_id: Option<&str>,
+) -> Result<Option<UsageRecord>, UsageLedgerError> {
+    connection
+        .query_row(
+            "
+            SELECT
+                record_id,
+                source,
+                confidence,
+                amounts_json,
+                occurred_at_unix_ms,
+                run_id,
+                attempt_id,
+                provider_response_id,
+                pricing_ref,
+                quota_window_id,
+                execution_scope,
+                reconciliation_of,
+                metadata_json
+            FROM usage_records
+            WHERE provider_response_id = ?
+                AND ((attempt_id IS NULL AND ? IS NULL) OR attempt_id = ?)
+                AND reconciliation_of IS NULL
+            ORDER BY sequence
+            LIMIT 1
+            ",
+            params![provider_response_id, attempt_id, attempt_id],
+            stored_usage_record_from_row,
+        )
+        .optional()
+        .map_err(usage_storage_error)?
+        .map(usage_record_from_storage)
+        .transpose()
 }
 
 fn sqlite_usage_records_for_run(

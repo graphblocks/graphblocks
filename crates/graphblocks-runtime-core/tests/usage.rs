@@ -2,11 +2,13 @@ use graphblocks_runtime_core::usage::{
     InMemoryUsageLedger, SqliteUsageLedger, UsageAmount, UsageConfidence, UsageLedgerError,
     UsageRecord, UsageSource,
 };
-use rusqlite::params;
+use rusqlite::{Connection, params};
 use std::{
     fs,
     path::PathBuf,
-    time::{SystemTime, UNIX_EPOCH},
+    sync::{Arc, Barrier},
+    thread,
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 fn tokens(amount: i64) -> UsageAmount {
@@ -22,6 +24,23 @@ fn sqlite_usage_path(test_name: &str) -> PathBuf {
         "graphblocks-{test_name}-{}-{unique}.sqlite",
         std::process::id()
     ))
+}
+
+fn assert_reconciliation_rejected_by_both_ledgers(
+    source: &UsageRecord,
+    reconciliation: &UsageRecord,
+    expected: UsageLedgerError,
+) -> Result<(), UsageLedgerError> {
+    let mut memory = InMemoryUsageLedger::new();
+    let mut sqlite = SqliteUsageLedger::open_in_memory()?;
+    memory.append(source.clone())?;
+    sqlite.append(source.clone())?;
+
+    assert_eq!(memory.append(reconciliation.clone()), Err(expected.clone()));
+    assert_eq!(sqlite.append(reconciliation.clone()), Err(expected));
+    assert_eq!(memory.records_for_run("run-1"), vec![source.clone()]);
+    assert_eq!(sqlite.records_for_run("run-1")?, vec![source.clone()]);
+    Ok(())
 }
 
 #[test]
@@ -703,6 +722,225 @@ fn usage_ledgers_require_reconciled_lineage_only_for_reconciliations()
             message: "usage reconciliation_of requires reconciled source".to_owned(),
         })
     );
+    Ok(())
+}
+
+#[test]
+fn usage_ledgers_reject_direct_reconciliations_with_forged_identity() -> Result<(), UsageLedgerError>
+{
+    let source = UsageRecord::new(
+        "usage-provisional",
+        UsageSource::TokenizerEstimated,
+        UsageConfidence::Estimated,
+        [tokens(18)],
+        1_000,
+    )
+    .with_run_id("run-1")
+    .with_attempt_id("attempt-1")
+    .with_provider_response_id("resp-1")
+    .with_pricing_ref("pricing-2026-06")
+    .with_quota_window_id("tenant-a:2026-06")
+    .with_execution_scope("turn:turn-1/tool:call-1")
+    .with_metadata("tool_call_id", "call-1");
+    let mut reconciliation = UsageRecord::new(
+        "usage-reconciled",
+        UsageSource::Reconciled,
+        UsageConfidence::Exact,
+        [tokens(21)],
+        1_500,
+    );
+    reconciliation.run_id = source.run_id.clone();
+    reconciliation.attempt_id = source.attempt_id.clone();
+    reconciliation.provider_response_id = source.provider_response_id.clone();
+    reconciliation.pricing_ref = source.pricing_ref.clone();
+    reconciliation.quota_window_id = source.quota_window_id.clone();
+    reconciliation.execution_scope = source.execution_scope.clone();
+    reconciliation.reconciliation_of = Some(source.record_id.clone());
+    reconciliation.metadata = source.metadata.clone();
+
+    let forged = [
+        UsageRecord {
+            record_id: "usage-wrong-run".to_owned(),
+            run_id: Some("run-other".to_owned()),
+            ..reconciliation.clone()
+        },
+        UsageRecord {
+            record_id: "usage-wrong-attempt".to_owned(),
+            attempt_id: Some("attempt-other".to_owned()),
+            ..reconciliation.clone()
+        },
+        UsageRecord {
+            record_id: "usage-wrong-response".to_owned(),
+            provider_response_id: Some("resp-other".to_owned()),
+            ..reconciliation.clone()
+        },
+        UsageRecord {
+            record_id: "usage-wrong-pricing".to_owned(),
+            pricing_ref: Some("pricing-other".to_owned()),
+            ..reconciliation.clone()
+        },
+        UsageRecord {
+            record_id: "usage-wrong-quota".to_owned(),
+            quota_window_id: Some("tenant-b:2026-06".to_owned()),
+            ..reconciliation.clone()
+        },
+        UsageRecord {
+            record_id: "usage-wrong-scope".to_owned(),
+            execution_scope: Some("turn:other".to_owned()),
+            ..reconciliation.clone()
+        },
+        UsageRecord {
+            record_id: "usage-wrong-metadata".to_owned(),
+            metadata: [("tool_call_id".to_owned(), "call-other".to_owned())]
+                .into_iter()
+                .collect(),
+            ..reconciliation
+        },
+    ];
+
+    for record in forged {
+        assert_reconciliation_rejected_by_both_ledgers(
+            &source,
+            &record,
+            UsageLedgerError::RecordConflict {
+                record_id: source.record_id.clone(),
+            },
+        )?;
+    }
+    Ok(())
+}
+
+#[test]
+fn usage_ledgers_reject_direct_reconciliations_with_invalid_kind_time_or_lineage()
+-> Result<(), UsageLedgerError> {
+    let source = UsageRecord::new(
+        "usage-provisional",
+        UsageSource::TokenizerEstimated,
+        UsageConfidence::Estimated,
+        [tokens(18)],
+        1_000,
+    )
+    .with_run_id("run-1");
+    let mut reconciliation = UsageRecord::new(
+        "usage-reconciled",
+        UsageSource::Reconciled,
+        UsageConfidence::Exact,
+        [tokens(21)],
+        1_500,
+    )
+    .with_run_id("run-1");
+    reconciliation.reconciliation_of = Some(source.record_id.clone());
+
+    assert_reconciliation_rejected_by_both_ledgers(
+        &source,
+        &UsageRecord {
+            confidence: UsageConfidence::ProviderExact,
+            ..reconciliation.clone()
+        },
+        UsageLedgerError::InvalidRecord {
+            message: "usage reconciliation must have reconciled source and exact confidence"
+                .to_owned(),
+        },
+    )?;
+    assert_reconciliation_rejected_by_both_ledgers(
+        &source,
+        &UsageRecord {
+            occurred_at_unix_ms: 999,
+            ..reconciliation.clone()
+        },
+        UsageLedgerError::InvalidRecord {
+            message: "usage reconciliation occurred_at must not precede source usage".to_owned(),
+        },
+    )?;
+
+    let mut memory = InMemoryUsageLedger::new();
+    let mut sqlite = SqliteUsageLedger::open_in_memory()?;
+    memory.append(source.clone())?;
+    memory.append(reconciliation.clone())?;
+    sqlite.append(source)?;
+    sqlite.append(reconciliation.clone())?;
+    let nested = UsageRecord {
+        record_id: "usage-nested".to_owned(),
+        reconciliation_of: Some(reconciliation.record_id.clone()),
+        ..reconciliation.clone()
+    };
+    let expected = UsageLedgerError::RecordConflict {
+        record_id: reconciliation.record_id,
+    };
+    assert_eq!(memory.append(nested.clone()), Err(expected.clone()));
+    assert_eq!(sqlite.append(nested), Err(expected));
+    Ok(())
+}
+
+#[test]
+fn sqlite_usage_ledger_serializes_competing_reconciliations() -> Result<(), UsageLedgerError> {
+    let path = sqlite_usage_path("usage-reconciliation-race");
+    let source = UsageRecord::new(
+        "usage-provisional",
+        UsageSource::TokenizerEstimated,
+        UsageConfidence::Estimated,
+        [tokens(18)],
+        1_000,
+    )
+    .with_run_id("run-1")
+    .with_attempt_id("attempt-1");
+    let mut first = SqliteUsageLedger::open(&path)?;
+    first.append(source.clone())?;
+    let second = SqliteUsageLedger::open(&path)?;
+
+    let blocker = Connection::open(&path).expect("usage ledger database opens");
+    blocker
+        .execute_batch("BEGIN IMMEDIATE")
+        .expect("test obtains the write lock");
+    let barrier = Arc::new(Barrier::new(3));
+    let workers = [
+        (first, "usage-reconciled-1"),
+        (second, "usage-reconciled-2"),
+    ]
+    .into_iter()
+    .map(|(mut ledger, record_id)| {
+        let barrier = Arc::clone(&barrier);
+        thread::spawn(move || {
+            barrier.wait();
+            ledger.reconcile(
+                "usage-provisional",
+                [tokens(21)],
+                1_500,
+                Some(record_id.to_owned()),
+            )
+        })
+    })
+    .collect::<Vec<_>>();
+    barrier.wait();
+    thread::sleep(Duration::from_millis(50));
+    blocker
+        .execute_batch("COMMIT")
+        .expect("test releases the write lock");
+
+    let outcomes = workers
+        .into_iter()
+        .map(|worker| worker.join().expect("usage writer does not panic"))
+        .collect::<Vec<_>>();
+    assert_eq!(outcomes.iter().filter(|outcome| outcome.is_ok()).count(), 1);
+    assert_eq!(
+        outcomes
+            .into_iter()
+            .filter_map(Result::err)
+            .collect::<Vec<_>>(),
+        vec![UsageLedgerError::RecordConflict {
+            record_id: source.record_id.clone(),
+        }]
+    );
+
+    let ledger = SqliteUsageLedger::open(&path)?;
+    let records = ledger.records_for_run("run-1")?;
+    assert_eq!(records.len(), 2);
+    assert_eq!(records[0], source);
+    assert_eq!(records[1].source, UsageSource::Reconciled);
+    assert_eq!(ledger.totals_for_run("run-1")?, vec![tokens(21)]);
+    drop(ledger);
+    drop(blocker);
+    fs::remove_file(path).ok();
     Ok(())
 }
 
