@@ -144,6 +144,35 @@ def test_fuse_search_hits_rejects_unknown_strategy() -> None:
         fuse_search_hits([], strategy="unknown")
 
 
+@pytest.mark.parametrize(
+    "kwargs",
+    (
+        {"k": True},
+        {"weights": [True]},
+        {"weights": [0.0]},
+        {"weights": [float("inf")]},
+        {"weights": [10**1_000]},
+    ),
+)
+def test_fuse_search_hits_rejects_invalid_numeric_inputs(
+    kwargs: dict[str, object],
+) -> None:
+    with pytest.raises(ValueError):
+        fuse_search_hits(
+            [[_hit("kw-a", "chunk-a", 1, "keyword")]],
+            **kwargs,  # type: ignore[arg-type]
+        )
+
+
+def test_fuse_search_hits_handles_huge_rrf_k_without_overflow() -> None:
+    fused = fuse_search_hits(
+        [[_hit("kw-a", "chunk-a", 1, "keyword")]],
+        k=10**1_000,
+    )
+
+    assert fused[0].raw_score == 0.0
+
+
 def test_fuse_search_hits_supports_weighted_rank_strategy() -> None:
     keyword_hits = [_hit("kw-a", "chunk-a", 1, "keyword"), _hit("kw-b", "chunk-b", 2, "keyword")]
     dense_hits = [_hit("dense-b", "chunk-b", 1, "dense"), _hit("dense-a", "chunk-a", 2, "dense")]

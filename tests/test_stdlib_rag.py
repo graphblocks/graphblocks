@@ -3,7 +3,12 @@ from __future__ import annotations
 import pytest
 
 from graphblocks.runtime import InProcessRuntime, stdlib_registry
-from graphblocks.stdlib_rag import answer_validate_grounding, rank_documents, retrieve_execute_plan
+from graphblocks.stdlib_rag import (
+    answer_validate_grounding,
+    rank_documents,
+    retrieve_execute_plan,
+    retrieve_fuse,
+)
 
 
 def _hit(hit_id: str, item_id: str, rank: int, retriever: str, preview: str) -> dict[str, object]:
@@ -208,6 +213,32 @@ def test_retrieve_execute_plan_is_deterministic_and_enforces_minimum_sources() -
         retrieve_execute_plan(
             {"query": "policy", "sources": [source, {"sourceId": "offline", "error": "timeout"}]},
             {"minimumSuccessfulSources": 2},
+            {},
+        )
+
+
+def test_rag_wire_blocks_reject_boolean_numeric_coercions() -> None:
+    source = {
+        "sourceId": "policy",
+        "hits": [_hit("hit-1", "chunk-1", 1, "policy", "policy")],
+    }
+
+    with pytest.raises(ValueError, match="minimumSuccessfulSources"):
+        retrieve_execute_plan(
+            {"query": "policy", "sources": [source]},
+            {"minimumSuccessfulSources": True},
+            {},
+        )
+    with pytest.raises(ValueError, match="weight must be a number"):
+        retrieve_fuse(
+            {"sources": [{**source, "weight": True}]},
+            {},
+            {},
+        )
+    with pytest.raises(ValueError, match="topK"):
+        retrieve_fuse(
+            {"sources": [source]},
+            {"topK": False},
             {},
         )
 

@@ -59,6 +59,25 @@ def test_rerank_search_hits_applies_input_limit_and_reports_truncation() -> None
     assert [ranked.hit.hit_id for ranked in result.ranked_hits] == ["hit-b", "hit-a"]
 
 
+def test_rerank_search_hits_rejects_boolean_input_limit() -> None:
+    with pytest.raises(ValueError, match="input_limit must be an integer"):
+        rerank_search_hits(
+            [_hit("hit-a", "chunk-a", "doc-1", "alpha", 1)],
+            reranker_id="rank.rule",
+            query_terms=["alpha"],
+            input_limit=True,
+        )
+
+
+def test_rerank_search_hits_rejects_non_string_query_terms() -> None:
+    with pytest.raises(ValueError, match="query_terms"):
+        rerank_search_hits(
+            [_hit("hit-a", "chunk-a", "doc-1", "alpha", 1)],
+            reranker_id="rank.rule",
+            query_terms=["alpha", 1],  # type: ignore[list-item]
+        )
+
+
 def test_rerank_records_validate_wire_shape() -> None:
     hit = _hit("hit-a", "chunk-a", "doc-1", "alpha", 1)
     ranked = RankedHit(hit=hit, rerank_score=1, reranker="rank.rule", explanation="matched")

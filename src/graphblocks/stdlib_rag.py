@@ -40,6 +40,14 @@ def _sequence(value: object, label: str) -> list[Any]:
     return list(value)
 
 
+def _non_negative_integer(value: object, label: str) -> int:
+    if not isinstance(value, int) or isinstance(value, bool):
+        raise ValueError(f"{label} must be a non-negative integer")
+    if value < 0:
+        raise ValueError(f"{label} must be a non-negative integer")
+    return value
+
+
 def _value(record: Mapping[str, Any], camel_key: str, snake_key: str, default: Any = None) -> Any:
     if camel_key in record and snake_key in record:
         raise ValueError(
@@ -381,6 +389,10 @@ def retrieve_execute_plan(
             )
         )
     minimum_successful = _value(config, "minimumSuccessfulSources", "minimum_successful_sources", 1)
+    minimum_successful = _non_negative_integer(
+        minimum_successful,
+        "retrieve.execute_plan@1 minimumSuccessfulSources",
+    )
     successful = sum(source.result is not None and source.error is None for source in sources)
     if successful < minimum_successful:
         raise RuntimeError(
@@ -430,7 +442,7 @@ def retrieve_fuse(
         hit_sets.append(
             [_hit_from_wire(hit) for hit in _sequence(result_record.get("hits", []), "source hits")]
         )
-        weights.append(float(source.get("weight", 1.0)))
+        weights.append(source.get("weight", 1.0))
     strategy = config.get("algorithm", config.get("strategy", "reciprocal_rank_fusion"))
     fused = fuse_search_hits(
         hit_sets,
@@ -441,6 +453,10 @@ def retrieve_fuse(
     )
     top_k = _value(config, "topK", "top_k")
     if top_k is not None:
+        top_k = _non_negative_integer(
+            top_k,
+            "retrieve.fuse@1 topK",
+        )
         fused = fused[:top_k]
     return {
         "hits": [_hit_to_wire(hit) for hit in fused],

@@ -69,7 +69,10 @@ def _validate_optional_finite_float(owner: str, field_name: str, value: object |
         return None
     if not isinstance(value, int | float) or isinstance(value, bool):
         raise ValueError(f"{owner} {field_name} must be a number")
-    converted = float(value)
+    try:
+        converted = float(value)
+    except OverflowError as error:
+        raise ValueError(f"{owner} {field_name} must be finite") from error
     if not math.isfinite(converted):
         raise ValueError(f"{owner} {field_name} must be finite")
     return converted
@@ -833,16 +836,40 @@ def build_context_pack(
     minimum_source_modified_at: str | None = None,
     metadata: dict[str, object] | None = None,
 ) -> ContextPack:
-    if token_budget < 0:
-        raise ValueError("token_budget must be non-negative")
-    if reserve_output_tokens < 0:
-        raise ValueError("reserve_output_tokens must be non-negative")
-    if per_document_max_chunks is not None and per_document_max_chunks < 1:
-        raise ValueError("per_document_max_chunks must be at least 1")
-    if per_section_max_chunks is not None and per_section_max_chunks < 1:
-        raise ValueError("per_section_max_chunks must be at least 1")
-    if per_source_max_chunks is not None and per_source_max_chunks < 1:
-        raise ValueError("per_source_max_chunks must be at least 1")
+    validated_token_budget = _validate_non_negative_int(
+        "context builder",
+        "token_budget",
+        token_budget,
+    )
+    validated_reserve_output_tokens = _validate_non_negative_int(
+        "context builder",
+        "reserve_output_tokens",
+        reserve_output_tokens,
+    )
+    assert validated_token_budget is not None
+    assert validated_reserve_output_tokens is not None
+    token_budget = validated_token_budget
+    reserve_output_tokens = validated_reserve_output_tokens
+    if per_document_max_chunks is not None:
+        per_document_max_chunks = _validate_positive_int(
+            "context builder",
+            "per_document_max_chunks",
+            per_document_max_chunks,
+        )
+    if per_section_max_chunks is not None:
+        per_section_max_chunks = _validate_positive_int(
+            "context builder",
+            "per_section_max_chunks",
+            per_section_max_chunks,
+        )
+    if per_source_max_chunks is not None:
+        per_source_max_chunks = _validate_positive_int(
+            "context builder",
+            "per_source_max_chunks",
+            per_source_max_chunks,
+        )
+    if not isinstance(deduplicate, bool):
+        raise ValueError("context builder deduplicate must be a boolean")
 
     effective_context_token_budget = max(token_budget - reserve_output_tokens, 0)
     selected: list[SearchHit] = []
@@ -1049,16 +1076,17 @@ def build_answer_from_model_response(
             if not isinstance(claim_id, str) or not isinstance(claim_text, str):
                 raise ValueError("model_response claims must contain string claim_id and text")
             raw_citation_ids = raw_claim.get("citation_ids", [])
-            citation_ids = (
-                [item for item in raw_citation_ids if isinstance(item, str)]
-                if isinstance(raw_citation_ids, list)
-                else []
-            )
+            if not isinstance(raw_citation_ids, list) or any(
+                not isinstance(item, str) for item in raw_citation_ids
+            ):
+                raise ValueError(
+                    "model_response claim citation_ids must be a list of strings"
+                )
             claims.append(
                 Claim(
                     claim_id=claim_id,
                     text=claim_text,
-                    citation_ids=citation_ids,
+                    citation_ids=list(raw_citation_ids),
                 )
             )
 
@@ -1091,17 +1119,33 @@ def build_answer_from_model_response(
             claim_id = raw_citation.get("claim_id")
             cited_text = raw_citation.get("cited_text")
             confidence = raw_citation.get("confidence")
+            if claim_id is not None and not isinstance(claim_id, str):
+                raise ValueError(
+                    "model_response citation claim_id must be a string when present"
+                )
+            if cited_text is not None and not isinstance(cited_text, str):
+                raise ValueError(
+                    "model_response citation cited_text must be a string when present"
+                )
+            if confidence is not None and (
+                isinstance(confidence, bool)
+                or not isinstance(confidence, int | float)
+            ):
+                raise ValueError(
+                    "model_response citation confidence must be a number when present"
+                )
+            validated_confidence = _validate_optional_finite_float(
+                "model_response citation",
+                "confidence",
+                confidence,
+            )
             citations.append(
                 Citation(
                     citation_id=citation_id,
                     source=source,
-                    claim_id=claim_id if isinstance(claim_id, str) else None,
-                    cited_text=cited_text if isinstance(cited_text, str) else None,
-                    confidence=(
-                        float(confidence)
-                        if isinstance(confidence, int | float)
-                        else None
-                    ),
+                    claim_id=claim_id,
+                    cited_text=cited_text,
+                    confidence=validated_confidence,
                 )
             )
 
@@ -1244,10 +1288,21 @@ def fuse_search_hits(
         raise ValueError(
             "strategy must be concatenate, reciprocal_rank_fusion, weighted_rank, normalized_score, or interleave"
         )
-    if k < 1:
-        raise ValueError("k must be at least 1")
-    if weights is not None and len(weights) != len(hit_sets):
-        raise ValueError("weights length must match hit_sets length")
+    k = _validate_positive_int("search hit fusion", "k", k)
+    if weights is not None:
+        if len(weights) != len(hit_sets):
+            raise ValueError("weights length must match hit_sets length")
+        normalized_weights: list[float] = []
+        for weight in weights:
+            normalized_weight = _validate_optional_finite_float(
+                "search hit fusion",
+                "weight",
+                weight,
+            )
+            if normalized_weight is None or normalized_weight <= 0:
+                raise ValueError("search hit fusion weight must be positive")
+            normalized_weights.append(normalized_weight)
+        weights = normalized_weights
 
     grouped_hits: dict[str, list[SearchHit]] = {}
     first_seen_keys: list[str] = []
@@ -1290,13 +1345,21 @@ def fuse_search_hits(
                 first_seen_keys.append(dedupe_key)
             grouped_hits[dedupe_key].append(hit)
             if strategy == "reciprocal_rank_fusion":
+                try:
+                    score_increment = weight / (k + max(hit.rank, 1))
+                except OverflowError:
+                    score_increment = 0.0
                 fusion_scores[dedupe_key] = (
                     fusion_scores.get(dedupe_key, 0.0)
-                    + weight / (k + max(hit.rank, 1))
+                    + score_increment
                 )
             elif strategy == "weighted_rank":
+                try:
+                    score_increment = weight / max(hit.rank, 1)
+                except OverflowError:
+                    score_increment = 0.0
                 fusion_scores[dedupe_key] = (
-                    fusion_scores.get(dedupe_key, 0.0) + weight / max(hit.rank, 1)
+                    fusion_scores.get(dedupe_key, 0.0) + score_increment
                 )
             elif strategy == "normalized_score":
                 fusion_scores[dedupe_key] = (
@@ -1398,10 +1461,17 @@ def rerank_search_hits(
     query_terms: list[str],
     input_limit: int | None = None,
 ) -> RerankResult:
-    if input_limit is not None and input_limit < 1:
-        raise ValueError("input_limit must be at least 1")
+    if input_limit is not None:
+        input_limit = _validate_positive_int(
+            "rerank",
+            "input_limit",
+            input_limit,
+        )
 
-    normalized_terms = [term.lower() for term in query_terms if term]
+    normalized_terms = [
+        term.lower()
+        for term in _copy_string_list("rerank", "query_terms", query_terms)
+    ]
     ordered_hits = sorted(hits, key=lambda hit: (hit.rank, hit.hit_id))
     input_count = len(ordered_hits)
     evaluated_count = min(input_limit, input_count) if input_limit is not None else input_count
@@ -1917,6 +1987,7 @@ def validate_answer_citations(
     severity: Literal["warning", "error"] = "warning" if failure_policy == "warn" else "error"
     issues: list[CitationValidationIssue] = []
     citations_by_id: dict[str, Citation] = {}
+    claim_ids = {claim.claim_id for claim in answer.claims}
     context_source_texts: list[tuple[SourceRef, str]] = []
 
     for citation in answer.citations:
@@ -1931,6 +2002,19 @@ def validate_answer_citations(
             )
         else:
             citations_by_id[citation.citation_id] = citation
+        if citation.claim_id is not None and citation.claim_id not in claim_ids:
+            issues.append(
+                CitationValidationIssue(
+                    code="citation.claim_missing",
+                    message=(
+                        f"citation {citation.citation_id!r} references missing "
+                        f"claim {citation.claim_id!r}"
+                    ),
+                    citation_id=citation.citation_id,
+                    claim_id=citation.claim_id,
+                    severity=severity,
+                )
+            )
 
     for hit in context.hits:
         preview_text = "\n".join(hit.item.preview)

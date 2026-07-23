@@ -272,6 +272,52 @@ def test_document_payload_records_validate_nested_types_and_copy_collections() -
         DocumentChunk("chunk-1", "doc-1", "asset-1", "rev-1", "hello", ("el-1",), (object(),), {})  # type: ignore[arg-type]
 
 
+def test_document_records_reject_ambiguous_duplicate_element_identities() -> None:
+    first = DocumentElement("el-1", "paragraph", 0, "alpha", SourceLocation())
+    duplicate_id = DocumentElement(
+        "el-1",
+        "paragraph",
+        1,
+        "beta",
+        SourceLocation(),
+    )
+    duplicate_order = DocumentElement(
+        "el-2",
+        "paragraph",
+        0,
+        "beta",
+        SourceLocation(),
+    )
+
+    with pytest.raises(ValueError, match="element_id values must be unique"):
+        ParsedDocument(
+            "doc-1",
+            "asset-1",
+            "rev-1",
+            {},
+            elements=[first, duplicate_id],
+        )
+    with pytest.raises(ValueError, match="element order values must be unique"):
+        ParsedDocument(
+            "doc-1",
+            "asset-1",
+            "rev-1",
+            {},
+            elements=[first, duplicate_order],
+        )
+    with pytest.raises(ValueError, match="element_ids must not contain duplicates"):
+        DocumentChunk(
+            "chunk-1",
+            "doc-1",
+            "asset-1",
+            "rev-1",
+            "alpha",
+            ["el-1", "el-1"],
+            [],
+            {},
+        )
+
+
 def test_document_json_snapshots_resist_builtin_base_descriptor_mutation() -> None:
     document = ParsedDocument(
         "doc-1",

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import replace
 
+import pytest
+
 from graphblocks.documents import DocumentSpan, SourceRef
 from graphblocks.rag import KnowledgeItemRef, SearchHit, build_context_pack
 
@@ -80,6 +82,24 @@ def test_build_context_pack_limits_chunks_per_document() -> None:
     assert [hit.hit_id for hit in context.hits] == ["hit-1", "hit-3"]
     assert context.metadata["dropped_hit_ids"] == ["hit-2"]
     assert context.metadata["drop_reasons"] == {"hit-2": "per_document_max_chunks"}
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    (
+        {"token_budget": True},
+        {"token_budget": 10, "reserve_output_tokens": False},
+        {"token_budget": 10, "per_document_max_chunks": True},
+        {"token_budget": 10, "per_section_max_chunks": False},
+        {"token_budget": 10, "per_source_max_chunks": True},
+        {"token_budget": 10, "deduplicate": 1},
+    ),
+)
+def test_build_context_pack_rejects_boolean_numeric_and_flag_inputs(
+    kwargs: dict[str, object],
+) -> None:
+    with pytest.raises(ValueError):
+        build_context_pack("ctx-1", [_hit("hit-1", "doc-1", "alpha", 1)], **kwargs)  # type: ignore[arg-type]
 
 
 def test_build_context_pack_limits_chunks_per_section() -> None:

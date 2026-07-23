@@ -427,6 +427,12 @@ class ParsedDocument:
         elements = tuple(self.elements)
         if any(not isinstance(element, DocumentElement) for element in elements):
             raise ValueError("parsed document elements must be DocumentElement")
+        element_ids = [element.element_id for element in elements]
+        if len(element_ids) != len(set(element_ids)):
+            raise ValueError("parsed document element_id values must be unique")
+        element_orders = [element.order for element in elements]
+        if len(element_orders) != len(set(element_orders)):
+            raise ValueError("parsed document element order values must be unique")
         object.__setattr__(self, "elements", elements)
         object.__setattr__(self, "plain_text", _validate_optional_string("parsed document", "plain_text", self.plain_text))
         for field_name in ("language", "title"):
@@ -528,7 +534,16 @@ class DocumentChunk:
             object.__setattr__(self, field_name, _validate_non_empty_string("document chunk", field_name, getattr(self, field_name)))
         if not isinstance(self.text, str):
             raise ValueError("document chunk text must be a string")
-        object.__setattr__(self, "element_ids", _validate_string_tuple("document chunk", "element_ids", self.element_ids))
+        element_ids = _validate_string_tuple(
+            "document chunk",
+            "element_ids",
+            self.element_ids,
+        )
+        if len(element_ids) != len(set(element_ids)):
+            raise ValueError(
+                "document chunk element_ids must not contain duplicates"
+            )
+        object.__setattr__(self, "element_ids", element_ids)
         source_refs = tuple(self.source_refs)
         if any(not isinstance(source_ref, SourceRef) for source_ref in source_refs):
             raise ValueError("document chunk source_refs must be SourceRef")

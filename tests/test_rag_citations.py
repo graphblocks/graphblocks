@@ -338,6 +338,28 @@ def test_validate_answer_citations_rejects_unknown_citation_id() -> None:
     assert result.issues[0].citation_id == "missing"
 
 
+def test_validate_answer_citations_rejects_citation_bound_to_missing_claim() -> None:
+    context = _single_hit_context()
+    citation = Citation(
+        citation_id="cite-1",
+        source=context.hits[0].item.source,
+        claim_id="missing-claim",
+        cited_text="requires audit logs",
+    )
+    answer = Answer(
+        answer_id="answer-1",
+        text="Alpha policy requires audit logs.",
+        citations=[citation],
+    )
+
+    result = validate_answer_citations(answer, context)
+
+    assert result.ok is False
+    assert [issue.code for issue in result.issues] == ["citation.claim_missing"]
+    assert result.issues[0].citation_id == "cite-1"
+    assert result.issues[0].claim_id == "missing-claim"
+
+
 def test_validate_answer_citations_rejects_source_outside_current_context() -> None:
     context = _single_hit_context()
     foreign_context = _single_hit_context()

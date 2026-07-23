@@ -208,6 +208,21 @@ def test_parser_records_reject_recursive_and_noncanonical_metadata() -> None:
         )
 
 
+def test_parser_registry_validates_and_snapshots_restored_descriptors() -> None:
+    descriptor = plain_text_parser_descriptor()
+    restored = {("plain-text", "1"): descriptor}
+    registry = DocumentParserRegistry(restored)
+    restored.clear()
+
+    assert registry.resolve_locked(
+        ParserSelectionLock("plain-text", "1", "restored")
+    ).processor_id == "plain-text"
+    with pytest.raises(ValueError, match="key must match descriptor identity"):
+        DocumentParserRegistry({("wrong", "1"): descriptor})
+    with pytest.raises(ValueError, match="descriptors must be a mapping"):
+        DocumentParserRegistry(object())  # type: ignore[arg-type]
+
+
 def test_parser_registry_uses_extension_when_media_type_is_missing() -> None:
     registry = DocumentParserRegistry()
     registry.register(plain_text_parser_descriptor())

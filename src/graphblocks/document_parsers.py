@@ -217,6 +217,39 @@ class ParserCandidateParseResult:
 class DocumentParserRegistry:
     _descriptors: dict[tuple[str, str], ParserDescriptor] = field(default_factory=dict)
 
+    def __post_init__(self) -> None:
+        if not isinstance(self._descriptors, Mapping):
+            raise ValueError("parser registry descriptors must be a mapping")
+        restored = self._descriptors
+        self._descriptors = {}
+        for key, descriptor in restored.items():
+            if not isinstance(key, tuple) or len(key) != 2:
+                raise ValueError(
+                    "parser registry descriptor keys must contain processor_id and version"
+                )
+            processor_id = _validate_exact_non_empty_string(
+                "parser registry",
+                "processor_id",
+                key[0],
+            )
+            version = _validate_exact_non_empty_string(
+                "parser registry",
+                "version",
+                key[1],
+            )
+            if not isinstance(descriptor, ParserDescriptor):
+                raise ValueError(
+                    "parser registry descriptors must be ParserDescriptor records"
+                )
+            if (processor_id, version) != (
+                descriptor.processor_id,
+                descriptor.version,
+            ):
+                raise ValueError(
+                    "parser registry descriptor key must match descriptor identity"
+                )
+            self.register(descriptor)
+
     def register(self, descriptor: ParserDescriptor) -> None:
         if not isinstance(descriptor, ParserDescriptor):
             raise DocumentParserError("parser descriptor must be ParserDescriptor")
