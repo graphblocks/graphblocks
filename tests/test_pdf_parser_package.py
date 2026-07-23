@@ -85,6 +85,63 @@ def test_pdf_page_text_rejects_invalid_page_number(monkeypatch) -> None:
         graphblocks_pdf.PdfPageText(
             page_number=1, text="bad", metadata={"confidence": float("nan")}
         )
+    with pytest.raises(graphblocks_pdf.PdfParserError, match="18446744073709551615"):
+        graphblocks_pdf.PdfPageText(page_number=1 << 64, text="bad")
+    with pytest.raises(graphblocks_pdf.PdfParserError, match="Unicode scalar"):
+        graphblocks_pdf.PdfPageText(page_number=1, text="\ud800")
+
+
+def test_pdf_page_text_metadata_is_a_deeply_immutable_snapshot(monkeypatch) -> None:
+    graphblocks_pdf = importlib.import_module("graphblocks.integrations.pdf")
+    metadata = {"nested": {"label": "safe"}}
+    page = graphblocks_pdf.PdfPageText(1, "text", metadata)
+    metadata["nested"]["label"] = "mutated"
+
+    assert page.metadata == {"nested": {"label": "safe"}}
+    with pytest.raises(TypeError):
+        page.metadata["late"] = True
+    with pytest.raises(TypeError):
+        page.metadata["nested"]["label"] = "mutated"
+
+
+def test_pdf_page_parser_rejects_duplicate_pages_and_mismatched_lineage(monkeypatch) -> None:
+    graphblocks_pdf = importlib.import_module("graphblocks.integrations.pdf")
+    artifact = ArtifactRef("artifact-1", "file:///tmp/source.pdf")
+    asset = SourceAsset("asset-1", "file:///tmp/source.pdf", "local")
+    revision = AssetRevision(
+        "rev-1",
+        "asset-1",
+        "sha256:pdf",
+        "2026-07-23T00:00:00Z",
+        artifact,
+    )
+
+    with pytest.raises(graphblocks_pdf.PdfParserError, match="page numbers must be unique"):
+        graphblocks_pdf.parse_pdf_pages(
+            asset,
+            revision,
+            [
+                graphblocks_pdf.PdfPageText(1, "first"),
+                graphblocks_pdf.PdfPageText(1, "duplicate"),
+            ],
+        )
+    with pytest.raises(graphblocks_pdf.PdfParserError, match="asset_id must match"):
+        graphblocks_pdf.parse_pdf_pages(
+            SourceAsset("other", "file:///tmp/source.pdf", "local"),
+            revision,
+            [],
+        )
+
+    class ExplodingPages:
+        def __iter__(self) -> object:
+            raise RuntimeError("external page iterator failed")
+
+    with pytest.raises(graphblocks_pdf.PdfParserError, match="pages must be iterable"):
+        graphblocks_pdf.parse_pdf_pages(
+            asset,
+            revision,
+            ExplodingPages(),  # type: ignore[arg-type]
+        )
 
 
 def test_marker_pdf_parser_descriptor_preserves_block_lineage(monkeypatch) -> None:
@@ -273,3 +330,46 @@ def test_marker_pdf_parser_rejects_malformed_external_block_values(
 
     with pytest.raises(graphblocks_pdf.PdfParserError, match=error_match):
         descriptor.parse(asset, revision, b"%PDF-test")
+
+
+def test_marker_pdf_parser_rejects_duplicate_block_ids_and_page_overflow(monkeypatch) -> None:
+    graphblocks_pdf = importlib.import_module("graphblocks.integrations.pdf")
+    artifact = ArtifactRef("artifact-marker", "file:///tmp/source.pdf")
+    asset = SourceAsset("asset-marker", "file:///tmp/source.pdf", "local")
+    revision = AssetRevision(
+        "rev-marker",
+        "asset-marker",
+        "sha256:marker",
+        "2026-07-23T00:00:00Z",
+        artifact,
+    )
+
+    def block(block_id: str, page: int) -> SimpleNamespace:
+        return SimpleNamespace(
+            id=block_id,
+            block_type="Text",
+            html="<p>text</p>",
+            page=page,
+            bbox=[0.0, 0.0, 1.0, 1.0],
+            section_hierarchy=None,
+        )
+
+    duplicate_descriptor = graphblocks_pdf.marker_pdf_parser_descriptor(
+        converter=lambda source: SimpleNamespace(
+            blocks=[block("same", 0), block("same", 1)],
+            metadata={},
+        ),
+        html_text_extractor=lambda value: value,
+    )
+    with pytest.raises(graphblocks_pdf.PdfParserError, match="block ids must be unique"):
+        duplicate_descriptor.parse(asset, revision, b"%PDF-test")
+
+    overflow_descriptor = graphblocks_pdf.marker_pdf_parser_descriptor(
+        converter=lambda source: SimpleNamespace(
+            blocks=[block("huge", (1 << 64) - 1)],
+            metadata={},
+        ),
+        html_text_extractor=lambda value: value,
+    )
+    with pytest.raises(graphblocks_pdf.PdfParserError, match="page must be at most"):
+        overflow_descriptor.parse(asset, revision, b"%PDF-test")

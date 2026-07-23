@@ -10,8 +10,8 @@ import pytest
 ROOT = Path(__file__).parents[1]
 sys.path.insert(0, str(ROOT / "examples"))
 
-from _integration import FixtureBlock, NetworkAccessBlocked, WorkerBlockAdapter, run_integration
-from graphblocks.worker import (
+from _integration import FixtureBlock, NetworkAccessBlocked, WorkerBlockAdapter, run_integration  # noqa: E402
+from graphblocks.worker import (  # noqa: E402
     WorkerInvokeRequest,
     WorkerInvokeResult,
     WorkerProtocolMessage,

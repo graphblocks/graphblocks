@@ -195,3 +195,71 @@ def test_haystack_bridge_rejects_coercive_descriptor_values(monkeypatch) -> None
             outputs={"answer": "graphblocks.ai/Answer@1"},
             async_pipeline="false",  # type: ignore[arg-type]
         )
+
+
+def test_haystack_descriptor_fields_are_deeply_immutable_snapshots(monkeypatch) -> None:
+    graphblocks_haystack = importlib.import_module("graphblocks.integrations.haystack")
+    inputs = {"query": "graphblocks.ai/Text@1"}
+    metadata = {"nested": {"profile": "safe"}}
+    block = graphblocks_haystack.HaystackComponentBlock(
+        component_ref="support.SearchComponent",
+        block_type_id="haystack.component.support_search",
+        inputs=inputs,
+        outputs={"documents": "graphblocks.ai/DocumentChunk@1"},
+        metadata=metadata,
+    )
+    inputs["query"] = "mutated"
+    metadata["nested"]["profile"] = "mutated"
+
+    assert block.inputs == {"query": "graphblocks.ai/Text@1"}
+    assert block.metadata == {"nested": {"profile": "safe"}}
+    with pytest.raises(TypeError):
+        block.inputs["late"] = "invalid"
+    with pytest.raises(TypeError):
+        block.metadata["nested"]["profile"] = "invalid"
+
+
+def test_haystack_bridge_preserves_content_part_metadata(monkeypatch) -> None:
+    graphblocks_haystack = importlib.import_module("graphblocks.integrations.haystack")
+    message = Message(
+        message_id="msg-1",
+        role="user",
+        parts=(
+            ContentPart(
+                kind="text",
+                text="hello",
+                metadata={"source": "retrieval"},
+            ),
+        ),
+    )
+
+    haystack = graphblocks_haystack.message_to_haystack_chat_message(message)
+    restored = graphblocks_haystack.haystack_chat_message_to_message(
+        haystack,
+        message_id="msg-2",
+    )
+
+    assert haystack["content"] == [
+        {
+            "type": "text",
+            "text": "hello",
+            "graphblocks_metadata": {"source": "retrieval"},
+        }
+    ]
+    assert restored.parts[0].metadata == {"source": "retrieval"}
+
+
+def test_haystack_bridge_rejects_non_scalar_wire_strings(monkeypatch) -> None:
+    graphblocks_haystack = importlib.import_module("graphblocks.integrations.haystack")
+
+    with pytest.raises(graphblocks_haystack.HaystackBridgeError, match="Unicode scalar"):
+        graphblocks_haystack.HaystackComponentBlock(
+            component_ref="\ud800",
+            block_type_id="haystack.component.support_search",
+            outputs={"documents": "graphblocks.ai/DocumentChunk@1"},
+        )
+    with pytest.raises(graphblocks_haystack.HaystackBridgeError, match="Unicode scalar"):
+        graphblocks_haystack.haystack_chat_message_to_message(
+            {"role": "user", "content": "\ud800"},
+            message_id="msg-1",
+        )
