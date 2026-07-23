@@ -96,6 +96,31 @@ def test_kafka_adapter_rejects_offset_overflow_and_malformed_headers(
         graphblocks_kafka.KafkaRecord(object(), 0, 1, {})  # type: ignore[arg-type]
 
 
+def test_kafka_adapter_normalizes_unstable_header_mappings(monkeypatch) -> None:
+    graphblocks_kafka = _import_kafka(monkeypatch)
+
+    class BrokenHeaders(dict[str, str]):
+        def items(self):
+            raise RuntimeError("mapping changed during iteration")
+
+    with pytest.raises(graphblocks_kafka.KafkaAdapterError, match="headers"):
+        graphblocks_kafka.KafkaRecord(
+            "orders",
+            0,
+            1,
+            {},
+            headers=BrokenHeaders(),
+        )
+    with pytest.raises(graphblocks_kafka.KafkaAdapterError, match="headers"):
+        graphblocks_kafka.KafkaRecord(
+            "orders",
+            0,
+            1,
+            {},
+            headers={"trace": "\ud800"},
+        )
+
+
 def test_kafka_adapter_rejects_wire_range_and_topic_violations(monkeypatch) -> None:
     graphblocks_kafka = _import_kafka(monkeypatch)
 

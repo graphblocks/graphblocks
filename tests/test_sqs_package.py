@@ -107,6 +107,62 @@ def test_sqs_adapter_rejects_malformed_strings_and_attributes(monkeypatch) -> No
             )
 
 
+def test_sqs_rejects_overflowing_cursors_and_timestamps(monkeypatch) -> None:
+    graphblocks_sqs = _import_sqs(monkeypatch)
+
+    with pytest.raises(graphblocks_sqs.SqsAdapterError, match="unsigned 64-bit"):
+        graphblocks_sqs.SqsMessage(
+            "orders",
+            1 << 64,
+            "msg-1",
+            "receipt-1",
+            {},
+        )
+    with pytest.raises(graphblocks_sqs.SqsAdapterError, match="signed 64-bit"):
+        graphblocks_sqs.SqsMessage(
+            "orders",
+            1,
+            "msg-1",
+            "receipt-1",
+            {},
+            sent_timestamp_unix_ms=1 << 63,
+        )
+    with pytest.raises(graphblocks_sqs.SqsAdapterError, match="cannot advance"):
+        graphblocks_sqs.SqsReceiveCursor.from_source_cursor(
+            graphblocks_sqs.SourceCursor("orders", 0, (1 << 64) - 1)
+        )
+
+
+def test_sqs_rejects_unstable_attributes_and_incomplete_fifo_identity(monkeypatch) -> None:
+    graphblocks_sqs = _import_sqs(monkeypatch)
+
+    class BrokenAttributes(dict[str, str]):
+        def items(self):
+            raise RuntimeError("mapping changed during iteration")
+
+    for attributes in (
+        BrokenAttributes(),
+        {"trace": "\ud800"},
+        {"bad attribute": "value"},
+        {"AWS.reserved": "value"},
+    ):
+        with pytest.raises(graphblocks_sqs.SqsAdapterError, match="attributes"):
+            graphblocks_sqs.SqsMessage(
+                "orders",
+                1,
+                "msg-1",
+                "receipt-1",
+                {},
+                attributes=attributes,
+            )
+    with pytest.raises(graphblocks_sqs.SqsAdapterError, match="message_group_id"):
+        graphblocks_sqs.SqsSendMessage(
+            "orders.fifo",
+            {},
+            message_deduplication_id="idem-1",
+        )
+
+
 def test_sqs_message_snapshots_body_and_rejects_non_boolean_fifo(monkeypatch) -> None:
     graphblocks_sqs = _import_sqs(monkeypatch)
     body = {"order": {"state": "created"}}

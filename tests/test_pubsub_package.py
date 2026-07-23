@@ -118,6 +118,64 @@ def test_pubsub_adapter_rejects_malformed_strings_and_attributes(monkeypatch) ->
             )
 
 
+def test_pubsub_rejects_overflowing_cursors_timestamps_and_attempts(monkeypatch) -> None:
+    graphblocks_pubsub = _import_pubsub(monkeypatch)
+
+    with pytest.raises(graphblocks_pubsub.PubsubAdapterError, match="unsigned 64-bit"):
+        graphblocks_pubsub.PubsubMessage(
+            "orders-sub",
+            1 << 64,
+            "msg-1",
+            "ack-1",
+            {},
+        )
+    with pytest.raises(graphblocks_pubsub.PubsubAdapterError, match="signed 64-bit"):
+        graphblocks_pubsub.PubsubMessage(
+            "orders-sub",
+            1,
+            "msg-1",
+            "ack-1",
+            {},
+            publish_time_unix_ms=1 << 63,
+        )
+    with pytest.raises(graphblocks_pubsub.PubsubAdapterError, match="signed 32-bit"):
+        graphblocks_pubsub.PubsubMessage(
+            "orders-sub",
+            1,
+            "msg-1",
+            "ack-1",
+            {},
+            delivery_attempt=1 << 31,
+        )
+    with pytest.raises(graphblocks_pubsub.PubsubAdapterError, match="cannot advance"):
+        graphblocks_pubsub.PubsubSubscriptionCursor.from_source_cursor(
+            graphblocks_pubsub.SourceCursor(
+                "orders-sub",
+                0,
+                (1 << 64) - 1,
+            )
+        )
+
+
+def test_pubsub_rejects_unstable_attributes(monkeypatch) -> None:
+    graphblocks_pubsub = _import_pubsub(monkeypatch)
+
+    class BrokenAttributes(dict[str, str]):
+        def items(self):
+            raise RuntimeError("mapping changed during iteration")
+
+    for attributes in (BrokenAttributes(), {"trace": "\ud800"}):
+        with pytest.raises(graphblocks_pubsub.PubsubAdapterError, match="attributes"):
+            graphblocks_pubsub.PubsubMessage(
+                "orders-sub",
+                1,
+                "msg-1",
+                "ack-1",
+                {},
+                attributes=attributes,
+            )
+
+
 def test_pubsub_message_snapshots_data_and_rejects_non_string_ordering_key(monkeypatch) -> None:
     graphblocks_pubsub = _import_pubsub(monkeypatch)
     data = {"order": {"state": "created"}}

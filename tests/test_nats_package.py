@@ -110,6 +110,64 @@ def test_nats_rejects_malformed_strings_and_headers(monkeypatch) -> None:
             )
 
 
+def test_nats_rejects_overflowing_cursors_and_timestamps(monkeypatch) -> None:
+    graphblocks_nats = _import_nats(monkeypatch)
+
+    with pytest.raises(graphblocks_nats.NatsAdapterError, match="unsigned 64-bit"):
+        graphblocks_nats.NatsMessage(
+            "ORDERS",
+            "orders.created",
+            1 << 64,
+            {},
+        )
+    with pytest.raises(graphblocks_nats.NatsAdapterError, match="signed 64-bit"):
+        graphblocks_nats.NatsMessage(
+            "ORDERS",
+            "orders.created",
+            1,
+            {},
+            timestamp_unix_ms=1 << 63,
+        )
+    with pytest.raises(graphblocks_nats.NatsAdapterError, match="cannot advance"):
+        graphblocks_nats.NatsConsumerCursor.from_source_cursor(
+            "orders-durable",
+            graphblocks_nats.SourceCursor("ORDERS", 0, (1 << 64) - 1),
+        )
+
+
+def test_nats_rejects_ambiguous_or_unstable_headers_and_subjects(monkeypatch) -> None:
+    graphblocks_nats = _import_nats(monkeypatch)
+
+    class AmbiguousHeaders(dict[str, str]):
+        def items(self):
+            return (
+                ("Nats-Msg-Id", "idem-1"),
+                ("nats-msg-id", "idem-2"),
+            )
+
+    class BrokenHeaders(dict[str, str]):
+        def items(self):
+            raise RuntimeError("mapping changed during iteration")
+
+    for headers in (
+        AmbiguousHeaders(),
+        BrokenHeaders(),
+        {"trace": "\ud800"},
+        {"Bad Header": "value"},
+    ):
+        with pytest.raises(graphblocks_nats.NatsAdapterError, match="headers"):
+            graphblocks_nats.NatsMessage(
+                "ORDERS",
+                "orders.created",
+                1,
+                {},
+                headers=headers,
+            )
+    for subject in ("orders.*", "orders.>", "orders created", "orders..created"):
+        with pytest.raises(graphblocks_nats.NatsAdapterError, match="subject"):
+            graphblocks_nats.NatsPublishMessage(subject, {})
+
+
 def test_nats_message_snapshots_payload(monkeypatch) -> None:
     graphblocks_nats = _import_nats(monkeypatch)
     payload = {"order": {"state": "created"}}

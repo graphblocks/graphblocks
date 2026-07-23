@@ -15,30 +15,68 @@ class SqsAdapterError(ValueError):
     """Base error for SQS durable adapter contracts."""
 
 
+_MAX_RECEIVE_SEQUENCE = (1 << 64) - 1
+_MAX_TIMESTAMP_UNIX_MS = (1 << 63) - 1
+
+
 def _stable_string(field_name: str, value: object) -> str:
     if (
         not isinstance(value, str)
         or not value.strip()
         or value != value.strip()
-        or any(ord(character) < 0x20 or ord(character) == 0x7F for character in value)
+        or any(
+            ord(character) < 0x20
+            or ord(character) == 0x7F
+            or "\ud800" <= character <= "\udfff"
+            for character in value
+        )
     ):
         raise SqsAdapterError(f"{field_name} must be a stable non-empty string")
     return value
+
+
+def _attribute_name(field_name: str, value: object) -> str:
+    name = _stable_string(f"{field_name} key", value)
+    lowered = name.lower()
+    if (
+        len(name) > 256
+        or any(
+            not (
+                character.isascii()
+                and (character.isalnum() or character in "_.-")
+            )
+            for character in name
+        )
+        or name.startswith(".")
+        or name.endswith(".")
+        or ".." in name
+        or lowered.startswith(("aws.", "amazon."))
+    ):
+        raise SqsAdapterError(f"{field_name} key is not a valid SQS attribute name")
+    return name
 
 
 def _string_mapping(field_name: str, value: object) -> Mapping[str, str]:
     if not isinstance(value, Mapping):
         raise SqsAdapterError(f"{field_name} must be a mapping")
     normalized: dict[str, str] = {}
-    for key, item in tuple(value.items()):
-        if not isinstance(item, str):
-            raise SqsAdapterError(f"{field_name} values must be strings")
-        normalized_key = _stable_string(f"{field_name} key", key)
-        if normalized_key in normalized:
-            raise SqsAdapterError(
-                f"{field_name} must not contain duplicate key {normalized_key!r}"
-            )
-        normalized[normalized_key] = item
+    try:
+        for key, item in tuple(value.items()):
+            if not isinstance(item, str) or any(
+                "\ud800" <= character <= "\udfff"
+                for character in item
+            ):
+                raise SqsAdapterError(f"{field_name} values must be strings")
+            normalized_key = _attribute_name(field_name, key)
+            if normalized_key in normalized:
+                raise SqsAdapterError(
+                    f"{field_name} must not contain duplicate key {normalized_key!r}"
+                )
+            normalized[normalized_key] = item
+    except SqsAdapterError:
+        raise
+    except (TypeError, ValueError, RuntimeError) as error:
+        raise SqsAdapterError(f"{field_name} must be a stable mapping") from error
     return FrozenWireJsonObject(dict(sorted(normalized.items())))
 
 
@@ -49,26 +87,47 @@ def _wire_value(field_name: str, value: object) -> object:
         raise SqsAdapterError(str(error)) from error
 
 
-def _positive_int(field_name: str, value: object) -> int:
+def _positive_int(
+    field_name: str,
+    value: object,
+    *,
+    maximum: int = _MAX_RECEIVE_SEQUENCE,
+    range_name: str = "unsigned 64-bit",
+) -> int:
     if isinstance(value, bool) or not isinstance(value, int):
         raise SqsAdapterError(f"{field_name} must be an integer")
     if value <= 0:
         raise SqsAdapterError(f"{field_name} must be positive")
+    if value > maximum:
+        raise SqsAdapterError(f"{field_name} must not exceed {range_name} range")
     return value
 
 
-def _non_negative_int(field_name: str, value: object) -> int:
+def _non_negative_int(
+    field_name: str,
+    value: object,
+    *,
+    maximum: int,
+    range_name: str,
+) -> int:
     if isinstance(value, bool) or not isinstance(value, int):
         raise SqsAdapterError(f"{field_name} must be an integer")
     if value < 0:
         raise SqsAdapterError(f"{field_name} must be non-negative")
+    if value > maximum:
+        raise SqsAdapterError(f"{field_name} must not exceed {range_name} range")
     return value
 
 
 def _optional_non_negative_int(field_name: str, value: object | None) -> int | None:
     if value is None:
         return None
-    return _non_negative_int(field_name, value)
+    return _non_negative_int(
+        field_name,
+        value,
+        maximum=_MAX_TIMESTAMP_UNIX_MS,
+        range_name="signed 64-bit",
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -131,6 +190,10 @@ class SqsReceiveCursor:
             raise SqsAdapterError("SQS source cursors must use partition 0")
         if cursor.offset == 0:
             raise SqsAdapterError("SQS source cursor offset must be positive")
+        if cursor.offset >= _MAX_RECEIVE_SEQUENCE:
+            raise SqsAdapterError(
+                "SQS source cursor offset cannot advance beyond unsigned 64-bit range"
+            )
         return cls(cursor.stream, cursor.offset + 1)
 
     def to_source_cursor(self) -> SourceCursor | None:
@@ -153,6 +216,10 @@ class SqsSendMessage:
             _stable_string("message_group_id", self.message_group_id)
         if self.message_deduplication_id is not None:
             _stable_string("message_deduplication_id", self.message_deduplication_id)
+            if self.message_group_id is None:
+                raise SqsAdapterError(
+                    "message_deduplication_id requires message_group_id"
+                )
         object.__setattr__(self, "body", _wire_value("body", self.body))
         object.__setattr__(
             self,

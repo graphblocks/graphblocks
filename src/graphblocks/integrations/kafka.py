@@ -60,23 +60,34 @@ def _headers(value: object) -> Mapping[str, str]:
     if not isinstance(value, Mapping):
         raise KafkaAdapterError("headers must be a mapping of strings")
     headers: dict[str, str] = {}
-    for name, header_value in tuple(value.items()):
-        if (
-            not isinstance(name, str)
-            or not name
-            or name != name.strip()
-            or any(ord(character) < 0x20 or ord(character) == 0x7F for character in name)
-            or not isinstance(header_value, str)
-            or any(
-                (ord(character) < 0x20 and character != "\t")
-                or ord(character) == 0x7F
-                for character in header_value
-            )
-        ):
-            raise KafkaAdapterError("headers must be stable HTTP-compatible strings")
-        if name in headers:
-            raise KafkaAdapterError(f"headers must not contain duplicate key {name!r}")
-        headers[name] = header_value
+    try:
+        for name, header_value in tuple(value.items()):
+            if (
+                not isinstance(name, str)
+                or not name
+                or name != name.strip()
+                or any(
+                    ord(character) < 0x20
+                    or ord(character) == 0x7F
+                    or "\ud800" <= character <= "\udfff"
+                    for character in name
+                )
+                or not isinstance(header_value, str)
+                or any(
+                    (ord(character) < 0x20 and character != "\t")
+                    or ord(character) == 0x7F
+                    or "\ud800" <= character <= "\udfff"
+                    for character in header_value
+                )
+            ):
+                raise KafkaAdapterError("headers must be stable HTTP-compatible strings")
+            if name in headers:
+                raise KafkaAdapterError(f"headers must not contain duplicate key {name!r}")
+            headers[name] = header_value
+    except KafkaAdapterError:
+        raise
+    except (TypeError, ValueError, RuntimeError) as error:
+        raise KafkaAdapterError("headers must be a stable mapping of strings") from error
     return FrozenWireJsonObject(dict(sorted(headers.items())))
 
 
@@ -133,6 +144,12 @@ class KafkaConsumerCursor:
             not isinstance(self.group_id, str)
             or not self.group_id.strip()
             or self.group_id != self.group_id.strip()
+            or any(
+                ord(character) < 0x20
+                or ord(character) == 0x7F
+                or "\ud800" <= character <= "\udfff"
+                for character in self.group_id
+            )
         ):
             raise KafkaAdapterError("group_id must not be empty")
         _validate_topic(self.topic)
