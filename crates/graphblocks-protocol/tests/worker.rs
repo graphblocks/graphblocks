@@ -739,6 +739,105 @@ fn worker_protocol_message_deserialization_requires_explicit_version() {
 }
 
 #[test]
+fn worker_protocol_message_rejects_zero_sequence() {
+    let message = WorkerProtocolMessage::error("message-000001", 0, "worker.failed", "failed");
+
+    assert_eq!(
+        message.validate(),
+        Err(WorkerProtocolMessageError::NonPositiveSequence),
+    );
+    assert!(serde_json::to_value(&message).is_err());
+}
+
+#[test]
+fn worker_protocol_message_rejects_missing_or_mismatched_invocation_correlation() {
+    let request = WorkerInvokeRequest {
+        invocation_id: "invoke-000001".to_owned(),
+        run_id: "run-000001".to_owned(),
+        node_id: "render".to_owned(),
+        node_attempt_id: "render-attempt-1".to_owned(),
+        lease_epoch: 7,
+        block: "prompt.render@1".to_owned(),
+        context: WorkerInvocationContext::new("release-1", "rev-1"),
+        inputs: json!({}),
+        config: json!({}),
+    };
+    let mut message = WorkerProtocolMessage::invoke_request("message-000001", 1, request);
+
+    message.correlation_id = None;
+    assert_eq!(
+        message.validate(),
+        Err(WorkerProtocolMessageError::MismatchedCorrelationId {
+            expected: "invoke-000001".to_owned(),
+            actual: None,
+        }),
+    );
+
+    message.correlation_id = Some("invoke-other".to_owned());
+    assert_eq!(
+        message.validate(),
+        Err(WorkerProtocolMessageError::MismatchedCorrelationId {
+            expected: "invoke-000001".to_owned(),
+            actual: Some("invoke-other".to_owned()),
+        }),
+    );
+}
+
+#[test]
+fn worker_protocol_message_rejects_unknown_and_duplicate_wire_fields()
+-> Result<(), serde_json::Error> {
+    let message = WorkerProtocolMessage::error("message-000001", 1, "worker.failed", "failed");
+    let mut unknown_envelope = serde_json::to_value(&message)?;
+    unknown_envelope["extension"] = json!("silently dropped");
+    let envelope_error = serde_json::from_value::<WorkerProtocolMessage>(unknown_envelope)
+        .expect_err("unknown envelope fields must not be discarded");
+    assert!(
+        envelope_error.to_string().contains("unknown field"),
+        "{envelope_error}"
+    );
+
+    let mut unknown_payload = serde_json::to_value(&message)?;
+    unknown_payload["payload"]["workerId"] = json!("forged-worker");
+    serde_json::from_value::<WorkerProtocolMessage>(unknown_payload)
+        .expect_err("kind-specific payload fields must not be discarded");
+
+    let request = WorkerInvokeRequest {
+        invocation_id: "invoke-000001".to_owned(),
+        run_id: "run-000001".to_owned(),
+        node_id: "render".to_owned(),
+        node_attempt_id: "render-attempt-1".to_owned(),
+        lease_epoch: 7,
+        block: "prompt.render@1".to_owned(),
+        context: WorkerInvocationContext::new("release-1", "rev-1"),
+        inputs: json!({}),
+        config: json!({}),
+    };
+    let mut unknown_nested = serde_json::to_value(WorkerProtocolMessage::invoke_request(
+        "message-000002",
+        2,
+        request,
+    ))?;
+    unknown_nested["payload"]["context"]["extension"] = json!(true);
+    serde_json::from_value::<WorkerProtocolMessage>(unknown_nested)
+        .expect_err("unknown nested payload fields must not be discarded");
+
+    let duplicate_error = serde_json::from_str::<WorkerProtocolMessage>(
+        r#"{"protocolVersion":1,"messageId":"message-000001","kind":"error","sequence":1,"sequence":2,"payload":{"code":"worker.failed","message":"failed"}}"#,
+    )
+    .expect_err("duplicate envelope fields must be rejected");
+    assert!(
+        duplicate_error.to_string().contains("duplicate field"),
+        "{duplicate_error}"
+    );
+
+    serde_json::from_str::<WorkerProtocolMessage>(
+        r#"{"protocolVersion":1,"messageId":"message-000001","kind":"error","sequence":1,"payload":{"code":"worker.failed","code":"worker.other","message":"failed"}}"#,
+    )
+    .expect_err("duplicate payload fields must be rejected before payload decoding");
+    Ok(())
+}
+
+#[test]
 fn worker_protocol_message_validation_rejects_kind_payload_mismatch() {
     let mut message = WorkerProtocolMessage::advertisement(
         "message-000001",
@@ -1334,6 +1433,10 @@ fn worker_drain_validation_rejects_invalid_wire_shapes() {
     );
 
     plan.worker_state = WorkerState::Draining;
+    plan.admission_closed = false;
+    assert_eq!(plan.validate(), Err(WorkerDrainError::AdmissionOpen));
+
+    plan.admission_closed = true;
     plan.worker_id = " ".to_owned();
     assert_eq!(
         plan.validate(),

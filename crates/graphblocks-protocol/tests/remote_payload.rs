@@ -94,6 +94,47 @@ fn remote_payload_rejects_inline_json_beyond_canonical_depth() {
 }
 
 #[test]
+fn remote_payload_rejects_unknown_variant_and_artifact_fields() {
+    let variant_error = serde_json::from_value::<RemotePayload>(json!({
+        "mode": "inline",
+        "schema": "graphblocks.ai/Message@1",
+        "value": {},
+        "artifact": {}
+    }))
+    .expect_err("fields from another payload mode must not be discarded");
+    assert!(
+        variant_error.to_string().contains("unknown field"),
+        "{variant_error}"
+    );
+
+    let artifact_error = serde_json::from_value::<RemotePayload>(json!({
+        "mode": "artifact_ref",
+        "schema": "graphblocks.ai/ArtifactRef@1",
+        "artifact": {
+            "artifactId": "artifact-000001",
+            "uri": "s3://graphblocks/documents/source.pdf",
+            "metadata": {},
+            "inlineValue": {}
+        }
+    }))
+    .expect_err("unknown artifact fields must not be discarded");
+    assert!(
+        artifact_error.to_string().contains("unknown field"),
+        "{artifact_error}"
+    );
+}
+
+#[test]
+fn remote_payload_rejects_duplicate_mode_field() {
+    let error = serde_json::from_str::<RemotePayload>(
+        r#"{"mode":"inline","mode":"artifact_ref","schema":"graphblocks.ai/Message@1","value":{}}"#,
+    )
+    .expect_err("duplicate mode fields must be rejected");
+
+    assert!(error.to_string().contains("duplicate field"), "{error}");
+}
+
+#[test]
 fn remote_payload_allows_large_artifact_by_reference() -> Result<(), serde_json::Error> {
     let payload = RemotePayload::ArtifactRef {
         schema: "graphblocks.ai/ArtifactRef@1".to_owned(),

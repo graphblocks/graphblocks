@@ -9,7 +9,7 @@ use serde_json::Value;
 pub const WORKER_PROTOCOL_VERSION: u16 = 1;
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct BlockCapability {
     pub block: String,
 }
@@ -23,7 +23,7 @@ impl BlockCapability {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ArtifactRef {
     pub artifact_id: String,
     pub uri: String,
@@ -37,7 +37,7 @@ pub struct ArtifactRef {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WorkerAdvertisement {
     pub protocol_version: u16,
     pub worker_id: String,
@@ -117,7 +117,7 @@ impl WorkerAdmissionPolicy {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WorkerAdmissionDecision {
     pub admitted: bool,
     pub worker_id: String,
@@ -155,7 +155,7 @@ pub enum WorkerProtocolMessageKind {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WorkerProtocolErrorPayload {
     pub code: String,
     pub message: String,
@@ -266,64 +266,6 @@ impl WorkerProtocolMessagePayload {
             kind: self.kind(),
             source: source.to_string(),
         })
-    }
-
-    fn from_kind_and_value(
-        kind: WorkerProtocolMessageKind,
-        payload: Value,
-    ) -> Result<Self, WorkerProtocolMessageError> {
-        let payload = match kind {
-            WorkerProtocolMessageKind::Advertisement => {
-                Self::Advertisement(serde_json::from_value(payload).map_err(|source| {
-                    WorkerProtocolMessageError::PayloadDecoding {
-                        kind,
-                        source: source.to_string(),
-                    }
-                })?)
-            }
-            WorkerProtocolMessageKind::AdmissionDecision => {
-                Self::AdmissionDecision(serde_json::from_value(payload).map_err(|source| {
-                    WorkerProtocolMessageError::PayloadDecoding {
-                        kind,
-                        source: source.to_string(),
-                    }
-                })?)
-            }
-            WorkerProtocolMessageKind::InvokeRequest => {
-                Self::InvokeRequest(Box::new(serde_json::from_value(payload).map_err(
-                    |source| WorkerProtocolMessageError::PayloadDecoding {
-                        kind,
-                        source: source.to_string(),
-                    },
-                )?))
-            }
-            WorkerProtocolMessageKind::InvokeResult => {
-                Self::InvokeResult(serde_json::from_value(payload).map_err(|source| {
-                    WorkerProtocolMessageError::PayloadDecoding {
-                        kind,
-                        source: source.to_string(),
-                    }
-                })?)
-            }
-            WorkerProtocolMessageKind::DrainPlan => {
-                Self::DrainPlan(serde_json::from_value(payload).map_err(|source| {
-                    WorkerProtocolMessageError::PayloadDecoding {
-                        kind,
-                        source: source.to_string(),
-                    }
-                })?)
-            }
-            WorkerProtocolMessageKind::Error => {
-                Self::Error(serde_json::from_value(payload).map_err(|source| {
-                    WorkerProtocolMessageError::PayloadDecoding {
-                        kind,
-                        source: source.to_string(),
-                    }
-                })?)
-            }
-        };
-        payload.validate()?;
-        Ok(payload)
     }
 }
 
@@ -449,6 +391,9 @@ impl WorkerProtocolMessage {
         if self.message_id.trim().is_empty() {
             return Err(WorkerProtocolMessageError::EmptyMessageId);
         }
+        if self.sequence == 0 {
+            return Err(WorkerProtocolMessageError::NonPositiveSequence);
+        }
         if let Some(correlation_id) = &self.correlation_id
             && correlation_id.trim().is_empty()
         {
@@ -467,6 +412,23 @@ impl WorkerProtocolMessage {
             });
         }
         self.payload.validate()?;
+        let expected_correlation_id = match &self.payload {
+            WorkerProtocolMessagePayload::InvokeRequest(request) => {
+                Some(request.invocation_id.as_str())
+            }
+            WorkerProtocolMessagePayload::InvokeResult(result) => {
+                Some(result.invocation_id.as_str())
+            }
+            _ => None,
+        };
+        if let Some(expected) = expected_correlation_id
+            && self.correlation_id.as_deref() != Some(expected)
+        {
+            return Err(WorkerProtocolMessageError::MismatchedCorrelationId {
+                expected: expected.to_owned(),
+                actual: self.correlation_id.clone(),
+            });
+        }
         validate_canonical_json_depth(&self.to_wire_value_unchecked()?).map_err(|source| {
             WorkerProtocolMessageError::MessageEncoding {
                 source: source.to_string(),
@@ -550,7 +512,39 @@ impl<'de> Deserialize<'de> for WorkerProtocolMessage {
         D: serde::Deserializer<'de>,
     {
         #[derive(Deserialize)]
-        #[serde(rename_all = "camelCase")]
+        #[serde(untagged)]
+        enum WireWorkerProtocolMessagePayload {
+            Advertisement(WorkerAdvertisement),
+            AdmissionDecision(WorkerAdmissionDecision),
+            InvokeRequest(Box<WorkerInvokeRequest>),
+            InvokeResult(WorkerInvokeResult),
+            DrainPlan(WorkerDrainPlan),
+            Error(WorkerProtocolErrorPayload),
+        }
+
+        impl From<WireWorkerProtocolMessagePayload> for WorkerProtocolMessagePayload {
+            fn from(payload: WireWorkerProtocolMessagePayload) -> Self {
+                match payload {
+                    WireWorkerProtocolMessagePayload::Advertisement(value) => {
+                        Self::Advertisement(value)
+                    }
+                    WireWorkerProtocolMessagePayload::AdmissionDecision(value) => {
+                        Self::AdmissionDecision(value)
+                    }
+                    WireWorkerProtocolMessagePayload::InvokeRequest(value) => {
+                        Self::InvokeRequest(value)
+                    }
+                    WireWorkerProtocolMessagePayload::InvokeResult(value) => {
+                        Self::InvokeResult(value)
+                    }
+                    WireWorkerProtocolMessagePayload::DrainPlan(value) => Self::DrainPlan(value),
+                    WireWorkerProtocolMessagePayload::Error(value) => Self::Error(value),
+                }
+            }
+        }
+
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase", deny_unknown_fields)]
         struct WireWorkerProtocolMessage {
             protocol_version: u16,
             message_id: String,
@@ -560,12 +554,11 @@ impl<'de> Deserialize<'de> for WorkerProtocolMessage {
             correlation_id: Option<String>,
             #[serde(default)]
             causation_id: Option<String>,
-            payload: Value,
+            payload: WireWorkerProtocolMessagePayload,
         }
 
         let wire = WireWorkerProtocolMessage::deserialize(deserializer)?;
-        let payload = WorkerProtocolMessagePayload::from_kind_and_value(wire.kind, wire.payload)
-            .map_err(serde::de::Error::custom)?;
+        let payload = WorkerProtocolMessagePayload::from(wire.payload);
         let message = Self {
             protocol_version: wire.protocol_version,
             message_id: wire.message_id,
@@ -587,8 +580,13 @@ pub enum WorkerProtocolMessageError {
         actual: u16,
     },
     EmptyMessageId,
+    NonPositiveSequence,
     EmptyCorrelationId,
     EmptyCausationId,
+    MismatchedCorrelationId {
+        expected: String,
+        actual: Option<String>,
+    },
     KindPayloadMismatch {
         kind: WorkerProtocolMessageKind,
         payload_kind: WorkerProtocolMessageKind,
@@ -905,7 +903,7 @@ impl RunOwnershipLease {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "mode", rename_all = "snake_case")]
+#[serde(tag = "mode", rename_all = "snake_case", deny_unknown_fields)]
 pub enum RemotePayload {
     Inline {
         schema: String,
@@ -977,7 +975,7 @@ pub fn validate_remote_payload(
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WorkerInvocationContext {
     pub release_id: String,
     pub deployment_revision_id: String,
@@ -1133,7 +1131,7 @@ impl WorkerInvocationContext {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WorkerInvokeRequest {
     pub invocation_id: String,
     pub run_id: String,
@@ -1320,6 +1318,7 @@ pub enum WorkerDrainError {
     WorkerStateNotDraining {
         state: WorkerState,
     },
+    AdmissionOpen,
     DeadlineOverflow {
         drain_started_at_unix_ms: u64,
         timeout_ms: u64,
@@ -1380,7 +1379,7 @@ impl WorkerDrainTask {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WorkerDrainDecision {
     pub workload: WorkerDrainWorkloadKind,
     pub run_id: String,
@@ -1419,7 +1418,7 @@ impl WorkerDrainDecision {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WorkerDrainPlan {
     pub worker_id: String,
     pub target_id: String,
@@ -1444,6 +1443,9 @@ impl WorkerDrainPlan {
             return Err(WorkerDrainError::WorkerStateNotDraining {
                 state: self.worker_state,
             });
+        }
+        if !self.admission_closed {
+            return Err(WorkerDrainError::AdmissionOpen);
         }
         let mut invocation_ids = BTreeSet::new();
         for (index, decision) in self.decisions.iter().enumerate() {
@@ -1549,7 +1551,7 @@ impl WorkerDrainPlan {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WorkerInvokeResult {
     pub invocation_id: String,
     pub node_attempt_id: String,

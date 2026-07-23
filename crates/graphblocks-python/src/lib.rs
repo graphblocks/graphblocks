@@ -107,8 +107,9 @@ use graphblocks_runtime_durable::{
 use graphblocks_runtime_seq::tool_queue::{SequentialToolQueue, SequentialToolQueueError};
 use graphblocks_schema::parse_canonical_json;
 use graphblocksd::{DaemonConfig, DaemonStatus, WorkerRegistry, WorkerRegistryError};
-use pyo3::exceptions::{PyRuntimeError, PyValueError};
+use pyo3::exceptions::{PyRuntimeError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
+use pyo3::types::PyBool;
 use serde_json::{Value, json};
 
 #[pyfunction]
@@ -116,11 +117,29 @@ fn binding_version() -> &'static str {
     env!("CARGO_PKG_VERSION")
 }
 
+fn strict_u64_argument(value: &Bound<'_, PyAny>) -> PyResult<u64> {
+    if value.is_instance_of::<PyBool>() {
+        return Err(PyTypeError::new_err(
+            "boolean values are not valid unsigned integers",
+        ));
+    }
+    value.extract::<u64>()
+}
+
+fn strict_usize_argument(value: &Bound<'_, PyAny>) -> PyResult<usize> {
+    if value.is_instance_of::<PyBool>() {
+        return Err(PyTypeError::new_err(
+            "boolean values are not valid unsigned integers",
+        ));
+    }
+    value.extract::<usize>()
+}
+
 #[pyfunction]
 fn finalize_tool_call_json(
     draft_json: &str,
     resolved_tool_id: &str,
-    created_at_unix_ms: u64,
+    #[pyo3(from_py_with = strict_u64_argument)] created_at_unix_ms: u64,
 ) -> PyResult<String> {
     let draft_value = parse_json_argument(draft_json, "tool call draft")?;
     let draft_object = json_object(&draft_value, "draft")?;
@@ -135,12 +154,15 @@ fn finalize_tool_call_json(
         }
     };
     let expected_sequence = required_alias_u64(draft_object, "sequence", "sequence", "draft")?;
-    let fragments = draft_object
-        .get("argumentFragments")
-        .or_else(|| draft_object.get("argument_fragments"))
-        .ok_or_else(|| PyValueError::new_err("draft.argumentFragments is required"))?
-        .as_array()
-        .ok_or_else(|| PyValueError::new_err("draft.argumentFragments must be an array"))?;
+    let fragments = checked_alias_value(
+        draft_object,
+        "argumentFragments",
+        "argument_fragments",
+        "draft",
+    )?
+    .ok_or_else(|| PyValueError::new_err("draft.argumentFragments is required"))?
+    .as_array()
+    .ok_or_else(|| PyValueError::new_err("draft.argumentFragments must be an array"))?;
 
     let mut draft = ToolCallDraft::proposed(
         required_alias_string(draft_object, "responseId", "response_id", "draft")?,
@@ -255,6 +277,10 @@ fn validate_worker_advertisement_json(
     expected_package_lock_hash: Option<&str>,
 ) -> PyResult<String> {
     let advertisement_value = parse_json_argument(advertisement_json, "worker advertisement")?;
+    validate_worker_advertisement_wire_fields(&advertisement_value, "worker advertisement")
+        .map_err(|error| {
+            PyValueError::new_err(format!("invalid worker advertisement JSON: {error}"))
+        })?;
     let advertisement = serde_json::from_value::<WorkerAdvertisement>(advertisement_value)
         .map_err(|error| {
             PyValueError::new_err(format!("invalid worker advertisement JSON: {error}"))
@@ -314,21 +340,13 @@ fn validate_worker_advertisement_json(
 #[pyfunction]
 fn validate_worker_protocol_message_json(message_json: &str) -> PyResult<String> {
     let message_value = parse_json_argument(message_json, "worker message")?;
+    if let Err(error) = validate_worker_message_wire_fields(&message_value) {
+        return serialize_invalid_worker_protocol_message(error);
+    }
     let message = match serde_json::from_value::<WorkerProtocolMessage>(message_value) {
         Ok(message) => message,
         Err(error) => {
-            let payload = json!({
-                "ok": false,
-                "error": {
-                    "code": "worker_protocol_message.invalid",
-                    "message": error.to_string(),
-                },
-            });
-            return serde_json::to_string(&payload).map_err(|error| {
-                PyRuntimeError::new_err(format!(
-                    "failed to serialize worker protocol message result: {error}"
-                ))
-            });
+            return serialize_invalid_worker_protocol_message(error.to_string());
         }
     };
     let content_digest = message.content_digest().map_err(|error| {
@@ -353,6 +371,21 @@ fn validate_worker_protocol_message_json(message_json: &str) -> PyResult<String>
     })
 }
 
+fn serialize_invalid_worker_protocol_message(message: String) -> PyResult<String> {
+    let payload = json!({
+        "ok": false,
+        "error": {
+            "code": "worker_protocol_message.invalid",
+            "message": message,
+        },
+    });
+    serde_json::to_string(&payload).map_err(|error| {
+        PyRuntimeError::new_err(format!(
+            "failed to serialize worker protocol message result: {error}"
+        ))
+    })
+}
+
 #[pyfunction]
 #[pyo3(signature = (
     message_json,
@@ -364,7 +397,7 @@ fn admit_worker_message_json(
     message_json: &str,
     daemon_config_json: Option<&str>,
     response_message_id: &str,
-    response_sequence: u64,
+    #[pyo3(from_py_with = strict_u64_argument)] response_sequence: u64,
 ) -> PyResult<String> {
     let message_value = parse_json_argument(message_json, "worker message")?;
     let daemon_config_value = daemon_config_json
@@ -402,7 +435,10 @@ fn admit_worker_message_json(
 }
 
 #[pyfunction]
-fn validate_remote_payload_json(payload_json: &str, max_inline_bytes: usize) -> PyResult<String> {
+fn validate_remote_payload_json(
+    payload_json: &str,
+    #[pyo3(from_py_with = strict_usize_argument)] max_inline_bytes: usize,
+) -> PyResult<String> {
     let payload_value = parse_json_argument(payload_json, "remote payload")?;
     let payload = serde_json::from_value::<RemotePayload>(payload_value)
         .map_err(|error| PyValueError::new_err(format!("invalid remote payload JSON: {error}")))?;
@@ -549,7 +585,7 @@ fn evaluate_tool_approval_json(
     resolved_tool_json: &str,
     call_json: &str,
     principal_id: &str,
-    now_unix_ms: u64,
+    #[pyo3(from_py_with = strict_u64_argument)] now_unix_ms: u64,
 ) -> PyResult<String> {
     let record_value = parse_json_argument(record_json, "tool approval record")?;
     let resolved_tool_value = parse_json_argument(resolved_tool_json, "resolved tool")?;
@@ -2417,6 +2453,76 @@ fn parse_json_argument(text: &str, label: &str) -> PyResult<Value> {
         .map_err(|error| PyValueError::new_err(format!("invalid {label} JSON: {error}")))
 }
 
+fn reject_unknown_json_fields(
+    object: &serde_json::Map<String, Value>,
+    label: &str,
+    known_fields: &[&str],
+) -> Result<(), String> {
+    if let Some(field) = object
+        .keys()
+        .find(|field| !known_fields.contains(&field.as_str()))
+    {
+        return Err(format!("{label} has unknown field {field}"));
+    }
+    Ok(())
+}
+
+fn validate_worker_advertisement_wire_fields(value: &Value, label: &str) -> Result<(), String> {
+    let Some(object) = value.as_object() else {
+        return Ok(());
+    };
+    reject_unknown_json_fields(
+        object,
+        label,
+        &[
+            "protocolVersion",
+            "workerId",
+            "targetId",
+            "packageLockHash",
+            "imageDigest",
+            "supportedBlocks",
+            "state",
+        ],
+    )?;
+    if let Some(blocks) = object.get("supportedBlocks").and_then(Value::as_array) {
+        for (index, block) in blocks.iter().enumerate() {
+            if let Some(block) = block.as_object() {
+                reject_unknown_json_fields(
+                    block,
+                    &format!("{label}.supportedBlocks[{index}]"),
+                    &["block"],
+                )?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_worker_message_wire_fields(value: &Value) -> Result<(), String> {
+    let Some(object) = value.as_object() else {
+        return Ok(());
+    };
+    reject_unknown_json_fields(
+        object,
+        "worker message",
+        &[
+            "protocolVersion",
+            "messageId",
+            "kind",
+            "sequence",
+            "correlationId",
+            "causationId",
+            "payload",
+        ],
+    )?;
+    if object.get("kind").and_then(Value::as_str) == Some("advertisement")
+        && let Some(payload) = object.get("payload")
+    {
+        validate_worker_advertisement_wire_fields(payload, "worker message.payload")?;
+    }
+    Ok(())
+}
+
 fn json_object<'a>(value: &'a Value, label: &str) -> PyResult<&'a serde_json::Map<String, Value>> {
     value
         .as_object()
@@ -3916,10 +4022,7 @@ fn parse_block_error(value: &Value, label: &str) -> PyResult<BlockError> {
         optional_nullable_alias_bool(object, "retryable", "retryable", label)?.unwrap_or(false),
     );
     error.details = parse_json_value_map(object.get("details"), &format!("{label}.details"))?;
-    if let Some(cause_chain) = object
-        .get("causeChain")
-        .or_else(|| object.get("cause_chain"))
-    {
+    if let Some(cause_chain) = checked_alias_value(object, "causeChain", "cause_chain", label)? {
         let Some(cause_chain) = cause_chain.as_array() else {
             return Err(PyValueError::new_err(format!(
                 "{label}.causeChain must be an array"
@@ -4049,9 +4152,7 @@ fn parse_retry_policy(value: &Value, label: &str) -> PyResult<RetryPolicy> {
         )));
     }
     let max_attempts = required_alias_u64(object, "maxAttempts", "max_attempts", label)?;
-    let retry_on = object
-        .get("retryOn")
-        .or_else(|| object.get("retry_on"))
+    let retry_on = checked_alias_value(object, "retryOn", "retry_on", label)?
         .map(|value| {
             let Some(values) = value.as_array() else {
                 return Err(PyValueError::new_err(format!(
@@ -4085,9 +4186,12 @@ fn parse_retry_policy(value: &Value, label: &str) -> PyResult<RetryPolicy> {
             &format!("{label}.backoff"),
         )?);
     policy = policy.with_partial_output_policy(parse_partial_output_policy(
-        object
-            .get("partialOutputPolicy")
-            .or_else(|| object.get("partial_output_policy")),
+        checked_alias_value(
+            object,
+            "partialOutputPolicy",
+            "partial_output_policy",
+            label,
+        )?,
         &format!("{label}.partialOutputPolicy"),
     )?);
     Ok(policy)
@@ -4189,9 +4293,7 @@ fn parse_provider_limit_incident(value: &Value, label: &str) -> PyResult<Provide
         incident = incident.with_retry_after_ms(retry_after_ms);
     }
     for fallback in parse_string_vec(
-        object
-            .get("compatibleFallbacks")
-            .or_else(|| object.get("compatible_fallbacks")),
+        checked_alias_value(object, "compatibleFallbacks", "compatible_fallbacks", label)?,
         &format!("{label}.compatibleFallbacks"),
     )? {
         incident = incident.with_fallback(fallback);
@@ -7536,7 +7638,7 @@ fn evaluate_output_gate_json(gate_json: &str, operations_json: &str) -> PyResult
 fn evaluate_declarative_output_policy_json(
     rules_json: &str,
     chunk_json: &str,
-    evaluated_at_unix_ms: u64,
+    #[pyo3(from_py_with = strict_u64_argument)] evaluated_at_unix_ms: u64,
 ) -> PyResult<String> {
     let rules_value = parse_json_argument(rules_json, "declarative output policy rules")?;
     let chunk_value = parse_json_argument(chunk_json, "generation chunk")?;
@@ -9365,6 +9467,7 @@ mod tests {
     };
     use graphblocks_runtime_core::tool_approval::{ToolApprovalRecord, ToolApprovalRequest};
     use graphblocks_runtime_core::tool_result::{ContentPart, ToolResult};
+    use pyo3::types::PyAnyMethods;
     use serde_json::{Value, json};
 
     use super::{
@@ -9392,6 +9495,7 @@ mod tests {
 
     #[test]
     fn json_argument_admission_rejects_duplicate_object_keys() {
+        pyo3::Python::initialize();
         let error = parse_json_argument(r#"{"value":1,"value":2}"#, "test value")
             .expect_err("duplicate JSON keys must fail closed");
 
@@ -9404,6 +9508,7 @@ mod tests {
 
     #[test]
     fn typed_json_admission_rejects_duplicate_object_keys() {
+        pyo3::Python::initialize();
         assert!(
             validate_worker_advertisement_json(
                 r#"{"protocolVersion":1,"protocolVersion":1}"#,
@@ -9422,6 +9527,7 @@ mod tests {
 
     #[test]
     fn typed_alias_admission_rejects_ambiguous_field_spellings() {
+        pyo3::Python::initialize();
         let error = evaluate_timeout_deadline_json(
             r#"{"durationMs":1000,"duration_ms":1000}"#,
             r#"{"nodeId":"node-1","startedAtMs":0,"nowMs":1}"#,
@@ -9434,10 +9540,32 @@ mod tests {
                 .contains("timeout policy must not define both durationMs and duration_ms"),
             "{error}"
         );
+
+        let draft_error = finalize_tool_call_json(
+            r#"{
+                "status":"arguments_complete",
+                "sequence":1,
+                "responseId":"response-1",
+                "toolCallId":"call-1",
+                "toolName":"search",
+                "argumentFragments":["{}"],
+                "argument_fragments":["{}"]
+            }"#,
+            "resolved-tool-1",
+            1_000,
+        )
+        .expect_err("tool draft aliases must fail closed");
+        assert!(
+            draft_error
+                .to_string()
+                .contains("draft must not define both argumentFragments and argument_fragments"),
+            "{draft_error}"
+        );
     }
 
     #[test]
     fn tool_scope_and_usage_aliases_reject_ambiguous_field_spellings() {
+        pyo3::Python::initialize();
         let tool_error =
             evaluate_tool_admission_json(r#"{"call":{},"resolvedTool":{},"resolved_tool":{}}"#)
                 .expect_err("tool admission aliases must fail closed");
@@ -9475,6 +9603,7 @@ mod tests {
 
     #[test]
     fn budget_and_runtime_aliases_reject_ambiguous_field_spellings() {
+        pyo3::Python::initialize();
         let budget_error = evaluate_budget_ledger_json(
             r#"[{
                 "op":"commit",
@@ -9501,6 +9630,75 @@ mod tests {
                 .contains("test runtime options must not define both runId and run_id"),
             "{runtime_error}"
         );
+
+        let retry_error = evaluate_retry_policy_json(
+            r#"{"maxAttempts":2,"retryOn":[],"retry_on":[]}"#,
+            r#"{
+                "attempt":1,
+                "error":{
+                    "code":"provider.transient",
+                    "category":"transient",
+                    "message":"retry",
+                    "retryable":true
+                }
+            }"#,
+        )
+        .expect_err("retry policy aliases must fail closed");
+        assert!(
+            retry_error
+                .to_string()
+                .contains("retry policy must not define both retryOn and retry_on"),
+            "{retry_error}"
+        );
+    }
+
+    #[test]
+    fn python_numeric_arguments_reject_boolean_coercion() {
+        pyo3::Python::initialize();
+        pyo3::Python::attach(|py| {
+            let module =
+                pyo3::types::PyModule::new(py, "_native").expect("test module should construct");
+            super::_native(&module).expect("native functions should register");
+
+            let draft = json!({
+                "status": "arguments_complete",
+                "sequence": 1,
+                "responseId": "response-1",
+                "toolCallId": "call-1",
+                "toolName": "search",
+                "argumentFragments": ["{}"],
+            })
+            .to_string();
+            let timestamp_error = module
+                .getattr("finalize_tool_call_json")
+                .expect("finalize function should register")
+                .call1((draft, "resolved-tool-1", true))
+                .expect_err("boolean timestamps must not coerce to one");
+            assert!(
+                timestamp_error
+                    .to_string()
+                    .contains("boolean values are not valid unsigned integers"),
+                "{timestamp_error}"
+            );
+
+            let payload = json!({
+                "mode": "inline",
+                "schema": "graphblocks.ai/Message@1",
+                "value": {"body": "hello"},
+            })
+            .to_string();
+            let limit_error = module
+                .getattr("validate_remote_payload_json")
+                .expect("remote payload function should register")
+                .call1((payload, true))
+                .expect_err("boolean byte limits must not coerce to one");
+            assert!(
+                limit_error
+                    .to_string()
+                    .contains("boolean values are not valid unsigned integers"),
+                "{limit_error}"
+            );
+        });
     }
 
     #[test]
@@ -11469,6 +11667,67 @@ mod tests {
     }
 
     #[test]
+    fn worker_wire_deserialization_rejects_unknown_fields() -> Result<(), String> {
+        pyo3::Python::initialize();
+        let advertisement = json!({
+            "protocolVersion": 1,
+            "workerId": "worker-local-1",
+            "targetId": "doc-cpu",
+            "packageLockHash": "sha256:package-lock",
+            "imageDigest": "sha256:image",
+            "supportedBlocks": [{"block": "prompt.render@1"}],
+            "state": "ready",
+            "unexpected": true,
+        });
+        let advertisement_error = validate_worker_advertisement_json(
+            &serde_json::to_string(&advertisement).map_err(|error| error.to_string())?,
+            None,
+        )
+        .expect_err("unknown worker advertisement fields must fail closed");
+        assert!(
+            advertisement_error
+                .to_string()
+                .contains("worker advertisement has unknown field unexpected"),
+            "{advertisement_error}"
+        );
+
+        let message = json!({
+            "protocolVersion": 1,
+            "messageId": "message-000001",
+            "kind": "advertisement",
+            "sequence": 1,
+            "correlationId": null,
+            "causationId": null,
+            "payload": {
+                "protocolVersion": 1,
+                "workerId": "worker-local-1",
+                "targetId": "doc-cpu",
+                "packageLockHash": "sha256:package-lock",
+                "imageDigest": "sha256:image",
+                "supportedBlocks": [{"block": "prompt.render@1"}],
+                "state": "ready"
+            },
+            "unexpected": true,
+        });
+        let result_json = validate_worker_protocol_message_json(
+            &serde_json::to_string(&message).map_err(|error| error.to_string())?,
+        )
+        .map_err(|error| error.to_string())?;
+        let result =
+            serde_json::from_str::<Value>(&result_json).map_err(|error| error.to_string())?;
+        assert_eq!(result.get("ok"), Some(&json!(false)));
+        assert!(
+            result
+                .pointer("/error/message")
+                .and_then(Value::as_str)
+                .is_some_and(
+                    |message| message.contains("worker message has unknown field unexpected")
+                )
+        );
+        Ok(())
+    }
+
+    #[test]
     fn validate_worker_protocol_message_json_returns_digest_for_valid_envelope()
     -> Result<(), String> {
         let message = json!({
@@ -11476,7 +11735,7 @@ mod tests {
             "messageId": "message-000001",
             "kind": "invoke_request",
             "sequence": 7,
-            "correlationId": null,
+            "correlationId": "invoke-000001",
             "causationId": null,
             "payload": {
                 "invocationId": "invoke-000001",
@@ -12565,6 +12824,7 @@ mod tests {
 
     #[test]
     fn application_protocol_log_restore_rejects_ambiguous_event_collections() {
+        pyo3::Python::initialize();
         let error =
             evaluate_application_protocol_log_json(r#"{"events":[],"acceptedEvents":[]}"#, "[]")
                 .expect_err("ambiguous restored event collections must fail closed");
@@ -12580,6 +12840,7 @@ mod tests {
     #[cfg(target_pointer_width = "32")]
     #[test]
     fn application_protocol_log_replay_rejects_limit_above_platform_usize() {
+        pyo3::Python::initialize();
         let error = evaluate_application_protocol_log_json(
             "{}",
             r#"[{"kind":"replay_after","limit":4294967296}]"#,
