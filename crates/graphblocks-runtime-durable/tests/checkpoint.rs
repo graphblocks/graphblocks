@@ -77,6 +77,38 @@ fn checkpoint_barrier_requires_plan_hash_and_schema_versions() {
 }
 
 #[test]
+fn checkpoint_barrier_deserialization_rejects_unknown_fields() {
+    let barrier = checkpoint("checkpoint-000001", 1, "sha256:plan");
+
+    let mut top_level = serde_json::to_value(&barrier).expect("checkpoint barrier serializes");
+    top_level
+        .as_object_mut()
+        .expect("checkpoint barrier is an object")
+        .insert("unexpected".to_owned(), Value::Bool(true));
+    let error = serde_json::from_value::<CheckpointBarrier>(top_level)
+        .expect_err("unknown checkpoint fields must fail closed");
+    assert!(error.to_string().contains("unknown field"));
+
+    let mut nested_schema = serde_json::to_value(&barrier).expect("checkpoint barrier serializes");
+    nested_schema["checkpoint_schema"]
+        .as_object_mut()
+        .expect("checkpoint schema is an object")
+        .insert("unexpected".to_owned(), Value::Bool(true));
+    let error = serde_json::from_value::<CheckpointBarrier>(nested_schema)
+        .expect_err("unknown checkpoint schema fields must fail closed");
+    assert!(error.to_string().contains("unknown field"));
+
+    let mut nested_cursor = serde_json::to_value(&barrier).expect("checkpoint barrier serializes");
+    nested_cursor["source_cursors"]["orders"]
+        .as_object_mut()
+        .expect("source cursor is an object")
+        .insert("unexpected".to_owned(), Value::Bool(true));
+    let error = serde_json::from_value::<CheckpointBarrier>(nested_cursor)
+        .expect_err("unknown source cursor fields must fail closed");
+    assert!(error.to_string().contains("unknown field"));
+}
+
+#[test]
 fn checkpoint_barrier_rejects_whitespace_identity_fields() {
     let mut barrier = checkpoint(" checkpoint-000001 ", 1, "sha256:plan");
 
@@ -1074,5 +1106,185 @@ fn sqlite_checkpoint_store_rejects_zero_or_exhausted_fencing_epoch() {
             .claim
             .fencing_epoch,
         1
+    );
+}
+
+#[test]
+fn sqlite_checkpoint_store_rejects_malformed_stored_recovery_claims() {
+    let path = sqlite_checkpoint_path("malformed-stored-claim");
+    let mut store = SqliteCheckpointStore::open(&path).expect("sqlite checkpoint store opens");
+    store
+        .put(checkpoint("checkpoint-000001", 1, "sha256:plan"))
+        .expect("checkpoint should persist");
+    let connection = Connection::open(&path).expect("checkpoint database opens");
+    connection
+        .execute(
+            "
+            INSERT INTO checkpoint_recovery_claims (
+                run_id,
+                checkpoint_id,
+                worker_id,
+                lease_id,
+                fencing_epoch,
+                claimed_at_unix_ms,
+                expires_at_unix_ms
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+            ",
+            params![
+                "run-000001",
+                "checkpoint-000001",
+                "worker-a",
+                "lease-a",
+                0_i64,
+                1_000_i64,
+                2_000_i64,
+            ],
+        )
+        .expect("malformed recovery claim fixture should persist");
+
+    let error = store
+        .claim_latest_compatible(
+            "run-000001",
+            "release-2026-06-23",
+            "deployment-rev-1",
+            "sha256:plan",
+            "worker-b",
+            "lease-b",
+            1_500,
+            2_500,
+        )
+        .expect_err("zero stored fencing epoch must fail closed");
+    assert!(
+        matches!(
+            error,
+            CheckpointStoreError::Storage { ref message }
+                if message.contains("fencing_epoch")
+        ),
+        "unexpected stored-claim error: {error:?}",
+    );
+
+    connection
+        .execute(
+            "
+            UPDATE checkpoint_recovery_claims
+               SET fencing_epoch = 1,
+                   worker_id = ?2
+             WHERE run_id = ?1
+            ",
+            params!["run-000001", " worker-a "],
+        )
+        .expect("invalid identity fixture should persist");
+    let error = store
+        .complete_claim(
+            &CheckpointRecoveryClaim {
+                run_id: "run-000001".to_owned(),
+                checkpoint_id: "checkpoint-000001".to_owned(),
+                worker_id: " worker-a ".to_owned(),
+                lease_id: "lease-a".to_owned(),
+                fencing_epoch: 1,
+                claimed_at_unix_ms: 1_000,
+                expires_at_unix_ms: 2_000,
+            },
+            1_500,
+        )
+        .expect_err("invalid stored identity must fail closed");
+    assert!(
+        matches!(
+            error,
+            CheckpointStoreError::Storage { ref message }
+                if message.contains("worker_id")
+        ),
+        "unexpected stored-claim error: {error:?}",
+    );
+
+    connection
+        .execute(
+            "
+            UPDATE checkpoint_recovery_claims
+               SET worker_id = ?2,
+                   expires_at_unix_ms = claimed_at_unix_ms
+             WHERE run_id = ?1
+            ",
+            params!["run-000001", "worker-a"],
+        )
+        .expect("invalid interval fixture should persist");
+    let error = store
+        .renew_claim(
+            &CheckpointRecoveryClaim {
+                run_id: "run-000001".to_owned(),
+                checkpoint_id: "checkpoint-000001".to_owned(),
+                worker_id: "worker-a".to_owned(),
+                lease_id: "lease-a".to_owned(),
+                fencing_epoch: 1,
+                claimed_at_unix_ms: 1_000,
+                expires_at_unix_ms: 1_000,
+            },
+            1_000,
+            2_500,
+        )
+        .expect_err("invalid stored claim interval must fail closed");
+    assert!(
+        matches!(
+            error,
+            CheckpointStoreError::Storage { ref message }
+                if message.contains("expires_at_unix_ms")
+        ),
+        "unexpected stored-claim error: {error:?}",
+    );
+}
+
+#[test]
+fn sqlite_checkpoint_store_rejects_rewound_fencing_epoch_after_expired_claim() {
+    let path = sqlite_checkpoint_path("rewound-fencing-epoch");
+    let mut store = SqliteCheckpointStore::open(&path).expect("sqlite checkpoint store opens");
+    store
+        .put(checkpoint("checkpoint-000001", 1, "sha256:plan"))
+        .expect("checkpoint should persist");
+    let first = store
+        .claim_latest_compatible(
+            "run-000001",
+            "release-2026-06-23",
+            "deployment-rev-1",
+            "sha256:plan",
+            "worker-a",
+            "lease-a",
+            1_000,
+            1_100,
+        )
+        .expect("first recovery claim should persist");
+    assert_eq!(first.claim.fencing_epoch, 1);
+
+    Connection::open(&path)
+        .expect("checkpoint database opens")
+        .execute(
+            "
+            UPDATE checkpoint_recovery_epochs
+               SET next_fencing_epoch = 1
+             WHERE run_id = ?1
+            ",
+            params!["run-000001"],
+        )
+        .expect("rewound fencing epoch fixture should persist");
+
+    let error = store
+        .claim_latest_compatible(
+            "run-000001",
+            "release-2026-06-23",
+            "deployment-rev-1",
+            "sha256:plan",
+            "worker-b",
+            "lease-b",
+            1_200,
+            2_200,
+        )
+        .expect_err("rewound fencing epoch must fail closed");
+    assert!(
+        matches!(
+            error,
+            CheckpointStoreError::Storage { ref message }
+                if message.contains("next_fencing_epoch")
+                    && message.contains("active fencing_epoch")
+        ),
+        "unexpected fencing restoration error: {error:?}",
     );
 }

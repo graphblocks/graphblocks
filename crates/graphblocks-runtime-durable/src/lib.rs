@@ -55,6 +55,7 @@ pub enum DurableError {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Ord, PartialOrd, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct SourceCursor {
     pub stream: String,
     pub partition: u32,
@@ -1262,6 +1263,7 @@ mod sequence_tests {
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct SchemaRef {
     pub schema_id: String,
     pub schema_version: u32,
@@ -1277,6 +1279,7 @@ impl SchemaRef {
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct CheckpointBarrier {
     pub checkpoint_id: String,
     pub run_id: String,
@@ -1889,30 +1892,17 @@ impl SqliteCheckpointStore {
                  WHERE run_id = ?1
                 ",
                 params![run_id],
-                |row| {
-                    Ok(CheckpointRecoveryClaim {
-                        run_id: run_id.to_owned(),
-                        checkpoint_id: row.get(0)?,
-                        worker_id: row.get(1)?,
-                        lease_id: row.get(2)?,
-                        fencing_epoch: sqlite_i64_to_u64(row.get(3)?, "fencing_epoch")
-                            .map_err(rusqlite_error_from_checkpoint)?,
-                        claimed_at_unix_ms: sqlite_i64_to_u64(row.get(4)?, "claimed_at_unix_ms")
-                            .map_err(rusqlite_error_from_checkpoint)?,
-                        expires_at_unix_ms: sqlite_i64_to_u64(row.get(5)?, "expires_at_unix_ms")
-                            .map_err(rusqlite_error_from_checkpoint)?,
-                    })
-                },
+                |row| decode_stored_checkpoint_recovery_claim(row, run_id),
             )
             .optional()
             .map_err(checkpoint_storage_error)?;
-        if let Some(active) = active_claim
+        if let Some(active) = active_claim.as_ref()
             && active.expires_at_unix_ms > now_unix_ms
         {
             return Err(CheckpointStoreError::ActiveRecoveryClaim {
                 run_id: run_id.to_owned(),
-                worker_id: active.worker_id,
-                lease_id: active.lease_id,
+                worker_id: active.worker_id.clone(),
+                lease_id: active.lease_id.clone(),
                 expires_at_unix_ms: active.expires_at_unix_ms,
             });
         }
@@ -1928,6 +1918,16 @@ impl SqliteCheckpointStore {
             .optional()
             .map_err(checkpoint_storage_error)?
             .unwrap_or(1);
+        if let Some(active) = active_claim.as_ref()
+            && next_fencing_epoch <= active.fencing_epoch
+        {
+            return Err(CheckpointStoreError::Storage {
+                message: format!(
+                    "stored next_fencing_epoch {next_fencing_epoch} does not exceed active fencing_epoch {} for run {run_id:?}",
+                    active.fencing_epoch
+                ),
+            });
+        }
         let following_fencing_epoch =
             advance_fencing_epoch(next_fencing_epoch, i64::MAX as u64, run_id)?;
         let claim = CheckpointRecoveryClaim {
@@ -2012,20 +2012,7 @@ impl SqliteCheckpointStore {
                  WHERE run_id = ?1
                 ",
                 params![claim.run_id],
-                |row| {
-                    Ok(CheckpointRecoveryClaim {
-                        run_id: claim.run_id.clone(),
-                        checkpoint_id: row.get(0)?,
-                        worker_id: row.get(1)?,
-                        lease_id: row.get(2)?,
-                        fencing_epoch: sqlite_i64_to_u64(row.get(3)?, "fencing_epoch")
-                            .map_err(rusqlite_error_from_checkpoint)?,
-                        claimed_at_unix_ms: sqlite_i64_to_u64(row.get(4)?, "claimed_at_unix_ms")
-                            .map_err(rusqlite_error_from_checkpoint)?,
-                        expires_at_unix_ms: sqlite_i64_to_u64(row.get(5)?, "expires_at_unix_ms")
-                            .map_err(rusqlite_error_from_checkpoint)?,
-                    })
-                },
+                |row| decode_stored_checkpoint_recovery_claim(row, &claim.run_id),
             )
             .optional()
             .map_err(checkpoint_storage_error)?
@@ -2097,20 +2084,7 @@ impl SqliteCheckpointStore {
                  WHERE run_id = ?1
                 ",
                 params![claim.run_id],
-                |row| {
-                    Ok(CheckpointRecoveryClaim {
-                        run_id: claim.run_id.clone(),
-                        checkpoint_id: row.get(0)?,
-                        worker_id: row.get(1)?,
-                        lease_id: row.get(2)?,
-                        fencing_epoch: sqlite_i64_to_u64(row.get(3)?, "fencing_epoch")
-                            .map_err(rusqlite_error_from_checkpoint)?,
-                        claimed_at_unix_ms: sqlite_i64_to_u64(row.get(4)?, "claimed_at_unix_ms")
-                            .map_err(rusqlite_error_from_checkpoint)?,
-                        expires_at_unix_ms: sqlite_i64_to_u64(row.get(5)?, "expires_at_unix_ms")
-                            .map_err(rusqlite_error_from_checkpoint)?,
-                    })
-                },
+                |row| decode_stored_checkpoint_recovery_claim(row, &claim.run_id),
             )
             .optional()
             .map_err(checkpoint_storage_error)?
@@ -2238,6 +2212,53 @@ fn advance_fencing_epoch(
         .ok_or_else(|| CheckpointStoreError::FencingEpochOverflow {
             run_id: run_id.to_owned(),
         })
+}
+
+fn decode_stored_checkpoint_recovery_claim(
+    row: &rusqlite::Row<'_>,
+    run_id: &str,
+) -> rusqlite::Result<CheckpointRecoveryClaim> {
+    let claim = CheckpointRecoveryClaim {
+        run_id: run_id.to_owned(),
+        checkpoint_id: row.get(0)?,
+        worker_id: row.get(1)?,
+        lease_id: row.get(2)?,
+        fencing_epoch: sqlite_i64_to_u64(row.get(3)?, "fencing_epoch")
+            .map_err(rusqlite_error_from_checkpoint)?,
+        claimed_at_unix_ms: sqlite_i64_to_u64(row.get(4)?, "claimed_at_unix_ms")
+            .map_err(rusqlite_error_from_checkpoint)?,
+        expires_at_unix_ms: sqlite_i64_to_u64(row.get(5)?, "expires_at_unix_ms")
+            .map_err(rusqlite_error_from_checkpoint)?,
+    };
+    for (field, value) in [
+        ("run_id", claim.run_id.as_str()),
+        ("checkpoint_id", claim.checkpoint_id.as_str()),
+        ("worker_id", claim.worker_id.as_str()),
+        ("lease_id", claim.lease_id.as_str()),
+    ] {
+        if invalid_identity(value) {
+            return Err(rusqlite_error_from_checkpoint(
+                CheckpointStoreError::Storage {
+                    message: format!("stored checkpoint recovery claim field {field} is invalid"),
+                },
+            ));
+        }
+    }
+    if claim.fencing_epoch == 0 {
+        return Err(rusqlite_error_from_checkpoint(
+            CheckpointStoreError::Storage {
+                message: "stored checkpoint recovery claim field fencing_epoch is zero".to_owned(),
+            },
+        ));
+    }
+    if claim.expires_at_unix_ms <= claim.claimed_at_unix_ms {
+        return Err(rusqlite_error_from_checkpoint(
+            CheckpointStoreError::Storage {
+                message: "stored checkpoint recovery claim field expires_at_unix_ms is not after claimed_at_unix_ms".to_owned(),
+            },
+        ));
+    }
+    Ok(claim)
 }
 
 #[allow(clippy::too_many_arguments)]
