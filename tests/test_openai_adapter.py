@@ -237,6 +237,110 @@ def test_openai_chat_request_rejects_invalid_contract_inputs(monkeypatch) -> Non
         "#/$defs/request"
     )
 
+    with pytest.raises(
+        graphblocks_openai.OpenAICompatibleAdapterError,
+        match="valid JSON Schema",
+    ):
+        graphblocks_openai.openai_chat_completion_request(
+            model="gpt-test",
+            messages=(
+                Message("msg-1", "user", (ContentPart(kind="text", text="hello"),)),
+            ),
+            tools=(tool,),
+            tool_schemas={
+                "schemas/SearchRequest@1": {"allOf": 1},  # type: ignore[dict-item]
+            },
+        )
+
+    annotation_request = graphblocks_openai.openai_chat_completion_request(
+        model="gpt-test",
+        messages=(Message("msg-1", "user", (ContentPart(kind="text", text="hello"),)),),
+        tools=(tool,),
+        tool_schemas={
+            "schemas/SearchRequest@1": {
+                "type": "object",
+                "examples": [{"$ref": "https://example.test/instance-value"}],
+            }
+        },
+    )
+    assert annotation_request.body["tools"][0]["function"]["parameters"][
+        "examples"
+    ] == ({"$ref": "https://example.test/instance-value"},)
+
+
+@pytest.mark.parametrize(
+    "endpoint",
+    (
+        "https://attacker.example/chat/completions",
+        "//attacker.example/chat/completions",
+        "/chat/completions?target=other",
+        "/chat/completions#fragment",
+        "/chat/completions\r\nX-Injected: true",
+    ),
+)
+def test_openai_request_rejects_non_relative_endpoint_paths(
+    monkeypatch,
+    endpoint: str,
+) -> None:
+    graphblocks_openai = importlib.import_module("graphblocks.integrations.openai")
+
+    with pytest.raises(
+        graphblocks_openai.OpenAICompatibleAdapterError,
+        match="endpoint",
+    ):
+        graphblocks_openai.OpenAIChatCompletionRequest(
+            body={"model": "gpt-test"},
+            endpoint=endpoint,
+        )
+
+
+def test_openai_records_reject_malformed_parts_and_numeric_overflow(
+    monkeypatch,
+) -> None:
+    graphblocks_openai = importlib.import_module("graphblocks.integrations.openai")
+    message = Message(
+        "msg-1",
+        "user",
+        (ContentPart(kind="text", text="hello"),),
+    )
+
+    with pytest.raises(
+        graphblocks_openai.OpenAICompatibleAdapterError,
+        match="parts",
+    ):
+        graphblocks_openai.OpenAIChatResponse(
+            "response-1",
+            "gpt-test",
+            parts=(object(),),  # type: ignore[arg-type]
+        )
+    with pytest.raises(
+        graphblocks_openai.OpenAICompatibleAdapterError,
+        match="finish_reason",
+    ):
+        graphblocks_openai.OpenAIChatResponse(
+            "response-1",
+            "gpt-test",
+            finish_reason=1,  # type: ignore[arg-type]
+        )
+    with pytest.raises(
+        graphblocks_openai.OpenAICompatibleAdapterError,
+        match="finish_reason",
+    ):
+        graphblocks_openai.OpenAIChatResponse(
+            "response-1",
+            "gpt-test",
+            finish_reason=" ",
+        )
+    with pytest.raises(
+        graphblocks_openai.OpenAICompatibleAdapterError,
+        match="temperature",
+    ):
+        graphblocks_openai.openai_chat_completion_request(
+            model="gpt-test",
+            messages=(message,),
+            temperature=10**1_000,
+        )
+
 
 def test_openai_response_maps_text_choice_to_content_parts_and_usage(monkeypatch) -> None:
     graphblocks_openai = importlib.import_module("graphblocks.integrations.openai")
@@ -1208,6 +1312,42 @@ def test_openai_streaming_tool_call_assembler_validates_restored_state(
     for state in invalid_states:
         with pytest.raises(graphblocks_openai.OpenAICompatibleAdapterError):
             graphblocks_openai.OpenAIStreamingToolCallDraftAssembler(**state)
+
+
+def test_openai_streaming_assembler_rejects_new_delta_after_completion(
+    monkeypatch,
+) -> None:
+    graphblocks_openai = importlib.import_module("graphblocks.integrations.openai")
+    assembler = graphblocks_openai.OpenAIStreamingToolCallDraftAssembler()
+    initial = graphblocks_openai.OpenAIChatDelta(
+        response_id="chatcmpl-completed",
+        sequence=1,
+        choice_index=0,
+        tool_call_deltas=[
+            {
+                "index": 0,
+                "id": "call-1",
+                "name": "knowledge.search",
+                "arguments_delta": "{}",
+            }
+        ],
+    )
+    assembler.apply_delta(initial)
+    assembler.complete_all()
+
+    assert assembler.apply_delta(initial)[0].argument_fragments == ("{}",)
+    with pytest.raises(
+        graphblocks_openai.OpenAICompatibleAdapterError,
+        match="completed",
+    ):
+        assembler.apply_delta(
+            graphblocks_openai.OpenAIChatDelta(
+                response_id="chatcmpl-completed",
+                sequence=2,
+                choice_index=0,
+                content_delta="late",
+            )
+        )
 
 
 def test_openai_streaming_tool_call_assembler_rejects_duplicate_call_ids(

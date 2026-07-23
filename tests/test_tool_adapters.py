@@ -44,7 +44,7 @@ def test_mcp_and_openapi_adapters_expose_native_connector_capability_helper(monk
 
     monkeypatch.setitem(
         sys.modules,
-        "graphblocks.runtime",
+        "graphblocks_runtime",
         SimpleNamespace(evaluate_connector_capabilities=evaluate_connector_capabilities),
     )
     graphblocks_mcp = importlib.import_module("graphblocks.integrations.mcp")
@@ -179,6 +179,96 @@ def test_mcp_inline_schema_registry_detaches_nested_schema_inputs(monkeypatch) -
         registry.validate("schemas/SearchRequest@1", {"query": 42})
     with pytest.raises(graphblocks_mcp.McpToolAdapterError, match="schema reference"):
         graphblocks_mcp.McpInlineSchemaRegistry({" ": {"type": "object"}})
+    with pytest.raises(graphblocks_mcp.McpToolAdapterError, match="non-local"):
+        graphblocks_mcp.McpInlineSchemaRegistry(
+            {
+                "schemas/Remote@1": {
+                    "$ref": "https://attacker.example/schema.json",
+                }
+            }
+        )
+
+    annotation_registry = graphblocks_mcp.McpInlineSchemaRegistry(
+        {
+            "schemas/Annotation@1": {
+                "type": "object",
+                "examples": [{"$ref": "https://example.test/instance-value"}],
+            }
+        }
+    )
+    annotation_registry.validate("schemas/Annotation@1", {})
+    with pytest.raises(graphblocks_mcp.McpToolAdapterError, match="valid JSON Schema"):
+        graphblocks_mcp.McpInlineSchemaRegistry(
+            {"schemas/Malformed@1": {"allOf": 1}}  # type: ignore[dict-item]
+        )
+
+    numeric_registry = graphblocks_mcp.McpInlineSchemaRegistry(
+        {
+            "schemas/Score@1": {
+                "type": "object",
+                "properties": {"score": {"type": "number"}},
+                "required": ["score"],
+            }
+        }
+    )
+    with pytest.raises(ToolSchemaValidationError, match="strict JSON"):
+        numeric_registry.validate(
+            "schemas/Score@1",
+            {"score": float("nan")},
+        )
+
+
+def test_native_connector_capability_helpers_snapshot_and_validate_connections(
+    monkeypatch,
+) -> None:
+    observed: list[dict[str, object]] = []
+
+    def evaluate_connector_capabilities(
+        connection: dict[str, object],
+        required_capabilities: object,
+    ) -> dict[str, object]:
+        del required_capabilities
+        observed.append(connection)
+        connection["nested"]["region"] = "mutated"  # type: ignore[index]
+        return {"ok": True}
+
+    monkeypatch.setitem(
+        sys.modules,
+        "graphblocks_runtime",
+        SimpleNamespace(
+            evaluate_connector_capabilities=evaluate_connector_capabilities
+        ),
+    )
+    graphblocks_mcp = importlib.import_module("graphblocks.integrations.mcp")
+    graphblocks_openapi = importlib.import_module("graphblocks.integrations.openapi")
+    mcp_connection = {"nested": {"region": "us-east-1"}}
+    openapi_connection = {"nested": {"region": "eu-west-1"}}
+
+    graphblocks_mcp.evaluate_native_connector_capabilities(mcp_connection, [])
+    graphblocks_openapi.evaluate_native_connector_capabilities(
+        openapi_connection,
+        [],
+    )
+
+    assert mcp_connection == {"nested": {"region": "us-east-1"}}
+    assert openapi_connection == {"nested": {"region": "eu-west-1"}}
+    assert observed == [
+        {"nested": {"region": "mutated"}},
+        {"nested": {"region": "mutated"}},
+    ]
+    with pytest.raises(graphblocks_mcp.McpToolAdapterError, match="connection"):
+        graphblocks_mcp.evaluate_native_connector_capabilities(
+            [("kind", "mcp")],  # type: ignore[arg-type]
+            [],
+        )
+    with pytest.raises(
+        graphblocks_openapi.OpenApiToolAdapterError,
+        match="connection",
+    ):
+        graphblocks_openapi.evaluate_native_connector_capabilities(
+            [("kind", "openapi")],  # type: ignore[arg-type]
+            [],
+        )
 
 
 def test_mcp_adapter_discovers_tool_definitions_from_capabilities(monkeypatch) -> None:

@@ -6,6 +6,9 @@ from dataclasses import dataclass, field
 import math
 from types import MappingProxyType
 
+from jsonschema import Draft202012Validator
+from jsonschema.exceptions import SchemaError
+
 from graphblocks import (
     ContentPart,
     GenerationChunk,
@@ -17,6 +20,8 @@ from graphblocks import (
     canonical_dumps,
     canonical_loads,
 )
+
+from ._wire import find_non_local_schema_reference
 
 
 class OpenAICompatibleAdapterError(ValueError):
@@ -92,20 +97,18 @@ def _validated_inline_json_schema(schema_ref: str, schema: Mapping[str, object])
         raise OpenAICompatibleAdapterError(
             f"tool_schemas entry {schema_ref!r} must be a strict JSON object"
         )
-    pending: list[object] = [normalized_schema]
-    while pending:
-        value = pending.pop()
-        if isinstance(value, Mapping):
-            for key, child in value.items():
-                if key in {"$ref", "$dynamicRef"} and (
-                    not isinstance(child, str) or not child.startswith("#")
-                ):
-                    raise OpenAICompatibleAdapterError(
-                        f"tool_schemas entry {schema_ref!r} contains non-local {key}"
-                    )
-                pending.append(child)
-        elif isinstance(value, list):
-            pending.extend(value)
+    try:
+        Draft202012Validator.check_schema(normalized_schema)
+    except SchemaError as error:
+        raise OpenAICompatibleAdapterError(
+            f"tool_schemas entry {schema_ref!r} is not valid JSON Schema"
+        ) from error
+    non_local_reference = find_non_local_schema_reference(normalized_schema)
+    if non_local_reference is not None:
+        raise OpenAICompatibleAdapterError(
+            f"tool_schemas entry {schema_ref!r} contains "
+            f"non-local {non_local_reference}"
+        )
     return normalized_schema
 
 
@@ -119,7 +122,22 @@ class OpenAIChatCompletionRequest:
         body = _strict_json_mapping("body", self.body)
         if not body:
             raise OpenAICompatibleAdapterError("body must not be empty")
-        object.__setattr__(self, "endpoint", _strip_required_string("endpoint", self.endpoint))
+        endpoint = _strip_required_string("endpoint", self.endpoint)
+        if (
+            not endpoint.startswith("/")
+            or endpoint.startswith("//")
+            or any(character in endpoint for character in ("?", "#", "\\"))
+            or any(
+                ord(character) <= 0x20
+                or ord(character) == 0x7F
+                or "\ud800" <= character <= "\udfff"
+                for character in endpoint
+            )
+        ):
+            raise OpenAICompatibleAdapterError(
+                "endpoint must be a relative HTTP path without query or fragment"
+            )
+        object.__setattr__(self, "endpoint", endpoint)
         object.__setattr__(self, "body", body)
         object.__setattr__(self, "metadata", _strict_json_mapping("metadata", self.metadata))
 
@@ -143,7 +161,23 @@ class OpenAIChatResponse:
     def __post_init__(self) -> None:
         object.__setattr__(self, "response_id", _strip_required_string("response_id", self.response_id))
         object.__setattr__(self, "model", _strip_required_string("model", self.model))
-        object.__setattr__(self, "parts", tuple(self.parts))
+        if not isinstance(self.parts, Sequence) or isinstance(
+            self.parts, (str, bytes, Mapping)
+        ):
+            raise OpenAICompatibleAdapterError(
+                "parts must be a sequence of ContentPart records"
+            )
+        parts = tuple(self.parts)
+        if any(not isinstance(part, ContentPart) for part in parts):
+            raise OpenAICompatibleAdapterError(
+                "parts must be a sequence of ContentPart records"
+            )
+        object.__setattr__(self, "parts", parts)
+        object.__setattr__(
+            self,
+            "finish_reason",
+            _strip_optional_string("finish_reason", self.finish_reason),
+        )
         if (
             not isinstance(self.tool_calls, Sequence)
             or isinstance(self.tool_calls, (str, bytes))
@@ -467,6 +501,10 @@ class OpenAIStreamingToolCallDraftAssembler:
                 f"streaming delta sequence {delta.sequence} was reused "
                 "with different content"
             )
+        if self._completed:
+            raise OpenAICompatibleAdapterError(
+                "streaming tool call assembler is already completed"
+            )
         if self._last_sequence is not None and delta.sequence < self._last_sequence:
             raise OpenAICompatibleAdapterError(
                 "streaming delta sequence must increase"
@@ -669,7 +707,10 @@ def openai_chat_completion_request(
     if temperature is not None:
         if isinstance(temperature, bool) or not isinstance(temperature, (int, float)):
             raise OpenAICompatibleAdapterError("temperature must be numeric")
-        temperature_value = float(temperature)
+        try:
+            temperature_value = float(temperature)
+        except OverflowError as error:
+            raise OpenAICompatibleAdapterError("temperature must be finite") from error
         if not math.isfinite(temperature_value):
             raise OpenAICompatibleAdapterError("temperature must be finite")
         body["temperature"] = temperature_value

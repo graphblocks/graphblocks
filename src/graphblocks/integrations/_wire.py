@@ -4,6 +4,8 @@ from collections.abc import Iterator, Mapping
 from types import MappingProxyType
 from typing import Generic, TypeVar
 
+from referencing.jsonschema import DRAFT202012
+
 from graphblocks.canonical import _canonical_dumps, canonical_loads
 
 
@@ -58,6 +60,9 @@ class FrozenWireJsonArray(tuple[object, ...]):
             return tuple(self) == tuple(other)
         return super().__eq__(other)
 
+    def __ne__(self, other: object) -> bool:
+        return not self == other
+
     def __copy__(self) -> FrozenWireJsonArray:
         return self
 
@@ -80,6 +85,28 @@ def _freeze_json(value: object) -> object:
     if isinstance(value, list):
         return FrozenWireJsonArray(_freeze_json(item) for item in value)
     return value
+
+
+def find_non_local_schema_reference(
+    schema: Mapping[str, object],
+) -> str | None:
+    """Return the first external reference keyword in a Draft 2020-12 schema."""
+
+    pending: list[object] = [schema]
+    while pending:
+        candidate = pending.pop()
+        if not isinstance(candidate, Mapping):
+            continue
+        for keyword in ("$ref", "$dynamicRef"):
+            if keyword not in candidate:
+                continue
+            reference = candidate[keyword]
+            if not isinstance(reference, str) or (
+                reference != "" and not reference.startswith("#")
+            ):
+                return keyword
+        pending.extend(DRAFT202012.subresources_of(candidate))
+    return None
 
 
 def snapshot_wire_json(value: object, *, field_name: str) -> object:
@@ -106,6 +133,7 @@ def thaw_wire_json(value: object) -> object:
 __all__ = [
     "FrozenWireJsonArray",
     "FrozenWireJsonObject",
+    "find_non_local_schema_reference",
     "snapshot_wire_json",
     "thaw_wire_json",
 ]

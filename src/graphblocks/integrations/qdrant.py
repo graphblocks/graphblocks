@@ -56,6 +56,18 @@ def _strict_json_mapping(
     return projection
 
 
+def _finite_float(field_name: str, value: object) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise QdrantAdapterError(f"{field_name} must be numeric")
+    try:
+        number = float(value)
+    except OverflowError as error:
+        raise QdrantAdapterError(f"{field_name} must be finite") from error
+    if not math.isfinite(number):
+        raise QdrantAdapterError(f"{field_name} must be finite")
+    return number
+
+
 @dataclass(frozen=True, slots=True)
 class QdrantCollectionRef:
     collection: str
@@ -146,12 +158,7 @@ def qdrant_search_request(
         raise QdrantAdapterError("vector must contain at least one numeric value")
     vector_values: list[float] = []
     for value in vector:
-        if isinstance(value, bool) or not isinstance(value, (int, float)):
-            raise QdrantAdapterError("vector values must be numeric")
-        number = float(value)
-        if not math.isfinite(number):
-            raise QdrantAdapterError("vector values must be finite")
-        vector_values.append(number)
+        vector_values.append(_finite_float("vector values", value))
 
     body: dict[str, object] = {
         "limit": request.top_k,
@@ -197,13 +204,19 @@ def qdrant_search_request(
     if filter_terms:
         body["filter"] = {"must": filter_terms}
     if score_threshold is not None:
-        if (
-            isinstance(score_threshold, bool)
-            or not isinstance(score_threshold, (int, float))
-            or not math.isfinite(float(score_threshold))
+        if isinstance(score_threshold, bool) or not isinstance(
+            score_threshold, (int, float)
         ):
             raise QdrantAdapterError("score_threshold must be a finite number")
-        body["score_threshold"] = float(score_threshold)
+        try:
+            threshold = float(score_threshold)
+        except OverflowError as error:
+            raise QdrantAdapterError(
+                "score_threshold must be a finite number"
+            ) from error
+        if not math.isfinite(threshold):
+            raise QdrantAdapterError("score_threshold must be a finite number")
+        body["score_threshold"] = threshold
 
     return QdrantSearchRequest(
         collection=collection.collection,
@@ -232,6 +245,7 @@ def qdrant_hits_from_points(
         raise QdrantAdapterError("score_kind must not be empty")
 
     hits: list[SearchHit] = []
+    seen_point_ids: set[tuple[str, object]] = set()
     for rank, point in enumerate(points, start=1):
         if not isinstance(point, Mapping):
             raise QdrantAdapterError("Qdrant point must be a mapping")
@@ -257,11 +271,22 @@ def qdrant_hits_from_points(
                     "Qdrant string point id must not contain surrounding whitespace"
                 )
             try:
-                UUID(point_id)
+                normalized_point_id = str(UUID(point_id))
             except ValueError as error:
                 raise QdrantAdapterError(
                     "Qdrant string point id must be a UUID"
                 ) from error
+            point_identity: tuple[str, object] = (
+                "uuid",
+                normalized_point_id,
+            )
+        else:
+            point_identity = ("integer", point_id)
+        if point_identity in seen_point_ids:
+            raise QdrantAdapterError(
+                f"Qdrant response contains duplicate point id {point_id!r}"
+            )
+        seen_point_ids.add(point_identity)
         payload = point.get("payload", {})
         if payload is None:
             payload = {}
@@ -272,11 +297,7 @@ def qdrant_hits_from_points(
         raw_score: float | None = None
         normalized_score: float | None = None
         if score is not None:
-            if isinstance(score, bool) or not isinstance(score, (int, float)):
-                raise QdrantAdapterError("Qdrant point score must be numeric")
-            raw_score = float(score)
-            if not math.isfinite(raw_score):
-                raise QdrantAdapterError("Qdrant point score must be finite")
+            raw_score = _finite_float("Qdrant point score", score)
             if 0 <= raw_score <= 1:
                 normalized_score = raw_score
 

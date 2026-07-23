@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
+from copy import deepcopy
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 
@@ -68,9 +69,14 @@ def evaluate_native_connector_capabilities(
     connection: Mapping[str, object],
     required_capabilities: object,
 ) -> dict[str, object]:
-    from graphblocks.runtime import evaluate_connector_capabilities
+    from graphblocks_runtime import evaluate_connector_capabilities
 
-    return evaluate_connector_capabilities(dict(connection), required_capabilities)
+    if not isinstance(connection, Mapping):
+        raise OpenApiToolAdapterError("OpenAPI connector connection must be a mapping")
+    return evaluate_connector_capabilities(
+        deepcopy(dict(connection)),
+        deepcopy(required_capabilities),
+    )
 
 
 @dataclass(frozen=True, slots=True)

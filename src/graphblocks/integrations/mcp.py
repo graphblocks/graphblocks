@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
+from copy import deepcopy
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 import json
@@ -26,6 +27,8 @@ from graphblocks import (
     canonical_loads,
     validate_tool_result_for_model,
 )
+
+from ._wire import find_non_local_schema_reference
 
 
 class McpToolAdapterError(RuntimeError):
@@ -104,6 +107,12 @@ class McpInlineSchemaRegistry:
                 raise McpToolAdapterError(
                     f"MCP inline schema {schema_ref!r} is not valid JSON Schema"
                 ) from error
+            non_local_reference = find_non_local_schema_reference(document)
+            if non_local_reference is not None:
+                raise McpToolAdapterError(
+                    f"MCP inline schema {schema_ref!r} contains "
+                    f"non-local {non_local_reference}"
+                )
             documents[schema_ref] = document
         self._schemas = documents
 
@@ -112,7 +121,13 @@ class McpInlineSchemaRegistry:
         if schema is None:
             raise ToolSchemaValidationError(f"schema {schema_id} is not registered")
         try:
-            Draft202012Validator(schema).validate(value)
+            normalized = canonical_loads(canonical_dumps(value))
+        except (TypeError, ValueError) as error:
+            raise ToolSchemaValidationError(
+                f"schema {schema_id} requires a strict JSON value"
+            ) from error
+        try:
+            Draft202012Validator(schema).validate(normalized)
         except ValidationError as error:
             raise ToolSchemaValidationError(
                 f"schema {schema_id} rejected value at {error.json_path}"
@@ -154,9 +169,14 @@ def evaluate_native_connector_capabilities(
     connection: Mapping[str, object],
     required_capabilities: object,
 ) -> dict[str, object]:
-    from graphblocks.runtime import evaluate_connector_capabilities
+    from graphblocks_runtime import evaluate_connector_capabilities
 
-    return evaluate_connector_capabilities(dict(connection), required_capabilities)
+    if not isinstance(connection, Mapping):
+        raise McpToolAdapterError("MCP connector connection must be a mapping")
+    return evaluate_connector_capabilities(
+        deepcopy(dict(connection)),
+        deepcopy(required_capabilities),
+    )
 
 
 @dataclass(frozen=True, slots=True)

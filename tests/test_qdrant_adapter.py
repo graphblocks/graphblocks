@@ -29,6 +29,8 @@ def test_qdrant_request_snapshots_support_standard_serialization(monkeypatch) ->
         "query": {"values": [0.1]}
     }
     assert restored == request
+    assert restored.body["query"]["values"] == [0.1]
+    assert not restored.body["query"]["values"] != [0.1]
     with pytest.raises(AttributeError):
         restored.metadata["trace"]["tags"].append("mutated")
 
@@ -135,6 +137,44 @@ def test_qdrant_adapter_rejects_coerced_thresholds_and_invalid_point_ids(
         )
     with pytest.raises(graphblocks_qdrant.QdrantAdapterError, match="collection"):
         graphblocks_qdrant.QdrantCollectionRef(object())  # type: ignore[arg-type]
+
+
+def test_qdrant_adapter_wraps_numeric_overflow_and_rejects_duplicate_points(
+    monkeypatch,
+) -> None:
+    graphblocks_qdrant = importlib.import_module("graphblocks.integrations.qdrant")
+    request = SearchRequest(query_text="refund", top_k=1)
+    collection = graphblocks_qdrant.QdrantCollectionRef("support_chunks")
+
+    with pytest.raises(graphblocks_qdrant.QdrantAdapterError, match="vector"):
+        graphblocks_qdrant.qdrant_search_request(
+            request,
+            collection=collection,
+            vector=(10**1_000,),
+        )
+    with pytest.raises(
+        graphblocks_qdrant.QdrantAdapterError,
+        match="score_threshold",
+    ):
+        graphblocks_qdrant.qdrant_search_request(
+            request,
+            collection=collection,
+            vector=(0.1,),
+            score_threshold=10**1_000,
+        )
+    with pytest.raises(graphblocks_qdrant.QdrantAdapterError, match="score"):
+        graphblocks_qdrant.qdrant_hits_from_points(
+            [{"id": 1, "score": 10**1_000}],
+            retriever_id="qdrant-support",
+        )
+    with pytest.raises(
+        graphblocks_qdrant.QdrantAdapterError,
+        match="duplicate point id",
+    ):
+        graphblocks_qdrant.qdrant_hits_from_points(
+            [{"id": 1}, {"id": 1}],
+            retriever_id="qdrant-support",
+        )
 
 
 def test_qdrant_search_request_rejects_malformed_contract_boundaries(
