@@ -3,6 +3,7 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 from decimal import Decimal
 import json
+import math
 import sqlite3
 from threading import Barrier
 
@@ -43,7 +44,8 @@ def test_usage_ledger_appends_immutable_records_and_queries_by_run() -> None:
 
 def test_usage_record_deep_copies_mutable_amounts_and_metadata() -> None:
     amounts = [_tokens("12")]
-    metadata = {"phase": "generation"}
+    context = {"tags": ["initial"]}
+    metadata = {"phase": "generation", "context": context}
     record = UsageRecord(
         record_id="usage-1",
         source="runtime_measured",
@@ -56,15 +58,20 @@ def test_usage_record_deep_copies_mutable_amounts_and_metadata() -> None:
     )
     amounts.append(_tokens("99"))
     metadata["phase"] = "mutated"
+    context["tags"].append("mutated")
 
     assert record.amounts == (_tokens("12"),)
-    assert record.metadata == {"phase": "generation"}
+    assert record.metadata == {"phase": "generation", "context": {"tags": ["initial"]}}
     with pytest.raises(AttributeError):
         record.amounts.append(_tokens("13"))  # type: ignore[attr-defined]
     with pytest.raises(TypeError):
         record.amounts[0].dimensions["scope"] = "direct"
     with pytest.raises(TypeError):
         record.metadata["phase"] = "direct"
+    with pytest.raises(TypeError):
+        record.metadata["context"]["tags"] += ("direct",)  # type: ignore[index,operator]
+    with pytest.raises(TypeError):
+        dict.__setitem__(record.metadata, "phase", "bypassed")  # type: ignore[arg-type]
     with pytest.raises(ValueError, match="usage metadata must be a mapping"):
         UsageRecord(
             record_id="usage-2",
@@ -82,6 +89,24 @@ def test_usage_record_deep_copies_mutable_amounts_and_metadata() -> None:
             amounts=[_tokens("12")],
             occurred_at="2026-06-22T00:00:00Z",
             metadata={" ": "generation"},
+        )
+    with pytest.raises(ValueError, match="usage metadata must be valid strict JSON"):
+        UsageRecord(
+            record_id="usage-2",
+            source="runtime_measured",
+            confidence="estimated",
+            amounts=[_tokens("12")],
+            occurred_at="2026-06-22T00:00:00Z",
+            metadata={"invalid": object()},
+        )
+    with pytest.raises(ValueError, match="usage metadata must be valid strict JSON"):
+        UsageRecord(
+            record_id="usage-2",
+            source="runtime_measured",
+            confidence="estimated",
+            amounts=[_tokens("12")],
+            occurred_at="2026-06-22T00:00:00Z",
+            metadata={"invalid": math.nan},
         )
 
 
@@ -409,6 +434,51 @@ def test_usage_ledger_rejects_reconciliation_before_source_record() -> None:
 
     assert ledger.records_for_run("run-1") == [provisional]
     assert ledger.totals_for_run("run-1") == [_tokens("18")]
+
+
+@pytest.mark.parametrize("ledger_factory", (InMemoryUsageLedger, SQLiteUsageLedger.in_memory))
+def test_usage_ledger_rejects_orphaned_and_cross_identity_reconciliations(ledger_factory) -> None:
+    ledger = ledger_factory()
+    orphaned = UsageRecord(
+        record_id="usage-orphaned",
+        source="reconciled",
+        confidence="exact",
+        amounts=[_tokens("21")],
+        occurred_at="2026-06-22T00:05:00Z",
+        run_id="run-1",
+        reconciliation_of="usage-missing",
+    )
+    with pytest.raises(UsageRecordNotFoundError, match="usage-missing"):
+        ledger.append(orphaned)
+
+    source = ledger.append(
+        UsageRecord(
+            record_id="usage-source",
+            source="tokenizer_estimated",
+            confidence="estimated",
+            amounts=[_tokens("18")],
+            occurred_at="2026-06-22T00:00:00Z",
+            run_id="run-1",
+            attempt_id="attempt-1",
+        )
+    )
+    cross_run = UsageRecord(
+        record_id="usage-cross-run",
+        source="reconciled",
+        confidence="exact",
+        amounts=[_tokens("21")],
+        occurred_at="2026-06-22T00:05:00Z",
+        run_id="run-2",
+        attempt_id="attempt-1",
+        reconciliation_of=source.record_id,
+    )
+    with pytest.raises(UsageRecordConflictError, match="must preserve source record"):
+        ledger.append(cross_run)
+
+    assert ledger.records_for_run("run-1") == [source]
+    assert ledger.records_for_run("run-2") == []
+    if isinstance(ledger, SQLiteUsageLedger):
+        ledger.close()
 
 
 def test_sqlite_usage_ledger_persists_records_across_reopen(tmp_path) -> None:

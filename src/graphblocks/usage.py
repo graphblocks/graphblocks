@@ -46,6 +46,23 @@ class UsageRecordConflictError(UsageLedgerError):
     pass
 
 
+class _FrozenUsageMetadataList(tuple[object, ...]):
+    def __eq__(self, other: object) -> bool:
+        if isinstance(other, list):
+            return tuple(self) == tuple(other)
+        return super().__eq__(other)
+
+
+def _freeze_usage_metadata(value: object) -> object:
+    if isinstance(value, Mapping):
+        return MappingProxyType(
+            {str(key): _freeze_usage_metadata(item) for key, item in value.items()}
+        )
+    if isinstance(value, (list, tuple)):
+        return _FrozenUsageMetadataList(_freeze_usage_metadata(item) for item in value)
+    return value
+
+
 def _parse_datetime(owner: str, field_name: str, value: object) -> datetime:
     if not isinstance(value, str):
         raise ValueError(f"{owner} {field_name} must be a string")
@@ -91,6 +108,29 @@ def _validate_reconciliation_order(source: UsageRecord, occurred_at: str) -> Non
         source.occurred_at,
     ):
         raise ValueError("reconciled usage occurred_at must not precede source usage")
+
+
+def _validate_reconciliation_record(record: UsageRecord, source: UsageRecord) -> None:
+    if source.reconciliation_of is not None:
+        raise UsageRecordConflictError("reconciled usage cannot itself be reconciled")
+    if record.source != "reconciled" or record.confidence != "exact":
+        raise UsageRecordConflictError(
+            "usage reconciliation must have reconciled source and exact confidence"
+        )
+    identity_fields = (
+        "run_id",
+        "attempt_id",
+        "provider_response_id",
+        "pricing_ref",
+        "quota_window_id",
+        "execution_scope",
+        "metadata",
+    )
+    if any(getattr(record, field_name) != getattr(source, field_name) for field_name in identity_fields):
+        raise UsageRecordConflictError(
+            f"usage reconciliation must preserve source record {source.record_id!r} identity"
+        )
+    _validate_reconciliation_order(source, record.occurred_at)
 
 
 def _loads_strict_json(field_name: str, value: str) -> object:
@@ -175,7 +215,11 @@ class UsageRecord:
         metadata = dict(self.metadata)
         if any(not isinstance(key, str) or not key.strip() for key in metadata):
             raise ValueError("usage metadata keys must be non-empty strings")
-        object.__setattr__(self, "metadata", MappingProxyType(metadata))
+        try:
+            canonical_dumps(metadata)
+        except (TypeError, ValueError) as error:
+            raise ValueError("usage metadata must be valid strict JSON") from error
+        object.__setattr__(self, "metadata", _freeze_usage_metadata(metadata))
 
 
 @dataclass(slots=True)
@@ -191,6 +235,12 @@ class InMemoryUsageLedger:
                 return existing
             raise UsageRecordConflictError(f"usage record {record.record_id!r} already exists")
         if record.reconciliation_of is not None:
+            original = self._records.get(record.reconciliation_of)
+            if original is None:
+                raise UsageRecordNotFoundError(
+                    f"usage record {record.reconciliation_of!r} does not exist"
+                )
+            _validate_reconciliation_record(record, original)
             existing_reconciliation = self._reconciliation_for(record.reconciliation_of)
             if existing_reconciliation is not None:
                 raise UsageRecordConflictError(
@@ -341,6 +391,8 @@ class SQLiteUsageLedger:
                 return existing
             raise UsageRecordConflictError(f"usage record {record.record_id!r} already exists")
         if record.reconciliation_of is not None:
+            original = self.get(record.reconciliation_of)
+            _validate_reconciliation_record(record, original)
             existing_reconciliation = self._reconciliation_for(record.reconciliation_of)
             if existing_reconciliation is not None:
                 raise UsageRecordConflictError(
