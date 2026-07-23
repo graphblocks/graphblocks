@@ -34,8 +34,10 @@ from graphblocks.deployment import (
     RevisionDecision,
     RecoveryObjective,
     RolloutAnalysisResult,
+    RolloutDecision,
     RolloutError,
     RolloutPlan,
+    RolloutState,
     RolloutStep,
     UpgradePolicy,
     evaluate_canary_metrics,
@@ -1009,6 +1011,77 @@ def test_deployment_recovery_profile_evaluates_restore_test_freshness() -> None:
         "max_restore_test_age_seconds": 86_400,
     }
     assert profile.content_digest().startswith("sha256:")
+
+
+def test_deployment_recovery_profile_rejects_malformed_boundary_values() -> None:
+    with pytest.raises(GraphDeploymentError, match="restore test max age must be positive"):
+        DeploymentRecoveryProfile(
+            profile_id="production-recovery",
+            max_restore_test_age_seconds=True,
+        )
+    with pytest.raises(
+        GraphDeploymentError,
+        match="deployment recovery objective targets must be unique",
+    ):
+        DeploymentRecoveryProfile(
+            profile_id="production-recovery",
+            objectives=(
+                RecoveryObjective("service", "15m", "5m"),
+                RecoveryObjective("service", "1h", "15m"),
+            ),
+        )
+    with pytest.raises(
+        GraphDeploymentError,
+        match="knowledge index rebuild sources must contain non-empty strings",
+    ):
+        DeploymentRecoveryProfile(
+            profile_id="production-recovery",
+            knowledge_index_rebuildable_from=("release_bundle", object()),  # type: ignore[arg-type]
+        )
+
+    profile = DeploymentRecoveryProfile(profile_id="production-recovery")
+    with pytest.raises(
+        GraphDeploymentError,
+        match="restore test passed must be a boolean",
+    ):
+        profile.evaluate_restore_test(
+            tested_at_unix_seconds=1_000,
+            now_unix_seconds=2_000,
+            passed=1,  # type: ignore[arg-type]
+        )
+    with pytest.raises(
+        GraphDeploymentError,
+        match="restore test now_unix_seconds must be a non-negative integer",
+    ):
+        profile.evaluate_restore_test(
+            tested_at_unix_seconds=1_000,
+            now_unix_seconds=True,
+            passed=True,
+        )
+
+
+def test_rollout_state_records_reject_boolean_integer_substitutes() -> None:
+    plan = RolloutPlan.canary(
+        "rollout-1",
+        "rev-stable",
+        "rev-canary",
+        canary_steps=(RolloutStep.canary("canary-25", traffic_percent=25),),
+    )
+
+    with pytest.raises(RolloutError, match="current_step_index must be an integer"):
+        RolloutState(plan=plan, current_step_index=True)
+    with pytest.raises(RolloutError, match="rollout step index must be an integer"):
+        plan.current_step(True)
+    with pytest.raises(
+        RolloutError,
+        match="rollout decision automatic_rollback_allowed must be a boolean",
+    ):
+        RolloutDecision(
+            decision="hold",
+            reason="manual_approval",
+            next_state=plan.initial_state(),
+            automatic_rollback_allowed=1,  # type: ignore[arg-type]
+        )
 
 
 def test_rollout_traffic_assignment_is_deterministic_and_sticky_by_affinity() -> None:

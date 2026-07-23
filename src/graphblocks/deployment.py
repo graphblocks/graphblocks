@@ -912,15 +912,60 @@ class DeploymentRecoveryProfile:
             GraphDeploymentError,
         )
         if self.max_restore_test_age_seconds is not None and (
-            isinstance(self.max_restore_test_age_seconds, bool) or self.max_restore_test_age_seconds <= 0
+            not isinstance(self.max_restore_test_age_seconds, int)
+            or isinstance(self.max_restore_test_age_seconds, bool)
+            or self.max_restore_test_age_seconds <= 0
         ):
             raise GraphDeploymentError("restore test max age must be positive")
-        object.__setattr__(self, "objectives", tuple(sorted(self.objectives, key=lambda item: item.target)))
+        try:
+            objectives = tuple(self.objectives)
+        except TypeError as error:
+            raise GraphDeploymentError(
+                "deployment recovery objectives must be a collection"
+            ) from error
+        if any(
+            not isinstance(objective, RecoveryObjective)
+            for objective in objectives
+        ):
+            raise GraphDeploymentError(
+                "deployment recovery objectives must contain RecoveryObjective records"
+            )
+        objective_targets = [objective.target for objective in objectives]
+        if len(set(objective_targets)) != len(objective_targets):
+            raise GraphDeploymentError(
+                "deployment recovery objective targets must be unique"
+            )
+        object.__setattr__(
+            self,
+            "objectives",
+            tuple(sorted(objectives, key=lambda item: item.target)),
+        )
+        try:
+            knowledge_sources = tuple(self.knowledge_index_rebuildable_from)
+        except TypeError as error:
+            raise GraphDeploymentError(
+                "knowledge index rebuild sources must be a collection"
+            ) from error
+        if any(
+            not isinstance(source, str)
+            or not source.strip()
+            or source != source.strip()
+            for source in knowledge_sources
+        ):
+            raise GraphDeploymentError(
+                "knowledge index rebuild sources must contain non-empty strings"
+            )
         object.__setattr__(
             self,
             "knowledge_index_rebuildable_from",
-            tuple(sorted({str(item) for item in self.knowledge_index_rebuildable_from if str(item).strip()})),
+            tuple(sorted(set(knowledge_sources))),
         )
+        if self.regional_failover_mode is not None:
+            _require_stable_deployment_string(
+                self.regional_failover_mode,
+                "regional failover mode",
+                GraphDeploymentError,
+            )
 
     def with_objective(self, target: str, *, rto: str, rpo: str) -> DeploymentRecoveryProfile:
         objectives = {objective.target: objective for objective in self.objectives}
@@ -928,11 +973,23 @@ class DeploymentRecoveryProfile:
         return replace(self, objectives=tuple(objectives.values()))
 
     def with_knowledge_index_sources(self, sources: Iterable[str]) -> DeploymentRecoveryProfile:
-        return replace(self, knowledge_index_rebuildable_from=tuple(str(item) for item in sources))
+        try:
+            normalized_sources = tuple(sources)
+        except TypeError as error:
+            raise GraphDeploymentError(
+                "knowledge index rebuild sources must be a collection"
+            ) from error
+        return replace(
+            self,
+            knowledge_index_rebuildable_from=normalized_sources,
+        )
 
     def with_regional_failover(self, mode: str) -> DeploymentRecoveryProfile:
-        if not mode.strip():
-            raise GraphDeploymentError("regional failover mode must not be empty")
+        _require_stable_deployment_string(
+            mode,
+            "regional failover mode",
+            GraphDeploymentError,
+        )
         return replace(self, regional_failover_mode=mode)
 
     def with_max_restore_test_age_seconds(self, max_restore_test_age_seconds: int) -> DeploymentRecoveryProfile:
@@ -945,6 +1002,26 @@ class DeploymentRecoveryProfile:
         now_unix_seconds: int,
         passed: bool,
     ) -> DeploymentCondition:
+        if not isinstance(passed, bool):
+            raise GraphDeploymentError(
+                "restore test passed must be a boolean"
+            )
+        if (
+            not isinstance(now_unix_seconds, int)
+            or isinstance(now_unix_seconds, bool)
+            or now_unix_seconds < 0
+        ):
+            raise GraphDeploymentError(
+                "restore test now_unix_seconds must be a non-negative integer"
+            )
+        if tested_at_unix_seconds is not None and (
+            not isinstance(tested_at_unix_seconds, int)
+            or isinstance(tested_at_unix_seconds, bool)
+            or tested_at_unix_seconds < 0
+        ):
+            raise GraphDeploymentError(
+                "restore test tested_at_unix_seconds must be a non-negative integer"
+            )
         if not passed:
             return DeploymentCondition("RecoveryTestCurrent", "false", "restore_test_failed")
         if tested_at_unix_seconds is None:
@@ -1265,6 +1342,25 @@ class RolloutDecision:
     next_state: RolloutState
     automatic_rollback_allowed: bool = True
 
+    def __post_init__(self) -> None:
+        if self.decision not in {"hold", "advance", "promote", "abort"}:
+            raise RolloutError(
+                f"invalid rollout decision {self.decision!r}"
+            )
+        _require_stable_deployment_string(
+            self.reason,
+            "rollout decision reason",
+            RolloutError,
+        )
+        if not isinstance(self.next_state, RolloutState):
+            raise RolloutError(
+                "rollout decision next_state must be a RolloutState"
+            )
+        if not isinstance(self.automatic_rollback_allowed, bool):
+            raise RolloutError(
+                "rollout decision automatic_rollback_allowed must be a boolean"
+            )
+
 
 @dataclass(frozen=True, slots=True)
 class RolloutPlan:
@@ -1355,6 +1451,8 @@ class RolloutPlan:
         return RolloutState(plan=self)
 
     def current_step(self, index: int) -> RolloutStep:
+        if not isinstance(index, int) or isinstance(index, bool):
+            raise RolloutError("rollout step index must be an integer")
         if index < 0 or index >= len(self.steps):
             raise RolloutError("rollout step index out of range")
         return self.steps[index]
@@ -1384,6 +1482,15 @@ class RolloutState:
     status: RolloutStatus = "running"
 
     def __post_init__(self) -> None:
+        if not isinstance(self.plan, RolloutPlan):
+            raise RolloutError("rollout state plan must be a RolloutPlan")
+        if not isinstance(self.current_step_index, int) or isinstance(
+            self.current_step_index,
+            bool,
+        ):
+            raise RolloutError(
+                "current_step_index must be an integer"
+            )
         if self.current_step_index < 0 or self.current_step_index >= len(self.plan.steps):
             raise RolloutError("current_step_index out of range")
         if self.status not in {"running", "promoted", "aborted"}:
