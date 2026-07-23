@@ -120,6 +120,22 @@ def test_agent_constructors_reject_ambiguous_and_coerced_state() -> None:
         AgentState(revision=False)
 
 
+def test_agent_state_rejects_revision_overflow_without_mutating_state() -> None:
+    max_revision = (1 << 64) - 1
+    state = AgentState(revision=max_revision, values={"profile": "stable"})
+
+    with pytest.raises(AgentStateError, match="agent state revision is exhausted"):
+        state.apply_patch(
+            max_revision,
+            AgentStatePatch().set("profile", "mutated"),
+        )
+
+    assert state.revision == max_revision
+    assert state.values == {"profile": "stable"}
+    with pytest.raises(ValueError, match="agent state revision must be at most"):
+        AgentState(revision=max_revision + 1)
+
+
 def test_agent_state_snapshots_nested_patch_values_before_commit() -> None:
     payload = {"preferences": ["short"]}
     state = AgentState()

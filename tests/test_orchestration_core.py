@@ -13,6 +13,7 @@ from graphblocks.orchestration import (
     LeaseGrant,
     LeasePool,
     LeasePoolCapacityError,
+    LeasePoolError,
     LeasePoolExhaustedError,
     LeaseRequest,
     ModelPool,
@@ -29,6 +30,7 @@ from graphblocks.orchestration import (
     TaskPlanContextAccessError,
     TaskPlanDependencyError,
     TaskPlanDuplicateStepError,
+    TaskPlanError,
     TaskPlanIdentityError,
     TaskPlanLimitError,
     TaskPlanLimits,
@@ -97,6 +99,36 @@ def test_task_plan_records_reject_ambiguous_restored_collections_and_revisions()
         match="invalid_mode",
     ):
         TaskContextAccess("draft", "policy-doc", ["read"])  # type: ignore[arg-type]
+
+
+def test_task_plan_rejects_revision_overflow_before_applying_patch() -> None:
+    max_revision = (1 << 64) - 1
+    plan = TaskPlan("plan-1", "answer", revision=max_revision)
+    patch = TaskPlanPatch("patch-1", "plan-1", max_revision)
+
+    with pytest.raises(TaskPlanError, match="task plan revision is exhausted"):
+        plan.apply_patch(patch)
+
+    assert plan.revision == max_revision
+    with pytest.raises(ValueError, match="task plan revision must be at most"):
+        TaskPlan("plan-1", "answer", revision=max_revision + 1)
+    with pytest.raises(
+        ValueError,
+        match="task plan patch base_revision must be at most",
+    ):
+        TaskPlanPatch("patch-1", "plan-1", max_revision + 1)
+
+
+def test_task_plan_apply_patch_rejects_forged_patch_records() -> None:
+    plan = TaskPlan("plan-1", "answer")
+
+    with pytest.raises(
+        TaskPlanError,
+        match="task plan patch must be a TaskPlanPatch",
+    ):
+        plan.apply_patch(object())  # type: ignore[arg-type]
+
+    assert plan.revision == 1
 
 
 def test_task_plan_patch_rejects_duplicate_and_conflicting_step_operations() -> None:
@@ -666,6 +698,72 @@ def test_lease_pool_rejects_invalid_restored_lease_entries() -> None:
             capacity_units=1,
             active_leases=(object(),),  # type: ignore[arg-type]
         )
+
+
+def test_lease_pool_rejects_fencing_epoch_overflow_and_scalar_restore_state() -> None:
+    max_epoch = (1 << 64) - 1
+    holder = ResourceRef("trial:formal")
+    exhausted_grant = LeaseGrant(
+        lease_id="lease-max",
+        request_id="formal-check",
+        pool_id="formal-license",
+        holder=holder,
+        resource_kind="eda.formal",
+        units=1,
+        fencing_epoch=max_epoch,
+        acquired_at="2026-06-24T00:00:00Z",
+        expires_at="2026-06-24T00:05:00Z",
+    )
+
+    with pytest.raises(
+        LeasePoolCapacityError,
+        match="next_fencing_epoch must be at most",
+    ):
+        LeasePool(
+            "formal-license",
+            "eda.formal",
+            capacity_units=1,
+            active_leases=(exhausted_grant,),
+        )
+    with pytest.raises(
+        LeasePoolCapacityError,
+        match="next_fencing_epoch must be at most",
+    ):
+        LeasePool(
+            "formal-license",
+            "eda.formal",
+            capacity_units=1,
+            next_fencing_epoch=max_epoch + 1,
+        )
+    with pytest.raises(
+        LeasePoolError,
+        match="active_leases must be a collection of LeaseGrant records",
+    ):
+        LeasePool(
+            "formal-license",
+            "eda.formal",
+            capacity_units=1,
+            active_leases=1,  # type: ignore[arg-type]
+        )
+
+    pool = LeasePool(
+        "formal-license",
+        "eda.formal",
+        capacity_units=1,
+        next_fencing_epoch=max_epoch,
+    )
+    with pytest.raises(
+        LeasePoolCapacityError,
+        match="next_fencing_epoch must be at most",
+    ):
+        pool.acquire(
+            LeaseRequest("formal-check", holder, "eda.formal"),
+            lease_id="lease-overflow",
+            acquired_at="2026-06-24T00:00:00Z",
+            expires_at="2026-06-24T00:05:00Z",
+        )
+    assert pool.active_leases == ()
+    assert pool.next_fencing_epoch == max_epoch
 
 
 def test_lease_records_detach_nested_metadata_from_callers() -> None:

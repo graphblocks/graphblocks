@@ -12,6 +12,7 @@ ToolFailurePolicy = Literal["return_to_model", "fail", "fallback"]
 VALID_TOOL_FAILURE_POLICIES = frozenset({"return_to_model", "fail", "fallback"})
 AgentLoopDisposition = Literal["continue", "finalize", "stop"]
 AgentStatePatchOpKind = Literal["set", "delete"]
+_MAX_AGENT_STATE_REVISION = (1 << 64) - 1
 
 
 def _validate_exact_non_empty_string(owner: str, field_name: str, value: object) -> str:
@@ -30,6 +31,20 @@ def _validate_non_negative_integer(owner: str, field_name: str, value: object) -
     if value < 0:
         raise ValueError(f"{owner} {field_name} must be non-negative")
     return value
+
+
+def _validate_agent_state_revision(
+    owner: str,
+    field_name: str,
+    value: object,
+) -> int:
+    revision = _validate_non_negative_integer(owner, field_name, value)
+    if revision > _MAX_AGENT_STATE_REVISION:
+        raise ValueError(
+            f"{owner} {field_name} must be at most "
+            f"{_MAX_AGENT_STATE_REVISION}"
+        )
+    return revision
 
 
 def _validate_string_tuple(
@@ -195,7 +210,7 @@ class AgentState:
     active_task_plan_id: str | None = None
 
     def __post_init__(self) -> None:
-        _validate_non_negative_integer("agent state", "revision", self.revision)
+        _validate_agent_state_revision("agent state", "revision", self.revision)
         if not isinstance(self.values, Mapping):
             raise AgentStateError("agent state values must be a mapping")
         try:
@@ -238,7 +253,7 @@ class AgentState:
         *,
         schema: AgentStateSchema | None = None,
     ) -> int:
-        _validate_non_negative_integer(
+        _validate_agent_state_revision(
             "agent state patch",
             "expected_revision",
             expected_revision,
@@ -251,6 +266,8 @@ class AgentState:
             raise AgentStateError(
                 f"agent state is at revision {self.revision}, not expected revision {expected_revision}"
             )
+        if self.revision == _MAX_AGENT_STATE_REVISION:
+            raise AgentStateError("agent state revision is exhausted")
         set_values: dict[int, object] = {}
         for op in patch.ops:
             if schema is not None and not schema.allows(op.key):

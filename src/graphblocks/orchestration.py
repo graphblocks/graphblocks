@@ -16,6 +16,7 @@ ContextAccessMode = Literal["read", "write", "read_write"]
 VALID_CONTEXT_ACCESS_MODES = {"read", "write", "read_write"}
 TaskPriority = Literal["optional", "normal", "required", "verification", "finalization"]
 VALID_TASK_PRIORITIES = {"optional", "normal", "required", "verification", "finalization"}
+_MAX_ORCHESTRATION_INTEGER = (1 << 64) - 1
 
 
 class TaskPlanError(ValueError):
@@ -45,9 +46,25 @@ def _copy_metadata(owner: str, value: object) -> dict[str, object]:
     return copied
 
 
+def _validate_task_revision(owner: str, value: object) -> int:
+    if (
+        not isinstance(value, int)
+        or isinstance(value, bool)
+        or value < 1
+    ):
+        raise ValueError(f"{owner} must be positive")
+    if value > _MAX_ORCHESTRATION_INTEGER:
+        raise ValueError(
+            f"{owner} must be at most {_MAX_ORCHESTRATION_INTEGER}"
+        )
+    return value
+
+
 def _validate_positive_lease_integer(field_name: str, value: object) -> int:
     if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
         raise LeasePoolCapacityError(field_name, value)  # type: ignore[arg-type]
+    if value > _MAX_ORCHESTRATION_INTEGER:
+        raise LeasePoolCapacityError(field_name, value)
     return value
 
 
@@ -138,12 +155,10 @@ class TaskPlanPatch:
     def __post_init__(self) -> None:
         _validate_task_identity("patch", "patch_id", self.patch_id)
         _validate_task_identity("patch", "base_plan_id", self.base_plan_id)
-        if (
-            not isinstance(self.base_revision, int)
-            or isinstance(self.base_revision, bool)
-            or self.base_revision < 1
-        ):
-            raise ValueError("task plan patch base_revision must be positive")
+        _validate_task_revision(
+            "task plan patch base_revision",
+            self.base_revision,
+        )
         if isinstance(self.upsert_steps, (str, bytes, bytearray, Mapping)):
             raise ValueError(
                 "task plan patch upsert_steps must contain TaskStep records"
@@ -316,12 +331,7 @@ class TaskPlan:
     def __post_init__(self) -> None:
         _validate_task_identity("plan", "plan_id", self.plan_id)
         _validate_task_identity("plan", "objective", self.objective)
-        if (
-            not isinstance(self.revision, int)
-            or isinstance(self.revision, bool)
-            or self.revision < 1
-        ):
-            raise ValueError("task plan revision must be positive")
+        _validate_task_revision("task plan revision", self.revision)
         if not isinstance(self.limits, TaskPlanLimits):
             raise ValueError("task plan limits must be TaskPlanLimits")
         if isinstance(self.steps, (str, bytes, bytearray, Mapping)):
@@ -508,8 +518,14 @@ class TaskPlan:
         return tuple(layers)
 
     def apply_patch(self, patch: TaskPlanPatch) -> TaskPlan:
+        if not isinstance(patch, TaskPlanPatch):
+            raise TaskPlanError(
+                "task plan patch must be a TaskPlanPatch"
+            )
         if patch.base_plan_id != self.plan_id or patch.base_revision != self.revision:
             raise TaskPlanPatchMismatchError(self.plan_id, patch.base_plan_id, self.revision, patch.base_revision)
+        if self.revision == _MAX_ORCHESTRATION_INTEGER:
+            raise TaskPlanError("task plan revision is exhausted")
         remove_step_ids = set(patch.remove_step_ids)
         steps_by_id = {step.step_id: step for step in self.steps if step.step_id not in remove_step_ids}
         for step in patch.upsert_steps:
@@ -834,7 +850,18 @@ class LeasePoolCapacityError(LeasePoolError):
     def __init__(self, field_name: str, value: int) -> None:
         self.field_name = field_name
         self.value = value
-        super().__init__(f"{field_name} must be positive, got {value}")
+        if (
+            isinstance(value, int)
+            and not isinstance(value, bool)
+            and value > _MAX_ORCHESTRATION_INTEGER
+        ):
+            message = (
+                f"{field_name} must be at most "
+                f"{_MAX_ORCHESTRATION_INTEGER}, got {value}"
+            )
+        else:
+            message = f"{field_name} must be positive, got {value}"
+        super().__init__(message)
 
 
 class LeasePoolExhaustedError(LeasePoolError):
@@ -959,7 +986,19 @@ class LeasePool:
             "next_fencing_epoch",
             self.next_fencing_epoch,
         )
-        unsorted_active_leases = tuple(self.active_leases)
+        if isinstance(
+            self.active_leases,
+            (str, bytes, bytearray, Mapping),
+        ):
+            raise LeasePoolError(
+                "active_leases must be a collection of LeaseGrant records"
+            )
+        try:
+            unsorted_active_leases = tuple(self.active_leases)
+        except TypeError as error:
+            raise LeasePoolError(
+                "active_leases must be a collection of LeaseGrant records"
+            ) from error
         if any(not isinstance(lease, LeaseGrant) for lease in unsorted_active_leases):
             raise LeasePoolError("active_leases must contain LeaseGrant records")
         active_leases = tuple(
@@ -983,8 +1022,16 @@ class LeasePool:
             highest_epoch = max(highest_epoch, lease.fencing_epoch)
         if used_units > self.capacity_units:
             raise LeasePoolExhaustedError(self.pool_id, used_units, self.capacity_units)
+        next_after_highest = _validate_positive_lease_integer(
+            "next_fencing_epoch",
+            highest_epoch + 1,
+        )
         object.__setattr__(self, "active_leases", active_leases)
-        object.__setattr__(self, "next_fencing_epoch", max(next_fencing_epoch, highest_epoch + 1))
+        object.__setattr__(
+            self,
+            "next_fencing_epoch",
+            max(next_fencing_epoch, next_after_highest),
+        )
         object.__setattr__(self, "metadata", _copy_metadata("lease pool", self.metadata))
 
     @property
@@ -1022,6 +1069,10 @@ class LeasePool:
             raise LeaseAlreadyExistsError(lease_id)
         if request.units > current.available_units:
             raise LeasePoolExhaustedError(self.pool_id, request.units, current.available_units)
+        next_fencing_epoch = _validate_positive_lease_integer(
+            "next_fencing_epoch",
+            current.next_fencing_epoch + 1,
+        )
         grant = LeaseGrant(
             lease_id=lease_id,
             request_id=request.request_id,
@@ -1037,7 +1088,7 @@ class LeasePool:
         return replace(
             current,
             active_leases=current.active_leases + (grant,),
-            next_fencing_epoch=current.next_fencing_epoch + 1,
+            next_fencing_epoch=next_fencing_epoch,
         ), grant
 
     def acquire_with_budget_permit(
