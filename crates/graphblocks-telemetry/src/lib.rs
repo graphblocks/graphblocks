@@ -318,6 +318,9 @@ impl GenerationTelemetryRecord {
         ] {
             require_optional_non_empty(field, value)?;
         }
+        require_non_empty_keys("usage_unit", self.usage.keys().map(String::as_str))?;
+        require_non_empty_keys("timing_name", self.timing_ms.keys().map(String::as_str))?;
+        require_non_empty_keys("attribute_key", self.attributes.keys().map(String::as_str))?;
         Ok(())
     }
 
@@ -488,6 +491,20 @@ impl OutputPolicyTelemetryRecord {
             self.durable_result.as_deref(),
             DURABLE_RESULTS.iter().copied().map(DurableResult::as_str),
         )?;
+        if self.accepted_through_sequence == Some(0) {
+            return Err(TelemetryProjectionError::InvalidAcceptedThroughSequence);
+        }
+        if let (Some(accepted), Some(delivered)) = (
+            self.accepted_through_sequence,
+            self.last_client_delivered_sequence,
+        ) && delivered > accepted
+        {
+            return Err(TelemetryProjectionError::DeliveredBeyondAccepted {
+                accepted,
+                delivered,
+            });
+        }
+        require_non_empty_keys("attribute_key", self.attributes.keys().map(String::as_str))?;
         Ok(())
     }
 
@@ -614,6 +631,7 @@ impl ToolExecutionTelemetryRecord {
                 TOOL_EFFECTS.iter().copied().map(ToolEffect::as_str),
             )?;
         }
+        require_non_empty_keys("attribute_key", self.attributes.keys().map(String::as_str))?;
         Ok(())
     }
 
@@ -1382,15 +1400,32 @@ fn diagnostic_summary(diagnostics: &[TelemetryDiagnostic]) -> BTreeMap<String, u
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum TelemetryProjectionError {
+    ControlCharacter { field: &'static str },
+    DeliveredBeyondAccepted { accepted: u64, delivered: u64 },
     EmptyField { field: &'static str },
     ExportAffectsRunCorrectness,
+    InvalidAcceptedThroughSequence,
     InvalidLiteral { field: &'static str, value: String },
     InvalidMetricSampleName,
+    NonCanonicalField { field: &'static str },
 }
 
 impl fmt::Display for TelemetryProjectionError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::ControlCharacter { field } => {
+                write!(
+                    formatter,
+                    "telemetry field '{field}' must not contain control characters"
+                )
+            }
+            Self::DeliveredBeyondAccepted {
+                accepted,
+                delivered,
+            } => write!(
+                formatter,
+                "last client-delivered sequence {delivered} exceeds accepted-through sequence {accepted}"
+            ),
             Self::EmptyField { field } => {
                 write!(formatter, "telemetry field '{field}' must be non-empty")
             }
@@ -1399,6 +1434,9 @@ impl fmt::Display for TelemetryProjectionError {
                     formatter,
                     "telemetry export result must not affect run correctness"
                 )
+            }
+            Self::InvalidAcceptedThroughSequence => {
+                write!(formatter, "accepted-through sequence must be positive")
             }
             Self::InvalidLiteral { field, value } => {
                 write!(
@@ -1409,6 +1447,12 @@ impl fmt::Display for TelemetryProjectionError {
             Self::InvalidMetricSampleName => {
                 write!(formatter, "metric sample name must be a non-empty string")
             }
+            Self::NonCanonicalField { field } => {
+                write!(
+                    formatter,
+                    "telemetry field '{field}' must not contain surrounding whitespace"
+                )
+            }
         }
     }
 }
@@ -1416,8 +1460,27 @@ impl fmt::Display for TelemetryProjectionError {
 impl Error for TelemetryProjectionError {}
 
 fn require_non_empty(field: &'static str, value: &str) -> Result<(), TelemetryProjectionError> {
+    if value
+        .chars()
+        .any(|character| ('\u{0}'..='\u{1f}').contains(&character) || character == '\u{7f}')
+    {
+        return Err(TelemetryProjectionError::ControlCharacter { field });
+    }
     if value.trim().is_empty() {
         return Err(TelemetryProjectionError::EmptyField { field });
+    }
+    if value != value.trim() {
+        return Err(TelemetryProjectionError::NonCanonicalField { field });
+    }
+    Ok(())
+}
+
+fn require_non_empty_keys<'a>(
+    field: &'static str,
+    values: impl IntoIterator<Item = &'a str>,
+) -> Result<(), TelemetryProjectionError> {
+    for value in values {
+        require_non_empty(field, value)?;
     }
     Ok(())
 }

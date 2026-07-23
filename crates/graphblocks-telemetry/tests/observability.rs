@@ -352,6 +352,73 @@ fn telemetry_records_validate_runtime_literal_contracts() {
 }
 
 #[test]
+fn telemetry_records_reject_noncanonical_keys_and_sequence_boundaries() {
+    assert_eq!(
+        GenerationTelemetryRecord::new(" gen-1", "run-1", "span-1", "agent", "openai", "gpt-test",)
+            .validate(),
+        Err(TelemetryProjectionError::NonCanonicalField { field: "record_id" })
+    );
+    assert_eq!(
+        GenerationTelemetryRecord::new("gen-1", "run-1", "span-1", "agent", "openai", "gpt-test",)
+            .with_usage(" ", 1)
+            .validate(),
+        Err(TelemetryProjectionError::EmptyField {
+            field: "usage_unit"
+        })
+    );
+    assert_eq!(
+        GenerationTelemetryRecord::new(
+            "run\0id",
+            "run-1",
+            "span-1",
+            "agent",
+            "openai",
+            "gpt-test",
+        )
+        .validate(),
+        Err(TelemetryProjectionError::ControlCharacter { field: "record_id" })
+    );
+    assert_eq!(
+        GenerationTelemetryRecord::new("gen-1", "run-1", "span-1", "agent", "openai", "gpt-test",)
+            .with_attribute("trace\u{7f}id", json!("trace-1"))
+            .validate(),
+        Err(TelemetryProjectionError::ControlCharacter {
+            field: "attribute_key"
+        })
+    );
+    assert_eq!(
+        OutputPolicyTelemetryRecord::new(
+            "policy-1",
+            "run-1",
+            "stream-1",
+            "response-1",
+            "before_client_delivery",
+            "allow",
+        )
+        .with_accepted_through_sequence(0)
+        .validate(),
+        Err(TelemetryProjectionError::InvalidAcceptedThroughSequence)
+    );
+    assert_eq!(
+        OutputPolicyTelemetryRecord::new(
+            "policy-1",
+            "run-1",
+            "stream-1",
+            "response-1",
+            "before_client_delivery",
+            "allow",
+        )
+        .with_accepted_through_sequence(3)
+        .with_last_client_delivered_sequence(4)
+        .validate(),
+        Err(TelemetryProjectionError::DeliveredBeyondAccepted {
+            accepted: 3,
+            delivered: 4,
+        })
+    );
+}
+
+#[test]
 fn telemetry_capture_policy_redacts_drops_and_removes_disabled_digests() {
     let record =
         GenerationTelemetryRecord::new("gen-1", "run-1", "span-1", "agent", "openai", "gpt-test")
