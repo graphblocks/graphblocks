@@ -1,16 +1,17 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
 from dataclasses import dataclass, field, replace
 import hashlib
-import json
+from types import MappingProxyType
 from typing import Literal
 
-from .canonical import canonical_dumps
+from .canonical import canonical_dumps, canonical_loads
 
 
 WORKER_PROTOCOL_VERSION = 1
 _MAX_WORKER_UNSIGNED_64 = (1 << 64) - 1
+_MAX_WORKER_UNSIGNED_16 = (1 << 16) - 1
 
 WorkerState = Literal[
     "starting",
@@ -115,10 +116,15 @@ class WorkerAdvertisement:
             "image_digest",
             _validate_worker_non_empty_string("worker advertisement", "image_digest", self.image_digest),
         )
-        if not isinstance(self.protocol_version, int) or isinstance(self.protocol_version, bool):
-            raise WorkerProtocolError("worker advertisement protocol_version must be an integer")
-        if self.protocol_version < 0:
-            raise WorkerProtocolError("worker advertisement protocol_version must not be negative")
+        object.__setattr__(
+            self,
+            "protocol_version",
+            _validate_worker_unsigned_16_integer(
+                "worker advertisement",
+                "protocol_version",
+                self.protocol_version,
+            ),
+        )
         if self.state not in VALID_WORKER_STATES:
             raise WorkerProtocolError(f"worker advertisement state has invalid value {self.state!r}")
         if isinstance(self.supported_blocks, str):
@@ -202,10 +208,15 @@ class WorkerAdmissionPolicy:
     required_block: str | None = None
 
     def __post_init__(self) -> None:
-        if not isinstance(self.protocol_version, int) or isinstance(self.protocol_version, bool):
-            raise WorkerProtocolError("worker admission policy protocol_version must be an integer")
-        if self.protocol_version < 0:
-            raise WorkerProtocolError("worker admission policy protocol_version must not be negative")
+        object.__setattr__(
+            self,
+            "protocol_version",
+            _validate_worker_unsigned_16_integer(
+                "worker admission policy",
+                "protocol_version",
+                self.protocol_version,
+            ),
+        )
         object.__setattr__(
             self,
             "package_lock_hash",
@@ -260,10 +271,15 @@ class WorkerAdmissionDecision:
                     getattr(self, field_name),
                 ),
             )
-        if not isinstance(self.protocol_version, int) or isinstance(self.protocol_version, bool):
-            raise WorkerProtocolError("worker admission decision protocol_version must be an integer")
-        if self.protocol_version < 0:
-            raise WorkerProtocolError("worker admission decision protocol_version must not be negative")
+        object.__setattr__(
+            self,
+            "protocol_version",
+            _validate_worker_unsigned_16_integer(
+                "worker admission decision",
+                "protocol_version",
+                self.protocol_version,
+            ),
+        )
         if self.state not in VALID_WORKER_STATES:
             raise WorkerProtocolError(f"worker admission decision state has invalid value {self.state!r}")
         if isinstance(self.reason_codes, str):
@@ -285,6 +301,18 @@ class WorkerAdmissionDecision:
         if not self.admitted and not reason_codes:
             raise WorkerProtocolError(
                 "denied worker admission decision requires reason_codes"
+            )
+        if len(set(reason_codes)) != len(reason_codes):
+            raise WorkerProtocolError(
+                "worker admission decision reason_codes must be unique"
+            )
+        if self.admitted and self.protocol_version != WORKER_PROTOCOL_VERSION:
+            raise WorkerProtocolError(
+                "admitted worker admission decision must use the current protocol_version"
+            )
+        if self.admitted and self.state not in {"ready", "saturated"}:
+            raise WorkerProtocolError(
+                "admitted worker admission decision must describe an admission-ready state"
             )
         object.__setattr__(self, "reason_codes", reason_codes)
         object.__setattr__(
@@ -352,14 +380,23 @@ class WorkerProtocolMessage:
         )
         if self.kind not in VALID_WORKER_PROTOCOL_MESSAGE_KINDS:
             raise WorkerProtocolError(f"worker protocol message kind has invalid value {self.kind!r}")
-        if not isinstance(self.protocol_version, int) or isinstance(self.protocol_version, bool):
-            raise WorkerProtocolError("worker protocol message protocol_version must be an integer")
-        if self.protocol_version < 0:
-            raise WorkerProtocolError("worker protocol message protocol_version must not be negative")
+        object.__setattr__(
+            self,
+            "protocol_version",
+            _validate_worker_unsigned_16_integer(
+                "worker protocol message",
+                "protocol_version",
+                self.protocol_version,
+            ),
+        )
+        if self.protocol_version != WORKER_PROTOCOL_VERSION:
+            raise WorkerProtocolError(
+                "worker protocol message protocol_version is incompatible"
+            )
         object.__setattr__(
             self,
             "sequence",
-            _validate_worker_non_negative_integer(
+            _validate_worker_unsigned_64_integer(
                 "worker protocol message",
                 "sequence",
                 self.sequence,
@@ -386,6 +423,10 @@ class WorkerProtocolMessage:
         if self.kind == "advertisement":
             if not isinstance(self.payload, WorkerAdvertisement):
                 raise WorkerProtocolError("worker protocol message advertisement payload must be WorkerAdvertisement")
+            if self.payload.protocol_version != WORKER_PROTOCOL_VERSION:
+                raise WorkerProtocolError(
+                    "worker protocol message advertisement protocol_version is incompatible"
+                )
             return
         if self.kind == "admission_decision":
             if not isinstance(self.payload, WorkerAdmissionDecision):
@@ -567,14 +608,8 @@ class WorkerProtocolMessage:
 
     def content_digest(self) -> str:
         try:
-            encoded = json.dumps(
-                self.to_wire(),
-                sort_keys=True,
-                separators=(",", ":"),
-                ensure_ascii=False,
-                allow_nan=False,
-            )
-        except (TypeError, ValueError) as error:
+            encoded = canonical_dumps(self.to_wire())
+        except (RecursionError, TypeError, ValueError) as error:
             raise RemotePayloadInlineJsonEncodingError(
                 "worker protocol message payload is not JSON serializable"
             ) from error
@@ -591,7 +626,7 @@ class WorkerProtocolMessage:
             return self.payload.to_wire()
         if self.kind == "drain_plan":
             return self.payload.to_wire()
-        return dict(self.payload)
+        return _worker_json_projection(self.payload)
 
 
 class WorkerProtocolError(ValueError):
@@ -667,7 +702,7 @@ def _require_worker_wire_field(
         raise WorkerProtocolError(f"{owner} is missing required field {field_name!r}") from error
 
 
-def _validate_worker_string_attributes(owner: str, value: object) -> dict[str, str]:
+def _validate_worker_string_attributes(owner: str, value: object) -> Mapping[str, str]:
     if not isinstance(value, Mapping):
         raise WorkerProtocolError(f"{owner} attributes must be a mapping")
     attributes = dict(value)
@@ -678,13 +713,94 @@ def _validate_worker_string_attributes(owner: str, value: object) -> dict[str, s
             raise WorkerProtocolError(f"{owner} attribute keys must not be empty")
         if not isinstance(item, str):
             raise WorkerProtocolError(f"{owner} attribute values must be strings")
-    return attributes
+    return _FrozenWorkerJsonObject(attributes)
 
 
-def _validate_worker_error_payload(value: object) -> dict[str, object]:
+def _freeze_worker_json_value(value: object) -> object:
+    if isinstance(value, dict):
+        return _FrozenWorkerJsonObject(
+            {
+                key: _freeze_worker_json_value(item)
+                for key, item in value.items()
+            }
+        )
+    if isinstance(value, list):
+        return _FrozenWorkerJsonArray(
+            _freeze_worker_json_value(item) for item in value
+        )
+    return value
+
+
+class _FrozenWorkerJsonObject(Mapping[str, object]):
+    __slots__ = ("__values",)
+
+    def __init__(self, values: Mapping[str, object]) -> None:
+        self.__values = MappingProxyType(dict(values))
+
+    def __getitem__(self, key: str) -> object:
+        return self.__values[key]
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self.__values)
+
+    def __len__(self) -> int:
+        return len(self.__values)
+
+    def __repr__(self) -> str:
+        return repr(self.__values)
+
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, Mapping) and self.__values == dict(other)
+
+    def __deepcopy__(self, memo: dict[int, object]) -> dict[str, object]:
+        return {
+            key: _worker_json_projection(value)
+            for key, value in self.__values.items()
+        }
+
+
+class _FrozenWorkerJsonArray(tuple[object, ...]):
+    def __eq__(self, other: object) -> bool:
+        if isinstance(other, list):
+            return tuple(self) == tuple(other)
+        return super().__eq__(other)
+
+    def __deepcopy__(self, memo: dict[int, object]) -> list[object]:
+        return [_worker_json_projection(value) for value in self]
+
+
+def _worker_json_projection(value: object) -> object:
+    if isinstance(value, Mapping):
+        return {
+            key: _worker_json_projection(item)
+            for key, item in value.items()
+        }
+    if isinstance(value, (list, tuple)):
+        return [_worker_json_projection(item) for item in value]
+    return value
+
+
+def _snapshot_worker_json_value(owner: str, value: object) -> object:
+    try:
+        snapshot = canonical_loads(canonical_dumps(value))
+    except (RecursionError, TypeError, ValueError) as error:
+        raise WorkerProtocolError(f"{owner} must contain strict JSON") from error
+    return _freeze_worker_json_value(snapshot)
+
+
+def _validate_worker_error_payload(value: object) -> Mapping[str, object]:
     if not isinstance(value, Mapping):
         raise WorkerProtocolError("worker protocol message error payload must be a mapping")
-    payload = dict(value)
+    if any(not isinstance(key, str) for key in value):
+        raise WorkerProtocolError(
+            "worker protocol message error payload keys must be strings"
+        )
+    payload = _snapshot_worker_json_value(
+        "worker protocol message error payload",
+        value,
+    )
+    if not isinstance(payload, Mapping):
+        raise WorkerProtocolError("worker protocol message error payload must be a mapping")
     code = payload.get("code")
     if not isinstance(code, str):
         raise WorkerProtocolError("worker protocol message error code must be a string")
@@ -707,8 +823,12 @@ def _validate_worker_error_payload(value: object) -> dict[str, object]:
     if details is not None:
         if not isinstance(details, Mapping):
             raise WorkerProtocolError("worker protocol message error details must be a mapping")
-        normalized["details"] = {str(key): details[key] for key in sorted(details, key=str)}
-    return normalized
+        if any(not key.strip() for key in details):
+            raise WorkerProtocolError(
+                "worker protocol message error detail keys must not be empty"
+            )
+        normalized["details"] = details
+    return _freeze_worker_json_value(normalized)  # type: ignore[return-value]
 
 
 def _validate_worker_non_negative_integer(owner: str, field_name: str, value: object) -> int:
@@ -728,6 +848,19 @@ def _validate_worker_unsigned_64_integer(
     if value > _MAX_WORKER_UNSIGNED_64:
         raise WorkerProtocolError(
             f"{owner} {field_name} must fit an unsigned 64-bit integer"
+        )
+    return value
+
+
+def _validate_worker_unsigned_16_integer(
+    owner: str,
+    field_name: str,
+    value: object,
+) -> int:
+    value = _validate_worker_non_negative_integer(owner, field_name, value)
+    if value > _MAX_WORKER_UNSIGNED_16:
+        raise WorkerProtocolError(
+            f"{owner} {field_name} must fit an unsigned 16-bit integer"
         )
     return value
 
@@ -872,7 +1005,7 @@ class RunOwnershipLease:
         object.__setattr__(
             self,
             "lease_epoch",
-            _validate_worker_non_negative_integer(
+            _validate_worker_unsigned_64_integer(
                 "run ownership lease",
                 "lease_epoch",
                 self.lease_epoch,
@@ -881,7 +1014,7 @@ class RunOwnershipLease:
         object.__setattr__(
             self,
             "expires_at_unix_ms",
-            _validate_worker_non_negative_integer(
+            _validate_worker_unsigned_64_integer(
                 "run ownership lease",
                 "expires_at_unix_ms",
                 self.expires_at_unix_ms,
@@ -972,14 +1105,7 @@ class RemotePayloadInvalidModeError(RemotePayloadError):
 
 def _encode_remote_inline_json(value: object) -> str:
     try:
-        canonical_dumps(value)
-        return json.dumps(
-            value,
-            sort_keys=True,
-            separators=(",", ":"),
-            ensure_ascii=False,
-            allow_nan=False,
-        )
+        return canonical_dumps(value)
     except (RecursionError, TypeError, ValueError) as error:
         raise RemotePayloadInlineJsonEncodingError(
             "remote inline payload is not strict JSON"
@@ -1031,7 +1157,11 @@ class RemoteEdgePayload:
             computed_digest = "sha256:" + hashlib.sha256(encoded.encode("utf-8")).hexdigest()
             if self.value_digest is not None and self.value_digest != computed_digest:
                 raise RemotePayloadInvalidModeError("value_digest_mismatch")
-            object.__setattr__(self, "value", json.loads(encoded))
+            object.__setattr__(
+                self,
+                "value",
+                _freeze_worker_json_value(canonical_loads(encoded)),
+            )
             object.__setattr__(
                 self,
                 "value_digest",
@@ -1042,8 +1172,14 @@ class RemoteEdgePayload:
         if self.mode == "artifact_ref":
             if not isinstance(self.artifact, Mapping):
                 raise RemotePayloadInvalidArtifactRefError("artifact")
-            artifact = dict(self.artifact)
-            if any(not isinstance(key, str) for key in artifact):
+            try:
+                artifact = _snapshot_worker_json_value(
+                    "remote artifact reference",
+                    self.artifact,
+                )
+            except WorkerProtocolError as error:
+                raise RemotePayloadInvalidArtifactRefError("artifact") from error
+            if not isinstance(artifact, Mapping):
                 raise RemotePayloadInvalidArtifactRefError("artifact")
             if self.value is not None:
                 raise RemotePayloadInvalidModeError("artifact_ref_with_inline_value")
@@ -1051,7 +1187,7 @@ class RemoteEdgePayload:
                 {"mode": "artifact_ref", "schema": self.schema, "artifact": artifact},
                 RemotePayloadLimits(max_inline_bytes=0),
             )
-            object.__setattr__(self, "artifact", {key: artifact[key] for key in sorted(artifact)})
+            object.__setattr__(self, "artifact", artifact)
             object.__setattr__(self, "value_digest", None)
             return
         raise RemotePayloadInvalidModeError(self.mode)
@@ -1094,13 +1230,13 @@ class RemoteEdgePayload:
             return {
                 "mode": self.mode,
                 "schema": self.schema,
-                "value": self.value,
+                "value": _worker_json_projection(self.value),
                 "valueDigest": self.value_digest,
             }
         return {
             "mode": self.mode,
             "schema": self.schema,
-            "artifact": dict(self.artifact or {}),
+            "artifact": _worker_json_projection(self.artifact or {}),
         }
 
     @classmethod
@@ -1126,14 +1262,8 @@ class RemoteEdgePayload:
 
     def content_digest(self) -> str:
         try:
-            encoded = json.dumps(
-                self.to_wire(),
-                sort_keys=True,
-                separators=(",", ":"),
-                ensure_ascii=False,
-                allow_nan=False,
-            )
-        except (TypeError, ValueError) as error:
+            encoded = canonical_dumps(self.to_wire())
+        except (RecursionError, TypeError, ValueError) as error:
             raise RemotePayloadInlineJsonEncodingError(
                 "remote edge payload is not JSON serializable"
             ) from error
@@ -1150,7 +1280,7 @@ class WorkerInvocationContext:
     policy_snapshot_digest: str | None = None
     budget_permit_id: str | None = None
     budget_permit_digest: str | None = None
-    attributes: dict[str, str] = field(default_factory=dict)
+    attributes: Mapping[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -1187,6 +1317,10 @@ class WorkerInvocationContext:
                     field_name,
                     getattr(self, field_name),
                 ),
+            )
+        if (self.trace_id is None) != (self.parent_span_id is None):
+            raise WorkerProtocolError(
+                "worker invocation context trace id and parent span id must be provided together"
             )
         if (self.policy_snapshot_id is None) != (self.policy_snapshot_digest is None):
             raise WorkerProtocolError(
@@ -1278,14 +1412,29 @@ class WorkerInvokeRequest:
                     getattr(self, field_name),
                 ),
             )
-        if not isinstance(self.lease_epoch, int) or isinstance(self.lease_epoch, bool):
-            raise WorkerProtocolError("worker invoke request lease_epoch must be an integer")
-        if self.lease_epoch < 0:
-            raise WorkerProtocolError("worker invoke request lease_epoch must not be negative")
+        object.__setattr__(
+            self,
+            "lease_epoch",
+            _validate_worker_unsigned_64_integer(
+                "worker invoke request",
+                "lease_epoch",
+                self.lease_epoch,
+            ),
+        )
         if not isinstance(self.context, WorkerInvocationContext):
             raise WorkerProtocolError(
                 "worker invoke request context must be a WorkerInvocationContext"
             )
+        object.__setattr__(
+            self,
+            "inputs",
+            _snapshot_worker_json_value("worker invoke request inputs", self.inputs),
+        )
+        object.__setattr__(
+            self,
+            "config",
+            _snapshot_worker_json_value("worker invoke request config", self.config),
+        )
 
     def to_wire(self) -> dict[str, object]:
         return {
@@ -1296,8 +1445,8 @@ class WorkerInvokeRequest:
             "leaseEpoch": self.lease_epoch,
             "block": self.block,
             "context": self.context.to_wire(),
-            "inputs": self.inputs,
-            "config": self.config,
+            "inputs": _worker_json_projection(self.inputs),
+            "config": _worker_json_projection(self.config),
         }
 
     @classmethod
@@ -1699,7 +1848,7 @@ class WorkerInvokeResult:
     invocation_id: str
     node_attempt_id: str
     lease_epoch: int
-    outputs: dict[str, object] = field(default_factory=dict)
+    outputs: Mapping[str, object] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -1720,13 +1869,27 @@ class WorkerInvokeResult:
                 self.node_attempt_id,
             ),
         )
-        if not isinstance(self.lease_epoch, int) or isinstance(self.lease_epoch, bool):
-            raise WorkerProtocolError("worker invoke result lease_epoch must be an integer")
-        if self.lease_epoch < 0:
-            raise WorkerProtocolError("worker invoke result lease_epoch must not be negative")
+        object.__setattr__(
+            self,
+            "lease_epoch",
+            _validate_worker_unsigned_64_integer(
+                "worker invoke result",
+                "lease_epoch",
+                self.lease_epoch,
+            ),
+        )
         if not isinstance(self.outputs, Mapping):
             raise WorkerProtocolError("worker invoke result outputs must be a mapping")
-        outputs = dict(self.outputs)
+        if any(not isinstance(key, str) for key in self.outputs):
+            raise WorkerProtocolError(
+                "worker invoke result output keys must be strings"
+            )
+        outputs = _snapshot_worker_json_value(
+            "worker invoke result outputs",
+            self.outputs,
+        )
+        if not isinstance(outputs, Mapping):
+            raise WorkerProtocolError("worker invoke result outputs must be a mapping")
         for key in outputs:
             if not isinstance(key, str):
                 raise WorkerProtocolError("worker invoke result output keys must be strings")
@@ -1739,7 +1902,10 @@ class WorkerInvokeResult:
             "invocationId": self.invocation_id,
             "nodeAttemptId": self.node_attempt_id,
             "leaseEpoch": self.lease_epoch,
-            "outputs": dict(sorted(self.outputs.items())),
+            "outputs": {
+                key: _worker_json_projection(self.outputs[key])
+                for key in sorted(self.outputs)
+            },
         }
 
     @classmethod

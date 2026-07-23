@@ -229,6 +229,49 @@ fn worker_admission_decision_rejects_inconsistent_reason_codes() {
             field: "reason_codes",
         }),
     );
+
+    let mut duplicate_reasons =
+        evaluate_worker_admission(&WorkerAdmissionPolicy::current(), &advertisement);
+    duplicate_reasons.admitted = false;
+    duplicate_reasons.reason_codes =
+        vec!["worker.not_ready".to_owned(), "worker.not_ready".to_owned()];
+    let duplicate_message =
+        WorkerProtocolMessage::admission_decision("decision-duplicate", 3, duplicate_reasons);
+    assert_eq!(
+        duplicate_message.validate(),
+        Err(WorkerProtocolMessageError::InvalidAdmissionDecision {
+            field: "reason_codes",
+        }),
+    );
+}
+
+#[test]
+fn worker_admission_decision_rejects_forged_admitted_state() {
+    let advertisement = WorkerAdvertisement::new(
+        "worker-local-1",
+        "doc-cpu",
+        "sha256:package-lock",
+        "sha256:image",
+        [BlockCapability::new("prompt.render@1")],
+    );
+    let mut decision = evaluate_worker_admission(&WorkerAdmissionPolicy::current(), &advertisement);
+    decision.protocol_version = WORKER_PROTOCOL_VERSION + 1;
+    let wrong_version =
+        WorkerProtocolMessage::admission_decision("decision-version", 1, decision.clone());
+    assert_eq!(
+        wrong_version.validate(),
+        Err(WorkerProtocolMessageError::InvalidAdmissionDecision {
+            field: "protocol_version",
+        }),
+    );
+
+    decision.protocol_version = WORKER_PROTOCOL_VERSION;
+    decision.state = WorkerState::Draining;
+    let wrong_state = WorkerProtocolMessage::admission_decision("decision-state", 2, decision);
+    assert_eq!(
+        wrong_state.validate(),
+        Err(WorkerProtocolMessageError::InvalidAdmissionDecision { field: "state" }),
+    );
 }
 
 #[test]
@@ -808,6 +851,23 @@ fn worker_invocation_context_validation_requires_bound_policy_and_budget_pairs()
     assert_eq!(
         context.validate(),
         Err(WorkerInvocationContextError::MissingBudgetPermitId),
+    );
+}
+
+#[test]
+fn worker_invocation_context_validation_requires_bound_trace_pair() {
+    let mut context = WorkerInvocationContext::new("release-1", "rev-1");
+    context.trace_id = Some("trace-1".to_owned());
+    assert_eq!(
+        context.validate(),
+        Err(WorkerInvocationContextError::MissingParentSpanId),
+    );
+
+    context.trace_id = None;
+    context.parent_span_id = Some("span-parent".to_owned());
+    assert_eq!(
+        context.validate(),
+        Err(WorkerInvocationContextError::MissingTraceId),
     );
 }
 

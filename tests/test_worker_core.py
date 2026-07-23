@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import deepcopy
 import json
 from pathlib import Path
 
@@ -96,6 +97,10 @@ def test_worker_advertisement_rejects_invalid_wire_payloads() -> None:
         (
             {**base, "protocolVersion": True},
             "worker advertisement protocol_version must be an integer",
+        ),
+        (
+            {**base, "protocolVersion": 1 << 16},
+            "worker advertisement protocol_version must fit an unsigned 16-bit integer",
         ),
         (
             {**base, "state": "paused"},
@@ -271,6 +276,10 @@ def test_worker_admission_decision_rejects_invalid_wire_payloads() -> None:
             "worker admission decision protocol_version must be an integer",
         ),
         (
+            {**base, "protocolVersion": 1 << 16},
+            "worker admission decision protocol_version must fit an unsigned 16-bit integer",
+        ),
+        (
             {**base, "state": "paused"},
             "worker admission decision state has invalid value",
         ),
@@ -283,8 +292,34 @@ def test_worker_admission_decision_rejects_invalid_wire_payloads() -> None:
             "worker admission decision reason_code must not be empty",
         ),
         (
+            {
+                **base,
+                "reasonCodes": ["worker.not_ready", "worker.not_ready"],
+            },
+            "worker admission decision reason_codes must be unique",
+        ),
+        (
             {**base, "admitted": True},
             "admitted worker admission decision must not define reason_codes",
+        ),
+        (
+            {
+                **base,
+                "admitted": True,
+                "reasonCodes": [],
+                "protocolVersion": WORKER_PROTOCOL_VERSION + 1,
+                "state": "ready",
+            },
+            "admitted worker admission decision must use the current protocol_version",
+        ),
+        (
+            {
+                **base,
+                "admitted": True,
+                "reasonCodes": [],
+                "state": "draining",
+            },
+            "admitted worker admission decision must describe an admission-ready state",
         ),
         (
             {**base, "reasonCodes": []},
@@ -619,6 +654,14 @@ def test_worker_protocol_message_rejects_invalid_wire_shapes() -> None:
             "worker protocol message sequence must not be negative",
         ),
         (
+            {**base, "sequence": 1 << 64},
+            "worker protocol message sequence must fit an unsigned 64-bit integer",
+        ),
+        (
+            {**base, "protocolVersion": WORKER_PROTOCOL_VERSION + 1},
+            "worker protocol message protocol_version is incompatible",
+        ),
+        (
             {**base, "kind": "heartbeat"},
             "worker protocol message kind has invalid value",
         ),
@@ -640,6 +683,17 @@ def test_worker_protocol_message_rejects_invalid_wire_shapes() -> None:
             | {"payload": {"code": " ", "message": "failed"}},
             "worker protocol message error code must not be empty",
         ),
+        (
+            WorkerProtocolMessage.error("msg-4", 4, code="worker.failed", message="failed").to_wire()
+            | {
+                "payload": {
+                    "code": "worker.failed",
+                    "message": "failed",
+                    "details": {" ": "value"},
+                }
+            },
+            "worker protocol message error detail keys must not be empty",
+        ),
     )
 
     for payload, message in invalid_messages:
@@ -650,7 +704,17 @@ def test_worker_protocol_message_rejects_invalid_wire_shapes() -> None:
         WorkerProtocolError,
         match="worker protocol message invoke_request payload must be WorkerInvokeRequest",
     ):
-        WorkerProtocolMessage("msg-4", "invoke_request", 4, advertisement)
+        WorkerProtocolMessage("msg-5", "invoke_request", 5, advertisement)
+
+    with pytest.raises(
+        WorkerProtocolError,
+        match="worker protocol message advertisement protocol_version is incompatible",
+    ):
+        WorkerProtocolMessage.advertisement(
+            "msg-6",
+            6,
+            advertisement.with_protocol_version(WORKER_PROTOCOL_VERSION + 1),
+        )
 
 
 def test_worker_invocation_context_rejects_invalid_propagation_fields() -> None:
@@ -670,6 +734,22 @@ def test_worker_invocation_context_rejects_invalid_propagation_fields() -> None:
         (
             lambda: WorkerInvocationContext("release-1", "rev-1", trace_id=" "),
             "worker invocation context trace_id must not be empty",
+        ),
+        (
+            lambda: WorkerInvocationContext(
+                "release-1",
+                "rev-1",
+                trace_id="trace-1",
+            ),
+            "worker invocation context trace id and parent span id must be provided together",
+        ),
+        (
+            lambda: WorkerInvocationContext(
+                "release-1",
+                "rev-1",
+                parent_span_id="span-parent",
+            ),
+            "worker invocation context trace id and parent span id must be provided together",
         ),
         (
             lambda: WorkerInvocationContext(
@@ -778,8 +858,20 @@ def test_worker_invoke_request_rejects_invalid_envelope_fields() -> None:
             "worker invoke request lease_epoch must not be negative",
         ),
         (
+            {**base_request, "lease_epoch": 1 << 64},
+            "worker invoke request lease_epoch must fit an unsigned 64-bit integer",
+        ),
+        (
             {**base_request, "context": object()},
             "worker invoke request context must be a WorkerInvocationContext",
+        ),
+        (
+            {**base_request, "inputs": {1: "coerced"}},
+            "worker invoke request inputs must contain strict JSON",
+        ),
+        (
+            {**base_request, "config": {"temperature": float("nan")}},
+            "worker invoke request config must contain strict JSON",
         ),
     )
 
@@ -829,6 +921,10 @@ def test_worker_invoke_result_rejects_invalid_envelope_fields() -> None:
             "worker invoke result lease_epoch must not be negative",
         ),
         (
+            {**base_result, "lease_epoch": 1 << 64},
+            "worker invoke result lease_epoch must fit an unsigned 64-bit integer",
+        ),
+        (
             {**base_result, "outputs": []},
             "worker invoke result outputs must be a mapping",
         ),
@@ -839,6 +935,10 @@ def test_worker_invoke_result_rejects_invalid_envelope_fields() -> None:
         (
             {**base_result, "outputs": {" ": "Echo Hello"}},
             "worker invoke result output keys must not be empty",
+        ),
+        (
+            {**base_result, "outputs": {"score": float("nan")}},
+            "worker invoke result outputs must contain strict JSON",
         ),
     )
 
@@ -861,6 +961,120 @@ def test_worker_invoke_result_rejects_invalid_envelope_fields() -> None:
         match="worker invoke result outputs must be a mapping",
     ):
         WorkerInvokeResult.from_wire(encoded)
+
+
+def test_worker_wire_records_snapshot_nested_payloads_and_return_mutable_projections() -> None:
+    attributes = {"tenant": "acme"}
+    context = WorkerInvocationContext(
+        "release-1",
+        "rev-1",
+        attributes=attributes,
+    )
+    attributes["tenant"] = "mutated"
+    assert context.attributes == {"tenant": "acme"}
+    with pytest.raises(TypeError):
+        context.attributes["tenant"] = "mutated"  # type: ignore[index]
+    with pytest.raises(TypeError):
+        dict.__setitem__(context.attributes, "tenant", "mutated")  # type: ignore[arg-type]
+
+    inputs = {"messages": [{"text": "hello"}]}
+    config = {"temperature": 0}
+    request = WorkerInvokeRequest(
+        invocation_id="invoke-000001",
+        run_id="run-000001",
+        node_id="model",
+        node_attempt_id="model-attempt-1",
+        lease_epoch=7,
+        block="model.generate@1",
+        context=context,
+        inputs=inputs,
+        config=config,
+    )
+    message = WorkerProtocolMessage.invoke_request("message-1", 1, request)
+    digest = message.content_digest()
+
+    inputs["messages"][0]["text"] = "mutated"
+    config["temperature"] = 1
+    with pytest.raises(TypeError):
+        request.inputs["extra"] = True  # type: ignore[index]
+    with pytest.raises(TypeError):
+        list.__setitem__(request.inputs["messages"], 0, {"text": "mutated"})  # type: ignore[arg-type,index]
+    projection = request.to_wire()
+    projection["inputs"]["messages"][0]["text"] = "projection mutation"  # type: ignore[index]
+
+    assert request.to_wire()["inputs"] == {"messages": [{"text": "hello"}]}
+    assert request.to_wire()["config"] == {"temperature": 0}
+    assert message.content_digest() == digest
+
+    outputs = {"answer": {"text": "hello"}}
+    result = WorkerInvokeResult(
+        invocation_id="invoke-000001",
+        node_attempt_id="model-attempt-1",
+        lease_epoch=7,
+        outputs=outputs,
+    )
+    outputs["answer"]["text"] = "mutated"
+    with pytest.raises(TypeError):
+        result.outputs["extra"] = True  # type: ignore[index]
+    result_projection = result.to_wire()
+    result_projection["outputs"]["answer"]["text"] = "projection mutation"  # type: ignore[index]
+    assert result.to_wire()["outputs"] == {"answer": {"text": "hello"}}
+    copied_outputs = deepcopy(result.outputs)
+    copied_outputs["answer"]["text"] = "deepcopy mutation"  # type: ignore[index]
+    assert isinstance(copied_outputs, dict)
+    assert result.to_wire()["outputs"] == {"answer": {"text": "hello"}}
+
+
+def test_worker_wire_digests_support_arbitrary_size_integers_and_freeze_error_details() -> None:
+    huge_integer = 10**5_000
+    payload = RemoteEdgePayload.inline(
+        "graphblocks.ai/Message",
+        {"value": huge_integer},
+        RemotePayloadLimits(max_inline_bytes=10_000),
+    )
+    assert payload.to_wire()["value"] == {"value": huge_integer}
+    assert payload.content_digest().startswith("sha256:")
+    with pytest.raises(TypeError):
+        payload.value["value"] = 0  # type: ignore[index]
+
+    artifact = {
+        "artifact_id": "artifact-1",
+        "uri": "s3://bucket/artifact-1",
+        "metadata": {"tenant": "acme"},
+    }
+    artifact_payload = RemoteEdgePayload(
+        mode="artifact_ref",
+        schema="graphblocks.ai/Artifact",
+        artifact=artifact,
+    )
+    artifact["metadata"]["tenant"] = "mutated"
+    with pytest.raises(TypeError):
+        artifact_payload.artifact["metadata"]["tenant"] = "mutated"  # type: ignore[index]
+    assert artifact_payload.to_wire()["artifact"] == {
+        "artifact_id": "artifact-1",
+        "uri": "s3://bucket/artifact-1",
+        "metadata": {"tenant": "acme"},
+    }
+
+    details = {"attempt": {"number": huge_integer}}
+    message = WorkerProtocolMessage(
+        message_id="message-error",
+        kind="error",
+        sequence=2,
+        payload={
+            "code": "worker.failed",
+            "message": "failed",
+            "details": details,
+        },
+    )
+    digest = message.content_digest()
+    details["attempt"]["number"] = 0
+    with pytest.raises(TypeError):
+        message.payload["details"]["attempt"]["number"] = 0  # type: ignore[index]
+    projection = message.to_wire()
+    projection["payload"]["details"]["attempt"]["number"] = 0  # type: ignore[index]
+    assert message.content_digest() == digest
+    assert message.to_wire()["payload"]["details"]["attempt"]["number"] == huge_integer  # type: ignore[index]
 
 
 def test_worker_drain_plan_closes_admission_and_preserves_inflight_affinity() -> None:
@@ -1188,18 +1402,20 @@ def test_worker_wire_serializers_reject_non_finite_numbers() -> None:
     with pytest.raises(RemotePayloadInlineJsonEncodingError):
         RemoteEdgePayload.inline("graphblocks.ai/Score@1", value, RemotePayloadLimits(128))
 
-    message = WorkerProtocolMessage(
-        "message-1",
-        "error",
-        1,
-        {
-            "code": "worker.failed",
-            "message": "worker failed",
-            "details": value,
-        },
-    )
-    with pytest.raises(RemotePayloadInlineJsonEncodingError):
-        message.content_digest()
+    with pytest.raises(
+        WorkerProtocolError,
+        match="worker protocol message error payload must contain strict JSON",
+    ):
+        WorkerProtocolMessage(
+            "message-1",
+            "error",
+            1,
+            {
+                "code": "worker.failed",
+                "message": "worker failed",
+                "details": value,
+            },
+        )
 
 
 def test_remote_inline_payload_rejects_ambiguous_or_overdeep_json() -> None:
@@ -1367,8 +1583,16 @@ def test_run_ownership_lease_rejects_invalid_wire_payloads() -> None:
             "run ownership lease lease_epoch must be an integer",
         ),
         (
+            {**base, "leaseEpoch": 1 << 64},
+            "run ownership lease lease_epoch must fit an unsigned 64-bit integer",
+        ),
+        (
             {**base, "expiresAtUnixMs": -1},
             "run ownership lease expires_at_unix_ms must not be negative",
+        ),
+        (
+            {**base, "expiresAtUnixMs": 1 << 64},
+            "run ownership lease expires_at_unix_ms must fit an unsigned 64-bit integer",
         ),
         (
             {**base, "lastCheckpoint": ""},

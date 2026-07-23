@@ -660,10 +660,23 @@ fn validate_worker_admission_decision(
             field: "reason_codes",
         });
     }
+    if decision.reason_codes.iter().collect::<BTreeSet<_>>().len() != decision.reason_codes.len() {
+        return Err(WorkerProtocolMessageError::InvalidAdmissionDecision {
+            field: "reason_codes",
+        });
+    }
     if decision.admitted != decision.reason_codes.is_empty() {
         return Err(WorkerProtocolMessageError::InvalidAdmissionDecision {
             field: "reason_codes",
         });
+    }
+    if decision.admitted && decision.protocol_version != WORKER_PROTOCOL_VERSION {
+        return Err(WorkerProtocolMessageError::InvalidAdmissionDecision {
+            field: "protocol_version",
+        });
+    }
+    if decision.admitted && !matches!(decision.state, WorkerState::Ready | WorkerState::Saturated) {
+        return Err(WorkerProtocolMessageError::InvalidAdmissionDecision { field: "state" });
     }
     if let Some(required_block) = &decision.required_block
         && required_block.trim().is_empty()
@@ -986,6 +999,8 @@ pub enum WorkerInvocationContextError {
     MissingPolicySnapshotId,
     MissingBudgetPermitDigest,
     MissingBudgetPermitId,
+    MissingTraceId,
+    MissingParentSpanId,
     EmptyAttributeKey,
 }
 
@@ -1091,6 +1106,13 @@ impl WorkerInvocationContext {
             return Err(WorkerInvocationContextError::EmptyOptionalField {
                 field: "budget_permit_digest".to_owned(),
             });
+        }
+        match (&self.trace_id, &self.parent_span_id) {
+            (Some(_), Some(_)) | (None, None) => {}
+            (Some(_), None) => {
+                return Err(WorkerInvocationContextError::MissingParentSpanId);
+            }
+            (None, Some(_)) => return Err(WorkerInvocationContextError::MissingTraceId),
         }
         match (&self.policy_snapshot_id, &self.policy_snapshot_digest) {
             (Some(_), Some(_)) | (None, None) => {}
