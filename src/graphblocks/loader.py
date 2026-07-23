@@ -148,6 +148,10 @@ def load_documents(path: str | Path) -> list[dict[str, Any]]:
         raise ValueError(
             f"{source}: invalid YAML: document nesting exceeds parser limit"
         ) from error
+    except UnicodeError as error:
+        raise ValueError(
+            f"{source}: invalid YAML: document is not UTF-8"
+        ) from error
     except yaml.YAMLError as error:
         raise ValueError(f"{source}: invalid YAML: {error}") from error
     for index, document in enumerate(documents):

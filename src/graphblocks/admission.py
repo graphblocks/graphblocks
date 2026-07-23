@@ -82,6 +82,10 @@ def _non_empty_string(owner: str, field_name: str, value: object) -> str:
         raise AdmissionError(
             f"{owner} {field_name} must not contain control characters"
         )
+    if any("\ud800" <= character <= "\udfff" for character in value):
+        raise AdmissionError(
+            f"{owner} {field_name} must contain only Unicode scalar values"
+        )
     return value
 
 
@@ -204,6 +208,29 @@ class AdmissionTicket:
             if self.completed_at_ms < lower_bound:
                 raise AdmissionError(
                     "admission ticket completed_at_ms must not precede its lifecycle"
+                )
+        if (
+            self.started_at_ms is not None
+            and self.started_at_ms >= self.expires_at_ms
+        ):
+            raise AdmissionError(
+                "admission ticket started_at_ms must precede expires_at_ms"
+            )
+        if self.completed_at_ms is not None:
+            if (
+                self.state == "expired"
+                and self.completed_at_ms < self.expires_at_ms
+            ):
+                raise AdmissionError(
+                    "expired admission ticket completed_at_ms must not precede "
+                    "expires_at_ms"
+                )
+            if (
+                self.state != "expired"
+                and self.completed_at_ms >= self.expires_at_ms
+            ):
+                raise AdmissionError(
+                    "admission ticket completed_at_ms must precede expires_at_ms"
                 )
 
     def contract(self) -> dict[str, object]:

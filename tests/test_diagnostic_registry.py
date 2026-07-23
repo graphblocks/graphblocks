@@ -51,6 +51,15 @@ def test_diagnostic_records_validate_and_snapshot_public_values() -> None:
             )
 
 
+def test_diagnostic_set_normalizes_hostile_iterable_failures() -> None:
+    class ExplodingDiagnostics:
+        def __iter__(self):
+            raise RuntimeError("source changed during iteration")
+
+    with pytest.raises(ValueError, match="diagnostics must be a collection"):
+        DiagnosticSet(ExplodingDiagnostics())  # type: ignore[arg-type]
+
+
 def _literal_diagnostics(path: Path, constructors: set[str]) -> dict[str, str]:
     observed: dict[str, str] = {}
     tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))

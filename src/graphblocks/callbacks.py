@@ -82,6 +82,10 @@ def _validate_non_empty_string(owner: str, field_name: str, value: object) -> st
         raise ValueError(f"{owner} {field_name} must not be empty")
     if value != value.strip():
         raise ValueError(f"{owner} {field_name} must not contain surrounding whitespace")
+    try:
+        value.encode("utf-8")
+    except UnicodeEncodeError:
+        raise ValueError(f"{owner} {field_name} must contain only Unicode scalar values") from None
     return value
 
 
@@ -174,7 +178,7 @@ def _string_tuple(owner: str, field_name: str, value: Iterable[str] | None) -> t
         raise ValueError(f"{owner} {field_name} must be a sequence")
     try:
         items = tuple(value)
-    except TypeError:
+    except (TypeError, ValueError, RuntimeError):
         raise ValueError(f"{owner} {field_name} must be a sequence") from None
     normalized = tuple(_validate_non_empty_string(owner, field_name, item) for item in items)
     if len(set(normalized)) != len(normalized):

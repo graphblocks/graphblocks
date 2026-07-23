@@ -134,6 +134,15 @@ def test_outcome_metadata_rejects_cycles_and_excessive_depth() -> None:
         Outcome("value", metadata=overdeep)  # type: ignore[arg-type]
 
 
+def test_outcome_metadata_normalizes_unstable_mapping_failures() -> None:
+    class BrokenMetadata(dict[str, object]):
+        def items(self):
+            raise RuntimeError("mapping changed during iteration")
+
+    with pytest.raises(ValueError, match="outcome metadata must be a stable mapping"):
+        Outcome("value", metadata=BrokenMetadata(attempt=1))
+
+
 def test_readiness_records_validate_shapes_and_copy_inputs() -> None:
     source = PortRef(" node ", " output ")
     resolved = ResolvedInput.value("payload")

@@ -20,6 +20,8 @@ def test_admission_models_reject_controls_coerced_flags_and_counter_overflow() -
     ticket = _ticket()
     with pytest.raises(AdmissionError, match="control characters"):
         _ticket(request_id="request\u0000hidden")
+    with pytest.raises(AdmissionError, match="Unicode scalar values"):
+        _ticket(request_id="request-\ud800")
     with pytest.raises(AdmissionError, match="duplicate must be a boolean"):
         AdmissionSubmission(ticket, duplicate=1)  # type: ignore[arg-type]
 
@@ -100,6 +102,40 @@ def _ticket(**overrides: object) -> AdmissionTicket:
     ),
 )
 def test_admission_ticket_rejects_inconsistent_lifecycle_fields(
+    overrides: dict[str, object],
+    message: str,
+) -> None:
+    with pytest.raises(AdmissionError, match=message):
+        _ticket(**overrides)
+
+
+@pytest.mark.parametrize(
+    ("overrides", "message"),
+    (
+        (
+            {
+                "state": "running",
+                "started_at_ms": 1_000,
+            },
+            "started_at_ms must precede expires_at_ms",
+        ),
+        (
+            {
+                "state": "completed",
+                "completed_at_ms": 1_000,
+            },
+            "completed_at_ms must precede expires_at_ms",
+        ),
+        (
+            {
+                "state": "expired",
+                "completed_at_ms": 999,
+            },
+            "expired admission ticket completed_at_ms must not precede expires_at_ms",
+        ),
+    ),
+)
+def test_admission_ticket_rejects_lifecycle_states_outside_its_lease(
     overrides: dict[str, object],
     message: str,
 ) -> None:

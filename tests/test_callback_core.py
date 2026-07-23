@@ -132,6 +132,35 @@ def test_event_filter_rejects_mappings_as_sequence_constraints() -> None:
             construct()
 
 
+def test_event_filter_normalizes_hostile_iterable_failures() -> None:
+    class ExplodingIterable:
+        def __iter__(self):
+            raise RuntimeError("iterator changed during snapshot")
+
+    with raises_value_error("event filter types must be a sequence"):
+        graphblocks.EventFilter(types=ExplodingIterable())
+    with raises_value_error("event filter authorized visibility must be a sequence"):
+        graphblocks.EventFilter().authorized_for_visibility(ExplodingIterable())
+
+
+def test_callback_schema_rejects_non_unicode_wire_strings() -> None:
+    with raises_value_error("event filter types must contain only Unicode scalar values"):
+        graphblocks.EventFilter(types=["Run\ud800"])
+    with raises_value_error(
+        "callback subscription subscription_id must contain only Unicode scalar values"
+    ):
+        graphblocks.CallbackSubscription(
+            subscription_id="sub-\ud800",
+            owner="principal:ide",
+            scope="run",
+            scope_id="run-1",
+            event_filter=graphblocks.EventFilter(),
+            delivery_target="webhook:ide-relay",
+            status="active",
+            created_at="2026-07-02T00:00:00Z",
+        )
+
+
 def test_callback_schema_rejects_whitespace_wrapped_subscription_and_filter_values() -> None:
     filter_cases = (
         (lambda: graphblocks.EventFilter(types=[" RunStarted"]), "event filter types must not contain surrounding whitespace"),

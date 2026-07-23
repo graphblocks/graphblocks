@@ -74,6 +74,22 @@ def test_audit_outbox_rejects_attempt_counter_overflow() -> None:
         outbox.mark_failed("audit-overflow", error="still unavailable")
 
 
+def test_audit_outbox_normalizes_unstable_payload_mappings() -> None:
+    graphblocks_audit = importlib.import_module("graphblocks.audit")
+
+    class BrokenPayload(dict[str, object]):
+        def items(self):
+            raise RuntimeError("mapping changed during iteration")
+
+    outbox = graphblocks_audit.SQLiteAuditOutbox.in_memory()
+    with pytest.raises(ValueError, match="must contain strict canonical JSON"):
+        outbox.append(
+            "application_event",
+            BrokenPayload(event_id="event-1"),
+            occurred_at="2026-06-23T00:00:00Z",
+        )
+
+
 def test_audit_package_exposes_append_only_event_and_enforcement_records(monkeypatch) -> None:
     graphblocks_audit = importlib.import_module("graphblocks.audit")
 

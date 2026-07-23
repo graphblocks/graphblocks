@@ -101,3 +101,14 @@ def test_load_documents_rejects_unicode_surrogates(
 
     with pytest.raises(ValueError, match="Unicode scalar values"):
         load_documents(path)
+
+
+def test_load_documents_normalizes_invalid_utf8(tmp_path: Path) -> None:
+    path = tmp_path / "invalid-utf8.yaml"
+    path.write_bytes(b"value: \xff\n")
+
+    with pytest.raises(
+        ValueError,
+        match=r"invalid-utf8\.yaml: invalid YAML: document is not UTF-8",
+    ):
+        load_documents(path)

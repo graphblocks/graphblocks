@@ -49,7 +49,7 @@ class DiagnosticSet:
             raise ValueError("diagnostic set diagnostics must be a collection")
         try:
             diagnostics = tuple(self.diagnostics)
-        except TypeError as error:
+        except (TypeError, RuntimeError) as error:
             raise ValueError("diagnostic set diagnostics must be a collection") from error
         if any(not isinstance(item, Diagnostic) for item in diagnostics):
             raise ValueError("diagnostic set diagnostics must contain Diagnostic records")

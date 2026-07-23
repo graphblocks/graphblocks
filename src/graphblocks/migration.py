@@ -85,7 +85,7 @@ def _migrate_document(
 
     try:
         migrated = canonical_loads(canonical_dumps(document))
-    except (TypeError, ValueError) as error:
+    except (TypeError, ValueError, RuntimeError, LookupError) as error:
         raise ValueError("migration document must contain canonical JSON values") from error
     kind = migrated.get("kind")
     api_version = migrated.get("apiVersion")

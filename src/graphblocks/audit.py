@@ -145,7 +145,7 @@ def _snapshot_audit_payload(
         normalized = _normalize_audit_json_value(payload, active_containers=set())
         canonical_payload = canonical_dumps(normalized)
         decoded = canonical_loads(canonical_payload)
-    except (RecursionError, TypeError, ValueError) as error:
+    except (RecursionError, TypeError, ValueError, RuntimeError) as error:
         if isinstance(error, ValueError) and str(error).startswith("audit payload"):
             raise
         raise ValueError(f"audit {field_name} must contain strict canonical JSON") from error

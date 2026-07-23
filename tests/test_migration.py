@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Iterator, Mapping
 from copy import deepcopy
 from pathlib import Path
 
@@ -129,6 +130,26 @@ def test_migration_rejects_invalid_root_and_recursive_documents_cleanly() -> Non
     recursive["spec"] = recursive
     with pytest.raises(ValueError, match="canonical JSON values"):
         migrate_document(recursive)
+
+
+def test_migration_normalizes_hostile_mapping_traversal_errors() -> None:
+    class ExplodingMapping(Mapping[str, object]):
+        def __getitem__(self, key: str) -> object:
+            raise RuntimeError("hostile lookup")
+
+        def __iter__(self) -> Iterator[str]:
+            return iter(("apiVersion",))
+
+        def __len__(self) -> int:
+            return 1
+
+    with pytest.raises(
+        ValueError,
+        match="migration document must contain canonical JSON values",
+    ) as captured:
+        migrate_document(ExplodingMapping())  # type: ignore[arg-type]
+
+    assert isinstance(captured.value.__cause__, RuntimeError)
 
 
 def test_migration_reports_non_string_resource_versions() -> None:

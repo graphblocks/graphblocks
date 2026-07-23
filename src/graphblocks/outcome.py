@@ -84,19 +84,24 @@ def _freeze_metadata_value(
         active_containers.add(identity)
         try:
             snapshot: dict[str, object] = {}
-            for key, item in value.items():
-                key_text = _validate_non_empty_string(owner, "metadata key", key)
-                if key_text != key_text.strip():
-                    raise ValueError(
-                        f"{owner} metadata key must not contain surrounding whitespace"
+            try:
+                for key, item in value.items():
+                    key_text = _validate_non_empty_string(owner, "metadata key", key)
+                    if key_text != key_text.strip():
+                        raise ValueError(
+                            f"{owner} metadata key must not contain surrounding whitespace"
+                        )
+                    snapshot[key_text] = _freeze_metadata_value(
+                        owner,
+                        item,
+                        depth=depth + 1,
+                        active_containers=active_containers,
+                        node_count=node_count,
                     )
-                snapshot[key_text] = _freeze_metadata_value(
-                    owner,
-                    item,
-                    depth=depth + 1,
-                    active_containers=active_containers,
-                    node_count=node_count,
-                )
+            except RuntimeError as error:
+                raise ValueError(
+                    f"{owner} metadata must be a stable mapping"
+                ) from error
             return MappingProxyType(snapshot)
         finally:
             active_containers.remove(identity)
