@@ -4,14 +4,13 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from decimal import Decimal
-import json
 from pathlib import Path
 import sqlite3
 from threading import RLock
 from typing import Literal
 
 from .budget import UsageAmount
-from .canonical import MAX_CANONICAL_JSON_DEPTH, canonical_dumps
+from .canonical import MAX_CANONICAL_JSON_DEPTH, canonical_dumps, canonical_loads
 from .documents import FrozenDict
 
 
@@ -236,20 +235,8 @@ def _usage_provider_duplicate_conflict(
 
 
 def _loads_strict_json(field_name: str, value: str) -> object:
-    def reject_duplicate_keys(pairs: list[tuple[str, object]]) -> dict[str, object]:
-        decoded: dict[str, object] = {}
-        for key, item in pairs:
-            if key in decoded:
-                raise ValueError(f"duplicate JSON object key {key!r}")
-            decoded[key] = item
-        return decoded
-
     try:
-        return json.loads(
-            value,
-            parse_constant=lambda constant: (_ for _ in ()).throw(ValueError(constant)),
-            object_pairs_hook=reject_duplicate_keys,
-        )
+        return canonical_loads(value)
     except (RecursionError, TypeError, ValueError) as error:
         raise ValueError(f"usage ledger {field_name} must be valid strict JSON") from error
 

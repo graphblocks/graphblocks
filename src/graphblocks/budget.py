@@ -5,13 +5,12 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 from functools import wraps
-import json
 from pathlib import Path
 import sqlite3
 from threading import RLock
 from typing import Literal, ParamSpec, TypeVar, cast, get_args
 
-from .canonical import canonical_dumps
+from .canonical import canonical_dumps, canonical_loads
 from .documents import FrozenDict
 from .policy import ResourceRef
 
@@ -229,20 +228,8 @@ def _validate_usage_amounts(owner: str, field_name: str, values: object) -> _Fro
 
 
 def _loads_strict_json(field_name: str, value: str) -> object:
-    def reject_duplicate_keys(pairs: list[tuple[str, object]]) -> dict[str, object]:
-        decoded: dict[str, object] = {}
-        for key, item in pairs:
-            if key in decoded:
-                raise ValueError(f"duplicate JSON object key {key!r}")
-            decoded[key] = item
-        return decoded
-
     try:
-        return json.loads(
-            value,
-            parse_constant=lambda constant: (_ for _ in ()).throw(ValueError(constant)),
-            object_pairs_hook=reject_duplicate_keys,
-        )
+        return canonical_loads(value)
     except (RecursionError, TypeError, ValueError) as error:
         raise ValueError(f"budget ledger {field_name} must be valid strict JSON") from error
 
