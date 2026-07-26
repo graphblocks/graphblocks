@@ -11,11 +11,15 @@ import yaml
 from graphblocks import BlockCatalog
 from graphblocks.plugins import builtin_block_catalog
 from graphblocks.runtime import (
+    ExecutionJournal,
     InProcessRuntime,
+    JournalRecord,
     LocalExecutionJournal,
+    LocalJournalRecord,
     LocalRunResult,
     LocalRuntime,
     RuntimeRegistry,
+    SQLiteExecutionJournal,
     core_stdlib_registry,
     stdlib_registry,
 )
@@ -112,6 +116,20 @@ EXPECTED_CORE_STDLIB_BLOCKS = {
 }
 
 
+_CYCLIC_LOCAL_JSON: dict[str, Any] = {}
+_CYCLIC_LOCAL_JSON["self"] = _CYCLIC_LOCAL_JSON
+_INVALID_LOCAL_JSON_OBJECTS = (
+    pytest.param({"value": object()}, id="object"),
+    pytest.param({"value": b"\x00\x01"}, id="bytes"),
+    pytest.param({"value": {1, 2, 3}}, id="set"),
+    pytest.param(_CYCLIC_LOCAL_JSON, id="cycle"),
+    pytest.param({1: "value"}, id="non-string-key"),
+    pytest.param({"value": float("nan")}, id="nan"),
+    pytest.param({"value": float("inf")}, id="positive-infinity"),
+    pytest.param({"value": float("-inf")}, id="negative-infinity"),
+)
+
+
 def _single_node_graph(block_id: str) -> dict[str, Any]:
     return {
         "apiVersion": "graphblocks.ai/v1alpha3",
@@ -126,6 +144,14 @@ def _catalog_for(block_id: str, outputs: list[dict[str, Any]]) -> BlockCatalog:
     return BlockCatalog.from_blocks(
         [{"typeId": type_id, "version": int(version), "outputs": outputs}]
     )
+
+
+def _terminal_local_journal(
+    run_id: str = "stable-local-journal",
+) -> LocalExecutionJournal:
+    journal = LocalExecutionJournal(run_id)
+    journal.append_terminal("run_succeeded", {})
+    return journal
 
 
 def test_builtin_catalog_and_python_stdlib_have_exact_port_contract_parity() -> None:
@@ -250,6 +276,107 @@ def test_stable_local_result_and_journal_preserve_terminal_invariants() -> None:
             status="waiting_callback",  # type: ignore[arg-type]
             outputs={},
             journal=journal,
+        )
+
+
+@pytest.mark.parametrize("payload", _INVALID_LOCAL_JSON_OBJECTS)
+def test_stable_local_journal_rejects_non_json_payloads(
+    payload: dict[object, Any],
+) -> None:
+    with pytest.raises(ValueError, match="local journal payload must be valid strict JSON"):
+        LocalJournalRecord(
+            sequence=1,
+            kind="run_started",
+            payload=payload,  # type: ignore[arg-type]
+        )
+
+
+@pytest.mark.parametrize("outputs", _INVALID_LOCAL_JSON_OBJECTS)
+def test_stable_local_result_rejects_non_json_outputs(
+    outputs: dict[object, Any],
+) -> None:
+    with pytest.raises(ValueError, match="local result outputs must be valid strict JSON"):
+        LocalRunResult(
+            run_id="stable-local-journal",
+            status="succeeded",
+            outputs=outputs,  # type: ignore[arg-type]
+            journal=_terminal_local_journal(),
+        )
+
+
+@pytest.mark.parametrize(
+    "items",
+    [
+        pytest.param(({"values": (1, 2)},), id="tuple"),
+        pytest.param([{"values": [1, 2]}], id="list"),
+    ],
+)
+def test_local_and_persistent_journals_share_canonical_json_normalization(
+    items: object,
+) -> None:
+    payload = {"nested": {"items": items}}
+    persistent = JournalRecord(1, "run_started", payload)
+    local = LocalJournalRecord(1, "run_started", payload)
+    expected = {"nested": {"items": [{"values": [1, 2]}]}}
+
+    assert persistent.to_dict()["payload"] == expected
+    assert local.to_dict()["payload"] == expected
+    assert persistent.payload == local.payload
+
+
+@pytest.mark.parametrize(
+    "items",
+    [
+        pytest.param(({"values": (1, 2)},), id="tuple"),
+        pytest.param([{"values": [1, 2]}], id="list"),
+    ],
+)
+def test_stable_local_result_uses_canonical_json_normalization(
+    items: object,
+) -> None:
+    result = LocalRunResult(
+        run_id="stable-local-journal",
+        status="succeeded",
+        outputs={"nested": {"items": items}},
+        journal=_terminal_local_journal(),
+    )
+
+    assert result.outputs == {
+        "nested": {"items": [{"values": [1, 2]}]}
+    }
+
+
+@pytest.mark.parametrize(
+    "run_id",
+    [
+        pytest.param("", id="empty"),
+        pytest.param(" ", id="space"),
+        pytest.param("\t", id="tab"),
+        pytest.param("\n", id="newline"),
+        pytest.param(" stable-local-journal", id="leading-space"),
+        pytest.param("stable-local-journal ", id="trailing-space"),
+        pytest.param(object(), id="non-string"),
+    ],
+)
+def test_journal_backends_and_local_result_reject_noncanonical_run_ids(
+    run_id: object,
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(ValueError, match="exact nonempty string"):
+        ExecutionJournal(run_id)  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="exact nonempty string"):
+        LocalExecutionJournal(run_id)  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="exact nonempty string"):
+        SQLiteExecutionJournal(
+            tmp_path / "journal.sqlite3",
+            run_id,  # type: ignore[arg-type]
+        )
+    with pytest.raises(ValueError, match="exact nonempty string"):
+        LocalRunResult(
+            run_id=run_id,  # type: ignore[arg-type]
+            status="succeeded",
+            outputs={},
+            journal=_terminal_local_journal(),
         )
 
 

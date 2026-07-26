@@ -16,6 +16,7 @@ from graphblocks.runtime import (
     InProcessRuntime,
     JournalRecord,
     JournalStateError,
+    LocalExecutionJournal,
     LocalRuntime,
     RunResult,
     RuntimeRegistry,
@@ -1870,9 +1871,20 @@ def test_journal_snapshots_payload_once_and_hides_mutable_history() -> None:
         journal.terminal_kind = "run_succeeded"
 
 
-def test_sqlite_journal_rejects_ambiguous_run_identity(tmp_path) -> None:
+@pytest.mark.parametrize("run_id", ("", " ", "\t", "\n", " run-1", "run-1 "))
+@pytest.mark.parametrize("backend", ("execution", "local", "sqlite"))
+def test_journal_backends_reject_noncanonical_run_identity(
+    tmp_path,
+    backend: str,
+    run_id: str,
+) -> None:
     with pytest.raises(ValueError, match="exact nonempty string"):
-        SQLiteExecutionJournal(tmp_path / "journal.sqlite3", " run-test")
+        if backend == "execution":
+            ExecutionJournal(run_id)
+        elif backend == "local":
+            LocalExecutionJournal(run_id)
+        else:
+            SQLiteExecutionJournal(tmp_path / "journal.sqlite3", run_id)
 
 
 def test_runtime_fails_when_block_is_not_registered() -> None:

@@ -165,6 +165,30 @@ def _dumps_strict_json(owner: str, value: Any) -> str:
         raise ValueError(f"{owner} must be valid strict JSON") from error
 
 
+def _canonical_json_object(owner: str, value: object) -> FrozenDict:
+    if not isinstance(value, Mapping):
+        raise TypeError(f"{owner} must be a mapping")
+    snapshot = _loads_strict_json(
+        owner,
+        _dumps_strict_json(owner, value),
+    )
+    if not isinstance(snapshot, dict):
+        raise TypeError(f"{owner} must be a mapping")
+    frozen = _freeze_json_like(snapshot)
+    if not isinstance(frozen, FrozenDict):
+        raise TypeError(f"{owner} must be a mapping")
+    return frozen
+
+
+def _require_exact_nonempty_string(owner: str, value: object) -> None:
+    if (
+        not isinstance(value, str)
+        or not value.strip()
+        or value != value.strip()
+    ):
+        raise ValueError(f"{owner} must be an exact nonempty string")
+
+
 @dataclass(slots=True)
 class CancellationToken:
     cancelled: bool = False
@@ -214,15 +238,11 @@ class JournalRecord:
             raise ValueError("execution journal sequence must be a positive integer")
         if not isinstance(self.kind, str) or self.kind not in _JOURNAL_KINDS:
             raise ValueError(f"unsupported journal kind {self.kind!r}")
-        if not isinstance(self.payload, Mapping):
-            raise TypeError("execution journal payload must be a mapping")
-        snapshot = _loads_strict_json(
-            "execution journal payload",
-            _dumps_strict_json("execution journal payload", self.payload),
+        object.__setattr__(
+            self,
+            "payload",
+            _canonical_json_object("execution journal payload", self.payload),
         )
-        if not isinstance(snapshot, dict):
-            raise TypeError("execution journal payload must be a mapping")
-        object.__setattr__(self, "payload", _freeze_json_like(snapshot))
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -239,12 +259,10 @@ class ExecutionJournal:
     terminal_kind: JournalKind | None = None
 
     def __post_init__(self) -> None:
-        if (
-            not isinstance(self.run_id, str)
-            or not self.run_id.strip()
-            or self.run_id != self.run_id.strip()
-        ):
-            raise ValueError("execution journal run id must be an exact nonempty string")
+        _require_exact_nonempty_string(
+            "execution journal run id",
+            self.run_id,
+        )
         if isinstance(self.records, (str, bytes, bytearray, Mapping)):
             raise ValueError(
                 "execution journal records must be JournalRecord values"
@@ -332,9 +350,11 @@ class LocalJournalRecord:
             raise ValueError("local journal sequence must be a positive integer")
         if self.kind not in _LOCAL_JOURNAL_KINDS:
             raise ValueError(f"unsupported local journal kind {self.kind!r}")
-        if not isinstance(self.payload, Mapping):
-            raise TypeError("local journal payload must be a mapping")
-        object.__setattr__(self, "payload", _freeze_json_like(self.payload))
+        object.__setattr__(
+            self,
+            "payload",
+            _canonical_json_object("local journal payload", self.payload),
+        )
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -353,8 +373,10 @@ class LocalExecutionJournal:
     terminal_kind: LocalTerminalJournalKind | None = field(default=None, init=False)
 
     def __post_init__(self) -> None:
-        if not isinstance(self.run_id, str) or not self.run_id.strip():
-            raise ValueError("local journal run id must be a nonempty string")
+        _require_exact_nonempty_string(
+            "local journal run id",
+            self.run_id,
+        )
 
     def append(
         self,
@@ -399,14 +421,10 @@ class SQLiteExecutionJournal:
     connection: sqlite3.Connection = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
-        if (
-            not isinstance(self.run_id, str)
-            or not self.run_id.strip()
-            or self.run_id != self.run_id.strip()
-        ):
-            raise ValueError(
-                "SQLite execution journal run id must be an exact nonempty string"
-            )
+        _require_exact_nonempty_string(
+            "SQLite execution journal run id",
+            self.run_id,
+        )
         self.path = Path(self.path)
         self.connection = sqlite3.connect(self.path)
         self.connection.row_factory = sqlite3.Row
@@ -535,7 +553,11 @@ class SQLiteExecutionJournal:
                 """,
                 (self.run_id, sequence, kind, payload_json, int(terminal)),
             )
-        return JournalRecord(sequence, kind, dict(payload))
+        return JournalRecord(
+            sequence,
+            kind,
+            _loads_strict_json("execution journal payload", payload_json),
+        )
 
     def append(self, kind: JournalKind, payload: dict[str, Any]) -> JournalRecord:
         try:
@@ -871,6 +893,10 @@ class LocalRunResult:
     journal: LocalExecutionJournal
 
     def __post_init__(self) -> None:
+        _require_exact_nonempty_string(
+            "local result run_id",
+            self.run_id,
+        )
         if self.status not in {"succeeded", "failed", "cancelled"}:
             raise ValueError(f"invalid local result status {self.status!r}")
         if not isinstance(self.outputs, Mapping):
@@ -890,7 +916,11 @@ class LocalRunResult:
             raise ValueError(
                 "local result status must match its terminal journal record"
             )
-        object.__setattr__(self, "outputs", _freeze_json_like(self.outputs))
+        object.__setattr__(
+            self,
+            "outputs",
+            _canonical_json_object("local result outputs", self.outputs),
+        )
 
 
 @dataclass(slots=True)
