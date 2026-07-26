@@ -1,0 +1,143 @@
+name: Cut release candidate
+
+on:
+  workflow_dispatch:
+    inputs:
+      candidate_number:
+        description: Positive RC sequence number for v1.0.0-rc.N
+        required: true
+        type: string
+      commit_sha:
+        description: Exact 40-character main commit SHA to promote
+        required: true
+        type: string
+
+permissions: {}
+
+concurrency:
+  group: release-candidate-${{ inputs.candidate_number }}
+  cancel-in-progress: false
+
+jobs:
+  admit-green-sha:
+    name: Admit a green main SHA
+    if: >-
+      github.repository == 'graphblocks/graphblocks' &&
+      github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      candidate_ref: ${{ steps.admit.outputs.candidate_ref }}
+      candidate_sha: ${{ steps.admit.outputs.candidate_sha }}
+      ci_run_id: ${{ steps.admit.outputs.ci_run_id }}
+    steps:
+      - name: Admit an exact green main SHA
+        id: admit
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CANDIDATE_NUMBER: ${{ inputs.candidate_number }}
+          CANDIDATE_SHA: ${{ inputs.commit_sha }}
+        run: |
+          set -euo pipefail
+
+          if [[ ! "$CANDIDATE_NUMBER" =~ ^[1-9][0-9]*$ ]]; then
+            echo "::error::candidate_number must be a canonical positive integer"
+            exit 1
+          fi
+          if [[ ! "$CANDIDATE_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::commit_sha must be an exact lowercase 40-character SHA"
+            exit 1
+          fi
+
+          candidate_ref="refs/tags/v1.0.0-rc.$CANDIDATE_NUMBER"
+          if gh api \
+            "repos/$GITHUB_REPOSITORY/git/ref/tags/v1.0.0-rc.$CANDIDATE_NUMBER" \
+            >/dev/null 2>&1
+          then
+            echo "::error::$candidate_ref already exists and will not be moved"
+            exit 1
+          fi
+          gh api "repos/$GITHUB_REPOSITORY/git/commits/$CANDIDATE_SHA" >/dev/null
+
+          runs_json="$(
+            gh api --method GET \
+              "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs" \
+              -f branch=main \
+              -f event=push \
+              -f status=success \
+              -f head_sha="$CANDIDATE_SHA" \
+              -f per_page=100
+          )"
+          run_ids="$(
+            jq -r --arg sha "$CANDIDATE_SHA" '
+              .workflow_runs[]
+              | select(
+                  .head_branch == "main"
+                  and .event == "push"
+                  and .head_sha == $sha
+                  and .conclusion == "success"
+                )
+              | .id
+            ' <<<"$runs_json"
+          )"
+
+          admitted_run=""
+          while IFS= read -r run_id; do
+            if [[ -z "$run_id" ]]; then
+              continue
+            fi
+            jobs_json="$(
+              gh api --paginate --method GET \
+                "repos/$GITHUB_REPOSITORY/actions/runs/$run_id/jobs" \
+                -f per_page=100
+            )"
+            if jq -se '
+              any(
+                .[].jobs[];
+                .name == "Required gates" and .conclusion == "success"
+              )
+            ' <<<"$jobs_json" >/dev/null
+            then
+              admitted_run="$run_id"
+              break
+            fi
+          done <<<"$run_ids"
+
+          if [[ -z "$admitted_run" ]]; then
+            echo "::error::$CANDIDATE_SHA has no successful main push Required gates job"
+            exit 1
+          fi
+
+          printf 'candidate_ref=%s\n' "$candidate_ref" >> "$GITHUB_OUTPUT"
+          printf 'candidate_sha=%s\n' "$CANDIDATE_SHA" >> "$GITHUB_OUTPUT"
+          printf 'ci_run_id=%s\n' "$admitted_run" >> "$GITHUB_OUTPUT"
+
+  create-candidate-tag:
+    name: Create immutable release candidate tag
+    needs:
+      - admit-green-sha
+    if: needs.admit-green-sha.outputs.candidate_ref != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - name: Create the admitted candidate ref
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CANDIDATE_REF: ${{ needs.admit-green-sha.outputs.candidate_ref }}
+          CANDIDATE_SHA: ${{ needs.admit-green-sha.outputs.candidate_sha }}
+        run: |
+          set -euo pipefail
+          jq -n \
+            --arg ref "$CANDIDATE_REF" \
+            --arg sha "$CANDIDATE_SHA" \
+            '{"ref": $ref, "sha": $sha}' \
+            | gh api --method POST \
+                "repos/$GITHUB_REPOSITORY/git/refs" \
+                --input -

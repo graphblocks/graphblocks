@@ -314,6 +314,17 @@ installer. Public verification of a final bundle requires Cosign both for the
 retained promotion reports and for the final in-bundle manifest signature; the
 executing binary's observed identity must equal the recorded identity.
 
+Release operators must create RC refs through
+`.github/workflows/cut-release-candidate.yml`, dispatched from `main` with a
+canonical positive candidate number and the exact lowercase 40-character
+commit SHA to promote. The read-only admission job accepts only a successful
+`main` push run of `.github/workflows/ci.yml` for that SHA whose `Required
+gates` job also concluded successfully. Only the dependent tag-creation job
+receives `contents: write`, and it creates a new `v1.0.0-rc.N` ref without
+moving an existing tag. Direct local `git tag` and `git push --tags` operations
+are outside the release process because they do not prove that the tagged SHA
+passed the aggregate gate.
+
 For an RC tag, the no-OIDC release-evidence job runs only after the Python,
 installed-artifact, example, and Rust jobs succeed. It emits exactly one
 canonical matrix attestation for that workflow attempt, binding the candidate
