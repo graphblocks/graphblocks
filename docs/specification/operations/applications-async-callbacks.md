@@ -251,6 +251,27 @@ those authorities, validate the callback payload against the referenced schema,
 or verify that the asserted lease remains fresh. Consequently this preview is
 not a multi-worker production admission boundary.
 
+Existing checkpoint round-trip, journal-prefix repair, identical-replay,
+claim/fence, and shared-file serialization tests remain valid evidence for this
+preview. They MUST NOT be described as absent merely because the production
+boundary remains open. Promotion to a production durable continuation requires
+all of the following additional evidence:
+
+1. resume admission and every authoritative commit revalidate live policy,
+   budget, release, ownership, and lease freshness instead of trusting only the
+   signed pre-admission assertion;
+2. at least two independent operating-system processes contend for the same
+   run, with crash failpoints around journal append, checkpoint replacement,
+   lease expiry or takeover, and output/effect publication;
+3. output and external-effect publication use a durable outbox or an equivalent
+   atomic, replayable boundary with stable idempotency identities; and
+4. the implementation states separately whether authoritative effects are
+   exactly once or deduplicated at least once, while callback and event delivery
+   remains at least once unless a stronger transport contract is proved.
+
+Those are C4/X3 preview-promotion gates. They do not expand or block the first
+stable C0/C1 local-runtime claim while durable continuation remains preview.
+
 The external rejection surface is deliberately non-oracular for callback
 admission: a denied assertion, unknown coordinator/operation, malformed or
 missing trusted evidence (including `schema_validated` other than the boolean

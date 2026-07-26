@@ -148,6 +148,26 @@ Cancellation MUST be structured and cooperative, with explicit behavior for
 in-flight provider calls, tools, children, checkpointing, and cleanup. Timeout
 and retry MUST use bounded policies.
 
+`ToolBinding.cancellation` declares an adapter capability, not an outcome:
+
+- `unsupported` means the adapter cannot propagate a cancellation request to
+  work that has already started;
+- `cooperative` means the adapter can propagate the request and the callee is
+  expected to observe it, but the runtime cannot compel observation; and
+- `force_terminable` means the adapter owns a runtime-controlled boundary that
+  can terminate the executing call. It does not by itself retract an external
+  effect that the call already delegated.
+
+Reaching a deadline MAY stop the runtime from accepting a late result without
+stopping the underlying call. In particular, `cooperative` cancellation MUST
+NOT be represented as a guarantee that execution or side effects cease at the
+deadline. A stronger timeout guarantee requires process isolation or another
+verified force-termination boundary, plus effect fencing at every authoritative
+result and effect commit. Conformance for that stronger guarantee MUST hold an
+adapter past its deadline and prove that a late return cannot publish a result,
+record success, commit an effect under stale authority, or overwrite the
+terminal timeout/cancellation outcome.
+
 ### Local timeout and retry
 
 <a id="GB-GCR-TIMEOUT-RETRY-001"></a>
@@ -156,9 +176,12 @@ A configured node timeout MUST be a positive finite duration and invalid values
 MUST be rejected before the node is
 scheduled. At its deadline, the in-process runtime exposes cancellation through
 the block context; cooperative blocks MUST inspect that token before committing
-an effect. An adapter that cannot cooperate MUST provide its own force-
-termination or effect-fencing boundary. A stale retry, lease holder, or fencing
-token MUST NOT mutate a newer attempt.
+an effect. This first stable local-runtime contract guarantees deadline
+signaling and rejection of stale authoritative commits, not preemptive
+termination of arbitrary in-process code or rollback of an external effect. An
+adapter claiming stronger post-deadline behavior MUST provide the termination
+and effect-fencing boundaries described above. A stale retry, lease holder, or
+fencing token MUST NOT mutate a newer attempt.
 
 <a id="GB-GCR-RETRY-LIMIT-001"></a>
 

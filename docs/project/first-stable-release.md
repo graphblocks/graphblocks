@@ -71,16 +71,20 @@ stable pure-Python claim; other implementations must publish their own reports.
 | Profile | 1.0 tier | Promotion condition |
 | --- | --- | --- |
 | `GB-C0-SCHEMA` | Stable | Closed schemas and readers for every claimed stable resource, `graphblocks.ai/v1` Graph output, alpha-to-v1 migrations, closed-world compilation by default, deterministic registered diagnostics, and current C0 TCK evidence. |
-| `GB-C1-LOCAL-RUNTIME` | Stable | All C0 gates plus local scheduling, typed ports, outcomes, cancellation, journal, bounded flow, tool lifecycle, and restart-independent local correctness evidence. This first claim applies to the pure-Python runtime only. |
+| `GB-C1-LOCAL-RUNTIME` | Stable | All C0 gates plus local scheduling, typed ports, outcomes, cooperative deadline signaling, rejection of stale authoritative commits, journal, bounded flow, tool lifecycle, and restart-independent local correctness evidence. This first claim applies to the pure-Python runtime only and does not promise preemptive termination of arbitrary in-process or provider work, or rollback of an external effect after a deadline. |
 | `GB-C2-AI-APPLICATION` | Preview | Documents, retrieval/RAG, conversation, and application protocol remain on the roadmap until their wire/API and acceptance gates are frozen. |
 | `GB-C3-GOVERNED-RUNTIME` | Preview | Policy, usage, budget, permit, approval, review, and workspace contracts require their own stable API and durability/security gates. |
-| `GB-C4-PRODUCTION` | Preview | Requires restart-durable accepted runs, authenticated and idempotent resume, worker crash recovery and fencing, immutable-release evidence, and production adapter verification. |
+| `GB-C4-PRODUCTION` | Preview | Existing checkpoint, replay, journal-repair, and claim/fence primitives remain preview evidence. Promotion additionally requires live authority and lease-freshness revalidation, independent-process crash recovery, a durable outbox/idempotency boundary for output and effect publication, explicit delivery/effect guarantees, immutable-release evidence, and production adapter verification. |
 | `GB-X1-ORCHESTRATION` | Preview (provisional) | Retains the catalog's provisional qualifier until bounded orchestration and delegated-budget parity gates pass. |
 | `GB-X2-VOICE` | Preview (experimental) | Retains the catalog's experimental qualifier until transport/provider support and interruption/playback authority gates pass. |
-| `GB-X3-DURABLE-STREAM` | Preview (experimental) | Retains the catalog's experimental qualifier until restart, replay, barrier, watermark, and sink-commit gates pass. |
+| `GB-X3-DURABLE-STREAM` | Preview (experimental) | Existing source replay, barrier, watermark, window, checkpoint, and sink-commit primitives remain preview evidence. Promotion requires real multi-process restart/crash failpoints, fresh lease and authority checks at commit, durable outbox/idempotency evidence, and an explicit boundary between at-least-once delivery and any exactly-once effect claim. |
 
 Passing C0 or C1 does not make a preview profile stable. Conversely, keeping a
 profile preview does not remove it from the specification or future roadmap.
+The additional C4 and X3 production gates do not block the first stable C0/C1
+release while those profiles remain explicitly preview. They become blocking
+only for a later promotion of the named preview profile; defects that cross
+into the claimed C0/C1 behavior remain ordinary stable-scope blockers.
 The executable mapping from every direct C0/C1 capability requirement to its
 normative source, implementation, schema, TCK suite, and focused tests is
 maintained in `stable-requirements.yaml`; CI rejects drift from the canonical
