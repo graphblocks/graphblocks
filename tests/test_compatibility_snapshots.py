@@ -65,6 +65,69 @@ def test_snapshot_writer_requires_explicit_update_for_drift(
     assert _check_or_update(snapshot_path, contract, update=False) is True
 
 
+def test_snapshot_drift_reports_semantic_api_changes(
+    tmp_path,
+    capsys,
+) -> None:
+    snapshot_path = tmp_path / "snapshot.json"
+    snapshot_path.write_text(
+        json.dumps(
+            {
+                "symbols": [
+                    {
+                        "path": "graphblocks.changed",
+                        "signature": "(value: 'str') -> 'str'",
+                        "dataclass": {
+                            "fields": [
+                                {"name": "value"},
+                            ],
+                        },
+                    },
+                    {
+                        "path": "graphblocks.removed",
+                        "signature": "() -> 'None'",
+                    },
+                ],
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    actual = {
+        "symbols": [
+            {
+                "path": "graphblocks.added",
+                "signature": "() -> 'None'",
+            },
+            {
+                "path": "graphblocks.changed",
+                "signature": "(value: 'bytes') -> 'bytes'",
+                "dataclass": {
+                    "fields": [
+                        {"name": "value"},
+                        {"name": "encoding"},
+                    ],
+                },
+            },
+        ],
+    }
+
+    assert _check_or_update(snapshot_path, actual, update=False) is False
+
+    error = capsys.readouterr().err
+    assert "Removed symbols:\n  graphblocks.removed" in error
+    assert "Added symbols:\n  graphblocks.added" in error
+    assert "Changed signatures:" in error
+    assert (
+        "graphblocks.changed: (value: 'str') -> 'str' "
+        "=> (value: 'bytes') -> 'bytes'"
+    ) in error
+    assert "Changed dataclass fields:" in error
+    assert "graphblocks.changed: [value] => [value, encoding]" in error
+
+
 def test_compatibility_cli_reports_missing_snapshot_without_traceback(
     tmp_path,
     monkeypatch,

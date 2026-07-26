@@ -515,6 +515,77 @@ def _display_path(path: Path) -> str:
         return str(path)
 
 
+def _symbol_contracts(snapshot: object) -> dict[str, dict[str, object]]:
+    if not isinstance(snapshot, dict):
+        return {}
+    raw_symbols = snapshot.get("symbols")
+    if not isinstance(raw_symbols, list):
+        return {}
+    symbols: dict[str, dict[str, object]] = {}
+    for raw_symbol in raw_symbols:
+        if not isinstance(raw_symbol, dict):
+            continue
+        path = raw_symbol.get("path")
+        if isinstance(path, str):
+            symbols[path] = raw_symbol
+    return symbols
+
+
+def _dataclass_field_names(symbol: dict[str, object]) -> tuple[str, ...] | None:
+    dataclass_contract = symbol.get("dataclass")
+    if not isinstance(dataclass_contract, dict):
+        return None
+    raw_fields = dataclass_contract.get("fields")
+    if not isinstance(raw_fields, list):
+        return None
+    return tuple(
+        name
+        for raw_field in raw_fields
+        if isinstance(raw_field, dict)
+        and isinstance((name := raw_field.get("name")), str)
+    )
+
+
+def _semantic_snapshot_diff(expected: object, actual: object) -> str:
+    expected_symbols = _symbol_contracts(expected)
+    actual_symbols = _symbol_contracts(actual)
+    if not expected_symbols and not actual_symbols:
+        return ""
+
+    sections: list[str] = []
+    removed = sorted(expected_symbols.keys() - actual_symbols.keys())
+    if removed:
+        sections.append("Removed symbols:\n" + "\n".join(f"  {path}" for path in removed))
+    added = sorted(actual_symbols.keys() - expected_symbols.keys())
+    if added:
+        sections.append("Added symbols:\n" + "\n".join(f"  {path}" for path in added))
+
+    changed_signatures: list[str] = []
+    changed_fields: list[str] = []
+    for path in sorted(expected_symbols.keys() & actual_symbols.keys()):
+        expected_symbol = expected_symbols[path]
+        actual_symbol = actual_symbols[path]
+        expected_signature = expected_symbol.get("signature")
+        actual_signature = actual_symbol.get("signature")
+        if expected_signature != actual_signature:
+            changed_signatures.append(
+                f"  {path}: {expected_signature} => {actual_signature}"
+            )
+        expected_fields = _dataclass_field_names(expected_symbol)
+        actual_fields = _dataclass_field_names(actual_symbol)
+        if expected_fields != actual_fields:
+            expected_names = ", ".join(expected_fields or ())
+            actual_names = ", ".join(actual_fields or ())
+            changed_fields.append(
+                f"  {path}: [{expected_names}] => [{actual_names}]"
+            )
+    if changed_signatures:
+        sections.append("Changed signatures:\n" + "\n".join(changed_signatures))
+    if changed_fields:
+        sections.append("Changed dataclass fields:\n" + "\n".join(changed_fields))
+    return "\n".join(sections)
+
+
 def _check_or_update(path: Path, actual: dict[str, object], *, update: bool) -> bool:
     rendered = _render(actual)
     if update:
@@ -526,6 +597,13 @@ def _check_or_update(path: Path, actual: dict[str, object], *, update: bool) -> 
         print(f"OK {_display_path(path)}")
         return True
     display_path = _display_path(path)
+    try:
+        expected_contract: object = json.loads(expected)
+    except json.JSONDecodeError:
+        expected_contract = None
+    semantic_diff = _semantic_snapshot_diff(expected_contract, actual)
+    if semantic_diff:
+        print(semantic_diff, file=sys.stderr)
     diff = "".join(
         difflib.unified_diff(
             expected.splitlines(keepends=True),
