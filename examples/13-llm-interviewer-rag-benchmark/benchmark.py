@@ -382,7 +382,7 @@ def run_benchmark() -> dict[str, object]:
     gate = evaluate_gate(
         "rag-improves-interview-quality",
         candidate,
-        metrics=metrics,
+        metrics=[metric for metric in metrics if metric.subject == candidate],
         constraints=[
             GateConstraint("rag_score_delta", "at_least", Decimal("0.20")),
             GateConstraint("rag_win_rate", "at_least", Decimal("0.67")),

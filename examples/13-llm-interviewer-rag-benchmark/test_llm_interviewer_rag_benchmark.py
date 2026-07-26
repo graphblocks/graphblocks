@@ -86,6 +86,12 @@ def test_llm_interviewer_rag_benchmark_example() -> None:
     assert all(case["retrievedItemIds"] for case in benchmark["cases"])
     assert str(benchmark["evidenceDigest"]).startswith("sha256:")
     assert benchmark["metrics"][0]["baselineValue"] == "0.2"
+    assert [metric["name"] for metric in benchmark["metrics"]] == [
+        "rag_mean_interview_score",
+        "no_rag_mean_interview_score",
+        "rag_score_delta",
+        "rag_win_rate",
+    ]
 
     repeated = assert_example_runner(
         script,
