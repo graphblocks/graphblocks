@@ -198,7 +198,12 @@ def _snapshot_regular_file(path: Path, *, owner: str) -> FileSnapshot:
         raise ReleaseBundleError(f"{owner} is missing or unreadable: {path}") from error
     if stat.S_ISLNK(before.st_mode) or not stat.S_ISREG(before.st_mode):
         raise ReleaseBundleError(f"{owner} must be a regular non-symlink file: {path}")
-    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    flags = (
+        os.O_RDONLY
+        | getattr(os, "O_BINARY", 0)
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+    )
     try:
         descriptor = os.open(path, flags)
     except OSError as error:

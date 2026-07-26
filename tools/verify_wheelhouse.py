@@ -76,6 +76,15 @@ def _tool_command(executable: str | Sequence[str]) -> list[str]:
     return command
 
 
+def _sanitized_process_output(output: str | None) -> str:
+    normalized = " ".join(
+        re.sub(r"[\x00-\x1f\x7f]+", " ", output or "").split()
+    )
+    if len(normalized) > 1_000:
+        normalized = normalized[:997] + "..."
+    return normalized or "<empty>"
+
+
 def parse_rustc_identity(output: str) -> dict[str, str]:
     normalized = output.strip()
     match = re.fullmatch(r"rustc ([0-9]+\.[0-9]+\.[0-9]+)(?: .+)?", normalized)
@@ -100,9 +109,18 @@ def observe_rustc_identity(
             capture_output=True,
             text=True,
         )
-    except (OSError, subprocess.CalledProcessError) as error:
+    except subprocess.CalledProcessError as error:
         raise RuntimeError(
-            f"release builds require rustc=={PINNED_RUSTC_VERSION}"
+            f"release builds require rustc=={PINNED_RUSTC_VERSION}; "
+            f"rustc --version failed with exit code {error.returncode}; "
+            f"stdout={_sanitized_process_output(error.stdout)!r}; "
+            f"stderr={_sanitized_process_output(error.stderr)!r}"
+        ) from error
+    except OSError as error:
+        raise RuntimeError(
+            f"release builds require rustc=={PINNED_RUSTC_VERSION}; "
+            "rustc --version could not be executed: "
+            f"{_sanitized_process_output(str(error))}"
         ) from error
     return parse_rustc_identity(completed.stdout)
 
