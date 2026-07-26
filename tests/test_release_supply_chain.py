@@ -2465,6 +2465,58 @@ def test_rustc_and_cosign_versions_are_observed_and_fail_closed(tmp_path: Path) 
         module._observe_cosign_identity(wrong_cosign)
 
 
+def test_rustc_observation_reports_sanitized_process_diagnostics(
+    tmp_path: Path,
+) -> None:
+    verify_path = Path(__file__).parents[1] / "tools" / "verify_wheelhouse.py"
+    spec = importlib.util.spec_from_file_location(
+        "verify_wheelhouse_for_diagnostics", verify_path
+    )
+    assert spec is not None and spec.loader is not None
+    verifier = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(verifier)
+
+    failing_tool = tmp_path / "failing_rustc.py"
+    failing_tool.write_text(
+        "import sys\n"
+        "print('partial\\trustc\\nidentity')\n"
+        "print('toolchain\\0sync\\nfailed', file=sys.stderr)\n"
+        "raise SystemExit(7)\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(RuntimeError) as raised:
+        verifier.observe_rustc_identity([sys.executable, str(failing_tool)])
+
+    message = str(raised.value)
+    assert "rustc --version failed with exit code 7" in message
+    assert "stdout='partial rustc identity'" in message
+    assert "stderr='toolchain sync failed'" in message
+    assert "\n" not in message
+    assert "\0" not in message
+
+
+def test_release_digest_inputs_are_checked_out_with_lf_line_endings() -> None:
+    root = Path(__file__).parents[1]
+    paths = (
+        "tck/durable/cases.json",
+        "crates/graphblocks-runtime-durable/tests/fixtures/durable-cases.json",
+        "compatibility/stable-testing-cli-contracts.json",
+    )
+
+    completed = subprocess.run(
+        ["git", "check-attr", "text", "eol", "--", *paths],
+        cwd=root,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    for path in paths:
+        assert f"{path}: text: set" in completed.stdout
+        assert f"{path}: eol: lf" in completed.stdout
+
+
 def test_release_evidence_snapshot_preserves_arbitrary_precision_json_numbers(
     tmp_path: Path,
 ) -> None:
@@ -2481,6 +2533,36 @@ def test_release_evidence_snapshot_preserves_arbitrary_precision_json_numbers(
     assert module._require_content_digest(observed, owner="test evidence") == payload[
         "contentDigest"
     ]
+
+
+def test_release_evidence_snapshot_uses_binary_mode_when_supported(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _load_module()
+    path = tmp_path / "evidence.json"
+    path.write_bytes(b'{"line":"one\\r\\ntwo"}\r\n')
+    binary_flag = 1 << 29
+    opened_flags: list[int] = []
+    platform_open = module.os.open
+    platform_binary_flag = getattr(module.os, "O_BINARY", 0)
+
+    monkeypatch.setattr(module.os, "O_BINARY", binary_flag, raising=False)
+
+    def recording_open(candidate: Path, flags: int) -> int:
+        opened_flags.append(flags)
+        return platform_open(
+            candidate,
+            (flags & ~binary_flag) | platform_binary_flag,
+        )
+
+    monkeypatch.setattr(module.os, "open", recording_open)
+
+    snapshot = module._snapshot_regular_file(path, owner="test evidence")
+
+    assert snapshot.data == path.read_bytes()
+    assert len(opened_flags) == 1
+    assert opened_flags[0] & binary_flag == binary_flag
 
 
 def test_ci_enforces_pinned_platform_aggregation_and_isolated_release_signing() -> None:
@@ -2553,13 +2635,14 @@ def test_ci_enforces_pinned_platform_aggregation_and_isolated_release_signing() 
 
     aggregate = jobs["release-evidence"]
     assert aggregate["needs"] == [
-        "python",
-        "installed-artifacts",
-        "examples",
-        "rust",
+        "required-gates",
         "release-ref-gate",
     ]
-    assert aggregate["if"] == "needs.release-ref-gate.outputs.release_ref == github.ref"
+    assert "needs.required-gates.result == 'success'" in aggregate["if"]
+    assert (
+        "needs.release-ref-gate.outputs.release_ref == github.ref"
+        in aggregate["if"]
+    )
     assert aggregate["permissions"] == {"contents": "read"}
     assert "id-token" not in json.dumps(aggregate)
     aggregate_steps = {step["name"]: step for step in aggregate["steps"]}
@@ -2712,6 +2795,167 @@ def test_ci_enforces_pinned_platform_aggregation_and_isolated_release_signing() 
     ]
     assert signed_upload["with"]["name"] == "graphblocks-release-candidate-bundle"
     assert signed_upload["with"]["path"] == "dist/release-bundle"
+
+
+def test_ci_primes_offline_rust_inputs_and_retains_failure_diagnostics() -> None:
+    root = Path(__file__).parents[1]
+    workflow = yaml.safe_load((root / ".github" / "workflows" / "ci.yml").read_text())
+    jobs = workflow["jobs"]
+
+    for job_name in ("python", "installed-artifacts", "examples", "rust"):
+        steps = {step["name"]: step for step in jobs[job_name]["steps"]}
+        setup = steps["Set up pinned Rust"]["run"]
+        assert (
+            "rustup toolchain install 1.94.0 --profile minimal "
+            "--component clippy,rustfmt"
+        ) in setup
+        assert "rustup default 1.94.0" in setup
+        preflight = steps["Verify pinned Rust toolchain"]["run"]
+        assert "rustup run 1.94.0 rustc --version" in preflight
+        assert "rustup run 1.94.0 cargo --version" in preflight
+        assert "rustup run 1.94.0 cargo clippy --version" in preflight
+        assert "rustup run 1.94.0 cargo fmt --version" in preflight
+
+    python_steps = {step["name"]: step for step in jobs["python"]["steps"]}
+    cargo_fetch = python_steps["Prime offline Rust example dependencies"]["run"]
+    assert "cargo fetch --locked --manifest-path" in cargo_fetch
+    assert (
+        "examples/01-enterprise-federated-rag/1-3-rust-runtime/Cargo.toml"
+        in cargo_fetch
+    )
+    assert "examples/12-custom-python-rust-blocks/rust/Cargo.toml" in cargo_fetch
+    compatibility = python_steps["Check candidate stable API and CLI snapshots"]["run"]
+    assert "dist/ci/compatibility.log" in compatibility
+    python_tests = python_steps["Run Python tests"]["run"]
+    assert "--junitxml=dist/ci/python-tests.xml" in python_tests
+    assert "dist/ci/python-tests.log" in python_tests
+    python_diagnostics = python_steps["Retain Python CI diagnostics"]
+    assert python_diagnostics["if"] == "always()"
+    assert python_diagnostics["with"]["if-no-files-found"] == "warn"
+
+    installed_steps = {
+        step["name"]: step for step in jobs["installed-artifacts"]["steps"]
+    }
+    installed_gate = installed_steps[
+        "Build once, install, and run installed-artifact gates"
+    ]["run"]
+    assert "dist/ci/verify-wheelhouse.log" in installed_gate
+    installed_diagnostics = installed_steps["Retain installed-artifact diagnostics"]
+    assert installed_diagnostics["if"] == "always()"
+    assert installed_diagnostics["with"]["if-no-files-found"] == "warn"
+
+    example_steps = {step["name"]: step for step in jobs["examples"]["steps"]}
+    example_fetch = example_steps["Prime offline Rust example dependencies"]["run"]
+    assert "cargo fetch --locked --manifest-path" in example_fetch
+    assert (
+        "examples/01-enterprise-federated-rag/1-3-rust-runtime/Cargo.toml"
+        in example_fetch
+    )
+    assert "examples/12-custom-python-rust-blocks/rust/Cargo.toml" in example_fetch
+    example_tests = example_steps["Run example integration tests"]["run"]
+    assert "--junitxml=dist/ci/example-tests.xml" in example_tests
+    assert "dist/ci/example-tests.log" in example_tests
+    example_diagnostics = example_steps["Retain example CI diagnostics"]
+    assert example_diagnostics["if"] == "always()"
+    assert example_diagnostics["with"]["if-no-files-found"] == "warn"
+
+    required = jobs["required-gates"]
+    assert required["needs"] == ["python", "installed-artifacts", "examples", "rust"]
+    assert required["if"] == "always()"
+    assert required["permissions"] == {}
+    required_step = required["steps"][0]
+    assert required_step["env"] == {
+        "PYTHON_RESULT": "${{ needs.python.result }}",
+        "INSTALLED_ARTIFACTS_RESULT": "${{ needs.installed-artifacts.result }}",
+        "EXAMPLES_RESULT": "${{ needs.examples.result }}",
+        "RUST_RESULT": "${{ needs.rust.result }}",
+    }
+    for variable in (
+        "PYTHON_RESULT",
+        "INSTALLED_ARTIFACTS_RESULT",
+        "EXAMPLES_RESULT",
+        "RUST_RESULT",
+    ):
+        assert variable in required_step["run"]
+
+
+def test_ci_retains_each_rust_gate_log_on_failure() -> None:
+    root = Path(__file__).parents[1]
+    workflow = yaml.safe_load((root / ".github" / "workflows" / "ci.yml").read_text())
+    rust_steps = {
+        step["name"]: step for step in workflow["jobs"]["rust"]["steps"]
+    }
+
+    expected_logs = {
+        "Check Rust formatting": "dist/ci/rust-fmt.log",
+        "Run Clippy": "dist/ci/rust-clippy.log",
+        "Run Rust tests": "dist/ci/rust-tests.log",
+        "Verify Rust packages": "dist/ci/rust-packages.log",
+    }
+    for step_name, log_path in expected_logs.items():
+        command = rust_steps[step_name]["run"]
+        assert "set -o pipefail" in command
+        assert f"2>&1 | tee {log_path}" in command
+
+    diagnostics = rust_steps["Retain Rust CI diagnostics"]
+    assert diagnostics["if"] == "always()"
+    assert diagnostics["with"] == {
+        "name": "graphblocks-ci-rust",
+        "path": "dist/ci",
+        "if-no-files-found": "warn",
+        "retention-days": 30,
+    }
+
+
+def test_release_candidate_tag_workflow_only_tags_green_main_sha() -> None:
+    root = Path(__file__).parents[1]
+    workflow_path = root / ".github" / "workflows" / "cut-release-candidate.yml"
+    workflow = yaml.safe_load(workflow_path.read_text(encoding="utf-8"))
+    triggers = workflow.get("on", workflow.get(True))
+
+    assert set(triggers) == {"workflow_dispatch"}
+    assert triggers["workflow_dispatch"]["inputs"] == {
+        "candidate_number": {
+            "description": "Positive RC sequence number for v1.0.0-rc.N",
+            "required": True,
+            "type": "string",
+        },
+        "commit_sha": {
+            "description": "Exact 40-character main commit SHA to promote",
+            "required": True,
+            "type": "string",
+        },
+    }
+    assert workflow["permissions"] == {}
+
+    jobs = workflow["jobs"]
+    admission = jobs["admit-green-sha"]
+    assert admission["permissions"] == {"actions": "read", "contents": "read"}
+    assert "github.repository == 'graphblocks/graphblocks'" in admission["if"]
+    assert "github.ref == 'refs/heads/main'" in admission["if"]
+    admission_step = admission["steps"][0]
+    admission_command = admission_step["run"]
+    assert "actions/workflows/ci.yml/runs" in admission_command
+    assert '.head_branch == "main"' in admission_command
+    assert '.event == "push"' in admission_command
+    assert '.head_sha == $sha' in admission_command
+    assert '.conclusion == "success"' in admission_command
+    assert '.name == "Required gates"' in admission_command
+    assert "refs/tags/v1.0.0-rc.$CANDIDATE_NUMBER" in admission_command
+
+    creation = jobs["create-candidate-tag"]
+    assert creation["needs"] == ["admit-green-sha"]
+    assert creation["permissions"] == {"contents": "write"}
+    assert "needs.admit-green-sha.outputs.candidate_ref" in creation["if"]
+    creation_step = creation["steps"][0]
+    assert creation_step["env"]["CANDIDATE_REF"] == (
+        "${{ needs.admit-green-sha.outputs.candidate_ref }}"
+    )
+    assert creation_step["env"]["CANDIDATE_SHA"] == (
+        "${{ needs.admit-green-sha.outputs.candidate_sha }}"
+    )
+    assert "git/refs" in creation_step["run"]
+    assert '"sha": $sha' in creation_step["run"]
 
 
 def test_candidate_promotion_report_workflow_freezes_before_isolated_signing() -> None:
