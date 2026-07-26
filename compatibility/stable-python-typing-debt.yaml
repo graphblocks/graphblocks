@@ -1,0 +1,99 @@
+version: 1
+modules:
+  - module: graphblocks.canonical
+    issue: TYPE-001
+    owner: schema-maintainers
+    reason: Canonical container traversal still needs strict index narrowing.
+    review_by: '2026-09-30'
+    symbols:
+      - graphblocks.canonical_loads
+      - graphblocks.canonical_dumps
+      - graphblocks.canonical_hash
+      - graphblocks.normalize_graph
+
+  - module: graphblocks.diagnostics
+    issue: TYPE-002
+    owner: schema-maintainers
+    reason: The strict-green diagnostics owner is awaiting enrollment in the repository mypy file set.
+    review_by: '2026-09-30'
+    symbols:
+      - graphblocks.Severity
+      - graphblocks.Diagnostic
+      - graphblocks.Diagnostic.to_dict
+      - graphblocks.DiagnosticSet
+      - graphblocks.DiagnosticSet.to_list
+
+  - module: graphblocks.schema
+    issue: TYPE-003
+    owner: schema-maintainers
+    reason: Resource schema loading and jsonschema boundaries still have strict typing debt.
+    review_by: '2026-09-30'
+    symbols:
+      - graphblocks.SchemaId
+      - graphblocks.SchemaId.parse
+      - graphblocks.ResourceSchemaViolation
+      - graphblocks.ResourceValidationError
+      - graphblocks.resource_schema_errors
+      - graphblocks.validate_resource
+
+  - module: graphblocks.migration
+    issue: TYPE-004
+    owner: schema-maintainers
+    reason: Migration transforms still return dynamically typed canonical snapshots.
+    review_by: '2026-09-30'
+    symbols:
+      - graphblocks.migrate_document
+
+  - module: graphblocks.plugins
+    issue: TYPE-005
+    owner: plugin-maintainers
+    reason: Plugin discovery and schema validation boundaries are not yet strict-green.
+    review_by: '2026-09-30'
+    symbols:
+      - graphblocks.validate_plugin_manifest
+      - graphblocks.PluginManifest
+      - graphblocks.OutputRequirednessPredicate
+      - graphblocks.PortDescriptor
+      - graphblocks.PortDescriptor.required_for
+      - graphblocks.ResourceSlotDescriptor
+      - graphblocks.BlockDescriptor
+      - graphblocks.BlockCatalog
+      - graphblocks.BlockCatalog.from_blocks
+      - graphblocks.BlockCatalog.from_manifests
+      - graphblocks.BlockCatalog.get
+
+  - module: graphblocks.compiler
+    issue: TYPE-006
+    owner: compiler-maintainers
+    reason: Compiler validation and iterative graph traversal still have strict typing debt.
+    review_by: '2026-09-30'
+    symbols:
+      - graphblocks.Plan
+      - graphblocks.Plan.to_dict
+      - graphblocks.compile_graph
+
+  - module: graphblocks.runtime
+    issue: TYPE-007
+    owner: runtime-maintainers
+    reason: Runtime checkpoint, tool binding, and async control flow are not yet strict-green.
+    review_by: '2026-09-30'
+    symbols:
+      - graphblocks.BlockCallable
+      - graphblocks.LocalJournalKind
+      - graphblocks.LocalTerminalJournalKind
+      - graphblocks.CancellationToken
+      - graphblocks.CancellationToken.cancel
+      - graphblocks.LocalJournalRecord
+      - graphblocks.LocalJournalRecord.to_dict
+      - graphblocks.LocalExecutionJournal
+      - graphblocks.LocalExecutionJournal.append
+      - graphblocks.LocalExecutionJournal.append_terminal
+      - graphblocks.RuntimeRegistry
+      - graphblocks.RuntimeRegistry.register
+      - graphblocks.RuntimeRegistry.replace
+      - graphblocks.RuntimeRegistry.compilation_catalog
+      - graphblocks.RuntimeRegistry.resolve
+      - graphblocks.LocalRunResult
+      - graphblocks.LocalRuntime
+      - graphblocks.LocalRuntime.run
+      - graphblocks.core_stdlib_registry

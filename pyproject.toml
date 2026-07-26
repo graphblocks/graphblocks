@@ -64,6 +64,7 @@ python_version = "3.11"
 strict = true
 show_error_codes = true
 warn_unused_ignores = true
+follow_imports = "silent"
 files = [
   "src/graphblocks/typed.py",
   "src/graphblocks/stdlib_blocks.py",
