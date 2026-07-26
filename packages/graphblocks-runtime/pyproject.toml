@@ -6,7 +6,7 @@ build-backend = "maturin"
 name = "graphblocks-runtime"
 version = "0.1.0"
 description = "Python wrapper for the GraphBlocks Rust runtime bindings"
-requires-python = ">=3.11"
+requires-python = ">=3.11,<3.13"
 license = "Apache-2.0"
 authors = [
   { name = "GraphBlocks contributors" },

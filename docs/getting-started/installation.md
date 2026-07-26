@@ -6,7 +6,7 @@ promising availability from a public package index.
 
 ## Requirements
 
-- Python 3.11 or newer
+- Python 3.11 or 3.12
 - `pip`
 - the Rust toolchain selected by `rust-toolchain.toml` for Rust work
 

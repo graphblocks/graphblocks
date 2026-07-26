@@ -26,7 +26,7 @@ directory presence; higher profiles and native bindings remain preview.
 
 ## Development quickstart
 
-Requirements are Python 3.11 or newer and the Rust toolchain selected by
+Requirements are Python 3.11 or 3.12 and the Rust toolchain selected by
 `rust-toolchain.toml`.
 
 ```bash

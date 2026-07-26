@@ -6,7 +6,7 @@ build-backend = "hatchling.build"
 name = "graphblocks-testing"
 version = "1.0.0rc1"
 description = "Deterministic local testing runtime helpers for GraphBlocks"
-requires-python = ">=3.11"
+requires-python = ">=3.11,<3.13"
 license = "Apache-2.0"
 authors = [
   { name = "GraphBlocks contributors" },

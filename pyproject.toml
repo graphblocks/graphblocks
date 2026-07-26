@@ -7,7 +7,7 @@ name = "graphblocks"
 version = "1.0.0rc1"
 description = "Provider-neutral contracts, tooling, and integrations for GraphBlocks"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.11,<3.13"
 license = "Apache-2.0"
 authors = [
   { name = "GraphBlocks contributors" },

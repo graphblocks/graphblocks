@@ -195,6 +195,22 @@ def test_wheelhouse_gate_rejects_stale_artifacts_before_build(tmp_path, monkeypa
         module.main(["--wheelhouse", str(wheelhouse)])
 
 
+@pytest.mark.parametrize(
+    "manifest",
+    (
+        "pyproject.toml",
+        "packages/graphblocks-runtime/pyproject.toml",
+        "packages/graphblocks-testing/pyproject.toml",
+    ),
+)
+def test_python_distributions_require_the_verified_minor_range(
+    manifest: str,
+) -> None:
+    pyproject = tomllib.loads((ROOT / manifest).read_text(encoding="utf-8"))
+
+    assert pyproject["project"]["requires-python"] == ">=3.11,<3.13"
+
+
 def test_graphblocks_artifact_owns_consolidated_namespace_and_cli() -> None:
     pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
 
@@ -1622,6 +1638,40 @@ def test_package_wheel_matrix_is_exactly_the_three_python_artifacts() -> None:
     }
     assert matrix.matrix_contract()["target_count"] == 3
     assert matrix.content_digest().startswith("sha256:")
+
+
+def test_package_wheel_matrix_rejects_unverified_python_minor() -> None:
+    matrix = build_wheel_matrix(
+        ROOT,
+        python_versions=("3.11", "3.12", "3.13"),
+    )
+
+    assert not matrix.ok
+    assert {
+        (diagnostic.code, diagnostic.path)
+        for diagnostic in matrix.diagnostics
+    } == {
+        (
+            "WheelPythonVersionUnsupported",
+            "$.pyproject.toml.project.requires-python",
+        ),
+        (
+            "WheelPythonVersionUnsupported",
+            "$.packages/graphblocks-runtime/pyproject.toml.project.requires-python",
+        ),
+        (
+            "WheelPythonVersionUnsupported",
+            "$.packages/graphblocks-testing/pyproject.toml.project.requires-python",
+        ),
+    }
+    assert {
+        target.distribution: target.python_versions
+        for target in matrix.targets
+    } == {
+        "graphblocks": ("3.11", "3.12"),
+        "graphblocks-runtime": ("3.11", "3.12"),
+        "graphblocks-testing": ("3.11", "3.12"),
+    }
 
 
 @pytest.mark.parametrize(
