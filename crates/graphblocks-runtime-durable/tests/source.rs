@@ -100,13 +100,44 @@ fn in_memory_source_rejects_conflicting_offset_reuse() {
 }
 
 #[test]
-fn in_memory_source_rejects_exact_duplicate_offsets() {
+fn in_memory_source_deduplicates_identical_offset_replay() {
     let event = order_event(10);
     let cursor = event.cursor.clone();
-    let source = InMemoryDurableSource::new(DeliveryGuarantee::AtLeastOnce, [event.clone(), event]);
+    let mut source = InMemoryDurableSource::new(
+        DeliveryGuarantee::AtLeastOnce,
+        [event.clone(), event.clone()],
+    );
+
+    let batch = source
+        .poll(None, 2)
+        .expect("identical source replay should be idempotent");
+    assert_eq!(batch.events, vec![event]);
+
+    source
+        .commit(cursor)
+        .expect("deduplicated cursor should remain committable");
+    assert!(
+        source
+            .poll(None, 2)
+            .expect("committed source should remain pollable")
+            .events
+            .is_empty()
+    );
+}
+
+#[test]
+fn in_memory_source_rejects_same_offset_with_different_event_time() {
+    let cursor = SourceCursor::new("orders", 0, 10);
+    let source = InMemoryDurableSource::new(
+        DeliveryGuarantee::AtLeastOnce,
+        [
+            SourceEvent::new(cursor.clone(), json!({"orderId": "ord-10"}), Some(100)),
+            SourceEvent::new(cursor.clone(), json!({"orderId": "ord-10"}), Some(101)),
+        ],
+    );
 
     assert_eq!(
-        source.poll(None, 2),
+        source.poll(None, 1),
         Err(DurableError::ConflictingSourceOffset { cursor })
     );
 }

@@ -217,9 +217,20 @@ impl InMemoryDurableSource {
     {
         let mut events = events.into_iter().collect::<Vec<_>>();
         events.sort_by(|left, right| left.cursor.cmp(&right.cursor));
-        let conflicting_cursor = events
-            .windows(2)
-            .find_map(|pair| (pair[0].cursor == pair[1].cursor).then(|| pair[0].cursor.clone()));
+        let mut normalized_events: Vec<SourceEvent> = Vec::with_capacity(events.len());
+        let mut conflicting_cursor = None;
+        for event in events {
+            if let Some(previous) = normalized_events.last()
+                && previous.cursor == event.cursor
+            {
+                if previous != &event && conflicting_cursor.is_none() {
+                    conflicting_cursor = Some(event.cursor.clone());
+                }
+                continue;
+            }
+            normalized_events.push(event);
+        }
+        let events = normalized_events;
         let known_streams = events
             .iter()
             .map(|event| event.cursor.stream.clone())

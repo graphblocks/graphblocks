@@ -94,6 +94,23 @@ class LateEventError(DurableError):
         )
 
 
+class WindowBoundaryOverflowError(DurableError):
+    def __init__(
+        self,
+        event_time_unix_ms: int,
+        size_ms: int,
+        allowed_lateness_ms: int,
+    ) -> None:
+        self.event_time_unix_ms = event_time_unix_ms
+        self.size_ms = size_ms
+        self.allowed_lateness_ms = allowed_lateness_ms
+        super().__init__(
+            "window boundary exceeds the portable u64 range: "
+            f"event_time_unix_ms={event_time_unix_ms}, "
+            f"size_ms={size_ms}, allowed_lateness_ms={allowed_lateness_ms}"
+        )
+
+
 class SinkCommitError(DurableError):
     pass
 
@@ -363,7 +380,10 @@ class InMemoryDurableSource:
         events_by_cursor: dict[SourceCursor, SourceEvent] = {}
         for event in events:
             existing = events_by_cursor.get(event.cursor)
-            if existing is not None and existing != event:
+            if existing is not None and (
+                existing.event_time_unix_ms != event.event_time_unix_ms
+                or canonical_dumps(existing.payload) != canonical_dumps(event.payload)
+            ):
                 raise ConflictingSourceOffsetError(event.cursor)
             events_by_cursor[event.cursor] = event
         self.events = tuple(sorted(
@@ -515,15 +535,37 @@ class WindowAccumulator:
     windows: dict[int, list[SourceEvent]] = field(default_factory=dict)
     _on_time_emitted: set[int] = field(default_factory=set, init=False, repr=False)
 
+    def _window_bounds(
+        self,
+        event_time_unix_ms: int,
+    ) -> tuple[int, int, int]:
+        start_unix_ms = event_time_unix_ms - (
+            event_time_unix_ms % self.policy.size_ms
+        )
+        end_unix_ms = start_unix_ms + self.policy.size_ms
+        if end_unix_ms > _MAX_U64:
+            raise WindowBoundaryOverflowError(
+                event_time_unix_ms,
+                self.policy.size_ms,
+                self.policy.allowed_lateness_ms,
+            )
+        deadline_unix_ms = end_unix_ms + self.policy.allowed_lateness_ms
+        if deadline_unix_ms > _MAX_U64:
+            raise WindowBoundaryOverflowError(
+                event_time_unix_ms,
+                self.policy.size_ms,
+                self.policy.allowed_lateness_ms,
+            )
+        return start_unix_ms, end_unix_ms, deadline_unix_ms
+
     def ingest(self, event: SourceEvent) -> None:
         if not isinstance(event, SourceEvent):
             raise DurableError("window event must be a SourceEvent")
         if event.event_time_unix_ms is None:
             raise MissingEventTimeError(event.cursor)
         event_time_unix_ms = event.event_time_unix_ms
-        start_unix_ms = event_time_unix_ms - (event_time_unix_ms % self.policy.size_ms)
-        deadline_unix_ms = (
-            start_unix_ms + self.policy.size_ms + self.policy.allowed_lateness_ms
+        start_unix_ms, _, deadline_unix_ms = self._window_bounds(
+            event_time_unix_ms
         )
         if (
             self.watermark is not None
@@ -547,16 +589,18 @@ class WindowAccumulator:
             return []
         if self.watermark is not None and watermark.unix_ms <= self.watermark.unix_ms:
             return []
+        triggerable: list[tuple[int, int, int]] = []
+        for start_unix_ms in sorted(self.windows):
+            _, end_unix_ms, deadline_unix_ms = self._window_bounds(
+                start_unix_ms
+            )
+            if end_unix_ms <= watermark.unix_ms:
+                triggerable.append(
+                    (start_unix_ms, end_unix_ms, deadline_unix_ms)
+                )
         self.watermark = watermark
-        triggerable = [
-            start_unix_ms
-            for start_unix_ms in sorted(self.windows)
-            if start_unix_ms + self.policy.size_ms <= watermark.unix_ms
-        ]
         emitted: list[WindowPane] = []
-        for start_unix_ms in triggerable:
-            end_unix_ms = start_unix_ms + self.policy.size_ms
-            deadline_unix_ms = end_unix_ms + self.policy.allowed_lateness_ms
+        for start_unix_ms, end_unix_ms, deadline_unix_ms in triggerable:
             if deadline_unix_ms <= watermark.unix_ms:
                 events = tuple(
                     sorted(
@@ -1652,6 +1696,7 @@ __all__ = [
     "Watermark",
     "WatermarkKind",
     "WindowAccumulator",
+    "WindowBoundaryOverflowError",
     "WindowPane",
     "WindowPolicy",
     "evaluate_native_durable_tool_terminal_store",

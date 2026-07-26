@@ -38,6 +38,14 @@ def _order_event(graphblocks_durable, offset: int):
     )
 
 
+def _window_event(graphblocks_durable, event_time_unix_ms: int):
+    return graphblocks_durable.SourceEvent(
+        graphblocks_durable.SourceCursor("orders", 0, 1),
+        {"orderId": "ord-1"},
+        event_time_unix_ms=event_time_unix_ms,
+    )
+
+
 def _checkpoint(graphblocks_durable, checkpoint_id: str, state_revision: int, plan_hash: str):
     return graphblocks_durable.CheckpointBarrier(
         checkpoint_id=checkpoint_id,
@@ -149,6 +157,41 @@ def test_durable_source_rejects_conflicting_offset_reuse(monkeypatch) -> None:
             [
                 graphblocks_durable.SourceEvent(cursor, {"orderId": "ord-10"}),
                 graphblocks_durable.SourceEvent(cursor, {"orderId": "other"}),
+            ],
+        )
+
+    assert error.value.cursor == cursor
+
+
+@pytest.mark.parametrize(
+    ("first_value", "replayed_value"),
+    (
+        pytest.param(True, 1, id="boolean-vs-integer"),
+        pytest.param(1, 1.0, id="integer-vs-float"),
+    ),
+)
+def test_durable_source_rejects_scalar_coercion_during_offset_reuse(
+    monkeypatch,
+    first_value: object,
+    replayed_value: object,
+) -> None:
+    graphblocks_durable = _import_durable(monkeypatch)
+    cursor = graphblocks_durable.SourceCursor("orders", 0, 10)
+
+    with pytest.raises(graphblocks_durable.ConflictingSourceOffsetError) as error:
+        graphblocks_durable.InMemoryDurableSource(
+            "at_least_once",
+            [
+                graphblocks_durable.SourceEvent(
+                    cursor,
+                    {"value": first_value},
+                    event_time_unix_ms=1000,
+                ),
+                graphblocks_durable.SourceEvent(
+                    cursor,
+                    {"value": replayed_value},
+                    event_time_unix_ms=1000,
+                ),
             ],
         )
 
@@ -487,6 +530,103 @@ def test_durable_event_time_window_closes_after_watermark_and_rejects_late_event
     with pytest.raises(graphblocks_durable.LateEventError) as error:
         windows.ingest(_order_event(graphblocks_durable, 999))
     assert error.value.watermark_unix_ms == 1_820_000_001_250
+
+
+def test_durable_window_end_exactly_max_u64_is_accepted(monkeypatch) -> None:
+    graphblocks_durable = _import_durable(monkeypatch)
+    max_u64 = (1 << 64) - 1
+    windows = graphblocks_durable.WindowAccumulator(
+        graphblocks_durable.WindowPolicy.tumbling_event_time(
+            size_ms=1,
+            allowed_lateness_ms=0,
+            accumulation_mode="discarding",
+        )
+    )
+
+    windows.ingest(_window_event(graphblocks_durable, max_u64 - 1))
+    panes = windows.advance_watermark(
+        graphblocks_durable.Watermark.event_time(max_u64)
+    )
+
+    assert len(panes) == 1
+    assert panes[0].start_unix_ms == max_u64 - 1
+    assert panes[0].end_unix_ms == max_u64
+    assert panes[0].is_final is True
+
+
+def test_durable_window_end_overflow_is_rejected_before_state_change(
+    monkeypatch,
+) -> None:
+    graphblocks_durable = _import_durable(monkeypatch)
+    max_u64 = (1 << 64) - 1
+    windows = graphblocks_durable.WindowAccumulator(
+        graphblocks_durable.WindowPolicy.tumbling_event_time(
+            size_ms=1,
+            allowed_lateness_ms=0,
+            accumulation_mode="discarding",
+        )
+    )
+
+    with pytest.raises(
+        graphblocks_durable.WindowBoundaryOverflowError
+    ) as error:
+        windows.ingest(_window_event(graphblocks_durable, max_u64))
+
+    assert error.value.event_time_unix_ms == max_u64
+    assert error.value.size_ms == 1
+    assert error.value.allowed_lateness_ms == 0
+    assert windows.windows == {}
+    assert windows.watermark is None
+    assert "WindowBoundaryOverflowError" in graphblocks_durable.__all__
+
+
+def test_durable_window_deadline_exactly_max_u64_is_accepted(
+    monkeypatch,
+) -> None:
+    graphblocks_durable = _import_durable(monkeypatch)
+    max_u64 = (1 << 64) - 1
+    windows = graphblocks_durable.WindowAccumulator(
+        graphblocks_durable.WindowPolicy.tumbling_event_time(
+            size_ms=1,
+            allowed_lateness_ms=1,
+            accumulation_mode="discarding",
+        )
+    )
+
+    windows.ingest(_window_event(graphblocks_durable, max_u64 - 2))
+    panes = windows.advance_watermark(
+        graphblocks_durable.Watermark.event_time(max_u64)
+    )
+
+    assert len(panes) == 1
+    assert panes[0].start_unix_ms == max_u64 - 2
+    assert panes[0].end_unix_ms == max_u64 - 1
+    assert panes[0].is_final is True
+
+
+def test_durable_window_deadline_overflow_is_rejected_before_state_change(
+    monkeypatch,
+) -> None:
+    graphblocks_durable = _import_durable(monkeypatch)
+    max_u64 = (1 << 64) - 1
+    windows = graphblocks_durable.WindowAccumulator(
+        graphblocks_durable.WindowPolicy.tumbling_event_time(
+            size_ms=1,
+            allowed_lateness_ms=1,
+            accumulation_mode="discarding",
+        )
+    )
+
+    with pytest.raises(
+        graphblocks_durable.WindowBoundaryOverflowError
+    ) as error:
+        windows.ingest(_window_event(graphblocks_durable, max_u64 - 1))
+
+    assert error.value.event_time_unix_ms == max_u64 - 1
+    assert error.value.size_ms == 1
+    assert error.value.allowed_lateness_ms == 1
+    assert windows.windows == {}
+    assert windows.watermark is None
 
 
 def test_durable_event_time_window_rejects_missing_event_time(monkeypatch) -> None:

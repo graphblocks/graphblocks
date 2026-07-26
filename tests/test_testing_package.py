@@ -1777,7 +1777,7 @@ def test_testing_package_loads_shared_durable_tck_cases(monkeypatch) -> None:
     cases = graphblocks_testing.load_durable_tck_cases(ROOT / "tck" / "durable" / "cases.json")
     report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry()).run_cases(cases)
 
-    assert [case.kind for case in cases] == ["durable"] * 322
+    assert [case.kind for case in cases] == ["durable"] * 331
     assert resume_token_hashes
     assert all(
         isinstance(token_hash, str)
@@ -1790,6 +1790,15 @@ def test_testing_package_loads_shared_durable_tck_cases(monkeypatch) -> None:
     assert {case.case_id for case in cases} == {
         "source_cursor_replay_and_commit_advances",
         "source_rejects_unknown_cursor_and_stale_commit",
+        "source_identical_duplicate_is_idempotent",
+        "source_same_offset_different_payload_is_conflict",
+        "source_same_offset_different_event_time_is_conflict",
+        "source_same_offset_boolean_vs_integer_payload_is_conflict",
+        "source_same_offset_integer_vs_float_payload_is_conflict",
+        "window_end_exactly_max_u64_is_accepted",
+        "window_end_overflows_u64_is_rejected",
+        "window_deadline_exactly_max_u64_is_accepted",
+        "window_deadline_overflows_u64_is_rejected",
         "window_watermark_closes_after_allowed_lateness",
         "window_accumulating_emits_on_time_and_final_replacement",
         "sink_idempotency_replays_and_rejects_conflict",
@@ -7922,6 +7931,15 @@ def test_testing_package_discovers_all_shared_tck_suite_manifests(monkeypatch) -
     assert by_suite["durable"].case_ids == (
         "source_cursor_replay_and_commit_advances",
         "source_rejects_unknown_cursor_and_stale_commit",
+        "source_identical_duplicate_is_idempotent",
+        "source_same_offset_different_payload_is_conflict",
+        "source_same_offset_different_event_time_is_conflict",
+        "source_same_offset_boolean_vs_integer_payload_is_conflict",
+        "source_same_offset_integer_vs_float_payload_is_conflict",
+        "window_end_exactly_max_u64_is_accepted",
+        "window_end_overflows_u64_is_rejected",
+        "window_deadline_exactly_max_u64_is_accepted",
+        "window_deadline_overflows_u64_is_rejected",
         "window_watermark_closes_after_allowed_lateness",
         "window_accumulating_emits_on_time_and_final_replacement",
         "sink_idempotency_replays_and_rejects_conflict",

@@ -132,6 +132,39 @@ fn run_case(case: &Value) -> Result<(), String> {
                 "unknownPollError": unknown_poll_error,
             })
         }
+        "source_offset_reuse" => {
+            let events = event_list(case, "events", name)?;
+            let source = InMemoryDurableSource::new(
+                guarantee_from(required_str(case, "guarantee", name)?)?,
+                events,
+            );
+            let mut source_error = None;
+            let mut conflict_cursor = None;
+            let mut source_events = Vec::new();
+            match source.poll(
+                None,
+                case.get("pollDemand")
+                    .or_else(|| case.get("poll_demand"))
+                    .and_then(Value::as_u64)
+                    .ok_or_else(|| format!("{name} is missing integer pollDemand"))?
+                    as usize,
+            ) {
+                Ok(batch) => source_events = batch.events,
+                Err(DurableError::ConflictingSourceOffset { cursor }) => {
+                    source_error = Some("conflicting_source_offset");
+                    conflict_cursor = Some(cursor_contract(&cursor));
+                }
+                Err(error) => {
+                    return Err(format!("{name} source offset reuse poll failed: {error:?}"));
+                }
+            }
+            json!({
+                "error": source_error,
+                "conflictCursor": conflict_cursor,
+                "eventCount": source_events.len(),
+                "offsets": offsets(&source_events),
+            })
+        }
         "window_lateness" => {
             let policy = required_object(case, "policy", name)?;
             let policy = WindowPolicy::tumbling_event_time(
@@ -195,6 +228,57 @@ fn run_case(case: &Value) -> Result<(), String> {
                 "paneOffsets": pane.map(|pane| offsets(&pane.events)).unwrap_or_default(),
                 "lateError": late_error,
                 "lateWatermarkUnixMs": late_watermark_unix_ms,
+            })
+        }
+        "window_boundary" => {
+            let raw_policy = required_object(case, "policy", name)?;
+            let size_ms = required_u64_map(raw_policy, "sizeMs", name)?;
+            let allowed_lateness_ms = required_u64_map(raw_policy, "allowedLatenessMs", name)?;
+            let policy = WindowPolicy::tumbling_event_time(
+                size_ms,
+                allowed_lateness_ms,
+                accumulation_from(required_str_map(raw_policy, "accumulationMode", name)?)?,
+            )
+            .map_err(|error| format!("{name} policy failed: {error:?}"))?;
+            let raw_event = required_object(case, "event", name)?;
+            let event_time_unix_ms = required_u64_map(raw_event, "eventTimeUnixMs", name)?;
+            let mut windows = WindowAccumulator::new(policy);
+            let mut boundary_error = None;
+            let mut observed_event_time_unix_ms = event_time_unix_ms;
+            let mut observed_size_ms = size_ms;
+            let mut observed_allowed_lateness_ms = allowed_lateness_ms;
+            let panes = match windows.ingest(event_from(raw_event)?) {
+                Ok(()) => windows.advance_watermark(Watermark::event_time(
+                    case.get("watermarkUnixMs")
+                        .or_else(|| case.get("watermark_unix_ms"))
+                        .and_then(Value::as_u64)
+                        .ok_or_else(|| format!("{name} is missing integer watermarkUnixMs"))?,
+                )),
+                Err(DurableError::WindowBoundaryOverflow {
+                    event_time_unix_ms,
+                    size_ms,
+                    allowed_lateness_ms,
+                }) => {
+                    boundary_error = Some("window_boundary_overflow");
+                    observed_event_time_unix_ms = event_time_unix_ms;
+                    observed_size_ms = size_ms;
+                    observed_allowed_lateness_ms = allowed_lateness_ms;
+                    Vec::new()
+                }
+                Err(error) => {
+                    return Err(format!("{name} window boundary ingest failed: {error:?}"));
+                }
+            };
+            let first_pane = panes.first();
+            json!({
+                "error": boundary_error,
+                "eventTimeUnixMs": observed_event_time_unix_ms,
+                "sizeMs": observed_size_ms,
+                "allowedLatenessMs": observed_allowed_lateness_ms,
+                "paneCount": panes.len(),
+                "paneStartUnixMs": first_pane.map(|pane| pane.start_unix_ms),
+                "paneEndUnixMs": first_pane.map(|pane| pane.end_unix_ms),
+                "paneIsFinal": first_pane.map(|pane| pane.is_final),
             })
         }
         "sink_idempotency" => {

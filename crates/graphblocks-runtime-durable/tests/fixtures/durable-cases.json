@@ -111,6 +111,300 @@
     }
   },
   {
+    "name": "source_identical_duplicate_is_idempotent",
+    "kind": "source_offset_reuse",
+    "guarantee": "at_least_once",
+    "events": [
+      {
+        "stream": "orders",
+        "partition": 0,
+        "offset": 10,
+        "payload": {
+          "value": 1
+        },
+        "eventTimeUnixMs": 1000
+      },
+      {
+        "stream": "orders",
+        "partition": 0,
+        "offset": 10,
+        "payload": {
+          "value": 1
+        },
+        "eventTimeUnixMs": 1000
+      }
+    ],
+    "pollDemand": 2,
+    "expected": {
+      "error": null,
+      "conflictCursor": null,
+      "eventCount": 1,
+      "offsets": [
+        10
+      ]
+    }
+  },
+  {
+    "name": "source_same_offset_different_payload_is_conflict",
+    "kind": "source_offset_reuse",
+    "guarantee": "at_least_once",
+    "events": [
+      {
+        "stream": "orders",
+        "partition": 0,
+        "offset": 10,
+        "payload": {
+          "value": 1
+        },
+        "eventTimeUnixMs": 1000
+      },
+      {
+        "stream": "orders",
+        "partition": 0,
+        "offset": 10,
+        "payload": {
+          "value": 2
+        },
+        "eventTimeUnixMs": 1000
+      }
+    ],
+    "pollDemand": 2,
+    "expected": {
+      "error": "conflicting_source_offset",
+      "conflictCursor": {
+        "stream": "orders",
+        "partition": 0,
+        "offset": 10
+      },
+      "eventCount": 0,
+      "offsets": []
+    }
+  },
+  {
+    "name": "source_same_offset_different_event_time_is_conflict",
+    "kind": "source_offset_reuse",
+    "guarantee": "at_least_once",
+    "events": [
+      {
+        "stream": "orders",
+        "partition": 0,
+        "offset": 10,
+        "payload": {
+          "value": 1
+        },
+        "eventTimeUnixMs": 1000
+      },
+      {
+        "stream": "orders",
+        "partition": 0,
+        "offset": 10,
+        "payload": {
+          "value": 1
+        },
+        "eventTimeUnixMs": 1001
+      }
+    ],
+    "pollDemand": 2,
+    "expected": {
+      "error": "conflicting_source_offset",
+      "conflictCursor": {
+        "stream": "orders",
+        "partition": 0,
+        "offset": 10
+      },
+      "eventCount": 0,
+      "offsets": []
+    }
+  },
+  {
+    "name": "source_same_offset_boolean_vs_integer_payload_is_conflict",
+    "kind": "source_offset_reuse",
+    "guarantee": "at_least_once",
+    "events": [
+      {
+        "stream": "orders",
+        "partition": 0,
+        "offset": 10,
+        "payload": {
+          "value": true
+        },
+        "eventTimeUnixMs": 1000
+      },
+      {
+        "stream": "orders",
+        "partition": 0,
+        "offset": 10,
+        "payload": {
+          "value": 1
+        },
+        "eventTimeUnixMs": 1000
+      }
+    ],
+    "pollDemand": 2,
+    "expected": {
+      "error": "conflicting_source_offset",
+      "conflictCursor": {
+        "stream": "orders",
+        "partition": 0,
+        "offset": 10
+      },
+      "eventCount": 0,
+      "offsets": []
+    }
+  },
+  {
+    "name": "source_same_offset_integer_vs_float_payload_is_conflict",
+    "kind": "source_offset_reuse",
+    "guarantee": "at_least_once",
+    "events": [
+      {
+        "stream": "orders",
+        "partition": 0,
+        "offset": 10,
+        "payload": {
+          "value": 1
+        },
+        "eventTimeUnixMs": 1000
+      },
+      {
+        "stream": "orders",
+        "partition": 0,
+        "offset": 10,
+        "payload": {
+          "value": 1.0
+        },
+        "eventTimeUnixMs": 1000
+      }
+    ],
+    "pollDemand": 2,
+    "expected": {
+      "error": "conflicting_source_offset",
+      "conflictCursor": {
+        "stream": "orders",
+        "partition": 0,
+        "offset": 10
+      },
+      "eventCount": 0,
+      "offsets": []
+    }
+  },
+  {
+    "name": "window_end_exactly_max_u64_is_accepted",
+    "kind": "window_boundary",
+    "policy": {
+      "sizeMs": 1,
+      "allowedLatenessMs": 0,
+      "accumulationMode": "discarding"
+    },
+    "event": {
+      "stream": "orders",
+      "partition": 0,
+      "offset": 1,
+      "payload": {
+        "value": 1
+      },
+      "eventTimeUnixMs": 18446744073709551614
+    },
+    "watermarkUnixMs": 18446744073709551615,
+    "expected": {
+      "error": null,
+      "eventTimeUnixMs": 18446744073709551614,
+      "sizeMs": 1,
+      "allowedLatenessMs": 0,
+      "paneCount": 1,
+      "paneStartUnixMs": 18446744073709551614,
+      "paneEndUnixMs": 18446744073709551615,
+      "paneIsFinal": true
+    }
+  },
+  {
+    "name": "window_end_overflows_u64_is_rejected",
+    "kind": "window_boundary",
+    "policy": {
+      "sizeMs": 10,
+      "allowedLatenessMs": 0,
+      "accumulationMode": "discarding"
+    },
+    "event": {
+      "stream": "orders",
+      "partition": 0,
+      "offset": 1,
+      "payload": {
+        "value": 1
+      },
+      "eventTimeUnixMs": 18446744073709551613
+    },
+    "watermarkUnixMs": 18446744073709551615,
+    "expected": {
+      "error": "window_boundary_overflow",
+      "eventTimeUnixMs": 18446744073709551613,
+      "sizeMs": 10,
+      "allowedLatenessMs": 0,
+      "paneCount": 0,
+      "paneStartUnixMs": null,
+      "paneEndUnixMs": null,
+      "paneIsFinal": null
+    }
+  },
+  {
+    "name": "window_deadline_exactly_max_u64_is_accepted",
+    "kind": "window_boundary",
+    "policy": {
+      "sizeMs": 1,
+      "allowedLatenessMs": 1,
+      "accumulationMode": "discarding"
+    },
+    "event": {
+      "stream": "orders",
+      "partition": 0,
+      "offset": 1,
+      "payload": {
+        "value": 1
+      },
+      "eventTimeUnixMs": 18446744073709551613
+    },
+    "watermarkUnixMs": 18446744073709551615,
+    "expected": {
+      "error": null,
+      "eventTimeUnixMs": 18446744073709551613,
+      "sizeMs": 1,
+      "allowedLatenessMs": 1,
+      "paneCount": 1,
+      "paneStartUnixMs": 18446744073709551613,
+      "paneEndUnixMs": 18446744073709551614,
+      "paneIsFinal": true
+    }
+  },
+  {
+    "name": "window_deadline_overflows_u64_is_rejected",
+    "kind": "window_boundary",
+    "policy": {
+      "sizeMs": 1,
+      "allowedLatenessMs": 2,
+      "accumulationMode": "discarding"
+    },
+    "event": {
+      "stream": "orders",
+      "partition": 0,
+      "offset": 1,
+      "payload": {
+        "value": 1
+      },
+      "eventTimeUnixMs": 18446744073709551613
+    },
+    "watermarkUnixMs": 18446744073709551615,
+    "expected": {
+      "error": "window_boundary_overflow",
+      "eventTimeUnixMs": 18446744073709551613,
+      "sizeMs": 1,
+      "allowedLatenessMs": 2,
+      "paneCount": 0,
+      "paneStartUnixMs": null,
+      "paneEndUnixMs": null,
+      "paneIsFinal": null
+    }
+  },
+  {
     "name": "window_watermark_closes_after_allowed_lateness",
     "kind": "window_lateness",
     "policy": {

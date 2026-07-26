@@ -2391,7 +2391,9 @@ def load_durable_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
         if case_kind not in {
             "source_replay",
             "source_errors",
+            "source_offset_reuse",
             "window_lateness",
+            "window_boundary",
             "sink_idempotency",
             "checkpoint_replay",
             "tool_terminal_from_tool_result",
@@ -11573,6 +11575,52 @@ class TckRunner:
                     "unknownCommitError": unknown_commit_error,
                     "unknownPollError": unknown_poll_error,
                 }
+            elif kind == "source_offset_reuse":
+                raw_events = fixture.get("events", [])
+                if not isinstance(raw_events, list):
+                    raise ValueError("durable source_offset_reuse case requires events")
+                events = []
+                for raw_event in raw_events:
+                    if not isinstance(raw_event, Mapping):
+                        raise ValueError("durable source event must be a mapping")
+                    event_time = raw_event.get("eventTimeUnixMs", raw_event.get("event_time_unix_ms"))
+                    events.append(
+                        durable.SourceEvent(
+                            durable.SourceCursor(
+                                str(raw_event.get("stream", "")),
+                                int(raw_event.get("partition", 0)),
+                                int(raw_event.get("offset", 0)),
+                            ),
+                            deepcopy(raw_event.get("payload")),
+                            event_time_unix_ms=int(event_time) if event_time is not None else None,
+                        )
+                    )
+                source_error = None
+                conflict_cursor = None
+                source_events = ()
+                try:
+                    source = durable.InMemoryDurableSource(
+                        str(fixture.get("guarantee", "")),
+                        events,
+                    )
+                    batch = source.poll(
+                        None,
+                        demand=int(fixture.get("pollDemand", fixture.get("poll_demand", 1))),
+                    )
+                    source_events = batch.events
+                except durable.ConflictingSourceOffsetError as error:
+                    source_error = "conflicting_source_offset"
+                    conflict_cursor = {
+                        "stream": error.cursor.stream,
+                        "partition": error.cursor.partition,
+                        "offset": error.cursor.offset,
+                    }
+                observed = {
+                    "error": source_error,
+                    "conflictCursor": conflict_cursor,
+                    "eventCount": len(source_events),
+                    "offsets": [event.cursor.offset for event in source_events],
+                }
             elif kind == "window_lateness":
                 raw_policy = fixture.get("policy", {})
                 raw_events = fixture.get("events", [])
@@ -11654,6 +11702,70 @@ class TckRunner:
                     "paneOffsets": [event.cursor.offset for event in first_pane.events] if first_pane is not None else [],
                     "lateError": late_error,
                     "lateWatermarkUnixMs": late_watermark_unix_ms,
+                }
+            elif kind == "window_boundary":
+                raw_policy = fixture.get("policy", {})
+                raw_event = fixture.get("event", {})
+                if not isinstance(raw_policy, Mapping) or not isinstance(raw_event, Mapping):
+                    raise ValueError("durable window_boundary case requires policy and event")
+                size_ms = int(raw_policy.get("sizeMs", raw_policy.get("size_ms", 0)))
+                allowed_lateness_ms = int(
+                    raw_policy.get("allowedLatenessMs", raw_policy.get("allowed_lateness_ms", 0))
+                )
+                event_time = raw_event.get("eventTimeUnixMs", raw_event.get("event_time_unix_ms"))
+                if event_time is None:
+                    raise ValueError("durable window_boundary case requires eventTimeUnixMs")
+                event_time_unix_ms = int(event_time)
+                policy = durable.WindowPolicy.tumbling_event_time(
+                    size_ms=size_ms,
+                    allowed_lateness_ms=allowed_lateness_ms,
+                    accumulation_mode=str(
+                        raw_policy.get(
+                            "accumulationMode",
+                            raw_policy.get("accumulation_mode", ""),
+                        )
+                    ),
+                )
+                windows = durable.WindowAccumulator(policy)
+                boundary_error = None
+                panes = []
+                try:
+                    windows.ingest(
+                        durable.SourceEvent(
+                            durable.SourceCursor(
+                                str(raw_event.get("stream", "")),
+                                int(raw_event.get("partition", 0)),
+                                int(raw_event.get("offset", 0)),
+                            ),
+                            deepcopy(raw_event.get("payload")),
+                            event_time_unix_ms=event_time_unix_ms,
+                        )
+                    )
+                    panes = windows.advance_watermark(
+                        durable.Watermark.event_time(
+                            int(
+                                fixture.get(
+                                    "watermarkUnixMs",
+                                    fixture.get("watermark_unix_ms", 0),
+                                )
+                            )
+                        )
+                    )
+                except durable.WindowBoundaryOverflowError as error:
+                    boundary_error = "window_boundary_overflow"
+                    event_time_unix_ms = error.event_time_unix_ms
+                    size_ms = error.size_ms
+                    allowed_lateness_ms = error.allowed_lateness_ms
+                first_pane = panes[0] if panes else None
+                observed = {
+                    "error": boundary_error,
+                    "eventTimeUnixMs": event_time_unix_ms,
+                    "sizeMs": size_ms,
+                    "allowedLatenessMs": allowed_lateness_ms,
+                    "paneCount": len(panes),
+                    "paneStartUnixMs": first_pane.start_unix_ms if first_pane is not None else None,
+                    "paneEndUnixMs": first_pane.end_unix_ms if first_pane is not None else None,
+                    "paneIsFinal": first_pane.is_final if first_pane is not None else None,
                 }
             elif kind == "sink_idempotency":
                 raw_request = fixture.get("request", {})

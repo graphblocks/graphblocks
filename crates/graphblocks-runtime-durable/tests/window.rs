@@ -287,3 +287,37 @@ fn event_time_window_rejects_unrepresentable_half_open_bounds() {
         );
     }
 }
+
+#[test]
+fn event_time_window_accepts_end_exactly_at_u64_max() {
+    let policy = WindowPolicy::tumbling_event_time(1, 0, AccumulationMode::Discarding)
+        .expect("policy should be valid");
+    let mut windows = WindowAccumulator::new(policy);
+    windows
+        .ingest(event(1, u64::MAX - 1))
+        .expect("window end equal to u64::MAX should be accepted");
+
+    let panes = windows.advance_watermark(Watermark::event_time(u64::MAX));
+
+    assert_eq!(panes.len(), 1);
+    assert_eq!(panes[0].start_unix_ms, u64::MAX - 1);
+    assert_eq!(panes[0].end_unix_ms, u64::MAX);
+    assert!(panes[0].is_final);
+}
+
+#[test]
+fn event_time_window_accepts_deadline_exactly_at_u64_max() {
+    let policy = WindowPolicy::tumbling_event_time(1, 1, AccumulationMode::Discarding)
+        .expect("policy should be valid");
+    let mut windows = WindowAccumulator::new(policy);
+    windows
+        .ingest(event(1, u64::MAX - 2))
+        .expect("window deadline equal to u64::MAX should be accepted");
+
+    let panes = windows.advance_watermark(Watermark::event_time(u64::MAX));
+
+    assert_eq!(panes.len(), 1);
+    assert_eq!(panes[0].start_unix_ms, u64::MAX - 2);
+    assert_eq!(panes[0].end_unix_ms, u64::MAX - 1);
+    assert!(panes[0].is_final);
+}
