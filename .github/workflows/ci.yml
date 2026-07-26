@@ -24,6 +24,21 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - name: Set up pinned Rust
+        run: |
+          rustup toolchain install 1.94.0 --profile minimal --component clippy,rustfmt
+          rustup default 1.94.0
+      - name: Verify pinned Rust toolchain
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p dist/ci
+          {
+            rustup run 1.94.0 rustc --version
+            rustup run 1.94.0 cargo --version
+            rustup run 1.94.0 cargo clippy --version
+            rustup run 1.94.0 cargo fmt --version
+          } 2>&1 | tee dist/ci/rust-toolchain.log
       - name: Set up Python
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
@@ -35,12 +50,36 @@ jobs:
           python -m pip install pip==25.1.1
           python -m pip install build==1.5.1 hatchling==1.31.0 maturin==1.14.1
           python -m pip install -e ".[test]"
+      - name: Prime offline Rust example dependencies
+        run: |
+          cargo fetch --locked --manifest-path examples/01-enterprise-federated-rag/1-3-rust-runtime/Cargo.toml
+          cargo fetch --locked --manifest-path examples/12-custom-python-rust-blocks/rust/Cargo.toml
       - name: Verify typed graph contracts
-        run: python -m mypy
+        shell: bash
+        run: |
+          set -o pipefail
+          python tools/check_stable_typing.py
+          python -m mypy 2>&1 | tee dist/ci/mypy.log
       - name: Check candidate stable API and CLI snapshots
-        run: python tools/check_compatibility.py
+        shell: bash
+        run: |
+          set -o pipefail
+          python tools/check_compatibility.py 2>&1 | tee dist/ci/compatibility.log
       - name: Run Python tests
-        run: python -m pytest
+        shell: bash
+        run: |
+          set -o pipefail
+          python -m pytest \
+            --junitxml=dist/ci/python-tests.xml \
+            2>&1 | tee dist/ci/python-tests.log
+      - name: Retain Python CI diagnostics
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: graphblocks-ci-python-${{ matrix.os }}-py${{ matrix.python-version }}
+          path: dist/ci
+          if-no-files-found: warn
+          retention-days: 30
 
   installed-artifacts:
     name: Installed artifacts Python ${{ matrix.python-version }} (${{ matrix.os }})
@@ -56,8 +95,19 @@ jobs:
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
       - name: Set up pinned Rust
         run: |
-          rustup toolchain install 1.94.0 --profile minimal
+          rustup toolchain install 1.94.0 --profile minimal --component clippy,rustfmt
           rustup default 1.94.0
+      - name: Verify pinned Rust toolchain
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p dist/ci
+          {
+            rustup run 1.94.0 rustc --version
+            rustup run 1.94.0 cargo --version
+            rustup run 1.94.0 cargo clippy --version
+            rustup run 1.94.0 cargo fmt --version
+          } 2>&1 | tee dist/ci/rust-toolchain.log
       - name: Set up Python
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
@@ -70,16 +120,19 @@ jobs:
           python -m pip install build==1.5.1 hatchling==1.31.0 maturin==1.14.1 cyclonedx-bom==7.3.0
           python -m pip install -e ".[test]"
       - name: Build once, install, and run installed-artifact gates
-        run: >-
-          python tools/verify_wheelhouse.py
-          --wheelhouse dist/platform-wheelhouse
-          --sdist-dir dist/platform-sdists
-          --dependency-wheelhouse dist/platform-dependencies
-          --release-evidence-dir dist/platform-evidence
-          --sbom-output dist/platform-evidence/sbom.cdx.json
-          --platform ${{ matrix.os }}
-          --python-version ${{ matrix.python-version }}
-          --rustc rustc
+        shell: bash
+        run: |
+          set -o pipefail
+          python tools/verify_wheelhouse.py \
+            --wheelhouse dist/platform-wheelhouse \
+            --sdist-dir dist/platform-sdists \
+            --dependency-wheelhouse dist/platform-dependencies \
+            --release-evidence-dir dist/platform-evidence \
+            --sbom-output dist/platform-evidence/sbom.cdx.json \
+            --platform ${{ matrix.os }} \
+            --python-version ${{ matrix.python-version }} \
+            --rustc rustc \
+            2>&1 | tee dist/ci/verify-wheelhouse.log
       - name: Retain platform release inputs and conformance evidence
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
@@ -90,6 +143,14 @@ jobs:
             dist/platform-evidence
           if-no-files-found: error
           retention-days: 30
+      - name: Retain installed-artifact diagnostics
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: graphblocks-ci-installed-${{ matrix.os }}-py${{ matrix.python-version }}
+          path: dist/ci
+          if-no-files-found: warn
+          retention-days: 30
 
   examples:
     name: Examples
@@ -98,10 +159,21 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
-      - name: Set up Rust
+      - name: Set up pinned Rust
         run: |
           rustup toolchain install 1.94.0 --profile minimal --component clippy,rustfmt
           rustup default 1.94.0
+      - name: Verify pinned Rust toolchain
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p dist/ci
+          {
+            rustup run 1.94.0 rustc --version
+            rustup run 1.94.0 cargo --version
+            rustup run 1.94.0 cargo clippy --version
+            rustup run 1.94.0 cargo fmt --version
+          } 2>&1 | tee dist/ci/rust-toolchain.log
       - name: Set up Python
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
@@ -112,13 +184,64 @@ jobs:
         run: |
           python -m pip install pip==25.1.1
           python -m pip install -e ".[test]"
+      - name: Prime offline Rust example dependencies
+        run: |
+          cargo fetch --locked --manifest-path examples/01-enterprise-federated-rag/1-3-rust-runtime/Cargo.toml
+          cargo fetch --locked --manifest-path examples/12-custom-python-rust-blocks/rust/Cargo.toml
       - name: Verify custom Rust block
         run: |
           cargo fmt --manifest-path examples/12-custom-python-rust-blocks/rust/Cargo.toml -- --check
           cargo clippy --manifest-path examples/12-custom-python-rust-blocks/rust/Cargo.toml --locked --all-targets -- -D warnings
           cargo test --manifest-path examples/12-custom-python-rust-blocks/rust/Cargo.toml --locked
       - name: Run example integration tests
-        run: python -m pytest examples/*/test_*.py
+        run: |
+          set -o pipefail
+          python -m pytest examples/*/test_*.py \
+            --junitxml=dist/ci/example-tests.xml \
+            2>&1 | tee dist/ci/example-tests.log
+      - name: Retain example CI diagnostics
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: graphblocks-ci-examples
+          path: dist/ci
+          if-no-files-found: warn
+          retention-days: 30
+
+  required-gates:
+    name: Required gates
+    needs:
+      - python
+      - installed-artifacts
+      - examples
+      - rust
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Require every supported CI gate
+        env:
+          PYTHON_RESULT: ${{ needs.python.result }}
+          INSTALLED_ARTIFACTS_RESULT: ${{ needs.installed-artifacts.result }}
+          EXAMPLES_RESULT: ${{ needs.examples.result }}
+          RUST_RESULT: ${{ needs.rust.result }}
+        run: |
+          failed=0
+          for gate in \
+            "python:$PYTHON_RESULT" \
+            "installed-artifacts:$INSTALLED_ARTIFACTS_RESULT" \
+            "examples:$EXAMPLES_RESULT" \
+            "rust:$RUST_RESULT"
+          do
+            name=${gate%%:*}
+            result=${gate#*:}
+            if [[ "$result" != success ]]; then
+              echo "::error::$name gate concluded with $result"
+              failed=1
+            fi
+          done
+          exit "$failed"
 
   release-ref-gate:
     name: Validate stable release ref
@@ -147,12 +270,11 @@ jobs:
   release-evidence:
     name: Assemble unsigned release artifact and supply-chain evidence
     needs:
-      - python
-      - installed-artifacts
-      - examples
-      - rust
+      - required-gates
       - release-ref-gate
-    if: needs.release-ref-gate.outputs.release_ref == github.ref
+    if: >-
+      needs.required-gates.result == 'success' &&
+      needs.release-ref-gate.outputs.release_ref == github.ref
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -321,47 +443,81 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
-      - name: Set up Rust
+      - name: Set up pinned Rust
         run: |
           rustup toolchain install 1.94.0 --profile minimal --component clippy,rustfmt
           rustup default 1.94.0
-      - name: Check Rust formatting
-        run: cargo fmt --all -- --check
-      - name: Run Clippy
-        run: cargo clippy --workspace --all-targets --locked -- -D warnings
-      - name: Run Rust tests
-        run: cargo test --workspace --all-targets --locked
-      - name: Verify Rust packages
+      - name: Verify pinned Rust toolchain
+        shell: bash
         run: |
-          cargo package --workspace --locked --allow-dirty --no-verify
+          set -o pipefail
+          mkdir -p dist/ci
+          {
+            rustup run 1.94.0 rustc --version
+            rustup run 1.94.0 cargo --version
+            rustup run 1.94.0 cargo clippy --version
+            rustup run 1.94.0 cargo fmt --version
+          } 2>&1 | tee dist/ci/rust-toolchain.log
+      - name: Check Rust formatting
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo fmt --all -- --check 2>&1 | tee dist/ci/rust-fmt.log
+      - name: Run Clippy
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo clippy --workspace --all-targets --locked -- -D warnings \
+            2>&1 | tee dist/ci/rust-clippy.log
+      - name: Run Rust tests
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo test --workspace --all-targets --locked \
+            2>&1 | tee dist/ci/rust-tests.log
+      - name: Verify Rust packages
+        shell: bash
+        run: |
+          set -o pipefail
+          {
+            cargo package --workspace --locked --allow-dirty --no-verify
 
-          for archive in target/package/*.crate; do
-            tar -xzf "$archive" -C target/package
-          done
+            for archive in target/package/*.crate; do
+              tar -xzf "$archive" -C target/package
+            done
 
-          mapfile -t manifests < <(
-            find target/package -mindepth 2 -maxdepth 2 -name Cargo.toml -print | sort
-          )
-          mkdir -p .cargo
-          patch_config=.cargo/config.toml
-          printf '[patch.crates-io]\n' > "$patch_config"
-          schema_manifest=
-          for manifest in "${manifests[@]}"; do
-            crate_dir=$(dirname "$manifest")
-            crate_name=$(sed -n '/^name = / { s/^name = "//; s/"$//; p; q; }' "$manifest")
-            printf "%s = { path = '%s/%s' }\n" "$crate_name" "$PWD" "$crate_dir" >> "$patch_config"
-            if [[ "$crate_name" == graphblocks-schema ]]; then
-              schema_manifest=$manifest
-            fi
-          done
+            mapfile -t manifests < <(
+              find target/package -mindepth 2 -maxdepth 2 -name Cargo.toml -print | sort
+            )
+            mkdir -p .cargo
+            patch_config=.cargo/config.toml
+            printf '[patch.crates-io]\n' > "$patch_config"
+            schema_manifest=
+            for manifest in "${manifests[@]}"; do
+              crate_dir=$(dirname "$manifest")
+              crate_name=$(sed -n '/^name = / { s/^name = "//; s/"$//; p; q; }' "$manifest")
+              printf "%s = { path = '%s/%s' }\n" "$crate_name" "$PWD" "$crate_dir" >> "$patch_config"
+              if [[ "$crate_name" == graphblocks-schema ]]; then
+                schema_manifest=$manifest
+              fi
+            done
 
-          export CARGO_TARGET_DIR="$PWD/target/package/archive-target"
-          for manifest in "${manifests[@]}"; do
-            if [[ "$manifest" == "$schema_manifest" ]]; then
-              continue
-            fi
-            cargo test --manifest-path "$manifest" --all-targets
-          done
+            export CARGO_TARGET_DIR="$PWD/target/package/archive-target"
+            for manifest in "${manifests[@]}"; do
+              if [[ "$manifest" == "$schema_manifest" ]]; then
+                continue
+              fi
+              cargo test --manifest-path "$manifest" --all-targets
+            done
 
-          test -n "$schema_manifest"
-          cargo test --manifest-path "$schema_manifest" --all-targets
+            test -n "$schema_manifest"
+            cargo test --manifest-path "$schema_manifest" --all-targets
+          } 2>&1 | tee dist/ci/rust-packages.log
+      - name: Retain Rust CI diagnostics
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: graphblocks-ci-rust
+          path: dist/ci
+          if-no-files-found: warn
+          retention-days: 30
