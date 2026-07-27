@@ -1,0 +1,448 @@
+# Deep Audit Remediation Plan
+
+This plan turns the GraphBlocks deep-audit findings into release-blocking work.
+It supplements the machine-readable
+[stable release matrix](stable-release-matrix.yaml) and the
+[first stable release boundary](first-stable-release.md); it does not redefine a
+preview surface as stable or close an issue merely because the issue appears
+here.
+
+## Baseline and tracking rules
+
+The audit baseline contains 99 findings:
+
+| Severity | Findings | Planning rule |
+| --- | ---: | --- |
+| P0 | 4 | Security freeze; close before other feature work resumes. |
+| P1 | 23 | Close before a 1.0 or production-readiness claim. |
+| P2 | 64 | Triage into the stabilization milestones after the P0/P1 design boundaries are fixed. |
+| P3 | 8 | Schedule with the documentation, naming, and developer-experience work that owns the affected surface. |
+
+Nine findings were reproduced dynamically and 68 were confirmed directly from
+code. The original artifacts are now digest-bound in the machine-readable
+[remediation map](audit-remediation-map.yaml):
+
+| Artifact | SHA-256 |
+| --- | --- |
+| Korean report | `5ad9b3dcb77b387e1a5d6b41bdb65b9c609c18526d0f1ec712dcb102bfba9f2c` |
+| Issue inventory | `9f98ebde8dc981b0eaee8ed795e04306ac67f707223cfe844e2365561db7eb44` |
+| Evidence bundle | `75cf142766d1e8cbf8c89c1157727d8a4ca0e945b15e9157c8977f1c6a02fe06` |
+
+The issue inventory remains the issue-level authority for severity, impact,
+recommendation, regression coverage, and live status. The remediation map binds
+all 99 baseline identities to exactly one owning workstream; it does not replace
+the full inventory. Importing that inventory into repository/release tracking
+and preserving its digest is still required.
+
+The evidence bundle intentionally omits the audited source archive and contains
+no Git metadata. Its source commit, tree, and archive digest therefore remain
+unknown and must not be inferred from the audit date. Obtaining one of those
+source identities and creating a file-level evidence manifest with commands,
+tool versions, environment, and digests is a release-evidence blocker.
+
+A finding moves to resolved only when:
+
+1. its fix is merged;
+2. the original reproduction is a regression test or an equally strong
+   executable check;
+3. the relevant cross-runtime, adversarial, restart, or concurrency matrix
+   passes; and
+4. the release matrix or profile evidence is updated when the finding changes a
+   compatibility or production claim.
+
+The audit baseline records what was observed in the audited snapshot. It is not
+a live count of open findings; open and resolved counts must be generated from
+the imported inventory.
+
+## Release posture
+
+Until all P0 findings have closure evidence:
+
+- protect or withdraw any externally exposed server deployment;
+- pause new server, governance, durable, and external-adapter surface growth;
+- do not describe the server as a secure multi-tenant boundary;
+- do not describe contract-only integrations as production adapters; and
+- do not cut a stable release.
+
+The 1.0 gate is stricter than the compatibility tier of an individual module:
+every P0 and P1 in a shipped artifact must be resolved, including findings in a
+preview module that ships inside the `graphblocks` wheel. A preview
+compatibility label does not make a known authorization bypass or fail-open
+decoder acceptable to ship.
+
+The following existing assets remain invariants throughout the remediation:
+
+- versioned closed schemas and explicit migrations;
+- canonical serialization, identity, and hashing;
+- a shared Python/Rust TCK and profile-specific compatibility claims;
+- an authoritative event journal distinct from projections;
+- runtime admission for policy, budget, approval, and effects;
+- installed-wheel, SBOM, Sigstore, and exact-green-SHA release evidence; and
+- webhook URL, DNS, egress, and address-pinning validation.
+
+## Phase 0: security freeze
+
+Target window: days 0-7. These items are ordered by exploitability and shared
+design dependency, not by source-file location.
+
+| Work item and covered findings | Required outcome | Minimum closure evidence |
+| --- | --- | --- |
+| SEC-01 Protected-route fail-closed behavior (`GB-SEC-003`) | The application enforces `auth_required`. A manifest containing protected routes cannot be constructed without an authenticator unless `allow_unauthenticated_dev=True` is explicit. Public-only and authenticated manifests retain `/health`; custom hooks cannot redefine public/protected semantics. | Protected manifest without authenticator fails construction; public-only and authenticated `/health` return 200; protected routes deny unauthenticated access; only explicit development mode permits it. |
+| SEC-02 Tenant-owned identity (`GB-SEC-001`, `GB-SEC-006`, `GB-COR-006`) | Store immutable internal ID, tenant-scoped external run ID, tenant, owner, creation authorization context, state/version, and fence. Admission-ticket subjects and signatures bind `{tenant_id, principal_id}`. The same external ID may exist in two tenants; a duplicate inside one tenant conflicts. | Tenant-isolated identical IDs succeed, same-tenant duplicate returns 409, immutable ownership survives restart, and identical principal IDs in different tenants cannot share tickets. |
+| SEC-03 Object authorization (`GB-SEC-001`, `GB-SEC-002`, `GB-SEC-004`, `GB-SEC-008`, `GB-QA-016`) | Enforce `authenticate -> tenant-scoped resolve -> object authorize -> service transaction -> audit`. A common `ResourceOwner`/`Action` policy covers list, status, attach, events, WebSocket, SSE, detach, cancel, pause, resume, expire, subscription, acknowledgement, callback, redrive, and dead-letter. Direct handler principal comparison is forbidden. | A generated two-principal/two-tenant matrix covers owner/non-owner, accepted/running state, every read/control/stream path, non-disclosing 404 policy, and concurrent same-transaction owner/version/fence revalidation. A route-manifest meta-test fails for any protected route without owner resolution and authorization coverage. |
+| SEC-04 Callback and delivery lifecycle (`GB-SEC-007`, `GB-COR-009`) | Resolve delivery, subscription, registration, tenant, and owner atomically; enforce a symmetric delivery state machine and operation idempotency contract. Missing delivery returns 404 and impossible transition returns 409. | Missing, foreign, completed, cancelled, duplicate, conflicting-payload, concurrent, stale-lease, and stale-fence redrive/dead-letter cases. |
+| SEC-05 Exact external-input decoding (`GB-POL-001`, `GB-INP-010`) | Validate every external YAML/JSON command input against a closed schema and replace `str`, `int`, `tuple`, and `dict` coercions with path-aware exact codecs. | `actions`, `resources`, and `selectors` reject object, scalar, bool, null, duplicate key, unknown field, missing identifier, and `None`; generated type-confusion cases cover every CLI subcommand. |
+| SEC-06 Immediate resource ceilings (`GB-INP-001`–`004`, `GB-INP-006`, `GB-INP-007`, `GB-SEC-011`, `GB-SEC-012`) | Apply adapter wire caps before parsing and defense-in-depth route caps with 413. Client reads enforce `Content-Length`, chunk/decompressed-byte caps, total cancellation deadline, and truncated error bodies. YAML/directory loaders stream under document/file/byte/node, root-containment, and symlink budgets. IDs and reasons have separate byte, control-character, and Unicode-normalization policies. Untrusted regex is denied by default and may be admitted only by a non-backtracking engine or isolated deadline boundary. | Content-length mismatch, infinite chunking, compressed bomb, slow/error stream, deep/large JSON, header bomb, file bomb, symlink loop/escape, NUL/CRLF/bidi/normalization, catastrophic regex, and canonical integer boundary corpora. |
+| SEC-07 Evidence reconstruction and disclosure (all nine reproduced findings) | Reconstruct missing harnesses for policy CLI, canonical bigint/Decimal, journal append, and nonexistent delivery; convert every reproduced issue into before/after regression evidence. Create an evidence manifest binding the eventual source identity, commands, environment, tool versions, and file digests. Determine whether external users require a coordinated advisory. | Nine issue-to-fixture mappings are executable on supported Python and Rust environments; missing, stale, substituted, unresolved, or output-only evidence fails promotion. |
+| SEC-08 Authentication failure and audit contract (`GB-SEC-005`, `GB-SEC-009`, `GB-SEC-010`) | Return `401` plus `WWW-Authenticate` for absent/invalid authentication, `403` for an authenticated denial, and explicit `404` only for resource hiding. Public errors use stable codes, safe messages, and correlation IDs. Auth-provider timeout, exception, and invalid decisions emit structured internal audit containing route, request/correlation ID, exception class, and safe principal hint. | Status/reason/header matrix plus injected provider failures and sensitive exception strings; public responses do not leak internals and audit records remain correlated. |
+
+Phase 0 exits only with zero open P0 findings, passing adversarial regressions,
+and a documented authorization policy for existence disclosure. Handler-local
+owner checks are not sufficient closure for SEC-02 or SEC-03.
+
+## Phase 1: storage, durability, and resource model
+
+Target window: weeks 2-4. This phase closes the P1 failure modes that cannot be
+made reliable inside process-local dictionaries or monolithic handlers.
+
+1. Define `RunRepository`, `EventJournal`, `WorkQueue`, `CheckpointStore`,
+   `CallbackInbox`, `CallbackOutbox`, `DeliveryRepository`, and
+   `LeaseRepository` interfaces. Each write transaction binds tenant, resource,
+   owner, state/version, lease generation, fencing token, and idempotency
+   identity.
+2. Deliver one durable accepted-run vertical slice across process restart,
+   callback continuation, control state, and output/effect publication before
+   generalizing other routes.
+3. Add cursor pagination, retention, compaction, and explicit quotas for runs,
+   events, callbacks, controls, subscriptions, acknowledgements, and delivery
+   results. Default run responses are summary-only and enforce `maxEvents` and
+   `maxBytes`; full history uses cursor continuation or streams. In-memory
+   repositories remain bounded test/development implementations.
+4. Implement atomic outbox claim, lease, renewal, fence, completion, and retry
+   semantics so concurrent publishers cannot claim the same work without an
+   explicit idempotent duplicate contract.
+5. Define delivery lifecycle and operation idempotency keys; same key and
+   payload returns the same outcome, a conflicting payload returns 409, and
+   missing or illegal transitions never record a successful no-op.
+6. Replace long-lived, thread-affine SQLite connections and whole-ledger
+   snapshot rewrites with either a per-operation/thread pool or serialized DB
+   actor, explicit WAL and `busy_timeout`, transaction policy, versioned
+   transactional migrations, and row-level or append-oriented mutations.
+   Validate thread/process contention, close-during-call, concurrent open, and
+   crash-safe migration replay.
+7. Reserve tenant-scoped run and idempotency identities atomically before
+   compilation, generate missing resource IDs with UUIDv7/ULID rather than
+   fixed defaults, and keep resource IDs separate from idempotency keys.
+   Detach/ack uniqueness checks and appends occur in one transaction.
+8. Remove tuple-copy journal append behavior and replace Decimal placeholder
+   replacement with a single-pass canonical encoder. Separate the mutable
+   journal from immutable snapshots and add integer, node, depth, string,
+   field, allocation, and total-work limits.
+9. Introduce one `SchemaExecutionPolicy` for external MCP schemas, plugin
+   configuration schemas, OpenAPI-derived schemas, and future schema entry
+   points. It bounds schema bytes, nodes, depth, patterns, references, and
+   validation work. Remote references and patterns default to disabled; a
+   pattern requires a non-backtracking engine or an isolated killable deadline,
+   not merely a length check. Cache validated schemas by canonical digest in a
+   bounded LRU and retain immutable parsed discovery schemas.
+10. Change public Rust canonical and typed-value APIs from panicking `expect`
+    paths to `Result`-returning APIs with stable diagnostics. Deny new
+    `expect_used` in non-test targets and retain a reviewed baseline for any
+    temporary exception.
+11. State timeout semantics precisely. Cooperative in-process deadlines must
+    not be represented as preemptive termination; production isolation requires
+    a killable worker/process boundary, provider cancellation, worker recovery,
+    and fenced effect publication. Tests cover an infinite loop, unresponsive
+    provider, cancellation-ignoring tool, and stale commit after reclamation.
+12. Add explicit `start`, `drain`, and `close` lifecycle and ownership rules for
+    executors and repositories. Separate monotonic in-process deadlines,
+    authority wall-clock leases with skew policy, and audit wall timestamps;
+    test clock rollback/forward, graceful/forced drain, double close, and submit
+    during shutdown.
+
+Phase 1 exits when every related P1 has executable closure evidence, the durable
+vertical slice passes multi-process crash/restart tests, and resource-budget
+benchmarks fail closed at configured ceilings.
+
+## Phase 2: implementation boundaries
+
+Target window: months 1-2. Refactoring follows the security and repository
+contracts so moving code cannot preserve the current authority mistakes behind
+new module names.
+
+### Server
+
+Split routing, request limits, authentication, authorization, error mapping,
+route handlers, services, and repositories. Route modules resolve typed
+requests; services own domain transactions; repositories own tenant-scoped
+atomicity. The existing monolithic `GraphBlocksServerApp.handle` is retired
+incrementally behind route-level characterization tests. A typed `ServerLimits`
+contract covers body/header bytes and counts, connection and request
+concurrency, per-tenant rate, and idle/total deadlines; adapter conformance
+tests prove the limit is enforced before application parsing.
+
+### CLI and external codecs
+
+Give each command a `register` and `run` boundary with injected dependencies.
+Centralize typed input codecs, closed-schema validation, filesystem budgets,
+error-to-exit-code mapping, and JSON/text formatting. Command modules must not
+define their own permissive coercion rules.
+
+### Compiler and conformance kit
+
+Separate decode, migration, closed-schema validation, normalization, catalog
+resolution, type checking, lowering, and canonical evidence into immutable
+phase results with collected diagnostics. Split the conformance package into
+models, fixtures, reports, acceptance, and profile-specific runners; replace
+the durable mega-dispatch with typed case handlers. Generate the stdlib registry,
+documentation, and TCK inventory from one machine-readable manifest. Keep one
+authoritative durable fixture or enforce a digest-bound generated mirror.
+Consolidate repeated wire, validation, immutability, and SQLite primitives
+behind a shared corpus.
+
+### Python API
+
+Reduce the root export surface to the reviewed stable API, move preview
+capabilities under explicit namespaces, replace internal `from graphblocks
+import ...` imports with leaf-module imports, and remove import cycles. Enforce
+that no root export exists outside the reviewed snapshot; optional preview
+warnings remain inside explicit namespaces. Enforce base-install dependency/API
+budgets, module-level preview typing/debt budgets, import-time, resident-memory,
+and loaded-module limits in CI.
+
+### Rust authority and crate graph
+
+Adopt the following target authority model:
+
+```text
+Rust normative
+  schema reader and migration semantics
+  normalized IR, canonical serialization, and canonical hash
+  diagnostic registry and physical plan
+  runtime protocol and production scheduler
+
+Python
+  typed authoring and ergonomic builders
+  schema facade and native compiler/runtime binding
+  deterministic reference interpreter and TCK oracle
+```
+
+The current first-stable matrix lists `python-reference` as the candidate C0/C1
+implementation and keeps the native distribution preview; it does not yet
+declare a normative implementation authority. Record the target Rust authority
+and transition in an architecture decision before changing compatibility
+claims. Resolving `GB-ARCH-001` and `GB-ARCH-002` is a 1.0 blocker, so the
+decision cannot be deferred without explicitly changing the audit release
+policy. Update the artifact tiers, profile implementation identities,
+stable-requirement mappings, language-support documentation, protocol/version
+handshake, and release evidence together. During the transition, Python/Rust
+differential tests gate every normative phase.
+
+Extract a reusable `graphblocks-control-plane` library so the Python binding
+does not depend on the `graphblocksd` binary/control-plane implementation.
+Reassess very thin crates only after consumer, SemVer, or compile-isolation
+requirements are documented.
+
+### Product and profile boundary
+
+Keep the portable core limited to schema, compiler, runtime core, protocol, and
+testing. AI application, governance, durable/remote workers, voice, deployment,
+observability, and external integrations advance as separately gated extension
+profiles. A feature enters core only when it is required for portable execution
+semantics, is implementable by two independent runtimes, has a
+provider-neutral TCK, and does not impose a provider or deployment policy.
+
+Domain examples remain examples. Reusable patterns such as bounded delegation,
+authority-backed evidence, human approval, workspace transactions, retrieval
+provenance, background callbacks, and provider-authoritative playback may be
+promoted; legal, research, coding, or voice examples do not become separate
+product packages by default. Example metadata declares required profiles,
+mocked versus real integrations, threat model, and non-goals.
+
+Explicit non-goals include a hosted orchestrator, full API gateway, secret
+manager, generic ETL platform, and full Kubernetes operator. Proposals that
+cross those boundaries require a core-inclusion ADR rather than inheriting scope
+from an example or adapter.
+
+Every integration promotion record must state contract-only versus real-adapter
+maturity, supported authentication modes, SDK/service versions, real-service
+evidence, retry/failure model, and promotion gate. Decide whether
+`graphblocksd` is renamed or becomes a real daemon; decide whether the operator
+is renamed/internal or gains reconciliation, upgrade, finalizer, leader
+election, envtest, and kind evidence. Reserved Rust/npm artifacts must install
+only an unambiguous reserved-package notice.
+
+### Generated project facts and naming
+
+Do not introduce another manually maintained authority. Generate project facts
+from the existing owners: the stable release matrix for release tier and
+support, the conformance catalog for profile definitions, package metadata for
+interpreter constraints, and commit-bound CI evidence for test counts and TCK
+digests. Produce status tables, README facts, compatibility matrices, badges,
+and release evidence as digest-bound projections and fail CI on drift.
+
+Align `SECURITY.md`, package classifiers, Python version wording, roadmap state,
+and status wording through those projections. Describe `graphblocksd`, the
+operator artifact, and contract-only integrations by their implemented behavior
+rather than by aspirational product names. Generate evidence-bound risk status,
+owner, resolved version, and digest; reopen a resolved risk when its required
+evidence disappears or changes. The status projection reports supply chain,
+API, runtime security, durability, and adapter maturity as separate axes.
+
+### Quality debt and developer loop
+
+Roll strict typing out package by package, require an error code and reason for
+every `type: ignore`, and enforce no-new-ignore and no-new-preview-debt budgets.
+Inventory broad exception catches, rethrow cancellation and fatal errors, and
+replace external/persisted-data assertions with explicit errors that behave the
+same under `python -O`. Add non-test Rust `expect_used` denial.
+
+Split a two-to-three-minute quick PR gate from the full required matrix without
+allowing path filters to skip release-critical dependents. Generate the
+dependency map used by those filters. Pin a reproducible development
+constraints/lock input and verify clean installation and lock regeneration.
+
+Phase 2 exits only when its P1 findings—`GB-API-001`, `GB-ARCH-001`, and
+`GB-ARCH-002`—have executable closure evidence, the accepted authority decision
+is reflected consistently in the release/profile matrices, and every remaining
+P2/P3 has an owner, milestone, and acceptance contract in the remediation map.
+
+## Complete inventory coverage
+
+The [remediation map](audit-remediation-map.yaml) assigns every baseline
+finding to exactly one primary workstream. Several fixes affect multiple
+profiles or release gates, but primary ownership is unique so no finding can be
+silently omitted or counted closed twice.
+
+| Workstream | Phase | Findings | Primary outcome |
+| --- | --- | ---: | --- |
+| `M0-AUTHORIZATION` | Security freeze | 11 | Tenant identity, object authorization, authentication/error/audit contract |
+| `M0-INPUT-RESOURCE` | Security freeze | 11 | Exact codecs and bounded wire/schema/filesystem/server inputs |
+| `M1-DURABLE-SERVER` | Storage/resource model | 18 | Durable repositories, lifecycle, idempotency, migration, clocks, pagination |
+| `M1-CANONICAL-JOURNAL` | Storage/resource model | 6 | Linear bounded canonical/journal behavior and fallible Rust APIs |
+| `M2-PYTHON-API` | Implementation boundaries | 7 | Stable facade, preview isolation, imports, typing and base-install budgets |
+| `M2-NORMATIVE-AUTHORITY` | Implementation boundaries | 8 | Rust authority transition, differential evidence, crate/fixture/version boundary |
+| `M2-MODULE-BOUNDARIES` | Implementation boundaries | 7 | Server/CLI/registry/TCK/shared-primitive separation and mutation coverage |
+| `M2-PRODUCT-BOUNDARY` | Implementation boundaries | 7 | Core/non-goal, integration maturity, naming and example policy |
+| `M2-SCHEMA-CACHING` | Implementation boundaries | 2 | Bounded validator and parsed discovery-schema caches |
+| `QG-QUALITY-AND-CI` | Cross-cutting | 15 | Fuzz, typing/exception/assert debt, lint, coverage, SAST, model and platform gates |
+| `QG-DOCUMENTATION-FACTS` | Cross-cutting | 7 | Generated facts, evidence-bound risks, maturity/readiness and claim automation |
+
+CI validates the baseline severity counts, artifact digests, reproduction
+inventory, unique workstream ownership, referenced profiles, and referenced
+release gates. Finding status remains external until the full JSON inventory is
+imported; the map must never fabricate an open count from the immutable
+baseline.
+
+## Evidence and performance seed matrix
+
+The evidence bundle provides useful adversarial seeds, not portable hard caps:
+
+| Seed | Audit observation | Required regression contract |
+| --- | --- | --- |
+| Catastrophic regex | input length 18: 0.009s; 26: 2.412s | Default rejection or bounded non-backtracking/isolated execution; never calibrate only by pattern length. |
+| Canonical bigint | 10k digits: load/dump 0.0015/0.0043s; 300k: 0.886/3.507s | Stable digit/token ceiling and diagnostic; boundary, ceiling+1, time and allocation checks. |
+| Decimal canonicalization | 1k values: 0.0138s; 16k: 2.777s | Single-pass slope/complexity and allocation budget through at least 16k values. |
+| Journal append | 1k: 0.021s; 16k: 1.256s | Append scaling through 64k plus allocation and immutable-snapshot checks. |
+| Import | baseline 0.02s/7.6MB/24 modules; `graphblocks` 1.51s/59.7MB/388 modules; leaf canonical import is effectively identical | Clean-process time, RSS, GraphBlocks-module and total-module budgets for root and leaf imports. |
+
+Before turning these observations into thresholds, record the runner,
+interpreter/toolchain, warmup, repetitions, variance allowance, input fixture,
+absolute cap, and slope/complexity rule. Also seed:
+
+- one million runs/events for heap plateau and lookup SLO;
+- 10, 10k, and 1M runs for cursor-page latency and response caps;
+- 10k repeated schema validations for cache behavior and eviction;
+- 100 concurrent requests for one tenant/run ID with exactly one compile;
+- every append, checkpoint, outbox, and lease atomic boundary with a
+  deterministic pre/post-write kill point; and
+- client/server attacks covering content-length mismatch, infinite chunking,
+  decompression bombs, slow streams, oversized error bodies, deep JSON, header
+  bombs, and concurrency/rate limits.
+
+The audit ran Python tests on unsupported Python 3.13 and could not run Rust.
+Closure evidence must rerun the reconstructed reproductions and applicable full
+gates on Python 3.11/3.12 and pinned Rust 1.94, while retaining exact commands,
+versions, environment identity, and results.
+
+## Required CI and review gates
+
+The stabilization work adds the following gates before 1.0:
+
+1. a complete multi-tenant authorization matrix that automatically includes
+   every new protected route;
+2. Hypothesis plus Rust fuzz/proptest seed-corpus PR smoke and scheduled
+   long-running fuzz for panic-free, bounded-resource, and cross-runtime
+   equivalence properties;
+3. Python/Rust canonical and compiler phase differential tests;
+4. request, response, schema, and canonical resource-budget tests;
+5. import time, RSS, and loaded-module budgets;
+6. canonical, journal, budget, and compiler performance regressions;
+7. multi-process crash, restart, lease, and fencing tests;
+8. stable/security-critical branch coverage plus changed-lines coverage policy;
+9. Ruff formatting/linting, progressive strict typing, no-new-ignore/debt,
+   exception-boundary inventory, and optimized-mode validation;
+10. Python and Rust dependency vulnerability scanning;
+11. CodeQL or an equivalent reviewed static-analysis gate;
+12. macOS and native-wheel smoke coverage;
+13. documentation link/anchor, evidence-bound risk, and generated-facts drift
+    checks with a fast docs-only job;
+14. Miri, Loom, or an equivalent targeted Rust state-machine validation where
+    the model is applicable;
+15. a dependency-aware quick/full CI split plus reproducible development
+    constraints lock; and
+16. handler-level mutation coverage and surviving-mutant evidence for stable
+    compiler, policy, and canonical boundaries.
+
+Each gate needs a documented budget, deterministic failure output, and a named
+release-matrix requirement. Merely adding a tool without an enforced threshold
+does not close a finding.
+
+## 1.0 exit criteria
+
+The stable tag remains blocked until all existing release gates and all of the
+following audit gates pass:
+
+- zero open P0 and P1 findings;
+- all 99 immutable baseline IDs map to one workstream, and the imported live
+  inventory is digest-bound to promotion evidence;
+- the audited source commit/tree or source-archive digest and a file-level
+  evidence manifest are present;
+- the two-principal/two-tenant authorization matrix is green;
+- adversarial JSON, YAML, schema, regex, and canonical-number cases are green;
+- Python/Rust differential evidence is digest-bound to the release candidate;
+- the Rust normative-authority ADR and transition evidence satisfy
+  `REL-NORMATIVE-AUTHORITY`;
+- multi-process crash/restart/lease/fence tests are green;
+- output/effect outbox and idempotency guarantees have executable evidence;
+- performance, memory, and import budgets are enforced;
+- dependency and static security scans have no unaccepted high-impact finding;
+- a separately defined macOS and native-wheel smoke gate passes; expanding the
+  official supported-platform matrix requires an explicit release-tooling and
+  evidence decision;
+- independent API and security reviews approve the unchanged release
+  candidate; and
+- the reconstructed audit reproductions and applicable full gates pass on
+  Python 3.11/3.12 and pinned Rust 1.94.
+
+The exact release candidate must still satisfy the installed-artifact,
+supply-chain, signed-evidence, protected-ref, and soak requirements in the
+[first stable release boundary](first-stable-release.md). Audit remediation
+adds to those gates; it does not replace them.
+
+## P2 and P3 scheduling
+
+Every P2 and P3 is assigned in the remediation map. Security-adjacent P2 items
+needed to make a P0/P1 fix sound—tenant-bound admission tickets, atomic
+detach/ack, streaming/file budgets, safe errors and identifiers, versioned
+migrations, shutdown/clock boundaries, and Rust panic linting—move with Phase 0
+or Phase 1 rather than waiting for broad refactoring.
+
+The remaining P2 work follows the Phase 2 workstream order. P3 naming,
+documentation, reserved-artifact, non-goal, example-metadata, docs-check, and
+mutation-testing items ship with the owning product/quality/generated-facts
+workstream so they cannot drift independently again.
+
+Review this plan after each security-freeze merge, weekly through Phase 1, and
+at every release-candidate decision. Update status from evidence; do not reduce
+severity to meet a date.

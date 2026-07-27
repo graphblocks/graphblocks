@@ -1,0 +1,384 @@
+coverageVersion: 1
+auditDate: '2026-07-27'
+auditedSource:
+  description: User-provided graphblocks-main.zip
+  gitRevision: unavailable-source-archive-contained-no-git-metadata
+  archiveDigest: unavailable-original-source-archive-not-in-evidence-bundle
+artifactDigests:
+  reportSha256: 5ad9b3dcb77b387e1a5d6b41bdb65b9c609c18526d0f1ec712dcb102bfba9f2c
+  inventorySha256: 9f98ebde8dc981b0eaee8ed795e04306ac67f707223cfe844e2365561db7eb44
+  evidenceBundleSha256: 75cf142766d1e8cbf8c89c1157727d8a4ca0e945b15e9157c8977f1c6a02fe06
+statusAuthority:
+  source: graphblocks-audit-issues.json
+  repositoryBinding: pending-full-inventory-import
+  note: Baseline identities are bound here; live open and resolved state must come from the imported inventory.
+
+baselineBySeverity:
+  P0:
+    - GB-POL-001
+    - GB-SEC-001
+    - GB-SEC-002
+    - GB-SEC-003
+  P1:
+    - GB-INP-001
+    - GB-INP-004
+    - GB-INP-005
+    - GB-PERF-002
+    - GB-SEC-007
+    - GB-API-001
+    - GB-ARCH-001
+    - GB-COR-001
+    - GB-COR-002
+    - GB-COR-003
+    - GB-INP-002
+    - GB-INP-003
+    - GB-PERF-001
+    - GB-PERF-003
+    - GB-QA-008
+    - GB-RUST-001
+    - GB-SEC-004
+    - GB-SEC-005
+    - GB-SEC-006
+    - GB-SEC-009
+    - GB-ARCH-002
+    - GB-COR-004
+    - GB-SEC-008
+  P2:
+    - GB-API-002
+    - GB-API-003
+    - GB-ARCH-003
+    - GB-ARCH-004
+    - GB-ARCH-005
+    - GB-ARCH-006
+    - GB-ARCH-007
+    - GB-ARCH-008
+    - GB-ARCH-009
+    - GB-ARCH-010
+    - GB-ARCH-011
+    - GB-ARCH-012
+    - GB-ARCH-013
+    - GB-ARCH-015
+    - GB-ARCH-016
+    - GB-ARCH-017
+    - GB-COR-005
+    - GB-COR-006
+    - GB-COR-007
+    - GB-COR-008
+    - GB-COR-009
+    - GB-COR-011
+    - GB-COR-012
+    - GB-DOC-006
+    - GB-INP-006
+    - GB-INP-007
+    - GB-INP-009
+    - GB-INP-010
+    - GB-PERF-004
+    - GB-PERF-005
+    - GB-PERF-006
+    - GB-PERF-007
+    - GB-QA-001
+    - GB-QA-002
+    - GB-QA-003
+    - GB-QA-004
+    - GB-QA-005
+    - GB-QA-006
+    - GB-QA-007
+    - GB-QA-009
+    - GB-QA-010
+    - GB-QA-012
+    - GB-QA-013
+    - GB-QA-014
+    - GB-QA-015
+    - GB-QA-016
+    - GB-QA-017
+    - GB-RUST-002
+    - GB-SEC-010
+    - GB-DOC-001
+    - GB-DOC-002
+    - GB-DOC-003
+    - GB-DOC-005
+    - GB-ARCH-014
+    - GB-ARCH-019
+    - GB-COR-010
+    - GB-COR-013
+    - GB-COR-014
+    - GB-COR-015
+    - GB-INP-008
+    - GB-PERF-008
+    - GB-SEC-011
+    - GB-SEC-012
+    - GB-ARCH-020
+  P3:
+    - GB-ARCH-018
+    - GB-DOC-007
+    - GB-QA-011
+    - GB-QA-018
+    - GB-DOC-004
+    - GB-DOC-008
+    - GB-DOC-009
+    - GB-DOC-010
+
+reproducedFindings:
+  - id: GB-POL-001
+    harness: missing-cli-command-wrapper
+    evidence:
+      - reproductions/policy-malformed.yaml
+      - reproductions/policy-case.yaml
+      - reproductions/repro_policy_fail_open.out
+  - id: GB-SEC-001
+    harness: present
+    evidence:
+      - reproductions/repro_server_authz.py
+      - reproductions/repro_server_authz.out
+  - id: GB-SEC-002
+    harness: present
+    evidence:
+      - reproductions/repro_cross_tenant_control.py
+      - reproductions/repro_cross_tenant_control.out
+  - id: GB-SEC-003
+    harness: shared-with-GB-SEC-001
+    evidence:
+      - reproductions/repro_server_authz.py
+      - reproductions/repro_server_authz.out
+  - id: GB-INP-001
+    harness: present
+    evidence:
+      - reproductions/repro_mcp_regex_redos.py
+      - reproductions/repro_mcp_regex_redos.out
+  - id: GB-INP-004
+    harness: missing-output-only
+    evidence:
+      - reproductions/repro_canonical_bigint_cost.out
+  - id: GB-INP-005
+    harness: missing-output-only
+    evidence:
+      - reproductions/repro_canonical_decimal_cost.out
+  - id: GB-PERF-002
+    harness: missing-output-only
+    evidence:
+      - reproductions/repro_journal_append_cost.out
+  - id: GB-SEC-007
+    harness: missing-output-only
+    evidence:
+      - reproductions/repro_nonexistent_delivery_control.out
+
+workstreams:
+  - id: M0-AUTHORIZATION
+    phase: phase-0-security-freeze
+    ownerArea: server-security
+    affectedProfiles: [GB-C3-GOVERNED-RUNTIME, GB-C4-PRODUCTION]
+    releaseGates: [REL-AUDIT-REMEDIATION]
+    findings:
+      - GB-SEC-001
+      - GB-SEC-002
+      - GB-SEC-003
+      - GB-SEC-004
+      - GB-SEC-005
+      - GB-SEC-006
+      - GB-SEC-008
+      - GB-SEC-009
+      - GB-COR-006
+      - GB-QA-016
+      - GB-SEC-010
+    acceptanceFocus:
+      - fail-closed authentication and explicit development mode
+      - tenant-owned identities and object-level authorization
+      - 401/403/404 plus stable reason-code contracts
+      - safe auth-provider failure audit and public error mapping
+      - route-manifest authorization completeness
+  - id: M0-INPUT-RESOURCE
+    phase: phase-0-security-freeze
+    ownerArea: untrusted-input-boundaries
+    affectedProfiles: [GB-C0-SCHEMA, GB-C3-GOVERNED-RUNTIME, GB-C4-PRODUCTION]
+    releaseGates: [REL-AUDIT-REMEDIATION]
+    findings:
+      - GB-POL-001
+      - GB-INP-001
+      - GB-INP-002
+      - GB-INP-003
+      - GB-INP-004
+      - GB-INP-006
+      - GB-INP-007
+      - GB-INP-008
+      - GB-INP-010
+      - GB-SEC-011
+      - GB-SEC-012
+    acceptanceFocus:
+      - exact closed-schema codecs without coercion
+      - pre-parse wire and cumulative filesystem budgets
+      - safe schema execution and regex policy
+      - response decompression deadline header and concurrency limits
+      - bounded identifiers reasons and Unicode normalization
+  - id: M1-DURABLE-SERVER
+    phase: phase-1-storage-and-resource-model
+    ownerArea: runtime-storage
+    affectedProfiles: [GB-C3-GOVERNED-RUNTIME, GB-C4-PRODUCTION, GB-X3-DURABLE-STREAM]
+    releaseGates: [REL-AUDIT-REMEDIATION]
+    findings:
+      - GB-COR-001
+      - GB-COR-002
+      - GB-COR-003
+      - GB-COR-004
+      - GB-PERF-001
+      - GB-PERF-003
+      - GB-SEC-007
+      - GB-COR-005
+      - GB-COR-007
+      - GB-COR-008
+      - GB-COR-009
+      - GB-COR-010
+      - GB-COR-012
+      - GB-COR-013
+      - GB-COR-015
+      - GB-PERF-004
+      - GB-PERF-006
+      - GB-QA-017
+    acceptanceFocus:
+      - restart-durable tenant-scoped repositories and migrations
+      - atomic reservation idempotency claim lease and fencing
+      - explicit delivery and server lifecycle state machines
+      - monotonic deadline versus authority wall-clock semantics
+      - retention pagination response and memory ceilings
+  - id: M1-CANONICAL-JOURNAL
+    phase: phase-1-storage-and-resource-model
+    ownerArea: canonical-and-journal-core
+    affectedProfiles: [GB-C0-SCHEMA, GB-C1-LOCAL-RUNTIME]
+    releaseGates: [REL-AUDIT-REMEDIATION]
+    findings:
+      - GB-INP-005
+      - GB-PERF-002
+      - GB-RUST-001
+      - GB-ARCH-013
+      - GB-PERF-008
+      - GB-RUST-002
+    acceptanceFocus:
+      - single-pass bounded canonical encoding
+      - append-friendly journal with immutable snapshots
+      - fallible panic-free Rust public APIs
+      - deterministic complexity allocation and lint budgets
+  - id: M2-PYTHON-API
+    phase: phase-2-implementation-boundaries
+    ownerArea: python-api
+    affectedProfiles: [GB-C0-SCHEMA, GB-C1-LOCAL-RUNTIME]
+    releaseGates: [REL-API-SNAPSHOT, REL-AUDIT-REMEDIATION]
+    findings:
+      - GB-API-001
+      - GB-API-002
+      - GB-API-003
+      - GB-DOC-006
+      - GB-ARCH-019
+      - GB-PERF-005
+      - GB-COR-014
+    acceptanceFocus:
+      - reviewed stable root facade and explicit preview namespaces
+      - leaf-only internal dependency direction and zero import cycles
+      - base-install API dependency import and typing budgets
+  - id: M2-NORMATIVE-AUTHORITY
+    phase: phase-2-implementation-boundaries
+    ownerArea: cross-runtime-architecture
+    affectedProfiles: [GB-C0-SCHEMA, GB-C1-LOCAL-RUNTIME]
+    releaseGates: [REL-NORMATIVE-AUTHORITY]
+    findings:
+      - GB-ARCH-001
+      - GB-ARCH-002
+      - GB-ARCH-003
+      - GB-ARCH-004
+      - GB-ARCH-007
+      - GB-ARCH-011
+      - GB-ARCH-020
+      - GB-QA-014
+    acceptanceFocus:
+      - accepted Rust normative authority transition ADR
+      - compiler and runtime differential evidence
+      - corrected control-plane crate direction and fixture authority
+      - explicit protocol capability and unsupported-version handshake
+  - id: M2-MODULE-BOUNDARIES
+    phase: phase-2-implementation-boundaries
+    ownerArea: maintainability
+    affectedProfiles: [GB-C0-SCHEMA, GB-C1-LOCAL-RUNTIME, GB-X3-DURABLE-STREAM]
+    releaseGates: [REL-AUDIT-REMEDIATION]
+    findings:
+      - GB-ARCH-005
+      - GB-ARCH-006
+      - GB-ARCH-008
+      - GB-ARCH-009
+      - GB-ARCH-010
+      - GB-ARCH-012
+      - GB-QA-018
+    acceptanceFocus:
+      - separated server CLI compiler and TCK dispatch
+      - generated stdlib registry and shared narrow primitives
+      - profile-specific branch and mutation coverage
+  - id: M2-PRODUCT-BOUNDARY
+    phase: phase-2-implementation-boundaries
+    ownerArea: product-and-packaging
+    affectedProfiles: [GB-C2-AI-APPLICATION, GB-C3-GOVERNED-RUNTIME, GB-C4-PRODUCTION]
+    releaseGates: [REL-AUDIT-REMEDIATION]
+    findings:
+      - GB-ARCH-014
+      - GB-ARCH-015
+      - GB-ARCH-016
+      - GB-ARCH-017
+      - GB-ARCH-018
+      - GB-DOC-008
+      - GB-DOC-010
+    acceptanceFocus:
+      - core inclusion and explicit non-goal ADR policy
+      - contract-only versus real-adapter maturity evidence
+      - accurate daemon operator reserved-artifact naming
+      - pattern examples without domain guarantees
+  - id: M2-SCHEMA-CACHING
+    phase: phase-2-implementation-boundaries
+    ownerArea: integration-performance
+    affectedProfiles: [GB-C2-AI-APPLICATION]
+    releaseGates: [REL-AUDIT-REMEDIATION]
+    findings:
+      - GB-INP-009
+      - GB-PERF-007
+    acceptanceFocus:
+      - canonical-digest bounded validator cache
+      - immutable parsed discovery schema reuse
+  - id: QG-QUALITY-AND-CI
+    phase: cross-cutting-quality-gates
+    ownerArea: quality-and-release-engineering
+    affectedProfiles: [GB-C0-SCHEMA, GB-C1-LOCAL-RUNTIME, GB-C4-PRODUCTION]
+    releaseGates: [REL-AUDIT-REMEDIATION, REL-MACOS-NATIVE-SMOKE]
+    findings:
+      - GB-QA-008
+      - GB-COR-011
+      - GB-QA-001
+      - GB-QA-002
+      - GB-QA-003
+      - GB-QA-004
+      - GB-QA-005
+      - GB-QA-006
+      - GB-QA-007
+      - GB-QA-009
+      - GB-QA-010
+      - GB-QA-012
+      - GB-QA-013
+      - GB-QA-015
+      - GB-QA-011
+    acceptanceFocus:
+      - PR-smoke and scheduled fuzz property suites
+      - strict typing exception assert and optimized-mode debt budgets
+      - branch changed-lines dependency SAST and model-checking gates
+      - quick versus full CI with locked development dependencies
+      - separate macOS native and documentation smoke gates
+  - id: QG-DOCUMENTATION-FACTS
+    phase: cross-cutting-generated-facts
+    ownerArea: documentation-and-claims
+    affectedProfiles: [GB-C0-SCHEMA, GB-C1-LOCAL-RUNTIME, GB-C4-PRODUCTION]
+    releaseGates: [REL-AUDIT-REMEDIATION]
+    findings:
+      - GB-DOC-001
+      - GB-DOC-002
+      - GB-DOC-003
+      - GB-DOC-004
+      - GB-DOC-005
+      - GB-DOC-007
+      - GB-DOC-009
+    acceptanceFocus:
+      - generated revision-bound test maturity support and claim facts
+      - evidence-bound risk status and automatic reopening
+      - separate supply-chain API runtime durability and adapter readiness axes

@@ -24,6 +24,7 @@ organized by audience and authority.
 - [Language support](specification/conformance/language-support.md)
 - [Implementation status](project/status.md)
 - [First stable release boundary](project/first-stable-release.md)
+- [Deep audit remediation plan](project/audit-remediation-plan.md)
 - [Roadmap](project/roadmap.md)
 
 ## Document authority

@@ -5,12 +5,19 @@ provides the broad reference surface, and Rust implements canonical
 schema/compiler, core runtime, protocol, durable, and selected extension
 contracts.
 
+The 99-finding deep-audit baseline includes 4 P0 and 23 P1 findings. Closure
+evidence has not yet satisfied the release matrix, so security remediation now
+precedes feature growth and 1.0 remains blocked. In particular, the current
+server must not be represented as a production-ready multi-tenant authority
+boundary. See the [deep audit remediation plan](audit-remediation-plan.md).
+
 The intended 1.0 scope and its unmet gates are recorded in the
 [first stable release boundary](first-stable-release.md). The closed
 `graphblocks.ai/v1` core wire, explicit alpha migrations, compatibility
 snapshots, and candidate enforcement are implemented. Independent review,
-release-candidate soak, upgrade evidence, protected-ref signing, and authorized
-publish/rollback rehearsal remain before the stable tag.
+release-candidate soak, first-stable upgrade-exemption evidence, protected-ref
+signing, and authorized publish/rollback rehearsal remain before the stable
+tag.
 
 The Python release surface is consolidated into three distributions:
 `graphblocks` for the pure-Python SDK, built-ins, CLI, and server contracts;
@@ -18,16 +25,17 @@ The Python release surface is consolidated into three distributions:
 TCK. Package catalog component entries remain capability and binding identities,
 not separately published wheels.
 
-The consolidated checkout is verified by more than 2,700 Python tests, the complete Rust
-workspace formatting/strict-Clippy/test gates, all 42 acceptance gates, and a
-fresh no-index wheelhouse install of the three Python distributions followed by
-`pip check`.
+Revision-specific test, wheelhouse, and release-gate results are commit-bound CI
+facts and are not maintained as prose on this page. The remediation plan
+requires generating status projections from the existing release matrix,
+catalogs, package metadata, and digest-bound CI evidence.
 
-Current executable coverage includes all 42 gates in the ten-application
-acceptance manifest: documents, parser fallback, ACL propagation, RAG citations
-and abstention, conversation CAS/drafts, accepted runs and signed callbacks,
-bounded orchestration, governed workspace commits, release/canary/rollback,
-provider-authoritative voice behavior, and telemetry outage correctness.
+The ten-application acceptance manifest declares 42 gates covering documents,
+parser fallback, ACL propagation, RAG citations and abstention, conversation
+CAS/drafts, accepted runs and signed callbacks, bounded orchestration, governed
+workspace commits, release/canary/rollback, provider-authoritative voice
+behavior, and telemetry outage correctness. CI evidence, rather than this page,
+records whether they pass for a revision.
 
 Many integrations are still lightweight contracts, built-ins, and test doubles
 rather than production-ready external adapters. Optional extras add concrete

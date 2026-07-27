@@ -81,10 +81,16 @@ stable pure-Python claim; other implementations must publish their own reports.
 
 Passing C0 or C1 does not make a preview profile stable. Conversely, keeping a
 profile preview does not remove it from the specification or future roadmap.
-The additional C4 and X3 production gates do not block the first stable C0/C1
-release while those profiles remain explicitly preview. They become blocking
-only for a later promotion of the named preview profile; defects that cross
-into the claimed C0/C1 behavior remain ordinary stable-scope blockers.
+Capability-completeness gates that apply only to C4 or X3 do not block the
+first stable C0/C1 release while those profiles remain explicitly preview. They
+become blocking for a later promotion of the named preview profile.
+
+That sequencing does not waive release-wide defect gates. A known P0 or P1 in
+code shipped by the 1.0 release blocks promotion even when the affected
+capability remains preview; alternatively, the affected code must be removed
+from every release artifact. Compatibility scope and security release scope
+are different boundaries.
+
 The executable mapping from every direct C0/C1 capability requirement to its
 normative source, implementation, schema, TCK suite, and focused tests is
 maintained in `stable-requirements.yaml`; CI rejects drift from the canonical
@@ -123,6 +129,28 @@ does not mean that a real external service, SDK version range, authentication
 mode, retry policy, or failure model is supported. Each integration is promoted
 separately after real-service tests and an explicit dependency/platform matrix.
 
+## Deep-audit gate
+
+The [deep audit remediation plan](audit-remediation-plan.md) is release
+blocking. All P0 and P1 findings in a shipped artifact must be closed with
+executable regression evidence before 1.0, even when the affected module or
+profile remains preview. Preview limits the compatibility promise; it does not
+permit a known authorization bypass, fail-open decoder, unbounded
+attacker-controlled execution path, or public panic boundary in a shipped
+artifact.
+
+The original report, issue inventory, and evidence bundle digests plus the
+99-finding workstream crosswalk are recorded in
+[`audit-remediation-map.yaml`](audit-remediation-map.yaml). The evidence bundle
+does not contain the audited source revision/archive digest or a complete
+command/tool manifest, and several reproduced findings have output without an
+executable harness. Those provenance and reconstruction gaps remain blocking.
+
+The current profile tables describe the `python-reference` candidate
+implementation, not a settled normative authority. `REL-NORMATIVE-AUTHORITY`
+blocks 1.0 until the Rust authority transition is accepted, implemented, and
+reflected coherently in these tables and their evidence.
+
 ## Release gates
 
 The first stable release is blocked until all of these statements are evidenced
@@ -134,25 +162,39 @@ from the exact release artifacts:
 2. Closed `graphblocks.ai/v1` Graph and PluginManifest schemas exist; all stable
    readers validate them; alpha-to-v1 migrations have positive and negative
    golden tests; and compilers reject unknown blocks by default.
-3. C0 and pure-Python C1 trace every normative requirement to a schema or
-   implementation check and to TCK/acceptance evidence.
-4. Wheels and sdists are built once, installed into clean supported
+3. C0 and C1 trace every normative requirement to the implementation selected
+   by the final authority matrix and to schema, TCK, differential, and
+   acceptance evidence.
+4. The Rust normative-authority transition ADR, artifact/profile/language
+   matrices, native-first Python binding, explicit reference fallback, protocol
+   handshake, and phase-level differential evidence are complete.
+5. Wheels and sdists are built once, installed into clean supported
    environments, and used for TCK execution. Reports bind implementation,
    schema, fixture, profile-catalog, and acceptance-manifest digests.
-5. Supported Python/platform combinations pass install, upgrade, type, and
-   runtime tests. The exact matrix is published in the release notes.
-6. There are no unresolved critical or high-severity correctness or security
-   defects in the stable scope, no unexplained flakes, and three consecutive
-   clean release-candidate matrix runs.
-7. Artifacts carry checksums, an SBOM, provenance, and signatures; publishing,
+6. Supported Python/platform combinations pass install, type, and runtime
+   tests, plus either upgrade testing or the closed first-stable upgrade
+   exemption applicable only to `v1.0.0`. The exact matrix is published in the
+   release notes.
+7. All 99 baseline IDs map to an owning workstream; the source/evidence
+   provenance and live issue inventory are digest-bound; all nine reproduced
+   findings have executable regression harnesses; the inventory has zero open
+   P0/P1; there are no unresolved critical/high stable-scope defects or
+   unexplained flakes; and three consecutive release-candidate matrix runs are
+   clean on supported Python and pinned Rust.
+8. Artifacts carry checksums, an SBOM, provenance, and signatures; publishing,
    rollback, and yank procedures have been rehearsed.
-8. The unchanged release candidate completes a two-to-four-week soak in at
+9. The unchanged release candidate completes a two-to-four-week soak in at
    least two non-trivial applications and passes independent API/security
    review.
+10. A separately defined macOS and native-wheel smoke gate passes. This does not
+   expand the supported-platform matrix without a separate release-tooling and
+   evidence change.
 
-The stable tag must not be cut by waiving a missing gate. A gate may be removed
-only by changing the stable scope in this document and explaining the user
-impact in the release notes.
+The stable tag must not be cut by waiving a missing gate. A capability gate may
+be removed only by changing the stable scope in this document and explaining
+the user impact in the release notes. An audit finding leaves the release gate
+only after verified closure or after the affected code is removed from every
+1.0 release artifact.
 
 ### Supply-chain gate status
 
@@ -213,7 +255,9 @@ Release-candidate refs need no promotion record and continue to produce a
 `candidate` manifest. Final `v1.0.0` assembly instead fails before creating a
 bundle unless `--promotion-evidence` names an explicit regular, non-symlink
 JSON file. The record must use canonical JSON and carry a self-verifying
-`contentDigest`. Its closed contract binds all of the following:
+`contentDigest`. The current validator does not yet bind the deep-audit
+inventory; `REL-AUDIT-REMEDIATION` remains blocked until it does. The required
+closed contract must bind all of the following:
 
 - the exact final ref and `1.0.0` version, with the enclosing release manifest
   separately binding the final Git commit and tree;
@@ -229,19 +273,21 @@ JSON file. The record must use canonical JSON and carry a self-verifying
   applications explicitly attested as non-trivial, each of whose signed report
   intervals covers the declared soak period;
 - approved API and security reports from distinct reviewer identities;
-- zero unresolved critical/high stable-scope defects and zero unexplained
-  flakes;
+- a digest-bound audit inventory proving zero open P0/P1 findings across all
+  code shipped in the 1.0 release artifacts, zero unresolved critical/high
+  stable-scope defects, and zero unexplained flakes;
 - an attestation that the exact final ref is protected; and
 - an authorized real staging rehearsal in which publish, rollback, yank, and
   restore each succeeded.
 
-Every candidate, run, application, review, stable-scope defect audit,
-ref-protection, and rehearsal report is referenced by a canonical lowercase
-SHA-256 digest and an adjacent Sigstore bundle. The record gives the exact safe
-relative paths, file hashes, signature hashes, certificate identities, and
-issuer. The assembler resolves regular non-symlink files, rejects unreferenced
-or substituted reports, verifies every signature, and validates each report's
-content against the corresponding promotion claim. Matrix attestations must use
+Every candidate, run, application, review, audit inventory, stable-scope defect
+audit, ref-protection, and rehearsal report must be referenced by a canonical
+lowercase SHA-256 digest and an adjacent Sigstore bundle. The record must give
+the exact safe relative paths, file hashes, signature hashes, certificate
+identities, and issuer. Before 1.0 promotion, the assembler must resolve regular
+non-symlink files, reject unreferenced or substituted reports, verify every
+signature, and validate each report's content against the corresponding
+promotion claim. Matrix attestations must use
 the `graphblocks/graphblocks` CI workflow identity at the candidate tag; the
 deterministic candidate-manifest report and later operator reports use the
 dedicated promotion-report workflow identity at that same tag. Identities

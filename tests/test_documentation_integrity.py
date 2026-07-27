@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import Counter
 from pathlib import Path
 import re
 import tomllib
@@ -214,7 +215,71 @@ def test_stable_release_matrix_is_complete_and_machine_readable() -> None:
         for entry in matrix[section]
         for gate in entry.get("requiredGates", [])
     }
-    assert referenced_gates <= set(gate_ids)
+    referenced_gates.update(
+        gate
+        for entry in matrix["releaseGates"]
+        for gate in entry.get("companionGates", [])
+    )
+    referenced_gates.update(matrix["globalRequiredGates"])
+    assert referenced_gates == set(gate_ids)
+
+    audit = matrix["deepAudit"]
+    assert audit["releaseBlockingSeverities"] == ["P0", "P1"]
+    assert audit["defectScope"] == "all-code-shipped-in-release-artifacts"
+    assert audit["baseline"]["total"] == sum(audit["baseline"]["bySeverity"].values()) == 99
+    coverage_path = ROOT / audit["coverageMap"]
+    assert coverage_path.is_file()
+    coverage = yaml.safe_load(coverage_path.read_text(encoding="utf-8"))
+    assert coverage["auditDate"] == audit["auditDate"]
+    assert coverage["artifactDigests"] == audit["artifactDigests"]
+
+    baseline_by_severity = coverage["baselineBySeverity"]
+    assert set(baseline_by_severity) == set(audit["baseline"]["bySeverity"])
+    baseline_ids: list[str] = []
+    for severity, findings in baseline_by_severity.items():
+        assert len(findings) == audit["baseline"]["bySeverity"][severity]
+        baseline_ids.extend(findings)
+    assert len(baseline_ids) == audit["baseline"]["total"]
+    assert all(re.fullmatch(r"GB-[A-Z]+-\d{3}", finding) for finding in baseline_ids)
+    assert all(count == 1 for count in Counter(baseline_ids).values())
+
+    workstreams = coverage["workstreams"]
+    assert len({entry["id"] for entry in workstreams}) == len(workstreams)
+    mapped_findings = [
+        finding for workstream in workstreams for finding in workstream["findings"]
+    ]
+    assert Counter(mapped_findings) == Counter({finding: 1 for finding in baseline_ids})
+    assert all(
+        set(workstream["affectedProfiles"]) <= catalog_profiles
+        for workstream in workstreams
+    )
+    assert all(
+        set(workstream["releaseGates"]) <= set(gate_ids)
+        for workstream in workstreams
+    )
+
+    reproduced = [entry["id"] for entry in coverage["reproducedFindings"]]
+    assert len(reproduced) == audit["baseline"]["reproduced"] == len(set(reproduced))
+    assert set(reproduced) <= set(baseline_ids)
+
+    audit_gate = next(
+        entry for entry in matrix["releaseGates"] if entry["id"] == "REL-AUDIT-REMEDIATION"
+    )
+    assert audit_gate["readiness"] == "blocked"
+    assert audit_gate["exitCriteria"]["maxOpenBySeverity"] == {"P0": 0, "P1": 0}
+    assert audit_gate["companionGates"] == ["REL-MACOS-NATIVE-SMOKE"]
+
+    macos_gate = next(
+        entry for entry in matrix["releaseGates"] if entry["id"] == "REL-MACOS-NATIVE-SMOKE"
+    )
+    assert macos_gate["classification"] == "smoke-only"
+    assert macos_gate["changesSupportedPlatformMatrix"] is False
+
+    authority = matrix["authorityTransition"]
+    assert authority["currentCandidateImplementation"] == "python-reference"
+    assert authority["targetNormativeAuthority"] == "rust"
+    assert authority["blocksTargetRelease"] is True
+    assert authority["requiredGate"] == "REL-NORMATIVE-AUTHORITY"
 
     api_gate = next(entry for entry in matrix["releaseGates"] if entry["id"] == "REL-API-SNAPSHOT")
     assert api_gate["readiness"] == "candidate-enforced"

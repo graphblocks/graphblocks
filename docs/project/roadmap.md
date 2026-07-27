@@ -1,27 +1,53 @@
 # Roadmap
 
-The [first stable release boundary](first-stable-release.md) makes C0 and the
-pure-Python C1 implementation the initial stable compatibility promise. C2-C4,
-native execution, the operator, and X1-X3 remain active stabilization tracks;
-the boundary sequences their promotion rather than removing them from scope.
+GraphBlocks is under a security and stabilization freeze following a 99-finding
+deep audit (4 P0, 23 P1, 64 P2, and 8 P3). The detailed sequencing, acceptance
+evidence, and 1.0 exit conditions are in the
+[deep audit remediation plan](audit-remediation-plan.md). The machine-readable
+[stable release matrix](stable-release-matrix.yaml) remains the authority for
+release readiness, and the
+[remediation map](audit-remediation-map.yaml) assigns all 99 original finding
+IDs to one primary workstream.
 
-Near-term priorities are:
+Work proceeds in this order:
 
-1. Stabilize metadata, compatibility policy, and release automation for the
-   consolidated `graphblocks`, `graphblocks-runtime`, and `graphblocks-testing`
-   artifacts.
-2. Close Python/Rust parity gaps for orchestration limits, governed workspace
-   commits, deployment evidence, telemetry outbox behavior, webhook delivery,
-   and provider-authoritative voice.
-3. Complete end-to-end restart-durable accepted-run recovery and deployment-like
-   remote-worker coverage on top of the existing fenced checkpoint claim,
-   renewal, and completion primitives.
-4. Promote the closed core Graph and PluginManifest wire contracts to
-   `graphblocks.ai/v1`, with explicit migrations from the alpha resources.
-5. Freeze registered diagnostics, the stable Python/CLI surface, compatibility
-   policy, and installed-artifact release evidence for 1.0.
-6. Expand adapter integration tests while keeping external SDKs behind explicit
-   dependency extras and out of the default `graphblocks` install.
+1. **Days 0-7 — security freeze.** Make protected routes fail closed; persist
+   immutable tenant and owner identity; enforce object authorization on all
+   read, control, callback, subscription, acknowledgement, and delivery paths;
+   replace permissive policy coercion with exact decoding; and impose request,
+   response, schema, regex, and canonical-number limits. Exit with zero open
+   P0 findings and the original reproductions in regression coverage.
+2. **Weeks 2-4 — storage and resource model.** Introduce tenant-scoped
+   repositories and atomic owner/version/lease/fence/idempotency transactions;
+   deliver restart-durable accepted runs; add retention and pagination; make
+   outbox claims atomic; bound journal, budget, schema, and canonical work; and
+   return Rust errors instead of panicking at public boundaries.
+3. **Months 1-2 — implementation boundaries.** Split server middleware, routes,
+   services, and repositories; split CLI commands and exact codecs; make
+   compiler phases and TCK runners independently testable; reduce the Python
+   root surface and import cost; complete the 1.0-blocking transition from the
+   current `python-reference` candidate implementation toward a normative Rust
+   execution and compilation plane; and correct the Rust control-plane
+   dependency direction.
+4. **Stable-candidate closure.** Reach zero open P0/P1 findings, enforce the
+   authorization/adversarial/differential/resource/performance/restart/security
+   matrices, complete the separately defined macOS and native-wheel smoke gate,
+   reconstruct all nine reproduced findings, bind the source/evidence
+   provenance and live inventory, rerun on supported Python and pinned Rust, and
+   pass an independent API and security review on the unchanged release
+   candidate.
+
+The closed `graphblocks.ai/v1` Graph and PluginManifest resources and their
+alpha migrations are already candidate-enforced; they are no longer future
+promotion work. The compatibility promise remains blocked until every
+applicable audit and release gate passes.
+
+The target architecture keeps schema, compiler, runtime core, protocol, and
+testing portable. AI application, governance, durable execution, voice,
+deployment, observability, and external integrations advance as separately
+verified extension profiles. Domain examples remain examples unless a repeated,
+provider-neutral pattern earns core or profile status.
 
 Roadmap items are non-normative. A feature becomes supported only when its
-specification, implementation, fixtures, and required acceptance evidence agree.
+specification, implementation, fixtures, and required acceptance evidence
+agree.

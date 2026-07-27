@@ -3,6 +3,44 @@ targetRelease: '1.0'
 currentReadiness: blocked
 compatibilityPolicy: ../specification/reference/compatibility-policy.md
 diagnosticRegistry: ../specification/reference/diagnostic-codes.yaml
+globalRequiredGates:
+  - REL-AUDIT-REMEDIATION
+  - REL-NORMATIVE-AUTHORITY
+  - REL-PLATFORM-MATRIX
+  - REL-MACOS-NATIVE-SMOKE
+  - REL-SUPPLY-CHAIN
+  - REL-RC-SOAK
+deepAudit:
+  auditDate: '2026-07-27'
+  readiness: remediation-blocked
+  plan: docs/project/audit-remediation-plan.md
+  coverageMap: docs/project/audit-remediation-map.yaml
+  releaseBlockingSeverities: [P0, P1]
+  defectScope: all-code-shipped-in-release-artifacts
+  baselineBinding: artifact-digests-bound-source-revision-unavailable
+  artifactDigests:
+    reportSha256: 5ad9b3dcb77b387e1a5d6b41bdb65b9c609c18526d0f1ec712dcb102bfba9f2c
+    inventorySha256: 9f98ebde8dc981b0eaee8ed795e04306ac67f707223cfe844e2365561db7eb44
+    evidenceBundleSha256: 75cf142766d1e8cbf8c89c1157727d8a4ca0e945b15e9157c8977f1c6a02fe06
+  auditedSourceIdentity:
+    description: User-provided graphblocks-main.zip
+    gitRevision: unavailable-source-archive-contained-no-git-metadata
+    archiveDigest: unavailable-original-source-archive-not-in-evidence-bundle
+  baseline:
+    total: 99
+    bySeverity: {P0: 4, P1: 23, P2: 64, P3: 8}
+    reproduced: 9
+    codeConfirmed: 68
+  exitPolicy:
+    securityFreeze: {maxOpenP0: 0}
+    stableRelease: {maxOpenP0: 0, maxOpenP1: 0}
+authorityTransition:
+  readiness: blocked
+  currentCandidateImplementation: python-reference
+  targetNormativeAuthority: rust
+  targetMilestone: phase-2-before-1.0
+  blocksTargetRelease: true
+  requiredGate: REL-NORMATIVE-AUTHORITY
 tierDefinitions:
   stable: Compatibility promise after every applicable release gate passes.
   preview: Shipped for evaluation; documented breaking changes may occur in a minor release.
@@ -138,11 +176,12 @@ profiles:
     implementation: python-reference
     tier: preview
     roadmap: active
+    blockers: [fail-closed-policy-decoding, exact-external-codecs, durable-governance-transactions]
   - id: GB-C4-PRODUCTION
     implementation: python-reference
     tier: preview
     roadmap: active
-    blockers: [restart-durable-accepted-runs, authenticated-idempotent-resume, worker-crash-recovery, fencing, production-adapter-evidence]
+    blockers: [fail-closed-protected-routes, tenant-scoped-object-authorization, restart-durable-accepted-runs, authenticated-idempotent-resume, worker-crash-recovery, atomic-outbox-claims, retention-and-pagination, resource-execution-budgets, fencing, production-adapter-evidence]
   - id: GB-X1-ORCHESTRATION
     implementation: python-reference
     tier: preview
@@ -222,6 +261,17 @@ wireVersions:
     kind: extension
     tier: preview
     qualifier: experimental
+
+integrationPromotionPolicy:
+  readiness: maturity-schema-missing
+  requiredFields:
+    - implementationMaturity
+    - supportedAuthentication
+    - supportedServiceOrSdkVersions
+    - realServiceEvidence
+    - retryAndFailureModel
+    - promotionGate
+  allowedMaturity: [contract-only, test-double, real-adapter]
 
 integrations:
   - {id: graphblocks-pdf, tier: preview}
@@ -306,6 +356,63 @@ releaseGates:
       - tools/verify_wheelhouse.py
       - tests/test_wheelhouse_schema_verification.py
       - .github/workflows/ci.yml
+  - id: REL-AUDIT-REMEDIATION
+    description: Every deep-audit P0 and P1 in a shipped artifact is closed with executable regression and review evidence.
+    readiness: blocked
+    plan: docs/project/audit-remediation-plan.md
+    companionGates: [REL-MACOS-NATIVE-SMOKE]
+    exitCriteria:
+      maxOpenBySeverity: {P0: 0, P1: 0}
+      requiredEvidence:
+        - digest-bound-99-finding-workstream-coverage
+        - audited-source-identity-and-file-level-evidence-manifest
+        - reconstructed-nine-finding-reproduction-suite
+        - two-principal-two-tenant-authorization-matrix
+        - authentication-401-403-404-reason-header-matrix
+        - auth-provider-failure-structured-audit
+        - fail-closed-protected-route-configuration
+        - exact-policy-and-external-input-decoders
+        - adapter-request-response-schema-filesystem-canonical-resource-budgets
+        - hypothesis-cargo-fuzz-and-proptest-pr-smoke-and-scheduled
+        - multi-process-restart-lease-and-fence-tests
+        - output-effect-outbox-and-idempotency-tests
+        - python-rust-differential-tests
+        - import-time-rss-and-loaded-module-budgets
+        - canonical-journal-budget-and-compiler-performance-budgets
+        - stable-security-critical-branch-and-changed-lines-coverage
+        - ruff-format-lint-strict-typing-and-optimized-mode-validation
+        - dependency-and-static-security-scans
+        - quick-full-ci-split-and-development-constraints-lock
+        - handler-mutation-coverage-and-surviving-mutant-evidence
+        - documentation-risk-and-generated-facts-drift-checks
+        - targeted-miri-loom-or-equivalent-state-machine-validation
+        - supported-python-and-pinned-rust-rerun
+        - independent-api-and-security-reviews
+        - promotion-evidence-bound-audit-inventory
+    blockers:
+      - audited-source-commit-tree-or-archive-digest-unavailable
+      - full-issue-inventory-not-repository-bound
+      - reproduction-harnesses-and-command-provenance-incomplete
+      - open-p0-p1-count-unavailable-until-inventory-bound
+      - p0-p1-closure-evidence-incomplete
+      - promotion-validator-does-not-yet-bind-audit-inventory
+  - id: REL-NORMATIVE-AUTHORITY
+    description: Rust becomes the declared normative schema compiler canonical plan and production-runtime authority while Python remains the authoring facade and deterministic reference oracle.
+    readiness: blocked
+    blocksTargetRelease: true
+    currentCandidateImplementation: python-reference
+    targetNormativeAuthority: rust
+    requiredEvidence:
+      - accepted-authority-transition-adr
+      - updated-artifact-profile-language-and-stable-requirement-matrices
+      - native-first-python-binding-and-explicit-reference-fallback
+      - phase-level-python-rust-differential-evidence
+      - protocol-capability-and-unsupported-version-handshake
+      - fallible-panic-free-rust-public-boundaries
+    blockers:
+      - authority-transition-adr-not-accepted
+      - candidate-profile-matrix-still-python-reference
+      - normative-phase-differential-evidence-incomplete
   - id: REL-PLATFORM-MATRIX
     description: Install typing and runtime gates pass on every published platform; upgrade is explicitly exempt only for v1.0.0.
     readiness: candidate-enforced-with-first-stable-upgrade-exemption
@@ -322,6 +429,17 @@ releaseGates:
       - tools/verify_wheelhouse.py
       - .github/workflows/ci.yml
     blockers: []
+  - id: REL-MACOS-NATIVE-SMOKE
+    description: A separately defined macOS and native-wheel smoke gate passes without implicitly expanding the supported-platform matrix.
+    readiness: planned-blocked
+    classification: smoke-only
+    changesSupportedPlatformMatrix: false
+    exitCriteria:
+      - install the intended release artifacts on the selected macOS runner
+      - import and execute the native binding smoke contract
+      - retain runner Python artifact and result identities
+    blockers:
+      - macos-native-wheel-smoke-not-enforced
   - id: REL-SUPPLY-CHAIN
     description: Checksums SBOM provenance signatures publish and rollback are verified.
     readiness: promotion-contract-enforced-external-evidence-absent
