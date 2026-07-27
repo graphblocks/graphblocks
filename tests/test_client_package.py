@@ -2228,6 +2228,11 @@ def test_client_package_reads_run_status_over_http_transport(monkeypatch) -> Non
             },
         },
     )
+    app._record_run_authorization(
+        "run-status-http-1",
+        PrincipalRef("user-1"),
+        "2026-07-03T00:00:00Z",
+    )
 
     def transport(request: object, *, timeout: float) -> object:
         assert timeout == 4.0
@@ -2294,6 +2299,16 @@ def test_client_package_lists_runs_over_http_transport(monkeypatch) -> None:
                 "occurredAt": "2026-07-03T00:00:01Z",
             },
         },
+    )
+    app._record_run_authorization(
+        "run-list-http-1",
+        PrincipalRef("user-1"),
+        "2026-07-03T00:00:01Z",
+    )
+    app._record_run_authorization(
+        "run-list-http-2",
+        PrincipalRef("user-1"),
+        "2026-07-03T00:00:02Z",
     )
 
     def transport(request: object, *, timeout: float) -> object:

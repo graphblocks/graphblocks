@@ -2174,6 +2174,85 @@ class ServerAsyncCallbackResumeAdmissionHook(Protocol):
 
 
 @dataclass(frozen=True, slots=True)
+class _ServerRunAuthorizationRecord:
+    external_run_id: str
+    tenant_id: str | None
+    owner_principal_id: str | None
+    created_at: str
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "external_run_id",
+            _validate_exact_non_empty_string(
+                "server run authorization record",
+                "external_run_id",
+                self.external_run_id,
+            ),
+        )
+        if self.tenant_id is not None:
+            object.__setattr__(
+                self,
+                "tenant_id",
+                _validate_exact_non_empty_string(
+                    "server run authorization record",
+                    "tenant_id",
+                    self.tenant_id,
+                ),
+            )
+        if self.owner_principal_id is not None:
+            object.__setattr__(
+                self,
+                "owner_principal_id",
+                _validate_exact_non_empty_string(
+                    "server run authorization record",
+                    "owner_principal_id",
+                    self.owner_principal_id,
+                ),
+            )
+        object.__setattr__(
+            self,
+            "created_at",
+            _validate_iso_datetime(
+                "server run authorization record",
+                "created_at",
+                self.created_at,
+            ),
+        )
+
+    @classmethod
+    def create(
+        cls,
+        external_run_id: str,
+        principal: PrincipalRef | None,
+        created_at: str,
+    ) -> _ServerRunAuthorizationRecord:
+        return cls(
+            external_run_id=external_run_id,
+            tenant_id=principal.tenant_id if principal is not None else None,
+            owner_principal_id=(
+                principal.principal_id if principal is not None else None
+            ),
+            created_at=created_at,
+        )
+
+    def allows_read(self, principal: PrincipalRef | None) -> bool:
+        if self.owner_principal_id is None:
+            return principal is None
+        if (
+            principal is not None
+            and principal.principal_id == self.owner_principal_id
+            and principal.tenant_id == self.tenant_id
+        ):
+            return True
+        return (
+            principal is not None
+            and principal.tenant_id == self.tenant_id
+            and "operator" in principal.roles
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class StaticBearerAuthHook:
     principals_by_token: dict[str, PrincipalRef] = field(default_factory=dict)
 
@@ -2313,6 +2392,11 @@ class GraphBlocksServerApp:
     async_callback_resume_admission_hook: ServerAsyncCallbackResumeAdmissionHook | None = None
     callback_delivery_hook: ServerCallbackDeliveryHook | None = None
     _events_by_run_id: dict[str, tuple[Mapping[str, object], ...]] = field(default_factory=dict, init=False, repr=False)
+    _run_authorization_by_run_id: dict[str, _ServerRunAuthorizationRecord] = field(
+        default_factory=dict,
+        init=False,
+        repr=False,
+    )
     _callbacks_by_operation_id: dict[str, tuple[ServerAsyncCallbackSubmission, ...]] = field(
         default_factory=dict,
         init=False,
@@ -2435,6 +2519,28 @@ class GraphBlocksServerApp:
         if not callable(self.admission_clock):
             raise ValueError("server admission_clock must be callable")
 
+    def _principal_can_read_run(
+        self,
+        run_id: str,
+        principal: PrincipalRef | None,
+    ) -> bool:
+        record = self._run_authorization_by_run_id.get(run_id)
+        return record is not None and record.allows_read(principal)
+
+    def _record_run_authorization(
+        self,
+        run_id: str,
+        principal: PrincipalRef | None,
+        created_at: str,
+    ) -> None:
+        self._run_authorization_by_run_id[
+            run_id
+        ] = _ServerRunAuthorizationRecord.create(
+            run_id,
+            principal,
+            created_at,
+        )
+
     def handle(self, request: ServerRequest) -> ServerResponse:
         try:
             requested_transport: ServerTransport = "http"
@@ -2531,6 +2637,10 @@ class GraphBlocksServerApp:
                 runs = [
                     self._run_status_payload(run_id, events, include_ok=False)
                     for run_id, events in sorted(self._events_by_run_id.items())
+                    if self._principal_can_read_run(
+                        run_id,
+                        auth_decision.principal,
+                    )
                 ]
             except (TypeError, ValueError) as error:
                 return ServerResponse.json(
@@ -2575,6 +2685,14 @@ class GraphBlocksServerApp:
                 )
         if route.operation == "get_run_status":
             run_id = route_match.path_params.get("run_id", "")
+            if not self._principal_can_read_run(run_id, auth_decision.principal):
+                return ServerResponse.json(
+                    404,
+                    {
+                        "ok": False,
+                        "error": f"run status not found for run {run_id!r}",
+                    },
+                )
             events = self._events_by_run_id.get(run_id)
             if events is None:
                 return ServerResponse.json(
@@ -2597,6 +2715,17 @@ class GraphBlocksServerApp:
         if route.operation == "attach_to_run":
             try:
                 run_id = route_match.path_params.get("run_id", "")
+                if not self._principal_can_read_run(
+                    run_id,
+                    auth_decision.principal,
+                ):
+                    return ServerResponse.json(
+                        404,
+                        {
+                            "ok": False,
+                            "error": f"run attach stream not found for run {run_id!r}",
+                        },
+                    )
                 events = self._events_by_run_id.get(run_id)
                 if events is None:
                     return ServerResponse.json(
@@ -3988,6 +4117,14 @@ class GraphBlocksServerApp:
                     self._accepted_run_condition.release()
         if route.operation == "application_events":
             run_id = route_match.path_params.get("run_id", "")
+            if not self._principal_can_read_run(run_id, auth_decision.principal):
+                return ServerResponse.json(
+                    404,
+                    {
+                        "ok": False,
+                        "error": f"run events not found for run {run_id!r}",
+                    },
+                )
             events = self._events_by_run_id.get(run_id)
             if events is None:
                 return ServerResponse.json(
@@ -4082,6 +4219,14 @@ class GraphBlocksServerApp:
                         separators=(",", ":"),
                         sort_keys=True,
                     ).encode("utf-8"),
+                )
+            if not self._principal_can_read_run(run_id, auth_decision.principal):
+                return ServerResponse.json(
+                    404,
+                    {
+                        "ok": False,
+                        "error": f"application stream not found for run {run_id!r}",
+                    },
                 )
             events = self._events_by_run_id.get(run_id)
             if events is None:
@@ -4444,6 +4589,11 @@ class GraphBlocksServerApp:
                                 },
                             )
                         admission_ticket = submission.ticket
+                        self._record_run_authorization(
+                            run_id,
+                            auth_decision.principal,
+                            occurred_at,
+                        )
                         self._events_by_run_id[run_id] = ()
                         self._pending_accepted_runs_by_run_id[run_id] = pending_run
                         self._accepted_run_executions_by_run_id[
@@ -4535,6 +4685,11 @@ class GraphBlocksServerApp:
                         )
                     with self._accepted_run_condition:
                         assert frozen_start_event is not None
+                        self._record_run_authorization(
+                            run_id,
+                            auth_decision.principal,
+                            occurred_at,
+                        )
                         self._events_by_run_id[run_id] = (frozen_start_event,)
                         self._pending_accepted_runs_by_run_id[run_id] = pending_run
                         self._accepted_run_executions_by_run_id[
@@ -4557,6 +4712,11 @@ class GraphBlocksServerApp:
                                 },
                             )
                         assert frozen_start_event is not None
+                        self._record_run_authorization(
+                            run_id,
+                            auth_decision.principal,
+                            occurred_at,
+                        )
                         self._events_by_run_id[run_id] = (frozen_start_event,)
                         self._pending_accepted_runs_by_run_id[run_id] = pending_run
                         self._accepted_run_executions_by_run_id[

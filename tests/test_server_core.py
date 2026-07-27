@@ -48,6 +48,18 @@ def _callback_rejection_metadata(
     }
 
 
+def _record_seeded_run_owner(
+    app: GraphBlocksServerApp,
+    run_id: str,
+    principal: PrincipalRef,
+) -> None:
+    app._record_run_authorization(
+        run_id,
+        principal,
+        "2026-07-01T00:00:00Z",
+    )
+
+
 def test_server_route_manifest_groups_routes_and_hashes_stably() -> None:
     left = default_server_route_manifest().with_endpoint(
         "GET",
@@ -697,6 +709,127 @@ def test_server_app_handles_health_auth_and_run_requests() -> None:
     assert payload["events"][0]["metadata"]["responseId"] == "response-server-1"
     assert graphblocks.GraphBlocksServerApp is GraphBlocksServerApp
     assert "ServerResponse" in graphblocks.__all__
+
+
+def test_server_app_hides_run_reads_from_other_principals_and_tenants() -> None:
+    app = GraphBlocksServerApp(
+        auth_hook=StaticBearerAuthHook(
+            {
+                "alice-token": PrincipalRef("alice", tenant_id="tenant-a"),
+                "bob-token": PrincipalRef("bob", tenant_id="tenant-b"),
+                "charlie-token": PrincipalRef("charlie", tenant_id="tenant-a"),
+            }
+        )
+    )
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "tenant-owned-run"},
+        "spec": {
+            "nodes": {
+                "render": {
+                    "block": "prompt.render@1",
+                    "config": {"template": "{message.text}"},
+                    "inputs": {"message": "$input.message"},
+                    "outputs": {"prompt": "$output.prompt"},
+                }
+            }
+        },
+    }
+
+    created = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs",
+            headers={"Authorization": "Bearer alice-token"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "graph": graph,
+                    "inputs": {"message": {"text": "tenant-a-secret"}},
+                    "runId": "run-tenant-authz-1",
+                    "responseId": "response-tenant-authz-1",
+                    "occurredAt": "2026-07-27T00:00:00Z",
+                }
+            ).encode("utf-8"),
+        )
+    )
+
+    assert created.status_code == 200
+    alice_status = app.handle(
+        ServerRequest(
+            method="GET",
+            path="/runs/run-tenant-authz-1",
+            headers={"Authorization": "Bearer alice-token"},
+            query={},
+            cookies={},
+        )
+    )
+    assert alice_status.status_code == 200
+
+    bob_list = app.handle(
+        ServerRequest(
+            method="GET",
+            path="/runs",
+            headers={"Authorization": "Bearer bob-token"},
+            query={},
+            cookies={},
+        )
+    )
+    assert bob_list.status_code == 200
+    assert json.loads(bob_list.body.decode("utf-8")) == {"ok": True, "runs": []}
+
+    hidden_requests = (
+        ServerRequest(
+            method="GET",
+            path="/runs/run-tenant-authz-1",
+            headers={"Authorization": "Bearer bob-token"},
+            query={},
+            cookies={},
+        ),
+        ServerRequest(
+            method="POST",
+            path="/runs/run-tenant-authz-1/attach",
+            headers={"Authorization": "Bearer bob-token"},
+            query={},
+            cookies={},
+            body=b"{}",
+        ),
+        ServerRequest(
+            method="GET",
+            path="/runs/run-tenant-authz-1/events",
+            headers={
+                "Authorization": "Bearer bob-token",
+                "Accept": "text/event-stream",
+            },
+            query={},
+            cookies={},
+        ),
+        ServerRequest(
+            method="GET",
+            path="/runs/run-tenant-authz-1/ws",
+            headers={
+                "Authorization": "Bearer bob-token",
+                "Connection": "upgrade",
+                "Upgrade": "websocket",
+            },
+            query={},
+            cookies={},
+        ),
+        ServerRequest(
+            method="GET",
+            path="/runs/run-tenant-authz-1",
+            headers={"Authorization": "Bearer charlie-token"},
+            query={},
+            cookies={},
+        ),
+    )
+    for hidden_request in hidden_requests:
+        hidden = app.handle(hidden_request)
+
+        assert hidden.status_code == 404
+        assert b"tenant-a-secret" not in hidden.body
 
 
 def test_server_app_rejects_non_standard_request_json_constants() -> None:
@@ -3566,6 +3699,7 @@ def test_server_app_handles_authenticated_cancel_request() -> None:
             },
         },
     )
+    _record_seeded_run_owner(app, "run-server-1", PrincipalRef("user-1"))
 
     response = app.handle(
         ServerRequest(
@@ -4041,6 +4175,7 @@ def test_server_app_projects_typed_pause_wait_reason() -> None:
             },
         },
     )
+    _record_seeded_run_owner(app, "run-pause-kind-1", PrincipalRef("user-1"))
 
     pause = app.handle(
         ServerRequest(
@@ -4129,6 +4264,7 @@ def test_server_app_rejects_non_terminal_control_after_terminal_run_state() -> N
             },
         },
     )
+    _record_seeded_run_owner(app, "run-terminal-control-1", PrincipalRef("user-1"))
     cancelled = app.handle(
         ServerRequest(
             method="POST",
@@ -4186,6 +4322,11 @@ def test_server_app_treats_repeated_terminal_control_as_idempotent() -> None:
                 "occurredAt": "2026-07-02T00:00:00Z",
             },
         },
+    )
+    _record_seeded_run_owner(
+        app,
+        "run-terminal-idempotent-1",
+        PrincipalRef("user-1"),
     )
     first = app.handle(
         ServerRequest(
@@ -4283,6 +4424,11 @@ def test_server_app_resume_clears_waiting_callback_status_projection() -> None:
                 "occurredAt": "2026-07-02T00:00:00Z",
             },
         },
+    )
+    _record_seeded_run_owner(
+        app,
+        "run-resume-callback-1",
+        PrincipalRef("callback-relay"),
     )
     callback = app.handle(
         ServerRequest(
@@ -4432,6 +4578,11 @@ def test_server_app_accepts_authenticated_async_callback_submission() -> None:
                 "occurredAt": "2026-07-02T00:00:00Z",
             },
         },
+    )
+    _record_seeded_run_owner(
+        app,
+        "run-1",
+        PrincipalRef("callback-relay", roles=("operator",)),
     )
 
     response = app.handle(
@@ -4732,6 +4883,11 @@ def test_server_app_terminal_run_status_suppresses_active_callback_waits() -> No
                 "occurredAt": "2026-07-02T00:00:00Z",
             },
         },
+    )
+    _record_seeded_run_owner(
+        app,
+        "run-1",
+        PrincipalRef("callback-relay"),
     )
     app.handle(
         ServerRequest(
@@ -5290,6 +5446,11 @@ def test_server_app_rejects_stale_async_callback_attempt_for_existing_operation(
                 "occurredAt": "2026-07-03T00:00:00Z",
             },
         },
+    )
+    _record_seeded_run_owner(
+        app,
+        "run-1",
+        PrincipalRef("callback-relay", roles=("operator",)),
     )
 
     current = app.handle(
@@ -6062,6 +6223,11 @@ def test_server_app_rejects_async_callback_for_terminal_declared_run() -> None:
                 "occurredAt": "2026-07-03T00:00:01Z",
             },
         },
+    )
+    _record_seeded_run_owner(
+        app,
+        "run-terminal-1",
+        PrincipalRef("callback-relay", roles=("operator",)),
     )
 
     response = app.handle(
@@ -7162,6 +7328,11 @@ def test_server_app_run_event_replay_filters_visibility_by_principal() -> None:
             },
         },
     )
+    _record_seeded_run_owner(
+        app,
+        "run-events-visibility-1",
+        PrincipalRef("user-1"),
+    )
 
     client_response = app.handle(
         ServerRequest(
@@ -7204,6 +7375,11 @@ def test_server_app_rejects_malformed_stored_event_cursor_query() -> None:
             "payload": {},
         },
     )
+    _record_seeded_run_owner(
+        app,
+        "run-events-cursor-format-1",
+        PrincipalRef("user-1"),
+    )
 
     response = app.handle(
         ServerRequest(
@@ -7243,6 +7419,7 @@ def test_server_app_rejects_out_of_domain_stored_event_cursor_query(
     run_id = "run-events-cursor-domain-1"
     app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
     app._events_by_run_id[run_id] = ()
+    _record_seeded_run_owner(app, run_id, PrincipalRef("user-1"))
 
     response = app.handle(
         ServerRequest(
@@ -7281,6 +7458,11 @@ def test_server_app_rejects_stored_event_replay_with_malformed_sequence() -> Non
             "payload": {},
         },
     )
+    _record_seeded_run_owner(
+        app,
+        "run-events-bool-sequence-1",
+        PrincipalRef("user-1"),
+    )
 
     response = app.handle(
         ServerRequest(
@@ -7312,6 +7494,11 @@ def test_server_app_reports_stored_event_cursor_expired() -> None:
             },
             "payload": {},
         },
+    )
+    _record_seeded_run_owner(
+        app,
+        "run-events-cursor-expired-1",
+        PrincipalRef("user-1"),
     )
 
     response = app.handle(
@@ -7424,6 +7611,11 @@ def test_server_app_rejects_run_status_without_event_timestamps() -> None:
             },
         },
     )
+    _record_seeded_run_owner(
+        app,
+        "run-status-missing-time-1",
+        PrincipalRef("user-1"),
+    )
 
     response = app.handle(
         ServerRequest(
@@ -7456,6 +7648,11 @@ def test_server_app_rejects_run_status_with_malformed_event_sequence() -> None:
                 "occurredAt": "2026-07-02T00:00:00Z",
             },
         },
+    )
+    _record_seeded_run_owner(
+        app,
+        "run-status-bool-sequence-1",
+        PrincipalRef("user-1"),
     )
 
     response = app.handle(
@@ -7500,6 +7697,11 @@ def test_server_app_terminal_run_status_overrides_stale_control_projection() -> 
                 "occurredAt": "2026-07-02T00:00:02Z",
             },
         },
+    )
+    _record_seeded_run_owner(
+        app,
+        "run-status-terminal-control-1",
+        PrincipalRef("user-1"),
     )
     app._run_controls_by_run_id["run-status-terminal-control-1"] = (
         {
@@ -7678,12 +7880,14 @@ def test_server_app_rejects_attach_with_invalid_capabilities() -> None:
     )
     for index, (capabilities, expected_error) in enumerate(cases, start=1):
         app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
-        app._events_by_run_id[f"run-attach-invalid-capability-{index}"] = ()
+        run_id = f"run-attach-invalid-capability-{index}"
+        app._events_by_run_id[run_id] = ()
+        _record_seeded_run_owner(app, run_id, PrincipalRef("user-1"))
 
         response = app.handle(
             ServerRequest(
                 method="POST",
-                path=f"/runs/run-attach-invalid-capability-{index}/attach",
+                path=f"/runs/{run_id}/attach",
                 headers={"Authorization": "Bearer token-1"},
                 query={},
                 cookies={},
@@ -7706,6 +7910,11 @@ def test_server_app_rejects_attach_replay_with_malformed_sequence() -> None:
             "metadata": {"eventId": "evt-start", "sequence": True},
             "payload": {},
         },
+    )
+    _record_seeded_run_owner(
+        app,
+        "run-attach-bool-sequence-1",
+        PrincipalRef("user-1"),
     )
 
     response = app.handle(
@@ -7805,6 +8014,11 @@ def test_server_app_rejects_attach_cursor_for_different_run() -> None:
             "payload": {},
         },
     )
+    _record_seeded_run_owner(
+        app,
+        "run-attach-cursor-scope-1",
+        PrincipalRef("user-1"),
+    )
 
     response = app.handle(
         ServerRequest(
@@ -7832,6 +8046,11 @@ def test_server_app_rejects_malformed_attach_cursor() -> None:
             "metadata": {"eventId": "evt-start", "sequence": 1},
             "payload": {},
         },
+    )
+    _record_seeded_run_owner(
+        app,
+        "run-attach-cursor-format-1",
+        PrincipalRef("user-1"),
     )
 
     response = app.handle(
@@ -12862,6 +13081,11 @@ def test_server_app_rejects_boolean_event_sequence_for_stream_cursor() -> None:
             "metadata": {"eventId": "evt-bool", "sequence": True},
             "payload": {},
         },
+    )
+    _record_seeded_run_owner(
+        app,
+        "run-stream-bool-sequence-1",
+        PrincipalRef("user-1"),
     )
 
     response = app.handle(
