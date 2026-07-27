@@ -832,6 +832,85 @@ def test_server_app_hides_run_reads_from_other_principals_and_tenants() -> None:
         assert b"tenant-a-secret" not in hidden.body
 
 
+def test_server_app_rejects_cross_tenant_run_controls_atomically() -> None:
+    app = GraphBlocksServerApp(
+        auth_hook=StaticBearerAuthHook(
+            {
+                "alice-token": PrincipalRef("alice", tenant_id="tenant-a"),
+                "bob-token": PrincipalRef("bob", tenant_id="tenant-b"),
+            }
+        ),
+        defer_accepted_runs=True,
+    )
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "tenant-owned-control"},
+        "spec": {
+            "nodes": {
+                "render": {
+                    "block": "prompt.render@1",
+                    "config": {"template": "{message.text}"},
+                    "inputs": {"message": "$input.message"},
+                    "outputs": {"prompt": "$output.prompt"},
+                }
+            }
+        },
+    }
+    created = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs",
+            headers={"Authorization": "Bearer alice-token"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "graph": graph,
+                    "inputs": {"message": {"text": "tenant-a-control"}},
+                    "runId": "run-tenant-control-1",
+                    "responseId": "response-tenant-control-1",
+                    "responseMode": "accepted",
+                    "occurredAt": "2026-07-27T00:00:00Z",
+                }
+            ).encode("utf-8"),
+        )
+    )
+
+    assert created.status_code == 202
+    for index, operation in enumerate(
+        ("cancel", "pause", "resume", "expire"),
+        start=1,
+    ):
+        denied = app.handle(
+            ServerRequest(
+                method="POST",
+                path=f"/runs/run-tenant-control-1/{operation}",
+                headers={"Authorization": "Bearer bob-token"},
+                query={},
+                cookies={},
+                body=b"{}",
+                requested_at=f"2026-07-27T00:00:0{index}Z",
+            )
+        )
+
+        assert denied.status_code == 404
+        assert b"tenant-a-control" not in denied.body
+
+    assert app.run_controls("run-tenant-control-1") == ()
+    alice_status = app.handle(
+        ServerRequest(
+            method="GET",
+            path="/runs/run-tenant-control-1",
+            headers={"Authorization": "Bearer alice-token"},
+            query={},
+            cookies={},
+        )
+    )
+    assert alice_status.status_code == 200
+    assert json.loads(alice_status.body.decode("utf-8"))["state"] == "running"
+
+
 def test_server_app_rejects_non_standard_request_json_constants() -> None:
     app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
 
@@ -3786,6 +3865,7 @@ def test_server_app_rejects_run_control_after_terminal_event_stream() -> None:
                 },
             },
         )
+        _record_seeded_run_owner(app, run_id, PrincipalRef("user-1"))
 
         response = app.handle(
             ServerRequest(
@@ -4005,6 +4085,11 @@ def test_server_app_rejects_run_control_for_missing_stream_or_malformed_reason()
     }
 
     app._events_by_run_id["run-control-invalid-1"] = ()
+    _record_seeded_run_owner(
+        app,
+        "run-control-invalid-1",
+        PrincipalRef("user-1"),
+    )
     invalid = app.handle(
         ServerRequest(
             method="POST",
@@ -4038,6 +4123,11 @@ def test_server_app_rejects_run_control_with_whitespace_wrapped_reason() -> None
                 "occurredAt": "2026-07-03T00:00:00Z",
             },
         },
+    )
+    _record_seeded_run_owner(
+        app,
+        "run-control-whitespace-reason-1",
+        PrincipalRef("user-1"),
     )
 
     response = app.handle(
@@ -4075,6 +4165,11 @@ def test_server_app_rejects_run_control_with_invalid_timestamp() -> None:
             },
         },
     )
+    _record_seeded_run_owner(
+        app,
+        "run-control-invalid-time-1",
+        PrincipalRef("user-1"),
+    )
 
     response = app.handle(
         ServerRequest(
@@ -4110,6 +4205,11 @@ def test_server_app_rejects_run_control_duplicate_with_conflicting_reason() -> N
                 "occurredAt": "2026-07-03T00:00:00Z",
             },
         },
+    )
+    _record_seeded_run_owner(
+        app,
+        "run-control-duplicate-1",
+        PrincipalRef("user-1"),
     )
 
     first = app.handle(
@@ -4227,6 +4327,11 @@ def test_server_app_rejects_unknown_pause_kind() -> None:
                 "occurredAt": "2026-07-02T00:00:00Z",
             },
         },
+    )
+    _record_seeded_run_owner(
+        app,
+        "run-pause-kind-invalid-1",
+        PrincipalRef("user-1"),
     )
 
     response = app.handle(
@@ -4388,6 +4493,11 @@ def test_server_app_rejects_resume_without_paused_or_waiting_state() -> None:
             },
         },
     )
+    _record_seeded_run_owner(
+        app,
+        "run-resume-active-1",
+        PrincipalRef("user-1"),
+    )
 
     response = app.handle(
         ServerRequest(
@@ -4492,6 +4602,11 @@ def test_server_app_treats_repeated_non_terminal_control_as_idempotent() -> None
                 "occurredAt": "2026-07-02T00:00:00Z",
             },
         },
+    )
+    _record_seeded_run_owner(
+        app,
+        "run-non-terminal-idempotent-1",
+        PrincipalRef("user-1"),
     )
     pause = app.handle(
         ServerRequest(

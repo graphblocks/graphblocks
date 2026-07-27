@@ -2519,7 +2519,7 @@ class GraphBlocksServerApp:
         if not callable(self.admission_clock):
             raise ValueError("server admission_clock must be callable")
 
-    def _principal_can_read_run(
+    def _principal_can_access_run(
         self,
         run_id: str,
         principal: PrincipalRef | None,
@@ -2637,7 +2637,7 @@ class GraphBlocksServerApp:
                 runs = [
                     self._run_status_payload(run_id, events, include_ok=False)
                     for run_id, events in sorted(self._events_by_run_id.items())
-                    if self._principal_can_read_run(
+                    if self._principal_can_access_run(
                         run_id,
                         auth_decision.principal,
                     )
@@ -2654,19 +2654,35 @@ class GraphBlocksServerApp:
         if route.operation in {"cancel_run", "pause_run", "resume_run", "expire_run"}:
             try:
                 run_id = route_match.path_params.get("run_id", "")
-                events = self._events_by_run_id.get(run_id)
-                if events is None:
-                    return ServerResponse.json(
-                        404,
-                        {
-                            "ok": False,
-                            "error": f"run control stream not found for run {run_id!r}",
-                        },
-                    )
+                with self._accepted_run_condition:
+                    events = self._events_by_run_id.get(run_id)
+                    if events is None or not self._principal_can_access_run(
+                        run_id,
+                        auth_decision.principal,
+                    ):
+                        return ServerResponse.json(
+                            404,
+                            {
+                                "ok": False,
+                                "error": f"run control stream not found for run {run_id!r}",
+                            },
+                        )
                 payload = _server_request_json_body(request, "run control request")
                 if not isinstance(payload, Mapping):
                     raise ValueError("run control request body must be a JSON object")
                 with self._accepted_run_condition:
+                    events = self._events_by_run_id.get(run_id)
+                    if events is None or not self._principal_can_access_run(
+                        run_id,
+                        auth_decision.principal,
+                    ):
+                        return ServerResponse.json(
+                            404,
+                            {
+                                "ok": False,
+                                "error": f"run control stream not found for run {run_id!r}",
+                            },
+                        )
                     return self._run_control_response(
                         run_id,
                         route.operation,
@@ -2685,7 +2701,7 @@ class GraphBlocksServerApp:
                 )
         if route.operation == "get_run_status":
             run_id = route_match.path_params.get("run_id", "")
-            if not self._principal_can_read_run(run_id, auth_decision.principal):
+            if not self._principal_can_access_run(run_id, auth_decision.principal):
                 return ServerResponse.json(
                     404,
                     {
@@ -2715,7 +2731,7 @@ class GraphBlocksServerApp:
         if route.operation == "attach_to_run":
             try:
                 run_id = route_match.path_params.get("run_id", "")
-                if not self._principal_can_read_run(
+                if not self._principal_can_access_run(
                     run_id,
                     auth_decision.principal,
                 ):
@@ -4117,7 +4133,7 @@ class GraphBlocksServerApp:
                     self._accepted_run_condition.release()
         if route.operation == "application_events":
             run_id = route_match.path_params.get("run_id", "")
-            if not self._principal_can_read_run(run_id, auth_decision.principal):
+            if not self._principal_can_access_run(run_id, auth_decision.principal):
                 return ServerResponse.json(
                     404,
                     {
@@ -4220,7 +4236,7 @@ class GraphBlocksServerApp:
                         sort_keys=True,
                     ).encode("utf-8"),
                 )
-            if not self._principal_can_read_run(run_id, auth_decision.principal):
+            if not self._principal_can_access_run(run_id, auth_decision.principal):
                 return ServerResponse.json(
                     404,
                     {

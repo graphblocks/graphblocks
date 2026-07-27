@@ -2176,6 +2176,11 @@ def test_client_package_sends_cancel_run_over_http_transport(monkeypatch) -> Non
             },
         },
     )
+    app._record_run_authorization(
+        "run-http-1",
+        PrincipalRef("user-1"),
+        "2026-07-03T00:00:00Z",
+    )
 
     def transport(request: object, *, timeout: float) -> object:
         assert timeout == 4.0
@@ -2362,6 +2367,11 @@ def test_client_package_controls_run_lifecycle_over_http_transport(monkeypatch) 
                 "occurredAt": "2026-07-03T00:00:00Z",
             },
         },
+    )
+    app._record_run_authorization(
+        "run-control-client-1",
+        PrincipalRef("operator-1"),
+        "2026-07-03T00:00:00Z",
     )
     calls: list[str] = []
 
