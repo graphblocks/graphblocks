@@ -71,7 +71,7 @@ from graphblocks import (
 )
 
 
-def test_root_facade_exports_tool_schema_aliases() -> None:
+def test_tool_schema_aliases_are_not_stable_root_exports() -> None:
     expected_aliases = {
         "GraphRef",
         "JsonSchemaRef",
@@ -113,9 +113,7 @@ def test_root_facade_exports_tool_schema_aliases() -> None:
     }
 
     expected_exports = expected_aliases | set(expected_constants)
-    missing = sorted(name for name in expected_exports if name not in graphblocks.__all__)
-
-    assert missing == []
+    assert expected_exports.isdisjoint(graphblocks.__all__)
     for name in expected_exports:
         assert hasattr(graphblocks, name)
     assert graphblocks.PendingToolCallsDisposition is OutputPendingToolCallsDisposition

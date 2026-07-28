@@ -715,7 +715,7 @@ def test_native_compile_helper_delegates_to_runtime(monkeypatch) -> None:
             True,
         )
     ]
-    assert "compile_graph_native" in graphblocks.__all__
+    assert "compile_graph_native" not in graphblocks.__all__
 
 
 def test_compile_rejects_unbounded_output_holdback_and_unsafe_immediate_draft() -> None:

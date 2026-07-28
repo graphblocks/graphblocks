@@ -132,7 +132,7 @@ def test_run_store_records_invocation_mode_and_preserves_it_across_mutations() -
 
     background = store.create_run("sha256:test", {}, invocation_mode="background")
     assert background.invocation_mode == "background"
-    assert "RunInvocationMode" in graphblocks.__all__
+    assert "RunInvocationMode" not in graphblocks.__all__
 
 
 def test_run_store_accepts_requested_run_id() -> None:

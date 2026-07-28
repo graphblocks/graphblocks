@@ -112,7 +112,7 @@ def test_agents_package_exposes_tool_literal_sets(monkeypatch) -> None:
     assert graphblocks_agents.PendingToolCallsDisposition is PendingToolCallsDisposition
     assert "PendingToolCallsDisposition" in graphblocks_agents.__all__
     assert graphblocks.VALID_TOOL_FAILURE_POLICIES is VALID_TOOL_FAILURE_POLICIES
-    assert "VALID_TOOL_FAILURE_POLICIES" in graphblocks.__all__
+    assert "VALID_TOOL_FAILURE_POLICIES" not in graphblocks.__all__
 
 
 def test_agents_package_lazy_native_helpers_delegate_to_runtime(monkeypatch) -> None:

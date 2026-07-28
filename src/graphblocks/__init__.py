@@ -1,4 +1,12 @@
-"""GraphBlocks contract toolkit."""
+"""GraphBlocks contract toolkit.
+
+Only the C0/C1 candidate surface declared in ``__all__`` is a package-root
+public API. Existing preview attributes remain temporarily available for
+direct-import compatibility and belong to their feature modules.
+"""
+
+# Preview attributes remain imported for transitional direct-import compatibility.
+# ruff: noqa: F401
 
 from __future__ import annotations
 
@@ -647,7 +655,7 @@ from .workspace import (
 
 __version__ = "1.0.0rc1"
 
-__all__ = [
+_LEGACY_ROOT_ATTRIBUTES = [
     "TERMINAL_ADMISSION_TICKET_STATES",
     "AdmissionError",
     "AdmissionIdempotencyConflictError",
@@ -1253,4 +1261,39 @@ __all__ = [
     "validate_worker_result",
     "build_context_pack",
     "fuse_search_hits",
+]
+
+__all__ = [
+    "canonical_loads",
+    "canonical_dumps",
+    "canonical_hash",
+    "normalize_graph",
+    "Severity",
+    "Diagnostic",
+    "DiagnosticSet",
+    "SchemaId",
+    "ResourceSchemaViolation",
+    "ResourceValidationError",
+    "resource_schema_errors",
+    "validate_resource",
+    "migrate_document",
+    "validate_plugin_manifest",
+    "PluginManifest",
+    "OutputRequirednessPredicate",
+    "PortDescriptor",
+    "ResourceSlotDescriptor",
+    "BlockDescriptor",
+    "BlockCatalog",
+    "Plan",
+    "compile_graph",
+    "BlockCallable",
+    "LocalJournalKind",
+    "LocalTerminalJournalKind",
+    "CancellationToken",
+    "LocalJournalRecord",
+    "LocalExecutionJournal",
+    "RuntimeRegistry",
+    "LocalRunResult",
+    "LocalRuntime",
+    "core_stdlib_registry",
 ]

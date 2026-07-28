@@ -18,7 +18,7 @@ from graphblocks.ingestion import (
 )
 
 
-def test_root_facade_exports_ingestion_manifest_types() -> None:
+def test_ingestion_manifest_types_are_not_stable_root_exports() -> None:
     expected = {
         "IndexRecordRef",
         "IngestionDeletePolicy",
@@ -29,7 +29,7 @@ def test_root_facade_exports_ingestion_manifest_types() -> None:
         "ProcessorRef",
     }
 
-    assert sorted(name for name in expected if name not in graphblocks.__all__) == []
+    assert expected.isdisjoint(graphblocks.__all__)
     for name in expected:
         assert hasattr(graphblocks, name)
 

@@ -398,7 +398,17 @@ def test_stable_python_surface_is_deliberate_and_profile_bounded() -> None:
     stable_type_names = {
         entry["path"].split(".", 2)[1] for entry in snapshot["symbols"]
     }
-    assert stable_type_names <= set(graphblocks.__all__)
+    stable_root_exports = tuple(
+        dict.fromkeys(
+            entry["path"].split(".", 2)[1] for entry in snapshot["symbols"]
+        )
+    )
+    assert tuple(graphblocks.__all__) == stable_root_exports
+    wildcard_namespace: dict[str, object] = {}
+    exec("from graphblocks import *", wildcard_namespace)
+    assert {
+        name for name in wildcard_namespace if not name.startswith("__")
+    } == set(stable_root_exports)
     assert all(
         set(entry.get("typeReferences", ())) <= stable_type_names
         for entry in snapshot["symbols"]

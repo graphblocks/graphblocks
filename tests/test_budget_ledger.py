@@ -156,7 +156,7 @@ def _set_budget_status(
     ledger._accounts[budget_id] = replace(ledger._accounts[budget_id], status=status)
 
 
-def test_root_facade_exports_budget_literal_contract() -> None:
+def test_budget_literal_contract_is_not_a_stable_root_export() -> None:
     expected_exports = {
         "BudgetStatus",
         "ReservationPurpose",
@@ -170,7 +170,7 @@ def test_root_facade_exports_budget_literal_contract() -> None:
         "VALID_COMPLETION_RESERVE_STATUSES",
     }
 
-    assert sorted(name for name in expected_exports if name not in graphblocks.__all__) == []
+    assert expected_exports.isdisjoint(graphblocks.__all__)
     for name in expected_exports:
         assert hasattr(graphblocks, name)
     assert graphblocks.VALID_BUDGET_STATUSES == VALID_BUDGET_STATUSES

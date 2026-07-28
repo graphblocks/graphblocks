@@ -130,7 +130,7 @@ def test_audit_package_exposes_append_only_event_and_enforcement_records(monkeyp
     assert graphblocks_audit.VALID_APPROVAL_STATUSES is VALID_APPROVAL_STATUSES
     assert "VALID_APPROVAL_STATUSES" in graphblocks_audit.__all__
     assert graphblocks.VALID_APPROVAL_STATUSES is VALID_APPROVAL_STATUSES
-    assert "VALID_APPROVAL_STATUSES" in graphblocks.__all__
+    assert "VALID_APPROVAL_STATUSES" not in graphblocks.__all__
 
 
 def test_audit_package_exposes_native_audit_helpers(monkeypatch) -> None:

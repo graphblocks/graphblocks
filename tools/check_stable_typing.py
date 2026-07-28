@@ -86,6 +86,67 @@ def _root_export_owners(package_init: Path) -> dict[str, str]:
     return owners
 
 
+def _root_public_exports(package_init: Path) -> tuple[str, ...]:
+    tree = ast.parse(
+        package_init.read_text(encoding="utf-8"),
+        filename=str(package_init),
+    )
+    assignments = [
+        node
+        for node in tree.body
+        if isinstance(node, ast.Assign)
+        and any(
+            isinstance(target, ast.Name) and target.id == "__all__"
+            for target in node.targets
+        )
+    ]
+    if len(assignments) != 1:
+        raise ValueError("graphblocks package root must assign __all__ exactly once")
+    raw_exports = ast.literal_eval(assignments[0].value)
+    if not isinstance(raw_exports, (list, tuple)):
+        raise ValueError("graphblocks package root __all__ must be a list or tuple")
+    exports: list[str] = []
+    for index, raw_export in enumerate(raw_exports):
+        export = _exact_nonempty_string(raw_export)
+        if export is None:
+            raise ValueError(
+                f"graphblocks package root __all__ entry {index} must be an exact nonempty string"
+            )
+        exports.append(export)
+    duplicates = sorted(
+        export for export, count in Counter(exports).items() if count > 1
+    )
+    if duplicates:
+        raise ValueError(
+            "graphblocks package root __all__ contains duplicates: "
+            + ", ".join(duplicates)
+        )
+    return tuple(exports)
+
+
+def validate_root_exports(
+    *,
+    stable_symbols: Sequence[str],
+    public_exports: Sequence[str],
+) -> list[str]:
+    stable_root_exports = tuple(
+        dict.fromkeys(symbol.split(".", 2)[1] for symbol in stable_symbols)
+    )
+    stable_root_set = set(stable_root_exports)
+    public_export_set = set(public_exports)
+    errors = [
+        f"stable root export is missing from __all__: {export}"
+        for export in sorted(stable_root_set - public_export_set)
+    ]
+    errors.extend(
+        f"preview or internal root export is present in __all__: {export}"
+        for export in sorted(public_export_set - stable_root_set)
+    )
+    if not errors and tuple(public_exports) != stable_root_exports:
+        errors.append("graphblocks package root __all__ must follow stable surface order")
+    return errors
+
+
 def _symbol_owner_map(
     symbols: Sequence[str],
     export_owners: Mapping[str, str],
@@ -286,17 +347,26 @@ def check_repository(
     surface = _load_yaml(root / SURFACE_PATH)
     stable_symbols = _stable_symbols(surface)
     export_owners = _root_export_owners(root / PACKAGE_INIT_PATH)
+    public_exports = _root_public_exports(root / PACKAGE_INIT_PATH)
     symbol_owners = _symbol_owner_map(stable_symbols, export_owners)
     with (root / PYPROJECT_PATH).open("rb") as pyproject_file:
         pyproject = tomllib.load(pyproject_file)
     strict_modules = _strict_modules(pyproject)
     debt = _load_yaml(root / DEBT_PATH)
-    return validate_typing_coverage(
-        stable_symbols=stable_symbols,
-        symbol_owners=symbol_owners,
-        strict_modules=strict_modules,
-        debt=debt,
-        today=today or date.today(),
+    return sorted(
+        {
+            *validate_root_exports(
+                stable_symbols=stable_symbols,
+                public_exports=public_exports,
+            ),
+            *validate_typing_coverage(
+                stable_symbols=stable_symbols,
+                symbol_owners=symbol_owners,
+                strict_modules=strict_modules,
+                debt=debt,
+                today=today or date.today(),
+            ),
+        }
     )
 
 

@@ -643,7 +643,7 @@ def test_callback_delivery_rejects_whitespace_wrapped_identifiers_and_status() -
             graphblocks.CallbackDelivery(**{**delivery_base, **overrides})
 
 
-def test_callback_schema_exports_are_available() -> None:
-    assert "EventFilter" in graphblocks.__all__
-    assert "CallbackSubscription" in graphblocks.__all__
-    assert "CallbackDelivery" in graphblocks.__all__
+def test_callback_schema_attributes_are_not_stable_root_exports() -> None:
+    assert "EventFilter" not in graphblocks.__all__
+    assert "CallbackSubscription" not in graphblocks.__all__
+    assert "CallbackDelivery" not in graphblocks.__all__

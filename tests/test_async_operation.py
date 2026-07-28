@@ -2158,12 +2158,12 @@ def test_async_operation_requires_callback_receipt_timestamp() -> None:
         ).wait_for_callback().mark_callback_received()
 
 
-def test_async_operation_result_exports_are_available() -> None:
-    assert "AsyncOperation" in graphblocks.__all__
-    assert "AsyncOperationState" in graphblocks.__all__
-    assert "AsyncOperationResult" in graphblocks.__all__
-    assert "ExternalEffectRecord" in graphblocks.__all__
-    assert "ExternalCallbackReceived" in graphblocks.__all__
+def test_async_operation_result_attributes_are_not_stable_root_exports() -> None:
+    assert "AsyncOperation" not in graphblocks.__all__
+    assert "AsyncOperationState" not in graphblocks.__all__
+    assert "AsyncOperationResult" not in graphblocks.__all__
+    assert "ExternalEffectRecord" not in graphblocks.__all__
+    assert "ExternalCallbackReceived" not in graphblocks.__all__
     assert graphblocks.AsyncOperationState.WAITING_CALLBACK == "waiting_callback"
     assert graphblocks.AsyncOperationResultStatus.CANCELLED == "cancelled"
 
@@ -2205,7 +2205,7 @@ def run_direct() -> None:
         test_async_operation_rejects_expiry_before_deadline,
         test_async_operation_rejects_terminal_failure_at_or_after_expiry,
         test_async_operation_requires_callback_receipt_timestamp,
-        test_async_operation_result_exports_are_available,
+        test_async_operation_result_attributes_are_not_stable_root_exports,
     )
     for test in tests:
         test()

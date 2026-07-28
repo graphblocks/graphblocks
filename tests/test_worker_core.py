@@ -449,8 +449,8 @@ def test_top_level_package_exports_worker_admission_decision_api() -> None:
     assert edge_payload.to_wire()["valueDigest"].startswith("sha256:")
     assert graphblocks.VALID_WORKER_PROTOCOL_MESSAGE_KINDS is VALID_WORKER_PROTOCOL_MESSAGE_KINDS
     assert graphblocks.VALID_WORKER_STATES is VALID_WORKER_STATES
-    assert "VALID_WORKER_PROTOCOL_MESSAGE_KINDS" in graphblocks.__all__
-    assert "VALID_WORKER_STATES" in graphblocks.__all__
+    assert "VALID_WORKER_PROTOCOL_MESSAGE_KINDS" not in graphblocks.__all__
+    assert "VALID_WORKER_STATES" not in graphblocks.__all__
 
 
 def test_worker_selection_skips_draining_and_saturated_workers() -> None:

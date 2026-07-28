@@ -189,16 +189,16 @@ def test_policy_package_exposes_canonical_literal_sets(monkeypatch) -> None:
     assert graphblocks.VALID_POLICY_EFFECTS is VALID_POLICY_EFFECTS
     assert graphblocks.VALID_POLICY_FAIL_MODES is VALID_POLICY_FAIL_MODES
     assert graphblocks.VALID_RULE_EFFECTS is VALID_RULE_EFFECTS
-    assert "VALID_ENFORCEMENT_POINTS" in graphblocks.__all__
-    assert "VALID_POLICY_EFFECTS" in graphblocks.__all__
+    assert "VALID_ENFORCEMENT_POINTS" not in graphblocks.__all__
+    assert "VALID_POLICY_EFFECTS" not in graphblocks.__all__
     assert graphblocks.EnforcementPoint is EnforcementPoint
     assert graphblocks.PolicyEffect is PolicyEffect
     assert graphblocks.PolicyEnforcementStatus is PolicyEnforcementStatus
     assert graphblocks.RuleEffect is RuleEffect
-    assert "EnforcementPoint" in graphblocks.__all__
-    assert "PolicyEffect" in graphblocks.__all__
-    assert "PolicyEnforcementStatus" in graphblocks.__all__
-    assert "RuleEffect" in graphblocks.__all__
+    assert "EnforcementPoint" not in graphblocks.__all__
+    assert "PolicyEffect" not in graphblocks.__all__
+    assert "PolicyEnforcementStatus" not in graphblocks.__all__
+    assert "RuleEffect" not in graphblocks.__all__
     for name, value in output_constants.items():
         assert getattr(graphblocks_policy, name) is value
         assert name in graphblocks_policy.__all__
@@ -206,7 +206,7 @@ def test_policy_package_exposes_canonical_literal_sets(monkeypatch) -> None:
     assert {"bounded_holdback", "immediate_draft"}.issubset(graphblocks_policy.VALID_DELIVERY_MODES)
 
 
-def test_root_facade_exports_output_policy_literal_contract() -> None:
+def test_output_policy_literal_contract_is_not_a_stable_root_export() -> None:
     expected_aliases = {
         "DeliveryMode",
         "DraftDisposition",
@@ -231,7 +231,7 @@ def test_root_facade_exports_output_policy_literal_contract() -> None:
     }
     expected_exports = expected_aliases | set(expected_constants)
 
-    assert sorted(name for name in expected_exports if name not in graphblocks.__all__) == []
+    assert expected_exports.isdisjoint(graphblocks.__all__)
     for name in expected_aliases:
         assert hasattr(graphblocks, name)
     assert graphblocks.PendingToolCallsDisposition is PendingToolCallsDisposition

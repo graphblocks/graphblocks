@@ -8,6 +8,7 @@ import tomllib
 
 from tools.check_stable_typing import (
     check_repository,
+    validate_root_exports,
     validate_typing_coverage,
 )
 
@@ -41,6 +42,30 @@ def test_repository_mypy_scope_silences_only_transitive_diagnostics() -> None:
         mypy = tomllib.load(pyproject_file)["tool"]["mypy"]
 
     assert mypy["follow_imports"] == "silent"
+
+
+def test_stable_typing_scope_requires_exact_ordered_root_exports() -> None:
+    stable_symbols = (
+        "graphblocks.Foo",
+        "graphblocks.Foo.method",
+        "graphblocks.Bar",
+    )
+
+    assert validate_root_exports(
+        stable_symbols=stable_symbols,
+        public_exports=("Foo", "Bar"),
+    ) == []
+    assert validate_root_exports(
+        stable_symbols=stable_symbols,
+        public_exports=("Foo", "Preview"),
+    ) == [
+        "stable root export is missing from __all__: Bar",
+        "preview or internal root export is present in __all__: Preview",
+    ]
+    assert validate_root_exports(
+        stable_symbols=stable_symbols,
+        public_exports=("Bar", "Foo"),
+    ) == ["graphblocks package root __all__ must follow stable surface order"]
 
 
 def test_stable_typing_scope_rejects_missing_symbol_debt() -> None:

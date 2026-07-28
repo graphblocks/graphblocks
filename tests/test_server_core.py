@@ -811,7 +811,7 @@ def test_server_app_handles_health_auth_and_run_requests() -> None:
     assert [event["kind"] for event in payload["events"]] == ["RunStarted", "RunSucceeded"]
     assert payload["events"][0]["metadata"]["responseId"] == "response-server-1"
     assert graphblocks.GraphBlocksServerApp is GraphBlocksServerApp
-    assert "ServerResponse" in graphblocks.__all__
+    assert "ServerResponse" not in graphblocks.__all__
 
 
 def test_server_app_hides_run_reads_from_other_principals_and_tenants() -> None:
