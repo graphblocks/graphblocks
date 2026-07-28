@@ -215,7 +215,7 @@ def _canonical_dumps(value: Any, *, reject_tuples: bool) -> str:
     pending_copies: list[tuple[Any, dict[str, Any] | list[Any], str | int]] = [
         (snapshot, root, 0)
     ]
-    decimal_tokens: dict[str, str] = {}
+    numeric_tokens: dict[str, str] = {}
     token_index = 0
     while pending_copies:
         current_value, parent, parent_key = pending_copies.pop()
@@ -261,7 +261,13 @@ def _canonical_dumps(value: Any, *, reject_tuples: bool) -> str:
                 token = f"\x00graphblocks-decimal-{token_index}\x00"
             token_index += 1
             occupied_strings.add(token)
-            decimal_tokens[token] = canonical_number
+            numeric_tokens[
+                json.dumps(
+                    token,
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                )
+            ] = canonical_number
             parent[parent_key] = token
         elif (
             isinstance(current_value, int)
@@ -275,7 +281,13 @@ def _canonical_dumps(value: Any, *, reject_tuples: bool) -> str:
                 token = f"\x00graphblocks-integer-{token_index}\x00"
             token_index += 1
             occupied_strings.add(token)
-            decimal_tokens[token] = canonical_number
+            numeric_tokens[
+                json.dumps(
+                    token,
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                )
+            ] = canonical_number
             parent[parent_key] = token
         elif isinstance(current_value, Mapping):
             copied_mapping: dict[str, Any] = {}
@@ -300,12 +312,30 @@ def _canonical_dumps(value: Any, *, reject_tuples: bool) -> str:
         )
     except RecursionError as error:
         raise _depth_error() from error
-    for token, canonical_number in decimal_tokens.items():
-        encoded = encoded.replace(
-            json.dumps(token, ensure_ascii=False, separators=(",", ":")),
-            canonical_number,
-        )
-    return encoded
+    parts: list[str] = []
+    copy_start = 0
+    cursor = 0
+    while cursor < len(encoded):
+        if encoded[cursor] != '"':
+            cursor += 1
+            continue
+        string_start = cursor
+        cursor += 1
+        while cursor < len(encoded):
+            if encoded[cursor] == "\\":
+                cursor += 2
+            elif encoded[cursor] == '"':
+                cursor += 1
+                break
+            else:
+                cursor += 1
+        replacement = numeric_tokens.get(encoded[string_start:cursor])
+        if replacement is not None:
+            parts.append(encoded[copy_start:string_start])
+            parts.append(replacement)
+            copy_start = cursor
+    parts.append(encoded[copy_start:])
+    return "".join(parts)
 
 
 def canonical_dumps(value: Any) -> str:
