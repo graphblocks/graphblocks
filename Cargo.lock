@@ -361,6 +361,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "graphblocks-control-plane"
+version = "0.1.0"
+dependencies = [
+ "graphblocks-protocol",
+ "graphblocks-runtime-core",
+ "graphblocks-runtime-durable",
+ "graphblocks-schema",
+ "httpdate",
+ "rcgen",
+ "rusqlite",
+ "rustls",
+ "serde_json",
+ "webpki-roots",
+]
+
+[[package]]
 name = "graphblocks-flow"
 version = "0.1.0"
 dependencies = [
@@ -381,12 +397,12 @@ name = "graphblocks-python"
 version = "0.1.0"
 dependencies = [
  "graphblocks-compiler",
+ "graphblocks-control-plane",
  "graphblocks-protocol",
  "graphblocks-runtime-core",
  "graphblocks-runtime-durable",
  "graphblocks-runtime-seq",
  "graphblocks-schema",
- "graphblocksd",
  "pyo3",
  "serde_json",
 ]
@@ -446,22 +462,6 @@ version = "0.1.0"
 dependencies = [
  "graphblocks-schema",
  "serde_json",
-]
-
-[[package]]
-name = "graphblocksd"
-version = "0.1.0"
-dependencies = [
- "graphblocks-protocol",
- "graphblocks-runtime-core",
- "graphblocks-runtime-durable",
- "graphblocks-schema",
- "httpdate",
- "rcgen",
- "rusqlite",
- "rustls",
- "serde_json",
- "webpki-roots",
 ]
 
 [[package]]

@@ -5,8 +5,8 @@ use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
+use graphblocks_control_plane::{StdWebhookHttpClient, WebhookHttpClient, WebhookHttpClientError};
 use graphblocks_runtime_core::callback_delivery::WebhookHttpRequest;
-use graphblocksd::{StdWebhookHttpClient, WebhookHttpClient, WebhookHttpClientError};
 use rcgen::{CertifiedKey, generate_simple_self_signed};
 use rustls::pki_types::{PrivateKeyDer, PrivatePkcs8KeyDer};
 use rustls::{ServerConfig, ServerConnection, StreamOwned};

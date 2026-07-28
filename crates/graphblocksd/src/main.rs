@@ -1,5 +1,6 @@
 use std::io::{self, Read};
 
+use graphblocks_control_plane::{DaemonConfig, DaemonStatus, WorkerRegistry, WorkerRegistryError};
 use graphblocks_protocol::WorkerProtocolMessageKind;
 use graphblocks_runtime_core::async_operation::{
     AsyncCallbackResumeDecision, AsyncCallbackSubmission, AsyncOperation, AsyncOperationError,
@@ -18,7 +19,6 @@ use graphblocks_runtime_durable::{
     CheckpointRecoveryClaim, CheckpointStoreError, SqliteCheckpointStore,
 };
 use graphblocks_schema::parse_canonical_json;
-use graphblocksd::{DaemonConfig, DaemonStatus, WorkerRegistry, WorkerRegistryError};
 use serde_json::{Value, json};
 
 #[derive(Clone, Debug, Eq, PartialEq)]

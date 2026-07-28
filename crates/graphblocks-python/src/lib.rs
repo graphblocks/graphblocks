@@ -5,6 +5,7 @@ use graphblocks_compiler::compiler::{
 };
 use graphblocks_compiler::diagnostics::Severity;
 use graphblocks_compiler::graph::GRAPH_API_VERSION;
+use graphblocks_control_plane::{DaemonConfig, DaemonStatus, WorkerRegistry, WorkerRegistryError};
 use graphblocks_protocol::{
     RemotePayload, RemotePayloadError, RemotePayloadLimits, WorkerAdmissionPolicy,
     WorkerAdvertisement, WorkerProtocolError, WorkerProtocolMessage, WorkerProtocolMessageKind,
@@ -107,7 +108,6 @@ use graphblocks_runtime_durable::{
 };
 use graphblocks_runtime_seq::tool_queue::{SequentialToolQueue, SequentialToolQueueError};
 use graphblocks_schema::parse_canonical_json;
-use graphblocksd::{DaemonConfig, DaemonStatus, WorkerRegistry, WorkerRegistryError};
 use pyo3::exceptions::{PyRuntimeError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyBool;

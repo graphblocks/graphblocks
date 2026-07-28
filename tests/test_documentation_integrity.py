@@ -156,6 +156,32 @@ def test_living_documentation_has_one_authority_tree() -> None:
     assert (ROOT / "profiles" / "policy-profiles.yaml").is_file()
 
 
+def test_python_binding_depends_on_control_plane_library_not_daemon() -> None:
+    control_plane = tomllib.loads(
+        (ROOT / "crates" / "graphblocksd" / "Cargo.toml").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert control_plane["package"]["name"] == "graphblocks-control-plane"
+    assert control_plane["lib"]["name"] == "graphblocks_control_plane"
+    assert control_plane["bin"] == [
+        {"name": "graphblocksd", "path": "src/main.rs"}
+    ]
+
+    binding = tomllib.loads(
+        (ROOT / "crates" / "graphblocks-python" / "Cargo.toml").read_text(
+            encoding="utf-8"
+        )
+    )
+    dependencies = binding["dependencies"]
+    assert "graphblocks-control-plane" in dependencies
+    assert dependencies["graphblocks-control-plane"] == {
+        "version": "0.1.0",
+        "path": "../graphblocksd",
+    }
+    assert "graphblocksd" not in dependencies
+
+
 def test_stable_release_matrix_is_complete_and_machine_readable() -> None:
     matrix = yaml.safe_load((ROOT / "docs" / "project" / "stable-release-matrix.yaml").read_text())
     assert matrix["matrixVersion"] == 1
@@ -178,10 +204,18 @@ def test_stable_release_matrix_is_complete_and_machine_readable() -> None:
             assert source in artifacts, f"unknown release-matrix artifact source: {source}"
 
     workspace = tomllib.loads((ROOT / "Cargo.toml").read_text(encoding="utf-8"))
-    workspace_crates = {
-        f"crate:{Path(member).name}" for member in workspace["workspace"]["members"]
-    }
+    workspace_crates = set()
+    for member in workspace["workspace"]["members"]:
+        manifest = tomllib.loads(
+            (ROOT / member / "Cargo.toml").read_text(encoding="utf-8")
+        )
+        workspace_crates.add(f"crate:{manifest['package']['name']}")
     assert workspace_crates <= set(artifacts)
+    assert "crate:graphblocks-control-plane" in artifacts
+    assert "crate:graphblocksd" not in artifacts
+    assert artifacts["executable:graphblocksd"]["source"] == (
+        "crate:graphblocks-control-plane"
+    )
 
     profile_catalog = yaml.safe_load(
         (ROOT / "src" / "graphblocks" / "data" / "conformance-profiles.yaml").read_text()
@@ -289,7 +323,8 @@ def test_stable_release_matrix_is_complete_and_machine_readable() -> None:
     assert "supported-installed-native-compiler-tck-and-artifact-evidence" in (
         authority["remainingPhases"]
     )
-    assert "control-plane-library-extraction" in authority["remainingPhases"]
+    assert "control-plane-library-extraction" not in authority["remainingPhases"]
+    assert "control-plane-library-extraction" in authority["completedPhases"]
     assert authority["blocksTargetRelease"] is True
     assert authority["requiredGate"] == "REL-NORMATIVE-AUTHORITY"
     authority_decision = ROOT / authority["decision"]
@@ -355,9 +390,12 @@ def test_stable_release_matrix_is_complete_and_machine_readable() -> None:
     assert "installed-native-compiler-tck-and-artifact-identity-incomplete" in (
         authority_gate["blockers"]
     )
-    assert "control-plane-dependency-inversion-incomplete" in authority_gate[
+    assert "control-plane-dependency-inversion-incomplete" not in authority_gate[
         "blockers"
     ]
+    assert "python-binding-depends-on-control-plane-library-not-daemon" in (
+        authority_gate["completedEvidence"]
+    )
 
     traceability = yaml.safe_load(
         (ROOT / "docs" / "project" / "stable-requirements.yaml").read_text(

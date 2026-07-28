@@ -52,7 +52,8 @@ Python-only advanced reference contracts are listed in
 `graphblocks-native` can validate, plan, and execute a single JSON or YAML graph
 without Python, and can select a named graph from multi-document YAML, using the
 Rust stdlib runtime. It does not yet inject arbitrary integration adapters.
-Despite its name,
-`graphblocksd` is currently a one-shot worker control-plane CLI for worker
-admission and SQLite checkpoint claim lifecycle operations rather than a
-long-running HTTP server.
+The reusable `graphblocks-control-plane` library is consumed by both the Python
+binding and the `graphblocksd` binary, so the binding no longer depends on a
+daemon-named package. Despite its name, `graphblocksd` is currently a one-shot
+worker control-plane CLI for worker admission and SQLite checkpoint claim
+lifecycle operations rather than a long-running HTTP server.

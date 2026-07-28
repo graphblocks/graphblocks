@@ -3,6 +3,9 @@ use std::io::Write;
 use std::process::{Command, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use graphblocks_control_plane::{
+    DaemonConfig, DaemonConfigError, WorkerRegistry, WorkerRegistryError,
+};
 use graphblocks_protocol::{
     BlockCapability, WORKER_PROTOCOL_VERSION, WorkerAdvertisement, WorkerDrainDisposition,
     WorkerDrainPlan, WorkerDrainPolicy, WorkerDrainTask, WorkerDrainWorkloadKind,
@@ -17,7 +20,6 @@ use graphblocks_runtime_core::run_store::{RunInvocationMode, RunStatus, SqliteRu
 use graphblocks_runtime_durable::{
     CheckpointBarrier, SchemaRef, SourceCursor, SqliteCheckpointStore,
 };
-use graphblocksd::{DaemonConfig, DaemonConfigError, WorkerRegistry, WorkerRegistryError};
 use rusqlite::Connection;
 use serde_json::json;
 

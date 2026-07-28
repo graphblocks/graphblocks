@@ -237,10 +237,11 @@ protocol/version handshake, artifact promotion, and installed evidence are
 complete. During the transition, Python/Rust differential tests gate every
 normative phase.
 
-Extract a reusable `graphblocks-control-plane` library so the Python binding
-does not depend on the `graphblocksd` binary/control-plane implementation.
-Reassess very thin crates only after consumer, SemVer, or compile-isolation
-requirements are documented.
+The reusable `graphblocks-control-plane` library boundary is extracted:
+`graphblocks-python` and the `graphblocksd` binary now depend on that library,
+so the binding no longer depends on a daemon-named package. Reassess very thin
+crates only after consumer, SemVer, or compile-isolation requirements are
+documented.
 
 ### Product and profile boundary
 
