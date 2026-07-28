@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from collections.abc import Iterator, Mapping
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from jsonschema import Draft202012Validator
 from jsonschema.exceptions import ValidationError
@@ -16,7 +16,7 @@ from .canonical import (
     canonical_hash,
     canonical_loads,
 )
-from .diagnostics import Diagnostic, DiagnosticSet
+from .diagnostics import Diagnostic, DiagnosticSet, Severity
 from .duration import parse_duration_milliseconds, parse_duration_seconds
 from .migration import (
     GRAPH_API_VERSION,
@@ -161,6 +161,10 @@ class Plan:
             "diagnostics": self.diagnostics.to_list(),
             "graph": graph,
         }
+
+
+class NativeCompilerContractError(RuntimeError):
+    """Raised when the native compiler returns an invalid Plan contract."""
 
 
 def _is_positive_integer(value: object) -> bool:
@@ -915,7 +919,7 @@ def _diagnose_callback_subscription_config(
         )
 
 
-def compile_graph(
+def compile_graph_reference(
     document: dict[str, Any],
     block_catalog: BlockCatalog | None = None,
     *,
@@ -2726,6 +2730,19 @@ def compile_graph(
     )
 
 
+def compile_graph(
+    document: dict[str, Any],
+    block_catalog: BlockCatalog | None = None,
+    *,
+    allow_unknown_blocks: bool = False,
+) -> Plan:
+    return compile_graph_reference(
+        document,
+        block_catalog=block_catalog,
+        allow_unknown_blocks=allow_unknown_blocks,
+    )
+
+
 def compile_graph_native(
     document: dict[str, object],
     block_catalog: object | None = None,
@@ -2734,8 +2751,118 @@ def compile_graph_native(
 ) -> dict[str, object]:
     from graphblocks_runtime import compile_graph as native_compile_graph
 
+    native_block_catalog = (
+        block_catalog.to_blocks()
+        if isinstance(block_catalog, BlockCatalog)
+        else block_catalog
+    )
+    native_allow_unknown_blocks = allow_unknown_blocks or (
+        isinstance(block_catalog, BlockCatalog)
+        and block_catalog.allow_unknown_blocks
+    )
     return native_compile_graph(
+        document,
+        block_catalog=native_block_catalog,
+        allow_unknown_blocks=native_allow_unknown_blocks,
+    )
+
+
+def compile_graph_native_plan(
+    document: dict[str, object],
+    block_catalog: object | None = None,
+    *,
+    allow_unknown_blocks: bool = False,
+) -> Plan:
+    result = compile_graph_native(
         document,
         block_catalog=block_catalog,
         allow_unknown_blocks=allow_unknown_blocks,
+    )
+    expected_fields = {"diagnostics", "graph", "hash", "ok"}
+    if type(result) is not dict or set(result) != expected_fields:
+        raise NativeCompilerContractError(
+            "native compiler result must contain exactly diagnostics, graph, hash, and ok"
+        )
+
+    graph_hash = result["hash"]
+    if not isinstance(graph_hash, str) or not _is_canonical_sha256_digest(
+        graph_hash
+    ):
+        raise NativeCompilerContractError(
+            "native compiler result hash must be a canonical sha256 digest"
+        )
+    graph = result["graph"]
+    if type(graph) is not dict:
+        raise NativeCompilerContractError(
+            "native compiler result graph must be an object"
+        )
+    try:
+        normalized = canonical_loads(canonical_dumps(graph))
+    except (TypeError, ValueError, RuntimeError, LookupError) as error:
+        raise NativeCompilerContractError(
+            "native compiler result graph must contain canonical JSON"
+        ) from error
+    if not isinstance(normalized, dict):
+        raise NativeCompilerContractError(
+            "native compiler result graph must be an object"
+        )
+    if canonical_hash(normalized) != graph_hash:
+        raise NativeCompilerContractError(
+            "native compiler result hash does not match its normalized graph"
+        )
+
+    raw_diagnostics = result["diagnostics"]
+    if type(raw_diagnostics) is not list:
+        raise NativeCompilerContractError(
+            "native compiler result diagnostics must be an array"
+        )
+    diagnostics: list[Diagnostic] = []
+    for index, raw_diagnostic in enumerate(raw_diagnostics):
+        if type(raw_diagnostic) is not dict or set(raw_diagnostic) != {
+            "code",
+            "message",
+            "path",
+            "severity",
+        }:
+            raise NativeCompilerContractError(
+                f"native compiler diagnostic {index} has an invalid shape"
+            )
+        code = raw_diagnostic["code"]
+        message = raw_diagnostic["message"]
+        path = raw_diagnostic["path"]
+        severity = raw_diagnostic["severity"]
+        if (
+            not isinstance(code, str)
+            or not isinstance(message, str)
+            or not isinstance(path, str)
+            or not isinstance(severity, str)
+            or severity not in {"error", "warning", "info"}
+        ):
+            raise NativeCompilerContractError(
+                f"native compiler diagnostic {index} has invalid field values"
+            )
+        try:
+            diagnostics.append(
+                Diagnostic(
+                    code=code,
+                    message=message,
+                    path=path,
+                    severity=cast(Severity, severity),
+                )
+            )
+        except ValueError as error:
+            raise NativeCompilerContractError(
+                f"native compiler diagnostic {index} has invalid field values"
+            ) from error
+
+    diagnostic_set = DiagnosticSet(tuple(diagnostics))
+    ok = result["ok"]
+    if type(ok) is not bool or ok != diagnostic_set.ok:
+        raise NativeCompilerContractError(
+            "native compiler result ok does not match its diagnostics"
+        )
+    return Plan(
+        normalized=normalized,
+        graph_hash=graph_hash,
+        diagnostics=diagnostic_set,
     )

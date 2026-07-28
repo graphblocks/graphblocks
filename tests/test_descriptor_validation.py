@@ -1295,3 +1295,108 @@ def test_compile_checks_nested_node_parent_port_without_inferring_field_type(
     plan = compile_graph(graph, block_catalog=catalog)
 
     assert not [item for item in plan.diagnostics.diagnostics if item.severity == "error"]
+
+
+def test_block_catalog_serializes_a_deterministic_native_wire_contract() -> None:
+    catalog = BlockCatalog.from_blocks(
+        [
+            {
+                "typeId": "test.conditional",
+                "version": 2,
+                "inputs": [
+                    {
+                        "name": "prompt",
+                        "type": "schemas/Prompt@1",
+                        "required": False,
+                    }
+                ],
+                "outputs": [
+                    {
+                        "name": "answer",
+                        "type": "schemas/Answer@1",
+                        "required": False,
+                        "requiredWhen": {
+                            "all": [
+                                {"phase": "resumed"},
+                                {
+                                    "not": {
+                                        "configEquals": {
+                                            "pointer": "/disabled",
+                                            "value": True,
+                                        }
+                                    }
+                                },
+                            ]
+                        },
+                    }
+                ],
+                "resourceSlots": [
+                    {
+                        "name": "model",
+                        "type": "providers.Model",
+                        "optional": True,
+                    }
+                ],
+                "capabilities": ["streaming", "deterministic"],
+                "configSchema": {
+                    "type": "object",
+                    "properties": {"disabled": {"type": "boolean"}},
+                    "additionalProperties": False,
+                },
+            }
+        ],
+        allow_unknown_blocks=True,
+    )
+
+    wire_blocks = catalog.to_blocks()
+
+    assert wire_blocks == [
+        {
+            "typeId": "test.conditional",
+            "version": 2,
+            "inputs": [
+                {
+                    "name": "prompt",
+                    "required": False,
+                    "type": "schemas/Prompt@1",
+                }
+            ],
+            "outputs": [
+                {
+                    "name": "answer",
+                    "required": False,
+                    "type": "schemas/Answer@1",
+                    "requiredWhen": {
+                        "all": [
+                            {"phase": "resumed"},
+                            {
+                                "not": {
+                                    "configEquals": {
+                                        "pointer": "/disabled",
+                                        "value": True,
+                                    }
+                                }
+                            },
+                        ]
+                    },
+                }
+            ],
+            "resourceSlots": [
+                {
+                    "name": "model",
+                    "optional": True,
+                    "type": "providers.Model",
+                }
+            ],
+            "capabilities": ["deterministic", "streaming"],
+            "configSchema": {
+                "type": "object",
+                "properties": {"disabled": {"type": "boolean"}},
+                "additionalProperties": False,
+            },
+        }
+    ]
+    assert BlockCatalog.from_blocks(
+        wire_blocks,
+        allow_unknown_blocks=catalog.allow_unknown_blocks,
+    ).to_blocks() == wire_blocks

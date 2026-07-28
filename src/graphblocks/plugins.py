@@ -1048,6 +1048,112 @@ class BlockCatalog:
     def get(self, block_id: str) -> BlockDescriptor | None:
         return self.descriptors.get(block_id)
 
+    def to_blocks(self) -> list[dict[str, Any]]:
+        """Return the deterministic wire representation accepted by compilers."""
+
+        blocks: list[dict[str, Any]] = []
+        for block_id in sorted(self.descriptors):
+            descriptor = self.descriptors[block_id]
+            inputs: list[dict[str, Any]] = []
+            for port in descriptor.inputs:
+                raw_port: dict[str, Any] = {
+                    "name": port.name,
+                    "required": port.required,
+                }
+                if port.type_ref is not None:
+                    raw_port["type"] = port.type_ref
+                inputs.append(raw_port)
+
+            outputs: list[dict[str, Any]] = []
+            for port in descriptor.outputs:
+                raw_port = {
+                    "name": port.name,
+                    "required": port.required,
+                }
+                if port.type_ref is not None:
+                    raw_port["type"] = port.type_ref
+                if port.required_when is not None:
+                    predicate_payloads: dict[int, dict[str, Any]] = {}
+                    pending = [(port.required_when, False)]
+                    while pending:
+                        predicate, leaving = pending.pop()
+                        if not leaving:
+                            pending.append((predicate, True))
+                            pending.extend(
+                                (operand, False)
+                                for operand in reversed(predicate.operands)
+                            )
+                            continue
+                        payload: dict[str, Any]
+                        if predicate.operator == "configEquals":
+                            if (
+                                predicate.pointer is None
+                                or predicate.expected_json is None
+                            ):
+                                raise ValueError(
+                                    "configEquals predicate is missing its wire fields"
+                                )
+                            payload = {
+                                "configEquals": {
+                                    "pointer": predicate.pointer,
+                                    "value": canonical_loads(
+                                        predicate.expected_json
+                                    ),
+                                }
+                            }
+                        elif predicate.operator == "phase":
+                            if predicate.phase is None:
+                                raise ValueError(
+                                    "phase predicate is missing its wire value"
+                                )
+                            payload = {"phase": predicate.phase}
+                        elif predicate.operator in {"all", "any"}:
+                            payload = {
+                                predicate.operator: [
+                                    predicate_payloads[id(operand)]
+                                    for operand in predicate.operands
+                                ]
+                            }
+                        else:
+                            payload = {
+                                "not": predicate_payloads[
+                                    id(predicate.operands[0])
+                                ]
+                            }
+                        predicate_payloads[id(predicate)] = payload
+                    raw_port["requiredWhen"] = predicate_payloads[
+                        id(port.required_when)
+                    ]
+                outputs.append(raw_port)
+
+            resource_slots: list[dict[str, Any]] = []
+            for slot in descriptor.resource_slots:
+                raw_slot: dict[str, Any] = {
+                    "name": slot.name,
+                    "optional": slot.optional,
+                }
+                if slot.type_ref is not None:
+                    raw_slot["type"] = slot.type_ref
+                resource_slots.append(raw_slot)
+
+            config_schema = canonical_loads(
+                canonical_dumps(descriptor.config_schema)
+            )
+            if not isinstance(config_schema, dict):
+                raise TypeError("block config schema must be a canonical JSON object")
+            blocks.append(
+                {
+                    "typeId": descriptor.type_id,
+                    "version": descriptor.version,
+                    "inputs": inputs,
+                    "outputs": outputs,
+                    "resourceSlots": resource_slots,
+                    "capabilities": list(descriptor.capabilities),
+                    "configSchema": config_schema,
+                }
+            )
+        return blocks
+
 
 @dataclass(frozen=True, slots=True)
 class PluginRegistry:
