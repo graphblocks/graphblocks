@@ -11,12 +11,14 @@ MAX_CANONICAL_INTEGER_DIGITS = 10_000
 _MANUAL_INTEGER_BIT_LENGTH = 1_024
 _INTEGER_CHUNK_BASE = 1_000_000_000
 _INTEGER_CHUNK_DIGITS = 9
+_MAX_NATIVE_JSON_DEPTH = 64
 _MAX_CANONICAL_INTEGER_MAGNITUDE = 10**MAX_CANONICAL_INTEGER_DIGITS
 _MIN_CANONICAL_INTEGER_MAGNITUDE = -_MAX_CANONICAL_INTEGER_MAGNITUDE
 
 
 class _NativeIntegerToken(str):
     pass
+
 
 try:
     from ._native import (
@@ -171,7 +173,9 @@ except ImportError as error:
     def evaluate_retry_policy_json(policy_json: str, request_json: str) -> str:
         require_native_extension()
 
-    def evaluate_provider_limit_policy_json(policy_json: str, incident_json: str) -> str:
+    def evaluate_provider_limit_policy_json(
+        policy_json: str, incident_json: str
+    ) -> str:
         require_native_extension()
 
     def evaluate_timeout_deadline_json(policy_json: str, request_json: str) -> str:
@@ -199,13 +203,19 @@ except ImportError as error:
     ) -> str:
         require_native_extension()
 
-    def evaluate_application_event_stream_json(state_json: str, operations_json: str) -> str:
+    def evaluate_application_event_stream_json(
+        state_json: str, operations_json: str
+    ) -> str:
         require_native_extension()
 
-    def evaluate_application_protocol_log_json(state_json: str, operations_json: str) -> str:
+    def evaluate_application_protocol_log_json(
+        state_json: str, operations_json: str
+    ) -> str:
         require_native_extension()
 
-    def evaluate_application_protocol_stream_json(state_json: str, operations_json: str) -> str:
+    def evaluate_application_protocol_stream_json(
+        state_json: str, operations_json: str
+    ) -> str:
         require_native_extension()
 
     def evaluate_connector_capabilities_json(
@@ -223,7 +233,9 @@ except ImportError as error:
     def evaluate_tool_result_stream_json(state_json: str, operations_json: str) -> str:
         require_native_extension()
 
-    def evaluate_sequential_tool_queue_json(queue_json: str, operations_json: str) -> str:
+    def evaluate_sequential_tool_queue_json(
+        queue_json: str, operations_json: str
+    ) -> str:
         require_native_extension()
 
     def evaluate_tool_approval_json(
@@ -245,7 +257,9 @@ except ImportError as error:
     ) -> str:
         require_native_extension()
 
-    def evaluate_usage_ledger_json(operations_json: str, run_id: str | None = None) -> str:
+    def evaluate_usage_ledger_json(
+        operations_json: str, run_id: str | None = None
+    ) -> str:
         require_native_extension()
 
     def evaluate_budget_ledger_json(operations_json: str) -> str:
@@ -263,7 +277,9 @@ except ImportError as error:
     def validate_remote_payload_json(payload_json: str, max_inline_bytes: int) -> str:
         require_native_extension()
 
-    def run_test_graph_json(graph_json: str, inputs_json: str, node_outputs_json: str) -> str:
+    def run_test_graph_json(
+        graph_json: str, inputs_json: str, node_outputs_json: str
+    ) -> str:
         require_native_extension()
 
     def run_test_graph_with_options_json(
@@ -302,39 +318,114 @@ else:
 
 
 def _canonical_json(value: object) -> str:
-    pending = [value]
+    root: list[object] = [None]
+    pending: list[
+        tuple[
+            object,
+            dict[str, object] | list[object],
+            str | int,
+            int,
+            bool,
+        ]
+    ] = [(value, root, 0, 0, False)]
+    active_containers: set[int] = set()
     occupied_strings: set[str] = set()
     has_decimal = False
     has_large_integer = False
     while pending:
-        current = pending.pop()
+        current, parent, parent_key, depth, leaving = pending.pop()
+        if leaving:
+            active_containers.remove(id(current))
+            continue
+        if depth > _MAX_NATIVE_JSON_DEPTH:
+            raise ValueError(
+                f"native JSON nesting must not exceed {_MAX_NATIVE_JSON_DEPTH} levels"
+            )
         if isinstance(current, Mapping):
-            for key, child in current.items():
+            identity = id(current)
+            if identity in active_containers:
+                raise ValueError("native JSON values must not be recursive")
+            try:
+                source_items = tuple(current.items())
+                items = tuple((key, child) for key, child in source_items)
+            except Exception as error:
+                raise ValueError("native JSON mappings must be stable") from error
+            copied: dict[str, object] = {}
+            normalized_items: list[tuple[str, object]] = []
+            seen_keys: set[str] = set()
+            for key, child in items:
                 if not isinstance(key, str):
                     raise TypeError("native JSON object keys must be strings")
-                occupied_strings.add(key)
-                pending.append(child)
+                normalized_key = str.__str__(key)
+                if any(
+                    "\ud800" <= character <= "\udfff"
+                    for character in str.__iter__(normalized_key)
+                ):
+                    raise ValueError(
+                        "native JSON strings must contain only Unicode scalar values"
+                    )
+                if normalized_key in seen_keys:
+                    raise ValueError(
+                        f"duplicate native JSON object key {normalized_key!r}"
+                    )
+                seen_keys.add(normalized_key)
+                occupied_strings.add(normalized_key)
+                normalized_items.append((normalized_key, child))
+            parent[parent_key] = copied
+            active_containers.add(identity)
+            pending.append((current, parent, parent_key, depth, True))
+            for normalized_key, child in reversed(normalized_items):
+                pending.append((child, copied, normalized_key, depth + 1, False))
         elif isinstance(current, list | tuple):
-            pending.extend(current)
+            identity = id(current)
+            if identity in active_containers:
+                raise ValueError("native JSON values must not be recursive")
+            try:
+                items = tuple(current)
+            except Exception as error:
+                raise ValueError("native JSON arrays must be stable") from error
+            copied_list: list[object] = [None] * len(items)
+            parent[parent_key] = copied_list
+            active_containers.add(identity)
+            pending.append((current, parent, parent_key, depth, True))
+            for index in range(len(items) - 1, -1, -1):
+                pending.append((items[index], copied_list, index, depth + 1, False))
         elif isinstance(current, str):
-            occupied_strings.add(current)
+            normalized_string = str.__str__(current)
+            if any(
+                "\ud800" <= character <= "\udfff"
+                for character in str.__iter__(normalized_string)
+            ):
+                raise ValueError(
+                    "native JSON strings must contain only Unicode scalar values"
+                )
+            occupied_strings.add(normalized_string)
+            parent[parent_key] = normalized_string
         elif isinstance(current, Decimal):
             has_decimal = True
+            parent[parent_key] = Decimal(current)
         elif isinstance(current, int) and not isinstance(current, bool):
             current = int.__int__(current)
-            if int.__ge__(
-                current, _MAX_CANONICAL_INTEGER_MAGNITUDE
-            ) or int.__le__(current, _MIN_CANONICAL_INTEGER_MAGNITUDE):
+            if int.__ge__(current, _MAX_CANONICAL_INTEGER_MAGNITUDE) or int.__le__(
+                current, _MIN_CANONICAL_INTEGER_MAGNITUDE
+            ):
                 raise ValueError(
                     "canonical JSON integer must not exceed "
                     f"{MAX_CANONICAL_INTEGER_DIGITS} decimal digits"
                 )
             if current.bit_length() > _MANUAL_INTEGER_BIT_LENGTH:
                 has_large_integer = True
+            parent[parent_key] = current
+        elif isinstance(current, float):
+            parent[parent_key] = float.__float__(current)
+        else:
+            parent[parent_key] = current
+
+    snapshot = root[0]
 
     if not has_decimal and not has_large_integer:
         return json.dumps(
-            value,
+            snapshot,
             allow_nan=False,
             ensure_ascii=False,
             separators=(",", ":"),
@@ -343,7 +434,7 @@ def _canonical_json(value: object) -> str:
 
     root: list[object] = [None]
     copies: list[tuple[object, dict[str, object] | list[object], str | int]] = [
-        (value, root, 0)
+        (snapshot, root, 0)
     ]
     numeric_tokens: dict[str, str] = {}
     token_index = 0
@@ -366,9 +457,16 @@ def _canonical_json(value: object) -> str:
                     if point <= 0:
                         rendered = sign + "0." + ("0" * -point) + coefficient
                     elif point >= len(coefficient):
-                        rendered = sign + coefficient + ("0" * (point - len(coefficient))) + ".0"
+                        rendered = (
+                            sign
+                            + coefficient
+                            + ("0" * (point - len(coefficient)))
+                            + ".0"
+                        )
                     else:
-                        rendered = sign + coefficient[:point] + "." + coefficient[point:]
+                        rendered = (
+                            sign + coefficient[:point] + "." + coefficient[point:]
+                        )
                 else:
                     rendered = sign + coefficient[0]
                     if len(coefficient) > 1:
@@ -398,8 +496,7 @@ def _canonical_json(value: object) -> str:
                 chunks.append(chunk)
             rendered = str(chunks.pop())
             rendered += "".join(
-                f"{chunk:0{_INTEGER_CHUNK_DIGITS}d}"
-                for chunk in reversed(chunks)
+                f"{chunk:0{_INTEGER_CHUNK_DIGITS}d}" for chunk in reversed(chunks)
             )
             if negative:
                 rendered = f"-{rendered}"
@@ -413,12 +510,12 @@ def _canonical_json(value: object) -> str:
                 json.dumps(token, ensure_ascii=False, separators=(",", ":"))
             ] = rendered
             parent[key] = token
-        elif isinstance(current, Mapping):
+        elif isinstance(current, dict):
             copied: dict[str, object] = {}
             parent[key] = copied
             for child_key, child in reversed(tuple(current.items())):
                 copies.append((child, copied, child_key))
-        elif isinstance(current, list | tuple):
+        elif isinstance(current, list):
             copied_list: list[object] = [None] * len(current)
             parent[key] = copied_list
             for index in range(len(current) - 1, -1, -1):
@@ -473,9 +570,7 @@ def _json_object_result(result_json: str, label: str) -> dict[str, object]:
             parse_constant=lambda constant: (_ for _ in ()).throw(ValueError(constant)),
         )
         root: list[object] = [payload]
-        pending: list[
-            tuple[dict[str, object] | list[object], str | int]
-        ] = [(root, 0)]
+        pending: list[tuple[dict[str, object] | list[object], str | int]] = [(root, 0)]
         while pending:
             parent, key = pending.pop()
             current = parent[key]
@@ -497,9 +592,8 @@ def _json_object_result(result_json: str, label: str) -> dict[str, object]:
                     len(digits),
                     _INTEGER_CHUNK_DIGITS,
                 ):
-                    decoded = (
-                        decoded * _INTEGER_CHUNK_BASE
-                        + int(digits[offset : offset + _INTEGER_CHUNK_DIGITS])
+                    decoded = decoded * _INTEGER_CHUNK_BASE + int(
+                        digits[offset : offset + _INTEGER_CHUNK_DIGITS]
                     )
                 parent[key] = -decoded if negative else decoded
             elif isinstance(current, dict):
@@ -514,9 +608,13 @@ def _json_object_result(result_json: str, label: str) -> dict[str, object]:
     return payload
 
 
-def capture_telemetry_content(decision: dict[str, object], content: dict[str, object]) -> dict[str, object]:
+def capture_telemetry_content(
+    decision: dict[str, object], content: dict[str, object]
+) -> dict[str, object]:
     return _json_object_result(
-        capture_telemetry_content_json(_canonical_json(decision), _canonical_json(content)),
+        capture_telemetry_content_json(
+            _canonical_json(decision), _canonical_json(content)
+        ),
         "native telemetry captured content",
     )
 
@@ -529,7 +627,9 @@ def compile_graph(
 ) -> dict[str, object]:
     if not isinstance(allow_unknown_blocks, bool):
         raise TypeError("allow_unknown_blocks must be a boolean")
-    block_catalog_json = None if block_catalog is None else _canonical_json(block_catalog)
+    block_catalog_json = (
+        None if block_catalog is None else _canonical_json(block_catalog)
+    )
     return _json_object_result(
         compile_graph_json(
             _canonical_json(document),
@@ -645,7 +745,9 @@ def finalize_tool_call(
     created_at_unix_ms: int,
 ) -> dict[str, object]:
     return _json_object_result(
-        finalize_tool_call_json(_canonical_json(draft), resolved_tool_id, created_at_unix_ms),
+        finalize_tool_call_json(
+            _canonical_json(draft), resolved_tool_id, created_at_unix_ms
+        ),
         "native finalized tool call",
     )
 
@@ -658,7 +760,9 @@ def prepare_tool_result_for_model(
     *,
     content_policy: dict[str, object] | None = None,
 ) -> dict[str, object]:
-    content_policy_json = None if content_policy is None else _canonical_json(content_policy)
+    content_policy_json = (
+        None if content_policy is None else _canonical_json(content_policy)
+    )
     return _json_object_result(
         prepare_tool_result_for_model_json(
             _canonical_json(call),
@@ -725,14 +829,18 @@ def record_tool_effect_audit_event(
     )
 
 
-def decide_agent_step(spec: dict[str, object], request: dict[str, object]) -> dict[str, object]:
+def decide_agent_step(
+    spec: dict[str, object], request: dict[str, object]
+) -> dict[str, object]:
     return _json_object_result(
         decide_agent_step_json(_canonical_json(spec), _canonical_json(request)),
         "native agent step decision",
     )
 
 
-def admit_exhaustion_work(policy: dict[str, object], request: dict[str, object]) -> dict[str, object]:
+def admit_exhaustion_work(
+    policy: dict[str, object], request: dict[str, object]
+) -> dict[str, object]:
     return _json_object_result(
         admit_exhaustion_work_json(_canonical_json(policy), _canonical_json(request)),
         "native exhaustion admission result",
@@ -746,7 +854,9 @@ def admit_worker_message(
     response_message_id: str = "message-daemon-1",
     response_sequence: int = 1,
 ) -> dict[str, object]:
-    daemon_config_json = None if daemon_config is None else _canonical_json(daemon_config)
+    daemon_config_json = (
+        None if daemon_config is None else _canonical_json(daemon_config)
+    )
     return _json_object_result(
         admit_worker_message_json(
             _canonical_json(message),
@@ -768,7 +878,9 @@ def evaluate_output_gate(
     )
 
 
-def evaluate_retry_policy(policy: dict[str, object], request: dict[str, object]) -> dict[str, object]:
+def evaluate_retry_policy(
+    policy: dict[str, object], request: dict[str, object]
+) -> dict[str, object]:
     return _json_object_result(
         evaluate_retry_policy_json(_canonical_json(policy), _canonical_json(request)),
         "native retry policy decision",
@@ -780,21 +892,29 @@ def evaluate_provider_limit_policy(
     incident: dict[str, object],
 ) -> dict[str, object]:
     return _json_object_result(
-        evaluate_provider_limit_policy_json(_canonical_json(policy), _canonical_json(incident)),
+        evaluate_provider_limit_policy_json(
+            _canonical_json(policy), _canonical_json(incident)
+        ),
         "native provider limit policy decision",
     )
 
 
-def evaluate_timeout_deadline(policy: dict[str, object], request: dict[str, object]) -> dict[str, object]:
+def evaluate_timeout_deadline(
+    policy: dict[str, object], request: dict[str, object]
+) -> dict[str, object]:
     return _json_object_result(
-        evaluate_timeout_deadline_json(_canonical_json(policy), _canonical_json(request)),
+        evaluate_timeout_deadline_json(
+            _canonical_json(policy), _canonical_json(request)
+        ),
         "native timeout deadline evaluation result",
     )
 
 
 def evaluate_readiness(signals: object, dependencies: object) -> dict[str, object]:
     return _json_object_result(
-        evaluate_readiness_json(_canonical_json(signals), _canonical_json(dependencies)),
+        evaluate_readiness_json(
+            _canonical_json(signals), _canonical_json(dependencies)
+        ),
         "native readiness evaluation result",
     )
 
@@ -806,23 +926,33 @@ def evaluate_scheduler(nodes: object, operations: object) -> dict[str, object]:
     )
 
 
-def evaluate_cancellation_scope(root: dict[str, object], operations: object) -> dict[str, object]:
+def evaluate_cancellation_scope(
+    root: dict[str, object], operations: object
+) -> dict[str, object]:
     return _json_object_result(
-        evaluate_cancellation_scope_json(_canonical_json(root), _canonical_json(operations)),
+        evaluate_cancellation_scope_json(
+            _canonical_json(root), _canonical_json(operations)
+        ),
         "native cancellation scope evaluation result",
     )
 
 
-def evaluate_task_group(group: dict[str, object], operations: object) -> dict[str, object]:
+def evaluate_task_group(
+    group: dict[str, object], operations: object
+) -> dict[str, object]:
     return _json_object_result(
         evaluate_task_group_json(_canonical_json(group), _canonical_json(operations)),
         "native task group evaluation result",
     )
 
 
-def evaluate_node_lifecycle(state: dict[str, object], operations: object) -> dict[str, object]:
+def evaluate_node_lifecycle(
+    state: dict[str, object], operations: object
+) -> dict[str, object]:
     return _json_object_result(
-        evaluate_node_lifecycle_json(_canonical_json(state), _canonical_json(operations)),
+        evaluate_node_lifecycle_json(
+            _canonical_json(state), _canonical_json(operations)
+        ),
         "native node lifecycle evaluation result",
     )
 
@@ -848,7 +978,9 @@ def evaluate_application_event_stream(
     operations: object,
 ) -> dict[str, object]:
     return _json_object_result(
-        evaluate_application_event_stream_json(_canonical_json(state), _canonical_json(operations)),
+        evaluate_application_event_stream_json(
+            _canonical_json(state), _canonical_json(operations)
+        ),
         "native application event stream result",
     )
 
@@ -858,7 +990,9 @@ def evaluate_application_protocol_log(
     operations: object,
 ) -> dict[str, object]:
     return _json_object_result(
-        evaluate_application_protocol_log_json(_canonical_json(state), _canonical_json(operations)),
+        evaluate_application_protocol_log_json(
+            _canonical_json(state), _canonical_json(operations)
+        ),
         "native application protocol log result",
     )
 
@@ -868,7 +1002,9 @@ def evaluate_application_protocol_stream(
     operations: object,
 ) -> dict[str, object]:
     return _json_object_result(
-        evaluate_application_protocol_stream_json(_canonical_json(state), _canonical_json(operations)),
+        evaluate_application_protocol_stream_json(
+            _canonical_json(state), _canonical_json(operations)
+        ),
         "native application protocol stream result",
     )
 
@@ -911,7 +1047,9 @@ def evaluate_tool_execution_plan(
     operations: object,
 ) -> dict[str, object]:
     return _json_object_result(
-        evaluate_tool_execution_plan_json(_canonical_json(plan), _canonical_json(operations)),
+        evaluate_tool_execution_plan_json(
+            _canonical_json(plan), _canonical_json(operations)
+        ),
         "native tool execution plan result",
     )
 
@@ -921,7 +1059,9 @@ def evaluate_tool_result_stream(
     operations: object,
 ) -> dict[str, object]:
     return _json_object_result(
-        evaluate_tool_result_stream_json(_canonical_json(state), _canonical_json(operations)),
+        evaluate_tool_result_stream_json(
+            _canonical_json(state), _canonical_json(operations)
+        ),
         "native tool result stream result",
     )
 
@@ -974,12 +1114,16 @@ def evaluate_sequential_tool_queue(
     operations: object,
 ) -> dict[str, object]:
     return _json_object_result(
-        evaluate_sequential_tool_queue_json(_canonical_json(queue), _canonical_json(operations)),
+        evaluate_sequential_tool_queue_json(
+            _canonical_json(queue), _canonical_json(operations)
+        ),
         "native sequential tool queue result",
     )
 
 
-def evaluate_usage_ledger(operations: object, *, run_id: str | None = None) -> dict[str, object]:
+def evaluate_usage_ledger(
+    operations: object, *, run_id: str | None = None
+) -> dict[str, object]:
     return _json_object_result(
         evaluate_usage_ledger_json(_canonical_json(operations), run_id),
         "native usage ledger result",
@@ -999,7 +1143,9 @@ def validate_worker_advertisement(
     expected_package_lock_hash: str | None = None,
 ) -> dict[str, object]:
     return _json_object_result(
-        validate_worker_advertisement_json(_canonical_json(advertisement), expected_package_lock_hash),
+        validate_worker_advertisement_json(
+            _canonical_json(advertisement), expected_package_lock_hash
+        ),
         "native worker advertisement validation result",
     )
 
@@ -1011,7 +1157,9 @@ def validate_worker_protocol_message(message: dict[str, object]) -> dict[str, ob
     )
 
 
-def validate_remote_payload(payload: dict[str, object], *, max_inline_bytes: int) -> dict[str, object]:
+def validate_remote_payload(
+    payload: dict[str, object], *, max_inline_bytes: int
+) -> dict[str, object]:
     return _json_object_result(
         validate_remote_payload_json(_canonical_json(payload), max_inline_bytes),
         "native remote payload validation result",

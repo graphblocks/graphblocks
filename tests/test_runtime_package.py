@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+from collections.abc import Iterator, Mapping
 from decimal import Decimal
 import json
 import sys
@@ -14,7 +15,9 @@ ROOT = Path(__file__).parents[1]
 
 
 def load_runtime_wrapper(fake_native=None):
-    package_root = ROOT / "packages" / "graphblocks-runtime" / "src" / "graphblocks_runtime"
+    package_root = (
+        ROOT / "packages" / "graphblocks-runtime" / "src" / "graphblocks_runtime"
+    )
     module_name = "_graphblocks_runtime_wrapper_under_test"
     native_module_name = f"{module_name}._native"
     spec = importlib.util.spec_from_file_location(
@@ -36,7 +39,9 @@ def load_runtime_wrapper(fake_native=None):
     return module
 
 
-def test_runtime_wrapper_reports_native_binding_readiness_without_second_implementation() -> None:
+def test_runtime_wrapper_reports_native_binding_readiness_without_second_implementation() -> (
+    None
+):
     runtime = load_runtime_wrapper()
 
     assert runtime.native_extension_available() is False
@@ -52,7 +57,9 @@ def test_runtime_wrapper_reports_native_binding_readiness_without_second_impleme
     assert "native_extension_available" in runtime.__all__
     assert "native_extension_status" in runtime.__all__
     assert "require_native_extension" in runtime.__all__
-    with pytest.raises(RuntimeError, match="single PyO3 binding crate graphblocks-python"):
+    with pytest.raises(
+        RuntimeError, match="single PyO3 binding crate graphblocks-python"
+    ):
         runtime.require_native_extension()
 
 
@@ -79,7 +86,9 @@ def test_runtime_wrapper_rejects_non_standard_native_json_results() -> None:
 
     runtime = load_runtime_wrapper(FakeNative())
 
-    with pytest.raises(ValueError, match="native compiler result must be valid strict JSON"):
+    with pytest.raises(
+        ValueError, match="native compiler result must be valid strict JSON"
+    ):
         runtime.compile_graph({"kind": "Graph"})
 
 
@@ -120,6 +129,81 @@ def test_runtime_wrapper_preserves_exact_numbers_and_rejects_nonfinite_inputs() 
         runtime.compile_graph({"kind": "Graph", "value": float("nan")})
     with pytest.raises(ValueError, match="finite numbers"):
         runtime.compile_graph({"kind": "Graph", "value": Decimal("Infinity")})
+
+
+def test_runtime_wrapper_snapshots_non_dict_mapping_inputs() -> None:
+    calls: list[str] = []
+
+    class ReadOnlyMapping(Mapping[str, object]):
+        def __init__(self, values: dict[str, object]) -> None:
+            self._values = values
+
+        def __getitem__(self, key: str) -> object:
+            return self._values[key]
+
+        def __iter__(self) -> Iterator[str]:
+            return iter(self._values)
+
+        def __len__(self) -> int:
+            return len(self._values)
+
+    class FakeNative:
+        __version__ = "0.1.0"
+
+        def __getattr__(self, name: str):
+            if name.endswith("_json"):
+                return lambda *args, **kwargs: '{"ok":true}'
+            raise AttributeError(name)
+
+        def binding_version(self) -> str:
+            return self.__version__
+
+        def compile_graph_json(
+            self,
+            document_json: str,
+            block_catalog_json: str | None = None,
+            *,
+            allow_unknown_blocks: bool = False,
+        ) -> str:
+            calls.append(document_json)
+            return '{"ok":true}'
+
+    runtime = load_runtime_wrapper(FakeNative())
+
+    runtime.compile_graph(
+        ReadOnlyMapping(
+            {
+                "kind": "Graph",
+                "nested": ReadOnlyMapping({"items": (1, 2)}),
+            }
+        )
+    )
+
+    assert json.loads(calls[0]) == {
+        "kind": "Graph",
+        "nested": {"items": [1, 2]},
+    }
+
+
+def test_runtime_wrapper_normalizes_unstable_mapping_errors() -> None:
+    class ExplodingMapping(Mapping[str, object]):
+        def __getitem__(self, key: str) -> object:
+            raise RuntimeError("hostile lookup")
+
+        def __iter__(self) -> Iterator[str]:
+            return iter(("kind",))
+
+        def __len__(self) -> int:
+            return 1
+
+    runtime = load_runtime_wrapper()
+
+    with pytest.raises(
+        ValueError, match="native JSON mappings must be stable"
+    ) as captured:
+        runtime._canonical_json(ExplodingMapping())
+
+    assert isinstance(captured.value.__cause__, RuntimeError)
 
 
 def test_runtime_wrapper_round_trips_bounded_large_integers() -> None:
@@ -166,10 +250,7 @@ def test_runtime_wrapper_round_trips_bounded_large_integers() -> None:
         }
     )
 
-    assert (
-        '"collision":"\\u0000graphblocks-native-integer-0\\u0000"'
-        in calls[0]
-    )
+    assert '"collision":"\\u0000graphblocks-native-integer-0\\u0000"' in calls[0]
     assert f'"negative":-{boundary_digits}' in calls[0]
     assert f'"positive":{boundary_digits}' in calls[0]
     assert result == {
@@ -248,7 +329,9 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
                 (document_json, block_catalog_json or "", allow_unknown_blocks),
             )
         )
-        return json.dumps({"ok": True, "graph": json.loads(document_json), "diagnostics": []})
+        return json.dumps(
+            {"ok": True, "graph": json.loads(document_json), "diagnostics": []}
+        )
 
     def capture_telemetry_content_json(decision_json: str, content_json: str) -> str:
         calls.append(("telemetry_capture", (decision_json, content_json)))
@@ -264,7 +347,9 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
         connection_json: str,
         required_capabilities_json: str,
     ) -> str:
-        calls.append(("connector_capabilities", (connection_json, required_capabilities_json)))
+        calls.append(
+            ("connector_capabilities", (connection_json, required_capabilities_json))
+        )
         return json.dumps(
             {
                 "ok": True,
@@ -283,7 +368,12 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
         principal_id: str,
         now_unix_ms: int,
     ) -> str:
-        calls.append(("tool_approval", (record_json, resolved_tool_json, call_json, principal_id, now_unix_ms)))
+        calls.append(
+            (
+                "tool_approval",
+                (record_json, resolved_tool_json, call_json, principal_id, now_unix_ms),
+            )
+        )
         return json.dumps(
             {
                 "ok": True,
@@ -303,7 +393,10 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
             {
                 "ok": True,
                 "request": json.loads(request_json),
-                "admitted": {"call": {"status": "admitted"}, "idempotencyKey": "idem-1"},
+                "admitted": {
+                    "call": {"status": "admitted"},
+                    "idempotencyKey": "idem-1",
+                },
                 "error": None,
             }
         )
@@ -313,7 +406,12 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
         scope_json: str,
         effective_policy_snapshot_id: str,
     ) -> str:
-        calls.append(("tool_resolution", (catalog_json, scope_json, effective_policy_snapshot_id)))
+        calls.append(
+            (
+                "tool_resolution",
+                (catalog_json, scope_json, effective_policy_snapshot_id),
+            )
+        )
         return json.dumps(
             {
                 "ok": True,
@@ -335,7 +433,9 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
             }
         )
 
-    def run_stdlib_graph_with_options_json(graph_json: str, inputs_json: str, options_json: str) -> str:
+    def run_stdlib_graph_with_options_json(
+        graph_json: str, inputs_json: str, options_json: str
+    ) -> str:
         calls.append(("run_stdlib_options", (graph_json, inputs_json, options_json)))
         options = json.loads(options_json)
         return json.dumps(
@@ -346,9 +446,13 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
             }
         )
 
-    def run_test_graph_json(graph_json: str, inputs_json: str, node_outputs_json: str) -> str:
+    def run_test_graph_json(
+        graph_json: str, inputs_json: str, node_outputs_json: str
+    ) -> str:
         calls.append(("run_test", (graph_json, inputs_json, node_outputs_json)))
-        return json.dumps({"runId": "run-test-1", "status": "succeeded", "outputs": {"fixture": True}})
+        return json.dumps(
+            {"runId": "run-test-1", "status": "succeeded", "outputs": {"fixture": True}}
+        )
 
     def run_test_graph_with_options_json(
         graph_json: str,
@@ -356,14 +460,27 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
         node_outputs_json: str,
         options_json: str,
     ) -> str:
-        calls.append(("run_test_options", (graph_json, inputs_json, node_outputs_json, options_json)))
+        calls.append(
+            (
+                "run_test_options",
+                (graph_json, inputs_json, node_outputs_json, options_json),
+            )
+        )
         options = json.loads(options_json)
         return json.dumps(
-            {"runId": options["runId"], "status": "succeeded", "outputs": {"fixture": True}}
+            {
+                "runId": options["runId"],
+                "status": "succeeded",
+                "outputs": {"fixture": True},
+            }
         )
 
-    def finalize_tool_call_json(draft_json: str, resolved_tool_id: str, created_at_unix_ms: int) -> str:
-        calls.append(("finalize_tool", (draft_json, resolved_tool_id, created_at_unix_ms)))
+    def finalize_tool_call_json(
+        draft_json: str, resolved_tool_id: str, created_at_unix_ms: int
+    ) -> str:
+        calls.append(
+            ("finalize_tool", (draft_json, resolved_tool_id, created_at_unix_ms))
+        )
         return json.dumps(
             {
                 "toolCallId": json.loads(draft_json)["toolCallId"],
@@ -378,7 +495,9 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
     ) -> str:
         calls.append(("application_protocol_capabilities", (server_json, client_json)))
         server = json.loads(server_json)
-        protocol_version = server.get("protocolVersion", server.get("protocol_version", ""))
+        protocol_version = server.get(
+            "protocolVersion", server.get("protocol_version", "")
+        )
         if isinstance(protocol_version, str) and not protocol_version.strip():
             raise ValueError(
                 "application protocol capability negotiation failed: "
@@ -414,7 +533,9 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
                 "result": json.loads(result_json),
                 "resolvedTool": json.loads(resolved_tool_json),
                 "schemaRegistry": json.loads(schema_registry_json),
-                "contentPolicy": None if content_policy_json is None else json.loads(content_policy_json),
+                "contentPolicy": None
+                if content_policy_json is None
+                else json.loads(content_policy_json),
             }
         )
 
@@ -499,7 +620,9 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
 
     def evaluate_output_gate_json(gate_json: str, operations_json: str) -> str:
         calls.append(("output_gate", (gate_json, operations_json)))
-        return json.dumps({"gate": json.loads(gate_json), "updates": json.loads(operations_json)})
+        return json.dumps(
+            {"gate": json.loads(gate_json), "updates": json.loads(operations_json)}
+        )
 
     def evaluate_retry_policy_json(policy_json: str, request_json: str) -> str:
         calls.append(("retry_policy", (policy_json, request_json)))
@@ -514,7 +637,9 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
             }
         )
 
-    def evaluate_provider_limit_policy_json(policy_json: str, incident_json: str) -> str:
+    def evaluate_provider_limit_policy_json(
+        policy_json: str, incident_json: str
+    ) -> str:
         calls.append(("provider_limit", (policy_json, incident_json)))
         return json.dumps(
             {
@@ -604,17 +729,29 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
             }
         )
 
-    def evaluate_application_event_stream_json(state_json: str, operations_json: str) -> str:
+    def evaluate_application_event_stream_json(
+        state_json: str, operations_json: str
+    ) -> str:
         calls.append(("application_event_stream", (state_json, operations_json)))
-        return json.dumps({"state": json.loads(state_json), "updates": json.loads(operations_json)})
+        return json.dumps(
+            {"state": json.loads(state_json), "updates": json.loads(operations_json)}
+        )
 
-    def evaluate_application_protocol_log_json(state_json: str, operations_json: str) -> str:
+    def evaluate_application_protocol_log_json(
+        state_json: str, operations_json: str
+    ) -> str:
         calls.append(("application_protocol_log", (state_json, operations_json)))
-        return json.dumps({"state": json.loads(state_json), "updates": json.loads(operations_json)})
+        return json.dumps(
+            {"state": json.loads(state_json), "updates": json.loads(operations_json)}
+        )
 
-    def evaluate_application_protocol_stream_json(state_json: str, operations_json: str) -> str:
+    def evaluate_application_protocol_stream_json(
+        state_json: str, operations_json: str
+    ) -> str:
         calls.append(("application_protocol_stream", (state_json, operations_json)))
-        return json.dumps({"state": json.loads(state_json), "updates": json.loads(operations_json)})
+        return json.dumps(
+            {"state": json.loads(state_json), "updates": json.loads(operations_json)}
+        )
 
     def evaluate_durable_tool_terminal_store_json(operations_json: str) -> str:
         calls.append(("durable_tool_terminal", (operations_json,)))
@@ -622,17 +759,27 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
 
     def evaluate_tool_execution_plan_json(plan_json: str, operations_json: str) -> str:
         calls.append(("tool_execution_plan", (plan_json, operations_json)))
-        return json.dumps({"plan": json.loads(plan_json), "operations": json.loads(operations_json)})
+        return json.dumps(
+            {"plan": json.loads(plan_json), "operations": json.loads(operations_json)}
+        )
 
     def evaluate_tool_result_stream_json(state_json: str, operations_json: str) -> str:
         calls.append(("tool_result_stream", (state_json, operations_json)))
-        return json.dumps({"state": json.loads(state_json), "updates": json.loads(operations_json)})
+        return json.dumps(
+            {"state": json.loads(state_json), "updates": json.loads(operations_json)}
+        )
 
-    def evaluate_sequential_tool_queue_json(queue_json: str, operations_json: str) -> str:
+    def evaluate_sequential_tool_queue_json(
+        queue_json: str, operations_json: str
+    ) -> str:
         calls.append(("sequential_tool_queue", (queue_json, operations_json)))
-        return json.dumps({"queue": json.loads(queue_json), "operations": json.loads(operations_json)})
+        return json.dumps(
+            {"queue": json.loads(queue_json), "operations": json.loads(operations_json)}
+        )
 
-    def evaluate_usage_ledger_json(operations_json: str, run_id: str | None = None) -> str:
+    def evaluate_usage_ledger_json(
+        operations_json: str, run_id: str | None = None
+    ) -> str:
         calls.append(("usage_ledger", (operations_json, run_id)))
         return json.dumps(
             {
@@ -648,11 +795,23 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
 
     def decide_agent_step_json(spec_json: str, request_json: str) -> str:
         calls.append(("agent_step", (spec_json, request_json)))
-        return json.dumps({"decision": "continue", "spec": json.loads(spec_json), "request": json.loads(request_json)})
+        return json.dumps(
+            {
+                "decision": "continue",
+                "spec": json.loads(spec_json),
+                "request": json.loads(request_json),
+            }
+        )
 
     def admit_exhaustion_work_json(policy_json: str, request_json: str) -> str:
         calls.append(("exhaustion", (policy_json, request_json)))
-        return json.dumps({"allowed": True, "policy": json.loads(policy_json), "request": json.loads(request_json)})
+        return json.dumps(
+            {
+                "allowed": True,
+                "policy": json.loads(policy_json),
+                "request": json.loads(request_json),
+            }
+        )
 
     def admit_worker_message_json(
         message_json: str,
@@ -660,12 +819,24 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
         response_message_id: str = "message-daemon-1",
         response_sequence: int = 1,
     ) -> str:
-        calls.append(("worker_admission", (message_json, daemon_config_json, response_message_id, response_sequence)))
+        calls.append(
+            (
+                "worker_admission",
+                (
+                    message_json,
+                    daemon_config_json,
+                    response_message_id,
+                    response_sequence,
+                ),
+            )
+        )
         return json.dumps(
             {
                 "ok": True,
                 "message": json.loads(message_json),
-                "daemonConfig": None if daemon_config_json is None else json.loads(daemon_config_json),
+                "daemonConfig": None
+                if daemon_config_json is None
+                else json.loads(daemon_config_json),
                 "responseMessageId": response_message_id,
                 "responseSequence": response_sequence,
             }
@@ -675,7 +846,9 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
         advertisement_json: str,
         expected_package_lock_hash: str | None = None,
     ) -> str:
-        calls.append(("worker_advertisement", (advertisement_json, expected_package_lock_hash)))
+        calls.append(
+            ("worker_advertisement", (advertisement_json, expected_package_lock_hash))
+        )
         return json.dumps({"ok": True, "advertisement": json.loads(advertisement_json)})
 
     def validate_worker_protocol_message_json(message_json: str) -> str:
@@ -757,7 +930,9 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
         },
         ["http_json"],
     )
-    compiled = runtime.compile_graph({"kind": "Graph"}, block_catalog=[{"typeId": "prompt.render"}])
+    compiled = runtime.compile_graph(
+        {"kind": "Graph"}, block_catalog=[{"typeId": "prompt.render"}]
+    )
     stdlib = runtime.run_stdlib_graph({"kind": "Graph"}, {"message": {"text": "hi"}})
     stdlib_requested = runtime.run_stdlib_graph(
         {"kind": "Graph"},
@@ -776,7 +951,9 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
             "release_signature_digest": "sha256:signature",
         },
     )
-    test_run = runtime.run_test_graph({"kind": "Graph"}, {"message": "hi"}, {"node": {"value": "ok"}})
+    test_run = runtime.run_test_graph(
+        {"kind": "Graph"}, {"message": "hi"}, {"node": {"value": "ok"}}
+    )
     test_run_requested = runtime.run_test_graph(
         {"kind": "Graph"},
         {"message": "hi"},
@@ -960,7 +1137,12 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
     )
     application_event_stream = runtime.evaluate_application_event_stream(
         {"acceptedEvents": []},
-        [{"kind": "event", "event": {"kind": "RunStarted", "metadata": {"eventId": "event-1"}}}],
+        [
+            {
+                "kind": "event",
+                "event": {"kind": "RunStarted", "metadata": {"eventId": "event-1"}},
+            }
+        ],
     )
     application_protocol_log = runtime.evaluate_application_protocol_log(
         {"events": []},
@@ -1006,7 +1188,12 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
     )
     tool_result_stream = runtime.evaluate_tool_result_stream(
         {"acceptedEvents": []},
-        [{"kind": "event", "event": {"kind": "started", "toolCallId": "call-1", "sequence": 1}}],
+        [
+            {
+                "kind": "event",
+                "event": {"kind": "started", "toolCallId": "call-1", "sequence": 1},
+            }
+        ],
     )
     sequential_queue = runtime.evaluate_sequential_tool_queue(
         {"planId": "plan-1", "responseId": "response-1", "calls": []},
@@ -1204,7 +1391,9 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
                 "port": "prompt",
             }
         ],
-        "dependencies": [{"input": "prompt", "source": {"node": "render", "port": "prompt"}}],
+        "dependencies": [
+            {"input": "prompt", "source": {"node": "render", "port": "prompt"}}
+        ],
     }
     assert scheduler == {
         "ok": True,
@@ -1266,7 +1455,12 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
     }
     assert application_event_stream == {
         "state": {"acceptedEvents": []},
-        "updates": [{"event": {"kind": "RunStarted", "metadata": {"eventId": "event-1"}}, "kind": "event"}],
+        "updates": [
+            {
+                "event": {"kind": "RunStarted", "metadata": {"eventId": "event-1"}},
+                "kind": "event",
+            }
+        ],
     }
     assert application_protocol_log == {
         "state": {"events": []},
@@ -1306,7 +1500,11 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
     }
     with pytest.raises(ValueError, match="protocol_version must not be empty"):
         runtime.negotiate_application_protocol_capabilities(
-            {"protocolVersion": " ", "commands": ["InvokeGraph"], "events": ["RunStarted"]},
+            {
+                "protocolVersion": " ",
+                "commands": ["InvokeGraph"],
+                "events": ["RunStarted"],
+            },
             {
                 "protocolVersion": "graphblocks.app.v1",
                 "commands": ["InvokeGraph"],
@@ -1320,7 +1518,12 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
     }
     assert tool_result_stream == {
         "state": {"acceptedEvents": []},
-        "updates": [{"event": {"kind": "started", "sequence": 1, "toolCallId": "call-1"}, "kind": "event"}],
+        "updates": [
+            {
+                "event": {"kind": "started", "sequence": 1, "toolCallId": "call-1"},
+                "kind": "event",
+            }
+        ],
     }
     assert sequential_queue == {
         "queue": {"calls": [], "planId": "plan-1", "responseId": "response-1"},
@@ -1358,7 +1561,10 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
         "message": {"kind": "invoke_request", "messageId": "message-1"},
         "contentDigest": "sha256:message",
     }
-    assert remote_payload == {"ok": True, "payload": {"kind": "inline_json", "value": {"ok": True}}}
+    assert remote_payload == {
+        "ok": True,
+        "payload": {"kind": "inline_json", "value": {"ok": True}},
+    }
     assert calls == [
         (
             "telemetry_capture",
@@ -1406,7 +1612,10 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
                 '"runId":"run-requested-native-1","runStorePath":"/tmp/graphblocks-runs.sqlite3"}',
             ),
         ),
-        ("run_test", ('{"kind":"Graph"}', '{"message":"hi"}', '{"node":{"value":"ok"}}')),
+        (
+            "run_test",
+            ('{"kind":"Graph"}', '{"message":"hi"}', '{"node":{"value":"ok"}}'),
+        ),
         (
             "run_test_options",
             (
