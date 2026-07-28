@@ -783,6 +783,25 @@ fn truthy_flag(config: &Map<String, Value>, names: &[&str]) -> bool {
         .any(|name| config.get(*name).and_then(Value::as_bool) == Some(true))
 }
 
+fn diagnose_alias_conflicts(
+    diagnostics: &mut Vec<Diagnostic>,
+    value: &Map<String, Value>,
+    path: &str,
+    aliases: &[(&str, &str)],
+) {
+    for (camel_case, snake_case) in aliases {
+        if value.contains_key(*camel_case) && value.contains_key(*snake_case) {
+            diagnostics.push(Diagnostic::error(
+                "GB0014",
+                format!(
+                    "configuration must not contain both '{camel_case}' and '{snake_case}' aliases"
+                ),
+                format!("{path}.{snake_case}"),
+            ));
+        }
+    }
+}
+
 fn duration_milliseconds(value: Option<&Value>) -> Option<u64> {
     value.and_then(parse_duration_milliseconds)
 }
@@ -1004,6 +1023,76 @@ fn diagnose_async_operation_config(
     path: &str,
     require_callback_schema: bool,
 ) {
+    diagnose_alias_conflicts(
+        diagnostics,
+        config,
+        path,
+        &[
+            ("timeoutMs", "timeout_ms"),
+            ("expiresAtUnixMs", "expires_at_unix_ms"),
+            ("infiniteWait", "infinite_wait"),
+            ("infiniteWaitPolicy", "infinite_wait_policy"),
+            ("idempotencyKey", "idempotency_key"),
+            ("callbackSchema", "callback_schema"),
+            ("callbackRef", "callback_ref"),
+            ("pollingRef", "polling_ref"),
+            ("resumeTokenHash", "resume_token_hash"),
+            ("onTimeout", "on_timeout"),
+            ("intervalMs", "interval_ms"),
+            ("maxInterval", "max_interval"),
+            ("maxIntervalMs", "max_interval_ms"),
+            ("expectedPayloadBytes", "expected_payload_bytes"),
+            ("expectedMaxPayloadBytes", "expected_max_payload_bytes"),
+            ("maxPayloadBytes", "max_payload_bytes"),
+            ("attemptFencing", "attempt_fencing"),
+            ("fencingTokenRequired", "fencing_token_required"),
+            ("ownershipFence", "ownership_fence"),
+            ("runOwnershipLease", "run_ownership_lease"),
+            ("requirePolicyReevaluation", "require_policy_reevaluation"),
+            ("requireBudgetReservation", "require_budget_reservation"),
+            (
+                "requireReleaseCompatibility",
+                "require_release_compatibility",
+            ),
+        ],
+    );
+    if let Some(callback) = config.get("callback").and_then(Value::as_object) {
+        diagnose_alias_conflicts(
+            diagnostics,
+            callback,
+            &format!("{path}.callback"),
+            &[
+                ("acceptedSchema", "accepted_schema"),
+                ("expectedSchema", "expected_schema"),
+                ("expectedPayloadBytes", "expected_payload_bytes"),
+                ("expectedMaxPayloadBytes", "expected_max_payload_bytes"),
+                ("maxPayloadBytes", "max_payload_bytes"),
+                ("attemptFencing", "attempt_fencing"),
+                ("fencingTokenRequired", "fencing_token_required"),
+            ],
+        );
+    }
+    if let Some(resume) = config.get("resume").and_then(Value::as_object) {
+        diagnose_alias_conflicts(
+            diagnostics,
+            resume,
+            &format!("{path}.resume"),
+            &[
+                ("requirePolicyReevaluation", "require_policy_reevaluation"),
+                ("policyReevaluation", "policy_reevaluation"),
+                ("requireBudgetReservation", "require_budget_reservation"),
+                ("budgetReservation", "budget_reservation"),
+                (
+                    "requireReleaseCompatibility",
+                    "require_release_compatibility",
+                ),
+                ("releaseCompatibility", "release_compatibility"),
+                ("requireOwnershipFence", "require_ownership_fence"),
+                ("ownershipFence", "ownership_fence"),
+                ("runOwnershipLease", "run_ownership_lease"),
+            ],
+        );
+    }
     if has_async_callback_completion_ref(config) && has_async_polling_completion_ref(config) {
         diagnostics.push(Diagnostic::error(
             "GB1026",
@@ -1205,6 +1294,41 @@ fn diagnose_background_execution_config(
     execution: &Map<String, Value>,
     event_stream: Option<&Map<String, Value>>,
 ) {
+    diagnose_alias_conflicts(
+        diagnostics,
+        execution,
+        "$.spec.execution",
+        &[
+            ("runLifetime", "run_lifetime"),
+            ("invocationMode", "invocation_mode"),
+            ("responseMode", "response_mode"),
+            ("clientConnectionRequired", "client_connection_required"),
+            ("websocketRequired", "websocket_required"),
+            ("processBound", "process_bound"),
+        ],
+    );
+    if let Some(detach) = execution.get("detach").and_then(Value::as_object) {
+        diagnose_alias_conflicts(
+            diagnostics,
+            detach,
+            "$.spec.execution.detach",
+            &[("onClientDisconnect", "on_client_disconnect")],
+        );
+    }
+    if let Some(event_stream) = event_stream {
+        diagnose_alias_conflicts(
+            diagnostics,
+            event_stream,
+            "$.spec.eventStream",
+            &[
+                ("cursorReplay", "cursor_replay"),
+                ("eventRetention", "event_retention"),
+                ("retentionDuration", "retention_duration"),
+                ("reconnectReplayGuarantee", "reconnect_replay_guarantee"),
+                ("replayGuarantee", "replay_guarantee"),
+            ],
+        );
+    }
     if !is_background_run(execution) {
         return;
     }
@@ -1453,9 +1577,44 @@ fn diagnose_callback_subscription_config(
     config: &Map<String, Value>,
     path: &str,
 ) {
+    diagnose_alias_conflicts(
+        diagnostics,
+        config,
+        path,
+        &[
+            ("authoritativeFor", "authoritative_for"),
+            ("sourceOfTruth", "source_of_truth"),
+            ("failurePolicy", "failure_policy"),
+            ("retryPolicyRef", "retry_policy_ref"),
+            ("deadLetterPolicy", "dead_letter_policy"),
+            ("deadLetterRef", "dead_letter_ref"),
+            ("fallbackPolicy", "fallback_policy"),
+            ("fallbackRef", "fallback_ref"),
+        ],
+    );
     let Some(delivery) = config.get("delivery").and_then(Value::as_object) else {
         return;
     };
+    diagnose_alias_conflicts(
+        diagnostics,
+        delivery,
+        &format!("{path}.delivery"),
+        &[
+            ("retryPolicyRef", "retry_policy_ref"),
+            ("deadLetterPolicy", "dead_letter_policy"),
+            ("deadLetterRef", "dead_letter_ref"),
+            ("fallbackPolicy", "fallback_policy"),
+            ("fallbackRef", "fallback_ref"),
+        ],
+    );
+    if let Some(signing) = delivery.get("signing").and_then(Value::as_object) {
+        diagnose_alias_conflicts(
+            diagnostics,
+            signing,
+            &format!("{path}.delivery.signing"),
+            &[("secretRef", "secret_ref")],
+        );
+    }
     let delivery_kind = delivery.get("kind").and_then(Value::as_str);
     if delivery_kind == Some("webhook") {
         if !has_callback_signing(delivery) {
@@ -1659,6 +1818,20 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
         ));
         prepend_schema_diagnostics(&mut diagnostics, &schema_violations);
         return finish_plan(normalized, diagnostics);
+    }
+    if let Some(spec) = spec.and_then(Value::as_object) {
+        diagnose_alias_conflicts(
+            &mut diagnostics,
+            spec,
+            "$.spec",
+            &[
+                ("eventStream", "event_stream"),
+                ("asyncOperations", "async_operations"),
+                ("callbackSubscriptions", "callback_subscriptions"),
+                ("outputPolicy", "output_policy"),
+                ("toolExecution", "tool_execution"),
+            ],
+        );
     }
 
     let nodes = spec
@@ -3133,6 +3306,7 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
     {
         let mut seen_edge_identities = BTreeSet::<(String, String)>::new();
         let mut source_by_target = BTreeMap::<String, String>::new();
+        let mut target_parts_by_target = BTreeMap::<String, (String, Vec<String>)>::new();
         for (index, edge) in edges.iter().enumerate() {
             let Some(edge) = edge.as_object() else {
                 diagnostics.push(Diagnostic::error(
@@ -3160,8 +3334,23 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
                     format!("duplicate edge identity '{source}' -> '{target}'"),
                     format!("$.spec.edges[{index}]"),
                 ));
-            } else if let Some(existing_source) = source_by_target.get(target) {
-                if existing_source != source {
+            } else {
+                let (target_owner, target_path) = target.split_once('.').unwrap_or((target, ""));
+                let target_parts = target_path
+                    .split('.')
+                    .map(str::to_owned)
+                    .collect::<Vec<_>>();
+                let overlapping_target = target_parts_by_target.iter().find_map(
+                    |(existing_target, (existing_owner, existing_parts))| {
+                        (existing_owner == target_owner
+                            && (target_parts.starts_with(existing_parts)
+                                || existing_parts.starts_with(&target_parts)))
+                        .then_some(existing_target.as_str())
+                    },
+                );
+                if let Some(existing_source) = source_by_target.get(target)
+                    && existing_source != source
+                {
                     diagnostics.push(Diagnostic::error(
                         "GB1007",
                         format!(
@@ -3169,9 +3358,19 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
                         ),
                         format!("$.spec.edges[{index}]"),
                     ));
+                } else if let Some(overlapping_target) = overlapping_target {
+                    diagnostics.push(Diagnostic::error(
+                        "GB1007",
+                        format!(
+                            "overlapping edge targets '{overlapping_target}' and '{target}' cannot have independent writers"
+                        ),
+                        format!("$.spec.edges[{index}]"),
+                    ));
+                } else {
+                    source_by_target.insert(target.to_owned(), source.to_owned());
+                    target_parts_by_target
+                        .insert(target.to_owned(), (target_owner.to_owned(), target_parts));
                 }
-            } else {
-                source_by_target.insert(target.to_owned(), source.to_owned());
             }
             for (key, endpoint) in [("from", source), ("to", target)] {
                 let Some((owner, endpoint_path)) = endpoint.split_once('.') else {
@@ -3928,15 +4127,10 @@ fn prepend_schema_diagnostics(
     let mut schema_diagnostics = schema_violations
         .iter()
         .filter(|violation| {
-            (violation.keyword == "additionalProperties" && violation.path == "$")
-                || !diagnostics.iter().any(|diagnostic| {
-                    diagnostic.severity == Severity::Error
-                        && (diagnostic.path == violation.path
-                            || diagnostic.path.starts_with(&format!("{}.", violation.path))
-                            || diagnostic.path.starts_with(&format!("{}[", violation.path))
-                            || violation.path.starts_with(&format!("{}.", diagnostic.path))
-                            || violation.path.starts_with(&format!("{}[", diagnostic.path)))
-                })
+            violation.keyword == "additionalProperties"
+                || !diagnostics
+                    .iter()
+                    .any(|diagnostic| diagnostic.path == violation.path)
         })
         .map(|violation| {
             Diagnostic::error(

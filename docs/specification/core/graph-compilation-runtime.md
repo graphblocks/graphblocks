@@ -64,6 +64,11 @@ explicit edge, MUST fail as a duplicate edge identity.
 
 Each normalized target endpoint MUST have at most one distinct source. Distinct
 sources writing the same block input or graph output MUST fail with `GB1007`.
+Target paths under the same owner also share a write domain when one path's
+segments are a prefix of the other, so independent writers for `node.value` and
+`node.value.detail` MUST fail with `GB1007`. Textual prefixes that are not whole
+segments, such as `node.value` and `node.value2.detail`, and paths owned by
+different nodes do not overlap.
 One source MAY fan out to multiple targets, and symmetric input-side and
 output-side shorthand remains the single connection described above.
 

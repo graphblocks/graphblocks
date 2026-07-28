@@ -2291,5 +2291,392 @@
         "GB1015"
       ]
     }
+  },
+  {
+    "name": "conflicting_graph_spec_alias",
+    "document": {
+      "apiVersion": "graphblocks.ai/v1alpha3",
+      "kind": "Graph",
+      "metadata": {
+        "name": "alias-conflict"
+      },
+      "spec": {
+        "nodes": {},
+        "eventStream": {},
+        "event_stream": {}
+      }
+    },
+    "expected": {
+      "graph_hash": "sha256:bf36fb063fe308fc19edec314c9921f0bb3f5924fb70b2b49ef1cdc9740dec52",
+      "error_codes": [
+        "GB0014"
+      ]
+    }
+  },
+  {
+    "name": "conflicting_nested_control_aliases",
+    "document": {
+      "apiVersion": "graphblocks.ai/v1alpha3",
+      "kind": "Graph",
+      "metadata": {
+        "name": "nested-alias-conflict"
+      },
+      "spec": {
+        "nodes": {},
+        "execution": {
+          "runLifetime": "request",
+          "run_lifetime": "request"
+        },
+        "eventStream": {
+          "cursorReplay": true,
+          "cursor_replay": true
+        },
+        "asyncOperations": {
+          "upload": {
+            "timeoutMs": 1000,
+            "timeout_ms": 1000,
+            "idempotencyKey": "upload-1",
+            "attemptFencing": true,
+            "resume": {
+              "requirePolicyReevaluation": true,
+              "requireBudgetReservation": true,
+              "requireReleaseCompatibility": true,
+              "requireOwnershipFence": true
+            }
+          }
+        },
+        "callbackSubscriptions": {
+          "events": {
+            "scope": "run",
+            "failurePolicy": "ignore",
+            "failure_policy": "ignore",
+            "delivery": {
+              "kind": "local_callback",
+              "callbackName": "events"
+            }
+          }
+        }
+      }
+    },
+    "expected": {
+      "graph_hash": "sha256:98c8e70a44ec076688e11ca0333d573198af9d9bc7b8cfb1117a2ea11f772d88",
+      "error_codes": [
+        "GB0014",
+        "GB0014",
+        "GB0014",
+        "GB0014"
+      ]
+    }
+  },
+  {
+    "name": "stable_nested_additional_property_with_related_error",
+    "document": {
+      "apiVersion": "graphblocks.ai/v1",
+      "kind": "Graph",
+      "metadata": {
+        "name": "nested-closed-schema"
+      },
+      "spec": {
+        "nodes": {},
+        "outputPolicy": {
+          "delivery": {
+            "mode": "bogus",
+            "future": true
+          },
+          "evaluation": {
+            "enforcementPoints": [
+              "on_generation_chunk",
+              "before_client_delivery",
+              "before_output_commit"
+            ]
+          }
+        }
+      }
+    },
+    "expected": {
+      "graph_hash": "sha256:218e2baa633c4d1d19d95f890db23a64e8f2a72485c81fa600305baa359d50a0",
+      "error_codes": [
+        "GB0014",
+        "GB1030"
+      ]
+    }
+  },
+  {
+    "name": "overlapping_target_parent_first",
+    "document": {
+      "apiVersion": "graphblocks.ai/v1alpha3",
+      "kind": "Graph",
+      "metadata": {
+        "name": "overlapping-target-parent-first"
+      },
+      "spec": {
+        "interface": {
+          "inputs": {
+            "left": "graphblocks.ai/Text@1",
+            "right": "graphblocks.ai/Text@1"
+          }
+        },
+        "nodes": {
+          "sink": {
+            "block": "test.sink@1"
+          }
+        },
+        "edges": [
+          {
+            "from": "$input.left",
+            "to": "sink.value"
+          },
+          {
+            "from": "$input.right",
+            "to": "sink.value.deep"
+          }
+        ]
+      }
+    },
+    "expected": {
+      "graph_hash": "sha256:7f8ffa052605e8b1056f762f0301035c60807732393f7fc306633d24f018b42a",
+      "error_codes": [
+        "GB1007"
+      ]
+    }
+  },
+  {
+    "name": "overlapping_target_child_first",
+    "document": {
+      "apiVersion": "graphblocks.ai/v1alpha3",
+      "kind": "Graph",
+      "metadata": {
+        "name": "overlapping-target-child-first"
+      },
+      "spec": {
+        "interface": {
+          "inputs": {
+            "left": "graphblocks.ai/Text@1",
+            "right": "graphblocks.ai/Text@1"
+          }
+        },
+        "nodes": {
+          "sink": {
+            "block": "test.sink@1"
+          }
+        },
+        "edges": [
+          {
+            "from": "$input.left",
+            "to": "sink.value.deep"
+          },
+          {
+            "from": "$input.right",
+            "to": "sink.value"
+          }
+        ]
+      }
+    },
+    "expected": {
+      "graph_hash": "sha256:426831bf5d0d2c73594fca4bdb4442c3ae9175ceacb25364e98c6d5cd9a33673",
+      "error_codes": [
+        "GB1007"
+      ]
+    }
+  },
+  {
+    "name": "unknown_nested_interface_ports",
+    "block_catalog": [
+      {
+        "typeId": "test.source",
+        "version": 1,
+        "outputs": [
+          {
+            "name": "value",
+            "type": "Any"
+          }
+        ]
+      },
+      {
+        "typeId": "test.sink",
+        "version": 1,
+        "inputs": [
+          {
+            "name": "value",
+            "type": "Any",
+            "required": false
+          }
+        ]
+      }
+    ],
+    "document": {
+      "apiVersion": "graphblocks.ai/v1alpha3",
+      "kind": "Graph",
+      "metadata": {
+        "name": "unknown-nested-interface-ports"
+      },
+      "spec": {
+        "interface": {
+          "inputs": {
+            "payload": "graphblocks.ai/Value@1"
+          },
+          "outputs": {
+            "payload": "graphblocks.ai/Value@1"
+          }
+        },
+        "nodes": {
+          "source": {
+            "block": "test.source@1"
+          },
+          "sink": {
+            "block": "test.sink@1"
+          }
+        },
+        "edges": [
+          {
+            "from": "$input.missing.field",
+            "to": "sink.value"
+          },
+          {
+            "from": "source.value",
+            "to": "$output.missing.field"
+          }
+        ]
+      }
+    },
+    "expected": {
+      "graph_hash": "sha256:0685447a53c4f4f6a6d322093893b5b49df9ff21f003ec9343212da7cae0f0d4",
+      "error_codes": [
+        "GB1014",
+        "GB1013"
+      ]
+    }
+  },
+  {
+    "name": "declared_nested_interface_ports",
+    "block_catalog": [
+      {
+        "typeId": "test.source",
+        "version": 1,
+        "outputs": [
+          {
+            "name": "value",
+            "type": "Any"
+          }
+        ]
+      },
+      {
+        "typeId": "test.sink",
+        "version": 1,
+        "inputs": [
+          {
+            "name": "value",
+            "type": "Any",
+            "required": false
+          }
+        ]
+      }
+    ],
+    "document": {
+      "apiVersion": "graphblocks.ai/v1alpha3",
+      "kind": "Graph",
+      "metadata": {
+        "name": "declared-nested-interface-ports"
+      },
+      "spec": {
+        "interface": {
+          "inputs": {
+            "payload": "graphblocks.ai/Value@1"
+          },
+          "outputs": {
+            "payload": "graphblocks.ai/Value@1"
+          }
+        },
+        "nodes": {
+          "source": {
+            "block": "test.source@1"
+          },
+          "sink": {
+            "block": "test.sink@1"
+          }
+        },
+        "edges": [
+          {
+            "from": "$input.payload.field",
+            "to": "sink.value"
+          },
+          {
+            "from": "source.value",
+            "to": "$output.payload.field"
+          }
+        ]
+      }
+    },
+    "expected": {
+      "graph_hash": "sha256:cccc69dd67fe829d35709cded22a677878bb4c3370e39ae6eb697405bbf19a59",
+      "error_codes": []
+    }
+  },
+  {
+    "name": "when_reference_parity",
+    "block_catalog": [
+      {
+        "typeId": "test.source",
+        "version": 1,
+        "outputs": [
+          {
+            "name": "enabled",
+            "type": "Any"
+          }
+        ]
+      },
+      {
+        "typeId": "test.branch",
+        "version": 1
+      }
+    ],
+    "document": {
+      "apiVersion": "graphblocks.ai/v1alpha3",
+      "kind": "Graph",
+      "metadata": {
+        "name": "when-reference-parity"
+      },
+      "spec": {
+        "interface": {
+          "inputs": {
+            "enabled": "graphblocks.ai/Boolean@1"
+          }
+        },
+        "nodes": {
+          "aBadShape": {
+            "block": "test.branch@1",
+            "when": "$input"
+          },
+          "bUnknownInput": {
+            "block": "test.branch@1",
+            "when": "$input.missing.flag"
+          },
+          "cUnknownNode": {
+            "block": "test.branch@1",
+            "when": "missing.enabled"
+          },
+          "dUnknownOutput": {
+            "block": "test.branch@1",
+            "when": "source.missing.flag"
+          },
+          "source": {
+            "block": "test.source@1"
+          },
+          "zValidNested": {
+            "block": "test.branch@1",
+            "when": "$input.enabled.flag"
+          }
+        }
+      }
+    },
+    "expected": {
+      "graph_hash": "sha256:351d71e37d8f05808adf5790471b27860ff0583ad2a4b96797f3550ca5dfcb30",
+      "error_codes": [
+        "GB1020",
+        "GB1014",
+        "GB1002",
+        "GB1014"
+      ]
+    }
   }
 ]

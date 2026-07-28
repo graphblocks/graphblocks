@@ -169,7 +169,14 @@ fn compile_graph_requires_metadata_name() {
     let plan = compile_graph_for_discovery(&graph);
 
     assert!(!plan.ok());
-    assert_eq!(plan.diagnostics[0].code, "GB0003");
+    assert_eq!(
+        plan.diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.severity == Severity::Error)
+            .map(|diagnostic| diagnostic.code.as_str())
+            .collect::<Vec<_>>(),
+        vec!["GB0014", "GB0003"]
+    );
 }
 
 #[test]
@@ -196,7 +203,10 @@ fn compile_graph_rejects_unexpanded_composition_and_slot() {
         .map(|diagnostic| diagnostic.code.as_str())
         .collect::<Vec<_>>();
 
-    assert_eq!(error_codes, vec!["GB1052", "GB1052"]);
+    assert_eq!(
+        error_codes,
+        vec!["GB0014", "GB0014", "GB0014", "GB1052", "GB1052"]
+    );
 }
 
 #[test]
@@ -1240,9 +1250,9 @@ fn compile_graph_reports_async_callback_amendment_diagnostics() {
             .map(|diagnostic| diagnostic.code.as_str())
             .collect::<Vec<_>>(),
         vec![
-            "GB6001", "GB6003", "GB6007", "GB6008", "GB6015", "GB6016", "GB6005", "GB6009",
-            "GB6013", "GB6010", "GB6008", "GB6015", "GB6016", "GB6002", "GB6011", "GB6004",
-            "GB6006", "GB6012", "GB6014"
+            "GB0014", "GB6001", "GB6003", "GB6007", "GB6008", "GB6015", "GB6016", "GB6005",
+            "GB6009", "GB6013", "GB6010", "GB6008", "GB6015", "GB6016", "GB6002", "GB6011",
+            "GB6004", "GB6006", "GB6012", "GB6014"
         ]
     );
 }
@@ -1281,7 +1291,7 @@ fn compile_graph_rejects_alternate_numeric_callback_webhook_loopback_host() {
             .filter(|diagnostic| diagnostic.severity == Severity::Error)
             .map(|diagnostic| diagnostic.code.as_str())
             .collect::<Vec<_>>(),
-        vec!["GB6011"]
+        vec!["GB0014", "GB6011"]
     );
 }
 
@@ -1373,7 +1383,7 @@ fn compile_graph_rejects_invalid_callback_webhook_host_syntax() {
                 .filter(|diagnostic| diagnostic.severity == Severity::Error)
                 .map(|diagnostic| diagnostic.code.as_str())
                 .collect::<Vec<_>>(),
-            vec!["GB6011"],
+            vec!["GB0014", "GB6011"],
             "{url} should be rejected as an unsafe callback endpoint"
         );
     }
@@ -1419,7 +1429,7 @@ fn compile_graph_rejects_mapped_compatible_and_reserved_callback_hosts() {
                 .filter(|diagnostic| diagnostic.severity == Severity::Error)
                 .map(|diagnostic| diagnostic.code.as_str())
                 .collect::<Vec<_>>(),
-            vec!["GB6011"],
+            vec!["GB0014", "GB6011"],
             "{url} should be rejected as an unsafe callback endpoint"
         );
     }
@@ -1668,7 +1678,7 @@ fn compile_graph_rejects_async_operation_with_callback_and_polling_refs() {
             .filter(|diagnostic| diagnostic.severity == Severity::Error)
             .map(|diagnostic| diagnostic.code.as_str())
             .collect::<Vec<_>>(),
-        vec!["GB1026"]
+        vec!["GB0014", "GB1026"]
     );
 }
 
@@ -2994,18 +3004,21 @@ fn compile_graph_reports_malformed_output_policy_structure() {
         }
     });
     let cases = [
-        (json!({"spec": {"outputPolicy": "strict"}}), vec!["GB1034"]),
+        (
+            json!({"spec": {"outputPolicy": "strict"}}),
+            vec!["GB0014", "GB1034"],
+        ),
         (
             json!({"spec": {"outputPolicy": {"delivery": "bounded"}}}),
-            vec!["GB1034", "GB1046"],
+            vec!["GB0014", "GB1034", "GB1046"],
         ),
         (
             json!({"spec": {"outputPolicy": {"evaluation": "mandatory"}}}),
-            vec!["GB1034", "GB1046"],
+            vec!["GB0014", "GB1034", "GB1046"],
         ),
         (
             json!({"spec": {"outputPolicy": {"evaluation": {"enforcementPoints": "before_client_delivery"}}}}),
-            vec!["GB1033", "GB1046"],
+            vec!["GB0014", "GB1033", "GB1046"],
         ),
         (
             json!({"spec": {"outputPolicy": {
@@ -3016,7 +3029,7 @@ fn compile_graph_reports_malformed_output_policy_structure() {
                 ]},
                 "onViolation": "abort_response"
             }}}),
-            vec!["GB1034"],
+            vec!["GB0014", "GB1034"],
         ),
     ];
 
@@ -3102,7 +3115,7 @@ fn compile_graph_rejects_boolean_output_holdback_bound() {
             .filter(|diagnostic| diagnostic.severity == Severity::Error)
             .map(|diagnostic| diagnostic.code.as_str())
             .collect::<Vec<_>>(),
-        vec!["GB1051", "GB1046"]
+        vec!["GB0014", "GB1051", "GB1046"]
     );
 }
 
@@ -3533,8 +3546,8 @@ fn compile_graph_reports_invalid_output_policy_literals() {
             .map(|diagnostic| diagnostic.code.as_str())
             .collect::<Vec<_>>(),
         vec![
-            "GB1030", "GB1044", "GB1029", "GB1033", "GB1031", "GB1036", "GB1035", "GB1028",
-            "GB1032"
+            "GB0014", "GB1030", "GB1044", "GB1029", "GB1033", "GB1031", "GB1036", "GB1035",
+            "GB1028", "GB1032"
         ]
     );
 }
@@ -3617,7 +3630,7 @@ fn compile_graph_reports_model_visible_tool_without_binding() {
             .filter(|diagnostic| diagnostic.severity == Severity::Error)
             .map(|diagnostic| diagnostic.code.as_str())
             .collect::<Vec<_>>(),
-        vec!["GB1049"]
+        vec!["GB0014", "GB1049"]
     );
 }
 
@@ -3656,7 +3669,7 @@ fn compile_graph_reports_tool_definition_without_input_schema() {
             .filter(|diagnostic| diagnostic.severity == Severity::Error)
             .map(|diagnostic| diagnostic.code.as_str())
             .collect::<Vec<_>>(),
-        vec!["GB1050"]
+        vec!["GB0014", "GB1050"]
     );
 }
 
@@ -3750,7 +3763,7 @@ fn compile_graph_reports_malformed_tool_implementation_bindings() {
                 .filter(|diagnostic| diagnostic.severity == Severity::Error)
                 .map(|diagnostic| diagnostic.code.as_str())
                 .collect::<Vec<_>>(),
-            vec!["GB1049"]
+            vec!["GB0014", "GB1049"]
         );
     }
 }
@@ -3917,7 +3930,7 @@ fn compile_graph_rejects_forbidden_tool_definition_execution_details() {
             .filter(|diagnostic| diagnostic.severity == Severity::Error)
             .map(|diagnostic| diagnostic.code.as_str())
             .collect::<Vec<_>>(),
-        vec!["GB1039", "GB1039", "GB1039"]
+        vec!["GB0014", "GB1039", "GB1039", "GB1039"]
     );
 }
 
@@ -4064,7 +4077,7 @@ fn compile_graph_reports_invalid_tool_effect_literals() {
             .filter(|diagnostic| diagnostic.severity == Severity::Error)
             .map(|diagnostic| diagnostic.code.as_str())
             .collect::<Vec<_>>(),
-        vec!["GB1040"]
+        vec!["GB0014", "GB1040"]
     );
 
     let conflicting_none = json!({
@@ -4150,7 +4163,7 @@ fn compile_graph_reports_invalid_tool_binding_literals() {
             .filter(|diagnostic| diagnostic.severity == Severity::Error)
             .map(|diagnostic| diagnostic.code.as_str())
             .collect::<Vec<_>>(),
-        vec!["GB1037", "GB1042", "GB1038", "GB1043"]
+        vec!["GB0014", "GB1037", "GB1042", "GB1038", "GB1043"]
     );
 }
 
@@ -4249,7 +4262,7 @@ fn compile_graph_rejects_parallel_state_changing_tools_without_effect_serializat
             .filter(|diagnostic| diagnostic.severity == Severity::Error)
             .map(|diagnostic| diagnostic.code.as_str())
             .collect::<Vec<_>>(),
-        vec!["GB1053"]
+        vec!["GB0014", "GB1053"]
     );
 }
 
@@ -4550,7 +4563,7 @@ fn compile_graph_rejects_oversized_remote_inline_payload() {
             .filter(|diagnostic| diagnostic.severity == Severity::Error)
             .map(|diagnostic| diagnostic.code.as_str())
             .collect::<Vec<_>>(),
-        vec!["GB1055"]
+        vec!["GB0014", "GB1055"]
     );
 }
 
@@ -4588,4 +4601,195 @@ fn compile_graph_allows_large_remote_payload_by_artifact_reference() {
             .iter()
             .any(|diagnostic| diagnostic.code == "GB1055")
     );
+}
+
+#[test]
+fn compile_graph_rejects_conflicting_control_aliases() {
+    let graph = json!({
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "conflicting-control-aliases"},
+        "spec": {
+            "nodes": {},
+            "eventStream": {
+                "cursorReplay": true,
+                "cursor_replay": true
+            },
+            "event_stream": {},
+            "execution": {
+                "runLifetime": "background",
+                "run_lifetime": "background"
+            },
+            "asyncOperations": {
+                "upload": {
+                    "expiresAtUnixMs": 1,
+                    "expires_at_unix_ms": 2,
+                    "callback": {
+                        "acceptedSchema": "schemas/Accepted@1",
+                        "accepted_schema": "schemas/Accepted@1"
+                    },
+                    "resume": {
+                        "policyReevaluation": true,
+                        "policy_reevaluation": true
+                    }
+                }
+            },
+            "callbackSubscriptions": {
+                "events": {
+                    "failurePolicy": "ignore",
+                    "failure_policy": "ignore",
+                    "delivery": {
+                        "kind": "local_callback",
+                        "retryPolicyRef": "retry/default",
+                        "retry_policy_ref": "retry/default",
+                        "signing": {
+                            "secretRef": "secret://callback",
+                            "secret_ref": "secret://callback"
+                        }
+                    }
+                }
+            }
+        }
+    });
+
+    let plan = compile_graph_for_discovery(&graph);
+    let alias_paths = plan
+        .diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.code == "GB0014" && diagnostic.message.ends_with("aliases"))
+        .map(|diagnostic| diagnostic.path.as_str())
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        alias_paths,
+        vec![
+            "$.spec.event_stream",
+            "$.spec.execution.run_lifetime",
+            "$.spec.eventStream.cursor_replay",
+            "$.spec.asyncOperations.upload.expires_at_unix_ms",
+            "$.spec.asyncOperations.upload.callback.accepted_schema",
+            "$.spec.asyncOperations.upload.resume.policy_reevaluation",
+            "$.spec.callbackSubscriptions.events.failure_policy",
+            "$.spec.callbackSubscriptions.events.delivery.retry_policy_ref",
+            "$.spec.callbackSubscriptions.events.delivery.signing.secret_ref",
+        ]
+    );
+}
+
+#[test]
+fn compile_graph_preserves_nested_closed_schema_diagnostics() {
+    let graph = json!({
+        "apiVersion": GRAPH_API_VERSION,
+        "kind": "Graph",
+        "metadata": {"name": "nested-closed-schema"},
+        "spec": {
+            "nodes": {},
+            "outputPolicy": {
+                "delivery": {
+                    "mode": "bogus",
+                    "future": true
+                },
+                "evaluation": {
+                    "enforcementPoints": [
+                        "on_generation_chunk",
+                        "before_client_delivery",
+                        "before_output_commit"
+                    ]
+                }
+            }
+        }
+    });
+
+    let errors = compile_graph_for_discovery(&graph)
+        .diagnostics
+        .into_iter()
+        .filter(|diagnostic| diagnostic.severity == Severity::Error)
+        .map(|diagnostic| (diagnostic.code, diagnostic.path))
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        errors,
+        vec![
+            (
+                "GB0014".to_owned(),
+                "$.spec.outputPolicy.delivery".to_owned(),
+            ),
+            (
+                "GB1030".to_owned(),
+                "$.spec.outputPolicy.delivery.mode".to_owned(),
+            ),
+        ]
+    );
+}
+
+#[test]
+fn compile_graph_rejects_overlapping_nested_edge_targets() {
+    for (first_target, second_target) in [
+        ("sink.value", "sink.value.deep"),
+        ("sink.value.deep", "sink.value"),
+    ] {
+        let graph = json!({
+            "apiVersion": GRAPH_API_VERSION,
+            "kind": "Graph",
+            "metadata": {"name": "overlapping-nested-targets"},
+            "spec": {
+                "interface": {
+                    "inputs": {
+                        "left": "graphblocks.ai/Text@1",
+                        "right": "graphblocks.ai/Text@1"
+                    }
+                },
+                "nodes": {"sink": {"block": "test.sink@1"}},
+                "edges": [
+                    {"from": "$input.left", "to": first_target},
+                    {"from": "$input.right", "to": second_target}
+                ]
+            }
+        });
+
+        let errors = compile_graph_for_discovery(&graph)
+            .diagnostics
+            .into_iter()
+            .filter(|diagnostic| diagnostic.severity == Severity::Error)
+            .collect::<Vec<_>>();
+
+        assert_eq!(errors.len(), 1, "{first_target} then {second_target}");
+        assert_eq!(errors[0].code, "GB1007");
+        assert_eq!(
+            errors[0].message,
+            format!(
+                "overlapping edge targets '{first_target}' and '{second_target}' cannot have independent writers"
+            )
+        );
+        assert_eq!(errors[0].path, "$.spec.edges[1]");
+    }
+}
+
+#[test]
+fn compile_graph_allows_nonoverlapping_nested_edge_targets() {
+    let graph = json!({
+        "apiVersion": GRAPH_API_VERSION,
+        "kind": "Graph",
+        "metadata": {"name": "nonoverlapping-nested-targets"},
+        "spec": {
+            "interface": {
+                "inputs": {
+                    "left": "graphblocks.ai/Text@1",
+                    "right": "graphblocks.ai/Text@1",
+                    "third": "graphblocks.ai/Text@1"
+                }
+            },
+            "nodes": {
+                "other": {"block": "test.sink@1"},
+                "sink": {"block": "test.sink@1"}
+            },
+            "edges": [
+                {"from": "$input.left", "to": "sink.value"},
+                {"from": "$input.right", "to": "sink.value2.deep"},
+                {"from": "$input.third", "to": "other.value.deep"}
+            ]
+        }
+    });
+
+    assert!(compile_graph_for_discovery(&graph).ok());
 }
