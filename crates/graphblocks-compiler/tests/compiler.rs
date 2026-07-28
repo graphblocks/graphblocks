@@ -877,6 +877,40 @@ fn compile_graph_does_not_relabel_unknown_stable_versions() {
 }
 
 #[test]
+fn compile_graph_formats_invalid_api_versions_without_internal_debug_values() {
+    for (api_version, expected) in [
+        (Some(json!("graphblocks.ai/v2")), "graphblocks.ai/v2"),
+        (Some(json!(["bad"])), "['bad']"),
+        (Some(Value::Null), "None"),
+        (Some(json!(3)), "3"),
+        (Some(json!(true)), "True"),
+        (None, "None"),
+    ] {
+        let mut graph = json!({
+            "kind": "Graph",
+            "metadata": {"name": "invalid-api-version"},
+            "spec": {"nodes": {}}
+        });
+        if let Some(api_version) = api_version {
+            graph["apiVersion"] = api_version;
+        }
+
+        let plan = compile_graph_for_discovery(&graph);
+        let diagnostic = plan
+            .diagnostics
+            .iter()
+            .find(|diagnostic| diagnostic.code == "GB0002")
+            .expect("invalid apiVersion must be diagnosed");
+
+        assert_eq!(
+            diagnostic.message,
+            format!("unsupported Graph apiVersion {expected}")
+        );
+        assert_eq!(diagnostic.path, "$.apiVersion");
+    }
+}
+
+#[test]
 fn compile_graph_reports_unknown_edge_endpoint() {
     let graph = json!({
         "apiVersion": GRAPH_API_VERSION,

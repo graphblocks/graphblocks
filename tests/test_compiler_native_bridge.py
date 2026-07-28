@@ -329,6 +329,30 @@ def test_native_plan_bridge_matches_reference_diagnostic_quotes(
     assert native.diagnostics.to_list() == reference.diagnostics.to_list()
 
 
+@pytest.mark.parametrize(
+    "api_version",
+    ["graphblocks.ai/v2", ["bad"], None, 3, True],
+)
+def test_native_plan_bridge_matches_reference_api_version_diagnostics(
+    api_version: object,
+) -> None:
+    pytest.importorskip(
+        "graphblocks_runtime",
+        reason="native Plan integration requires the Rust binding",
+    )
+    document: dict[str, object] = {
+        "apiVersion": api_version,
+        "kind": "Graph",
+        "metadata": {"name": "native-api-version-diagnostic"},
+        "spec": {"nodes": {}},
+    }
+
+    reference = compile_graph_reference(document)
+    native = compile_graph_native_plan(document)
+
+    assert native.diagnostics.to_list() == reference.diagnostics.to_list()
+
+
 def test_native_plan_bridge_preserves_bounded_large_integers() -> None:
     pytest.importorskip(
         "graphblocks_runtime",

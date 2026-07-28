@@ -178,6 +178,42 @@ fn python_string_repr(value: &str) -> String {
     rendered
 }
 
+fn python_json_repr(value: &Value) -> String {
+    match value {
+        Value::Null => "None".to_owned(),
+        Value::Bool(value) => if *value { "True" } else { "False" }.to_owned(),
+        Value::Number(value) => value.to_string(),
+        Value::String(value) => python_string_repr(value),
+        Value::Array(values) => format!(
+            "[{}]",
+            values
+                .iter()
+                .map(python_json_repr)
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        Value::Object(values) => format!(
+            "{{{}}}",
+            values
+                .iter()
+                .map(|(key, value)| format!(
+                    "{}: {}",
+                    python_string_repr(key),
+                    python_json_repr(value)
+                ))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+    }
+}
+
+fn python_diagnostic_value(value: &Value) -> String {
+    match value {
+        Value::String(value) => value.clone(),
+        value => python_json_repr(value),
+    }
+}
+
 /// Returns whether a JSON integer is greater than an unsigned bound, including
 /// arbitrary-precision integer tokens that do not fit in `u64`.
 pub fn json_integer_exceeds_u64(value: &Value, maximum: u64) -> bool {
@@ -346,7 +382,8 @@ fn descriptor_type_ref(
             Ok(Some(type_ref.clone()))
         }
         Some(type_ref) => Err(format!(
-            "{context} has invalid type {type_ref}: type reference must be a string"
+            "{context} has invalid type {}: type reference must be a string",
+            python_diagnostic_value(type_ref)
         )),
     }
 }
@@ -2003,8 +2040,10 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
         diagnostics.push(Diagnostic::error(
             "GB0002",
             format!(
-                "unsupported Graph apiVersion {:?}",
-                document.get("apiVersion")
+                "unsupported Graph apiVersion {}",
+                document
+                    .get("apiVersion")
+                    .map_or_else(|| "None".to_owned(), python_diagnostic_value)
             ),
             "$.apiVersion",
         ));
@@ -2444,7 +2483,10 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
         {
             diagnostics.push(Diagnostic::error(
                 "GB1030",
-                format!("invalid output delivery mode {mode}"),
+                format!(
+                    "invalid output delivery mode {}",
+                    python_diagnostic_value(mode)
+                ),
                 "$.spec.outputPolicy.delivery.mode",
             ));
         }
@@ -2461,7 +2503,10 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
         {
             diagnostics.push(Diagnostic::error(
                 "GB1044",
-                format!("invalid violation action {on_violation}"),
+                format!(
+                    "invalid violation action {}",
+                    python_diagnostic_value(on_violation)
+                ),
                 "$.spec.outputPolicy.delivery.onViolation",
             ));
         }
@@ -2483,7 +2528,10 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
         {
             diagnostics.push(Diagnostic::error(
                 "GB1028",
-                format!("invalid draft disposition {delivered_draft_disposition}"),
+                format!(
+                    "invalid draft disposition {}",
+                    python_diagnostic_value(delivered_draft_disposition)
+                ),
                 format!("$.spec.outputPolicy.delivery.{path_key}"),
             ));
         }
@@ -2512,7 +2560,10 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
                     }) {
                         diagnostics.push(Diagnostic::error(
                             "GB1029",
-                            format!("invalid flush boundary {boundary}"),
+                            format!(
+                                "invalid flush boundary {}",
+                                python_diagnostic_value(boundary)
+                            ),
                             format!("$.spec.outputPolicy.delivery.{path_key}[{boundary_index}]"),
                         ));
                     }
@@ -2657,7 +2708,10 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
                 }) {
                     diagnostics.push(Diagnostic::error(
                         "GB1033",
-                        format!("invalid output policy enforcement point {enforcement_point}"),
+                        format!(
+                            "invalid output policy enforcement point {}",
+                            python_diagnostic_value(enforcement_point)
+                        ),
                         format!("$.spec.outputPolicy.evaluation.enforcementPoints[{index}]"),
                     ));
                 }
@@ -2751,8 +2805,7 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
             if !valid_disposition {
                 let invalid_disposition = on_violation
                     .get("disposition")
-                    .map(Value::to_string)
-                    .unwrap_or_default();
+                    .map_or_else(String::new, python_diagnostic_value);
                 diagnostics.push(Diagnostic::error(
                     "GB1031",
                     format!("invalid output disposition {invalid_disposition}"),
@@ -2772,7 +2825,10 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
                     {
                         diagnostics.push(Diagnostic::error(
                             "GB1036",
-                            format!("invalid provider cancellation {mode}"),
+                            format!(
+                                "invalid provider cancellation {}",
+                                python_diagnostic_value(mode)
+                            ),
                             "$.spec.outputPolicy.onViolation.providerCancellation.mode",
                         ));
                     }
@@ -2787,7 +2843,10 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
                 {
                     diagnostics.push(Diagnostic::error(
                         "GB1036",
-                        format!("invalid provider cancellation {provider_cancellation}"),
+                        format!(
+                            "invalid provider cancellation {}",
+                            python_diagnostic_value(provider_cancellation)
+                        ),
                         "$.spec.outputPolicy.onViolation.providerCancellation",
                     ));
                 }
@@ -2806,8 +2865,7 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
                 });
             if !valid_pending_tool_calls_disposition {
                 let invalid_disposition = pending_tool_calls_disposition_value
-                    .map(Value::to_string)
-                    .unwrap_or_default();
+                    .map_or_else(String::new, python_diagnostic_value);
                 diagnostics.push(Diagnostic::error(
                     "GB1035",
                     format!("invalid pending tool calls disposition {invalid_disposition}"),
@@ -2829,7 +2887,10 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
             {
                 diagnostics.push(Diagnostic::error(
                     "GB1028",
-                    format!("invalid draft disposition {delivered_draft_disposition}"),
+                    format!(
+                        "invalid draft disposition {}",
+                        python_diagnostic_value(delivered_draft_disposition)
+                    ),
                     "$.spec.outputPolicy.onViolation.deliveredDraft.disposition",
                 ));
             }
@@ -2847,8 +2908,7 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
                 });
             if !valid_durable_result_disposition {
                 let invalid_disposition = durable_result_disposition_value
-                    .map(Value::to_string)
-                    .unwrap_or_default();
+                    .map_or_else(String::new, python_diagnostic_value);
                 diagnostics.push(Diagnostic::error(
                     "GB1032",
                     format!("invalid output durable result {invalid_disposition}"),
@@ -3062,7 +3122,7 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
                         }
                         diagnostics.push(Diagnostic::error(
                             "GB1040",
-                            format!("invalid tool effect {effect}"),
+                            format!("invalid tool effect {}", python_diagnostic_value(effect)),
                             format!("$.spec.bindings.tools.{tool_key}.effects[{effect_index}]"),
                         ));
                     }
@@ -3099,12 +3159,8 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
                             .is_some_and(|mode| matches!(mode, "never" | "policy" | "always"))
                     });
                     if !valid_mode {
-                        let invalid_mode = mode_value
-                            .and_then(Value::as_str)
-                            .map(str::to_owned)
-                            .unwrap_or_else(|| {
-                                mode_value.map(Value::to_string).unwrap_or_default()
-                            });
+                        let invalid_mode =
+                            mode_value.map_or_else(String::new, python_diagnostic_value);
                         diagnostics.push(Diagnostic::error(
                             "GB1037",
                             format!("invalid tool approval {invalid_mode}"),
@@ -3148,7 +3204,10 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
                 } else {
                     diagnostics.push(Diagnostic::error(
                         "GB1037",
-                        format!("invalid tool approval {approval}"),
+                        format!(
+                            "invalid tool approval {}",
+                            python_diagnostic_value(approval)
+                        ),
                         format!("$.spec.bindings.tools.{tool_key}.approval"),
                     ));
                 }
@@ -3160,7 +3219,10 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
             {
                 diagnostics.push(Diagnostic::error(
                     "GB1042",
-                    format!("invalid tool idempotency {idempotency}"),
+                    format!(
+                        "invalid tool idempotency {}",
+                        python_diagnostic_value(idempotency)
+                    ),
                     format!("$.spec.bindings.tools.{tool_key}.idempotency"),
                 ));
             }
@@ -3174,7 +3236,10 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
             {
                 diagnostics.push(Diagnostic::error(
                     "GB1038",
-                    format!("invalid tool cancellation {cancellation}"),
+                    format!(
+                        "invalid tool cancellation {}",
+                        python_diagnostic_value(cancellation)
+                    ),
                     format!("$.spec.bindings.tools.{tool_key}.cancellation"),
                 ));
             }
@@ -3195,7 +3260,10 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
             {
                 diagnostics.push(Diagnostic::error(
                     "GB1043",
-                    format!("invalid tool result mode {result_mode}"),
+                    format!(
+                        "invalid tool result mode {}",
+                        python_diagnostic_value(result_mode)
+                    ),
                     format!("$.spec.bindings.tools.{tool_key}.{result_mode_key}"),
                 ));
             }
