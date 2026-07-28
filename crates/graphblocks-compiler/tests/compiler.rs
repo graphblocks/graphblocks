@@ -390,6 +390,67 @@ fn compile_graph_normalizes_config_schema_diagnostic_messages() -> Result<(), St
 }
 
 #[test]
+fn compile_graph_bounds_arbitrary_size_config_diagnostic_integers() -> Result<(), String> {
+    let huge_integer = serde_json::from_str::<Value>(&format!("1{}", "0".repeat(5_000)))
+        .map_err(|error| error.to_string())?;
+    let catalog = BlockCatalog::from_blocks(&json!([
+        {
+            "typeId": "test.maximum",
+            "version": 1,
+            "configSchema": {
+                "type": "object",
+                "properties": {"count": {"type": "integer", "maximum": 1}},
+                "required": ["count"],
+                "additionalProperties": false
+            }
+        },
+        {
+            "typeId": "test.minimum",
+            "version": 1,
+            "configSchema": {
+                "type": "object",
+                "properties": {"count": {"type": "integer", "minimum": huge_integer.clone()}},
+                "required": ["count"],
+                "additionalProperties": false
+            }
+        }
+    ]))?;
+    let graph = json!({
+        "apiVersion": GRAPH_API_VERSION,
+        "kind": "Graph",
+        "metadata": {"name": "bounded-config-diagnostic-integers"},
+        "spec": {
+            "nodes": {
+                "maximum": {
+                    "block": "test.maximum@1",
+                    "config": {"count": huge_integer}
+                },
+                "minimum": {
+                    "block": "test.minimum@1",
+                    "config": {"count": 1}
+                }
+            }
+        }
+    });
+
+    let messages = compile_graph_with_catalog(&graph, &catalog)
+        .diagnostics
+        .into_iter()
+        .filter(|diagnostic| diagnostic.code == "GB2019")
+        .map(|diagnostic| diagnostic.message)
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        messages,
+        vec![
+            "node config does not satisfy test.maximum@1 configSchema: <arbitrary-size integer> is greater than the maximum of 1",
+            "node config does not satisfy test.minimum@1 configSchema: 1 is less than the minimum of <arbitrary-size integer>",
+        ]
+    );
+    Ok(())
+}
+
+#[test]
 fn compile_graph_bounds_retained_config_validation_errors() -> Result<(), String> {
     let catalog = BlockCatalog::from_blocks(&json!([{
         "typeId": "test.many-errors",

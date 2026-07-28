@@ -143,6 +143,10 @@ const MAX_TYPE_REF_DEPTH: usize = 32;
 const MAX_CONFIG_SCHEMA_NODES: usize = 10_000;
 const MAX_CONFIG_VALIDATION_ERRORS: usize = 100;
 const MAX_CONFIG_VALIDATION_ERROR_MESSAGE_CHARS: usize = 1_024;
+const TWO_TO_1024: &str = concat!(
+    "17976931348623159077293051907890247336179769789423065727343008115773267580550096313270847732240753602112011387987139335765878976881441662249284743063947412437776789342486548527630221960124609411945308295208500",
+    "5768838150682342462881473913110540827237163350510684586298239947245938479716304835356329624224137216",
+);
 
 fn python_string_repr(value: &str) -> String {
     let quote = if value.contains('\'') && !value.contains('"') {
@@ -179,17 +183,33 @@ fn python_string_repr(value: &str) -> String {
     rendered
 }
 
-fn python_json_repr(value: &Value) -> String {
+fn python_json_repr_inner(value: &Value, bound_large_integers: bool) -> String {
     match value {
         Value::Null => "None".to_owned(),
         Value::Bool(value) => if *value { "True" } else { "False" }.to_owned(),
-        Value::Number(value) => value.to_string(),
+        Value::Number(value) => {
+            let token = value.to_string();
+            let digits = token
+                .strip_prefix('-')
+                .unwrap_or(&token)
+                .trim_start_matches('0');
+            if bound_large_integers
+                && !digits.is_empty()
+                && digits.bytes().all(|byte| byte.is_ascii_digit())
+                && (digits.len() > TWO_TO_1024.len()
+                    || (digits.len() == TWO_TO_1024.len() && digits >= TWO_TO_1024))
+            {
+                "<arbitrary-size integer>".to_owned()
+            } else {
+                token
+            }
+        }
         Value::String(value) => python_string_repr(value),
         Value::Array(values) => format!(
             "[{}]",
             values
                 .iter()
-                .map(python_json_repr)
+                .map(|value| python_json_repr_inner(value, bound_large_integers))
                 .collect::<Vec<_>>()
                 .join(", ")
         ),
@@ -200,12 +220,20 @@ fn python_json_repr(value: &Value) -> String {
                 .map(|(key, value)| format!(
                     "{}: {}",
                     python_string_repr(key),
-                    python_json_repr(value)
+                    python_json_repr_inner(value, bound_large_integers)
                 ))
                 .collect::<Vec<_>>()
                 .join(", ")
         ),
     }
+}
+
+fn python_json_repr(value: &Value) -> String {
+    python_json_repr_inner(value, false)
+}
+
+fn python_config_diagnostic_value(value: &Value) -> String {
+    python_json_repr_inner(value, true)
 }
 
 fn python_diagnostic_value(value: &Value) -> String {
@@ -4035,6 +4063,31 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
                     ValidationErrorKind::Enum { options } => {
                         format!("value must be one of {}", canonical_schema_value(options))
                     }
+                    ValidationErrorKind::Maximum { limit } => format!(
+                        "{} is greater than the maximum of {}",
+                        python_config_diagnostic_value(error.instance().as_ref()),
+                        python_config_diagnostic_value(limit)
+                    ),
+                    ValidationErrorKind::Minimum { limit } => format!(
+                        "{} is less than the minimum of {}",
+                        python_config_diagnostic_value(error.instance().as_ref()),
+                        python_config_diagnostic_value(limit)
+                    ),
+                    ValidationErrorKind::ExclusiveMaximum { limit } => format!(
+                        "{} is greater than or equal to the maximum of {}",
+                        python_config_diagnostic_value(error.instance().as_ref()),
+                        python_config_diagnostic_value(limit)
+                    ),
+                    ValidationErrorKind::ExclusiveMinimum { limit } => format!(
+                        "{} is less than or equal to the minimum of {}",
+                        python_config_diagnostic_value(error.instance().as_ref()),
+                        python_config_diagnostic_value(limit)
+                    ),
+                    ValidationErrorKind::MultipleOf { multiple_of } => format!(
+                        "{} is not a multiple of {}",
+                        python_config_diagnostic_value(error.instance().as_ref()),
+                        python_config_diagnostic_value(multiple_of)
+                    ),
                     ValidationErrorKind::UniqueItems => "array items must be unique".to_owned(),
                     ValidationErrorKind::OneOfMultipleValid { .. }
                     | ValidationErrorKind::OneOfNotValid { .. } => {
