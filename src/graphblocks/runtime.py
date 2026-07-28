@@ -252,11 +252,32 @@ class JournalRecord:
         }
 
 
+def _mutable_journal_records(journal: object) -> list[Any]:
+    records = object.__getattribute__(journal, "records")
+    if isinstance(records, list):
+        return records
+    mutable_records = list(records)
+    object.__setattr__(journal, "records", mutable_records)
+    return mutable_records
+
+
+def _journal_attribute(journal: object, name: str) -> Any:
+    value = object.__getattribute__(journal, name)
+    # The records slot is a mutable append buffer internally, but the stable
+    # public contract remains an immutable point-in-time tuple.
+    if name == "records" and isinstance(value, list):
+        return tuple(value)
+    return value
+
+
 @dataclass(frozen=True, slots=True)
 class ExecutionJournal:
     run_id: str
     records: tuple[JournalRecord, ...] = field(default_factory=tuple)
     terminal_kind: JournalKind | None = None
+
+    def __getattribute__(self, name: str) -> Any:
+        return _journal_attribute(self, name)
 
     def __post_init__(self) -> None:
         _require_exact_nonempty_string(
@@ -306,7 +327,7 @@ class ExecutionJournal:
                 raise JournalStateError(
                     "execution journal terminal_kind must match its terminal record"
                 )
-        object.__setattr__(self, "records", records)
+        object.__setattr__(self, "records", list(records))
         object.__setattr__(self, "terminal_kind", inferred_terminal)
 
     def append(self, kind: JournalKind, payload: dict[str, Any]) -> JournalRecord:
@@ -318,8 +339,9 @@ class ExecutionJournal:
             )
         if self.terminal_kind is not None:
             raise JournalStateError(f"cannot append {kind} after terminal {self.terminal_kind}")
-        record = JournalRecord(len(self.records) + 1, kind, payload)
-        object.__setattr__(self, "records", (*self.records, record))
+        records = _mutable_journal_records(self)
+        record = JournalRecord(len(records) + 1, kind, payload)
+        records.append(record)
         return record
 
     def append_terminal(self, kind: JournalKind, payload: dict[str, Any]) -> JournalRecord:
@@ -327,8 +349,9 @@ class ExecutionJournal:
             raise ValueError(f"journal terminal kind is invalid: {kind!r}")
         if self.terminal_kind is not None:
             raise JournalStateError(f"terminal already recorded as {self.terminal_kind}")
-        record = JournalRecord(len(self.records) + 1, kind, payload)
-        object.__setattr__(self, "records", (*self.records, record))
+        records = _mutable_journal_records(self)
+        record = JournalRecord(len(records) + 1, kind, payload)
+        records.append(record)
         object.__setattr__(self, "terminal_kind", kind)
         return record
 
@@ -372,11 +395,15 @@ class LocalExecutionJournal:
     records: tuple[LocalJournalRecord, ...] = field(default_factory=tuple, init=False)
     terminal_kind: LocalTerminalJournalKind | None = field(default=None, init=False)
 
+    def __getattribute__(self, name: str) -> Any:
+        return _journal_attribute(self, name)
+
     def __post_init__(self) -> None:
         _require_exact_nonempty_string(
             "local journal run id",
             self.run_id,
         )
+        object.__setattr__(self, "records", [])
 
     def append(
         self,
@@ -393,8 +420,9 @@ class LocalExecutionJournal:
             raise JournalStateError(
                 f"cannot append {kind} after terminal {self.terminal_kind}"
             )
-        record = LocalJournalRecord(len(self.records) + 1, kind, payload)
-        object.__setattr__(self, "records", (*self.records, record))
+        records = _mutable_journal_records(self)
+        record = LocalJournalRecord(len(records) + 1, kind, payload)
+        records.append(record)
         return record
 
     def append_terminal(
@@ -408,8 +436,9 @@ class LocalExecutionJournal:
             raise JournalStateError(
                 f"terminal already recorded as {self.terminal_kind}"
             )
-        record = LocalJournalRecord(len(self.records) + 1, kind, payload)
-        object.__setattr__(self, "records", (*self.records, record))
+        records = _mutable_journal_records(self)
+        record = LocalJournalRecord(len(records) + 1, kind, payload)
+        records.append(record)
         object.__setattr__(self, "terminal_kind", kind)
         return record
 

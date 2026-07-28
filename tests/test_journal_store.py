@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 import math
+import pickle
 from threading import Barrier
 
 import pytest
@@ -10,6 +11,7 @@ from graphblocks.runtime import (
     ExecutionJournal,
     JournalRecord,
     JournalStateError,
+    LocalExecutionJournal,
     LocalJournalRecord,
     SQLiteExecutionJournal,
 )
@@ -62,6 +64,41 @@ def test_execution_journal_records_snapshot_payloads_and_freeze_nested_values() 
         record.payload["outputs"]["answer"] = "mutated"
     with pytest.raises(TypeError):
         record.payload["events"][0]["kind"] = "mutated"
+
+
+@pytest.mark.parametrize("journal_type", (ExecutionJournal, LocalExecutionJournal))
+def test_in_memory_journal_append_keeps_constant_time_internal_storage(
+    journal_type: type[ExecutionJournal] | type[LocalExecutionJournal],
+) -> None:
+    journal = journal_type("run-000001")
+    initial_snapshot = journal.records
+    storage = object.__getattribute__(journal, "records")
+
+    for index in range(1_000):
+        journal.append("node_started", {"node": f"node-{index}"})
+
+    assert isinstance(storage, list)
+    assert object.__getattribute__(journal, "records") is storage
+    assert initial_snapshot == ()
+    assert isinstance(journal.records, tuple)
+    assert len(journal.records) == 1_000
+
+
+@pytest.mark.parametrize("journal_type", (ExecutionJournal, LocalExecutionJournal))
+def test_in_memory_journal_restores_mutable_storage_after_pickle_round_trip(
+    journal_type: type[ExecutionJournal] | type[LocalExecutionJournal],
+) -> None:
+    journal = journal_type("run-000001")
+    journal.append("node_started", {"node": "first"})
+
+    restored = pickle.loads(pickle.dumps(journal))
+    appended = restored.append("node_started", {"node": "second"})
+
+    assert appended.sequence == 2
+    assert [record.payload["node"] for record in restored.records] == [
+        "first",
+        "second",
+    ]
 
 
 def test_journal_record_backends_share_canonical_nested_payload_snapshot(
