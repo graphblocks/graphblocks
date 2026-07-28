@@ -2769,12 +2769,83 @@ def compile_graph_native(
 
 def compile_graph_native_plan(
     document: dict[str, object],
-    block_catalog: object | None = None,
+    block_catalog: BlockCatalog | None = None,
     *,
     allow_unknown_blocks: bool = False,
 ) -> Plan:
+    if not isinstance(document, Mapping):
+        raise TypeError("graph document must be a mapping")
+    if block_catalog is not None and not isinstance(block_catalog, BlockCatalog):
+        raise TypeError("block_catalog must be a BlockCatalog")
+    if not isinstance(allow_unknown_blocks, bool):
+        raise TypeError("allow_unknown_blocks must be a boolean")
+
+    try:
+        domain_violations = tuple(
+            violation
+            for violation in resource_schema_errors(document)
+            if violation.keyword
+            in {
+                "finiteNumber",
+                "jsonObjectKey",
+                "jsonValue",
+                "maxDepth",
+                "recursive",
+                "unicodeScalar",
+            }
+        )
+    except (TypeError, ValueError, RuntimeError, LookupError) as error:
+        cause = (
+            error.__cause__
+            if isinstance(error.__cause__, Exception)
+            else error
+        )
+        raise ValueError(
+            "graph document must contain stable canonical JSON values"
+        ) from cause
+    if domain_violations:
+        invalid_resource_identity = {
+            "invalidResource": [
+                {
+                    "code": violation.code,
+                    "keyword": violation.keyword,
+                    "message": violation.message,
+                    "path": violation.path,
+                }
+                for violation in domain_violations
+            ]
+        }
+        return Plan(
+            invalid_resource_identity,
+            canonical_hash(invalid_resource_identity),
+            DiagnosticSet(
+                tuple(
+                    Diagnostic(
+                        violation.code,
+                        violation.message,
+                        violation.path,
+                    )
+                    for violation in domain_violations
+                )
+            ),
+        )
+
+    try:
+        snapshot = canonical_loads(canonical_dumps(document))
+    except (TypeError, ValueError, RuntimeError, LookupError) as error:
+        cause = (
+            error.__cause__
+            if isinstance(error.__cause__, Exception)
+            else error
+        )
+        raise ValueError(
+            "graph document must contain stable canonical JSON values"
+        ) from cause
+    if not isinstance(snapshot, dict):
+        raise ValueError("graph document must contain a canonical JSON object")
+
     result = compile_graph_native(
-        document,
+        snapshot,
         block_catalog=block_catalog,
         allow_unknown_blocks=allow_unknown_blocks,
     )

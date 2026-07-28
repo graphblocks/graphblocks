@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterator, Mapping
+import math
 import sys
 from types import SimpleNamespace
 
@@ -90,10 +91,109 @@ def test_native_compiler_result_is_restored_as_a_plan(
         SimpleNamespace(compile_graph=lambda *args, **kwargs: result),
     )
 
-    plan = compile_graph_native_plan(NORMALIZED_GRAPH, block_catalog=[])
+    plan = compile_graph_native_plan(
+        NORMALIZED_GRAPH,
+        block_catalog=BlockCatalog({}),
+    )
 
     assert isinstance(plan, Plan)
     assert plan.to_dict() == result
+
+
+@pytest.mark.parametrize(
+    "invalid_value",
+    [
+        {1: "not a JSON object key"},
+        "\ud800",
+        {"\udfff": "value"},
+        math.nan,
+        math.inf,
+        -math.inf,
+        b"bytes",
+        {"set"},
+        object(),
+    ],
+    ids=(
+        "non-string-key",
+        "surrogate-string",
+        "surrogate-key",
+        "nan",
+        "positive-infinity",
+        "negative-infinity",
+        "bytes",
+        "set",
+        "object",
+    ),
+)
+def test_native_plan_bridge_matches_reference_json_domain_diagnostics(
+    invalid_value: object,
+) -> None:
+    document: dict[str, object] = {
+        "apiVersion": "graphblocks.ai/v1",
+        "kind": "Graph",
+        "metadata": {"name": "native-invalid-json-domain"},
+        "spec": {"nodes": {}, "extensions": invalid_value},
+    }
+
+    reference = compile_graph_reference(document)
+    native = compile_graph_native_plan(document)
+
+    assert native.to_dict() == reference.to_dict()
+
+
+def test_native_plan_bridge_matches_reference_depth_diagnostic() -> None:
+    nested: dict[str, object] = {}
+    current = nested
+    for _ in range(65):
+        child: dict[str, object] = {}
+        current["next"] = child
+        current = child
+    document: dict[str, object] = {
+        "apiVersion": "graphblocks.ai/v1",
+        "kind": "Graph",
+        "metadata": {"name": "native-too-deep"},
+        "spec": {"nodes": {}, "extensions": nested},
+    }
+
+    reference = compile_graph_reference(document)
+    native = compile_graph_native_plan(document)
+
+    assert native.to_dict() == reference.to_dict()
+
+
+def test_native_plan_bridge_normalizes_hostile_mapping_errors() -> None:
+    class ExplodingMapping(Mapping[str, object]):
+        def __getitem__(self, key: str) -> object:
+            raise RuntimeError("hostile lookup")
+
+        def __iter__(self) -> Iterator[str]:
+            return iter(("apiVersion",))
+
+        def __len__(self) -> int:
+            return 1
+
+    with pytest.raises(
+        ValueError,
+        match="graph document must contain stable canonical JSON values",
+    ) as captured:
+        compile_graph_native_plan(ExplodingMapping())  # type: ignore[arg-type]
+
+    assert isinstance(captured.value.__cause__, RuntimeError)
+
+
+def test_native_plan_bridge_validates_public_input_types() -> None:
+    with pytest.raises(TypeError, match="graph document must be a mapping"):
+        compile_graph_native_plan([])  # type: ignore[arg-type]
+    with pytest.raises(TypeError, match="block_catalog must be a BlockCatalog"):
+        compile_graph_native_plan(
+            NORMALIZED_GRAPH,
+            block_catalog=object(),  # type: ignore[arg-type]
+        )
+    with pytest.raises(TypeError, match="allow_unknown_blocks must be a boolean"):
+        compile_graph_native_plan(
+            NORMALIZED_GRAPH,
+            allow_unknown_blocks=1,  # type: ignore[arg-type]
+        )
 
 
 def test_native_plan_bridge_accepts_a_python_block_catalog() -> None:
@@ -454,4 +554,7 @@ def test_native_compiler_plan_rejects_invalid_contracts(
     )
 
     with pytest.raises(NativeCompilerContractError, match=message):
-        compile_graph_native_plan(NORMALIZED_GRAPH, block_catalog=[])
+        compile_graph_native_plan(
+            NORMALIZED_GRAPH,
+            block_catalog=BlockCatalog({}),
+        )
