@@ -22,6 +22,7 @@ from graphblocks.server import (
     ServerAsyncCallbackSubmission,
     ServerAuthDecision,
     ServerAuthRequest,
+    ServerCallbackDeliveryResult,
     ServerCallbackRegistration,
     ServerEndpoint,
     ServerEventSubscription,
@@ -59,6 +60,43 @@ def _record_seeded_run_owner(
         principal,
         "2026-07-01T00:00:00Z",
     )
+
+
+def _record_failed_callback_delivery(
+    app: GraphBlocksServerApp,
+    delivery_id: str,
+    principal: PrincipalRef,
+    *,
+    attempt: int = 1,
+    subscription_id: str | None = None,
+) -> str:
+    subscription_id = subscription_id or f"callback-sub-{delivery_id}"
+    registration = ServerCallbackRegistration(
+        subscription_id=subscription_id,
+        scope="tenant",
+        scope_id=principal.tenant_id or "tenant-1",
+        event_filter={"types": ["RunSucceeded"]},
+        delivery={"kind": "local_callback", "callback_name": "test"},
+        created_at="2026-07-02T00:00:00Z",
+        owner=principal,
+    )
+    delivery = ServerCallbackDeliveryResult(
+        delivery_id=delivery_id,
+        subscription_id=subscription_id,
+        event_id=f"event-{delivery_id}",
+        run_id=f"run-{delivery_id}",
+        sequence=1,
+        cursor=f"run-{delivery_id}:1",
+        attempt=attempt,
+        idempotency_key=f"{subscription_id}:event-{delivery_id}",
+        status="failed",
+        status_code=503,
+        last_error="receiver returned 503",
+    )
+    with app._callback_registration_condition:
+        app._callback_registrations[subscription_id] = registration
+        app._callback_delivery_results_by_subscription_id[subscription_id] = (delivery,)
+    return subscription_id
 
 
 def test_server_route_manifest_groups_routes_and_hashes_stably() -> None:
@@ -12936,19 +12974,10 @@ def test_server_app_rejects_callback_registration_with_whitespace_wrapped_identi
 
 
 def test_server_app_records_callback_delivery_redrive_and_dead_letter_projection() -> None:
-    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("operator-1")}))
+    principal = PrincipalRef("operator-1", tenant_id="tenant-1")
+    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": principal}))
+    subscription_id = _record_failed_callback_delivery(app, "del-1", principal)
 
-    redrive = app.handle(
-        ServerRequest(
-            method="POST",
-            path="/callbacks/deliveries/del-1/redrive",
-            headers={"Authorization": "Bearer token-1"},
-            query={},
-            cookies={},
-            body=json.dumps({"operator": "operator-1", "reason": "receiver recovered"}).encode("utf-8"),
-            requested_at="2026-07-02T00:02:00Z",
-        )
-    )
     dead_letter = app.handle(
         ServerRequest(
             method="POST",
@@ -12957,6 +12986,17 @@ def test_server_app_records_callback_delivery_redrive_and_dead_letter_projection
             query={},
             cookies={},
             body=json.dumps({"operator": "operator-1", "reason": "max attempts exhausted"}).encode("utf-8"),
+            requested_at="2026-07-02T00:02:00Z",
+        )
+    )
+    redrive = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/callbacks/deliveries/del-1/redrive",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps({"operator": "operator-1", "reason": "receiver recovered"}).encode("utf-8"),
             requested_at="2026-07-02T00:03:00Z",
         )
     )
@@ -12982,7 +13022,9 @@ def test_server_app_records_callback_delivery_redrive_and_dead_letter_projection
             "deliveryId": "del-1",
             "operator": "operator-1",
             "reason": "receiver recovered",
-            "requestedAt": "2026-07-02T00:02:00Z",
+            "requestedAt": "2026-07-02T00:03:00Z",
+            "resultingAttempt": 2,
+            "sourceAttempt": 1,
             "status": "redrive_requested",
         },
     )
@@ -12991,8 +13033,22 @@ def test_server_app_records_callback_delivery_redrive_and_dead_letter_projection
             "deliveryId": "del-1",
             "operator": "operator-1",
             "reason": "max attempts exhausted",
-            "requestedAt": "2026-07-02T00:03:00Z",
+            "requestedAt": "2026-07-02T00:02:00Z",
+            "sourceAttempt": 1,
             "status": "dead_letter_requested",
+        },
+    )
+    assert app.callback_delivery_results(subscription_id) == (
+        {
+            "deliveryId": "del-1",
+            "subscriptionId": subscription_id,
+            "eventId": "event-del-1",
+            "runId": "run-del-1",
+            "sequence": 1,
+            "cursor": "run-del-1:1",
+            "attempt": 2,
+            "idempotencyKey": f"{subscription_id}:event-del-1",
+            "status": "pending",
         },
     )
     with pytest.raises(TypeError):
@@ -13001,8 +13057,35 @@ def test_server_app_records_callback_delivery_redrive_and_dead_letter_projection
         app.callback_delivery_dead_letter_moves("del-1")[0]["reason"] = "changed"
 
 
-def test_server_app_uses_authenticated_principal_for_callback_delivery_control_operator() -> None:
+@pytest.mark.parametrize("operation", ("redrive", "dead-letter"))
+def test_server_app_rejects_control_for_unknown_callback_delivery(operation: str) -> None:
     app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("operator-1")}))
+
+    response = app.handle(
+        ServerRequest(
+            method="POST",
+            path=f"/callbacks/deliveries/never-existed/{operation}",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps({"reason": "operator request"}).encode("utf-8"),
+            requested_at="2026-07-03T00:00:00Z",
+        )
+    )
+
+    assert response.status_code == 404
+    assert json.loads(response.body.decode("utf-8")) == {
+        "ok": False,
+        "error": "callback delivery 'never-existed' not found",
+    }
+    assert app.callback_delivery_redrives("never-existed") == ()
+    assert app.callback_delivery_dead_letter_moves("never-existed") == ()
+
+
+def test_server_app_uses_authenticated_principal_for_callback_delivery_control_operator() -> None:
+    principal = PrincipalRef("operator-1", tenant_id="tenant-1")
+    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": principal}))
+    _record_failed_callback_delivery(app, "del-authenticated", principal)
 
     response = app.handle(
         ServerRequest(
@@ -13030,13 +13113,17 @@ def test_server_app_uses_authenticated_principal_for_callback_delivery_control_o
             "operator": "operator-1",
             "reason": "receiver recovered",
             "requestedAt": "2026-07-03T00:00:00Z",
+            "resultingAttempt": 2,
+            "sourceAttempt": 1,
             "status": "redrive_requested",
         },
     )
 
 
 def test_server_app_rejects_callback_delivery_control_operator_mismatch() -> None:
-    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("operator-1")}))
+    principal = PrincipalRef("operator-1", tenant_id="tenant-1")
+    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": principal}))
+    _record_failed_callback_delivery(app, "del-forged", principal)
 
     response = app.handle(
         ServerRequest(
@@ -13059,7 +13146,9 @@ def test_server_app_rejects_callback_delivery_control_operator_mismatch() -> Non
 
 
 def test_server_app_treats_repeated_callback_dead_letter_move_as_idempotent() -> None:
-    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("operator-1")}))
+    principal = PrincipalRef("operator-1", tenant_id="tenant-1")
+    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": principal}))
+    _record_failed_callback_delivery(app, "del-idempotent", principal)
 
     first = app.handle(
         ServerRequest(
@@ -13101,13 +13190,172 @@ def test_server_app_treats_repeated_callback_dead_letter_move_as_idempotent() ->
             "operator": "operator-1",
             "reason": "max attempts exhausted",
             "requestedAt": "2026-07-03T00:01:00Z",
+            "sourceAttempt": 1,
             "status": "dead_letter_requested",
         },
     )
 
 
+def test_server_app_treats_repeated_callback_redrive_as_idempotent() -> None:
+    principal = PrincipalRef("operator-1", tenant_id="tenant-1")
+    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": principal}))
+    subscription_id = _record_failed_callback_delivery(app, "del-redrive-idempotent", principal)
+    requests = tuple(
+        ServerRequest(
+            method="POST",
+            path="/callbacks/deliveries/del-redrive-idempotent/redrive",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps({"reason": reason}).encode("utf-8"),
+            requested_at=requested_at,
+        )
+        for reason, requested_at in (
+            ("receiver recovered", "2026-07-03T00:01:00Z"),
+            ("already requested", "2026-07-03T00:02:00Z"),
+        )
+    )
+
+    first, duplicate = (app.handle(request) for request in requests)
+
+    assert first.status_code == 202
+    assert duplicate.status_code == 200
+    assert json.loads(duplicate.body.decode("utf-8")) == {
+        "ok": True,
+        "deliveryId": "del-redrive-idempotent",
+        "operator": "operator-1",
+        "reason": "receiver recovered",
+        "status": "redrive_requested",
+        "requestedAt": "2026-07-03T00:01:00Z",
+        "duplicate": True,
+    }
+    assert len(app.callback_delivery_redrives("del-redrive-idempotent")) == 1
+    assert app.callback_delivery_results(subscription_id)[0]["attempt"] == 2
+
+
+def test_server_app_hides_foreign_callback_delivery_from_control_request() -> None:
+    alice = PrincipalRef("alice", tenant_id="tenant-a")
+    bob = PrincipalRef("bob", tenant_id="tenant-b")
+    app = GraphBlocksServerApp(
+        auth_hook=StaticBearerAuthHook({"alice-token": alice, "bob-token": bob})
+    )
+    subscription_id = _record_failed_callback_delivery(app, "del-alice", alice)
+
+    response = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/callbacks/deliveries/del-alice/redrive",
+            headers={"Authorization": "Bearer bob-token"},
+            query={},
+            cookies={},
+            body=json.dumps({"reason": "unauthorized retry"}).encode("utf-8"),
+            requested_at="2026-07-03T00:03:00Z",
+        )
+    )
+
+    assert response.status_code == 404
+    assert json.loads(response.body.decode("utf-8")) == {
+        "ok": False,
+        "error": "callback delivery 'del-alice' not found",
+    }
+    assert app.callback_delivery_results(subscription_id)[0]["status"] == "failed"
+    assert app.callback_delivery_redrives("del-alice") == ()
+
+
+def test_server_app_scopes_duplicate_callback_delivery_ids_to_owner() -> None:
+    alice = PrincipalRef("alice", tenant_id="tenant-a")
+    bob = PrincipalRef("bob", tenant_id="tenant-b")
+    app = GraphBlocksServerApp(
+        auth_hook=StaticBearerAuthHook({"alice-token": alice, "bob-token": bob})
+    )
+    alice_subscription_id = _record_failed_callback_delivery(
+        app,
+        "shared-delivery-id",
+        alice,
+        subscription_id="callback-sub-alice",
+    )
+    bob_subscription_id = _record_failed_callback_delivery(
+        app,
+        "shared-delivery-id",
+        bob,
+        subscription_id="callback-sub-bob",
+    )
+
+    response = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/callbacks/deliveries/shared-delivery-id/redrive",
+            headers={"Authorization": "Bearer bob-token"},
+            query={},
+            cookies={},
+            body=json.dumps({"reason": "bob receiver recovered"}).encode("utf-8"),
+            requested_at="2026-07-03T00:03:30Z",
+        )
+    )
+
+    assert response.status_code == 202
+    assert app.callback_delivery_results(alice_subscription_id)[0]["status"] == "failed"
+    assert app.callback_delivery_results(bob_subscription_id)[0]["status"] == "pending"
+    assert len(app.callback_delivery_redrives("shared-delivery-id")) == 1
+
+
+@pytest.mark.parametrize("operation", ("redrive", "dead-letter"))
+@pytest.mark.parametrize("delivery_status", ("pending", "delivered", "acknowledged", "cancelled"))
+def test_server_app_rejects_callback_delivery_control_from_invalid_lifecycle_state(
+    operation: str,
+    delivery_status: str,
+) -> None:
+    principal = PrincipalRef("operator-1", tenant_id="tenant-1")
+    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": principal}))
+    subscription_id = _record_failed_callback_delivery(app, "del-invalid-state", principal)
+    delivery = app._callback_delivery_results_by_subscription_id[subscription_id][0]
+    if delivery_status in {"delivered", "acknowledged"}:
+        updated_delivery = replace(
+            delivery,
+            status=delivery_status,
+            status_code=202,
+            delivered_at="2026-07-03T00:00:00Z",
+            last_error=None,
+        )
+    elif delivery_status == "cancelled":
+        updated_delivery = replace(
+            delivery,
+            status=delivery_status,
+            status_code=None,
+            last_error="subscription cancelled",
+        )
+    else:
+        updated_delivery = replace(
+            delivery,
+            status=delivery_status,
+            status_code=None,
+            last_error=None,
+        )
+    app._callback_delivery_results_by_subscription_id[subscription_id] = (updated_delivery,)
+
+    response = app.handle(
+        ServerRequest(
+            method="POST",
+            path=f"/callbacks/deliveries/del-invalid-state/{operation}",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps({"reason": "invalid transition"}).encode("utf-8"),
+            requested_at="2026-07-03T00:04:00Z",
+        )
+    )
+
+    assert response.status_code == 409
+    assert json.loads(response.body.decode("utf-8"))["state"] == delivery_status
+    assert app.callback_delivery_results(subscription_id)[0]["status"] == delivery_status
+    assert app.callback_delivery_redrives("del-invalid-state") == ()
+    assert app.callback_delivery_dead_letter_moves("del-invalid-state") == ()
+
+
 def test_server_app_serializes_concurrent_callback_dead_letter_moves() -> None:
-    class CoordinatedDeadLetterStore(dict[str, tuple[dict[str, object], ...]]):
+    class CoordinatedDeadLetterStore(
+        dict[tuple[str, str], tuple[dict[str, object], ...]]
+    ):
         def __init__(self) -> None:
             super().__init__()
             self._calls = 0
@@ -13116,7 +13364,7 @@ def test_server_app_serializes_concurrent_callback_dead_letter_moves() -> None:
 
         def get(
             self,
-            key: str,
+            key: tuple[str, str],
             default: tuple[dict[str, object], ...] | None = None,
         ) -> tuple[dict[str, object], ...] | None:
             current = super().get(key, default)
@@ -13128,7 +13376,9 @@ def test_server_app_serializes_concurrent_callback_dead_letter_moves() -> None:
                 self._both_reading.wait(timeout=1)
             return current
 
-    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("operator-1")}))
+    principal = PrincipalRef("operator-1", tenant_id="tenant-1")
+    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": principal}))
+    _record_failed_callback_delivery(app, "del-concurrent", principal)
     app._callback_delivery_dead_letter_moves = CoordinatedDeadLetterStore()
     requests = tuple(
         ServerRequest(

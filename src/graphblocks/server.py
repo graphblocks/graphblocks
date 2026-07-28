@@ -93,6 +93,7 @@ VALID_SERVER_CALLBACK_DELIVERY_STATUSES = frozenset({
     "delivered",
     "acknowledged",
     "failed",
+    "dead_lettered",
     "cancelled",
 })
 SERVER_EVENT_SEVERITY_RANKS = {
@@ -2012,7 +2013,7 @@ class ServerCallbackDeliveryResult:
         if self.status not in VALID_SERVER_CALLBACK_DELIVERY_STATUSES:
             raise ValueError(
                 "server callback delivery result status must be one of "
-                "pending, delivered, acknowledged, failed, or cancelled"
+                "pending, delivered, acknowledged, failed, dead_lettered, or cancelled"
             )
         if self.status_code is not None and (
             isinstance(self.status_code, bool)
@@ -2048,7 +2049,7 @@ class ServerCallbackDeliveryResult:
                 )
             if self.last_error is not None:
                 raise ValueError("successful server callback delivery result must not have last_error")
-        if self.status in {"failed", "cancelled"} and self.last_error is None:
+        if self.status in {"failed", "dead_lettered", "cancelled"} and self.last_error is None:
             raise ValueError("failed server callback delivery result requires last_error")
 
     def protocol_value(self) -> dict[str, object]:
@@ -2459,12 +2460,18 @@ class GraphBlocksServerApp:
         init=False,
         repr=False,
     )
-    _callback_delivery_redrives: dict[str, tuple[dict[str, object], ...]] = field(
+    _callback_delivery_redrives: dict[
+        tuple[str, str],
+        tuple[dict[str, object], ...],
+    ] = field(
         default_factory=dict,
         init=False,
         repr=False,
     )
-    _callback_delivery_dead_letter_moves: dict[str, tuple[dict[str, object], ...]] = field(
+    _callback_delivery_dead_letter_moves: dict[
+        tuple[str, str],
+        tuple[dict[str, object], ...],
+    ] = field(
         default_factory=dict,
         init=False,
         repr=False,
@@ -5734,7 +5741,12 @@ class GraphBlocksServerApp:
             delivery_id,
         )
         with self._callback_registration_condition:
-            return self._callback_delivery_redrives.get(delivery_id, ())
+            return tuple(
+                record
+                for control_key, records in self._callback_delivery_redrives.items()
+                if control_key[1] == delivery_id
+                for record in records
+            )
 
     def callback_delivery_dead_letter_moves(self, delivery_id: str) -> tuple[dict[str, object], ...]:
         delivery_id = _validate_exact_non_empty_string(
@@ -5743,7 +5755,12 @@ class GraphBlocksServerApp:
             delivery_id,
         )
         with self._callback_registration_condition:
-            return self._callback_delivery_dead_letter_moves.get(delivery_id, ())
+            return tuple(
+                record
+                for control_key, records in self._callback_delivery_dead_letter_moves.items()
+                if control_key[1] == delivery_id
+                for record in records
+            )
 
     def _run_status_payload(
         self,
@@ -6442,34 +6459,151 @@ class GraphBlocksServerApp:
             if operation == "redrive_callback_delivery"
             else "dead_letter_requested"
         )
-        record = _freeze_json_value("callback delivery control record", "record", {
-            "deliveryId": delivery_id,
-            "operator": operator,
-            "reason": reason,
-            "requestedAt": requested_at,
-            "status": status,
-        })
         with self._callback_registration_condition:
+            matches: list[
+                tuple[
+                    str,
+                    int,
+                    ServerCallbackDeliveryResult,
+                    ServerCallbackRegistration,
+                ]
+            ] = []
+            for subscription_id, deliveries in (
+                self._callback_delivery_results_by_subscription_id.items()
+            ):
+                registration = self._callback_registrations.get(subscription_id)
+                if registration is None or (
+                    registration.owner is not None
+                    and not _principal_matches_owner(principal, registration.owner)
+                ):
+                    continue
+                for index, delivery in enumerate(deliveries):
+                    if (
+                        delivery.subscription_id == subscription_id
+                        and delivery.delivery_id == delivery_id
+                    ):
+                        matches.append(
+                            (subscription_id, index, delivery, registration)
+                        )
+            if not matches:
+                return ServerResponse.json(
+                    404,
+                    {
+                        "ok": False,
+                        "error": f"callback delivery {delivery_id!r} not found",
+                    },
+                )
+            if len(matches) != 1:
+                return ServerResponse.json(
+                    409,
+                    {
+                        "ok": False,
+                        "deliveryId": delivery_id,
+                        "error": f"callback delivery {delivery_id!r} has ambiguous ownership",
+                    },
+                )
+            subscription_id, delivery_index, delivery, registration = matches[0]
+            if registration.status != "active":
+                return ServerResponse.json(
+                    409,
+                    {
+                        "ok": False,
+                        "deliveryId": delivery_id,
+                        "state": registration.status,
+                        "error": (
+                            f"callback delivery {delivery_id!r} registration is "
+                            f"{registration.status}"
+                        ),
+                    },
+                )
+
+            control_key = (subscription_id, delivery_id)
             if operation == "redrive_callback_delivery":
-                existing = self._callback_delivery_redrives.get(delivery_id, ())
-                self._callback_delivery_redrives[delivery_id] = (*existing, record)
+                existing = self._callback_delivery_redrives.get(control_key, ())
+                duplicate = next(
+                    (
+                        item
+                        for item in reversed(existing)
+                        if item.get("resultingAttempt") == delivery.attempt
+                        and delivery.status == "pending"
+                    ),
+                    None,
+                )
+                allowed_states = {"failed", "dead_lettered"}
             else:
-                existing = self._callback_delivery_dead_letter_moves.get(delivery_id, ())
-                if existing:
-                    first = existing[0]
-                    return ServerResponse.json(
-                        200,
-                        {
-                            "ok": True,
-                            "deliveryId": delivery_id,
-                            "operator": first.get("operator"),
-                            "reason": first.get("reason"),
-                            "status": first.get("status"),
-                            "requestedAt": first.get("requestedAt"),
-                            "duplicate": True,
-                        },
-                    )
-                self._callback_delivery_dead_letter_moves[delivery_id] = (*existing, record)
+                existing = self._callback_delivery_dead_letter_moves.get(control_key, ())
+                duplicate = next(
+                    (
+                        item
+                        for item in reversed(existing)
+                        if item.get("sourceAttempt") == delivery.attempt
+                        and delivery.status == "dead_lettered"
+                    ),
+                    None,
+                )
+                allowed_states = {"failed"}
+            if duplicate is not None:
+                return ServerResponse.json(
+                    200,
+                    {
+                        "ok": True,
+                        "deliveryId": delivery_id,
+                        "operator": duplicate.get("operator"),
+                        "reason": duplicate.get("reason"),
+                        "status": duplicate.get("status"),
+                        "requestedAt": duplicate.get("requestedAt"),
+                        "duplicate": True,
+                    },
+                )
+            if delivery.status not in allowed_states:
+                return ServerResponse.json(
+                    409,
+                    {
+                        "ok": False,
+                        "deliveryId": delivery_id,
+                        "state": delivery.status,
+                        "error": (
+                            f"callback delivery {delivery_id!r} in state "
+                            f"{delivery.status!r} cannot be "
+                            f"{'redriven' if operation == 'redrive_callback_delivery' else 'dead-lettered'}"
+                        ),
+                    },
+                )
+
+            record_payload: dict[str, object] = {
+                "deliveryId": delivery_id,
+                "operator": operator,
+                "reason": reason,
+                "requestedAt": requested_at,
+                "sourceAttempt": delivery.attempt,
+                "status": status,
+            }
+            if operation == "redrive_callback_delivery":
+                record_payload["resultingAttempt"] = delivery.attempt + 1
+                updated_delivery = replace(
+                    delivery,
+                    attempt=delivery.attempt + 1,
+                    status="pending",
+                    status_code=None,
+                    delivered_at=None,
+                    last_error=None,
+                )
+            else:
+                updated_delivery = replace(delivery, status="dead_lettered")
+            record = _freeze_json_value(
+                "callback delivery control record",
+                "record",
+                record_payload,
+            )
+            deliveries = list(
+                self._callback_delivery_results_by_subscription_id[subscription_id]
+            )
+            deliveries[delivery_index] = updated_delivery
+            self._callback_delivery_results_by_subscription_id[subscription_id] = tuple(deliveries)
+            if operation == "redrive_callback_delivery":
+                self._callback_delivery_redrives[control_key] = (*existing, record)
+            else:
+                self._callback_delivery_dead_letter_moves[control_key] = (*existing, record)
         return ServerResponse.json(
             202,
             {
