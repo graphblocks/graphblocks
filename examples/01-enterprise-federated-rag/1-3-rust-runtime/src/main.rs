@@ -223,7 +223,7 @@ fn execute() -> Result<Value, Box<dyn Error>> {
         "succeededNodes": succeeded_nodes
     });
     let mut report = evidence.clone();
-    report["evidenceDigest"] = Value::String(canonical_hash(&evidence));
+    report["evidenceDigest"] = Value::String(canonical_hash(&evidence)?);
     Ok(report)
 }
 
