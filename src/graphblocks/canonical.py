@@ -12,14 +12,24 @@ from .migration import migrate_document
 
 PSEUDO_NODES = {"$input", "$output", "$state", "$context", "$execution"}
 MAX_CANONICAL_JSON_DEPTH = 64
+MAX_CANONICAL_INTEGER_DIGITS = 10_000
 _MANUAL_INTEGER_BIT_LENGTH = 1_024
 _INTEGER_CHUNK_BASE = 1_000_000_000
 _INTEGER_CHUNK_DIGITS = 9
+_MAX_CANONICAL_INTEGER_MAGNITUDE = 10**MAX_CANONICAL_INTEGER_DIGITS
+_MIN_CANONICAL_INTEGER_MAGNITUDE = -_MAX_CANONICAL_INTEGER_MAGNITUDE
 
 
 def _depth_error() -> ValueError:
     return ValueError(
         f"canonical JSON nesting must not exceed {MAX_CANONICAL_JSON_DEPTH} levels"
+    )
+
+
+def _integer_limit_error() -> ValueError:
+    return ValueError(
+        "canonical JSON integer must not exceed "
+        f"{MAX_CANONICAL_INTEGER_DIGITS} decimal digits"
     )
 
 
@@ -39,6 +49,8 @@ def _has_unicode_surrogate(value: str) -> bool:
 def _parse_integer(token: str) -> int:
     negative = token.startswith("-")
     digits = token[1:] if negative else token
+    if len(digits) > MAX_CANONICAL_INTEGER_DIGITS:
+        raise _integer_limit_error()
     first_chunk_length = len(digits) % _INTEGER_CHUNK_DIGITS
     if first_chunk_length == 0:
         first_chunk_length = _INTEGER_CHUNK_DIGITS
@@ -52,6 +64,11 @@ def _parse_integer(token: str) -> int:
 
 
 def _format_integer(value: int) -> str:
+    if int.__ge__(value, _MAX_CANONICAL_INTEGER_MAGNITUDE) or int.__le__(
+        value,
+        _MIN_CANONICAL_INTEGER_MAGNITUDE,
+    ):
+        raise _integer_limit_error()
     if value == 0:
         return "0"
     negative = value < 0
@@ -141,9 +158,17 @@ def _canonical_snapshot(
             elif (
                 isinstance(current_value, int)
                 and not isinstance(current_value, bool)
-                and current_value.bit_length() > _MANUAL_INTEGER_BIT_LENGTH
             ):
-                has_large_integer = True
+                if int.__ge__(
+                    current_value,
+                    _MAX_CANONICAL_INTEGER_MAGNITUDE,
+                ) or int.__le__(
+                    current_value,
+                    _MIN_CANONICAL_INTEGER_MAGNITUDE,
+                ):
+                    raise _integer_limit_error()
+                if current_value.bit_length() > _MANUAL_INTEGER_BIT_LENGTH:
+                    has_large_integer = True
             parent[parent_key] = current_value
     return root[0], occupied_strings, has_decimal, has_large_integer
 
