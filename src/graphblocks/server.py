@@ -2377,6 +2377,7 @@ class _AcceptedCallbackReceiptCapability:
 class GraphBlocksServerApp:
     route_manifest: ServerRouteManifest = field(default_factory=default_server_route_manifest)
     auth_hook: ServerAuthHook | None = None
+    allow_unauthenticated_dev: bool = False
     health: ServerHealth = field(default_factory=lambda: ServerHealth("graphblocks-api"))
     registry: RuntimeRegistry = field(default_factory=stdlib_registry)
     max_async_callback_payload_bytes: int = 262144
@@ -2499,6 +2500,17 @@ class GraphBlocksServerApp:
     )
 
     def __post_init__(self) -> None:
+        if not isinstance(self.allow_unauthenticated_dev, bool):
+            raise ValueError("server allow_unauthenticated_dev must be a boolean")
+        if (
+            self.auth_hook is None
+            and not self.allow_unauthenticated_dev
+            and any(endpoint.auth_required for endpoint in self.route_manifest.endpoints)
+        ):
+            raise ValueError(
+                "server protected routes require an auth_hook or explicit "
+                "unauthenticated development mode"
+            )
         if (
             not isinstance(self.max_async_callback_payload_bytes, int)
             or isinstance(self.max_async_callback_payload_bytes, bool)
@@ -2568,7 +2580,7 @@ class GraphBlocksServerApp:
             )
 
         auth_decision = ServerAuthDecision(True)
-        if self.auth_hook is not None:
+        if route.auth_required and self.auth_hook is not None:
             try:
                 hook_decision = self.auth_hook.authorize(
                     ServerAuthRequest(

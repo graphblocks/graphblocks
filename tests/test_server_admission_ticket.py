@@ -71,6 +71,7 @@ def test_ticketed_server_returns_cursor_zero_and_promotes_fifo() -> None:
         ticket_ttl_ms=60_000,
     )
     app = GraphBlocksServerApp(
+        allow_unauthenticated_dev=True,
         admission_ticket_queue=queue,
         admission_clock=lambda: clock[0],
     )
@@ -179,6 +180,7 @@ def test_executor_never_runs_more_blocks_than_ticket_capacity() -> None:
     )
     with ThreadPoolExecutor(max_workers=2) as executor:
         app = GraphBlocksServerApp(
+            allow_unauthenticated_dev=True,
             registry=registry,
             accepted_run_executor=executor,
             admission_ticket_queue=queue,
@@ -214,6 +216,7 @@ def test_cancelling_queued_ticket_never_executes_it() -> None:
         ticket_ttl_ms=60_000,
     )
     app = GraphBlocksServerApp(
+        allow_unauthenticated_dev=True,
         admission_ticket_queue=queue,
         admission_clock=lambda: 0,
     )
@@ -251,6 +254,7 @@ def test_maintenance_expires_queued_run_without_starting_it() -> None:
         ticket_ttl_ms=100,
     )
     app = GraphBlocksServerApp(
+        allow_unauthenticated_dev=True,
         admission_ticket_queue=queue,
         admission_clock=lambda: clock[0],
     )

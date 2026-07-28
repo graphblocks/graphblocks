@@ -349,6 +349,57 @@ def test_server_auth_decision_rejects_malformed_hook_state() -> None:
         )
 
 
+def test_server_app_requires_authentication_for_protected_manifests() -> None:
+    with pytest.raises(
+        ValueError,
+        match="protected routes require an auth_hook or explicit unauthenticated development mode",
+    ):
+        GraphBlocksServerApp()
+
+    development_app = GraphBlocksServerApp(allow_unauthenticated_dev=True)
+    protected = development_app.handle(
+        ServerRequest(
+            method="GET",
+            path="/runs",
+            headers={},
+            query={},
+            cookies={},
+        )
+    )
+
+    assert protected.status_code == 200
+    assert json.loads(protected.body) == {"ok": True, "runs": []}
+
+
+def test_server_app_owns_public_route_semantics_instead_of_auth_hook() -> None:
+    class RejectingAuthHook:
+        def authorize(self, request: ServerAuthRequest) -> ServerAuthDecision:
+            del request
+            return ServerAuthDecision(False, reason_codes=("auth.denied",))
+
+    app = GraphBlocksServerApp(auth_hook=RejectingAuthHook())
+
+    health = app.handle(
+        ServerRequest(
+            method="GET",
+            path="/health",
+            headers={},
+            query={},
+            cookies={},
+        )
+    )
+
+    assert health.status_code == 200
+
+
+def test_server_app_validates_unauthenticated_development_mode_flag() -> None:
+    with pytest.raises(
+        ValueError,
+        match="server allow_unauthenticated_dev must be a boolean",
+    ):
+        GraphBlocksServerApp(allow_unauthenticated_dev="yes")  # type: ignore[arg-type]
+
+
 def test_server_app_fails_closed_when_auth_hook_returns_wrong_type() -> None:
     class InvalidAuthHook:
         def authorize(self, request: ServerAuthRequest) -> object:
@@ -1362,6 +1413,7 @@ def test_server_app_executor_advances_accepted_run_after_client_detach() -> None
     registry.register("test.background@1", wait_block)
     with ThreadPoolExecutor(max_workers=1) as executor:
         app = GraphBlocksServerApp(
+            allow_unauthenticated_dev=True,
             registry=registry,
             defer_accepted_runs=True,
             accepted_run_executor=executor,
@@ -2326,6 +2378,7 @@ def test_server_app_executor_rejection_does_not_leave_ghost_run() -> None:
             raise RuntimeError("worker pool is shut down")
 
     app = GraphBlocksServerApp(
+        allow_unauthenticated_dev=True,
         defer_accepted_runs=True,
         accepted_run_executor=RejectingExecutor(),
     )
@@ -2374,6 +2427,7 @@ def test_server_app_executor_rejection_never_exposes_provisional_run() -> None:
             raise RuntimeError("worker pool rejected work")
 
     app = GraphBlocksServerApp(
+        allow_unauthenticated_dev=True,
         defer_accepted_runs=True,
         accepted_run_executor=BlockingRejector(),
     )
@@ -2439,6 +2493,7 @@ def test_server_app_rejects_inline_executor_without_deadlocking_admission() -> N
             return future
 
     app = GraphBlocksServerApp(
+        allow_unauthenticated_dev=True,
         defer_accepted_runs=True,
         accepted_run_executor=InlineExecutor(),
     )
@@ -2492,6 +2547,7 @@ def test_server_app_executor_resubmits_pending_run_after_resume() -> None:
         occupied = executor.submit(occupy_worker)
         assert worker_occupied.wait(timeout=5)
         app = GraphBlocksServerApp(
+            allow_unauthenticated_dev=True,
             defer_accepted_runs=True,
             accepted_run_executor=executor,
         )
@@ -2556,7 +2612,7 @@ def test_server_app_executor_resubmits_pending_run_after_resume() -> None:
 
 
 def test_server_app_deferred_accepted_completion_is_idempotent() -> None:
-    app = GraphBlocksServerApp(defer_accepted_runs=True)
+    app = GraphBlocksServerApp(allow_unauthenticated_dev=True, defer_accepted_runs=True)
     graph = {
         "apiVersion": "graphblocks.ai/v1alpha3",
         "kind": "Graph",
@@ -2607,7 +2663,7 @@ def test_server_app_terminal_control_stops_deferred_run_before_execution(
     terminal_state: str,
 ) -> None:
     run_id = f"run-deferred-{operation}-1"
-    app = GraphBlocksServerApp(defer_accepted_runs=True)
+    app = GraphBlocksServerApp(allow_unauthenticated_dev=True, defer_accepted_runs=True)
     app.handle(
         ServerRequest(
             method="POST",
@@ -2732,6 +2788,7 @@ def test_server_app_deferred_advance_is_fenced_against_concurrent_execution() ->
     registry = RuntimeRegistry(allow_untyped=True)
     registry.register("test.wait@1", wait_block)
     app = GraphBlocksServerApp(
+        allow_unauthenticated_dev=True,
         registry=registry,
         defer_accepted_runs=True,
     )
@@ -2789,7 +2846,7 @@ def test_server_app_deferred_advance_is_fenced_against_concurrent_execution() ->
 
 
 def test_server_app_deferred_completion_uses_monotonic_cursor_and_stable_result() -> None:
-    app = GraphBlocksServerApp(defer_accepted_runs=True)
+    app = GraphBlocksServerApp(allow_unauthenticated_dev=True, defer_accepted_runs=True)
     app.handle(
         ServerRequest(
             method="POST",
@@ -2885,6 +2942,7 @@ def test_server_app_serializes_callback_and_terminal_event_append() -> None:
         lambda inputs, config, context: {"value": "ok"},
     )
     app = BarrierServerApp(
+        allow_unauthenticated_dev=True,
         registry=registry,
         defer_accepted_runs=True,
     )
@@ -2978,7 +3036,10 @@ def test_server_app_rechecks_terminal_state_before_accepting_callback() -> None:
                 assert release_callback.wait(timeout=5)
             return payload
 
-    app = SnapshotBlockingServerApp(defer_accepted_runs=True)
+    app = SnapshotBlockingServerApp(
+        allow_unauthenticated_dev=True,
+        defer_accepted_runs=True,
+    )
     app.handle(
         ServerRequest(
             method="POST",
@@ -3041,7 +3102,7 @@ def test_server_app_rechecks_terminal_state_before_accepting_callback() -> None:
 
 
 def test_server_app_deferred_advance_waits_for_resume_after_pause() -> None:
-    app = GraphBlocksServerApp(defer_accepted_runs=True)
+    app = GraphBlocksServerApp(allow_unauthenticated_dev=True, defer_accepted_runs=True)
     app.handle(
         ServerRequest(
             method="POST",
@@ -3130,7 +3191,7 @@ def test_server_app_records_runtime_exception_as_terminal_failure(
     expected_status_code: int,
 ) -> None:
     run_id = f"run-runtime-exception-{response_mode}"
-    app = GraphBlocksServerApp()
+    app = GraphBlocksServerApp(allow_unauthenticated_dev=True)
     response = app.handle(
         ServerRequest(
             method="POST",
@@ -3189,6 +3250,7 @@ def test_server_app_records_non_json_runtime_output_without_reexecution() -> Non
     registry = RuntimeRegistry(allow_untyped=True)
     registry.register("test.non-json@1", non_json_block)
     app = GraphBlocksServerApp(
+        allow_unauthenticated_dev=True,
         registry=registry,
         defer_accepted_runs=True,
     )
@@ -3255,6 +3317,7 @@ def test_server_app_cancel_during_deferred_execution_remains_authoritative() -> 
     registry = RuntimeRegistry(allow_untyped=True)
     registry.register("test.wait@1", wait_block)
     app = GraphBlocksServerApp(
+        allow_unauthenticated_dev=True,
         registry=registry,
         defer_accepted_runs=True,
     )
@@ -3333,6 +3396,7 @@ def test_server_app_cancel_wakes_duplicate_advance_before_worker_exits() -> None
     registry = RuntimeRegistry(allow_untyped=True)
     registry.register("test.cancel-waiter@1", wait_block)
     app = GraphBlocksServerApp(
+        allow_unauthenticated_dev=True,
         registry=registry,
         defer_accepted_runs=True,
     )
@@ -3401,7 +3465,7 @@ def test_server_app_cancel_wakes_duplicate_advance_before_worker_exits() -> None
 
 
 def test_server_app_terminal_control_rejects_timestamp_before_deferred_run_start() -> None:
-    app = GraphBlocksServerApp(defer_accepted_runs=True)
+    app = GraphBlocksServerApp(allow_unauthenticated_dev=True, defer_accepted_runs=True)
     app.handle(
         ServerRequest(
             method="POST",
@@ -3447,7 +3511,7 @@ def test_server_app_terminal_control_rejects_timestamp_before_deferred_run_start
 
 
 def test_server_app_deferred_accepted_run_rejects_completion_before_start() -> None:
-    app = GraphBlocksServerApp(defer_accepted_runs=True)
+    app = GraphBlocksServerApp(allow_unauthenticated_dev=True, defer_accepted_runs=True)
     app.handle(
         ServerRequest(
             method="POST",
@@ -3485,7 +3549,7 @@ def test_server_app_deferred_accepted_run_rejects_completion_before_start() -> N
 
 def test_server_app_validates_deferred_accepted_runs_flag() -> None:
     with pytest.raises(ValueError, match="server defer_accepted_runs must be a boolean"):
-        GraphBlocksServerApp(defer_accepted_runs="yes")  # type: ignore[arg-type]
+        GraphBlocksServerApp(allow_unauthenticated_dev=True, defer_accepted_runs="yes")  # type: ignore[arg-type]
 
 
 def test_server_app_accepted_invoke_encodes_run_handle_route_links() -> None:
@@ -4849,7 +4913,7 @@ def test_server_app_rejects_async_callback_operation_id_mismatch() -> None:
 
 
 def test_server_app_rejects_async_callback_when_required_authentication_is_unconfigured() -> None:
-    app = GraphBlocksServerApp(require_async_callback_authentication=True)
+    app = GraphBlocksServerApp(allow_unauthenticated_dev=True, require_async_callback_authentication=True)
 
     response = app.handle(
         ServerRequest(
@@ -4909,7 +4973,7 @@ def test_server_app_required_callback_authentication_rejects_principalless_allow
 
 
 def test_server_app_bounds_async_callback_rejection_history() -> None:
-    app = GraphBlocksServerApp()
+    app = GraphBlocksServerApp(allow_unauthenticated_dev=True)
     history = app._async_callback_rejections_by_operation_id
 
     for index in range(1_025):
@@ -4979,9 +5043,15 @@ def test_server_app_records_async_callback_authentication_failure_rejection() ->
 
 def test_server_app_validates_async_callback_authentication_requirement_flag() -> None:
     with pytest.raises(ValueError, match="server require_async_callback_authentication must be a boolean"):
-        GraphBlocksServerApp(require_async_callback_authentication="yes")  # type: ignore[arg-type]
+        GraphBlocksServerApp(
+            allow_unauthenticated_dev=True,
+            require_async_callback_authentication="yes",  # type: ignore[arg-type]
+        )
     with pytest.raises(ValueError, match="server anti_enumerate_async_callbacks must be a boolean"):
-        GraphBlocksServerApp(anti_enumerate_async_callbacks="yes")  # type: ignore[arg-type]
+        GraphBlocksServerApp(
+            allow_unauthenticated_dev=True,
+            anti_enumerate_async_callbacks="yes",  # type: ignore[arg-type]
+        )
 
 
 def test_server_app_terminal_run_status_suppresses_active_callback_waits() -> None:
@@ -6704,7 +6774,7 @@ def test_server_timestamp_fields_reject_surrounding_whitespace() -> None:
 
 
 def test_server_inspection_accessors_reject_whitespace_wrapped_identities() -> None:
-    app = GraphBlocksServerApp()
+    app = GraphBlocksServerApp(allow_unauthenticated_dev=True)
     cases = (
         (
             lambda: app.callback_submissions(" op-ci-1"),
@@ -7164,7 +7234,7 @@ def test_server_app_deduplicates_nested_callback_payload_sequence_deterministica
 
 
 def test_server_app_rejects_malformed_async_callback_submission() -> None:
-    app = GraphBlocksServerApp()
+    app = GraphBlocksServerApp(allow_unauthenticated_dev=True)
 
     response = app.handle(
         ServerRequest(
@@ -7186,7 +7256,7 @@ def test_server_app_rejects_malformed_async_callback_submission() -> None:
 
 
 def test_server_app_rejects_async_callback_with_invalid_received_timestamp() -> None:
-    app = GraphBlocksServerApp()
+    app = GraphBlocksServerApp(allow_unauthenticated_dev=True)
 
     response = app.handle(
         ServerRequest(
@@ -7258,7 +7328,7 @@ def test_server_app_rejects_async_callback_with_invalid_policy_snapshot_id() -> 
 
 
 def test_server_app_rejects_oversized_async_callback_payload_before_storage() -> None:
-    app = GraphBlocksServerApp(max_async_callback_payload_bytes=32)
+    app = GraphBlocksServerApp(allow_unauthenticated_dev=True, max_async_callback_payload_bytes=32)
 
     response = app.handle(
         ServerRequest(
@@ -7558,7 +7628,7 @@ def test_server_app_rejects_out_of_domain_stored_event_cursor_query(
     (True, -1, math.nan, math.inf, 1e300, 10**1_000, "1"),
 )
 def test_server_wait_for_accepted_run_rejects_invalid_timeout(timeout: object) -> None:
-    app = GraphBlocksServerApp()
+    app = GraphBlocksServerApp(allow_unauthenticated_dev=True)
 
     with pytest.raises(ValueError, match="server accepted run worker timeout"):
         app.wait_for_accepted_run("run-1", timeout=timeout)
@@ -8872,7 +8942,7 @@ def test_server_app_serializes_subscription_creation_with_revocation() -> None:
 
 
 def test_server_terminal_event_filter_still_honors_requested_types() -> None:
-    app = GraphBlocksServerApp()
+    app = GraphBlocksServerApp(allow_unauthenticated_dev=True)
     event = {
         "kind": "RunSucceeded",
         "metadata": {"sequence": 1, "visibility": "client"},

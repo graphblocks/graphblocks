@@ -49,7 +49,7 @@ def test_server_package_reexports_framework_neutral_contracts(monkeypatch) -> No
     assert log.replay_after(limit=1) == (event,)
     assert "InvokeGraph" in graphblocks_server.APPLICATION_COMMAND_KINDS
     assert "RunStarted" in graphblocks_server.APPLICATION_PROTOCOL_EVENT_KINDS
-    assert graphblocks_server.GraphBlocksServerApp().handle(
+    assert graphblocks_server.GraphBlocksServerApp(allow_unauthenticated_dev=True).handle(
         graphblocks_server.ServerRequest(
             method="GET",
             path="/health",
@@ -108,7 +108,7 @@ def test_server_package_rejects_malformed_run_metadata(monkeypatch) -> None:
             }
         },
     }
-    app = graphblocks_server.GraphBlocksServerApp()
+    app = graphblocks_server.GraphBlocksServerApp(allow_unauthenticated_dev=True)
 
     response = app.handle(
         graphblocks_server.ServerRequest(

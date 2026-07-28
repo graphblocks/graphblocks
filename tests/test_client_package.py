@@ -2121,6 +2121,7 @@ def test_client_package_reads_server_health_over_http_transport(monkeypatch) -> 
     from graphblocks.server import GraphBlocksServerApp, ServerHealth, ServerRequest
 
     app = GraphBlocksServerApp(
+        allow_unauthenticated_dev=True,
         health=ServerHealth(
             "graphblocks-api",
             checks=(("runtime", "healthy", {"workers": 2}),),
