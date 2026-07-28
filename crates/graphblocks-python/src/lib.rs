@@ -9467,6 +9467,7 @@ mod tests {
     };
     use graphblocks_runtime_core::tool_approval::{ToolApprovalRecord, ToolApprovalRequest};
     use graphblocks_runtime_core::tool_result::{ContentPart, ToolResult};
+    use graphblocks_schema::MAX_CANONICAL_INTEGER_DIGITS;
     use pyo3::types::PyAnyMethods;
     use serde_json::{Value, json};
 
@@ -11519,6 +11520,29 @@ mod tests {
             .map_err(|error| error.to_string())?;
         assert_eq!(catalog_closed.get("ok"), Some(&json!(false)));
 
+        Ok(())
+    }
+
+    #[test]
+    fn compile_graph_json_enforces_the_canonical_integer_digit_limit() -> Result<(), String> {
+        pyo3::Python::initialize();
+        let template = r#"{"apiVersion":"graphblocks.ai/v1alpha3","kind":"Graph","metadata":{"name":"native-integer-limit"},"spec":{"nodes":{"configured":{"block":"test.unknown@1","config":{"value":"INTEGER_TOKEN"}}}}}"#;
+        let accepted_digits = "9".repeat(MAX_CANONICAL_INTEGER_DIGITS);
+        let accepted_document = template.replace("\"INTEGER_TOKEN\"", &accepted_digits);
+        let compiled = compile_graph_json(&accepted_document, Some("[]"), true)
+            .map_err(|error| error.to_string())?;
+        assert!(compiled.contains(&accepted_digits));
+
+        let oversized_digits = "9".repeat(MAX_CANONICAL_INTEGER_DIGITS + 1);
+        let oversized_document = template.replace("\"INTEGER_TOKEN\"", &oversized_digits);
+        let error = compile_graph_json(&oversized_document, Some("[]"), true)
+            .expect_err("oversized canonical integer must fail before compilation");
+        assert!(
+            error.to_string().contains(
+                "invalid graph document JSON: canonical JSON integer must not exceed 10000 decimal digits"
+            ),
+            "{error}"
+        );
         Ok(())
     }
 

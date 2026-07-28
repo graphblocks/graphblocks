@@ -307,6 +307,9 @@ impl Error for SchemaIdError {}
 /// Maximum JSON container nesting accepted by GraphBlocks identity and resource APIs.
 pub const MAX_CANONICAL_JSON_DEPTH: usize = 64;
 
+/// Maximum decimal digits accepted for one canonical JSON integer token.
+pub const MAX_CANONICAL_INTEGER_DIGITS: usize = 10_000;
+
 /// Maximum resource-document nesting, kept identical to canonical JSON admission.
 pub const MAX_RESOURCE_DOCUMENT_DEPTH: usize = MAX_CANONICAL_JSON_DEPTH;
 
@@ -314,6 +317,7 @@ pub const MAX_RESOURCE_DOCUMENT_DEPTH: usize = MAX_CANONICAL_JSON_DEPTH;
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum CanonicalJsonError {
     NestingTooDeep { max_depth: usize },
+    IntegerTooLarge { max_digits: usize },
 }
 
 impl Display for CanonicalJsonError {
@@ -322,6 +326,10 @@ impl Display for CanonicalJsonError {
             Self::NestingTooDeep { max_depth } => write!(
                 formatter,
                 "canonical JSON nesting must not exceed {max_depth} levels"
+            ),
+            Self::IntegerTooLarge { max_digits } => write!(
+                formatter,
+                "canonical JSON integer must not exceed {max_digits} decimal digits"
             ),
         }
     }
@@ -450,6 +458,59 @@ impl<'de> Visitor<'de> for DuplicateKeyVisitor {
 
 /// Parses a canonical-domain JSON value without silently collapsing duplicate keys.
 pub fn parse_canonical_json(text: &str) -> Result<Value, CanonicalJsonParseError> {
+    let bytes = text.as_bytes();
+    let mut index = 0_usize;
+    while index < bytes.len() {
+        if bytes[index] == b'"' {
+            index += 1;
+            while index < bytes.len() {
+                match bytes[index] {
+                    b'\\' => index = (index + 2).min(bytes.len()),
+                    b'"' => {
+                        index += 1;
+                        break;
+                    }
+                    _ => index += 1,
+                }
+            }
+            continue;
+        }
+        let starts_number = matches!(bytes[index], b'-' | b'0'..=b'9')
+            && (index == 0
+                || matches!(
+                    bytes[index - 1],
+                    b' ' | b'\t' | b'\r' | b'\n' | b'[' | b'{' | b',' | b':'
+                ));
+        if !starts_number {
+            index += 1;
+            continue;
+        }
+        if bytes[index] == b'-' {
+            index += 1;
+        }
+        let digit_start = index;
+        while index < bytes.len() && bytes[index].is_ascii_digit() {
+            index += 1;
+        }
+        if index > digit_start
+            && !bytes
+                .get(index)
+                .is_some_and(|byte| matches!(byte, b'.' | b'e' | b'E'))
+            && index - digit_start > MAX_CANONICAL_INTEGER_DIGITS
+        {
+            return Err(CanonicalJsonParseError::CanonicalJson(
+                CanonicalJsonError::IntegerTooLarge {
+                    max_digits: MAX_CANONICAL_INTEGER_DIGITS,
+                },
+            ));
+        }
+        while index < bytes.len()
+            && matches!(bytes[index], b'0'..=b'9' | b'.' | b'e' | b'E' | b'+' | b'-')
+        {
+            index += 1;
+        }
+    }
+
     let duplicate_key = Rc::new(RefCell::new(None));
     let detector = DuplicateKeyDetector {
         duplicate_key: Rc::clone(&duplicate_key),
@@ -470,7 +531,7 @@ pub fn parse_canonical_json(text: &str) -> Result<Value, CanonicalJsonParseError
         serde_json::from_str(text).map_err(|error| CanonicalJsonParseError::InvalidJson {
             message: error.to_string(),
         })?;
-    validate_canonical_json_depth(&value).map_err(CanonicalJsonParseError::CanonicalJson)?;
+    validate_canonical_json(&value).map_err(CanonicalJsonParseError::CanonicalJson)?;
     Ok(value)
 }
 
@@ -582,6 +643,30 @@ pub fn validate_canonical_json_depth(value: &Value) -> Result<(), CanonicalJsonE
     validate_json_depth_from(value, 0)
 }
 
+/// Checks every bounded canonical JSON invariant shared by parsing and identity APIs.
+pub fn validate_canonical_json(value: &Value) -> Result<(), CanonicalJsonError> {
+    validate_canonical_json_depth(value)?;
+    let mut pending = vec![value];
+    while let Some(value) = pending.pop() {
+        match value {
+            Value::Array(values) => pending.extend(values),
+            Value::Object(values) => pending.extend(values.values()),
+            Value::Number(number) => {
+                let token = number.as_str();
+                if !token.contains(['.', 'e', 'E'])
+                    && token.strip_prefix('-').unwrap_or(token).len() > MAX_CANONICAL_INTEGER_DIGITS
+                {
+                    return Err(CanonicalJsonError::IntegerTooLarge {
+                        max_digits: MAX_CANONICAL_INTEGER_DIGITS,
+                    });
+                }
+            }
+            Value::Null | Value::Bool(_) | Value::String(_) => {}
+        }
+    }
+    Ok(())
+}
+
 fn drop_json_value_iteratively(value: Value) {
     let mut pending = vec![value];
     while let Some(value) = pending.pop() {
@@ -616,7 +701,7 @@ impl TypedValue {
     }
 
     pub fn try_from_schema(schema: SchemaId, value: Value) -> Result<Self, CanonicalJsonError> {
-        if let Err(error) = validate_canonical_json_depth(&value) {
+        if let Err(error) = validate_canonical_json(&value) {
             drop_json_value_iteratively(value);
             return Err(error);
         }
@@ -688,7 +773,7 @@ pub fn canonical_json(value: &Value) -> Result<String, CanonicalJsonError> {
 
 /// Fallible canonical JSON serialization for values crossing an untrusted boundary.
 pub fn try_canonical_json(value: &Value) -> Result<String, CanonicalJsonError> {
-    validate_canonical_json_depth(value)?;
+    validate_canonical_json(value)?;
     Ok(canonical_json_unchecked(value))
 }
 

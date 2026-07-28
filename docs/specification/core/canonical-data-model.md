@@ -25,7 +25,11 @@ identities and MUST NOT silently coerce malformed persisted data.
 
 Canonical JSON numbers MUST retain their JSON type across implementations.
 Integers are emitted as their exact base-10 digits, including values outside a
-64-bit range, and MUST NOT be converted to exponential floating-point form.
+64-bit range, and MUST NOT be converted to exponential floating-point form. An
+integer token MUST contain no more than 10,000 decimal digits, excluding its
+optional minus sign; readers and programmatic value APIs MUST reject a larger
+integer before it enters canonical identity or hashing. Digit strings remain
+strings and are not subject to the integer-token limit.
 Floating-point and arbitrary-precision decimal values MUST be finite. Values
 representable as binary64 use their shortest round-tripping decimal spelling;
 integral floating-point values retain a decimal marker (`1.0`). Larger decimal
