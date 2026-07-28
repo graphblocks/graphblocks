@@ -14,7 +14,7 @@ from .canonical import canonical_dumps, canonical_hash, canonical_loads
 from .compiler import (
     MAX_NODE_RETRY_ATTEMPTS,
     STATE_CHANGING_TOOL_EFFECTS,
-    compile_graph,
+    compile_graph_reference as compile_graph,
 )
 from .duration import parse_duration_milliseconds, parse_duration_seconds
 from .documents import FrozenDict, FrozenList

@@ -42,7 +42,7 @@ from graphblocks.canonical import (
 )
 from graphblocks import __version__ as GRAPHBLOCKS_VERSION
 from graphblocks.cli import main as graphblocks_cli_main
-from graphblocks.compiler import compile_graph
+from graphblocks.compiler import compile_graph_reference as compile_graph
 from graphblocks.conversation import (
     BranchRequest,
     CompactionRecord,

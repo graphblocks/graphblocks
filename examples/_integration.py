@@ -17,7 +17,7 @@ from typing import Any, Callable
 import yaml
 
 from graphblocks.canonical import canonical_dumps, canonical_hash
-from graphblocks.compiler import compile_graph
+from graphblocks.compiler import compile_graph_reference as compile_graph
 from graphblocks.composition import CompositionResult, compose_documents
 from graphblocks.plugins import BlockCatalog, load_plugin_manifest
 from graphblocks.runtime import InProcessRuntime, RuntimeRegistry

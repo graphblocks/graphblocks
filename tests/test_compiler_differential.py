@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from graphblocks.canonical import canonical_dumps
-from graphblocks.compiler import compile_graph
+from graphblocks.compiler import compile_graph_reference
 from graphblocks.plugins import BlockCatalog
 
 
@@ -31,7 +31,7 @@ def test_python_reference_matches_native_compiler_tck_contract() -> None:
             if allow_unknown_blocks
             else BlockCatalog.from_blocks(raw_catalog)
         )
-        python_result = compile_graph(
+        python_result = compile_graph_reference(
             case["document"],
             block_catalog=python_catalog,
             allow_unknown_blocks=allow_unknown_blocks,
