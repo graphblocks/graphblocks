@@ -9,6 +9,7 @@ import json
 from jsonschema import Draft202012Validator
 from jsonschema.exceptions import SchemaError, ValidationError
 
+from graphblocks._schema_execution import find_regular_expression_keyword
 from graphblocks import (
     AdmittedToolCall,
     ArtifactRef,
@@ -112,6 +113,12 @@ class McpInlineSchemaRegistry:
                 raise McpToolAdapterError(
                     f"MCP inline schema {schema_ref!r} contains "
                     f"non-local {non_local_reference}"
+                )
+            regular_expression_keyword = find_regular_expression_keyword(document)
+            if regular_expression_keyword is not None:
+                raise McpToolAdapterError(
+                    f"MCP inline schema {schema_ref!r} regular-expression keyword "
+                    f"{regular_expression_keyword!r} is disabled"
                 )
             documents[schema_ref] = document
         self._schemas = documents
