@@ -29,8 +29,7 @@ def load_runtime_wrapper(fake_native=None):
     assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     sys.modules[module_name] = module
-    if fake_native is not None:
-        sys.modules[native_module_name] = fake_native
+    sys.modules[native_module_name] = fake_native
     try:
         spec.loader.exec_module(module)
     finally:

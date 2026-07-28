@@ -167,6 +167,23 @@ class NativeCompilerContractError(RuntimeError):
     """Raised when the native compiler returns an invalid Plan contract."""
 
 
+class NativeCompilerUnavailableError(RuntimeError):
+    """Raised when the normative native compiler cannot be loaded."""
+
+
+def _native_compiler_unavailable(
+    detail: object | None = None,
+) -> NativeCompilerUnavailableError:
+    message = (
+        "native GraphBlocks compiler is unavailable; install "
+        "graphblocks[runtime] or call "
+        "graphblocks.compiler.compile_graph_reference explicitly"
+    )
+    if detail is not None and str(detail).strip():
+        message = f"{message}: {detail}"
+    return NativeCompilerUnavailableError(message)
+
+
 def _is_positive_integer(value: object) -> bool:
     return isinstance(value, int) and not isinstance(value, bool) and value > 0
 
@@ -2736,7 +2753,7 @@ def compile_graph(
     *,
     allow_unknown_blocks: bool = False,
 ) -> Plan:
-    return compile_graph_reference(
+    return compile_graph_native_plan(
         document,
         block_catalog=block_catalog,
         allow_unknown_blocks=allow_unknown_blocks,
@@ -2749,7 +2766,46 @@ def compile_graph_native(
     *,
     allow_unknown_blocks: bool = False,
 ) -> dict[str, object]:
-    from graphblocks_runtime import compile_graph as native_compile_graph
+    try:
+        import graphblocks_runtime
+    except ImportError as error:
+        raise _native_compiler_unavailable(error) from error
+
+    native_extension_available = getattr(
+        graphblocks_runtime,
+        "native_extension_available",
+        None,
+    )
+    if callable(native_extension_available):
+        try:
+            available = native_extension_available()
+        except Exception as error:
+            raise _native_compiler_unavailable(
+                "native extension availability check failed"
+            ) from error
+        if available is not True:
+            detail = None
+            native_extension_status = getattr(
+                graphblocks_runtime,
+                "native_extension_status",
+                None,
+            )
+            if callable(native_extension_status):
+                try:
+                    status = native_extension_status()
+                except Exception as error:
+                    raise _native_compiler_unavailable(
+                        "native extension status check failed"
+                    ) from error
+                if isinstance(status, Mapping):
+                    detail = status.get("error")
+            raise _native_compiler_unavailable(detail)
+
+    native_compile_graph = getattr(graphblocks_runtime, "compile_graph", None)
+    if not callable(native_compile_graph):
+        raise _native_compiler_unavailable(
+            "graphblocks_runtime does not expose compile_graph"
+        )
 
     native_block_catalog = (
         block_catalog.to_blocks()

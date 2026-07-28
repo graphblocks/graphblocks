@@ -7,9 +7,11 @@ from types import SimpleNamespace
 
 import pytest
 
+from graphblocks import compiler as compiler_module
 from graphblocks.canonical import canonical_hash
 from graphblocks.compiler import (
     NativeCompilerContractError,
+    NativeCompilerUnavailableError,
     Plan,
     compile_graph,
     compile_graph_native,
@@ -43,12 +45,78 @@ def test_compile_graph_reference_is_the_explicit_python_entrypoint() -> None:
         NORMALIZED_GRAPH,
         block_catalog=catalog,
     )
-    compatibility_plan = compile_graph(
+
+    assert reference_plan.ok
+    assert reference_plan.normalized == NORMALIZED_GRAPH
+
+
+def test_compile_graph_dispatches_to_the_native_plan_entrypoint(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    catalog = BlockCatalog({}, allow_unknown_blocks=True)
+    expected = compile_graph_reference(
         NORMALIZED_GRAPH,
         block_catalog=catalog,
     )
+    calls: list[tuple[dict[str, object], BlockCatalog | None, bool]] = []
 
-    assert reference_plan.to_dict() == compatibility_plan.to_dict()
+    def native_plan(
+        document: dict[str, object],
+        block_catalog: BlockCatalog | None = None,
+        *,
+        allow_unknown_blocks: bool = False,
+    ) -> Plan:
+        calls.append((document, block_catalog, allow_unknown_blocks))
+        return expected
+
+    monkeypatch.setattr(
+        compiler_module,
+        "compile_graph_native_plan",
+        native_plan,
+    )
+
+    plan = compile_graph(
+        NORMALIZED_GRAPH,
+        block_catalog=catalog,
+        allow_unknown_blocks=True,
+    )
+
+    assert plan is expected
+    assert calls == [(NORMALIZED_GRAPH, catalog, True)]
+
+
+def test_compile_graph_fails_closed_when_native_compiler_is_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    reference_called = False
+
+    def unexpected_reference(*args: object, **kwargs: object) -> Plan:
+        nonlocal reference_called
+        reference_called = True
+        raise AssertionError("reference compiler fallback must be explicit")
+
+    monkeypatch.setattr(
+        compiler_module,
+        "compile_graph_reference",
+        unexpected_reference,
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "graphblocks_runtime",
+        SimpleNamespace(
+            compile_graph=lambda *args, **kwargs: _valid_native_result(),
+            native_extension_available=lambda: False,
+            native_extension_status=lambda: {"error": "missing native extension"},
+        ),
+    )
+
+    with pytest.raises(
+        NativeCompilerUnavailableError,
+        match="native GraphBlocks compiler is unavailable",
+    ):
+        compile_graph(NORMALIZED_GRAPH)
+
+    assert reference_called is False
 
 
 def test_native_compile_helper_serializes_python_catalog(

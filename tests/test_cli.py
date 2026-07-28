@@ -19,7 +19,7 @@ from graphblocks.canonical import (
     canonical_loads,
     normalize_graph,
 )
-from graphblocks.compiler import compile_graph
+from graphblocks.compiler import compile_graph_reference
 from graphblocks.diagnostics import Diagnostic, DiagnosticSet
 from graphblocks.plugins import PluginRegistry
 from graphblocks.runtime import SQLiteExecutionJournal
@@ -40,7 +40,7 @@ def _deployment_plan_payload(
     *,
     graph_hash: str | None = None,
 ) -> dict[str, object]:
-    resolved_graph_hash = graph_hash or compile_graph(graph).graph_hash
+    resolved_graph_hash = graph_hash or compile_graph_reference(graph).graph_hash
     deployment_spec_hash = "sha256:" + ("5" * 64)
     resolved_binding_hash = "sha256:" + ("6" * 64)
     target_capability_hash = "sha256:" + ("7" * 64)
@@ -860,7 +860,7 @@ def test_run_cli_rejects_tampered_physical_plan_hash(tmp_path, capsys) -> None:
     deployment_plan_path = tmp_path / "deployment-plan.json"
     graph_path.write_text(yaml.safe_dump(graph), encoding="utf-8")
     release_digest = "sha256:" + ("1" * 64)
-    graph_hash = compile_graph(graph).graph_hash
+    graph_hash = compile_graph_reference(graph).graph_hash
     physical_plan = {
         "graphHash": graph_hash,
         "packageLockHash": None,
@@ -1123,6 +1123,9 @@ def test_run_cli_passes_requested_run_id_to_native_runtime_bridge(tmp_path, caps
         sys.modules,
         "graphblocks_runtime",
         SimpleNamespace(
+            compile_graph=lambda document, **_kwargs: compile_graph_reference(
+                document
+            ).to_dict(),
             native_extension_available=lambda: True,
             run_stdlib_graph_with_options_json=run_stdlib_graph_with_options_json,
         ),
