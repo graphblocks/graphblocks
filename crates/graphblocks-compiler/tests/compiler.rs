@@ -1475,6 +1475,211 @@ fn compile_graph_allows_mandatory_callback_fallback_policy() {
 }
 
 #[test]
+fn compile_graph_validates_callback_subscription_shape() {
+    let graph = json!({
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "callback-subscription-shape"},
+        "spec": {
+            "nodes": {"agent": {"block": "agent.run@1"}},
+            "callbackSubscriptions": [
+                {
+                    "subscriptionId": "sub-invalid-kind",
+                    "scope": "workspace",
+                    "scopeId": "workspace-1",
+                    "delivery": {"kind": "http_callback"}
+                },
+                {
+                    "subscriptionId": "sub-invalid-method",
+                    "scope": "run",
+                    "scopeId": "run-1",
+                    "delivery": {
+                        "kind": "webhook",
+                        "url": "https://relay.example.com/events",
+                        "method": "GET",
+                        "signing": {
+                            "algorithm": "hmac-sha256",
+                            "secretRef": "secret://relay"
+                        }
+                    }
+                },
+                {
+                    "subscriptionId": "sub-invalid-delivery",
+                    "scope": "billing",
+                    "scopeId": "account-1",
+                    "authoritativeFor": ["billing"],
+                    "delivery": "https://127.0.0.1/events"
+                }
+            ]
+        }
+    });
+
+    let errors = compile_graph_for_discovery(&graph)
+        .diagnostics
+        .into_iter()
+        .filter(|diagnostic| diagnostic.severity == Severity::Error)
+        .map(|diagnostic| (diagnostic.code, diagnostic.path, diagnostic.message))
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        errors,
+        vec![
+            (
+                "GB1027".to_owned(),
+                "$.spec.callbackSubscriptions[0].scope".to_owned(),
+                "callback subscription scope must be one of run, conversation, project, tenant, or deployment".to_owned(),
+            ),
+            (
+                "GB1027".to_owned(),
+                "$.spec.callbackSubscriptions[0].delivery.kind".to_owned(),
+                "callback delivery kind must be one of webhook, websocket, sse, push_notification, email, or local_callback".to_owned(),
+            ),
+            (
+                "GB1027".to_owned(),
+                "$.spec.callbackSubscriptions[1].delivery.method".to_owned(),
+                "webhook callback delivery method must be POST".to_owned(),
+            ),
+            (
+                "GB1027".to_owned(),
+                "$.spec.callbackSubscriptions[2].delivery".to_owned(),
+                "callback subscription delivery must be a mapping".to_owned(),
+            ),
+            (
+                "GB1027".to_owned(),
+                "$.spec.callbackSubscriptions[2].scope".to_owned(),
+                "callback subscription scope must be one of run, conversation, project, tenant, or deployment".to_owned(),
+            ),
+            (
+                "GB6004".to_owned(),
+                "$.spec.callbackSubscriptions[2]".to_owned(),
+                "callback delivery must not be used as the source of truth for run correctness or accounting".to_owned(),
+            ),
+        ]
+    );
+}
+
+#[test]
+fn compile_graph_allows_mandatory_callback_recovery_contracts() {
+    let subscriptions = [
+        json!({
+            "subscriptionId": "sub-retry",
+            "scope": "run",
+            "scopeId": "run-1",
+            "mandatory": true,
+            "delivery": {
+                "kind": "local_callback",
+                "retryPolicyRef": "retry/default"
+            }
+        }),
+        json!({
+            "subscriptionId": "sub-dead-letter-ref",
+            "scope": "run",
+            "scopeId": "run-1",
+            "mandatory": true,
+            "deadLetterRef": {"name": "dead-letter/default"},
+            "delivery": {"kind": "local_callback"}
+        }),
+        json!({
+            "subscriptionId": "sub-fallback-ref",
+            "scope": "run",
+            "scopeId": "run-1",
+            "failurePolicy": "fail_run_on_failure",
+            "fallbackRef": {"name": "operator-review"},
+            "delivery": {"kind": "local_callback"}
+        }),
+        json!({
+            "subscriptionId": "sub-later-dead-letter-ref",
+            "scope": "run",
+            "scopeId": "run-1",
+            "failurePolicy": "pause_run_on_failure",
+            "deadLetterPolicy": "",
+            "deadLetterRef": "dead-letter/default",
+            "delivery": {"kind": "local_callback"}
+        }),
+    ];
+
+    for subscription in subscriptions {
+        let graph = json!({
+            "apiVersion": "graphblocks.ai/v1alpha3",
+            "kind": "Graph",
+            "metadata": {"name": "callback-recovery-contract"},
+            "spec": {
+                "nodes": {"agent": {"block": "agent.run@1"}},
+                "callbackSubscriptions": [subscription]
+            }
+        });
+
+        let error_codes = compile_graph_for_discovery(&graph)
+            .diagnostics
+            .into_iter()
+            .filter(|diagnostic| diagnostic.severity == Severity::Error)
+            .map(|diagnostic| diagnostic.code)
+            .collect::<Vec<_>>();
+
+        assert!(
+            !error_codes.contains(&"GB6006".to_owned()),
+            "{error_codes:?}"
+        );
+        assert!(
+            !error_codes.contains(&"GB6014".to_owned()),
+            "{error_codes:?}"
+        );
+    }
+}
+
+#[test]
+fn compile_graph_requires_explicit_callback_failure_recovery() {
+    let graph = json!({
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "callback-failure-recovery"},
+        "spec": {
+            "nodes": {"agent": {"block": "agent.run@1"}},
+            "callbackSubscriptions": [
+                {
+                    "subscriptionId": "sub-retry-dead-letter",
+                    "scope": "run",
+                    "scopeId": "run-1",
+                    "failurePolicy": "retry_then_dead_letter",
+                    "delivery": {"kind": "local_callback"}
+                },
+                {
+                    "subscriptionId": "sub-empty-policy",
+                    "scope": "run",
+                    "scopeId": "run-1",
+                    "mandatory": true,
+                    "failurePolicy": "",
+                    "delivery": {"kind": "local_callback"}
+                }
+            ]
+        }
+    });
+
+    let errors = compile_graph_for_discovery(&graph)
+        .diagnostics
+        .into_iter()
+        .filter(|diagnostic| diagnostic.severity == Severity::Error)
+        .map(|diagnostic| (diagnostic.code, diagnostic.path, diagnostic.message))
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        errors,
+        vec![
+            (
+                "GB6014".to_owned(),
+                "$.spec.callbackSubscriptions[0].deadLetterPolicy".to_owned(),
+                "mandatory callback failure policy requires dead-letter or fallback behavior".to_owned(),
+            ),
+            (
+                "GB6006".to_owned(),
+                "$.spec.callbackSubscriptions[1].failurePolicy".to_owned(),
+                "mandatory callback delivery requires retry, dead-letter, or fallback failure policy".to_owned(),
+            ),
+        ]
+    );
+}
+
+#[test]
 fn compile_graph_reports_async_poll_operation_without_timeout() {
     let graph = json!({
         "apiVersion": GRAPH_API_VERSION,

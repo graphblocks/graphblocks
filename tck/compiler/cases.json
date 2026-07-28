@@ -1882,6 +1882,164 @@
     }
   },
   {
+    "name": "callback_subscription_structural_parity",
+    "document": {
+      "apiVersion": "graphblocks.ai/v1alpha3",
+      "kind": "Graph",
+      "metadata": {
+        "name": "callback-subscription-structural-parity"
+      },
+      "spec": {
+        "nodes": {},
+        "callbackSubscriptions": [
+          {
+            "subscriptionId": "malformed",
+            "scope": "billing",
+            "authoritativeFor": [
+              "billing"
+            ],
+            "mandatory": true,
+            "ordering": {
+              "mode": "ordered"
+            },
+            "delivery": "https://127.0.0.1/events"
+          },
+          {
+            "subscriptionId": "invalid-kind",
+            "scope": "workspace",
+            "delivery": {
+              "kind": "http_callback"
+            }
+          },
+          {
+            "subscriptionId": "non-post",
+            "scope": "run",
+            "delivery": {
+              "kind": "webhook",
+              "url": "https://relay.example.com/events",
+              "method": "GET",
+              "signing": {
+                "algorithm": "hmac-sha256",
+                "secretRef": "secret://relay"
+              }
+            }
+          },
+          {
+            "subscriptionId": "retry-no-dead-letter",
+            "scope": "run",
+            "failurePolicy": "retry_then_dead_letter",
+            "delivery": {
+              "kind": "local_callback"
+            }
+          }
+        ]
+      }
+    },
+    "expected": {
+      "graph_hash": "sha256:ddb86f908620e4ee8394cd50db8360ce2cca29647fec26efad40c37a90abc441",
+      "error_codes": [
+        "GB1027",
+        "GB1027",
+        "GB6004",
+        "GB6006",
+        "GB6012",
+        "GB1027",
+        "GB1027",
+        "GB1027",
+        "GB6014"
+      ]
+    }
+  },
+  {
+    "name": "callback_subscription_positive_controls",
+    "document": {
+      "apiVersion": "graphblocks.ai/v1alpha3",
+      "kind": "Graph",
+      "metadata": {
+        "name": "callback-subscription-positive-controls"
+      },
+      "spec": {
+        "nodes": {},
+        "callbackSubscriptions": [
+          {
+            "subscriptionId": "dead-letter",
+            "scope": "conversation",
+            "mandatory": true,
+            "deadLetterPolicy": "standard",
+            "delivery": {
+              "kind": "local_callback"
+            }
+          },
+          {
+            "subscriptionId": "retry",
+            "scope": "project",
+            "mandatory": true,
+            "delivery": {
+              "kind": "webhook",
+              "url": "https://relay.example.com/events",
+              "method": "POST",
+              "timeout": "30s",
+              "maxPayloadBytes": 262144,
+              "retryPolicyRef": "webhook-standard",
+              "signing": {
+                "algorithm": "hmac-sha256",
+                "secretRef": "secret://relay"
+              },
+              "ordering": {
+                "mode": "ordered",
+                "scope": "project"
+              }
+            }
+          },
+          {
+            "subscriptionId": "fallback",
+            "scope": "tenant",
+            "mandatory": true,
+            "fallbackPolicy": "operator_review",
+            "delivery": {
+              "kind": "websocket",
+              "ordering": {
+                "mode": "ordered",
+                "scope": "tenant"
+              }
+            }
+          },
+          {
+            "subscriptionId": "retry-dead-letter",
+            "scope": "deployment",
+            "failurePolicy": "retry_then_dead_letter",
+            "deadLetterPolicy": "standard",
+            "delivery": {
+              "kind": "sse",
+              "ordering": {
+                "mode": "ordered",
+                "scope": "deployment"
+              }
+            }
+          },
+          {
+            "subscriptionId": "push",
+            "scope": "run",
+            "delivery": {
+              "kind": "push_notification"
+            }
+          },
+          {
+            "subscriptionId": "email",
+            "scope": "conversation",
+            "delivery": {
+              "kind": "email"
+            }
+          }
+        ]
+      }
+    },
+    "expected": {
+      "graph_hash": "sha256:a68d72fe7fc2b84644d3b9f8b45c57ce0064db5717cf9026e9c919f3188e8c98",
+      "error_codes": []
+    }
+  },
+  {
     "name": "background_run_missing_replay_and_retention",
     "document": {
       "apiVersion": "graphblocks.ai/v1alpha3",

@@ -123,6 +123,16 @@ const DEFAULT_CALLBACK_MAX_PAYLOAD_BYTES: u64 = 262_144;
 pub const MAX_NODE_RETRY_ATTEMPTS: u64 = 100;
 const MANDATORY_CALLBACK_FAILURE_POLICIES: [&str; 2] =
     ["pause_run_on_failure", "fail_run_on_failure"];
+const VALID_CALLBACK_SUBSCRIPTION_SCOPES: [&str; 5] =
+    ["run", "conversation", "project", "tenant", "deployment"];
+const VALID_CALLBACK_DELIVERY_KINDS: [&str; 6] = [
+    "webhook",
+    "websocket",
+    "sse",
+    "push_notification",
+    "email",
+    "local_callback",
+];
 const ORDER_CAPABLE_CALLBACK_TARGETS: [&str; 3] = ["webhook", "websocket", "sse"];
 const PRIMITIVE_TYPE_REFS: [&str; 7] = [
     "Any", "Boolean", "Bytes", "Integer", "Number", "Null", "String",
@@ -786,6 +796,17 @@ fn has_non_empty_string(value: Option<&Value>) -> bool {
     value
         .and_then(Value::as_str)
         .is_some_and(|value| !value.trim().is_empty())
+}
+
+fn json_value_is_truthy(value: &Value) -> bool {
+    match value {
+        Value::Null => false,
+        Value::Bool(value) => *value,
+        Value::Number(value) => value.as_f64().is_some_and(|value| value != 0.0),
+        Value::String(value) => !value.is_empty(),
+        Value::Array(value) => !value.is_empty(),
+        Value::Object(value) => !value.is_empty(),
+    }
 }
 
 fn truthy_flag(config: &Map<String, Value>, names: &[&str]) -> bool {
@@ -1602,45 +1623,42 @@ fn has_callback_dead_letter_behavior(
     config: &Map<String, Value>,
     delivery: &Map<String, Value>,
 ) -> bool {
-    config
-        .get("failurePolicy")
-        .or_else(|| config.get("failure_policy"))
-        .and_then(Value::as_str)
-        == Some("retry_then_dead_letter")
-        || has_non_empty_string(
-            config
-                .get("deadLetterPolicy")
-                .or_else(|| config.get("dead_letter_policy"))
-                .or_else(|| config.get("deadLetterRef"))
-                .or_else(|| config.get("dead_letter_ref"))
-                .or_else(|| delivery.get("deadLetterPolicy"))
-                .or_else(|| delivery.get("dead_letter_policy"))
-                .or_else(|| delivery.get("deadLetterRef"))
-                .or_else(|| delivery.get("dead_letter_ref")),
-        )
-        || config
-            .get("deadLetterPolicy")
-            .or_else(|| config.get("dead_letter_policy"))
-            .or_else(|| delivery.get("deadLetterPolicy"))
-            .or_else(|| delivery.get("dead_letter_policy"))
-            .is_some_and(Value::is_object)
-        || has_non_empty_string(
-            config
-                .get("fallbackPolicy")
-                .or_else(|| config.get("fallback_policy"))
-                .or_else(|| config.get("fallbackRef"))
-                .or_else(|| config.get("fallback_ref"))
-                .or_else(|| delivery.get("fallbackPolicy"))
-                .or_else(|| delivery.get("fallback_policy"))
-                .or_else(|| delivery.get("fallbackRef"))
-                .or_else(|| delivery.get("fallback_ref")),
-        )
-        || config
-            .get("fallbackPolicy")
-            .or_else(|| config.get("fallback_policy"))
-            .or_else(|| delivery.get("fallbackPolicy"))
-            .or_else(|| delivery.get("fallback_policy"))
-            .is_some_and(Value::is_object)
+    let mut dead_letter = None;
+    for candidate in [
+        config.get("deadLetterPolicy"),
+        config.get("dead_letter_policy"),
+        config.get("deadLetterRef"),
+        config.get("dead_letter_ref"),
+        delivery.get("deadLetterPolicy"),
+        delivery.get("dead_letter_policy"),
+        delivery.get("deadLetterRef"),
+        delivery.get("dead_letter_ref"),
+    ] {
+        if dead_letter.is_none_or(|value| !json_value_is_truthy(value)) {
+            dead_letter = candidate;
+        }
+    }
+
+    let mut fallback = None;
+    for candidate in [
+        config.get("fallbackPolicy"),
+        config.get("fallback_policy"),
+        config.get("fallbackRef"),
+        config.get("fallback_ref"),
+        delivery.get("fallbackPolicy"),
+        delivery.get("fallback_policy"),
+        delivery.get("fallbackRef"),
+        delivery.get("fallback_ref"),
+    ] {
+        if fallback.is_none_or(|value| !json_value_is_truthy(value)) {
+            fallback = candidate;
+        }
+    }
+
+    has_non_empty_string(dead_letter)
+        || dead_letter.is_some_and(Value::is_object)
+        || has_non_empty_string(fallback)
+        || fallback.is_some_and(Value::is_object)
 }
 
 fn diagnose_callback_subscription_config(
@@ -1663,9 +1681,19 @@ fn diagnose_callback_subscription_config(
             ("fallbackRef", "fallback_ref"),
         ],
     );
-    let Some(delivery) = config.get("delivery").and_then(Value::as_object) else {
-        return;
-    };
+    let empty_delivery = Map::new();
+    let delivery_value = config.get("delivery");
+    let delivery_is_mapping = delivery_value.is_some_and(Value::is_object);
+    if !delivery_is_mapping {
+        diagnostics.push(Diagnostic::error(
+            "GB1027",
+            "callback subscription delivery must be a mapping",
+            format!("{path}.delivery"),
+        ));
+    }
+    let delivery = delivery_value
+        .and_then(Value::as_object)
+        .unwrap_or(&empty_delivery);
     diagnose_alias_conflicts(
         diagnostics,
         delivery,
@@ -1686,8 +1714,35 @@ fn diagnose_callback_subscription_config(
             &[("secretRef", "secret_ref")],
         );
     }
+    let scope = config.get("scope").and_then(Value::as_str);
+    if !scope.is_some_and(|scope| VALID_CALLBACK_SUBSCRIPTION_SCOPES.contains(&scope)) {
+        diagnostics.push(Diagnostic::error(
+            "GB1027",
+            "callback subscription scope must be one of run, conversation, project, tenant, or deployment",
+            format!("{path}.scope"),
+        ));
+    }
     let delivery_kind = delivery.get("kind").and_then(Value::as_str);
+    if delivery_is_mapping
+        && !delivery_kind.is_some_and(|kind| VALID_CALLBACK_DELIVERY_KINDS.contains(&kind))
+    {
+        diagnostics.push(Diagnostic::error(
+            "GB1027",
+            "callback delivery kind must be one of webhook, websocket, sse, push_notification, email, or local_callback",
+            format!("{path}.delivery.kind"),
+        ));
+    }
     if delivery_kind == Some("webhook") {
+        if delivery
+            .get("method")
+            .is_some_and(|method| method.as_str() != Some("POST"))
+        {
+            diagnostics.push(Diagnostic::error(
+                "GB1027",
+                "webhook callback delivery method must be POST",
+                format!("{path}.delivery.method"),
+            ));
+        }
         if !has_callback_signing(delivery) {
             diagnostics.push(Diagnostic::error(
                 "GB6002",
@@ -1708,7 +1763,7 @@ fn diagnose_callback_subscription_config(
         || config
             .get("authoritativeFor")
             .or_else(|| config.get("authoritative_for"))
-            .is_some()
+            .is_some_and(json_value_is_truthy)
     {
         diagnostics.push(Diagnostic::error(
             "GB6004",
@@ -1717,16 +1772,40 @@ fn diagnose_callback_subscription_config(
         ));
     }
 
-    let failure_policy = config
+    let failure_policy_value = if config
         .get("failurePolicy")
-        .or_else(|| config.get("failure_policy"))
-        .and_then(Value::as_str);
+        .is_some_and(json_value_is_truthy)
+    {
+        config.get("failurePolicy")
+    } else {
+        config.get("failure_policy")
+    };
+    let failure_policy = failure_policy_value.and_then(Value::as_str);
     let mandatory = config.get("mandatory").and_then(Value::as_bool) == Some(true)
         || delivery.get("mandatory").and_then(Value::as_bool) == Some(true)
         || failure_policy.is_some_and(|failure_policy| {
             MANDATORY_CALLBACK_FAILURE_POLICIES.contains(&failure_policy)
         });
-    if mandatory && failure_policy.is_none() {
+
+    let mut retry_policy = None;
+    for candidate in [
+        config.get("retryPolicyRef"),
+        config.get("retry_policy_ref"),
+        delivery.get("retryPolicyRef"),
+        delivery.get("retry_policy_ref"),
+    ] {
+        if retry_policy.is_none_or(|value| !json_value_is_truthy(value)) {
+            retry_policy = candidate;
+        }
+    }
+    let has_retry_policy =
+        has_non_empty_string(retry_policy) || retry_policy.is_some_and(Value::is_object);
+    let has_dead_letter_behavior = has_callback_dead_letter_behavior(config, delivery);
+    if mandatory
+        && failure_policy_value.is_none_or(|value| !json_value_is_truthy(value))
+        && !has_retry_policy
+        && !has_dead_letter_behavior
+    {
         diagnostics.push(Diagnostic::error(
             "GB6006",
             "mandatory callback delivery requires retry, dead-letter, or fallback failure policy",
@@ -1751,9 +1830,10 @@ fn diagnose_callback_subscription_config(
         ));
     }
 
-    if failure_policy
-        .is_some_and(|failure_policy| MANDATORY_CALLBACK_FAILURE_POLICIES.contains(&failure_policy))
-        && !has_callback_dead_letter_behavior(config, delivery)
+    if failure_policy.is_some_and(|failure_policy| {
+        MANDATORY_CALLBACK_FAILURE_POLICIES.contains(&failure_policy)
+            || failure_policy == "retry_then_dead_letter"
+    }) && !has_dead_letter_behavior
     {
         diagnostics.push(Diagnostic::error(
             "GB6014",

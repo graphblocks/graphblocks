@@ -70,6 +70,23 @@ tenant/principal scope. Webhook targets MUST declare timeout, retry limits,
 payload bound, and a signing method. Redirects, DNS resolution, and egress MUST
 obey deployment policy.
 
+<a id="GB-AAC-CALLBACK-SUBSCRIPTION-COMPILER-001"></a>
+
+The compiler MUST require callback subscription `scope` to be one of `run`,
+`conversation`, `project`, `tenant`, or `deployment`. `delivery` MUST be a
+mapping whose `kind` is one of `webhook`, `websocket`, `sse`,
+`push_notification`, `email`, or `local_callback`; webhook delivery defaults to
+`POST` and MUST reject every explicitly configured method other than `POST`.
+Malformed delivery configuration MUST NOT stop validation of the subscription's
+scope, authority, or failure semantics.
+
+A mandatory callback MUST declare a non-empty failure policy, retry policy
+reference, dead-letter behavior, or fallback behavior. The failure policies
+`pause_run_on_failure`, `fail_run_on_failure`, and `retry_then_dead_letter` MUST
+also name explicit dead-letter or fallback behavior; the policy name alone does
+not create a dead-letter destination. Ordered delivery MUST be rejected for
+targets other than `webhook`, `websocket`, or `sse`.
+
 For hostname targets, the dispatcher MUST resolve every candidate address and
 reject the delivery if any candidate violates the egress policy. The transport
 MUST connect to one of those validated addresses without resolving the hostname
