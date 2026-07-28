@@ -767,8 +767,19 @@ fn parse_block_catalog_version_string(version: &str, index: usize) -> Result<u64
     })
 }
 
+fn is_positive_json_integer(value: &Value) -> bool {
+    value.as_number().is_some_and(|number| {
+        let number = number.as_str();
+        !number.is_empty()
+            && number.bytes().all(|byte| byte.is_ascii_digit())
+            && number.bytes().any(|byte| byte != b'0')
+    })
+}
+
 fn positive_integer(value: Option<&Value>) -> Option<u64> {
-    value.and_then(Value::as_u64).filter(|value| *value > 0)
+    value
+        .filter(|value| is_positive_json_integer(value))
+        .and_then(Value::as_u64)
 }
 
 fn has_non_empty_string(value: Option<&Value>) -> bool {
@@ -876,22 +887,21 @@ fn callback_schema_required(config: &Map<String, Value>) -> bool {
 
 fn has_async_callback_schema(config: &Map<String, Value>) -> bool {
     if let Some(callback) = callback_config(config)
-        && has_non_empty_string(
-            callback
-                .get("schema")
-                .or_else(|| callback.get("acceptedSchema"))
-                .or_else(|| callback.get("accepted_schema"))
-                .or_else(|| callback.get("expectedSchema"))
-                .or_else(|| callback.get("expected_schema")),
-        )
+        && [
+            "schema",
+            "acceptedSchema",
+            "accepted_schema",
+            "expectedSchema",
+            "expected_schema",
+        ]
+        .iter()
+        .any(|field_name| has_non_empty_string(callback.get(*field_name)))
     {
         return true;
     }
-    has_non_empty_string(
-        config
-            .get("callbackSchema")
-            .or_else(|| config.get("callback_schema")),
-    )
+    ["callbackSchema", "callback_schema"]
+        .iter()
+        .any(|field_name| has_non_empty_string(config.get(*field_name)))
 }
 
 fn has_async_callback_completion_ref(config: &Map<String, Value>) -> bool {
@@ -910,12 +920,6 @@ fn has_async_polling_completion_ref(config: &Map<String, Value>) -> bool {
                 .get("pollingRef")
                 .or_else(|| config.get("polling_ref")),
         )
-}
-
-fn configured_positive_integer(config: &Map<String, Value>, names: &[&str]) -> Option<u64> {
-    names
-        .iter()
-        .find_map(|name| positive_integer(config.get(*name)))
 }
 
 fn has_async_resume_reevaluation(config: &Map<String, Value>) -> bool {
@@ -1100,6 +1104,26 @@ fn diagnose_async_operation_config(
             path,
         ));
     }
+    if let Some(resume_token_hash) = config
+        .get("resumeTokenHash")
+        .or_else(|| config.get("resume_token_hash"))
+        && !resume_token_hash.as_str().is_some_and(|resume_token_hash| {
+            resume_token_hash
+                .strip_prefix("sha256:")
+                .is_some_and(|digest| {
+                    digest.len() == 64
+                        && digest
+                            .bytes()
+                            .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
+                })
+        })
+    {
+        diagnostics.push(Diagnostic::error(
+            "GB1026",
+            "async operation resumeTokenHash must be a canonical sha256 digest",
+            format!("{path}.resumeTokenHash"),
+        ));
+    }
     let has_relative_timeout = has_async_relative_timeout(config);
     let has_absolute_deadline = has_async_absolute_deadline(config);
     let has_bounded_timeout = has_relative_timeout || has_absolute_deadline;
@@ -1122,6 +1146,13 @@ fn diagnose_async_operation_config(
         diagnostics.push(Diagnostic::error(
             "GB6001",
             "async operation callback waits require a timeout or explicit infinite-wait policy",
+            path,
+        ));
+    }
+    if !has_async_idempotency_key(config) {
+        diagnostics.push(Diagnostic::error(
+            "GB6003",
+            "async operation callbacks require an idempotency key",
             path,
         ));
     }
@@ -1161,13 +1192,6 @@ fn diagnose_async_operation_config(
             ));
         }
     }
-    if !has_async_idempotency_key(config) {
-        diagnostics.push(Diagnostic::error(
-            "GB6003",
-            "async operation callbacks require an idempotency key",
-            path,
-        ));
-    }
     if (require_callback_schema || callback_schema_required(config))
         && !has_async_callback_schema(config)
     {
@@ -1177,36 +1201,83 @@ fn diagnose_async_operation_config(
             format!("{path}.callback"),
         ));
     }
-    let expected_payload_bytes = callback_config(config)
-        .and_then(|callback| {
-            configured_positive_integer(
-                callback,
-                &[
-                    "expectedPayloadBytes",
-                    "expected_payload_bytes",
-                    "expectedMaxPayloadBytes",
-                    "expected_max_payload_bytes",
-                ],
-            )
-        })
-        .or_else(|| {
-            configured_positive_integer(
-                config,
-                &[
-                    "expectedPayloadBytes",
-                    "expected_payload_bytes",
-                    "expectedMaxPayloadBytes",
-                    "expected_max_payload_bytes",
-                ],
-            )
+    for (payload_field, field_names) in [
+        (
+            "expectedPayloadBytes",
+            [
+                "expectedPayloadBytes",
+                "expected_payload_bytes",
+                "expectedMaxPayloadBytes",
+                "expected_max_payload_bytes",
+            ]
+            .as_slice(),
+        ),
+        (
+            "maxPayloadBytes",
+            ["maxPayloadBytes", "max_payload_bytes"].as_slice(),
+        ),
+    ] {
+        for (payload_config, payload_path) in [
+            (callback_config(config), format!("{path}.callback")),
+            (Some(config), path.to_owned()),
+        ] {
+            let Some(payload_config) = payload_config else {
+                continue;
+            };
+            for field_name in field_names {
+                let Some(value) = payload_config.get(*field_name) else {
+                    continue;
+                };
+                if !is_positive_json_integer(value) {
+                    diagnostics.push(Diagnostic::error(
+                        "GB1026",
+                        format!("async callback {payload_field} must be a positive integer"),
+                        format!("{payload_path}.{field_name}"),
+                    ));
+                }
+            }
+        }
+    }
+    let expected_payload_bytes = [callback_config(config), Some(config)]
+        .into_iter()
+        .flatten()
+        .find_map(|payload_config| {
+            [
+                "expectedPayloadBytes",
+                "expected_payload_bytes",
+                "expectedMaxPayloadBytes",
+                "expected_max_payload_bytes",
+            ]
+            .into_iter()
+            .find_map(|field_name| {
+                payload_config
+                    .get(field_name)
+                    .filter(|value| is_positive_json_integer(value))
+                    .and_then(Value::as_number)
+                    .map(serde_json::Number::as_str)
+            })
         });
-    let max_payload_bytes = callback_config(config)
-        .and_then(|callback| {
-            configured_positive_integer(callback, &["maxPayloadBytes", "max_payload_bytes"])
-        })
-        .or_else(|| configured_positive_integer(config, &["maxPayloadBytes", "max_payload_bytes"]))
-        .unwrap_or(DEFAULT_CALLBACK_MAX_PAYLOAD_BYTES);
-    if expected_payload_bytes.is_some_and(|expected| expected > max_payload_bytes) {
+    let configured_max_payload_bytes = [callback_config(config), Some(config)]
+        .into_iter()
+        .flatten()
+        .find_map(|payload_config| {
+            ["maxPayloadBytes", "max_payload_bytes"]
+                .into_iter()
+                .find_map(|field_name| {
+                    payload_config
+                        .get(field_name)
+                        .filter(|value| is_positive_json_integer(value))
+                        .and_then(Value::as_number)
+                        .map(serde_json::Number::as_str)
+                })
+        });
+    let default_max_payload_bytes = DEFAULT_CALLBACK_MAX_PAYLOAD_BYTES.to_string();
+    let max_payload_bytes =
+        configured_max_payload_bytes.unwrap_or(default_max_payload_bytes.as_str());
+    if expected_payload_bytes.is_some_and(|expected| {
+        expected.len() > max_payload_bytes.len()
+            || (expected.len() == max_payload_bytes.len() && expected > max_payload_bytes)
+    }) {
         diagnostics.push(Diagnostic::error(
             "GB6010",
             "async callback payload contract exceeds the configured inline payload limit",

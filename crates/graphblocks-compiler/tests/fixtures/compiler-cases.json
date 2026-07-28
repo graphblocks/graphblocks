@@ -1713,6 +1713,7 @@
           "ci": {
             "kind": "ci_job",
             "expiresAtUnixMs": 1801000,
+            "resumeTokenHash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             "idempotencyKey": "$input.request_id",
             "attemptFencing": true,
             "callback": {
@@ -1730,7 +1731,7 @@
       }
     },
     "expected": {
-      "graph_hash": "sha256:71389af7b72b31cc8960abc6628179cb296a0c7852f04cd03cc777c093de7d7d",
+      "graph_hash": "sha256:254a944a12b9b55a5c9e7437f82cd811da8ef7d7a08a555a194d1e966604877a",
       "error_codes": []
     }
   },
@@ -2677,6 +2678,154 @@
         "GB1002",
         "GB1014"
       ]
+    }
+  },
+  {
+    "name": "noncanonical_async_resume_token_hash",
+    "document": {
+      "apiVersion": "graphblocks.ai/v1alpha3",
+      "kind": "Graph",
+      "metadata": {
+        "name": "noncanonical-async-resume-token-hash"
+      },
+      "spec": {
+        "nodes": {},
+        "asyncOperations": {
+          "external": {
+            "timeout": "30m",
+            "idempotencyKey": "external-1",
+            "attemptFencing": true,
+            "resume": {
+              "requirePolicyReevaluation": true,
+              "requireBudgetReservation": true,
+              "requireReleaseCompatibility": true,
+              "requireOwnershipFence": true
+            },
+            "resumeTokenHash": "sha256:resume-token"
+          }
+        }
+      }
+    },
+    "expected": {
+      "graph_hash": "sha256:cc4b5d97b9c3fd7f583e3e0d0e323d6e270b7adb343fc487e790e90bb1f26031",
+      "error_codes": [
+        "GB1026"
+      ]
+    }
+  },
+  {
+    "name": "invalid_async_payload_limits",
+    "document": {
+      "apiVersion": "graphblocks.ai/v1alpha3",
+      "kind": "Graph",
+      "metadata": {
+        "name": "invalid-async-payload-limits"
+      },
+      "spec": {
+        "nodes": {},
+        "asyncOperations": {
+          "external": {
+            "timeout": "30m",
+            "idempotencyKey": "external-1",
+            "attemptFencing": true,
+            "resume": {
+              "requirePolicyReevaluation": true,
+              "requireBudgetReservation": true,
+              "requireReleaseCompatibility": true,
+              "requireOwnershipFence": true
+            },
+            "callback": {
+              "required": true,
+              "schema": "schemas/ExternalCallback@1",
+              "expectedPayloadBytes": 0,
+              "maxPayloadBytes": false
+            },
+            "expectedMaxPayloadBytes": -1,
+            "max_payload_bytes": "1"
+          }
+        }
+      }
+    },
+    "expected": {
+      "graph_hash": "sha256:3c038800a00ee44760decca8e31da9c294f3417f16057da4009f430da4645357",
+      "error_codes": [
+        "GB1026",
+        "GB1026",
+        "GB1026",
+        "GB1026"
+      ]
+    }
+  },
+  {
+    "name": "async_arbitrary_positive_payload",
+    "document": {
+      "apiVersion": "graphblocks.ai/v1alpha3",
+      "kind": "Graph",
+      "metadata": {
+        "name": "async-arbitrary-positive-payload"
+      },
+      "spec": {
+        "nodes": {},
+        "asyncOperations": {
+          "external": {
+            "timeout": "30m",
+            "idempotencyKey": "external-1",
+            "attemptFencing": true,
+            "callback": {
+              "required": true,
+              "schema": "schemas/ExternalCallback@1",
+              "expectedPayloadBytes": 18446744073709551616
+            },
+            "resume": {
+              "requirePolicyReevaluation": true,
+              "requireBudgetReservation": true,
+              "requireReleaseCompatibility": true,
+              "requireOwnershipFence": true
+            }
+          }
+        }
+      }
+    },
+    "expected": {
+      "graph_hash": "sha256:a70dfa3df27cfad70e8e63585239b11eb0a7cbed00defd70aab3547752710f54",
+      "error_codes": [
+        "GB6010"
+      ]
+    }
+  },
+  {
+    "name": "async_callback_schema_fallback",
+    "document": {
+      "apiVersion": "graphblocks.ai/v1alpha3",
+      "kind": "Graph",
+      "metadata": {
+        "name": "async-empty-schema-fallback"
+      },
+      "spec": {
+        "nodes": {},
+        "asyncOperations": {
+          "external": {
+            "timeout": "30m",
+            "idempotencyKey": "external-1",
+            "attemptFencing": true,
+            "callback": {
+              "required": true,
+              "schema": "",
+              "acceptedSchema": "schemas/ExternalCallback@1"
+            },
+            "resume": {
+              "requirePolicyReevaluation": true,
+              "requireBudgetReservation": true,
+              "requireReleaseCompatibility": true,
+              "requireOwnershipFence": true
+            }
+          }
+        }
+      }
+    },
+    "expected": {
+      "graph_hash": "sha256:57b7ba60df7ca82b92555e0712ad3c1c298fd30241bdb30e1c56024d95c4a80b",
+      "error_codes": []
     }
   }
 ]

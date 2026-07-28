@@ -122,6 +122,18 @@ idempotency key, expected callback schema, deadline, policy snapshot, release,
 and ownership fences. It is committed before provider invocation whenever
 possible. Callback and polling results normalize into one result model.
 
+<a id="GB-AAC-COMPILER-CONTRACT-001"></a>
+
+When graph configuration supplies `resumeTokenHash`, the compiler MUST require
+the canonical form `sha256:` followed by exactly 64 lowercase hexadecimal
+characters. `expectedPayloadBytes`, `expectedMaxPayloadBytes`, and
+`maxPayloadBytes`, including their snake-case aliases, MUST be positive JSON
+integers and MUST NOT accept booleans or numerically equivalent floating-point
+values. Callback-scoped payload values take precedence over operation-scoped
+values, and an absent maximum defaults to 262,144 bytes. If the selected
+expected payload size exceeds the selected maximum, compilation MUST fail with
+`GB6010`.
+
 Callback ingestion MUST perform, in order:
 
 1. authenticate the callback and bind its tenant/principal;

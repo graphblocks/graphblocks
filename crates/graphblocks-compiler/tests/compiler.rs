@@ -4793,3 +4793,172 @@ fn compile_graph_allows_nonoverlapping_nested_edge_targets() {
 
     assert!(compile_graph_for_discovery(&graph).ok());
 }
+
+#[test]
+fn compile_graph_validates_async_resume_token_hashes() {
+    let base = json!({
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "async-resume-token-hash"},
+        "spec": {
+            "nodes": {},
+            "asyncOperations": {
+                "external": {
+                    "timeout": "30m",
+                    "idempotencyKey": "external-1",
+                    "attemptFencing": true,
+                    "resume": {
+                        "requirePolicyReevaluation": true,
+                        "requireBudgetReservation": true,
+                        "requireReleaseCompatibility": true,
+                        "requireOwnershipFence": true
+                    }
+                }
+            }
+        }
+    });
+    let invalid_hashes = [
+        json!("sha256:resume-token"),
+        json!(format!("sha256:{}", "A".repeat(64))),
+        json!(format!("sha256:{}", "a".repeat(63))),
+        json!(format!("sha256:{}g", "a".repeat(63))),
+        json!(7),
+    ];
+
+    for invalid_hash in invalid_hashes {
+        let mut graph = base.clone();
+        graph["spec"]["asyncOperations"]["external"]["resumeTokenHash"] = invalid_hash.clone();
+        let errors = compile_graph_for_discovery(&graph)
+            .diagnostics
+            .into_iter()
+            .filter(|diagnostic| diagnostic.severity == Severity::Error)
+            .collect::<Vec<_>>();
+
+        assert_eq!(errors.len(), 1, "{invalid_hash}");
+        assert_eq!(errors[0].code, "GB1026");
+        assert_eq!(
+            errors[0].message,
+            "async operation resumeTokenHash must be a canonical sha256 digest"
+        );
+        assert_eq!(
+            errors[0].path,
+            "$.spec.asyncOperations.external.resumeTokenHash"
+        );
+    }
+
+    let mut valid_graph = base;
+    valid_graph["spec"]["asyncOperations"]["external"]["resumeTokenHash"] =
+        json!(format!("sha256:{}", "a".repeat(64)));
+
+    assert!(compile_graph_for_discovery(&valid_graph).ok());
+}
+
+#[test]
+fn compile_graph_rejects_non_positive_async_payload_limits() {
+    let base = json!({
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "async-payload-limit"},
+        "spec": {
+            "nodes": {},
+            "asyncOperations": {
+                "external": {
+                    "timeout": "30m",
+                    "idempotencyKey": "external-1",
+                    "attemptFencing": true,
+                    "callback": {
+                        "required": true,
+                        "schema": "schemas/ExternalCallback@1"
+                    },
+                    "resume": {
+                        "requirePolicyReevaluation": true,
+                        "requireBudgetReservation": true,
+                        "requireReleaseCompatibility": true,
+                        "requireOwnershipFence": true
+                    }
+                }
+            }
+        }
+    });
+
+    for invalid_limit in [json!(0), json!(-1), json!(true), json!("1"), json!(1.5)] {
+        let mut graph = base.clone();
+        graph["spec"]["asyncOperations"]["external"]["callback"]["maxPayloadBytes"] =
+            invalid_limit.clone();
+        let errors = compile_graph_for_discovery(&graph)
+            .diagnostics
+            .into_iter()
+            .filter(|diagnostic| diagnostic.severity == Severity::Error)
+            .collect::<Vec<_>>();
+
+        assert_eq!(errors.len(), 1, "{invalid_limit}");
+        assert_eq!(errors[0].code, "GB1026");
+        assert_eq!(
+            errors[0].message,
+            "async callback maxPayloadBytes must be a positive integer"
+        );
+        assert_eq!(
+            errors[0].path,
+            "$.spec.asyncOperations.external.callback.maxPayloadBytes"
+        );
+    }
+
+    let huge_positive_integer = serde_json::from_str::<Value>(&format!("1{}", "0".repeat(100)))
+        .expect("large JSON integer must parse");
+    let mut valid_graph = base.clone();
+    valid_graph["spec"]["asyncOperations"]["external"]["callback"]["expectedPayloadBytes"] =
+        json!(524_288);
+    valid_graph["spec"]["asyncOperations"]["external"]["callback"]["maxPayloadBytes"] =
+        huge_positive_integer;
+
+    assert!(compile_graph_for_discovery(&valid_graph).ok());
+
+    let mut oversized_expected_graph = base;
+    oversized_expected_graph["spec"]["asyncOperations"]["external"]["callback"]["expectedPayloadBytes"] =
+        serde_json::from_str("18446744073709551616")
+            .expect("arbitrary-precision JSON integer must parse");
+    let errors = compile_graph_for_discovery(&oversized_expected_graph)
+        .diagnostics
+        .into_iter()
+        .filter(|diagnostic| diagnostic.severity == Severity::Error)
+        .collect::<Vec<_>>();
+
+    assert_eq!(errors.len(), 1);
+    assert_eq!(errors[0].code, "GB6010");
+    assert_eq!(
+        errors[0].path,
+        "$.spec.asyncOperations.external.callback.maxPayloadBytes"
+    );
+}
+
+#[test]
+fn compile_graph_accepts_async_callback_schema_fallback() {
+    let graph = json!({
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "async-empty-schema-fallback"},
+        "spec": {
+            "nodes": {},
+            "asyncOperations": {
+                "external": {
+                    "timeout": "30m",
+                    "idempotencyKey": "external-1",
+                    "attemptFencing": true,
+                    "callback": {
+                        "required": true,
+                        "schema": "",
+                        "acceptedSchema": "schemas/ExternalCallback@1"
+                    },
+                    "resume": {
+                        "requirePolicyReevaluation": true,
+                        "requireBudgetReservation": true,
+                        "requireReleaseCompatibility": true,
+                        "requireOwnershipFence": true
+                    }
+                }
+            }
+        }
+    });
+
+    assert!(compile_graph_for_discovery(&graph).ok());
+}
