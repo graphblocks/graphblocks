@@ -47,6 +47,13 @@ pub const STDLIB_RUNTIME_BLOCK_IDS: [&str; 25] = [
     "conversation.policy_stop_turn@1",
 ];
 
+pub const STABLE_STDLIB_BLOCK_IDS: [&str; 4] = [
+    "control.map@2",
+    "control.select@1",
+    "model.generate@1",
+    "prompt.render@1",
+];
+
 macro_rules! graph_value {
     ($name:ident, $schema:literal) => {
         #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -770,6 +777,117 @@ pub fn stdlib_block_catalog() -> Result<BlockCatalog, TypedGraphError> {
     stdlib_typed_block_catalog()?.compiler_catalog()
 }
 
+/// Returns the closed built-in catalog available to stable `graphblocks.ai/v1` graphs.
+pub fn stable_stdlib_block_catalog() -> Result<BlockCatalog, TypedGraphError> {
+    BlockCatalog::from_blocks(&json!([
+        {
+            "typeId": "control.map",
+            "version": 2,
+            "configSchema": {
+                "type": "object",
+                "properties": {
+                    "block": {
+                        "type": "string",
+                        "pattern": "^\\S+@[1-9][0-9]*$"
+                    },
+                    "inputName": {"type": "string", "minLength": 1},
+                    "outputName": {"type": "string", "minLength": 1},
+                    "config": {"type": "object"},
+                    "onError": {"enum": ["fail_fast", "collect"]}
+                },
+                "required": ["block"],
+                "additionalProperties": false
+            },
+            "inputs": [
+                {"name": "items", "type": "graphblocks.ai/Items@1"}
+            ],
+            "outputs": [
+                {"name": "values", "type": "graphblocks.ai/Values@1"},
+                {
+                    "name": "outcomes",
+                    "type": "graphblocks.ai/Outcomes@1",
+                    "required": false,
+                    "requiredWhen": {
+                        "configEquals": {
+                            "pointer": "/onError",
+                            "value": "collect"
+                        }
+                    }
+                }
+            ]
+        },
+        {
+            "typeId": "control.select",
+            "version": 1,
+            "configSchema": {
+                "type": "object",
+                "properties": {
+                    "order": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "uniqueItems": true
+                    },
+                    "default": {}
+                },
+                "additionalProperties": false
+            },
+            "inputs": [
+                {"name": "cases", "type": "graphblocks.ai/Cases@1"}
+            ],
+            "outputs": [
+                {"name": "value", "type": "graphblocks.ai/SelectedValue@1"},
+                {"name": "selected", "type": "graphblocks.ai/SelectedKey@1"}
+            ]
+        },
+        {
+            "typeId": "model.generate",
+            "version": 1,
+            "configSchema": {
+                "type": "object",
+                "properties": {
+                    "script": {"type": "object"},
+                    "response": {}
+                },
+                "additionalProperties": false
+            },
+            "inputs": [
+                {
+                    "name": "prompt",
+                    "type": "graphblocks.ai/Prompt@1",
+                    "required": false
+                },
+                {
+                    "name": "context",
+                    "type": "graphblocks.ai/ContextPack@1",
+                    "required": false
+                }
+            ],
+            "outputs": [
+                {"name": "response", "type": "graphblocks.ai/ModelResponse@1"}
+            ],
+            "resourceSlots": [
+                {"name": "model", "type": "resources/Model@1", "optional": true}
+            ]
+        },
+        {
+            "typeId": "prompt.render",
+            "version": 1,
+            "configSchema": {
+                "type": "object",
+                "properties": {"template": {"type": "string"}},
+                "additionalProperties": false
+            },
+            "inputs": [
+                {"name": "message", "type": "graphblocks.ai/Message@1"}
+            ],
+            "outputs": [
+                {"name": "prompt", "type": "graphblocks.ai/Prompt@1"}
+            ]
+        }
+    ]))
+    .map_err(|message| TypedGraphError::InvalidCatalog { message })
+}
+
 /// Returns the typed form of the official stdlib block catalog.
 pub fn stdlib_typed_block_catalog() -> Result<TypedBlockCatalog, TypedGraphError> {
     let required = |name, type_ref| TypedPortDescriptor::required_type(name, type_ref);
@@ -1123,8 +1241,9 @@ mod tests {
         AnswerValue, ContextBuild, ContextBuildConfig, ContextBuildInputs, FederatedSourcesValue,
         RankDocuments, RankDocumentsConfig, RankDocumentsInputs, RetrievalFusionAlgorithm,
         RetrieveExecutePlan, RetrieveExecutePlanConfig, RetrieveExecutePlanInputs, RetrieveFuse,
-        RetrieveFuseConfig, RetrieveFuseInputs, STDLIB_RUNTIME_BLOCK_IDS, SearchRequestValue,
-        StdlibBlockConfigError, StructuredGenerateConfig, stdlib_block_catalog,
+        RetrieveFuseConfig, RetrieveFuseInputs, STABLE_STDLIB_BLOCK_IDS, STDLIB_RUNTIME_BLOCK_IDS,
+        SearchRequestValue, StdlibBlockConfigError, StructuredGenerateConfig,
+        stable_stdlib_block_catalog, stdlib_block_catalog,
     };
 
     #[test]
@@ -1238,6 +1357,72 @@ mod tests {
                 "missing runtime block descriptor for {block_id}"
             );
         }
+    }
+
+    #[test]
+    fn stable_stdlib_catalog_is_closed_to_the_v1_core_blocks() {
+        let catalog = stable_stdlib_block_catalog().expect("stable stdlib catalog is valid");
+
+        for block_id in STABLE_STDLIB_BLOCK_IDS {
+            assert!(
+                catalog.get(block_id).is_some(),
+                "missing stable block descriptor for {block_id}"
+            );
+        }
+        for block_id in STDLIB_RUNTIME_BLOCK_IDS {
+            if !STABLE_STDLIB_BLOCK_IDS.contains(&block_id) {
+                assert!(
+                    catalog.get(block_id).is_none(),
+                    "preview block {block_id} leaked into the stable catalog"
+                );
+            }
+        }
+
+        let manifest: Value =
+            serde_yaml::from_str(include_str!("../tests/fixtures/builtin-plugin.yaml"))
+                .expect("builtin plugin manifest is valid YAML");
+        let manifest_blocks = manifest
+            .pointer("/spec/blocks")
+            .and_then(Value::as_array)
+            .expect("builtin plugin manifest has spec.blocks");
+        let mut stable_blocks = Vec::new();
+        for block in manifest_blocks {
+            let type_id = block
+                .get("typeId")
+                .and_then(Value::as_str)
+                .expect("manifest block has typeId");
+            let version = block
+                .get("version")
+                .and_then(Value::as_u64)
+                .expect("manifest block has version");
+            if !STABLE_STDLIB_BLOCK_IDS.contains(&format!("{type_id}@{version}").as_str()) {
+                continue;
+            }
+            let mut block = block.clone();
+            if type_id == "control.map" {
+                block["configSchema"] = json!({
+                "type": "object",
+                "properties": {
+                    "block": {
+                        "type": "string",
+                        "pattern": "^\\S+@[1-9][0-9]*$"
+                    },
+                    "inputName": {"type": "string", "minLength": 1},
+                    "outputName": {"type": "string", "minLength": 1},
+                    "config": {"type": "object"},
+                    "onError": {"enum": ["fail_fast", "collect"]}
+                },
+                "required": ["block"],
+                "additionalProperties": false
+                });
+            }
+            stable_blocks.push(block);
+        }
+        let expected =
+            graphblocks_compiler::compiler::BlockCatalog::from_blocks(&Value::Array(stable_blocks))
+                .expect("stable manifest subset is a valid catalog");
+
+        assert_eq!(catalog, expected);
     }
 
     #[test]

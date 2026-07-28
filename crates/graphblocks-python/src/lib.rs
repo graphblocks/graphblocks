@@ -4,6 +4,7 @@ use graphblocks_compiler::compiler::{
     BlockCatalog, MAX_NODE_RETRY_ATTEMPTS, compile_graph_with_catalog, json_integer_exceeds_u64,
 };
 use graphblocks_compiler::diagnostics::Severity;
+use graphblocks_compiler::graph::GRAPH_API_VERSION;
 use graphblocks_protocol::{
     RemotePayload, RemotePayloadError, RemotePayloadLimits, WorkerAdmissionPolicy,
     WorkerAdvertisement, WorkerProtocolError, WorkerProtocolMessage, WorkerProtocolMessageKind,
@@ -61,7 +62,7 @@ use graphblocks_runtime_core::run_store::{RunDeploymentProvenance, RunStatus, Sq
 use graphblocks_runtime_core::scheduler::{
     LocalScheduler, NodeExecutionState, ScheduledNode, SchedulerError, StartedNode,
 };
-use graphblocks_runtime_core::stdlib_blocks::stdlib_block_catalog;
+use graphblocks_runtime_core::stdlib_blocks::{stable_stdlib_block_catalog, stdlib_block_catalog};
 use graphblocks_runtime_core::task_group::{
     ChildTaskState, SiblingCancellationPolicy, TaskGroupDecision, TaskGroupFailure,
     TaskGroupFailurePolicy, TaskGroupPolicy, TaskGroupState,
@@ -234,9 +235,17 @@ fn compile_graph_json(
             let catalog = parse_json_argument(catalog_json, "block catalog")?;
             BlockCatalog::from_blocks(&catalog).map_err(PyValueError::new_err)
         }
-        None => stdlib_block_catalog().map_err(|error| {
-            PyValueError::new_err(format!("invalid stdlib block catalog: {error}"))
-        }),
+        None => {
+            let catalog =
+                if document.get("apiVersion").and_then(Value::as_str) == Some(GRAPH_API_VERSION) {
+                    stable_stdlib_block_catalog()
+                } else {
+                    stdlib_block_catalog()
+                };
+            catalog.map_err(|error| {
+                PyValueError::new_err(format!("invalid stdlib block catalog: {error}"))
+            })
+        }
     }?;
     if allow_unknown_blocks {
         block_catalog = block_catalog.with_unknown_blocks_allowed();

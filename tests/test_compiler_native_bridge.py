@@ -163,6 +163,57 @@ def test_native_plan_bridge_accepts_a_python_block_catalog() -> None:
     ]
 
 
+@pytest.mark.parametrize(
+    ("api_version", "block_id", "config"),
+    [
+        ("graphblocks.ai/v1", "agent.run@1", {}),
+        ("graphblocks.ai/v1alpha3", "agent.run@1", {}),
+        ("graphblocks.ai/v1", "control.map@2", {"graph": "nested"}),
+        ("graphblocks.ai/v1alpha3", "control.map@2", {"graph": "nested"}),
+        (
+            "graphblocks.ai/v1",
+            "control.map@2",
+            {"block": "prompt.render@1"},
+        ),
+    ],
+)
+def test_native_plan_bridge_selects_the_builtin_catalog_profile(
+    api_version: str,
+    block_id: str,
+    config: dict[str, object],
+) -> None:
+    pytest.importorskip(
+        "graphblocks_runtime",
+        reason="native Plan integration requires the Rust binding",
+    )
+    document: dict[str, object] = {
+        "apiVersion": api_version,
+        "kind": "Graph",
+        "metadata": {"name": "native-catalog-profile"},
+        "spec": {
+            "nodes": {
+                "selected": {
+                    "block": block_id,
+                    "config": config,
+                }
+            }
+        },
+    }
+
+    reference = compile_graph_reference(document)
+    native = compile_graph_native_plan(document)
+
+    assert native.graph_hash == reference.graph_hash
+    assert native.normalized == reference.normalized
+    assert [
+        (item.code, item.severity, item.path)
+        for item in native.diagnostics.diagnostics
+    ] == [
+        (item.code, item.severity, item.path)
+        for item in reference.diagnostics.diagnostics
+    ]
+
+
 def test_native_plan_bridge_preserves_bounded_large_integers() -> None:
     pytest.importorskip(
         "graphblocks_runtime",
