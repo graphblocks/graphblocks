@@ -9,6 +9,7 @@ from threading import Barrier, Event, Lock, Thread
 from time import monotonic, sleep
 
 import graphblocks
+import graphblocks.server as graphblocks_server
 import pytest
 
 from graphblocks.policy import PrincipalRef
@@ -398,6 +399,19 @@ def test_server_app_validates_unauthenticated_development_mode_flag() -> None:
         match="server allow_unauthenticated_dev must be a boolean",
     ):
         GraphBlocksServerApp(allow_unauthenticated_dev="yes")  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize(
+    "field_name",
+    ("max_request_body_bytes", "max_async_callback_request_body_bytes"),
+)
+def test_server_app_rejects_invalid_request_body_limits(field_name: str) -> None:
+    for value in (True, 0, -1, "1024"):
+        with pytest.raises(ValueError, match=field_name):
+            GraphBlocksServerApp(
+                allow_unauthenticated_dev=True,
+                **{field_name: value},
+            )
 
 
 def test_server_app_fails_closed_when_auth_hook_returns_wrong_type() -> None:
@@ -981,6 +995,110 @@ def test_server_app_rejects_non_standard_request_json_constants() -> None:
     assert json.loads(response.body.decode("utf-8")) == {
         "ok": False,
         "error": "run request body must be valid JSON",
+    }
+
+
+@pytest.mark.parametrize(
+    ("body", "headers"),
+    (
+        (
+            json.dumps({"value": "x" * 64}).encode("utf-8"),
+            {"Content-Length": "77"},
+        ),
+        (
+            ("[" * 64 + "0" + "]" * 64).encode("utf-8"),
+            {"Transfer-Encoding": "chunked"},
+        ),
+        (
+            ("{\"value\":" + "9" * 64 + "}").encode("utf-8"),
+            {},
+        ),
+    ),
+    ids=("large-string", "chunked-deep", "large-number"),
+)
+def test_server_app_rejects_oversized_body_before_json_parsing(
+    monkeypatch,
+    body: bytes,
+    headers: dict[str, str],
+) -> None:
+    parser_calls = 0
+
+    def fail_if_parsed(request: ServerRequest, owner: str) -> object:
+        del request, owner
+        nonlocal parser_calls
+        parser_calls += 1
+        raise AssertionError("oversized request reached JSON parser")
+
+    monkeypatch.setattr(
+        graphblocks_server,
+        "_server_request_json_body",
+        fail_if_parsed,
+    )
+    app = GraphBlocksServerApp(
+        allow_unauthenticated_dev=True,
+        max_request_body_bytes=32,
+    )
+
+    response = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs",
+            headers=headers,
+            query={},
+            cookies={},
+            body=body,
+        )
+    )
+
+    assert response.status_code == 413
+    assert json.loads(response.body) == {
+        "ok": False,
+        "bodySizeBytes": len(body),
+        "maxBodyBytes": 32,
+        "error": "request body exceeds max body bytes",
+    }
+    assert parser_calls == 0
+
+
+def test_server_app_applies_callback_request_body_limit_before_decoding(
+    monkeypatch,
+) -> None:
+    body = json.dumps(
+        {"callback_id": "callback-1", "payload": {"value": "x" * 32}}
+    ).encode("utf-8")
+
+    def fail_if_parsed(request: ServerRequest, owner: str) -> object:
+        del request, owner
+        raise AssertionError("oversized callback reached JSON parser")
+
+    monkeypatch.setattr(
+        graphblocks_server,
+        "_server_request_json_body",
+        fail_if_parsed,
+    )
+    app = GraphBlocksServerApp(
+        allow_unauthenticated_dev=True,
+        max_request_body_bytes=1024,
+        max_async_callback_request_body_bytes=48,
+    )
+
+    response = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/callbacks/operation-1",
+            headers={"GraphBlocks-Idempotency-Key": "idem-1"},
+            query={},
+            cookies={},
+            body=body,
+        )
+    )
+
+    assert response.status_code == 413
+    assert json.loads(response.body) == {
+        "ok": False,
+        "bodySizeBytes": len(body),
+        "maxBodyBytes": 48,
+        "error": "request body exceeds max body bytes",
     }
 
 

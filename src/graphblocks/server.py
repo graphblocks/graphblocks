@@ -115,6 +115,8 @@ SERVER_TERMINAL_EVENT_KINDS = frozenset({
 })
 MAX_SERVER_REQUEST_JSON_DEPTH = 64
 MAX_RUN_CURSOR_SEQUENCE = (1 << 64) - 1
+DEFAULT_MAX_SERVER_REQUEST_BODY_BYTES = 1024 * 1024
+DEFAULT_MAX_ASYNC_CALLBACK_REQUEST_BODY_BYTES = 512 * 1024
 
 
 def _utc_now_iso() -> str:
@@ -2392,6 +2394,10 @@ class GraphBlocksServerApp:
     )
     async_callback_resume_admission_hook: ServerAsyncCallbackResumeAdmissionHook | None = None
     callback_delivery_hook: ServerCallbackDeliveryHook | None = None
+    max_request_body_bytes: int = DEFAULT_MAX_SERVER_REQUEST_BODY_BYTES
+    max_async_callback_request_body_bytes: int = (
+        DEFAULT_MAX_ASYNC_CALLBACK_REQUEST_BODY_BYTES
+    )
     _events_by_run_id: dict[str, tuple[Mapping[str, object], ...]] = field(default_factory=dict, init=False, repr=False)
     _run_authorization_by_run_id: dict[str, _ServerRunAuthorizationRecord] = field(
         default_factory=dict,
@@ -2517,6 +2523,13 @@ class GraphBlocksServerApp:
             or self.max_async_callback_payload_bytes < 1
         ):
             raise ValueError("server max_async_callback_payload_bytes must be a positive integer")
+        for field_name in (
+            "max_request_body_bytes",
+            "max_async_callback_request_body_bytes",
+        ):
+            value = getattr(self, field_name)
+            if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+                raise ValueError(f"server {field_name} must be a positive integer")
         if not isinstance(self.require_async_callback_authentication, bool):
             raise ValueError("server require_async_callback_authentication must be a boolean")
         if not isinstance(self.anti_enumerate_async_callbacks, bool):
@@ -2576,6 +2589,24 @@ class GraphBlocksServerApp:
                 {
                     "ok": False,
                     "error": str(error),
+                },
+            )
+
+        max_body_bytes = self.max_request_body_bytes
+        if route.operation == "submit_async_callback":
+            max_body_bytes = min(
+                max_body_bytes,
+                self.max_async_callback_request_body_bytes,
+            )
+        body_size_bytes = len(request.body)
+        if body_size_bytes > max_body_bytes:
+            return ServerResponse.json(
+                413,
+                {
+                    "ok": False,
+                    "bodySizeBytes": body_size_bytes,
+                    "maxBodyBytes": max_body_bytes,
+                    "error": "request body exceeds max body bytes",
                 },
             )
 
