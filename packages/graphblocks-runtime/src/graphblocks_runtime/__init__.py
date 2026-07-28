@@ -7,6 +7,16 @@ import math
 
 _NATIVE_EXTENSION_MODULE = "graphblocks_runtime._native"
 _BINDING_CRATE = "graphblocks-python"
+MAX_CANONICAL_INTEGER_DIGITS = 10_000
+_MANUAL_INTEGER_BIT_LENGTH = 1_024
+_INTEGER_CHUNK_BASE = 1_000_000_000
+_INTEGER_CHUNK_DIGITS = 9
+_MAX_CANONICAL_INTEGER_MAGNITUDE = 10**MAX_CANONICAL_INTEGER_DIGITS
+_MIN_CANONICAL_INTEGER_MAGNITUDE = -_MAX_CANONICAL_INTEGER_MAGNITUDE
+
+
+class _NativeIntegerToken(str):
+    pass
 
 try:
     from ._native import (
@@ -295,6 +305,7 @@ def _canonical_json(value: object) -> str:
     pending = [value]
     occupied_strings: set[str] = set()
     has_decimal = False
+    has_large_integer = False
     while pending:
         current = pending.pop()
         if isinstance(current, Mapping):
@@ -309,8 +320,19 @@ def _canonical_json(value: object) -> str:
             occupied_strings.add(current)
         elif isinstance(current, Decimal):
             has_decimal = True
+        elif isinstance(current, int) and not isinstance(current, bool):
+            current = int.__int__(current)
+            if int.__ge__(
+                current, _MAX_CANONICAL_INTEGER_MAGNITUDE
+            ) or int.__le__(current, _MIN_CANONICAL_INTEGER_MAGNITUDE):
+                raise ValueError(
+                    "canonical JSON integer must not exceed "
+                    f"{MAX_CANONICAL_INTEGER_DIGITS} decimal digits"
+                )
+            if current.bit_length() > _MANUAL_INTEGER_BIT_LENGTH:
+                has_large_integer = True
 
-    if not has_decimal:
+    if not has_decimal and not has_large_integer:
         return json.dumps(
             value,
             allow_nan=False,
@@ -323,7 +345,7 @@ def _canonical_json(value: object) -> str:
     copies: list[tuple[object, dict[str, object] | list[object], str | int]] = [
         (value, root, 0)
     ]
-    decimal_tokens: dict[str, str] = {}
+    numeric_tokens: dict[str, str] = {}
     token_index = 0
     while copies:
         current, parent, key = copies.pop()
@@ -358,7 +380,38 @@ def _canonical_json(value: object) -> str:
                 token = f"\x00graphblocks-native-decimal-{token_index}\x00"
             token_index += 1
             occupied_strings.add(token)
-            decimal_tokens[token] = rendered
+            numeric_tokens[
+                json.dumps(token, ensure_ascii=False, separators=(",", ":"))
+            ] = rendered
+            parent[key] = token
+        elif (
+            isinstance(current, int)
+            and not isinstance(current, bool)
+            and int.bit_length(current) > _MANUAL_INTEGER_BIT_LENGTH
+        ):
+            current = int.__int__(current)
+            negative = current < 0
+            magnitude = -current if negative else current
+            chunks: list[int] = []
+            while magnitude:
+                magnitude, chunk = divmod(magnitude, _INTEGER_CHUNK_BASE)
+                chunks.append(chunk)
+            rendered = str(chunks.pop())
+            rendered += "".join(
+                f"{chunk:0{_INTEGER_CHUNK_DIGITS}d}"
+                for chunk in reversed(chunks)
+            )
+            if negative:
+                rendered = f"-{rendered}"
+            token = f"\x00graphblocks-native-integer-{token_index}\x00"
+            while token in occupied_strings:
+                token_index += 1
+                token = f"\x00graphblocks-native-integer-{token_index}\x00"
+            token_index += 1
+            occupied_strings.add(token)
+            numeric_tokens[
+                json.dumps(token, ensure_ascii=False, separators=(",", ":"))
+            ] = rendered
             parent[key] = token
         elif isinstance(current, Mapping):
             copied: dict[str, object] = {}
@@ -380,18 +433,37 @@ def _canonical_json(value: object) -> str:
         separators=(",", ":"),
         sort_keys=True,
     )
-    for token, rendered in decimal_tokens.items():
-        encoded = encoded.replace(
-            json.dumps(token, ensure_ascii=False, separators=(",", ":")),
-            rendered,
-        )
-    return encoded
+    parts: list[str] = []
+    copy_start = 0
+    cursor = 0
+    while cursor < len(encoded):
+        if encoded[cursor] != '"':
+            cursor += 1
+            continue
+        string_start = cursor
+        cursor += 1
+        while cursor < len(encoded):
+            if encoded[cursor] == "\\":
+                cursor += 2
+            elif encoded[cursor] == '"':
+                cursor += 1
+                break
+            else:
+                cursor += 1
+        replacement = numeric_tokens.get(encoded[string_start:cursor])
+        if replacement is not None:
+            parts.append(encoded[copy_start:string_start])
+            parts.append(replacement)
+            copy_start = cursor
+    parts.append(encoded[copy_start:])
+    return "".join(parts)
 
 
 def _json_object_result(result_json: str, label: str) -> dict[str, object]:
     try:
         payload = json.loads(
             result_json,
+            parse_int=_NativeIntegerToken,
             parse_float=lambda token: (
                 float(token)
                 if math.isfinite(float(token))
@@ -400,6 +472,41 @@ def _json_object_result(result_json: str, label: str) -> dict[str, object]:
             ),
             parse_constant=lambda constant: (_ for _ in ()).throw(ValueError(constant)),
         )
+        root: list[object] = [payload]
+        pending: list[
+            tuple[dict[str, object] | list[object], str | int]
+        ] = [(root, 0)]
+        while pending:
+            parent, key = pending.pop()
+            current = parent[key]
+            if isinstance(current, _NativeIntegerToken):
+                token = str.__str__(current)
+                negative = token.startswith("-")
+                digits = token[1:] if negative else token
+                if len(digits) > MAX_CANONICAL_INTEGER_DIGITS:
+                    raise ValueError(
+                        "canonical JSON integer must not exceed "
+                        f"{MAX_CANONICAL_INTEGER_DIGITS} decimal digits"
+                    )
+                first_chunk_length = len(digits) % _INTEGER_CHUNK_DIGITS
+                if first_chunk_length == 0:
+                    first_chunk_length = _INTEGER_CHUNK_DIGITS
+                decoded = int(digits[:first_chunk_length])
+                for offset in range(
+                    first_chunk_length,
+                    len(digits),
+                    _INTEGER_CHUNK_DIGITS,
+                ):
+                    decoded = (
+                        decoded * _INTEGER_CHUNK_BASE
+                        + int(digits[offset : offset + _INTEGER_CHUNK_DIGITS])
+                    )
+                parent[key] = -decoded if negative else decoded
+            elif isinstance(current, dict):
+                pending.extend((current, child_key) for child_key in current)
+            elif isinstance(current, list):
+                pending.extend((current, index) for index in range(len(current)))
+        payload = root[0]
     except ValueError as error:
         raise ValueError(f"{label} must be valid strict JSON") from error
     if not isinstance(payload, dict):

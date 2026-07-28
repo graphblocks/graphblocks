@@ -163,6 +163,54 @@ def test_native_plan_bridge_accepts_a_python_block_catalog() -> None:
     ]
 
 
+def test_native_plan_bridge_preserves_bounded_large_integers() -> None:
+    pytest.importorskip(
+        "graphblocks_runtime",
+        reason="native Plan integration requires the Rust binding",
+    )
+    catalog = BlockCatalog.from_blocks(
+        [
+            {
+                "typeId": "test.large_integer",
+                "version": 1,
+                "configSchema": {
+                    "type": "object",
+                    "properties": {"value": {"type": "integer"}},
+                    "required": ["value"],
+                    "additionalProperties": False,
+                },
+            }
+        ]
+    )
+    value = 10**5_000
+    document: dict[str, object] = {
+        "apiVersion": "graphblocks.ai/v1",
+        "kind": "Graph",
+        "metadata": {"name": "native-large-integer"},
+        "spec": {
+            "nodes": {
+                "configured": {
+                    "block": "test.large_integer@1",
+                    "config": {"value": value},
+                }
+            }
+        },
+    }
+
+    reference = compile_graph_reference(document, block_catalog=catalog)
+    native = compile_graph_native_plan(document, block_catalog=catalog)
+
+    assert native.graph_hash == reference.graph_hash
+    assert native.normalized == reference.normalized
+    assert [
+        (item.code, item.severity, item.path)
+        for item in native.diagnostics.diagnostics
+    ] == [
+        (item.code, item.severity, item.path)
+        for item in reference.diagnostics.diagnostics
+    ]
+
+
 @pytest.mark.parametrize(
     ("mutate", "message"),
     [

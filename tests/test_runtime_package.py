@@ -122,6 +122,81 @@ def test_runtime_wrapper_preserves_exact_numbers_and_rejects_nonfinite_inputs() 
         runtime.compile_graph({"kind": "Graph", "value": Decimal("Infinity")})
 
 
+def test_runtime_wrapper_round_trips_bounded_large_integers() -> None:
+    calls: list[str] = []
+    boundary_digits = "1" + "0" * 9_999
+    boundary = 10**9_999
+    oversized = 10**10_000
+    digit_string = "9" * 10_001
+
+    class FakeNative:
+        __version__ = "0.1.0"
+        result_json = (
+            f'{{"digits":"{digit_string}","negative":-{boundary_digits},'
+            f'"positive":{boundary_digits}}}'
+        )
+
+        def __getattr__(self, name: str):
+            if name.endswith("_json"):
+                return lambda *args, **kwargs: '{"ok":true}'
+            raise AttributeError(name)
+
+        def binding_version(self) -> str:
+            return self.__version__
+
+        def compile_graph_json(
+            self,
+            document_json: str,
+            block_catalog_json: str | None = None,
+            *,
+            allow_unknown_blocks: bool = False,
+        ) -> str:
+            calls.append(document_json)
+            return self.result_json
+
+    native = FakeNative()
+    runtime = load_runtime_wrapper(native)
+
+    result = runtime.compile_graph(
+        {
+            "collision": "\x00graphblocks-native-integer-0\x00",
+            "kind": "Graph",
+            "negative": -boundary,
+            "positive": boundary,
+        }
+    )
+
+    assert (
+        '"collision":"\\u0000graphblocks-native-integer-0\\u0000"'
+        in calls[0]
+    )
+    assert f'"negative":-{boundary_digits}' in calls[0]
+    assert f'"positive":{boundary_digits}' in calls[0]
+    assert result == {
+        "digits": digit_string,
+        "negative": -boundary,
+        "positive": boundary,
+    }
+
+    for value in (oversized, -oversized):
+        with pytest.raises(
+            ValueError,
+            match="canonical JSON integer must not exceed 10000 decimal digits",
+        ):
+            runtime.compile_graph({"kind": "Graph", "value": value})
+
+    native.result_json = f'{{"value":{"9" * 10_001}}}'
+    with pytest.raises(
+        ValueError,
+        match="native compiler result must be valid strict JSON",
+    ) as captured:
+        runtime.compile_graph({"kind": "Graph"})
+    assert isinstance(captured.value.__cause__, ValueError)
+    assert str(captured.value.__cause__) == (
+        "canonical JSON integer must not exceed 10000 decimal digits"
+    )
+
+
 def test_runtime_wrapper_requires_explicit_unknown_block_discovery() -> None:
     calls: list[tuple[str | None, bool]] = []
 
