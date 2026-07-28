@@ -3954,12 +3954,56 @@ def test_client_package_rejects_mismatched_callback_revoke_response_subscription
         client.revoke_callback("callback-sub-requested")
 
 
+def _record_failed_callback_delivery_for_client(
+    app,
+    delivery_id: str,
+    principal,
+) -> None:
+    from graphblocks.server import (
+        ServerCallbackDeliveryResult,
+        ServerCallbackRegistration,
+    )
+
+    subscription_id = f"callback-sub-{delivery_id}"
+    registration = ServerCallbackRegistration(
+        subscription_id=subscription_id,
+        scope="tenant",
+        scope_id=principal.tenant_id or "tenant-1",
+        event_filter={"types": ["RunSucceeded"]},
+        delivery={"kind": "local_callback", "callback_name": "test"},
+        created_at="2026-07-02T00:00:00Z",
+        owner=principal,
+    )
+    delivery = ServerCallbackDeliveryResult(
+        delivery_id=delivery_id,
+        subscription_id=subscription_id,
+        event_id=f"event-{delivery_id}",
+        run_id=f"run-{delivery_id}",
+        sequence=1,
+        cursor=f"run-{delivery_id}:1",
+        attempt=1,
+        idempotency_key=f"{subscription_id}:event-{delivery_id}",
+        status="failed",
+        status_code=503,
+        last_error="receiver returned 503",
+    )
+    with app._callback_registration_condition:
+        app._callback_registrations[subscription_id] = registration
+        app._callback_delivery_results_by_subscription_id[subscription_id] = (
+            delivery,
+        )
+
+
 def test_client_package_redrives_callback_delivery_over_http_transport(monkeypatch) -> None:
     graphblocks_client = importlib.import_module("graphblocks.client")
     from graphblocks.policy import PrincipalRef
     from graphblocks.server import GraphBlocksServerApp, ServerRequest, StaticBearerAuthHook
 
-    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("operator-1")}))
+    principal = PrincipalRef("operator-1")
+    app = GraphBlocksServerApp(
+        auth_hook=StaticBearerAuthHook({"token-1": principal})
+    )
+    _record_failed_callback_delivery_for_client(app, "del-client-1", principal)
 
     def transport(request: object, *, timeout: float) -> object:
         assert timeout == 4.0
@@ -4010,7 +4054,9 @@ def test_client_package_redrives_callback_delivery_over_http_transport(monkeypat
             "operator": "operator-1",
             "reason": "receiver recovered",
             "requestedAt": "2026-07-03T00:00:00Z",
+            "sourceAttempt": 1,
             "status": "redrive_requested",
+            "resultingAttempt": 2,
         },
     )
 
@@ -4020,7 +4066,15 @@ def test_client_package_redrives_callback_delivery_with_auth_derived_operator(mo
     from graphblocks.policy import PrincipalRef
     from graphblocks.server import GraphBlocksServerApp, ServerRequest, StaticBearerAuthHook
 
-    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("operator-1")}))
+    principal = PrincipalRef("operator-1")
+    app = GraphBlocksServerApp(
+        auth_hook=StaticBearerAuthHook({"token-1": principal})
+    )
+    _record_failed_callback_delivery_for_client(
+        app,
+        "del-client-derived",
+        principal,
+    )
 
     def transport(request: object, *, timeout: float) -> object:
         assert timeout == 4.0
@@ -4067,7 +4121,9 @@ def test_client_package_redrives_callback_delivery_with_auth_derived_operator(mo
             "operator": "operator-1",
             "reason": "receiver recovered",
             "requestedAt": "2026-07-03T00:00:00Z",
+            "sourceAttempt": 1,
             "status": "redrive_requested",
+            "resultingAttempt": 2,
         },
     )
 
@@ -4077,7 +4133,11 @@ def test_client_package_moves_callback_delivery_to_dead_letter_over_http_transpo
     from graphblocks.policy import PrincipalRef
     from graphblocks.server import GraphBlocksServerApp, ServerRequest, StaticBearerAuthHook
 
-    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("operator-1")}))
+    principal = PrincipalRef("operator-1")
+    app = GraphBlocksServerApp(
+        auth_hook=StaticBearerAuthHook({"token-1": principal})
+    )
+    _record_failed_callback_delivery_for_client(app, "del-client-2", principal)
 
     def transport(request: object, *, timeout: float) -> object:
         assert timeout == 4.0
@@ -4142,6 +4202,7 @@ def test_client_package_moves_callback_delivery_to_dead_letter_over_http_transpo
             "operator": "operator-1",
             "reason": "max attempts exhausted",
             "requestedAt": "2026-07-03T00:01:00Z",
+            "sourceAttempt": 1,
             "status": "dead_letter_requested",
         },
     )
