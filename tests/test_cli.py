@@ -1299,6 +1299,107 @@ def test_policy_test_cli_runs_static_policy_cases(tmp_path, capsys) -> None:
     assert payload["cases"] == [{"caseId": "allow-support-model", "passed": True, "failures": []}]
 
 
+def test_policy_test_cli_rejects_object_coerced_to_action_list(tmp_path, capsys) -> None:
+    policy = {
+        "apiVersion": "graphblocks.ai/v1alpha1",
+        "kind": "PolicyBundle",
+        "metadata": {"name": "malformed-policy", "version": "1.0.0"},
+        "spec": {
+            "ruleLanguage": "static",
+            "rules": [
+                {
+                    "ruleId": "allow-model",
+                    "effect": "allow",
+                    "actions": {"model.generate": True},
+                    "resourceSelectors": {"model": True},
+                }
+            ],
+        },
+    }
+    case = {
+        "apiVersion": "graphblocks.ai/v1alpha1",
+        "kind": "PolicyTestCase",
+        "metadata": {"name": "malformed-object-becomes-allow-list"},
+        "spec": {
+            "request": {
+                "requestId": "request-1",
+                "enforcementPoint": "before_provider_call",
+                "action": "model.generate",
+                "resource": {
+                    "resourceId": "model:support",
+                    "resourceKind": "model",
+                },
+                "occurredAt": "2026-07-27T00:00:00Z",
+            },
+            "expect": {
+                "effect": "allow",
+                "reasonCodes": ["allow-model"],
+                "enforcementStatus": "enforced",
+            },
+            "evaluatedAt": "2026-07-27T00:00:01Z",
+        },
+    }
+    policy_path = tmp_path / "policy.yaml"
+    case_path = tmp_path / "case.yaml"
+    policy_path.write_text(yaml.safe_dump(policy), encoding="utf-8")
+    case_path.write_text(yaml.safe_dump(case), encoding="utf-8")
+
+    assert main(
+        ["policy", "test", str(policy_path), "--cases", str(case_path), "--json"]
+    ) == 1
+
+    output = capsys.readouterr().out
+    assert "PolicyBundle.spec.rules[0].actions expected array of strings" in output
+    assert '"passed": true' not in output
+
+
+def test_policy_test_cli_rejects_missing_resource_identity(tmp_path, capsys) -> None:
+    policy_path = tmp_path / "policy.yaml"
+    case_path = tmp_path / "case.yaml"
+    policy_path.write_text(
+        """\
+apiVersion: graphblocks.ai/v1alpha1
+kind: PolicyBundle
+metadata: {name: exact-policy, version: 1.0.0}
+spec:
+  rules:
+    - ruleId: allow-model
+      effect: allow
+      actions: [model.generate]
+      resourceSelectors: [model]
+""",
+        encoding="utf-8",
+    )
+    case_path.write_text(
+        """\
+apiVersion: graphblocks.ai/v1alpha1
+kind: PolicyTestCase
+metadata: {name: missing-resource-id}
+spec:
+  request:
+    requestId: request-1
+    enforcementPoint: before_provider_call
+    action: model.generate
+    resource: {resourceKind: model}
+    occurredAt: "2026-07-27T00:00:00Z"
+  expect: {effect: allow}
+  evaluatedAt: "2026-07-27T00:00:01Z"
+""",
+        encoding="utf-8",
+    )
+
+    assert main(
+        ["policy", "test", str(policy_path), "--cases", str(case_path), "--json"]
+    ) == 1
+
+    output = capsys.readouterr().out
+    assert (
+        "PolicyTestCase.spec.request.resource.resourceId expected non-empty string"
+        in output
+    )
+    assert '"None"' not in output
+
+
 def test_policy_test_cli_returns_failure_for_mismatched_case(tmp_path, capsys) -> None:
     policy = {
         "apiVersion": "graphblocks.ai/v1alpha1",
