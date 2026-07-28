@@ -264,6 +264,145 @@ fn block_catalog_retains_and_enforces_config_schema() -> Result<(), String> {
 }
 
 #[test]
+fn compile_graph_bounds_retained_config_validation_errors() -> Result<(), String> {
+    let catalog = BlockCatalog::from_blocks(&json!([{
+        "typeId": "test.many-errors",
+        "version": 1,
+        "configSchema": {
+            "type": "object",
+            "properties": {
+                "values": {
+                    "type": "array",
+                    "items": {"type": "integer"}
+                }
+            },
+            "required": ["values"],
+            "additionalProperties": false
+        }
+    }]))?;
+    let graph = json!({
+        "apiVersion": GRAPH_API_VERSION,
+        "kind": "Graph",
+        "metadata": {"name": "bounded-config-errors"},
+        "spec": {
+            "nodes": {
+                "configured": {
+                    "block": "test.many-errors@1",
+                    "config": {"values": vec!["invalid"; 105]}
+                }
+            }
+        }
+    });
+
+    let errors = compile_graph_with_catalog(&graph, &catalog)
+        .diagnostics
+        .into_iter()
+        .filter(|diagnostic| diagnostic.code == "GB2019")
+        .collect::<Vec<_>>();
+
+    assert_eq!(errors.len(), 101);
+    assert_eq!(
+        errors
+            .last()
+            .map(|diagnostic| (diagnostic.message.as_str(), diagnostic.path.as_str())),
+        Some((
+            "node config does not satisfy test.many-errors@1 configSchema: 5 additional violations were omitted after the first 100",
+            "$.spec.nodes.configured.config",
+        ))
+    );
+    Ok(())
+}
+
+#[test]
+fn compile_graph_bounds_config_validation_message_size() -> Result<(), String> {
+    let catalog = BlockCatalog::from_blocks(&json!([{
+        "typeId": "test.pattern",
+        "version": 1,
+        "configSchema": {
+            "type": "object",
+            "properties": {
+                "value": {"type": "string", "pattern": "^allowed$"}
+            },
+            "required": ["value"],
+            "additionalProperties": false
+        }
+    }]))?;
+    let graph = json!({
+        "apiVersion": GRAPH_API_VERSION,
+        "kind": "Graph",
+        "metadata": {"name": "bounded-config-message"},
+        "spec": {
+            "nodes": {
+                "configured": {
+                    "block": "test.pattern@1",
+                    "config": {"value": "😀".repeat(2_000)}
+                }
+            }
+        }
+    });
+
+    let errors = compile_graph_with_catalog(&graph, &catalog)
+        .diagnostics
+        .into_iter()
+        .filter(|diagnostic| diagnostic.code == "GB2019")
+        .collect::<Vec<_>>();
+
+    assert_eq!(errors.len(), 1);
+    let message = errors[0]
+        .message
+        .strip_prefix("node config does not satisfy test.pattern@1 configSchema: ")
+        .expect("config validation diagnostic prefix");
+    assert_eq!(message.chars().count(), 1_024);
+    assert!(message.ends_with("..."));
+    Ok(())
+}
+
+#[test]
+fn compile_graph_orders_config_errors_by_rendered_diagnostic_path() -> Result<(), String> {
+    let catalog = BlockCatalog::from_blocks(&json!([{
+        "typeId": "test.error-order",
+        "version": 1,
+        "configSchema": {
+            "type": "object",
+            "properties": {
+                "a-b": {"type": "integer"},
+                "b": {"type": "integer"}
+            },
+            "additionalProperties": false
+        }
+    }]))?;
+    let graph = json!({
+        "apiVersion": GRAPH_API_VERSION,
+        "kind": "Graph",
+        "metadata": {"name": "config-error-order"},
+        "spec": {
+            "nodes": {
+                "configured": {
+                    "block": "test.error-order@1",
+                    "config": {"a-b": "invalid", "b": "invalid"}
+                }
+            }
+        }
+    });
+
+    let paths = compile_graph_with_catalog(&graph, &catalog)
+        .diagnostics
+        .into_iter()
+        .filter(|diagnostic| diagnostic.code == "GB2019")
+        .map(|diagnostic| diagnostic.path)
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        paths,
+        vec![
+            "$.spec.nodes.configured.config.b",
+            "$.spec.nodes.configured.config[\"a-b\"]",
+        ]
+    );
+    Ok(())
+}
+
+#[test]
 fn block_catalog_rejects_invalid_or_external_config_schemas() {
     for schema in [
         json!({"type": "not-a-json-type"}),

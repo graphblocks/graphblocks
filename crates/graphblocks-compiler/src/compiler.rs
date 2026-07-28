@@ -139,6 +139,8 @@ const PRIMITIVE_TYPE_REFS: [&str; 7] = [
 ];
 const MAX_TYPE_REF_DEPTH: usize = 32;
 const MAX_CONFIG_SCHEMA_NODES: usize = 10_000;
+const MAX_CONFIG_VALIDATION_ERRORS: usize = 100;
+const MAX_CONFIG_VALIDATION_ERROR_MESSAGE_CHARS: usize = 1_024;
 
 /// Returns whether a JSON integer is greater than an unsigned bound, including
 /// arbitrary-precision integer tokens that do not fit in `u64`.
@@ -3811,25 +3813,47 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
             let config = node.get("config").unwrap_or(&empty_config);
             let validator = jsonschema::draft202012::new(&descriptor.config_schema)
                 .expect("block catalog configSchema was validated when constructed");
-            let mut config_errors = validator
-                .iter_errors(config)
-                .map(|error| {
-                    (
-                        error.instance_path().as_str().to_owned(),
-                        error.schema_path().as_str().to_owned(),
-                        error.to_string(),
-                    )
-                })
-                .collect::<Vec<_>>();
+            let mut config_errors = Vec::with_capacity(MAX_CONFIG_VALIDATION_ERRORS);
+            let mut omitted_config_error_count = 0_usize;
+            for error in validator.iter_errors(config) {
+                if config_errors.len() == MAX_CONFIG_VALIDATION_ERRORS {
+                    omitted_config_error_count += 1;
+                    continue;
+                }
+                let mut message = error.to_string();
+                if message.chars().count() > MAX_CONFIG_VALIDATION_ERROR_MESSAGE_CHARS {
+                    message = message
+                        .chars()
+                        .take(MAX_CONFIG_VALIDATION_ERROR_MESSAGE_CHARS - 3)
+                        .collect();
+                    message.push_str("...");
+                }
+                config_errors.push((
+                    config_diagnostic_path(node_name, error.instance_path().as_str()),
+                    error.schema_path().as_str().to_owned(),
+                    error.kind().keyword().to_owned(),
+                    message,
+                ));
+            }
             config_errors.sort();
-            for (instance_path, _, message) in config_errors {
+            for (diagnostic_path, _, _, message) in config_errors {
                 diagnostics.push(Diagnostic::error(
                     "GB2019",
                     format!(
                         "node config does not satisfy {} configSchema: {message}",
                         descriptor.block_id()
                     ),
-                    config_diagnostic_path(node_name, &instance_path),
+                    diagnostic_path,
+                ));
+            }
+            if omitted_config_error_count > 0 {
+                diagnostics.push(Diagnostic::error(
+                    "GB2019",
+                    format!(
+                        "node config does not satisfy {} configSchema: {omitted_config_error_count} additional violations were omitted after the first {MAX_CONFIG_VALIDATION_ERRORS}",
+                        descriptor.block_id()
+                    ),
+                    format!("$.spec.nodes.{node_name}.config"),
                 ));
             }
             if !descriptor.resource_slots.is_empty() {
