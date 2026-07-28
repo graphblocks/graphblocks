@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet};
+use std::fmt::Write as _;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
 use graphblocks_schema::{
@@ -142,6 +143,41 @@ const MAX_CONFIG_SCHEMA_NODES: usize = 10_000;
 const MAX_CONFIG_VALIDATION_ERRORS: usize = 100;
 const MAX_CONFIG_VALIDATION_ERROR_MESSAGE_CHARS: usize = 1_024;
 
+fn python_string_repr(value: &str) -> String {
+    let quote = if value.contains('\'') && !value.contains('"') {
+        '"'
+    } else {
+        '\''
+    };
+    let mut rendered = String::with_capacity(value.len() + 2);
+    rendered.push(quote);
+    for character in value.chars() {
+        match character {
+            '\\' => rendered.push_str("\\\\"),
+            '\t' => rendered.push_str("\\t"),
+            '\n' => rendered.push_str("\\n"),
+            '\r' => rendered.push_str("\\r"),
+            character if character == quote => {
+                rendered.push('\\');
+                rendered.push(character);
+            }
+            character if character.is_control() => {
+                let scalar = u32::from(character);
+                if scalar <= u32::from(u8::MAX) {
+                    let _ = write!(rendered, "\\x{scalar:02x}");
+                } else if scalar <= u32::from(u16::MAX) {
+                    let _ = write!(rendered, "\\u{scalar:04x}");
+                } else {
+                    let _ = write!(rendered, "\\U{scalar:08x}");
+                }
+            }
+            character => rendered.push(character),
+        }
+    }
+    rendered.push(quote);
+    rendered
+}
+
 /// Returns whether a JSON integer is greater than an unsigned bound, including
 /// arbitrary-precision integer tokens that do not fit in `u64`.
 pub fn json_integer_exceeds_u64(value: &Value, maximum: u64) -> bool {
@@ -182,16 +218,27 @@ fn validate_port_type_ref_at_depth(type_ref: &str, nesting_depth: usize) -> Resu
     }
 
     let Some(opening) = type_ref.find('<') else {
-        return Err(format!("invalid type reference {type_ref:?}"));
+        return Err(format!(
+            "invalid type reference {}",
+            python_string_repr(type_ref)
+        ));
     };
     if opening == 0 || !type_ref.ends_with('>') {
-        return Err(format!("invalid type reference {type_ref:?}"));
+        return Err(format!(
+            "invalid type reference {}",
+            python_string_repr(type_ref)
+        ));
     }
     let constructor = &type_ref[..opening];
     let expected_arity = match constructor {
         "List" | "Optional" => 1,
         "Map" => 2,
-        _ => return Err(format!("unsupported type constructor {constructor:?}")),
+        _ => {
+            return Err(format!(
+                "unsupported type constructor {}",
+                python_string_repr(constructor)
+            ));
+        }
     };
     if nesting_depth >= MAX_TYPE_REF_DEPTH {
         return Err(format!(
@@ -208,7 +255,10 @@ fn validate_port_type_ref_at_depth(type_ref: &str, nesting_depth: usize) -> Resu
             '>' => {
                 depth -= 1;
                 if depth < 0 {
-                    return Err(format!("invalid type reference {type_ref:?}"));
+                    return Err(format!(
+                        "invalid type reference {}",
+                        python_string_repr(type_ref)
+                    ));
                 }
             }
             ',' if depth == 0 => {
@@ -219,11 +269,17 @@ fn validate_port_type_ref_at_depth(type_ref: &str, nesting_depth: usize) -> Resu
         }
     }
     if depth != 0 {
-        return Err(format!("invalid type reference {type_ref:?}"));
+        return Err(format!(
+            "invalid type reference {}",
+            python_string_repr(type_ref)
+        ));
     }
     arguments.push(&body[start..]);
     if arguments.len() != expected_arity || arguments.iter().any(|argument| argument.is_empty()) {
-        return Err(format!("invalid type reference {type_ref:?}"));
+        return Err(format!(
+            "invalid type reference {}",
+            python_string_repr(type_ref)
+        ));
     }
     for argument in arguments {
         validate_port_type_ref_at_depth(argument, nesting_depth + 1)?;
@@ -455,7 +511,8 @@ fn parse_output_requiredness(
             parse_output_requiredness(operand, depth + 1)?,
         ))),
         _ => Err(format!(
-            "requiredWhen uses unsupported operator {operator:?}"
+            "requiredWhen uses unsupported operator {}",
+            python_string_repr(operator)
         )),
     }
 }
@@ -571,7 +628,8 @@ impl BlockCatalog {
                 }
                 if !input_names.insert(name) {
                     return Err(format!(
-                        "block catalog entry {index} has duplicate input {name:?}"
+                        "block catalog entry {index} has duplicate input {}",
+                        python_string_repr(name)
                     ));
                 }
                 if port.contains_key("requiredWhen") {
@@ -620,7 +678,8 @@ impl BlockCatalog {
                 }
                 if !output_names.insert(name) {
                     return Err(format!(
-                        "block catalog entry {index} has duplicate output {name:?}"
+                        "block catalog entry {index} has duplicate output {}",
+                        python_string_repr(name)
                     ));
                 }
                 let context = format!("block catalog entry {index} output {name}");
@@ -662,7 +721,8 @@ impl BlockCatalog {
                             .map_err(|error| format!("block catalog entry {index} {error}"))?;
                         if !names.insert(name) {
                             return Err(format!(
-                                "block catalog entry {index} has duplicate resource slot {name:?}"
+                                "block catalog entry {index} has duplicate resource slot {}",
+                                python_string_repr(name)
                             ));
                         }
                         let context = format!("block catalog entry {index} resource slot {name}");
@@ -686,12 +746,14 @@ impl BlockCatalog {
                             .map_err(|error| format!("block catalog entry {index} {error}"))?;
                         let slot = slot.as_object().ok_or_else(|| {
                             format!(
-                                "block catalog entry {index} resource slot {slot_name:?} must be an object"
+                                "block catalog entry {index} resource slot {} must be an object",
+                                python_string_repr(slot_name)
                             )
                         })?;
                         if slot.contains_key("name") {
                             return Err(format!(
-                                "block catalog entry {index} mapping resource slot {slot_name:?} must not declare name; its mapping key defines the name"
+                                "block catalog entry {index} mapping resource slot {} must not declare name; its mapping key defines the name",
+                                python_string_repr(slot_name)
                             ));
                         }
                         let context =
@@ -3600,7 +3662,10 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
                     if interface_inputs.is_some_and(|ports| !ports.contains_key(port_name)) {
                         diagnostics.push(Diagnostic::error(
                             "GB1014",
-                            format!("graph interface has no input port {port_name:?}"),
+                            format!(
+                                "graph interface has no input port {}",
+                                python_string_repr(port_name)
+                            ),
                             format!("$.spec.edges[{index}].from"),
                         ));
                     }
@@ -3614,7 +3679,10 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
                     if interface_outputs.is_some_and(|ports| !ports.contains_key(port_name)) {
                         diagnostics.push(Diagnostic::error(
                             "GB1013",
-                            format!("graph interface has no output port {port_name:?}"),
+                            format!(
+                                "graph interface has no output port {}",
+                                python_string_repr(port_name)
+                            ),
                             format!("$.spec.edges[{index}].to"),
                         ));
                     }
@@ -3626,7 +3694,10 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
                 if normalized_nodes.is_none_or(|nodes| !nodes.contains_key(owner)) {
                     diagnostics.push(Diagnostic::error(
                         "GB1002",
-                        format!("edge {key} endpoint references unknown node {owner:?}"),
+                        format!(
+                            "edge {key} endpoint references unknown node {}",
+                            python_string_repr(owner)
+                        ),
                         format!("$.spec.edges[{index}].{key}"),
                     ));
                 } else if key == "from" {
@@ -3718,9 +3789,9 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
                             diagnostics.push(Diagnostic::error(
                                 "GB1014",
                                 format!(
-                                    "block {} has no output port {:?}",
+                                    "block {} has no output port {}",
                                     descriptor.block_id(),
-                                    port_name
+                                    python_string_repr(port_name)
                                 ),
                                 format!("$.spec.edges[{index}].from"),
                             ));
@@ -3767,9 +3838,9 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
                             diagnostics.push(Diagnostic::error(
                                 "GB1013",
                                 format!(
-                                    "block {} has no input port {:?}",
+                                    "block {} has no input port {}",
                                     descriptor.block_id(),
-                                    port_name
+                                    python_string_repr(port_name)
                                 ),
                                 format!("$.spec.edges[{index}].to"),
                             ));
@@ -3810,7 +3881,10 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
                 if !block_catalog.allow_unknown_blocks {
                     diagnostics.push(Diagnostic::error(
                         "GB1022",
-                        format!("block {block_id:?} is not declared in the block catalog"),
+                        format!(
+                            "block {} is not declared in the block catalog",
+                            python_string_repr(block_id)
+                        ),
                         format!("$.spec.nodes.{node_name}.block"),
                     ));
                 }
@@ -3886,9 +3960,9 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
                             diagnostics.push(Diagnostic::error(
                                 "GB1017",
                                 format!(
-                                    "block {} has no resource slot {:?}",
+                                    "block {} has no resource slot {}",
                                     descriptor.block_id(),
-                                    binding_name
+                                    python_string_repr(binding_name)
                                 ),
                                 format!("$.spec.nodes.{node_name}.bindings.{binding_name}"),
                             ));
@@ -3904,8 +3978,9 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
                         diagnostics.push(Diagnostic::error(
                             "GB1016",
                             format!(
-                                "required resource slot {:?} is not bound for node {:?}",
-                                slot.name, node_name
+                                "required resource slot {} is not bound for node {}",
+                                python_string_repr(&slot.name),
+                                python_string_repr(node_name)
                             ),
                             format!("$.spec.nodes.{node_name}.bindings"),
                         ));
@@ -3923,8 +3998,9 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
                     diagnostics.push(Diagnostic::error(
                         "GB1003",
                         format!(
-                            "required input {:?} is never produced for node {:?}",
-                            port.name, node_name
+                            "required input {} is never produced for node {}",
+                            python_string_repr(&port.name),
+                            python_string_repr(node_name)
                         ),
                         format!("$.spec.nodes.{node_name}"),
                     ));
@@ -3974,7 +4050,10 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
                     if interface_inputs.is_some_and(|ports| !ports.contains_key(port_name)) {
                         diagnostics.push(Diagnostic::error(
                             "GB1014",
-                            format!("graph interface has no input port {port_name:?}"),
+                            format!(
+                                "graph interface has no input port {}",
+                                python_string_repr(port_name)
+                            ),
                             format!("$.spec.nodes.{node_name}.when"),
                         ));
                     }
@@ -3989,7 +4068,7 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
                 } else if !normalized_nodes.contains_key(owner) {
                     diagnostics.push(Diagnostic::error(
                         "GB1002",
-                        format!("when references unknown node {owner:?}"),
+                        format!("when references unknown node {}", python_string_repr(owner)),
                         format!("$.spec.nodes.{node_name}.when"),
                     ));
                 } else {
@@ -4008,8 +4087,9 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
                         diagnostics.push(Diagnostic::error(
                             "GB1014",
                             format!(
-                                "block {} has no output port {port_name:?}",
-                                descriptor.block_id()
+                                "block {} has no output port {}",
+                                descriptor.block_id(),
+                                python_string_repr(port_name)
                             ),
                             format!("$.spec.nodes.{node_name}.when"),
                         ));
@@ -4289,7 +4369,7 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
                 {
                     diagnostics.push(Diagnostic::warning(
                         "GB1001",
-                        format!("node {node_name:?} is not connected"),
+                        format!("node {} is not connected", python_string_repr(node_name)),
                         format!("$.spec.nodes.{node_name}"),
                     ));
                 }

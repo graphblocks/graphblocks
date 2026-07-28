@@ -363,7 +363,7 @@ fn compile_graph_rejects_unknown_interface_input_used_by_when() {
     assert_eq!(errors[0].code, "GB1014");
     assert_eq!(
         errors[0].message,
-        "graph interface has no input port \"missing\""
+        "graph interface has no input port 'missing'"
     );
     assert_eq!(errors[0].path, "$.spec.nodes.branch.when");
 }
@@ -406,7 +406,7 @@ fn compile_graph_rejects_unknown_block_output_used_by_when() -> Result<(), Strin
     assert_eq!(errors[0].code, "GB1014");
     assert_eq!(
         errors[0].message,
-        "block test.source@1 has no output port \"missing\""
+        "block test.source@1 has no output port 'missing'"
     );
     assert_eq!(errors[0].path, "$.spec.nodes.branch.when");
     Ok(())

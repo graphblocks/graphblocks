@@ -41,21 +41,25 @@ fn compile_graph_rejects_undeclared_blocks_by_default() {
         "metadata": {"name": "unknown-block"},
         "spec": {
             "nodes": {
-                "unknown": {"block": "test.unknown@1"}
+                "unknown": {"block": "vendor.o'clock@1"}
             }
         }
     });
 
     let plan = compile_graph(&graph);
+    let errors = plan
+        .diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.severity == Severity::Error)
+        .collect::<Vec<_>>();
 
+    assert_eq!(errors.len(), 1);
+    assert_eq!(errors[0].code, "GB1022");
     assert_eq!(
-        plan.diagnostics
-            .iter()
-            .filter(|diagnostic| diagnostic.severity == Severity::Error)
-            .map(|diagnostic| diagnostic.code.as_str())
-            .collect::<Vec<_>>(),
-        vec!["GB1022"]
+        errors[0].message,
+        "block \"vendor.o'clock@1\" is not declared in the block catalog"
     );
+    assert_eq!(errors[0].path, "$.spec.nodes.unknown.block");
 }
 
 #[test]
@@ -493,7 +497,7 @@ fn block_catalog_rejects_malformed_descriptor_shapes() {
                 "version": 1,
                 "resourceSlots": {"model": "not-an-object"}
             }]),
-            "resource slot \"model\" must be an object",
+            "resource slot 'model' must be an object",
         ),
     ];
 
@@ -684,7 +688,7 @@ fn block_catalog_rejects_duplicate_descriptor_and_port_names() {
                 "version": 1,
                 "inputs": [{"name": "value"}, {"name": "value"}]
             }]),
-            "duplicate input \"value\"",
+            "duplicate input 'value'",
         ),
         (
             json!([{
@@ -692,7 +696,7 @@ fn block_catalog_rejects_duplicate_descriptor_and_port_names() {
                 "version": 1,
                 "outputs": [{"name": "value"}, {"name": "value"}]
             }]),
-            "duplicate output \"value\"",
+            "duplicate output 'value'",
         ),
         (
             json!([{
@@ -700,7 +704,7 @@ fn block_catalog_rejects_duplicate_descriptor_and_port_names() {
                 "version": 1,
                 "resourceSlots": [{"name": "model"}, {"name": "model"}]
             }]),
-            "duplicate resource slot \"model\"",
+            "duplicate resource slot 'model'",
         ),
     ];
 
@@ -2281,12 +2285,12 @@ fn compile_graph_rejects_unknown_nested_graph_interface_ports() -> Result<(), St
         );
         assert_eq!(
             errors[0].message,
-            "graph interface has no input port \"missing\""
+            "graph interface has no input port 'missing'"
         );
         assert_eq!(errors[0].path, "$.spec.edges[0].from");
         assert_eq!(
             errors[1].message,
-            "graph interface has no output port \"missing\""
+            "graph interface has no output port 'missing'"
         );
         assert_eq!(errors[1].path, "$.spec.edges[1].to");
     }

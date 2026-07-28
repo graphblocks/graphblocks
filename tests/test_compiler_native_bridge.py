@@ -249,6 +249,86 @@ def test_native_plan_bridge_rejects_holdback_duration_bounds() -> None:
     assert native.diagnostics.to_list() == reference.diagnostics.to_list()
 
 
+@pytest.mark.parametrize(
+    ("document", "catalog"),
+    [
+        (
+            {
+                "apiVersion": "graphblocks.ai/v1",
+                "kind": "Graph",
+                "metadata": {"name": "native-interface-diagnostic-quotes"},
+                "spec": {
+                    "interface": {
+                        "inputs": {"declared": "String"},
+                        "outputs": {"declared": "String"},
+                    },
+                    "nodes": {},
+                    "edges": [
+                        {
+                            "from": "$input.missing",
+                            "to": "$output.missing",
+                        }
+                    ],
+                },
+            },
+            BlockCatalog({}, allow_unknown_blocks=True),
+        ),
+        (
+            {
+                "apiVersion": "graphblocks.ai/v1",
+                "kind": "Graph",
+                "metadata": {"name": "native-when-diagnostic-quotes"},
+                "spec": {
+                    "nodes": {
+                        "source": {"block": "test.source@1"},
+                        "branch": {
+                            "block": "test.branch@1",
+                            "when": "source.missing",
+                        },
+                    }
+                },
+            },
+            BlockCatalog.from_blocks(
+                [
+                    {
+                        "typeId": "test.source",
+                        "version": 1,
+                        "outputs": [{"name": "enabled", "type": "Boolean"}],
+                    },
+                    {"typeId": "test.branch", "version": 1},
+                ]
+            ),
+        ),
+        (
+            {
+                "apiVersion": "graphblocks.ai/v1",
+                "kind": "Graph",
+                "metadata": {"name": "native-block-diagnostic-quotes"},
+                "spec": {
+                    "nodes": {
+                        "selected": {"block": "vendor.o'clock@1"},
+                    }
+                },
+            },
+            BlockCatalog.from_blocks([]),
+        ),
+    ],
+)
+def test_native_plan_bridge_matches_reference_diagnostic_quotes(
+    document: dict[str, object],
+    catalog: BlockCatalog,
+) -> None:
+    pytest.importorskip(
+        "graphblocks_runtime",
+        reason="native Plan integration requires the Rust binding",
+    )
+
+    reference = compile_graph_reference(document, block_catalog=catalog)
+    native = compile_graph_native_plan(document, block_catalog=catalog)
+
+    assert native.diagnostics.to_list() == reference.diagnostics.to_list()
+
+
 def test_native_plan_bridge_preserves_bounded_large_integers() -> None:
     pytest.importorskip(
         "graphblocks_runtime",
