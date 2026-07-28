@@ -55,12 +55,14 @@ def test_run_graph_command_json_snapshots_support_standard_serialization() -> No
         400,
         {"error": {"codes": ["invalid"]}},
         raw_body=b"invalid",
+        raw_body_truncated=True,
     )
     restored_error = pickle.loads(pickle.dumps(http_error))
 
     assert restored_error.status_code == 400
     assert restored_error.payload == {"error": {"codes": ["invalid"]}}
     assert restored_error.raw_body == b"invalid"
+    assert restored_error.raw_body_truncated is True
 
 
 def _remote_admitted_call(
@@ -1059,6 +1061,24 @@ def test_client_package_http_error_rejects_malformed_transport_state(
         )
 
 
+def test_client_package_http_error_rejects_invalid_truncation_state() -> None:
+    graphblocks_client = importlib.import_module("graphblocks.client")
+
+    with pytest.raises(ValueError, match="raw_body_truncated must be a boolean"):
+        graphblocks_client.GraphBlocksHttpError(
+            502,
+            {},
+            raw_body=b"prefix",
+            raw_body_truncated=1,
+        )
+    with pytest.raises(ValueError, match="truncated raw_body must be present"):
+        graphblocks_client.GraphBlocksHttpError(
+            502,
+            {},
+            raw_body_truncated=True,
+        )
+
+
 @pytest.mark.parametrize(
     ("response_kwargs", "message"),
     (
@@ -1130,6 +1150,180 @@ def test_http_client_rejects_unusable_transport_configuration(monkeypatch) -> No
             "https://graphblocks.example/api",
             transport=object(),
         )
+
+    for field_name in ("max_response_bytes", "max_error_body_bytes"):
+        for invalid_limit in (True, 0, -1, "1024"):
+            with pytest.raises(ValueError, match=field_name):
+                graphblocks_client.HttpGraphBlocksClient(
+                    "https://graphblocks.example/api",
+                    **{field_name: invalid_limit},
+                )
+
+
+def test_http_client_rejects_oversized_content_length_before_reading() -> None:
+    graphblocks_client = importlib.import_module("graphblocks.client")
+
+    class OversizedResponse:
+        status = 200
+        headers = {"Content-Length": "33"}
+
+        def __init__(self) -> None:
+            self.read_called = False
+            self.closed = False
+
+        def read(self, size: int) -> bytes:
+            self.read_called = True
+            return b"x" * size
+
+        def close(self) -> None:
+            self.closed = True
+
+    response = OversizedResponse()
+    client = graphblocks_client.HttpGraphBlocksClient(
+        "https://graphblocks.example/api",
+        max_response_bytes=32,
+        transport=lambda request, *, timeout: response,
+    )
+
+    with pytest.raises(ValueError, match="body exceeds 32 bytes"):
+        client.health()
+
+    assert not response.read_called
+    assert response.closed
+
+
+def test_http_client_caps_chunked_and_decompressed_response_bytes() -> None:
+    graphblocks_client = importlib.import_module("graphblocks.client")
+
+    class ExpandingResponse:
+        status = 200
+
+        def __init__(self, headers: dict[str, str]) -> None:
+            self.headers = headers
+            self.read_sizes: list[int] = []
+            self.closed = False
+
+        def read(self, size: int) -> bytes:
+            self.read_sizes.append(size)
+            return b"x" * size
+
+        def close(self) -> None:
+            self.closed = True
+
+    for headers in (
+        {},
+        {"Content-Length": "8", "Content-Encoding": "gzip"},
+    ):
+        response = ExpandingResponse(headers)
+        client = graphblocks_client.HttpGraphBlocksClient(
+            "https://graphblocks.example/api",
+            max_response_bytes=32,
+            transport=lambda request, *, timeout, current=response: current,
+        )
+
+        with pytest.raises(ValueError, match="body exceeds 32 bytes"):
+            client.health()
+
+        assert response.read_sizes == [33]
+        assert response.closed
+
+
+def test_http_client_rejects_content_length_mismatch() -> None:
+    graphblocks_client = importlib.import_module("graphblocks.client")
+
+    class MismatchedResponse:
+        status = 200
+        headers = {"Content-Length": "2"}
+
+        def __init__(self) -> None:
+            self.chunks = [b'{"ok":true}', b""]
+            self.closed = False
+
+        def read(self, size: int) -> bytes:
+            del size
+            return self.chunks.pop(0)
+
+        def close(self) -> None:
+            self.closed = True
+
+    response = MismatchedResponse()
+    client = graphblocks_client.HttpGraphBlocksClient(
+        "https://graphblocks.example/api",
+        max_response_bytes=32,
+        transport=lambda request, *, timeout: response,
+    )
+
+    with pytest.raises(ValueError, match="Content-Length does not match"):
+        client.health()
+
+    assert response.closed
+
+
+def test_http_client_truncates_oversized_error_body() -> None:
+    graphblocks_client = importlib.import_module("graphblocks.client")
+
+    class OversizedErrorResponse:
+        status = 502
+        headers: dict[str, str] = {}
+
+        def __init__(self) -> None:
+            self.closed = False
+
+        def read(self, size: int) -> bytes:
+            return b"e" * size
+
+        def close(self) -> None:
+            self.closed = True
+
+    response = OversizedErrorResponse()
+    client = graphblocks_client.HttpGraphBlocksClient(
+        "https://graphblocks.example/api",
+        max_error_body_bytes=16,
+        transport=lambda request, *, timeout: response,
+    )
+
+    with pytest.raises(graphblocks_client.GraphBlocksHttpError) as captured:
+        client.health()
+
+    assert captured.value.status_code == 502
+    assert captured.value.payload == {}
+    assert captured.value.raw_body == b"e" * 16
+    assert captured.value.raw_body_truncated is True
+    assert response.closed
+
+
+def test_http_client_enforces_total_response_read_deadline(monkeypatch) -> None:
+    graphblocks_client = importlib.import_module("graphblocks.client")
+    clock_values = iter((0.0, 0.25, 1.01))
+    monkeypatch.setattr(graphblocks_client, "monotonic", lambda: next(clock_values))
+
+    class SlowResponse:
+        status = 200
+        headers: dict[str, str] = {}
+
+        def __init__(self) -> None:
+            self.read_calls = 0
+            self.closed = False
+
+        def read(self, size: int) -> bytes:
+            self.read_calls += 1
+            return b"{" if self.read_calls == 1 else b"}"
+
+        def close(self) -> None:
+            self.closed = True
+
+    response = SlowResponse()
+    client = graphblocks_client.HttpGraphBlocksClient(
+        "https://graphblocks.example/api",
+        timeout=1.0,
+        transport=lambda request, *, timeout: response,
+    )
+
+    with pytest.raises(TimeoutError, match="total timeout"):
+        client.health()
+
+    assert response.read_calls == 1
+    assert response.closed
 
 
 def test_client_package_posts_run_graph_command_over_http(monkeypatch) -> None:

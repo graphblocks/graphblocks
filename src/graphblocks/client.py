@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 import json
 import math
 from threading import TIMEOUT_MAX
+from time import monotonic
 from types import MappingProxyType
 from urllib.error import HTTPError
 from urllib.parse import quote, urlencode, urlsplit
@@ -58,6 +59,9 @@ from graphblocks.server import ApplicationProtocolCapabilities
 
 
 _MAX_RUN_CURSOR_SEQUENCE = (1 << 64) - 1
+_DEFAULT_MAX_HTTP_RESPONSE_BYTES = 8 * 1024 * 1024
+_DEFAULT_MAX_HTTP_ERROR_BODY_BYTES = 64 * 1024
+_HTTP_RESPONSE_READ_CHUNK_BYTES = 64 * 1024
 
 
 def _utc_now_iso() -> str:
@@ -303,6 +307,7 @@ class GraphBlocksHttpError(RuntimeError):
         payload: dict[str, object],
         *,
         raw_body: bytes | None = None,
+        raw_body_truncated: bool = False,
     ) -> None:
         if isinstance(status_code, bool) or not isinstance(status_code, int):
             raise ValueError("GraphBlocks HTTP error status_code must be an integer")
@@ -315,25 +320,52 @@ class GraphBlocksHttpError(RuntimeError):
             (bytes, bytearray, memoryview),
         ):
             raise ValueError("GraphBlocks HTTP error raw_body must be bytes")
+        if type(raw_body_truncated) is not bool:
+            raise ValueError(
+                "GraphBlocks HTTP error raw_body_truncated must be a boolean"
+            )
+        if raw_body_truncated and raw_body is None:
+            raise ValueError(
+                "GraphBlocks HTTP error truncated raw_body must be present"
+            )
         self.status_code = status_code
         self.payload = _canonical_json_mapping("GraphBlocks HTTP error", "payload", payload)
         self.raw_body = bytes(raw_body) if raw_body is not None else None
+        self.raw_body_truncated = raw_body_truncated
         super().__init__(f"GraphBlocks HTTP request failed with status {status_code}")
 
     def __reduce__(
         self,
     ) -> tuple[
         Callable[
-            [type[GraphBlocksHttpError], int, dict[str, object], bytes | None],
+            [
+                type[GraphBlocksHttpError],
+                int,
+                dict[str, object],
+                bytes | None,
+                bool,
+            ],
             GraphBlocksHttpError,
         ],
-        tuple[type[GraphBlocksHttpError], int, dict[str, object], bytes | None],
+        tuple[
+            type[GraphBlocksHttpError],
+            int,
+            dict[str, object],
+            bytes | None,
+            bool,
+        ],
     ]:
         payload = _thaw_json_snapshot(self.payload)
         assert isinstance(payload, dict)
         return (
             _restore_graphblocks_http_error,
-            (type(self), self.status_code, payload, self.raw_body),
+            (
+                type(self),
+                self.status_code,
+                payload,
+                self.raw_body,
+                self.raw_body_truncated,
+            ),
         )
 
 
@@ -342,8 +374,14 @@ def _restore_graphblocks_http_error(
     status_code: int,
     payload: dict[str, object],
     raw_body: bytes | None,
+    raw_body_truncated: bool,
 ) -> GraphBlocksHttpError:
-    return error_type(status_code, payload, raw_body=raw_body)
+    return error_type(
+        status_code,
+        payload,
+        raw_body=raw_body,
+        raw_body_truncated=raw_body_truncated,
+    )
 
 
 class _SameOriginRedirectHandler(HTTPRedirectHandler):
@@ -1081,6 +1119,8 @@ class HttpGraphBlocksClient:
     bearer_token: str | None = None
     timeout: float = 30.0
     transport: Callable[..., object] | None = None
+    max_response_bytes: int = _DEFAULT_MAX_HTTP_RESPONSE_BYTES
+    max_error_body_bytes: int = _DEFAULT_MAX_HTTP_ERROR_BODY_BYTES
 
     def __post_init__(self) -> None:
         if (
@@ -1139,8 +1179,15 @@ class HttpGraphBlocksClient:
         self.timeout = timeout
         if self.transport is not None and not callable(self.transport):
             raise ValueError("GraphBlocks HTTP transport must be callable")
+        for field_name in ("max_response_bytes", "max_error_body_bytes"):
+            value = getattr(self, field_name)
+            if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+                raise ValueError(
+                    f"GraphBlocks HTTP {field_name} must be a positive integer"
+                )
 
     def _request_json(self, request: Request, label: str) -> dict[str, object]:
+        deadline_monotonic = monotonic() + self.timeout
         try:
             if self.transport is None:
                 response = build_opener(_SameOriginRedirectHandler()).open(request, timeout=self.timeout)
@@ -1148,7 +1195,13 @@ class HttpGraphBlocksClient:
                 response = self.transport(request, timeout=self.timeout)
         except HTTPError as error:
             response = error
-        return _read_json_response(response, label)
+        return _read_json_response(
+            response,
+            label,
+            max_response_bytes=self.max_response_bytes,
+            max_error_body_bytes=self.max_error_body_bytes,
+            deadline_monotonic=deadline_monotonic,
+        )
 
     def _request_run_json(
         self,
@@ -2052,7 +2105,14 @@ def _canonical_json_mapping(label: str, field_name: str, value: object) -> _Froz
     return frozen
 
 
-def _read_json_response(response: object, label: str) -> dict[str, object]:
+def _read_json_response(
+    response: object,
+    label: str,
+    *,
+    max_response_bytes: int,
+    max_error_body_bytes: int,
+    deadline_monotonic: float,
+) -> dict[str, object]:
     try:
         status_code = getattr(response, "status", getattr(response, "status_code", None))
         if status_code is not None:
@@ -2060,20 +2120,152 @@ def _read_json_response(response: object, label: str) -> dict[str, object]:
                 raise ValueError(f"{label} status code must be an integer")
             if status_code < 100 or status_code > 599:
                 raise ValueError(f"{label} status code must be a valid HTTP status")
-        raw_body = response.read()
-        if not isinstance(raw_body, bytes):
-            raise ValueError(f"{label} body must be bytes")
+        is_error = status_code is not None and status_code >= 400
+        if is_error:
+            assert isinstance(status_code, int)
+        max_body_bytes = max_error_body_bytes if is_error else max_response_bytes
+        response_headers: dict[str, str | None] = {}
+        for header_name in ("Content-Length", "Content-Encoding"):
+            headers = getattr(response, "headers", None)
+            values: list[object] = []
+            get_all = getattr(headers, "get_all", None)
+            if callable(get_all):
+                raw_values = get_all(header_name)
+                if raw_values is not None:
+                    values.extend(raw_values)
+            elif isinstance(headers, Mapping):
+                values.extend(
+                    value
+                    for key, value in headers.items()
+                    if isinstance(key, str) and key.lower() == header_name.lower()
+                )
+            elif headers is not None:
+                get_header = getattr(headers, "get", None)
+                if callable(get_header):
+                    value = get_header(header_name)
+                    if value is not None:
+                        values.append(value)
+            if not values:
+                get_header = getattr(response, "getheader", None)
+                if callable(get_header):
+                    value = get_header(header_name)
+                    if value is not None:
+                        values.append(value)
+            if not values:
+                response_headers[header_name] = None
+                continue
+            if len(values) != 1 or not isinstance(values[0], str):
+                raise ValueError(
+                    f"{label} {header_name} must occur exactly once as text"
+                )
+            header_value = values[0].strip()
+            if not header_value:
+                raise ValueError(f"{label} {header_name} must not be empty")
+            response_headers[header_name] = header_value
+
+        raw_content_length = response_headers["Content-Length"]
+        content_length: int | None = None
+        if raw_content_length is not None:
+            if not raw_content_length.isascii() or not raw_content_length.isdecimal():
+                raise ValueError(
+                    f"{label} Content-Length must be a non-negative integer"
+                )
+            try:
+                content_length = int(raw_content_length)
+            except ValueError:
+                raise ValueError(
+                    f"{label} Content-Length must be a non-negative integer"
+                ) from None
+        if not is_error and content_length is not None and content_length > max_body_bytes:
+            raise ValueError(f"{label} body exceeds {max_body_bytes} bytes")
+
+        read_response = getattr(response, "read", None)
+        if not callable(read_response):
+            raise ValueError(f"{label} body must be readable")
+        body = bytearray()
+        target_bytes = max_body_bytes + 1
+        legacy_unbounded_read = False
+        while len(body) < target_bytes:
+            remaining_timeout = deadline_monotonic - monotonic()
+            if remaining_timeout <= 0:
+                raise TimeoutError(
+                    f"{label} exceeded total timeout while reading body"
+                )
+            for attribute_path in (
+                (),
+                ("_sock",),
+                ("raw", "_sock"),
+                ("fp", "_sock"),
+                ("fp", "raw", "_sock"),
+                ("fp", "fp", "raw", "_sock"),
+            ):
+                candidate = response
+                for attribute in attribute_path:
+                    candidate = getattr(candidate, attribute, None)
+                    if candidate is None:
+                        break
+                else:
+                    set_timeout = getattr(candidate, "settimeout", None)
+                    if callable(set_timeout):
+                        try:
+                            set_timeout(remaining_timeout)
+                        except (OSError, TypeError, ValueError):
+                            continue
+                        break
+            read_size = min(
+                _HTTP_RESPONSE_READ_CHUNK_BYTES,
+                target_bytes - len(body),
+            )
+            try:
+                chunk = read_response(read_size)
+            except TypeError:
+                if body:
+                    raise ValueError(
+                        f"{label} body reader must accept a size limit"
+                    ) from None
+                # Custom transports historically exposed a no-argument read
+                # method. They are trusted in-process code; retain compatibility
+                # while bounding retained data and every network-backed read.
+                chunk = read_response()
+                legacy_unbounded_read = True
+            if not isinstance(chunk, bytes):
+                raise ValueError(f"{label} body must be bytes")
+            if not chunk:
+                break
+            body.extend(chunk[: target_bytes - len(body)])
+            if legacy_unbounded_read:
+                break
+        raw_body_truncated = len(body) > max_body_bytes
+        raw_body = bytes(body[:max_body_bytes])
+
+        content_encoding = response_headers["Content-Encoding"]
+        if (
+            content_length is not None
+            and (content_encoding is None or content_encoding.lower() == "identity")
+            and not raw_body_truncated
+            and len(raw_body) != content_length
+        ):
+            raise ValueError(f"{label} Content-Length does not match body size")
+        if raw_body_truncated:
+            if is_error:
+                raise GraphBlocksHttpError(
+                    status_code,
+                    {},
+                    raw_body=raw_body,
+                    raw_body_truncated=True,
+                )
+            raise ValueError(f"{label} body exceeds {max_body_bytes} bytes")
         try:
             payload = _strict_json_loads(raw_body)
         except (TypeError, ValueError) as error:
-            if status_code is not None and status_code >= 400:
+            if is_error:
                 raise GraphBlocksHttpError(status_code, {}, raw_body=raw_body) from error
             raise ValueError(f"{label} must be valid JSON") from error
         if not isinstance(payload, dict):
-            if status_code is not None and status_code >= 400:
+            if is_error:
                 raise GraphBlocksHttpError(status_code, {}, raw_body=raw_body)
             raise ValueError(f"{label} must be a JSON object")
-        if status_code is not None and status_code >= 400:
+        if is_error:
             raise GraphBlocksHttpError(status_code, payload, raw_body=raw_body)
         return payload
     finally:
