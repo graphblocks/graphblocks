@@ -285,7 +285,8 @@ fn approval_request_rejects_non_object_arguments_before_request_creation() {
     let mut call = search_call("call-1", "runtime").expect("tool call is valid");
     call.resolved_tool_id = resolved.resolved_tool_id.clone();
     call.arguments = json!("runtime");
-    call.arguments_digest = graphblocks_compiler::canonical::canonical_hash(&call.arguments);
+    call.arguments_digest = graphblocks_compiler::canonical::canonical_hash(&call.arguments)
+        .expect("bounded tool arguments should hash");
 
     assert_eq!(
         ToolApprovalRequest::for_call("approval-1", &resolved, &call, "user-1", 1_000, 2_000),

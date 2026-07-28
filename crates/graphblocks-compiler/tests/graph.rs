@@ -27,11 +27,12 @@ fn normalize_graph_expands_input_and_output_shorthand() {
     let normalized = normalize_graph(&graph);
 
     assert_eq!(
-        canonical_json(&normalized["spec"]["nodes"]["render"]),
+        canonical_json(&normalized["spec"]["nodes"]["render"])
+            .expect("normalized node should serialize"),
         r#"{"block":"prompt.render@1"}"#
     );
     assert_eq!(
-        canonical_json(&normalized["spec"]["edges"]),
+        canonical_json(&normalized["spec"]["edges"]).expect("normalized edges should serialize"),
         r#"[{"from":"$input.message","to":"render.message"},{"from":"lookup.value","to":"render.context.current"},{"from":"render.value","to":"$output.result"}]"#
     );
 }
@@ -71,9 +72,13 @@ fn normalize_graph_sorts_nodes_and_edges_for_stable_hashes() {
         "metadata": {"name": "ordered"}
     });
 
-    let normalized_hash = canonical_hash(&normalize_graph(&left));
+    let normalized_hash =
+        canonical_hash(&normalize_graph(&left)).expect("normalized graph should hash");
 
-    assert_eq!(normalized_hash, canonical_hash(&normalize_graph(&right)));
+    assert_eq!(
+        normalized_hash,
+        canonical_hash(&normalize_graph(&right)).expect("normalized graph should hash")
+    );
     assert_eq!(
         normalized_hash,
         "sha256:fce14a3da5ee7f2b579494d34f3320758f5ff3204713d803c73fdcbccb162027"
@@ -99,7 +104,8 @@ fn normalize_graph_rewrites_connection_shorthand_to_default_binding() {
     let normalized = normalize_graph(&graph);
 
     assert_eq!(
-        canonical_json(&normalized["spec"]["nodes"]["model"]),
+        canonical_json(&normalized["spec"]["nodes"]["model"])
+            .expect("normalized node should serialize"),
         r#"{"bindings":{"default":"openai-main"},"block":"model.generate@1"}"#
     );
 }

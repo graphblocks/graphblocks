@@ -50,7 +50,7 @@ fn typed_value_preserves_schema_id_and_round_trips_json() -> Result<(), Box<dyn 
     assert_eq!(value.schema_id().as_str(), "schemas/Message@1");
     assert_eq!(value.value(), &json!({"text": "hello"}));
     assert_eq!(
-        value.canonical_value(),
+        value.canonical_value()?,
         json!({"schema": "schemas/Message@1", "value": {"text": "hello"}}),
     );
 

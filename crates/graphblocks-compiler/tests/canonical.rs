@@ -1,4 +1,5 @@
 use std::mem;
+use std::panic::{AssertUnwindSafe, catch_unwind};
 
 use graphblocks_compiler::canonical::{
     canonical_hash, canonical_json, try_canonical_hash, try_canonical_json,
@@ -17,7 +18,7 @@ fn canonical_json_sorts_object_keys_recursively() {
     });
 
     assert_eq!(
-        canonical_json(&value),
+        canonical_json(&value).expect("bounded value should serialize"),
         r#"{"a":{"a":["text",{"c":3,"d":null}],"b":true},"z":1}"#
     );
 }
@@ -57,9 +58,12 @@ fn canonical_hash_is_stable_for_map_ordering() {
         "metadata": {"name": "ordered"}
     });
 
-    assert_eq!(canonical_hash(&left), canonical_hash(&right));
     assert_eq!(
-        canonical_hash(&left),
+        canonical_hash(&left).expect("bounded value should hash"),
+        canonical_hash(&right).expect("bounded value should hash")
+    );
+    assert_eq!(
+        canonical_hash(&left).expect("bounded value should hash"),
         "sha256:4d121992be800bb056512aa26e834a45ee9efcba28e2ce8130d730f194ad97a2"
     );
 }
@@ -69,7 +73,10 @@ fn canonical_hash_preserves_array_order() {
     let left = json!({"items": [1, 2, 3]});
     let right = json!({"items": [3, 2, 1]});
 
-    assert_ne!(canonical_hash(&left), canonical_hash(&right));
+    assert_ne!(
+        canonical_hash(&left).expect("bounded value should hash"),
+        canonical_hash(&right).expect("bounded value should hash")
+    );
 }
 
 #[test]
@@ -89,7 +96,7 @@ fn canonical_json_preserves_large_integers_and_normalizes_exponents() {
     .expect("numeric fixture should parse");
 
     assert_eq!(
-        canonical_json(&value),
+        canonical_json(&value).expect("bounded value should serialize"),
         r#"{"fixed_high":1000000000000000.0,"fixed_low":0.0001,"large":100000000000000000000,"negative_integer_zero":0,"negative_zero":-0.0,"scientific_high":1e+16,"small":1e-07,"whole_float":1.0}"#
     );
 }
@@ -100,7 +107,7 @@ fn canonical_json_normalizes_numbers_beyond_binary64_range_without_panicking() {
         .expect("arbitrary precision numeric fixture should parse");
 
     assert_eq!(
-        canonical_json(&value),
+        canonical_json(&value).expect("bounded value should serialize"),
         r#"{"equivalent":1e+400,"huge":1e+400,"negative":-1e+400}"#
     );
 
@@ -109,8 +116,8 @@ fn canonical_json_normalizes_numbers_beyond_binary64_range_without_panicking() {
         serde_json::from_str(r#"1e1000000"#).expect("equivalent large exponent should parse");
 
     assert_eq!(
-        canonical_json(&enormous_left),
-        canonical_json(&enormous_right)
+        canonical_json(&enormous_left).expect("bounded value should serialize"),
+        canonical_json(&enormous_right).expect("bounded value should serialize")
     );
 }
 
@@ -123,11 +130,26 @@ fn canonical_json_keeps_distinct_decimals_above_binary64_integer_precision() {
     let right_equivalent = serde_json::from_str(r#"90071992547409930e-1"#)
         .expect("equivalent higher precision decimal should parse");
 
-    assert_eq!(canonical_json(&left), "9007199254740992.0");
-    assert_eq!(canonical_json(&right), "9007199254740993.0");
-    assert_eq!(canonical_json(&right_equivalent), "9007199254740993.0");
-    assert_ne!(canonical_hash(&left), canonical_hash(&right));
-    assert_eq!(canonical_hash(&right), canonical_hash(&right_equivalent));
+    assert_eq!(
+        canonical_json(&left).expect("bounded value should serialize"),
+        "9007199254740992.0"
+    );
+    assert_eq!(
+        canonical_json(&right).expect("bounded value should serialize"),
+        "9007199254740993.0"
+    );
+    assert_eq!(
+        canonical_json(&right_equivalent).expect("bounded value should serialize"),
+        "9007199254740993.0"
+    );
+    assert_ne!(
+        canonical_hash(&left).expect("bounded value should hash"),
+        canonical_hash(&right).expect("bounded value should hash")
+    );
+    assert_eq!(
+        canonical_hash(&right).expect("bounded value should hash"),
+        canonical_hash(&right_equivalent).expect("bounded value should hash")
+    );
 }
 
 #[test]
@@ -148,6 +170,39 @@ fn checked_compiler_identity_rejects_excessive_json_depth() {
     );
     assert_eq!(
         try_canonical_hash(&over_limit),
+        Err(CanonicalJsonError::NestingTooDeep {
+            max_depth: MAX_CANONICAL_JSON_DEPTH,
+        })
+    );
+}
+
+#[test]
+fn public_compiler_identity_reports_deep_input_without_panicking() {
+    let mut value = Value::Null;
+    for _ in 0..=MAX_CANONICAL_JSON_DEPTH {
+        value = Value::Array(vec![value]);
+    }
+
+    let json_outcome = catch_unwind(AssertUnwindSafe(|| canonical_json(&value)));
+    let hash_outcome = catch_unwind(AssertUnwindSafe(|| canonical_hash(&value)));
+
+    assert!(
+        json_outcome.is_ok(),
+        "compiler canonical_json must not panic on deep input"
+    );
+    assert!(
+        hash_outcome.is_ok(),
+        "compiler canonical_hash must not panic on deep input"
+    );
+    let expected = Err(CanonicalJsonError::NestingTooDeep {
+        max_depth: MAX_CANONICAL_JSON_DEPTH,
+    });
+    assert_eq!(
+        json_outcome.expect("compiler canonical_json must return normally"),
+        expected
+    );
+    assert_eq!(
+        hash_outcome.expect("compiler canonical_hash must return normally"),
         Err(CanonicalJsonError::NestingTooDeep {
             max_depth: MAX_CANONICAL_JSON_DEPTH,
         })

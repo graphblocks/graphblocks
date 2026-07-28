@@ -1545,6 +1545,21 @@ pub fn compile_graph_for_discovery(document: &Value) -> Plan {
 }
 
 pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog) -> Plan {
+    let finish_plan = |normalized: Value, mut diagnostics: Vec<Diagnostic>| {
+        let graph_hash = match canonical_hash(&normalized) {
+            Ok(graph_hash) => graph_hash,
+            Err(error) => {
+                diagnostics.push(Diagnostic::error("GB0014", error.to_string(), "$"));
+                String::new()
+            }
+        };
+        Plan {
+            normalized,
+            graph_hash,
+            diagnostics,
+        }
+    };
+
     if let Some(violation) = resource_depth_violation(document) {
         let diagnostic = Diagnostic::error(
             violation.code.as_str(),
@@ -1559,11 +1574,7 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
                 "path": violation.path,
             }]
         });
-        return Plan {
-            graph_hash: canonical_hash(&normalized),
-            normalized,
-            diagnostics: vec![diagnostic],
-        };
+        return finish_plan(normalized, vec![diagnostic]);
     }
 
     let source_uses_stable_graph_api =
@@ -1579,11 +1590,7 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
             "document kind must be Graph",
             "$.kind",
         ));
-        return Plan {
-            graph_hash: canonical_hash(&normalized),
-            normalized,
-            diagnostics,
-        };
+        return finish_plan(normalized, diagnostics);
     }
 
     let schema_violations = if matches!(
@@ -1651,11 +1658,7 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
             "$.spec",
         ));
         prepend_schema_diagnostics(&mut diagnostics, &schema_violations);
-        return Plan {
-            graph_hash: canonical_hash(&normalized),
-            normalized,
-            diagnostics,
-        };
+        return finish_plan(normalized, diagnostics);
     }
 
     let nodes = spec
@@ -3915,11 +3918,7 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
     }
 
     prepend_schema_diagnostics(&mut diagnostics, &schema_violations);
-    Plan {
-        graph_hash: canonical_hash(&normalized),
-        normalized,
-        diagnostics,
-    }
+    finish_plan(normalized, diagnostics)
 }
 
 fn prepend_schema_diagnostics(

@@ -76,7 +76,8 @@ fn in_memory_chunk_retriever_returns_ranked_hits_with_lineage() {
         "filters": {},
         "query_text": "beta",
         "top_k": 2,
-    }));
+    }))
+    .expect("bounded retrieval request should hash");
     assert_eq!(result.retrieval_id, format!("local-test:{request_hash}"));
     assert_eq!(result.request, request);
     assert_eq!(result.total_candidates, Some(2));
@@ -1236,7 +1237,7 @@ fn build_answer_from_model_response_preserves_structured_output_metadata()
     assert_eq!(answer.claims[0].citation_ids, vec!["cite-1"]);
     assert_eq!(
         answer.metadata["model_response_digest"],
-        json!(canonical_hash(&model_response))
+        json!(canonical_hash(&model_response).expect("bounded model response should hash"))
     );
     assert_eq!(answer.metadata["provider_response_id"], json!("response-1"));
     assert_eq!(answer.metadata["provider"], json!("scripted"));

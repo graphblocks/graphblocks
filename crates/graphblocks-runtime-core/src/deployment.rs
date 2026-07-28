@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt;
 
-use graphblocks_compiler::canonical::canonical_hash;
+use crate::canonical::canonical_hash;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 

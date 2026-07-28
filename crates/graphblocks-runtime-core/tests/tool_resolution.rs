@@ -659,7 +659,8 @@ fn tool_binding_digest_serializes_effects_by_canonical_string_order() {
         "retry_policy_ref": null,
         "policy_profile_ref": null,
         "execution_class": null,
-    }));
+    }))
+    .expect("bounded tool identity should hash");
 
     assert_eq!(binding.digest(), expected);
 }

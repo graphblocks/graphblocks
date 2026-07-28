@@ -338,7 +338,8 @@ fn retrieval_plan_emits_fused_result_and_requires_real_source_results() -> Resul
         "successful_sources": ["ok"],
         "failed_sources": [{"source_id": "missing", "error": "missing retrieval result"}],
         "fusion_strategy": "concatenate",
-    }));
+    }))
+    .expect("bounded retrieval identity should hash");
     assert_eq!(
         retrieval["result"]["retrievalId"],
         format!("federated:{expected_digest}")

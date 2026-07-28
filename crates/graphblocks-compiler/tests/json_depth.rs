@@ -87,7 +87,7 @@ fn compiler_accepts_resource_depth_64_and_rejects_depth_65_before_cloning() {
     assert_eq!(rejected.normalized, invalid_resource_identity);
     assert_eq!(
         rejected.graph_hash,
-        canonical_hash(&invalid_resource_identity)
+        canonical_hash(&invalid_resource_identity).expect("invalid-resource identity should hash")
     );
 }
 

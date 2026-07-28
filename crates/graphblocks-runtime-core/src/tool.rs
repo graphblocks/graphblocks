@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use graphblocks_compiler::canonical::canonical_hash;
+use crate::canonical::canonical_hash;
 use graphblocks_schema::{SchemaId, SchemaIdError};
 use serde_json::{Value, json};
 

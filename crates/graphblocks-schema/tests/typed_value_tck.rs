@@ -27,14 +27,20 @@ fn rust_typed_values_match_shared_tck_cases() -> Result<(), String> {
                     !expected.contains_key("error"),
                     "{name}: unexpectedly accepted invalid typed value"
                 );
+                let canonical_value = typed_value
+                    .canonical_value()
+                    .map_err(|error| format!("{name}: {error}"))?;
                 assert_eq!(
                     expected.get("canonical_value"),
-                    Some(&typed_value.canonical_value()),
+                    Some(&canonical_value),
                     "{name}",
                 );
+                let canonical_json = typed_value
+                    .canonical_json()
+                    .map_err(|error| format!("{name}: {error}"))?;
                 assert_eq!(
                     expected.get("canonical_json").and_then(Value::as_str),
-                    Some(typed_value.canonical_json().as_str()),
+                    Some(canonical_json.as_str()),
                     "{name}",
                 );
             }

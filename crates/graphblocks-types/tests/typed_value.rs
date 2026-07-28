@@ -76,12 +76,12 @@ fn typed_value_matches_shared_tck_cases() -> Result<(), Box<dyn std::error::Erro
             .get("canonical_value")
             .expect("expected canonical value");
         assert_eq!(
-            &observed.canonical_value(),
+            &observed.canonical_value()?,
             expected_canonical_value,
             "{name}"
         );
         assert_eq!(
-            observed.to_canonical_json(),
+            observed.to_canonical_json()?,
             expected
                 .get("canonical_json")
                 .and_then(Value::as_str)

@@ -68,7 +68,8 @@ fn sign_callback_admission(receipt: &mut Value) {
         .as_object_mut()
         .expect("callback admission is an object");
     admission.remove("signature");
-    let admission_digest = canonical_hash(&Value::Object(admission.clone()));
+    let admission_digest = canonical_hash(&Value::Object(admission.clone()))
+        .expect("bounded callback admission should hash");
     let message = format!("graphblocks.trusted-callback-resume-admission.v1\n{admission_digest}");
     let mut mac = Hmac::<Sha256>::new_from_slice(CALLBACK_ADMISSION_HMAC_KEY.as_bytes())
         .expect("test callback admission HMAC key is valid");
@@ -225,6 +226,7 @@ fn native_callback_run_suspends_and_returns_a_canonical_checkpoint() -> Result<(
                 .map(|(key, value)| (key.clone(), value.clone()))
                 .collect::<serde_json::Map<_, _>>()
         ))
+        .expect("bounded checkpoint should hash")
     );
     let waiting_position = waiting["journal"]
         .as_array()
@@ -254,6 +256,7 @@ fn native_callback_run_suspends_and_returns_a_canonical_checkpoint() -> Result<(
                 .cloned()
                 .collect::<Vec<_>>()
         ))
+        .expect("bounded journal should hash")
     );
     assert_eq!(
         waiting["journal"]
@@ -315,11 +318,15 @@ fn native_callback_checkpoint_rejects_overflowing_journal_positions_without_pani
         json!(format!(
             "checkpoint-{}",
             canonical_hash(&Value::Object(checkpoint.clone()))
+                .expect("bounded checkpoint should hash")
         )),
     );
     checkpoint.insert(
         "state_digest".to_owned(),
-        json!(canonical_hash(&Value::Object(checkpoint.clone()))),
+        json!(
+            canonical_hash(&Value::Object(checkpoint.clone()))
+                .expect("bounded checkpoint should hash")
+        ),
     );
     let state_digest = checkpoint["state_digest"]
         .as_str()
@@ -603,7 +610,8 @@ fn native_callback_admission_signature_binds_schema_and_payload_claims() -> Resu
     let waiting = run(&path, None)?;
     let mut forged = callback_receipt(&waiting, true);
     forged["payload"] = json!({"unexpected": "shape"});
-    let forged_digest = canonical_hash(&forged["payload"]);
+    let forged_digest =
+        canonical_hash(&forged["payload"]).expect("bounded forged payload should hash");
     forged["payload_digest"] = json!(forged_digest);
     forged["resume_admission"]["schema_verification"]["payload_digest"] =
         forged["payload_digest"].clone();
@@ -696,7 +704,8 @@ fn acceptance_ahead_rejects_tampered_persisted_receipt_binding() -> Result<(), S
         .map_err(|error| error.to_string())?;
     let mut event: Value = serde_json::from_str(&event_json).map_err(|error| error.to_string())?;
     let tampered_payload = json!({"status": "completed", "conclusion": "tampered"});
-    event["receipt"]["payload_digest"] = json!(canonical_hash(&tampered_payload));
+    event["receipt"]["payload_digest"] =
+        json!(canonical_hash(&tampered_payload).expect("bounded tampered payload should hash"));
     event["receipt"]["payload"] = tampered_payload;
     connection
         .execute(
@@ -746,7 +755,10 @@ fn terminal_duplicate_rejects_tampered_persisted_acceptance_evidence() -> Result
             match event_type {
                 "ExternalCallbackReceived" => {
                     let tampered_payload = json!({"status": "completed", "conclusion": "tampered"});
-                    event["receipt"]["payload_digest"] = json!(canonical_hash(&tampered_payload));
+                    event["receipt"]["payload_digest"] = json!(
+                        canonical_hash(&tampered_payload)
+                            .expect("bounded tampered payload should hash")
+                    );
                     event["receipt"]["payload"] = tampered_payload;
                 }
                 "CallbackResumeAuthorized" => {

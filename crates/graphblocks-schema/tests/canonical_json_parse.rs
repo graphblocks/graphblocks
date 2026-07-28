@@ -7,7 +7,7 @@ fn canonical_json_parser_preserves_arbitrary_precision_numbers() {
             .expect("arbitrary-precision canonical JSON parses");
 
     assert_eq!(
-        canonical_json(&value),
+        canonical_json(&value).expect("bounded value should serialize"),
         r#"{"decimal":1.00000000000000001,"integer":18446744073709551616}"#
     );
 }

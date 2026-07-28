@@ -5,7 +5,7 @@ use std::fs::{File, OpenOptions};
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use graphblocks_compiler::canonical::{canonical_hash, canonical_json, try_canonical_hash};
+use graphblocks_compiler::canonical::try_canonical_hash;
 use graphblocks_compiler::compiler::{
     BlockCatalog, BlockDescriptor, ExecutionPhase, compile_graph_with_catalog,
 };
@@ -27,6 +27,7 @@ use crate::async_operation::{
     AsyncOperationKind, AsyncOperationResult, AsyncOperationResultStatus, AsyncOperationState,
     CallbackArtifactRef, ExternalEffectRecord, SqliteAsyncOperationStore,
 };
+use crate::canonical::{canonical_hash, canonical_json};
 use crate::journal::{JournalMetadata, JournalRecord, SqliteExecutionJournal};
 use crate::outcome::{BlockError, ErrorCategory, Outcome, SkipReason};
 use crate::readiness::{InputDependency, PortRef, ResolvedInput};

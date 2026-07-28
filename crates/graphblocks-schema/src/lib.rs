@@ -611,9 +611,8 @@ impl TypedValue {
         Self::try_from_schema(schema, value).map_err(Into::into)
     }
 
-    pub fn from_schema(schema: SchemaId, value: Value) -> Self {
+    pub fn from_schema(schema: SchemaId, value: Value) -> Result<Self, CanonicalJsonError> {
         Self::try_from_schema(schema, value)
-            .expect("typed value value must satisfy canonical JSON depth limits")
     }
 
     pub fn try_from_schema(schema: SchemaId, value: Value) -> Result<Self, CanonicalJsonError> {
@@ -632,9 +631,8 @@ impl TypedValue {
         &self.value
     }
 
-    pub fn canonical_value(&self) -> Value {
+    pub fn canonical_value(&self) -> Result<Value, CanonicalJsonError> {
         self.try_canonical_value()
-            .expect("typed value envelope must satisfy canonical JSON depth limits")
     }
 
     pub fn try_canonical_value(&self) -> Result<Value, CanonicalJsonError> {
@@ -645,16 +643,15 @@ impl TypedValue {
         }))
     }
 
-    pub fn canonical_json(&self) -> String {
+    pub fn canonical_json(&self) -> Result<String, CanonicalJsonError> {
         self.try_canonical_json()
-            .expect("typed value envelope must satisfy canonical JSON depth limits")
     }
 
     pub fn try_canonical_json(&self) -> Result<String, CanonicalJsonError> {
         try_canonical_json(&self.try_canonical_value()?)
     }
 
-    pub fn to_canonical_json(&self) -> String {
+    pub fn to_canonical_json(&self) -> Result<String, CanonicalJsonError> {
         self.canonical_json()
     }
 
@@ -685,8 +682,8 @@ impl<'de> Deserialize<'de> for TypedValue {
 }
 
 /// Serializes a JSON value using the cross-language GraphBlocks identity format.
-pub fn canonical_json(value: &Value) -> String {
-    try_canonical_json(value).expect("value must satisfy canonical JSON depth limits")
+pub fn canonical_json(value: &Value) -> Result<String, CanonicalJsonError> {
+    try_canonical_json(value)
 }
 
 /// Fallible canonical JSON serialization for values crossing an untrusted boundary.
@@ -731,11 +728,7 @@ fn canonical_json_unchecked(value: &Value) -> String {
                     } else {
                         exponent_magnitude
                     };
-                    let exponent_delta = i128::try_from(significant.len())
-                        .expect("JSON number length must fit in i128")
-                        - i128::try_from(fractional_digits)
-                            .expect("JSON fraction length must fit in i128")
-                        - 1;
+                    let exponent_delta = significant.len() as i128 - fractional_digits as i128 - 1;
                     let delta_negative = exponent_delta.is_negative();
                     let delta_magnitude = exponent_delta.unsigned_abs().to_string();
 
@@ -767,8 +760,7 @@ fn canonical_json_unchecked(value: &Value) -> String {
                         reversed.reverse();
                         (
                             exponent_negative,
-                            String::from_utf8(reversed)
-                                .expect("canonical exponent digits must be UTF-8"),
+                            reversed.into_iter().map(char::from).collect(),
                         )
                     } else {
                         let exponent_is_larger = exponent_magnitude.len() > delta_magnitude.len()
@@ -806,11 +798,7 @@ fn canonical_json_unchecked(value: &Value) -> String {
                             reversed.pop();
                         }
                         reversed.reverse();
-                        (
-                            negative,
-                            String::from_utf8(reversed)
-                                .expect("canonical exponent digits must be UTF-8"),
-                        )
+                        (negative, reversed.into_iter().map(char::from).collect())
                     };
                     let coefficient = significant.trim_end_matches('0');
                     let adjusted_exponent = result_magnitude.parse::<i32>().ok().map(|value| {
@@ -830,15 +818,12 @@ fn canonical_json_unchecked(value: &Value) -> String {
                         let decimal_point = exponent + 1;
                         if decimal_point <= 0 {
                             output.push_str("0.");
-                            for _ in 0..usize::try_from(-decimal_point)
-                                .expect("fixed decimal prefix must fit in usize")
-                            {
+                            for _ in 0..(-decimal_point) as usize {
                                 output.push('0');
                             }
                             output.push_str(coefficient);
                         } else {
-                            let decimal_point = usize::try_from(decimal_point)
-                                .expect("fixed decimal point must fit in usize");
+                            let decimal_point = decimal_point as usize;
                             if decimal_point >= coefficient.len() {
                                 output.push_str(coefficient);
                                 for _ in 0..decimal_point - coefficient.len() {
@@ -1269,16 +1254,22 @@ mod resource_validation {
             }
             ValidationErrorKind::Not { .. } => "value matches a forbidden schema".into(),
             ValidationErrorKind::Constant { expected_value } => {
-                format!("value must equal {}", canonical_json(expected_value))
+                format!(
+                    "value must equal {}",
+                    canonical_json_unchecked(expected_value)
+                )
             }
             ValidationErrorKind::Enum { options } => {
-                format!("value must be one of {}", canonical_json(options))
+                format!("value must be one of {}", canonical_json_unchecked(options))
             }
             ValidationErrorKind::Type { .. } => {
                 let expected = schema
                     .pointer(error.schema_path().as_str())
                     .unwrap_or(&Value::Null);
-                format!("value must have JSON type {}", canonical_json(expected))
+                format!(
+                    "value must have JSON type {}",
+                    canonical_json_unchecked(expected)
+                )
             }
             ValidationErrorKind::UniqueItems => "array items must be unique".into(),
             ValidationErrorKind::AdditionalProperties { unexpected } => {
@@ -1286,7 +1277,7 @@ mod resource_validation {
                 unexpected.sort();
                 format!(
                     "unexpected properties are not allowed: {}",
-                    canonical_json(&Value::Array(
+                    canonical_json_unchecked(&Value::Array(
                         unexpected.into_iter().map(Value::String).collect()
                     ))
                 )
@@ -1372,7 +1363,9 @@ mod resource_validation {
             output.push_str(property);
         } else {
             output.push('[');
-            output.push_str(&canonical_json(&Value::String(property.to_owned())));
+            output.push_str(&canonical_json_unchecked(&Value::String(
+                property.to_owned(),
+            )));
             output.push(']');
         }
     }

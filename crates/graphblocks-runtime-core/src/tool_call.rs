@@ -1,4 +1,4 @@
-use graphblocks_compiler::canonical::canonical_hash;
+use crate::canonical::canonical_hash;
 use graphblocks_schema::parse_canonical_json;
 use serde_json::Value;
 

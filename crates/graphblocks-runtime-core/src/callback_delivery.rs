@@ -8,6 +8,7 @@ use crate::application_event::{
     ApplicationEvent, ApplicationEventKind, ApplicationProtocolEvent, ApplicationProtocolEventKind,
     ApplicationProtocolLog,
 };
+use crate::canonical::canonical_json;
 use crate::connectors::{SecretProviderError, SecretRef, SecretResolver};
 use hmac::{Hmac, Mac};
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
@@ -2375,7 +2376,7 @@ impl WebhookSigningConfig {
         timestamp_unix_ms: u64,
         body: &Value,
     ) -> Result<String, WebhookSignatureError> {
-        let body = graphblocks_compiler::canonical::canonical_json(body);
+        let body = canonical_json(body);
         let mut mac = HmacSha256::new_from_slice(&self.secret)
             .map_err(|_| WebhookSignatureError::InvalidSecret)?;
         mac.update(timestamp_unix_ms.to_string().as_bytes());
@@ -2402,7 +2403,7 @@ pub struct WebhookHttpRequest {
 
 impl WebhookHttpRequest {
     pub fn canonical_body(&self) -> String {
-        graphblocks_compiler::canonical::canonical_json(&self.body)
+        canonical_json(&self.body)
     }
 }
 
@@ -2661,7 +2662,7 @@ pub enum WebhookSignatureError {
 }
 
 fn canonical_body_size_bytes(body: &Value) -> usize {
-    graphblocks_compiler::canonical::canonical_json(body).len()
+    canonical_json(body).len()
 }
 
 fn hex_encode(bytes: &[u8]) -> String {

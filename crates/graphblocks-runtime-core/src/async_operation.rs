@@ -3,12 +3,12 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 use std::sync::Mutex;
 
-use graphblocks_compiler::canonical::canonical_hash;
 use hmac::{Hmac, Mac};
 use rusqlite::{Connection, TransactionBehavior, params};
 use serde_json::{Value, json};
 use sha2::Sha256;
 
+use crate::canonical::{canonical_hash, canonical_json};
 use crate::tool_result::ToolEffectOutcome;
 use crate::tool_schema::{ToolSchemaRegistry, ToolSchemaValidationError};
 
@@ -3340,7 +3340,7 @@ impl SqliteAsyncOperationStore {
 }
 
 fn callback_payload_size_bytes(payload: &Value) -> usize {
-    graphblocks_compiler::canonical::canonical_json(payload).len()
+    canonical_json(payload).len()
 }
 
 fn callback_idempotency_conflict_field(
@@ -3669,11 +3669,7 @@ fn compute_callback_hmac_signature(
 }
 
 fn callback_signature_message(timestamp_unix_ms: u64, payload: &Value) -> String {
-    format!(
-        "{}.{}",
-        timestamp_unix_ms,
-        graphblocks_compiler::canonical::canonical_json(payload)
-    )
+    format!("{}.{}", timestamp_unix_ms, canonical_json(payload))
 }
 
 fn hex_encode(bytes: &[u8]) -> String {

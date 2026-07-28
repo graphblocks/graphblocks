@@ -6,6 +6,7 @@ pub mod blob_store;
 pub mod budget;
 pub mod callback_delivery;
 pub mod cancellation;
+mod canonical;
 pub mod connectors;
 pub mod conversation;
 pub mod deployment;

@@ -1,8 +1,9 @@
 use std::mem;
+use std::panic::{AssertUnwindSafe, catch_unwind};
 
 use graphblocks_schema::{
-    CanonicalJsonError, MAX_CANONICAL_JSON_DEPTH, MAX_RESOURCE_DOCUMENT_DEPTH, TypedValue,
-    TypedValueError, resource_schema_errors, try_canonical_json,
+    CanonicalJsonError, MAX_CANONICAL_JSON_DEPTH, MAX_RESOURCE_DOCUMENT_DEPTH, SchemaId,
+    TypedValue, TypedValueError, canonical_json, resource_schema_errors, try_canonical_json,
 };
 use serde_json::{Map, Value};
 
@@ -73,6 +74,43 @@ fn canonical_json_accepts_depth_64_and_rejects_depth_65() {
     assert!(try_canonical_json(&at_limit).is_ok());
     assert_eq!(
         try_canonical_json(&over_limit),
+        Err(CanonicalJsonError::NestingTooDeep {
+            max_depth: MAX_CANONICAL_JSON_DEPTH,
+        })
+    );
+}
+
+#[test]
+fn public_canonical_json_reports_deep_input_without_panicking() {
+    let value = nested_object(MAX_CANONICAL_JSON_DEPTH + 1);
+
+    let outcome = catch_unwind(AssertUnwindSafe(|| canonical_json(&value)));
+
+    assert!(
+        outcome.is_ok(),
+        "canonical_json must not panic on deep input"
+    );
+    assert_eq!(
+        outcome.expect("canonical_json must return normally"),
+        Err(CanonicalJsonError::NestingTooDeep {
+            max_depth: MAX_CANONICAL_JSON_DEPTH,
+        })
+    );
+}
+
+#[test]
+fn typed_value_from_schema_reports_deep_input_without_panicking() {
+    let schema = SchemaId::parse("schemas/Message@1").expect("schema id should be valid");
+    let value = nested_object(MAX_CANONICAL_JSON_DEPTH + 1);
+
+    let outcome = catch_unwind(AssertUnwindSafe(|| TypedValue::from_schema(schema, value)));
+
+    assert!(
+        outcome.is_ok(),
+        "TypedValue::from_schema must not panic on deep input"
+    );
+    assert_eq!(
+        outcome.expect("TypedValue::from_schema must return normally"),
         Err(CanonicalJsonError::NestingTooDeep {
             max_depth: MAX_CANONICAL_JSON_DEPTH,
         })

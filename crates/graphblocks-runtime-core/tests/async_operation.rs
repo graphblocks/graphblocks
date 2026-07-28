@@ -1395,7 +1395,8 @@ fn idempotency_conflict_rejection_records_callback_receipt_metadata() {
 
     let mut mutated = valid_submission("cb-mutated", "idem-cb-1");
     mutated.payload = json!({"status": "failed", "workflow_run_id": "gha-run-1"});
-    let expected_payload_digest = graphblocks_compiler::canonical::canonical_hash(&mutated.payload);
+    let expected_payload_digest = graphblocks_compiler::canonical::canonical_hash(&mutated.payload)
+        .expect("bounded callback payload should hash");
 
     assert_eq!(
         store.accept_callback(mutated, &callback_schema_registry()),
