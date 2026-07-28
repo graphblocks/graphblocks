@@ -3560,7 +3560,7 @@ fn compile_graph_rejects_immediate_draft_without_retraction_support() {
 }
 
 #[test]
-fn compile_graph_allows_bounded_holdback_with_time_or_size_bound() {
+fn compile_graph_rejects_bounded_holdback_with_duration_bound() {
     let graph = json!({
         "apiVersion": GRAPH_API_VERSION,
         "kind": "Graph",
@@ -3570,6 +3570,40 @@ fn compile_graph_allows_bounded_holdback_with_time_or_size_bound() {
                 "delivery": {
                     "mode": "bounded_holdback",
                     "holdbackMaxDuration": "250ms",
+                    "onViolation": "abort_response"
+                }
+            },
+            "nodes": {
+                "model": {"block": "model.generate@1"}
+            }
+        }
+    });
+
+    let plan = compile_graph_for_discovery(&graph);
+
+    let diagnostic = plan
+        .diagnostics
+        .iter()
+        .find(|diagnostic| diagnostic.code == "GB1051")
+        .expect("duration holdback must be rejected");
+    assert_eq!(
+        diagnostic.message,
+        "holdback duration bounds are not supported by the local runtime"
+    );
+    assert_eq!(diagnostic.path, "$.spec.outputPolicy.delivery");
+}
+
+#[test]
+fn compile_graph_allows_bounded_holdback_with_size_bound() {
+    let graph = json!({
+        "apiVersion": GRAPH_API_VERSION,
+        "kind": "Graph",
+        "metadata": {"name": "bounded-output-policy"},
+        "spec": {
+            "outputPolicy": {
+                "delivery": {
+                    "mode": "bounded_holdback",
+                    "holdbackMaxBytes": 1024,
                     "onViolation": "abort_response"
                 }
             },

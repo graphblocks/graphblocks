@@ -1603,6 +1603,39 @@
     }
   },
   {
+    "name": "duration_output_policy_holdback",
+    "document": {
+      "apiVersion": "graphblocks.ai/v1",
+      "kind": "Graph",
+      "metadata": {
+        "name": "duration-output-policy-holdback"
+      },
+      "spec": {
+        "nodes": {},
+        "outputPolicy": {
+          "delivery": {
+            "mode": "bounded_holdback",
+            "holdbackMaxDuration": "250ms",
+            "onViolation": "abort_response"
+          },
+          "evaluation": {
+            "enforcementPoints": [
+              "on_generation_chunk",
+              "before_client_delivery",
+              "before_output_commit"
+            ]
+          }
+        }
+      }
+    },
+    "expected": {
+      "graph_hash": "sha256:a619e5875e138e644a5cf7edbacea4cacc9b2c5da2222aa861592bcc67889d33",
+      "error_codes": [
+        "GB1051"
+      ]
+    }
+  },
+  {
     "name": "holdback_limit_without_holdback_mode",
     "document": {
       "apiVersion": "graphblocks.ai/v1",

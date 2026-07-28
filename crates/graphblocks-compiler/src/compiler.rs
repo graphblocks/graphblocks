@@ -2474,37 +2474,43 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
             .or_else(|| delivery.get("holdback_max_bytes"))
             .and_then(Value::as_u64)
             .is_some_and(|value| value > 0);
-        let has_duration_bound = delivery
+        let holdback_duration = delivery
             .get("holdbackMaxDuration")
             .or_else(|| delivery.get("holdback_max_duration"))
             .or_else(|| delivery.get("holdbackMaxDurationMs"))
-            .or_else(|| delivery.get("holdback_max_duration_ms"))
-            .is_some_and(|duration| match duration {
-                Value::Number(duration) => duration.as_u64().is_some_and(|value| value > 0),
-                Value::String(duration) => {
-                    let duration = duration.trim();
-                    let mut valid_duration = false;
-                    for unit in ["ms", "s", "m", "h"] {
-                        if let Some(amount) = duration.strip_suffix(unit) {
-                            valid_duration = !amount.is_empty()
-                                && amount.chars().all(|character| character.is_ascii_digit())
-                                && match amount.parse::<u64>() {
-                                    Ok(value) => value > 0,
-                                    Err(_) => false,
-                                };
-                            break;
-                        }
+            .or_else(|| delivery.get("holdback_max_duration_ms"));
+        let has_duration_bound = holdback_duration.is_some_and(|duration| match duration {
+            Value::Number(duration) => duration.as_u64().is_some_and(|value| value > 0),
+            Value::String(duration) => {
+                let duration = duration.trim();
+                let mut valid_duration = false;
+                for unit in ["ms", "s", "m", "h"] {
+                    if let Some(amount) = duration.strip_suffix(unit) {
+                        valid_duration = !amount.is_empty()
+                            && amount.chars().all(|character| character.is_ascii_digit())
+                            && match amount.parse::<u64>() {
+                                Ok(value) => value > 0,
+                                Err(_) => false,
+                            };
+                        break;
                     }
-                    valid_duration
                 }
-                _ => false,
-            });
+                valid_duration
+            }
+            _ => false,
+        });
 
         if mode == Some("bounded_holdback") {
-            if !has_token_bound && !has_byte_bound && !has_duration_bound {
+            if holdback_duration.is_some() {
                 diagnostics.push(Diagnostic::error(
                     "GB1051",
-                    "bounded_holdback output delivery requires a token, byte, or duration bound",
+                    "holdback duration bounds are not supported by the local runtime",
+                    "$.spec.outputPolicy.delivery",
+                ));
+            } else if !has_token_bound && !has_byte_bound {
+                diagnostics.push(Diagnostic::error(
+                    "GB1051",
+                    "bounded_holdback output delivery requires a token or byte bound",
                     "$.spec.outputPolicy.delivery",
                 ));
             }

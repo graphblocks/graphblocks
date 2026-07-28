@@ -214,6 +214,41 @@ def test_native_plan_bridge_selects_the_builtin_catalog_profile(
     ]
 
 
+def test_native_plan_bridge_rejects_holdback_duration_bounds() -> None:
+    pytest.importorskip(
+        "graphblocks_runtime",
+        reason="native Plan integration requires the Rust binding",
+    )
+    document: dict[str, object] = {
+        "apiVersion": "graphblocks.ai/v1",
+        "kind": "Graph",
+        "metadata": {"name": "native-holdback-duration"},
+        "spec": {
+            "nodes": {},
+            "outputPolicy": {
+                "delivery": {
+                    "mode": "bounded_holdback",
+                    "holdbackMaxDuration": "250ms",
+                    "onViolation": "abort_response",
+                },
+                "evaluation": {
+                    "enforcementPoints": [
+                        "on_generation_chunk",
+                        "before_client_delivery",
+                        "before_output_commit",
+                    ]
+                },
+            },
+        },
+    }
+
+    reference = compile_graph_reference(document)
+    native = compile_graph_native_plan(document)
+
+    assert native.graph_hash == reference.graph_hash
+    assert native.diagnostics.to_list() == reference.diagnostics.to_list()
+
+
 def test_native_plan_bridge_preserves_bounded_large_integers() -> None:
     pytest.importorskip(
         "graphblocks_runtime",
