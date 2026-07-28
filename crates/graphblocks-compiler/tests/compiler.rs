@@ -268,6 +268,128 @@ fn block_catalog_retains_and_enforces_config_schema() -> Result<(), String> {
 }
 
 #[test]
+fn compile_graph_normalizes_config_schema_diagnostic_messages() -> Result<(), String> {
+    let cases = [
+        (
+            "type",
+            json!({
+                "type": "object",
+                "properties": {"value": {"type": "integer"}}
+            }),
+            json!({"value": "invalid"}),
+            "value must have JSON type \"integer\"",
+        ),
+        (
+            "required",
+            json!({
+                "type": "object",
+                "properties": {"alpha": {}, "zeta": {}},
+                "required": ["zeta", "alpha"]
+            }),
+            json!({}),
+            "required properties are missing: [\"alpha\",\"zeta\"]",
+        ),
+        (
+            "additional-properties",
+            json!({
+                "type": "object",
+                "properties": {"allowed": {}},
+                "additionalProperties": false
+            }),
+            json!({"zeta": 1, "alpha": 2}),
+            "unexpected properties are not allowed: [\"alpha\",\"zeta\"]",
+        ),
+        (
+            "const",
+            json!({
+                "type": "object",
+                "properties": {"value": {"const": "expected"}}
+            }),
+            json!({"value": "actual"}),
+            "value must equal \"expected\"",
+        ),
+        (
+            "enum",
+            json!({
+                "type": "object",
+                "properties": {"value": {"enum": ["alpha", "zeta"]}}
+            }),
+            json!({"value": "actual"}),
+            "value must be one of [\"alpha\",\"zeta\"]",
+        ),
+        (
+            "unique-items",
+            json!({
+                "type": "object",
+                "properties": {"value": {"type": "array", "uniqueItems": true}}
+            }),
+            json!({"value": [1, 1]}),
+            "array items must be unique",
+        ),
+        (
+            "one-of",
+            json!({
+                "type": "object",
+                "properties": {"value": {"oneOf": [{"type": "string"}, {"type": "integer"}]}}
+            }),
+            json!({"value": true}),
+            "value must match exactly one allowed schema",
+        ),
+        (
+            "any-of",
+            json!({
+                "type": "object",
+                "properties": {"value": {"anyOf": [{"type": "string"}, {"type": "integer"}]}}
+            }),
+            json!({"value": true}),
+            "value must match at least one allowed schema",
+        ),
+        (
+            "not",
+            json!({
+                "type": "object",
+                "properties": {"value": {"not": {"const": "forbidden"}}}
+            }),
+            json!({"value": "forbidden"}),
+            "value matches a forbidden schema",
+        ),
+    ];
+
+    for (case_name, config_schema, config, expected) in cases {
+        let catalog = BlockCatalog::from_blocks(&json!([{
+            "typeId": "test.configured",
+            "version": 1,
+            "configSchema": config_schema
+        }]))?;
+        let graph = json!({
+            "apiVersion": GRAPH_API_VERSION,
+            "kind": "Graph",
+            "metadata": {"name": "config-schema-diagnostics"},
+            "spec": {
+                "nodes": {
+                    "configured": {
+                        "block": "test.configured@1",
+                        "config": config
+                    }
+                }
+            }
+        });
+
+        let messages = compile_graph_with_catalog(&graph, &catalog)
+            .diagnostics
+            .into_iter()
+            .filter(|diagnostic| diagnostic.code == "GB2019")
+            .map(|diagnostic| diagnostic.message)
+            .collect::<Vec<_>>();
+        assert!(
+            messages.iter().any(|message| message.ends_with(expected)),
+            "{case_name}: {messages:#?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn compile_graph_bounds_retained_config_validation_errors() -> Result<(), String> {
     let catalog = BlockCatalog::from_blocks(&json!([{
         "typeId": "test.many-errors",

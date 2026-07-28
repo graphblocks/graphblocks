@@ -7,9 +7,10 @@ use graphblocks_schema::{
     parse_duration_seconds, resource_depth_violation, resource_schema_errors,
     validate_canonical_json_depth,
 };
+use jsonschema::error::{TypeKind, ValidationErrorKind};
 use serde_json::{Map, Value};
 
-use crate::canonical::canonical_hash;
+use crate::canonical::{canonical_hash, canonical_json};
 use crate::diagnostics::{Diagnostic, Severity};
 use crate::graph::{GRAPH_API_VERSION, PSEUDO_NODES, migrate_graph, normalize_graph};
 
@@ -3963,19 +3964,100 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
                 .expect("block catalog configSchema was validated when constructed");
             let mut config_errors = Vec::with_capacity(MAX_CONFIG_VALIDATION_ERRORS);
             let mut omitted_config_error_count = 0_usize;
+            let canonical_schema_value =
+                |value: &Value| canonical_json(value).unwrap_or_else(|_| value.to_string());
             for error in validator.iter_errors(config) {
                 if config_errors.len() == MAX_CONFIG_VALIDATION_ERRORS {
                     omitted_config_error_count += 1;
                     continue;
                 }
-                let mut message = error.to_string();
-                if message.chars().count() > MAX_CONFIG_VALIDATION_ERROR_MESSAGE_CHARS {
-                    message = message
-                        .chars()
-                        .take(MAX_CONFIG_VALIDATION_ERROR_MESSAGE_CHARS - 3)
-                        .collect();
-                    message.push_str("...");
-                }
+                let message = match error.kind() {
+                    ValidationErrorKind::Type { kind } => {
+                        let expected = descriptor
+                            .config_schema
+                            .pointer(error.schema_path().as_str())
+                            .map(&canonical_schema_value)
+                            .unwrap_or_else(|| {
+                                let expected = match kind {
+                                    TypeKind::Single(kind) => {
+                                        Value::String(kind.as_str().to_owned())
+                                    }
+                                    TypeKind::Multiple(kinds) => Value::Array(
+                                        kinds
+                                            .iter()
+                                            .map(|kind| Value::String(kind.as_str().to_owned()))
+                                            .collect(),
+                                    ),
+                                };
+                                canonical_schema_value(&expected)
+                            });
+                        format!("value must have JSON type {expected}")
+                    }
+                    ValidationErrorKind::Required { property } => {
+                        let mut missing = descriptor
+                            .config_schema
+                            .pointer(error.schema_path().as_str())
+                            .and_then(Value::as_array)
+                            .into_iter()
+                            .flatten()
+                            .filter_map(Value::as_str)
+                            .filter(|property| {
+                                !error
+                                    .instance()
+                                    .as_object()
+                                    .is_some_and(|instance| instance.contains_key(*property))
+                            })
+                            .map(|property| Value::String(property.to_owned()))
+                            .collect::<Vec<_>>();
+                        if missing.is_empty() {
+                            missing.push(property.clone());
+                        }
+                        missing.sort_by(|left, right| left.as_str().cmp(&right.as_str()));
+                        format!(
+                            "required properties are missing: {}",
+                            canonical_schema_value(&Value::Array(missing))
+                        )
+                    }
+                    ValidationErrorKind::AdditionalProperties { unexpected } => {
+                        let mut unexpected = unexpected.clone();
+                        unexpected.sort();
+                        format!(
+                            "unexpected properties are not allowed: {}",
+                            canonical_schema_value(&Value::Array(
+                                unexpected.into_iter().map(Value::String).collect()
+                            ))
+                        )
+                    }
+                    ValidationErrorKind::Constant { expected_value } => format!(
+                        "value must equal {}",
+                        canonical_schema_value(expected_value)
+                    ),
+                    ValidationErrorKind::Enum { options } => {
+                        format!("value must be one of {}", canonical_schema_value(options))
+                    }
+                    ValidationErrorKind::UniqueItems => "array items must be unique".to_owned(),
+                    ValidationErrorKind::OneOfMultipleValid { .. }
+                    | ValidationErrorKind::OneOfNotValid { .. } => {
+                        "value must match exactly one allowed schema".to_owned()
+                    }
+                    ValidationErrorKind::AnyOf { .. } => {
+                        "value must match at least one allowed schema".to_owned()
+                    }
+                    ValidationErrorKind::Not { .. } => {
+                        "value matches a forbidden schema".to_owned()
+                    }
+                    _ => {
+                        let mut message = error.to_string();
+                        if message.chars().count() > MAX_CONFIG_VALIDATION_ERROR_MESSAGE_CHARS {
+                            message = message
+                                .chars()
+                                .take(MAX_CONFIG_VALIDATION_ERROR_MESSAGE_CHARS - 3)
+                                .collect();
+                            message.push_str("...");
+                        }
+                        message
+                    }
+                };
                 config_errors.push((
                     config_diagnostic_path(node_name, error.instance_path().as_str()),
                     error.schema_path().as_str().to_owned(),

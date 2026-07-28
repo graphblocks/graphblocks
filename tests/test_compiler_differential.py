@@ -62,10 +62,8 @@ def test_python_reference_matches_native_compiler_tck_contract() -> None:
             }
             for diagnostic in rust_result["diagnostics"]
         ], case["name"]
-        if case["name"] != "config_validation_diagnostic_budget":
-            assert [
-                diagnostic["message"]
-                for diagnostic in python_result["diagnostics"]
-            ] == [
-                diagnostic["message"] for diagnostic in rust_result["diagnostics"]
-            ], case["name"]
+        assert [
+            diagnostic["message"] for diagnostic in python_result["diagnostics"]
+        ] == [
+            diagnostic["message"] for diagnostic in rust_result["diagnostics"]
+        ], case["name"]
