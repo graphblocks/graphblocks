@@ -484,11 +484,7 @@ fn validate_config_schema(schema: &Value) -> Result<(), String> {
     }
 
     jsonschema::draft202012::meta::validate(schema)
-        .map_err(|error| format!("configSchema is not valid JSON Schema Draft 2020-12: {error}"))?;
-
-    jsonschema::draft202012::new(schema)
-        .map(|_| ())
-        .map_err(|error| format!("configSchema could not be compiled: {error}"))
+        .map_err(|error| format!("configSchema is not valid JSON Schema Draft 2020-12: {error}"))
 }
 
 fn validate_endpoint_identifier(value: &str) -> bool {
@@ -3988,13 +3984,70 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
                 continue;
             };
             let config = node.get("config").unwrap_or(&empty_config);
-            let validator = jsonschema::draft202012::new(&descriptor.config_schema)
-                .expect("block catalog configSchema was validated when constructed");
+            let mut invalid_local_reference = false;
+            let mut pending_schema_values = vec![&descriptor.config_schema];
+            'schema_values: while let Some(schema_value) = pending_schema_values.pop() {
+                match schema_value {
+                    Value::Object(object) => {
+                        for (key, child) in object {
+                            if matches!(key.as_str(), "$ref" | "$dynamicRef")
+                                && let Some(reference) = child.as_str()
+                                && (reference == "#" || reference.starts_with("#/"))
+                            {
+                                let mut reference_chain = BTreeSet::new();
+                                let mut current_reference = reference;
+                                loop {
+                                    if !reference_chain.insert(current_reference.to_owned()) {
+                                        invalid_local_reference = true;
+                                        break 'schema_values;
+                                    }
+                                    let referenced_schema = if current_reference == "#" {
+                                        Some(&descriptor.config_schema)
+                                    } else {
+                                        descriptor.config_schema.pointer(&current_reference[1..])
+                                    };
+                                    let Some(referenced_schema) = referenced_schema else {
+                                        invalid_local_reference = true;
+                                        break 'schema_values;
+                                    };
+                                    let Some(next_reference) = referenced_schema
+                                        .as_object()
+                                        .and_then(|referenced_schema| {
+                                            referenced_schema
+                                                .get("$ref")
+                                                .or_else(|| referenced_schema.get("$dynamicRef"))
+                                        })
+                                        .and_then(Value::as_str)
+                                        .filter(|reference| {
+                                            *reference == "#" || reference.starts_with("#/")
+                                        })
+                                    else {
+                                        break;
+                                    };
+                                    current_reference = next_reference;
+                                }
+                            }
+                            pending_schema_values.push(child);
+                        }
+                    }
+                    Value::Array(values) => pending_schema_values.extend(values),
+                    _ => {}
+                }
+            }
+            let validator = if invalid_local_reference {
+                None
+            } else {
+                jsonschema::draft202012::new(&descriptor.config_schema).ok()
+            };
+            let invalid_local_reference = validator.is_none();
             let mut config_errors = Vec::with_capacity(MAX_CONFIG_VALIDATION_ERRORS);
             let mut omitted_config_error_count = 0_usize;
             let canonical_schema_value =
                 |value: &Value| canonical_json(value).unwrap_or_else(|_| value.to_string());
-            for error in validator.iter_errors(config) {
+            for error in validator
+                .iter()
+                .flat_map(|validator| validator.iter_errors(config))
+            {
                 if config_errors.len() == MAX_CONFIG_VALIDATION_ERRORS {
                     omitted_config_error_count += 1;
                     continue;
@@ -4129,7 +4182,16 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
                     diagnostic_path,
                 ));
             }
-            if omitted_config_error_count > 0 {
+            if invalid_local_reference {
+                diagnostics.push(Diagnostic::error(
+                    "GB2019",
+                    format!(
+                        "node config cannot be validated against {} because its configSchema contains an unresolved or nonterminating local reference",
+                        descriptor.block_id()
+                    ),
+                    format!("$.spec.nodes.{node_name}.config"),
+                ));
+            } else if omitted_config_error_count > 0 {
                 diagnostics.push(Diagnostic::error(
                     "GB2019",
                     format!(

@@ -451,6 +451,50 @@ fn compile_graph_bounds_arbitrary_size_config_diagnostic_integers() -> Result<()
 }
 
 #[test]
+fn compile_graph_reports_invalid_local_config_schema_references() -> Result<(), String> {
+    for config_schema in [
+        json!({
+            "type": "object",
+            "properties": {"count": {"$ref": "#/$defs/missing"}}
+        }),
+        json!({"$ref": "#"}),
+    ] {
+        let catalog = BlockCatalog::from_blocks(&json!([{
+            "typeId": "test.missing_ref",
+            "version": 1,
+            "configSchema": config_schema
+        }]))?;
+        let graph = json!({
+            "apiVersion": GRAPH_API_VERSION,
+            "kind": "Graph",
+            "metadata": {"name": "invalid-local-config-reference"},
+            "spec": {
+                "nodes": {
+                    "configured": {
+                        "block": "test.missing_ref@1",
+                        "config": {"count": 1}
+                    }
+                }
+            }
+        });
+
+        let errors = compile_graph_with_catalog(&graph, &catalog)
+            .diagnostics
+            .into_iter()
+            .filter(|diagnostic| diagnostic.code == "GB2019")
+            .collect::<Vec<_>>();
+
+        assert_eq!(errors.len(), 1);
+        assert_eq!(
+            errors[0].message,
+            "node config cannot be validated against test.missing_ref@1 because its configSchema contains an unresolved or nonterminating local reference"
+        );
+        assert_eq!(errors[0].path, "$.spec.nodes.configured.config");
+    }
+    Ok(())
+}
+
+#[test]
 fn compile_graph_bounds_retained_config_validation_errors() -> Result<(), String> {
     let catalog = BlockCatalog::from_blocks(&json!([{
         "typeId": "test.many-errors",
