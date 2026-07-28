@@ -48,18 +48,16 @@ from .url_validation import validate_webhook_url
 
 STATE_CHANGING_TOOL_EFFECTS = frozenset({"external_write", "filesystem_write", "process", "destructive"})
 MAX_NODE_RETRY_ATTEMPTS = 100
-FORBIDDEN_TOOL_DEFINITION_FIELDS = frozenset(
-    {
-        "credentials",
-        "credential",
-        "secret",
-        "secrets",
-        "connection",
-        "transport",
-        "providerSdk",
-        "provider_sdk",
-        "implementation",
-    }
+FORBIDDEN_TOOL_DEFINITION_FIELDS = (
+    "credentials",
+    "credential",
+    "secret",
+    "secrets",
+    "connection",
+    "transport",
+    "providerSdk",
+    "provider_sdk",
+    "implementation",
 )
 MANDATORY_CALLBACK_FAILURE_POLICIES = frozenset({"pause_run_on_failure", "fail_run_on_failure"})
 VALID_CALLBACK_SUBSCRIPTION_SCOPES = frozenset({"run", "conversation", "project", "tenant", "deployment"})
@@ -1369,17 +1367,22 @@ def compile_graph(
                             flush_boundaries_path,
                         )
                     )
+            holdback_max_tokens = delivery.get(
+                "holdbackMaxTokens", delivery.get("holdback_max_tokens")
+            )
+            holdback_max_bytes = delivery.get(
+                "holdbackMaxBytes", delivery.get("holdback_max_bytes")
+            )
+            holdback_max_duration = (
+                delivery.get("holdbackMaxDuration")
+                or delivery.get("holdback_max_duration")
+                or delivery.get("holdbackMaxDurationMs")
+                or delivery.get("holdback_max_duration_ms")
+            )
+            has_token_bound = _is_positive_integer(holdback_max_tokens)
+            has_byte_bound = _is_positive_integer(holdback_max_bytes)
+            has_duration_bound = _duration_milliseconds(holdback_max_duration) is not None
             if mode == "bounded_holdback":
-                holdback_max_tokens = delivery.get("holdbackMaxTokens", delivery.get("holdback_max_tokens"))
-                holdback_max_bytes = delivery.get("holdbackMaxBytes", delivery.get("holdback_max_bytes"))
-                holdback_max_duration = (
-                    delivery.get("holdbackMaxDuration")
-                    or delivery.get("holdback_max_duration")
-                    or delivery.get("holdbackMaxDurationMs")
-                    or delivery.get("holdback_max_duration_ms")
-                )
-                has_token_bound = _is_positive_integer(holdback_max_tokens)
-                has_byte_bound = _is_positive_integer(holdback_max_bytes)
                 if holdback_max_duration is not None:
                     diagnostics.append(
                         Diagnostic(
@@ -1396,6 +1399,16 @@ def compile_graph(
                             "$.spec.outputPolicy.delivery",
                         )
                     )
+            elif mode in {"buffer_until_commit", "immediate_draft"} and (
+                has_token_bound or has_byte_bound or has_duration_bound
+            ):
+                diagnostics.append(
+                    Diagnostic(
+                        "GB1054",
+                        "holdback limits require bounded_holdback output delivery mode",
+                        "$.spec.outputPolicy.delivery",
+                    )
+                )
 
             if mode == "immediate_draft":
                 delivered_draft_disposition = delivery.get(

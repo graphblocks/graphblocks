@@ -20,6 +20,7 @@ AMENDMENT_COMPILER_DIAGNOSTICS = {
     "GB1047",
     "GB1024",
     "GB1051",
+    "GB1054",
     "GB6001",
     "GB6002",
     "GB6003",

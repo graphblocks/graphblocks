@@ -1350,6 +1350,33 @@
     }
   },
   {
+    "name": "holdback_limit_without_holdback_mode",
+    "document": {
+      "apiVersion": "graphblocks.ai/v1",
+      "kind": "Graph",
+      "metadata": {
+        "name": "holdback-limit-without-holdback-mode"
+      },
+      "spec": {
+        "nodes": {},
+        "outputPolicy": {
+          "delivery": {
+            "mode": "buffer_until_commit",
+            "holdbackMaxBytes": 1024,
+            "onViolation": "abort_response"
+          }
+        }
+      }
+    },
+    "expected": {
+      "graph_hash": "sha256:3676581f266cb4f9647097b06003c9d5a1fb47eaf892290e5fbe851bc6d3a2b4",
+      "error_codes": [
+        "GB1054",
+        "GB1046"
+      ]
+    }
+  },
+  {
     "name": "immediate_draft_without_retraction_support",
     "document": {
       "apiVersion": "graphblocks.ai/v1alpha3",
