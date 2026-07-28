@@ -8,9 +8,10 @@ promising availability from a public package index.
 
 - Python 3.11 or 3.12
 - `pip`
-- the Rust toolchain selected by `rust-toolchain.toml` for Rust work
+- the Rust toolchain selected by `rust-toolchain.toml` for building the native
+  binding and for Rust work
 
-## Pure-Python SDK
+## Python authoring and reference SDK
 
 From the repository root:
 
@@ -23,11 +24,16 @@ python -m graphblocks --help
 ```
 
 This installs the `graphblocks` distribution in editable mode. It contains the
-public SDK, built-in block implementations, pure-Python reference runtime, CLI,
-and framework-neutral server contracts. The `graphblocks` command and
+public SDK, built-in block implementations, Python reference compiler/runtime,
+CLI, and framework-neutral server contracts. The `graphblocks` command and
 `python -m graphblocks` expose the same CLI. `GraphBlocksServerApp` handles the
 project request/response contract but does not start a network listener or add a
 `serve` command.
+
+This base-only setup supports authoring and explicit reference-oracle work.
+`graphblocks.compile_graph`, `validate`, `plan`, `lock`, and other
+compiler-backed paths use the normative Rust compiler and fail closed until the
+native binding is installed.
 
 Extras add concrete install dependencies rather than enabling internal feature
 packages:
@@ -39,10 +45,10 @@ packages:
 The built-ins, CLI, and server contracts are always part of the base
 `graphblocks` install.
 
-## Native Python runtime
+## Normative compiler and native Python runtime
 
-Install the native extension separately when you need the Rust-backed Python
-entry points:
+Install the native extension for public Graph compilation and Rust-backed
+runtime entry points:
 
 ```bash
 python -m pip install ./packages/graphblocks-runtime
@@ -51,12 +57,14 @@ graphblocks run graph.yaml --runtime native --input-json '{"message":{"text":"He
 ```
 
 `graphblocks-runtime` builds the independent `graphblocks_runtime._native`
-module with the selected Rust toolchain. It is not required for the pure-Python
-SDK; the root distribution's `runtime` extra is a convenience dependency on
-this wheel. For a fresh source checkout that uses the extra, install the local
-runtime project first, then install the root project with
-`python -m pip install -e '.[runtime,test]'`. This lets pip satisfy the extra
-from the locally built runtime rather than expecting a public package index.
+module with the selected Rust toolchain. It is optional for authoring and the
+explicit `graphblocks.compiler.compile_graph_reference` oracle, but required
+for the public normative compiler. The root distribution's `runtime` extra is
+a convenience dependency on this wheel. For a fresh source checkout that uses
+the extra, install the local runtime project first, then install the root project
+with `python -m pip install -e '.[runtime,test]'`. This lets pip satisfy the
+extra from the locally built runtime rather than expecting a public package
+index.
 
 ## TCK tooling
 

@@ -13,10 +13,12 @@ The execution journal and application event stream are authoritative records.
 Client streams, callbacks, and observability exporters are projections. A
 projection failure must not rewrite the authoritative outcome.
 
-The base `graphblocks` distribution provides the pure-Python reference runtime
-and built-in registry. Native Python entry points are isolated in the optional
-`graphblocks-runtime` distribution; the SDK and its built-ins do not require the
-native extension.
+The base `graphblocks` distribution provides the Python reference runtime and
+built-in registry. Authoring and explicit reference-runtime entry points do not
+require the native extension. Public Graph compilation is different: it uses
+the normative Rust compiler from `graphblocks-runtime` and fails closed when the
+binding is unavailable. The Python compiler remains available only through the
+explicit `graphblocks.compiler.compile_graph_reference` oracle.
 
 `RuntimeRegistry()` is closed by default: its empty catalog does not accept
 arbitrary handlers, duplicate `register` calls fail, and `replace` is required

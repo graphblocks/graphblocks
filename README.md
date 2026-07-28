@@ -12,13 +12,17 @@ parser, server framework, or deployment platform.
 
 The project is preparing its first 1.0 release candidate. Compatibility is
 claimed by conformance profile and executable evidence, not by package or
-directory presence; higher profiles and native bindings remain preview.
+directory presence. Rust is the normative Graph compiler, while higher
+profiles and native runtime surfaces remain blocked or preview as listed in the
+release matrix.
 
 ## What is here
 
-- The pure-Python `graphblocks` SDK, including authoring, validation, built-in
-  blocks, the reference runtime, CLI, and framework-neutral server contracts.
-- The optional native `graphblocks-runtime` Python extension.
+- The Python `graphblocks` SDK, including authoring, validation, built-in
+  blocks, the explicit reference compiler/runtime, CLI, and framework-neutral
+  server contracts.
+- The `graphblocks-runtime` Rust extension used by the public normative
+  compiler and native runtime entry points.
 - The `graphblocks-testing` distribution and shared TCK fixtures.
 - Rust schema, compiler, protocol, and runtime crates.
 - Versioned schemas and provider-neutral package catalogs.
@@ -32,7 +36,8 @@ Requirements are Python 3.11 or 3.12 and the Rust toolchain selected by
 ```bash
 python3 -m venv .venv
 . .venv/bin/activate
-python -m pip install -e '.[test]'
+python -m pip install -e ./packages/graphblocks-runtime
+python -m pip install -e '.[runtime,test]'
 python -m graphblocks validate examples/01-enterprise-federated-rag/example.yaml
 python examples/01-enterprise-federated-rag/run.py
 python -m pytest
@@ -43,9 +48,11 @@ After virtual-environment activation, the root editable install provides
 the `graphblocks` import package, the `graphblocks` command, and
 `python -m graphblocks`. Built-in block implementations and the CLI and server
 contracts are part of that distribution; they are not separate feature wheels.
-Extras add actual install dependencies: `runtime` adds the native bindings,
-`pdf` adds `pypdf`, and `test` adds pytest. Install `graphblocks-testing` for
-the `graphblocks-tck` command.
+Extras add actual install dependencies: `runtime` adds the native bindings
+required by `compile_graph` and compiler-backed CLI commands, `pdf` adds
+`pypdf`, and `test` adds pytest. Authoring and the explicit
+`graphblocks.compiler.compile_graph_reference` oracle can be used without the
+native wheel. Install `graphblocks-testing` for the `graphblocks-tck` command.
 
 The machine-readable package catalog distinguishes release artifacts from
 portable component and binding identities. Component entries do not correspond

@@ -25,10 +25,10 @@ Work proceeds in this order:
 3. **Months 1-2 — implementation boundaries.** Split server middleware, routes,
    services, and repositories; split CLI commands and exact codecs; make
    compiler phases and TCK runners independently testable; reduce the Python
-   root surface and import cost; complete the 1.0-blocking transition from the
-   current `python-reference` candidate implementation toward a normative Rust
-   execution and compilation plane; and correct the Rust control-plane
-   dependency direction.
+   root surface and import cost; complete the accepted, 1.0-blocking transition
+   from the native-first Rust compiler to the remaining canonical and production
+   execution authority; and correct the Rust control-plane dependency
+   direction.
 4. **Stable-candidate closure.** Reach zero open P0/P1 findings, enforce the
    authorization/adversarial/differential/resource/performance/restart/security
    matrices, complete the separately defined macOS and native-wheel smoke gate,

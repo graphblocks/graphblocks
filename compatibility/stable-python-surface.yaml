@@ -2,8 +2,14 @@ snapshotVersion: 1
 targetRelease: '1.0'
 readiness: candidate
 description: >-
-  Deliberately small pure-Python C0/C1 surface proposed for the first stable
-  graphblocks distribution. Names not listed here remain preview or internal.
+  Deliberately small C0/C1 Python facade and reference-runtime surface proposed
+  for the first stable graphblocks distribution. Its public compiler contract
+  requires the paired graphblocks-runtime artifact and has no implicit Python
+  fallback. Names not listed here remain preview or internal.
+requiredArtifacts: [graphblocks, graphblocks-runtime]
+compilerAuthority: rust
+pythonRole: authoring-facade-and-explicit-reference-oracle
+implicitReferenceFallback: false
 symbols:
   # C0 canonical graph, diagnostics, compilation, and closed block catalogs.
   - {path: graphblocks.canonical_loads, profile: GB-C0-SCHEMA}

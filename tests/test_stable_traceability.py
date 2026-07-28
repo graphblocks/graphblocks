@@ -141,7 +141,7 @@ def test_stable_requirement_traceability_matches_the_profile_catalog() -> None:
         for profile in catalog["spec"]["profiles"]  # type: ignore[index]
     }
 
-    assert traceability["traceabilityVersion"] == 2
+    assert traceability["traceabilityVersion"] == 3
     assert traceability["targetRelease"] == "1.0"
     assert set(profiles) == set(STABLE_PROFILES)
     for profile_id in STABLE_PROFILES:
@@ -188,14 +188,39 @@ def test_every_stable_clause_has_exact_requirement_and_evidence_traceability() -
                 assert clause_id in inventory, f"{requirement} missing clause {clause_id}"
                 claimed_clauses.add(clause_id)
 
-            for field in ("implementation", "evidence"):
-                paths = entry[field]
-                assert isinstance(paths, list) and paths, f"{requirement} {field}"
+            implementations = entry["implementations"]
+            assert isinstance(implementations, dict) and implementations, (
+                f"{requirement} implementations"
+            )
+            assert set(implementations) <= {
+                "normative",
+                "pythonFacadeAndReference",
+                "targetNormative",
+            }
+            assert "normative" in implementations or "targetNormative" in implementations
+            implementation_paths: list[str] = []
+            for role, paths in implementations.items():
+                assert isinstance(role, str)
+                assert isinstance(paths, list) and paths, (
+                    f"{requirement} {role} implementations"
+                )
                 for relative_path in paths:
                     assert isinstance(relative_path, str)
                     assert (ROOT / relative_path).is_file(), (
                         f"{requirement} missing {relative_path}"
                     )
+                    implementation_paths.append(relative_path)
+            assert len(implementation_paths) == len(set(implementation_paths)), (
+                f"{requirement} implementation path has multiple roles"
+            )
+
+            paths = entry["evidence"]
+            assert isinstance(paths, list) and paths, f"{requirement} evidence"
+            for relative_path in paths:
+                assert isinstance(relative_path, str)
+                assert (ROOT / relative_path).is_file(), (
+                    f"{requirement} missing {relative_path}"
+                )
 
             schemas = entry["schemas"]
             tck_suites = entry["tckSuites"]
@@ -214,3 +239,37 @@ def test_every_stable_clause_has_exact_requirement_and_evidence_traceability() -
         f"unlisted stable clauses: {sorted(set(inventory) - claimed_clauses)}; "
         f"missing anchored clauses: {sorted(claimed_clauses - set(inventory))}"
     )
+
+
+def test_stable_requirement_implementation_roles_match_the_authority_transition() -> None:
+    traceability = _load_mapping(TRACEABILITY_PATH)
+    assert traceability["implementationRoleDefinitions"] == {
+        "normative": "Active implementation authority for the named requirement.",
+        "pythonFacadeAndReference": (
+            "Python authoring facade, deterministic reference, or TCK-oracle "
+            "implementation."
+        ),
+        "targetNormative": (
+            "Selected future normative implementation whose promotion evidence "
+            "remains blocked."
+        ),
+    }
+    profiles = traceability["profiles"]
+    assert isinstance(profiles, dict)
+    c0 = {
+        entry["id"]: entry
+        for entry in profiles["GB-C0-SCHEMA"]["requirements"]
+    }
+    compiler_roles = c0["graph-parse-normalize-hash"]["implementations"]
+    assert set(compiler_roles) == {"normative", "pythonFacadeAndReference"}
+    assert all(
+        not path.startswith("src/graphblocks/")
+        for path in compiler_roles["normative"]
+    )
+    assert "targetNormative" in c0["canonical-schema-roundtrip"]["implementations"]
+
+    c1_entries = profiles["GB-C1-LOCAL-RUNTIME"]["requirements"]
+    for entry in c1_entries:
+        roles = entry["implementations"]
+        assert "normative" not in roles, entry["id"]
+        assert set(roles) == {"pythonFacadeAndReference", "targetNormative"}

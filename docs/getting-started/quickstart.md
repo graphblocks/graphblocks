@@ -1,7 +1,7 @@
 # Quickstart
 
-Install the [root development package](installation.md), then validate and plan
-one of the checked-in application contracts:
+Install the [root development package and native compiler binding](installation.md),
+then validate and plan one of the checked-in application contracts:
 
 ```bash
 python -m graphblocks validate examples/01-enterprise-federated-rag/example.yaml
@@ -27,8 +27,10 @@ stdlib handlers are exercised against the same manifest contracts by parity
 tests. See [type safety](../concepts/type-safety.md) for the exact boundaries and
 extension-friendly open-catalog behavior of `validate` and `plan`.
 The combined runner and 1-3 require the Rust toolchain selected by
-`rust-toolchain.toml`; 1-1 and 1-2 can be run with the Python development
-installation alone.
+`rust-toolchain.toml`. The 1-1 CLI variant requires the installed
+`graphblocks-runtime` compiler binding, while the 1-2 variant intentionally uses
+the explicit Python reference compiler/runtime and can run from the base Python
+development installation.
 
 These commands use the built-in plugin metadata and block registry shipped in
 `graphblocks`; no built-in feature wheels are required.
@@ -62,8 +64,9 @@ imports, and hashes only the expanded graph. See
 
 The separate `graphblocks-testing` distribution provides the TCK command and
 acceptance runner. Install it explicitly for conformance work; see
-[testing](../development/testing.md). Install `graphblocks-runtime` only when
-using the native Python entry points.
+[testing](../development/testing.md). The public compiler and compiler-backed
+CLI commands require `graphblocks-runtime`; only explicit reference-oracle work
+can omit it.
 
 Server integrations construct `GraphBlocksServerApp` and adapt its
 request/response types to their transport. The `graphblocks` CLI does not bind a

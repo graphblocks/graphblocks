@@ -18,9 +18,15 @@ schemas, TCK fixtures, examples, specifications, or project documentation.
 python3 -m venv .venv
 . .venv/bin/activate
 python -m pip install -e '.[test]'
+python -m pip install --editable ./packages/graphblocks-runtime
 python -m pytest
 cargo test --workspace --all-targets
 ```
+
+The second editable install builds the Rust binding used by the normative
+public compiler. Base-only development is supported for authoring and explicit
+`graphblocks.compiler.compile_graph_reference` oracle work, but it does not
+exercise `graphblocks.compile_graph` or compiler-backed CLI commands.
 
 Run formatting and lint checks relevant to the files you changed. CI also runs
 Python tests, Rust formatting/lint/test checks, documentation integrity checks,

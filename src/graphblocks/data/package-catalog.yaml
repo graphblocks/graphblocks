@@ -1,4 +1,4 @@
-catalogVersion: 5
+catalogVersion: 6
 specVersion: '1.0'
 defaultSelection:
   artifacts:
@@ -28,6 +28,10 @@ defaultSelection:
   - external_policy_engine
   - distributed_ledger_backend
   notes:
+  - The default graphblocks artifact selection supports authoring and explicit reference-oracle
+    workflows; it is not, by itself, a stable C0 compiler claim.
+  - Public Graph compilation and a stable C0 claim require the graphblocks-runtime companion
+    artifact named by stableClaimRequires.
   - Policy, budget, and usage default components provide only provider-neutral contracts and
     local in-memory/SQLite development implementations.
   - Distributed ledgers, external PDPs, providers, parsers, cloud SDKs, servers, voice, and
@@ -39,6 +43,8 @@ artifacts:
   manifest: pyproject.toml
   versionConstraint: ~=0.1
   dependsOn: []
+  stableClaimRequires:
+  - graphblocks-runtime
 - distribution: graphblocks-runtime
   import: graphblocks_runtime
   kind: native_wheel
@@ -126,7 +132,8 @@ components:
   - canonical AI and cross-domain work schemas
   - GraphSpec/ApplicationSpec/BindingSpec/Release/Deployment schemas
   - policy, evidence, snapshot, ChangeSet, Check/Gate/Review schemas
-  - BlockDescriptor SDK and static compiler frontend
+  - Python authoring/schema facade and explicit reference compiler
+  - public compiler facade delegated to the graphblocks-runtime artifact
   - plugin manifest reader
   implementationPhase: 0
   stability: foundation
@@ -139,6 +146,7 @@ components:
   dependsOn:
   - graphblocks-core
   responsibility:
+  - normative Rust Graph compiler and canonical Plan identity
   - Rust scheduler
   - cancellation and bounded flow
   - leases and BudgetPermit enforcement hooks
@@ -287,7 +295,8 @@ components:
   dependsOn:
   - graphblocks-core
   responsibility:
-  - validate/plan/run/lock/doctor
+  - validate/plan/run/lock through the graphblocks-runtime compiler binding
+  - base-only authoring, reference-oracle, and doctor commands
   - release/deploy/observe commands
   implementationPhase: 0
   stability: first-party-extension

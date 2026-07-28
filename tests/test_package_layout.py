@@ -411,7 +411,7 @@ def test_catalog_declares_three_python_artifacts_and_operator_delivery_artifact(
         artifact["distribution"]: artifact for artifact in catalog["artifacts"]
     }
 
-    assert catalog["catalogVersion"] == 5
+    assert catalog["catalogVersion"] == 6
     assert "defaultMetaPackage" not in catalog
     assert "packages" not in catalog
     assert artifacts == {
@@ -422,6 +422,7 @@ def test_catalog_declares_three_python_artifacts_and_operator_delivery_artifact(
             "manifest": "pyproject.toml",
             "versionConstraint": "~=0.1",
             "dependsOn": [],
+            "stableClaimRequires": ["graphblocks-runtime"],
         },
         "graphblocks-runtime": {
             "distribution": "graphblocks-runtime",
@@ -534,6 +535,20 @@ def test_default_selection_and_release_conformance_reference_components() -> Non
     selection = catalog["defaultSelection"]
 
     assert selection["artifacts"] == ["graphblocks"]
+    assert any(
+        "not, by itself, a stable C0 compiler claim" in note
+        for note in selection["notes"]
+    )
+    graphblocks_artifact = next(
+        artifact
+        for artifact in catalog["artifacts"]
+        if artifact["distribution"] == "graphblocks"
+    )
+    assert graphblocks_artifact["dependsOn"] == []
+    assert graphblocks_artifact["stableClaimRequires"] == ["graphblocks-runtime"]
+    assert "normative Rust Graph compiler and canonical Plan identity" in components[
+        "graphblocks-runtime"
+    ]["responsibility"]
     assert set(selection["components"]) == DEFAULT_COMPONENTS
     assert {
         name for name, component in components.items() if component["default"]

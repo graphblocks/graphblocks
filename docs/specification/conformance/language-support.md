@@ -5,10 +5,11 @@ release compatibility promise.
 
 | Contract area | Python | Rust |
 | --- | --- | --- |
-| Canonical schema/compiler | Implemented and TCK-backed | Implemented and TCK-backed |
+| Schema and canonical authoring utilities | Implemented facade and deterministic reference oracle | Selected normative target; not yet the active public facade, so standalone routing remains transition-blocked |
+| Graph compiler and canonical Plan identity | `compile_graph` is a fail-closed native facade; `compile_graph_reference` is the explicit TCK oracle | Normative compiler, exposed through `graphblocks-runtime` and backed by exact differential TCK |
 | Cross-file YAML composition authoring | Implemented; materializes an expanded Graph | Does not resolve authoring sources; consumes expanded Graph YAML |
 | Typed code graph authoring | Implemented and mypy-tested for the stdlib RAG vertical slice; catalog-backed and materializes a portable Graph | Implemented and trybuild-tested for the stdlib RAG vertical slice; catalog-backed and materializes a portable Graph |
-| Local runtime, cancellation, tools, budget core | Implemented | Implemented |
+| Local runtime, cancellation, tools, budget core | Implemented reference interpreter | Implemented target core; normative scheduler promotion remains blocked on protocol and durability evidence |
 | Documents, RAG, conversation reference APIs | Implemented | Selected core models/TCK behavior |
 | Accepted runs and callback resume | Reference server; process-local checkpoint continuation | Preview single-process/single-worker SQLite continuation plus core async/callback records and TCK behavior; consumes trusted pre-admission assertions and does not query policy/budget/schema/lease authorities or verify lease freshness |
 | Registered-secret signed webhook dispatch | Implemented in `graphblocks.callbacks` | Implemented in runtime-core with HMAC signing, replay verification, and egress-bound delivery hooks |
@@ -23,6 +24,10 @@ Profile claims are determined by applicable fixtures and acceptance evidence,
 not this summary alone. Advanced provider-specific voice adapters may still add
 their own evidence beyond the shared provider-authority and playback lifecycle
 cases.
+
+Authority is phase-scoped. It does not promote every Rust API or every surface
+of the native wheel. The accepted transition and its remaining release blockers
+are defined by [ADR-0001](../decisions/0001-rust-normative-authority.md).
 
 Composition is outside the runtime language boundary. A Python-authored graph
 may be materialized with `graphblocks compose` and then compiled or run by Rust

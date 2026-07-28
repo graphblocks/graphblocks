@@ -12,13 +12,15 @@ GraphBlocks는 이식 가능하고 테스트할 수 있으며 거버넌스를 �
 
 이 프로젝트는 첫 1.0 릴리스 후보를 준비하고 있습니다. 호환성은 패키지나 디렉터리의
 존재 여부가 아니라 적합성 프로필과 실행 가능한 증거를 기준으로 선언되며, 상위 프로필과
-네이티브 바인딩은 아직 프리뷰입니다.
+네이티브 런타임 표면은 아직 차단 또는 프리뷰 상태입니다. Graph 컴파일러의 규범적 구현은
+Rust입니다.
 
 ## 포함된 구성 요소
 
-- 작성, 검증, 기본 제공 블록, 참조 런타임, CLI 및 프레임워크 중립적 서버 계약을
-  포함하는 순수 Python `graphblocks` SDK
-- 선택 사항인 네이티브 `graphblocks-runtime` Python 확장
+- 작성, 검증, 기본 제공 블록, 명시적 참조 컴파일러/런타임, CLI 및 프레임워크
+  중립적 서버 계약을 포함하는 Python `graphblocks` SDK
+- 공개 규범 컴파일러와 네이티브 런타임 진입점이 사용하는 Rust
+  `graphblocks-runtime` 확장
 - `graphblocks-testing` 배포판 및 공유 TCK 픽스처
 - Rust 스키마, 컴파일러, 프로토콜 및 런타임 크레이트
 - 버전이 지정된 스키마 및 공급자 중립적 패키지 카탈로그
@@ -26,12 +28,13 @@ GraphBlocks는 이식 가능하고 테스트할 수 있으며 거버넌스를 �
 
 ## 개발 빠른 시작
 
-Python 3.11 이상과 `rust-toolchain.toml`에서 선택한 Rust 툴체인이 필요합니다.
+Python 3.11 또는 3.12와 `rust-toolchain.toml`에서 선택한 Rust 툴체인이 필요합니다.
 
 ```bash
 python3 -m venv .venv
 . .venv/bin/activate
-python -m pip install -e '.[test]'
+python -m pip install -e ./packages/graphblocks-runtime
+python -m pip install -e '.[runtime,test]'
 python -m graphblocks validate examples/01-enterprise-federated-rag/example.yaml
 python examples/01-enterprise-federated-rag/run.py
 python -m pytest
@@ -41,9 +44,11 @@ cargo test --workspace --all-targets
 가상 환경을 활성화한 후 루트에서 편집 가능 모드로 설치하면 `graphblocks` 임포트
 패키지와 `graphblocks` 명령, `python -m graphblocks`를 사용할 수 있습니다. 기본
 제공 블록 구현과 CLI 및 서버 계약은 이 배포판에 포함되며, 별도의 기능별 wheel이
-아닙니다. Extra는 실제 설치 의존성을 추가합니다. `runtime`은 네이티브 바인딩을,
-`pdf`는 `pypdf`를, `test`는 pytest를 추가합니다. `graphblocks-tck` 명령을
-사용하려면 `graphblocks-testing`을 설치하세요.
+아닙니다. Extra는 실제 설치 의존성을 추가합니다. `runtime`은 `compile_graph`와
+컴파일러 기반 CLI 명령에 필요한 네이티브 바인딩을, `pdf`는 `pypdf`를,
+`test`는 pytest를 추가합니다. 작성 API와 명시적인
+`graphblocks.compiler.compile_graph_reference` oracle은 네이티브 wheel 없이도 사용할
+수 있습니다. `graphblocks-tck` 명령을 사용하려면 `graphblocks-testing`을 설치하세요.
 
 기계 판독형 패키지 카탈로그는 릴리스 아티팩트와 이식 가능한 구성 요소 및 바인딩
 식별자를 구분합니다. 구성 요소 항목은 별도로 배포되는 Python wheel에 대응하지

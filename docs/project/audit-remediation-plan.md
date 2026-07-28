@@ -227,16 +227,15 @@ Python
   deterministic reference interpreter and TCK oracle
 ```
 
-The current first-stable matrix lists `python-reference` as the candidate C0/C1
-implementation and keeps the native distribution preview; it does not yet
-declare a normative implementation authority. Record the target Rust authority
-and transition in an architecture decision before changing compatibility
-claims. Resolving `GB-ARCH-001` and `GB-ARCH-002` is a 1.0 blocker, so the
-decision cannot be deferred without explicitly changing the audit release
-policy. Update the artifact tiers, profile implementation identities,
-stable-requirement mappings, language-support documentation, protocol/version
-handshake, and release evidence together. During the transition, Python/Rust
-differential tests gate every normative phase.
+[ADR-0001](../specification/decisions/0001-rust-normative-authority.md)
+accepts the target Rust authority and the public Python compiler now dispatches
+to it without an implicit reference fallback. The first-stable matrix records
+phase-scoped C0/C1 implementation roles rather than a blanket
+`python-reference` identity. Resolving `GB-ARCH-001` and `GB-ARCH-002` remains a
+1.0 blocker until standalone canonical/schema routing, production scheduler,
+protocol/version handshake, artifact promotion, and installed evidence are
+complete. During the transition, Python/Rust differential tests gate every
+normative phase.
 
 Extract a reusable `graphblocks-control-plane` library so the Python binding
 does not depend on the `graphblocksd` binary/control-plane implementation.

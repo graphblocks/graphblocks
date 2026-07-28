@@ -12,8 +12,10 @@ The living architecture follows these durable decisions:
 - Bound dynamic work through explicit sequence, task, retry, time, resource,
   and checkpoint limits.
 - Claim compatibility by profile with shared TCK and acceptance evidence.
-- Keep Python and Rust parity explicit rather than declaring one implementation
-  normative where support differs.
+- Assign portable compiler and execution authority by phase. Rust is the
+  normative compiler and target production execution authority; Python is the
+  authoring facade and explicit reference oracle. See
+  [ADR-0001](0001-rust-normative-authority.md).
 
 New decisions that alter a public contract should be added as numbered ADRs
 with context, decision, consequences, migration, and conformance impact. Git

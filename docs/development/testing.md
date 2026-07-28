@@ -6,8 +6,14 @@ Run the root Python suite after installing the development extra:
 python3 -m venv .venv
 . .venv/bin/activate
 python -m pip install -e '.[test]'
+python -m pip install --editable ./packages/graphblocks-runtime
 python -m pytest
 ```
+
+The native editable install is part of the normal suite setup because
+`graphblocks.compile_graph` is a fail-closed facade over the normative Rust
+compiler. Tests for the explicit Python reference oracle may intentionally run
+without it.
 
 Run Rust formatting, lint, and tests with the workspace toolchain:
 

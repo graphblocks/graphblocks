@@ -57,9 +57,10 @@ tck/         Shared conformance fixtures
 ```
 
 The Python distribution surface is deliberately smaller than the package
-catalog: `graphblocks` contains the pure-Python SDK, built-ins, CLI, and server
-contracts; `graphblocks-runtime` contains native bindings; and
-`graphblocks-testing` contains the TCK tooling.
+catalog: `graphblocks` contains the Python authoring/reference SDK, built-ins,
+CLI, and server contracts; `graphblocks-runtime` contains the normative Rust
+compiler binding and preview runtime surfaces; and `graphblocks-testing`
+contains the TCK tooling.
 
 Release stability is narrower than distribution contents. Consult the
 [first stable release boundary](project/first-stable-release.md) before treating

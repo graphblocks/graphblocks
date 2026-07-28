@@ -209,8 +209,12 @@ MUST NOT synthesize defaults for corrupt stored contract fields.
 
 <a id="GB-GCR-LANGUAGE-BOUNDARY-001"></a>
 
-Python is the authoring and broad reference implementation. Native execution
-may be selected only when the compiled plan and required contracts are
-supported by the native runtime. The language boundary MUST preserve canonical
-values, diagnostics, hashes, journal order, cancellation, and terminal outcome.
-See [language support](../conformance/language-support.md).
+Rust is the normative Graph compiler. Python provides authoring APIs and an
+explicit reference oracle; its public compiler entry point invokes the native
+compiler and MUST fail closed when that compiler is unavailable rather than
+selecting the reference implementation implicitly. Native execution may be
+selected only when the compiled plan and required contracts are supported by
+the native runtime. The language boundary MUST preserve canonical values,
+diagnostics, hashes, journal order, cancellation, and terminal outcome. See
+[ADR-0001](../decisions/0001-rust-normative-authority.md) and
+[language support](../conformance/language-support.md).

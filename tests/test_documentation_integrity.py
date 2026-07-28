@@ -276,10 +276,101 @@ def test_stable_release_matrix_is_complete_and_machine_readable() -> None:
     assert macos_gate["changesSupportedPlatformMatrix"] is False
 
     authority = matrix["authorityTransition"]
-    assert authority["currentCandidateImplementation"] == "python-reference"
+    assert authority["readiness"] == "in-progress-blocked"
+    assert authority["decisionStatus"] == "accepted"
+    assert authority["currentCandidateImplementation"] == "phase-scoped-rust-authority"
     assert authority["targetNormativeAuthority"] == "rust"
+    assert authority["publicCompilerAuthority"] == "rust"
+    assert authority["pythonRole"] == "authoring-facade-and-explicit-reference-oracle"
+    assert authority["implicitReferenceFallback"] is False
+    assert "production-scheduler-and-durable-authority" in authority[
+        "remainingPhases"
+    ]
+    assert "supported-installed-native-compiler-tck-and-artifact-evidence" in (
+        authority["remainingPhases"]
+    )
+    assert "control-plane-library-extraction" in authority["remainingPhases"]
     assert authority["blocksTargetRelease"] is True
     assert authority["requiredGate"] == "REL-NORMATIVE-AUTHORITY"
+    authority_decision = ROOT / authority["decision"]
+    assert authority_decision.is_file()
+    assert "Status: Accepted" in authority_decision.read_text(encoding="utf-8")
+
+    matrix_profiles = {entry["id"]: entry for entry in matrix["profiles"]}
+    assert matrix_profiles["GB-C0-SCHEMA"]["implementation"] == (
+        "rust-native-compiler+python-facade"
+    )
+    assert "REL-NORMATIVE-AUTHORITY" in matrix_profiles["GB-C0-SCHEMA"][
+        "requiredGates"
+    ]
+    assert matrix_profiles["GB-C1-LOCAL-RUNTIME"]["implementation"] == (
+        "rust-native-runtime-target+python-reference-oracle"
+    )
+    assert matrix_profiles["GB-C1-LOCAL-RUNTIME"]["authority"] == {
+        "compiler": "rust",
+        "productionRuntimeTarget": "rust",
+        "referenceInterpreter": "python",
+    }
+    assert "REL-NORMATIVE-AUTHORITY" in matrix_profiles["GB-C1-LOCAL-RUNTIME"][
+        "requiredGates"
+    ]
+    for profile_id in (
+        "GB-C2-AI-APPLICATION",
+        "GB-C3-GOVERNED-RUNTIME",
+        "GB-C4-PRODUCTION",
+        "GB-X1-ORCHESTRATION",
+        "GB-X2-VOICE",
+        "GB-X3-DURABLE-STREAM",
+    ):
+        profile = matrix_profiles[profile_id]
+        assert "implementation" not in profile
+        assert profile["extensionImplementation"] == "python-reference"
+        assert profile["inheritsCoreAuthority"] is True
+    assert artifacts["pypi:graphblocks"]["stableClaimRequires"] == [
+        "pypi:graphblocks-runtime"
+    ]
+    assert artifacts["pypi:graphblocks-runtime"]["tier"] == "stable"
+    assert artifacts["pypi:graphblocks-runtime"]["readiness"] == (
+        "authority-transition-blocked"
+    )
+
+    authority_gate = next(
+        entry
+        for entry in matrix["releaseGates"]
+        if entry["id"] == "REL-NORMATIVE-AUTHORITY"
+    )
+    assert authority_gate["decisionStatus"] == "accepted"
+    assert authority_gate["decision"] == authority["decision"]
+    assert set(authority_gate["completedEvidence"]) <= set(
+        authority_gate["requiredEvidence"]
+    )
+    assert (
+        "installed-native-compiler-tck-differential-and-artifact-identity"
+        not in authority_gate["completedEvidence"]
+    )
+    assert "authority-transition-adr-not-accepted" not in authority_gate["blockers"]
+    assert "production-runtime-authority-transition-incomplete" in authority_gate[
+        "blockers"
+    ]
+    assert "installed-native-compiler-tck-and-artifact-identity-incomplete" in (
+        authority_gate["blockers"]
+    )
+    assert "control-plane-dependency-inversion-incomplete" in authority_gate[
+        "blockers"
+    ]
+
+    traceability = yaml.safe_load(
+        (ROOT / "docs" / "project" / "stable-requirements.yaml").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert traceability["authorityDecision"] == authority["decision"]
+    assert traceability["authorityRoles"] == {
+        "graphCompiler": "rust",
+        "productionRuntimeTarget": "rust",
+        "python": "authoring-facade-and-explicit-reference-oracle",
+        "implicitReferenceFallback": False,
+    }
 
     api_gate = next(entry for entry in matrix["releaseGates"] if entry["id"] == "REL-API-SNAPSHOT")
     assert api_gate["readiness"] == "candidate-enforced"

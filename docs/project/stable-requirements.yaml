@@ -1,7 +1,17 @@
-traceabilityVersion: 2
+traceabilityVersion: 3
 targetRelease: '1.0'
 profileCatalog: ../../src/graphblocks/data/conformance-profiles.yaml
-scope: Candidate-stable requirements for the pure-Python GB-C0-SCHEMA and GB-C1-LOCAL-RUNTIME claims.
+scope: Candidate-stable phase-scoped GB-C0-SCHEMA and GB-C1-LOCAL-RUNTIME claims under the accepted Rust authority transition.
+authorityDecision: docs/specification/decisions/0001-rust-normative-authority.md
+authorityRoles:
+  graphCompiler: rust
+  productionRuntimeTarget: rust
+  python: authoring-facade-and-explicit-reference-oracle
+  implicitReferenceFallback: false
+implementationRoleDefinitions:
+  normative: Active implementation authority for the named requirement.
+  pythonFacadeAndReference: Python authoring facade, deterministic reference, or TCK-oracle implementation.
+  targetNormative: Selected future normative implementation whose promotion evidence remains blocked.
 normativeSections:
   docs/specification/core/canonical-data-model.md:
     - Values and identity
@@ -33,9 +43,13 @@ profiles:
         clauses:
           - GB-CDM-VALUES-001
           - GB-CDM-NUMBERS-001
-        implementation:
-          - src/graphblocks/canonical.py
-          - src/graphblocks/schema.py
+        implementations:
+          pythonFacadeAndReference:
+            - src/graphblocks/canonical.py
+            - src/graphblocks/schema.py
+          targetNormative:
+            - crates/graphblocks-schema/src/lib.rs
+            - crates/graphblocks-compiler/src/canonical.rs
         schemas:
           - schemas/graphblocks.ai/v1/graph.schema.json
           - schemas/graphblocks.ai/v1/plugin-manifest.schema.json
@@ -58,9 +72,16 @@ profiles:
           - GB-GCR-ENDPOINTS-001
           - GB-GCR-PLAN-001
           - GB-GCR-SINGLE-WRITER-001
-        implementation:
-          - src/graphblocks/canonical.py
-          - src/graphblocks/compiler.py
+        implementations:
+          normative:
+            - crates/graphblocks-compiler/src/compiler.rs
+            - crates/graphblocks-compiler/src/diagnostics.rs
+            - crates/graphblocks-compiler/src/graph.rs
+            - crates/graphblocks-python/src/lib.rs
+            - packages/graphblocks-runtime/src/graphblocks_runtime/__init__.py
+          pythonFacadeAndReference:
+            - src/graphblocks/canonical.py
+            - src/graphblocks/compiler.py
         schemas:
           - schemas/graphblocks.ai/v1/graph.schema.json
         tckSuites: [compiler]
@@ -68,6 +89,8 @@ profiles:
           - tests/test_canonical.py
           - tests/test_compiler_tck.py
           - tests/test_compiler_validation.py
+          - tests/test_compiler_differential.py
+          - tests/test_compiler_native_bridge.py
           - tck/compiler/cases.json
       - id: plugin-manifest-validation
         clauses:
@@ -77,9 +100,12 @@ profiles:
           - GB-PKG-PREDICATES-001
           - GB-PKG-PORT-TYPES-001
           - GB-PKG-PLUGIN-AUTHORITY-001
-        implementation:
-          - src/graphblocks/plugins.py
-          - src/graphblocks/schema.py
+        implementations:
+          pythonFacadeAndReference:
+            - src/graphblocks/plugins.py
+            - src/graphblocks/schema.py
+          targetNormative:
+            - crates/graphblocks-schema/src/lib.rs
         schemas:
           - schemas/graphblocks.ai/v1/plugin-manifest.schema.json
         tckSuites: []
@@ -94,8 +120,13 @@ profiles:
           - GB-VER-RESOURCE-VERSIONS-001
           - GB-VER-ALPHA-MIGRATION-001
           - GB-VER-DIAGNOSTIC-SEVERITY-001
-        implementation:
-          - src/graphblocks/migration.py
+        implementations:
+          normative:
+            - crates/graphblocks-compiler/src/graph.rs
+          pythonFacadeAndReference:
+            - src/graphblocks/migration.py
+        scopeNotes:
+          - Rust normative coverage currently applies to Graph migration through the public compiler; standalone and PluginManifest migration routing remains blocked.
         schemas:
           - schemas/graphblocks.ai/v1/graph.schema.json
           - schemas/graphblocks.ai/v1/plugin-manifest.schema.json
@@ -112,8 +143,12 @@ profiles:
         clauses:
           - GB-GCR-SCHEDULING-001
           - GB-GCR-CONDITIONAL-EXECUTION-001
-        implementation:
-          - src/graphblocks/runtime.py
+        implementations:
+          pythonFacadeAndReference:
+            - src/graphblocks/runtime.py
+          targetNormative:
+            - crates/graphblocks-runtime-core/src/scheduler.rs
+            - crates/graphblocks-runtime-core/src/stdlib_runtime.rs
         schemas: []
         tckSuites: [runtime]
         evidence:
@@ -125,11 +160,15 @@ profiles:
           - GB-GCR-TYPING-001
           - GB-GCR-SCHEDULING-001
           - GB-GCR-LANGUAGE-BOUNDARY-001
-        implementation:
-          - src/graphblocks/compiler.py
-          - src/graphblocks/plugins.py
-          - src/graphblocks/runtime.py
-          - src/graphblocks/typed.py
+        implementations:
+          pythonFacadeAndReference:
+            - src/graphblocks/compiler.py
+            - src/graphblocks/plugins.py
+            - src/graphblocks/runtime.py
+            - src/graphblocks/typed.py
+          targetNormative:
+            - crates/graphblocks-runtime-core/src/typed_graph.rs
+            - crates/graphblocks-runtime-core/src/typed_value.rs
         schemas: []
         tckSuites: [runtime]
         evidence:
@@ -141,10 +180,13 @@ profiles:
         clauses:
           - GB-GCR-SCHEDULING-001
           - GB-GCR-OUTPUT-PROJECTION-001
-        implementation:
-          - src/graphblocks/outcome.py
-          - src/graphblocks/runtime.py
-          - src/graphblocks/tools.py
+        implementations:
+          pythonFacadeAndReference:
+            - src/graphblocks/outcome.py
+            - src/graphblocks/runtime.py
+            - src/graphblocks/tools.py
+          targetNormative:
+            - crates/graphblocks-runtime-core/src/outcome.rs
         schemas: []
         tckSuites: [application-events, tool-result]
         evidence:
@@ -156,9 +198,13 @@ profiles:
       - id: cancellation
         clauses:
           - GB-GCR-TIMEOUT-RETRY-001
-        implementation:
-          - src/graphblocks/runtime.py
-          - src/graphblocks/tools.py
+        implementations:
+          pythonFacadeAndReference:
+            - src/graphblocks/runtime.py
+            - src/graphblocks/tools.py
+          targetNormative:
+            - crates/graphblocks-runtime-core/src/cancellation.rs
+            - crates/graphblocks-runtime-core/src/timeout.rs
         schemas: []
         tckSuites: [tool-lifecycle]
         evidence:
@@ -169,8 +215,11 @@ profiles:
         clauses:
           - GB-GCR-SCHEDULING-001
           - GB-GCR-CONDITIONAL-EXECUTION-001
-        implementation:
-          - src/graphblocks/runtime.py
+        implementations:
+          pythonFacadeAndReference:
+            - src/graphblocks/runtime.py
+          targetNormative:
+            - crates/graphblocks-runtime-core/src/journal.rs
         schemas: []
         tckSuites: [runtime]
         evidence:
@@ -182,10 +231,14 @@ profiles:
           - GB-GCR-CONDITIONAL-EXECUTION-001
           - GB-GCR-TIMEOUT-RETRY-001
           - GB-GCR-RETRY-LIMIT-001
-        implementation:
-          - src/graphblocks/compiler.py
-          - src/graphblocks/runtime.py
-          - src/graphblocks/tools.py
+        implementations:
+          pythonFacadeAndReference:
+            - src/graphblocks/compiler.py
+            - src/graphblocks/runtime.py
+            - src/graphblocks/tools.py
+          targetNormative:
+            - crates/graphblocks-runtime-core/src/scheduler.rs
+            - crates/graphblocks-runtime-seq/src/bounded.rs
         schemas:
           - schemas/graphblocks.ai/v1/graph.schema.json
         tckSuites: [retry, sequence, tool-execution]
@@ -203,10 +256,14 @@ profiles:
           - GB-GCR-CATALOG-RUNTIME-001
           - GB-GCR-UNTYPED-COMPAT-001
           - GB-GCR-LANGUAGE-BOUNDARY-001
-        implementation:
-          - src/graphblocks/__init__.py
-          - src/graphblocks/runtime.py
-          - packages/graphblocks-testing/src/graphblocks_testing/__init__.py
+        implementations:
+          pythonFacadeAndReference:
+            - src/graphblocks/__init__.py
+            - src/graphblocks/runtime.py
+            - packages/graphblocks-testing/src/graphblocks_testing/__init__.py
+          targetNormative:
+            - packages/graphblocks-runtime/src/graphblocks_runtime/__init__.py
+            - crates/graphblocks-python/src/lib.rs
         schemas: []
         tckSuites: [runtime]
         evidence:

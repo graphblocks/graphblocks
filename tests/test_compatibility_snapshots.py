@@ -382,6 +382,10 @@ def test_stable_python_surface_is_deliberate_and_profile_bounded() -> None:
     )
 
     assert policy["readiness"] == snapshot["readiness"] == "candidate"
+    assert policy["requiredArtifacts"] == ["graphblocks", "graphblocks-runtime"]
+    assert policy["compilerAuthority"] == "rust"
+    assert policy["pythonRole"] == "authoring-facade-and-explicit-reference-oracle"
+    assert policy["implicitReferenceFallback"] is False
     assert {entry["profile"] for entry in policy["symbols"]} == {
         "GB-C0-SCHEMA",
         "GB-C1-LOCAL-RUNTIME",

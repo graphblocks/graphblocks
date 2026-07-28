@@ -30,9 +30,9 @@ Repository presence, a passing unit test, a package-catalog entry, or a
 
 | Artifact | 1.0 tier | Stable scope or limitation |
 | --- | --- | --- |
-| `graphblocks` | Stable | Pure-Python C0/C1 SDK, canonicalization, closed-world validation and planning, local runtime, built-in C0/C1 blocks, and the corresponding `graphblocks validate`, `plan`, and local `run` CLI contracts. Modules belonging to C2-C4, X1-X3, external integrations, server/deployment operations, and catalog entries explicitly listed below remain preview even though they ship in this wheel. |
+| `graphblocks` | Stable | Python authoring and schema facade, stable API, explicit reference oracle, built-in C0/C1 blocks, and compiler-backed CLI contracts. Public compilation uses the companion `graphblocks-runtime` Rust binding and has no implicit Python fallback. Modules belonging to C2-C4, X1-X3, external integrations, server/deployment operations, and catalog entries explicitly listed below remain preview even though they ship in this wheel. |
 | `graphblocks-testing` | Stable | TCK discovery/execution, C0/C1 fixtures, deterministic report format, and the `graphblocks-tck` command. A TCK report is evidence for the named implementation/profile/digests, not a blanket claim for the whole repository. |
-| `graphblocks-runtime` | Preview | Optional PyO3 native bindings. It remains preview until native execution, suspension behavior, supported-wheel coverage, and Python/native differential gates pass. The pure-Python implementation can claim C1 without implying a native C1 claim. |
+| `graphblocks-runtime` | Stable | Stable scope is limited to the normative compiler binding and the C1 runtime surface that passes the final authority, protocol, supported-wheel, suspension, and differential gates. Other native entry points remain preview unless named by a promoted profile. |
 
 The deliberately small candidate stable Python surface is enumerated in
 [`compatibility/stable-python-surface.yaml`](../../compatibility/stable-python-surface.yaml)
@@ -65,13 +65,15 @@ and compatibility evidence. It is not implied by Python 1.0.
 
 ## Conformance-profile matrix
 
-Profile stability is implementation-specific. The table describes the first
-stable pure-Python claim; other implementations must publish their own reports.
+Profile stability is implementation-specific. The table describes the
+phase-scoped first-stable claim selected by
+[ADR-0001](../specification/decisions/0001-rust-normative-authority.md); reports
+must identify both the Rust authority and Python facade/reference roles.
 
 | Profile | 1.0 tier | Promotion condition |
 | --- | --- | --- |
-| `GB-C0-SCHEMA` | Stable | Closed schemas and readers for every claimed stable resource, `graphblocks.ai/v1` Graph output, alpha-to-v1 migrations, closed-world compilation by default, deterministic registered diagnostics, and current C0 TCK evidence. |
-| `GB-C1-LOCAL-RUNTIME` | Stable | All C0 gates plus local scheduling, typed ports, outcomes, cooperative deadline signaling, rejection of stale authoritative commits, journal, bounded flow, tool lifecycle, and restart-independent local correctness evidence. This first claim applies to the pure-Python runtime only and does not promise preemptive termination of arbitrary in-process or provider work, or rollback of an external effect after a deadline. |
+| `GB-C0-SCHEMA` | Stable | Rust-authoritative Graph compilation and Plan identity behind the Python authoring/schema facade; closed schemas and readers for every claimed stable resource; alpha-to-v1 migrations; closed-world compilation; deterministic registered diagnostics; installed native wheels; and exact C0 differential/TCK evidence. |
+| `GB-C1-LOCAL-RUNTIME` | Stable | All C0 gates plus promotion of the Rust runtime target selected by ADR-0001, typed ports, outcomes, cooperative deadline signaling, rejection of stale authoritative commits, journal, bounded flow, tool lifecycle, protocol handshake, and restart-independent correctness evidence. Python remains the explicit reference interpreter. The claim does not promise preemptive termination of arbitrary provider work or rollback of an external effect after a deadline. |
 | `GB-C2-AI-APPLICATION` | Preview | Documents, retrieval/RAG, conversation, and application protocol remain on the roadmap until their wire/API and acceptance gates are frozen. |
 | `GB-C3-GOVERNED-RUNTIME` | Preview | Policy, usage, budget, permit, approval, review, and workspace contracts require their own stable API and durability/security gates. |
 | `GB-C4-PRODUCTION` | Preview | Existing checkpoint, replay, journal-repair, and claim/fence primitives remain preview evidence. Promotion additionally requires live authority and lease-freshness revalidation, independent-process crash recovery, a durable outbox/idempotency boundary for output and effect publication, explicit delivery/effect guarantees, immutable-release evidence, and production adapter verification. |
@@ -146,10 +148,13 @@ does not contain the audited source revision/archive digest or a complete
 command/tool manifest, and several reproduced findings have output without an
 executable harness. Those provenance and reconstruction gaps remain blocking.
 
-The current profile tables describe the `python-reference` candidate
-implementation, not a settled normative authority. `REL-NORMATIVE-AUTHORITY`
-blocks 1.0 until the Rust authority transition is accepted, implemented, and
-reflected coherently in these tables and their evidence.
+The profile tables now record the phase-scoped authority accepted by ADR-0001.
+`REL-NORMATIVE-AUTHORITY` still blocks 1.0 until canonical/schema facade routing,
+the runtime scheduler and protocol handshake, supported native artifacts, and
+the remaining installed differential evidence are complete. In particular, the
+current installed TCK report does not yet bind a native compiler run to the
+`graphblocks-runtime` version and wheel digest, so source-tree differential
+success is not installed-artifact authority evidence.
 
 ## Release gates
 
@@ -166,8 +171,9 @@ from the exact release artifacts:
    by the final authority matrix and to schema, TCK, differential, and
    acceptance evidence.
 4. The Rust normative-authority transition ADR, artifact/profile/language
-   matrices, native-first Python binding, explicit reference fallback, protocol
-   handshake, and phase-level differential evidence are complete.
+   matrices, native-first Python binding, explicit reference oracle with no
+   implicit fallback, protocol handshake, and phase-level differential evidence
+   are complete.
 5. Wheels and sdists are built once, installed into clean supported
    environments, and used for TCK execution. Reports bind implementation,
    schema, fixture, profile-catalog, and acceptance-manifest digests.

@@ -35,9 +35,26 @@ deepAudit:
     securityFreeze: {maxOpenP0: 0}
     stableRelease: {maxOpenP0: 0, maxOpenP1: 0}
 authorityTransition:
-  readiness: blocked
-  currentCandidateImplementation: python-reference
+  readiness: in-progress-blocked
+  decisionStatus: accepted
+  decision: docs/specification/decisions/0001-rust-normative-authority.md
+  currentCandidateImplementation: phase-scoped-rust-authority
   targetNormativeAuthority: rust
+  publicCompilerAuthority: rust
+  pythonRole: authoring-facade-and-explicit-reference-oracle
+  publicCompilerEntrypoint: graphblocks.compiler.compile_graph
+  referenceCompilerEntrypoint: graphblocks.compiler.compile_graph_reference
+  implicitReferenceFallback: false
+  completedPhases:
+    - native-first-public-compiler
+    - strict-native-plan-bridge
+    - exact-shared-compiler-tck-differential
+  remainingPhases:
+    - standalone-canonical-and-schema-facade-authority
+    - runtime-protocol-capability-handshake
+    - production-scheduler-and-durable-authority
+    - supported-installed-native-compiler-tck-and-artifact-evidence
+    - control-plane-library-extraction
   targetMilestone: phase-2-before-1.0
   blocksTargetRelease: true
   requiredGate: REL-NORMATIVE-AUTHORITY
@@ -55,6 +72,7 @@ artifacts:
     tier: stable
     readiness: blocked
     stableProfiles: [GB-C0-SCHEMA, GB-C1-LOCAL-RUNTIME]
+    stableClaimRequires: [pypi:graphblocks-runtime]
     exclusions: [GB-C2-AI-APPLICATION, GB-C3-GOVERNED-RUNTIME, GB-C4-PRODUCTION, GB-X1-ORCHESTRATION, GB-X2-VOICE, GB-X3-DURABLE-STREAM, external-integrations]
   - id: pypi:graphblocks-testing
     ecosystem: python
@@ -67,8 +85,10 @@ artifacts:
     ecosystem: python
     kind: distribution
     path: packages/graphblocks-runtime/pyproject.toml
-    tier: preview
-    readiness: implemented-preview
+    tier: stable
+    readiness: authority-transition-blocked
+    stableProfiles: [GB-C0-SCHEMA, GB-C1-LOCAL-RUNTIME]
+    previewSurfaces: [GB-C2-AI-APPLICATION, GB-C3-GOVERNED-RUNTIME, GB-C4-PRODUCTION, GB-X1-ORCHESTRATION, GB-X2-VOICE, GB-X3-DURABLE-STREAM]
   - id: crate:graphblocks-schema
     ecosystem: rust
     kind: library-crate
@@ -158,42 +178,50 @@ artifacts:
 
 profiles:
   - id: GB-C0-SCHEMA
-    implementation: python-reference
+    implementation: rust-native-compiler+python-facade
     tier: stable
     readiness: blocked
-    requiredGates: [REL-WIRE-V1, REL-CLOSED-SCHEMA, REL-CLOSED-WORLD, REL-DIAGNOSTICS, REL-TRACEABILITY, REL-INSTALLED-TCK]
+    authority: {compiler: rust, authoringAndReferenceOracle: python}
+    requiredGates: [REL-WIRE-V1, REL-CLOSED-SCHEMA, REL-CLOSED-WORLD, REL-DIAGNOSTICS, REL-TRACEABILITY, REL-INSTALLED-TCK, REL-NORMATIVE-AUTHORITY]
   - id: GB-C1-LOCAL-RUNTIME
-    implementation: python-reference
+    implementation: rust-native-runtime-target+python-reference-oracle
     tier: stable
     readiness: blocked
+    authority: {compiler: rust, productionRuntimeTarget: rust, referenceInterpreter: python}
     extends: [GB-C0-SCHEMA]
-    requiredGates: [REL-API-SNAPSHOT, REL-RUNTIME-CORRECTNESS, REL-INSTALLED-TCK]
+    requiredGates: [REL-API-SNAPSHOT, REL-RUNTIME-CORRECTNESS, REL-INSTALLED-TCK, REL-NORMATIVE-AUTHORITY]
   - id: GB-C2-AI-APPLICATION
-    implementation: python-reference
+    extensionImplementation: python-reference
+    inheritsCoreAuthority: true
     tier: preview
     roadmap: active
   - id: GB-C3-GOVERNED-RUNTIME
-    implementation: python-reference
+    extensionImplementation: python-reference
+    inheritsCoreAuthority: true
     tier: preview
     roadmap: active
     blockers: [fail-closed-policy-decoding, exact-external-codecs, durable-governance-transactions]
   - id: GB-C4-PRODUCTION
-    implementation: python-reference
+    extensionImplementation: python-reference
+    inheritsCoreAuthority: true
     tier: preview
     roadmap: active
     blockers: [fail-closed-protected-routes, tenant-scoped-object-authorization, restart-durable-accepted-runs, authenticated-idempotent-resume, worker-crash-recovery, atomic-outbox-claims, retention-and-pagination, resource-execution-budgets, fencing, production-adapter-evidence]
   - id: GB-X1-ORCHESTRATION
-    implementation: python-reference
+    extensionImplementation: python-reference
+    inheritsCoreAuthority: true
     tier: preview
     qualifier: provisional
     roadmap: active
   - id: GB-X2-VOICE
-    implementation: python-reference
+    extensionImplementation: python-reference
+    inheritsCoreAuthority: true
     tier: preview
     qualifier: experimental
     roadmap: active
   - id: GB-X3-DURABLE-STREAM
-    implementation: python-reference
+    extensionImplementation: python-reference
+    inheritsCoreAuthority: true
     tier: preview
     qualifier: experimental
     roadmap: active
@@ -397,22 +425,33 @@ releaseGates:
       - p0-p1-closure-evidence-incomplete
       - promotion-validator-does-not-yet-bind-audit-inventory
   - id: REL-NORMATIVE-AUTHORITY
-    description: Rust becomes the declared normative schema compiler canonical plan and production-runtime authority while Python remains the authoring facade and deterministic reference oracle.
+    description: Rust is the normative Graph compiler and selected target production-runtime authority while Python remains the authoring facade and deterministic reference oracle; this gate tracks the remaining transition.
     readiness: blocked
     blocksTargetRelease: true
-    currentCandidateImplementation: python-reference
+    decisionStatus: accepted
+    decision: docs/specification/decisions/0001-rust-normative-authority.md
+    currentCandidateImplementation: phase-scoped-rust-authority
     targetNormativeAuthority: rust
     requiredEvidence:
       - accepted-authority-transition-adr
-      - updated-artifact-profile-language-and-stable-requirement-matrices
-      - native-first-python-binding-and-explicit-reference-fallback
-      - phase-level-python-rust-differential-evidence
+      - updated-package-artifact-profile-language-and-role-scoped-traceability-matrices
+      - native-first-python-binding-and-explicit-reference-oracle-without-implicit-fallback
+      - source-exact-shared-compiler-tck-differential
+      - installed-native-compiler-tck-differential-and-artifact-identity
       - protocol-capability-and-unsupported-version-handshake
       - fallible-panic-free-rust-public-boundaries
+    completedEvidence:
+      - accepted-authority-transition-adr
+      - updated-package-artifact-profile-language-and-role-scoped-traceability-matrices
+      - native-first-python-binding-and-explicit-reference-oracle-without-implicit-fallback
+      - source-exact-shared-compiler-tck-differential
     blockers:
-      - authority-transition-adr-not-accepted
-      - candidate-profile-matrix-still-python-reference
-      - normative-phase-differential-evidence-incomplete
+      - standalone-canonical-and-schema-authority-transition-incomplete
+      - production-runtime-authority-transition-incomplete
+      - protocol-capability-and-unsupported-version-handshake-incomplete
+      - remaining-normative-phase-differential-evidence-incomplete
+      - installed-native-compiler-tck-and-artifact-identity-incomplete
+      - control-plane-dependency-inversion-incomplete
   - id: REL-PLATFORM-MATRIX
     description: Install typing and runtime gates pass on every published platform; upgrade is explicitly exempt only for v1.0.0.
     readiness: candidate-enforced-with-first-stable-upgrade-exemption

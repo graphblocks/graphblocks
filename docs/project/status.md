@@ -1,9 +1,11 @@
 # Implementation Status
 
-GraphBlocks is pre-1.0 release-candidate software. The Python implementation
-provides the broad reference surface, and Rust implements canonical
-schema/compiler, core runtime, protocol, durable, and selected extension
-contracts.
+GraphBlocks is pre-1.0 release-candidate software. Python provides the broad
+authoring and explicit reference surface. Rust is the normative Graph compiler
+and the selected target for production execution authority; the compiler
+transition is implemented, while canonical-facade, scheduler,
+protocol-handshake, and durable execution evidence still block the complete
+authority gate.
 
 The 99-finding deep-audit baseline includes 4 P0 and 23 P1 findings. Closure
 evidence has not yet satisfied the release matrix, so security remediation now
@@ -20,10 +22,11 @@ signing, and authorized publish/rollback rehearsal remain before the stable
 tag.
 
 The Python release surface is consolidated into three distributions:
-`graphblocks` for the pure-Python SDK, built-ins, CLI, and server contracts;
-`graphblocks-runtime` for native bindings; and `graphblocks-testing` for the
-TCK. Package catalog component entries remain capability and binding identities,
-not separately published wheels.
+`graphblocks` for the Python authoring/reference SDK, built-ins, CLI, and server
+contracts; `graphblocks-runtime` for the normative compiler binding and native
+runtime; and `graphblocks-testing` for the TCK. Package catalog component
+entries remain capability and binding identities, not separately published
+wheels.
 
 Revision-specific test, wheelhouse, and release-gate results are commit-bound CI
 facts and are not maintained as prose on this page. The remediation plan
@@ -39,8 +42,9 @@ records whether they pass for a revision.
 
 Many integrations are still lightweight contracts, built-ins, and test doubles
 rather than production-ready external adapters. Optional extras add concrete
-dependencies such as the native runtime, `pypdf`, or pytest; they do not change
-the three-distribution release boundary.
+dependencies such as the native binding, `pypdf`, or pytest; they do not change
+the three-distribution release boundary. The native extra is optional for
+authoring/reference use but required by the public normative compiler.
 
 Python-only advanced reference contracts are listed in
 [language support](../specification/conformance/language-support.md).

@@ -8,9 +8,11 @@ other heavy third-party SDK.
 These identities are not one-to-one with Python distributions. The supported
 Python distribution surface is:
 
-- `graphblocks`: the pure-Python SDK, built-in implementations, reference
-  runtime, CLI, and framework-neutral server contracts.
-- `graphblocks-runtime`: the optional native runtime bindings.
+- `graphblocks`: the Python authoring SDK, built-in implementations, explicit
+  reference compiler/runtime, CLI, and framework-neutral server contracts.
+- `graphblocks-runtime`: the Rust compiler/runtime bindings. It is optional for
+  authoring and explicit reference-oracle use, but required by the public
+  normative compiler.
 - `graphblocks-testing`: the TCK library and `graphblocks-tck` command.
 
 The catalog also describes the non-Python `graphblocks-operator` release
@@ -21,7 +23,8 @@ catalog so graphs and locks can refer to stable capabilities. They are shipped
 as part of `graphblocks`, not as dozens of separately installed feature wheels.
 
 An optional extra is appropriate only when it adds a real install dependency.
-For example, `graphblocks[runtime]` adds the separately built native extension,
+For example, `graphblocks[runtime]` adds the separately built native extension
+required by `compile_graph` and compiler-backed CLI commands,
 `graphblocks[pdf]` adds `pypdf`, and `graphblocks[test]` adds pytest. Extras do
 not select catalog identities or move built-ins, CLI commands, or server
 contracts into separate feature wheels. The native bindings and TCK remain
