@@ -20,6 +20,7 @@ from graphblocks.server_storage import (
     AcceptedRunEventIntent,
     AcceptedRunExecutionEnvelope,
     AcceptedRunPhase,
+    AcceptedRunQueueClaimRequest,
     AcceptedRunWaitingCommit,
     AcceptedRunCallbackInput,
     AcceptedRunWorkItem,
@@ -464,6 +465,38 @@ def test_effect_delivery_claim_request_requires_positive_bounded_lease() -> None
     ):
         AcceptedRunEffectDeliveryClaimRequest(
             delivery_owner_id="dispatcher-1",
+            now_unix_ms=(1 << 64) - 1,
+            lease_duration_ms=1,
+        )
+
+
+def test_queue_claim_request_supports_global_or_tenant_scoped_discovery() -> None:
+    global_request = AcceptedRunQueueClaimRequest(
+        lease_owner_id="worker-1",
+        now_unix_ms=1_000,
+        lease_duration_ms=500,
+    )
+    tenant_request = replace(global_request, tenant_id="tenant-1")
+
+    assert global_request.tenant_id is None
+    assert tenant_request.tenant_id == "tenant-1"
+
+    with pytest.raises(
+        ValueError,
+        match="tenant_id must not be empty",
+    ):
+        replace(global_request, tenant_id="")
+    with pytest.raises(
+        ValueError,
+        match="lease_duration_ms must be a positive unsigned 64-bit integer",
+    ):
+        replace(global_request, lease_duration_ms=0)
+    with pytest.raises(
+        ValueError,
+        match="lease expiration exceeds unsigned 64-bit time",
+    ):
+        AcceptedRunQueueClaimRequest(
+            lease_owner_id="worker-1",
             now_unix_ms=(1 << 64) - 1,
             lease_duration_ms=1,
         )

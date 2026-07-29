@@ -21,6 +21,7 @@ from graphblocks.server_storage import (
     AcceptedRunLeaseExpiredError,
     AcceptedRunNotFoundError,
     AcceptedRunPhase,
+    AcceptedRunQueueClaimRequest,
     AcceptedRunStateConflictError,
     AcceptedRunWaitingCommit,
     AdmissionIdempotencyConflictError,
@@ -576,6 +577,165 @@ def test_sqlite_repository_claim_work_fails_closed_on_tampered_envelope(
     assert snapshot.phase is AcceptedRunPhase.READY_INITIAL
     assert snapshot.state_version == 1
     assert snapshot.event_high_watermark == 1
+
+
+def test_sqlite_repository_discovers_oldest_claimable_work_after_restart(
+    tmp_path,
+) -> None:
+    path = tmp_path / "accepted-runs.sqlite3"
+    repository = SQLiteAcceptedRunRepository(path)
+    newer = _admission(
+        run_id="run-newer",
+        idempotency_key="admission-newer",
+    )
+    older = _admission(
+        run_id="run-older",
+        idempotency_key="admission-older",
+    )
+    older = replace(
+        older,
+        created_at_unix_ms=900,
+        accepted_event=replace(
+            older.accepted_event,
+            created_at_unix_ms=900,
+        ),
+    )
+    repository.accept_run(newer)
+    repository.accept_run(older)
+
+    restarted = SQLiteAcceptedRunRepository(path)
+    first = restarted.claim_next_work(
+        AcceptedRunQueueClaimRequest(
+            lease_owner_id="worker-after-restart",
+            now_unix_ms=2_000,
+            lease_duration_ms=500,
+        )
+    )
+    second = restarted.claim_next_work(
+        AcceptedRunQueueClaimRequest(
+            lease_owner_id="worker-after-restart",
+            now_unix_ms=2_000,
+            lease_duration_ms=500,
+        )
+    )
+
+    assert first is not None
+    assert first.claim.run_id == "run-older"
+    assert first.envelope.run_id == "run-older"
+    assert second is not None
+    assert second.claim.run_id == "run-newer"
+    assert second.envelope.run_id == "run-newer"
+
+
+def test_sqlite_repository_claim_next_work_honors_tenant_scope(
+    tmp_path,
+) -> None:
+    repository = SQLiteAcceptedRunRepository(
+        tmp_path / "accepted-runs.sqlite3"
+    )
+    repository.accept_run(_admission(run_id="tenant-1-run"))
+    repository.accept_run(
+        _admission(
+            tenant_id="tenant-2",
+            owner_principal_id="principal-2",
+            run_id="tenant-2-run",
+            idempotency_key="tenant-2-admission",
+        )
+    )
+
+    tenant_work = repository.claim_next_work(
+        AcceptedRunQueueClaimRequest(
+            tenant_id="tenant-2",
+            lease_owner_id="tenant-2-worker",
+            now_unix_ms=2_000,
+            lease_duration_ms=500,
+        )
+    )
+    remaining_work = repository.claim_next_work(
+        AcceptedRunQueueClaimRequest(
+            lease_owner_id="global-worker",
+            now_unix_ms=2_000,
+            lease_duration_ms=500,
+        )
+    )
+
+    assert tenant_work is not None
+    assert tenant_work.claim.tenant_id == "tenant-2"
+    assert tenant_work.claim.run_id == "tenant-2-run"
+    assert remaining_work is not None
+    assert remaining_work.claim.tenant_id == "tenant-1"
+    assert remaining_work.claim.run_id == "tenant-1-run"
+
+
+def test_sqlite_repository_claim_next_work_is_atomic_across_workers(
+    tmp_path,
+) -> None:
+    path = tmp_path / "accepted-runs.sqlite3"
+    repository = SQLiteAcceptedRunRepository(path)
+    repository.accept_run(_admission())
+    request = AcceptedRunQueueClaimRequest(
+        lease_owner_id="placeholder",
+        now_unix_ms=2_000,
+        lease_duration_ms=500,
+    )
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        work_items = tuple(
+            executor.map(
+                lambda worker: SQLiteAcceptedRunRepository(
+                    path
+                ).claim_next_work(
+                    replace(request, lease_owner_id=worker)
+                ),
+                ("worker-1", "worker-2"),
+            )
+        )
+
+    granted = tuple(work for work in work_items if work is not None)
+    assert len(granted) == 1
+    assert granted[0].claim.run_id == "run-1"
+    assert granted[0].claim.lease_generation == 1
+    assert granted[0].claim.fencing_token == 1
+
+
+def test_sqlite_repository_claim_next_work_reclaims_only_expired_lease(
+    tmp_path,
+) -> None:
+    path = tmp_path / "accepted-runs.sqlite3"
+    repository = SQLiteAcceptedRunRepository(path)
+    repository.accept_run(_admission())
+    first = repository.claim_run(
+        AcceptedRunClaimRequest(
+            tenant_id="tenant-1",
+            run_id="run-1",
+            lease_owner_id="worker-1",
+            now_unix_ms=2_000,
+            lease_duration_ms=500,
+        )
+    )
+    assert first is not None
+
+    unavailable = repository.claim_next_work(
+        AcceptedRunQueueClaimRequest(
+            lease_owner_id="worker-2",
+            now_unix_ms=2_499,
+            lease_duration_ms=500,
+        )
+    )
+    reclaimed = SQLiteAcceptedRunRepository(path).claim_next_work(
+        AcceptedRunQueueClaimRequest(
+            lease_owner_id="worker-2",
+            now_unix_ms=2_500,
+            lease_duration_ms=750,
+        )
+    )
+
+    assert unavailable is None
+    assert reclaimed is not None
+    assert reclaimed.claim.run_id == "run-1"
+    assert reclaimed.claim.lease_generation == 2
+    assert reclaimed.claim.fencing_token == 2
+    assert reclaimed.claim.lease_expires_at_unix_ms == 3_250
 
 
 def test_sqlite_repository_pages_committed_events_across_claim(

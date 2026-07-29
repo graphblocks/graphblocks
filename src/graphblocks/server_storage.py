@@ -1594,6 +1594,56 @@ class AcceptedRunClaimRequest:
 
 
 @dataclass(frozen=True, slots=True)
+class AcceptedRunQueueClaimRequest:
+    lease_owner_id: str
+    now_unix_ms: int
+    lease_duration_ms: int
+    tenant_id: str | None = None
+
+    def __post_init__(self) -> None:
+        owner = "accepted run queue claim request"
+        object.__setattr__(
+            self,
+            "lease_owner_id",
+            _validate_exact_string(
+                owner,
+                "lease_owner_id",
+                self.lease_owner_id,
+            ),
+        )
+        if self.tenant_id is not None:
+            object.__setattr__(
+                self,
+                "tenant_id",
+                _validate_exact_string(
+                    owner,
+                    "tenant_id",
+                    self.tenant_id,
+                ),
+            )
+        object.__setattr__(
+            self,
+            "now_unix_ms",
+            _validate_u64(owner, "now_unix_ms", self.now_unix_ms),
+        )
+        object.__setattr__(
+            self,
+            "lease_duration_ms",
+            _validate_u64(
+                owner,
+                "lease_duration_ms",
+                self.lease_duration_ms,
+                positive=True,
+            ),
+        )
+        if self.now_unix_ms > _MAX_U64 - self.lease_duration_ms:
+            raise ValueError(
+                "accepted run queue claim request lease expiration exceeds "
+                "unsigned 64-bit time"
+            )
+
+
+@dataclass(frozen=True, slots=True)
 class AcceptedRunWaitingCommit:
     claim: AcceptedRunClaim
     expected_state_version: int
@@ -1837,6 +1887,12 @@ class AcceptedRunRepository(Protocol):
     def claim_work(
         self,
         request: AcceptedRunClaimRequest,
+    ) -> AcceptedRunWorkItem | None:
+        ...
+
+    def claim_next_work(
+        self,
+        request: AcceptedRunQueueClaimRequest,
     ) -> AcceptedRunWorkItem | None:
         ...
 

@@ -25,6 +25,7 @@ from .server_storage import (
     AcceptedRunLeaseExpiredError,
     AcceptedRunNotFoundError,
     AcceptedRunPhase,
+    AcceptedRunQueueClaimRequest,
     AcceptedRunSnapshot,
     AcceptedRunStateConflictError,
     AcceptedRunStorageError,
@@ -66,6 +67,21 @@ _TERMINAL_EVENT_KINDS = {
     "succeeded": "run_succeeded",
 }
 _T = TypeVar("_T")
+
+
+def _sqlite_lease_expiration(
+    request: AcceptedRunClaimRequest | AcceptedRunQueueClaimRequest,
+) -> int:
+    lease_expires_at_unix_ms = (
+        request.now_unix_ms + request.lease_duration_ms
+    )
+    if lease_expires_at_unix_ms > _MAX_SQLITE_INTEGER:
+        raise ValueError(
+            "accepted-run SQLite claim lease expiration exceeds SQLite "
+            "integer range"
+        )
+    return lease_expires_at_unix_ms
+
 
 _SCHEMA_V1_STATEMENTS = (
     """
@@ -1450,23 +1466,16 @@ class SQLiteAcceptedRunRepository:
         self._hit_failpoint("accept_run.after_commit")
         return result
 
-    def claim_work(
+    def _claim_work_transition(
         self,
         request: AcceptedRunClaimRequest,
-    ) -> AcceptedRunWorkItem | None:
+    ) -> Callable[[sqlite3.Connection], AcceptedRunWorkItem | None]:
         if not isinstance(request, AcceptedRunClaimRequest):
             raise TypeError(
                 "accepted-run SQLite claim must be an "
                 "AcceptedRunClaimRequest"
             )
-        lease_expires_at_unix_ms = (
-            request.now_unix_ms + request.lease_duration_ms
-        )
-        if lease_expires_at_unix_ms > _MAX_SQLITE_INTEGER:
-            raise ValueError(
-                "accepted-run SQLite claim lease expiration exceeds SQLite "
-                "integer range"
-            )
+        lease_expires_at_unix_ms = _sqlite_lease_expiration(request)
 
         def transition(
             connection: sqlite3.Connection,
@@ -1730,6 +1739,78 @@ class SQLiteAcceptedRunRepository:
                 raise SQLiteAcceptedRunCorruptionError(
                     "accepted-run SQLite claimed work is invalid"
                 ) from error
+
+        return transition
+
+    def claim_work(
+        self,
+        request: AcceptedRunClaimRequest,
+    ) -> AcceptedRunWorkItem | None:
+        transition = self._claim_work_transition(request)
+        work = self._database._run_immediate(transition)
+        if work is not None:
+            self._hit_failpoint("claim_run.after_commit")
+        return work
+
+    def claim_next_work(
+        self,
+        request: AcceptedRunQueueClaimRequest,
+    ) -> AcceptedRunWorkItem | None:
+        if not isinstance(request, AcceptedRunQueueClaimRequest):
+            raise TypeError(
+                "accepted-run SQLite queue claim must be an "
+                "AcceptedRunQueueClaimRequest"
+            )
+        _sqlite_lease_expiration(request)
+
+        def transition(
+            connection: sqlite3.Connection,
+        ) -> AcceptedRunWorkItem | None:
+            row = connection.execute(
+                """
+                SELECT tenant_id, external_run_id
+                FROM accepted_runs
+                WHERE (
+                    phase IN ('ready_initial', 'ready_resume')
+                    OR (
+                        phase = 'running'
+                        AND lease_expires_at_unix_ms <= ?
+                    )
+                )
+                  AND (? IS NULL OR tenant_id = ?)
+                ORDER BY
+                  CASE phase
+                    WHEN 'ready_resume' THEN 0
+                    WHEN 'ready_initial' THEN 1
+                    ELSE 2
+                  END,
+                  updated_at_unix_ms,
+                  created_at_unix_ms,
+                  internal_id
+                LIMIT 1
+                """,
+                (
+                    request.now_unix_ms,
+                    request.tenant_id,
+                    request.tenant_id,
+                ),
+            ).fetchone()
+            if row is None:
+                return None
+            concrete_request = AcceptedRunClaimRequest(
+                tenant_id=_decode_sqlite_text(
+                    "tenant_id",
+                    row["tenant_id"],
+                ),
+                run_id=_decode_sqlite_text(
+                    "external_run_id",
+                    row["external_run_id"],
+                ),
+                lease_owner_id=request.lease_owner_id,
+                now_unix_ms=request.now_unix_ms,
+                lease_duration_ms=request.lease_duration_ms,
+            )
+            return self._claim_work_transition(concrete_request)(connection)
 
         work = self._database._run_immediate(transition)
         if work is not None:
