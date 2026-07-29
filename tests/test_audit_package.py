@@ -844,6 +844,44 @@ def test_audit_outbox_serializes_concurrent_claim_schema_migrations(
     assert all(expected_claim_columns <= columns for columns in column_sets)
 
 
+def test_audit_outbox_serializes_single_instance_across_threads() -> None:
+    graphblocks_audit = importlib.import_module("graphblocks.audit")
+    outbox = graphblocks_audit.SQLiteAuditOutbox.in_memory()
+
+    def append_record(index: int) -> str:
+        return outbox.append(
+            "application_event",
+            {"event_id": f"event-{index}"},
+            occurred_at="2026-07-29T00:00:00Z",
+            record_id=f"audit-{index}",
+        ).record_id
+
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        record_ids = tuple(executor.map(append_record, range(32)))
+
+    assert record_ids == tuple(f"audit-{index}" for index in range(32))
+    pending_ids = [record.record_id for record in outbox.pending()]
+    assert len(pending_ids) == len(record_ids)
+    assert set(pending_ids) == set(record_ids)
+    outbox.close()
+
+
+def test_audit_outbox_reports_cross_thread_use_after_close() -> None:
+    graphblocks_audit = importlib.import_module("graphblocks.audit")
+    outbox = graphblocks_audit.SQLiteAuditOutbox.in_memory()
+    outbox.close()
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(outbox.pending)
+        with pytest.raises(
+            graphblocks_audit.AuditOutboxError,
+            match="audit outbox is closed",
+        ):
+            future.result()
+
+    outbox.close()
+
+
 @pytest.mark.parametrize("limit", (True, -1, 1.5))
 def test_audit_outbox_rejects_invalid_pending_limits(monkeypatch, limit: object) -> None:
     graphblocks_audit = importlib.import_module("graphblocks.audit")

@@ -2,11 +2,13 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
+from functools import wraps
 from pathlib import Path
 import sqlite3
+from threading import RLock
 from time import time
 from types import MappingProxyType
-from typing import Literal
+from typing import Literal, TypeVar
 
 from graphblocks.application_event import (
     STANDARD_APPLICATION_EVENT_KINDS,
@@ -49,6 +51,8 @@ AuditOutboxStatus = Literal["pending", "published", "failed"]
 _AUDIT_OUTBOX_STATUSES = frozenset({"pending", "published", "failed"})
 _MAX_AUDIT_ATTEMPTS = (1 << 63) - 1
 _MAX_AUDIT_MILLISECONDS = (1 << 63) - 1
+_AUDIT_SQLITE_BUSY_TIMEOUT_MS = 5_000
+_AuditOutboxMethodResult = TypeVar("_AuditOutboxMethodResult")
 
 
 def _audit_now_ms() -> int:
@@ -381,6 +385,23 @@ class AuditOutboxClaim:
             )
 
 
+def _with_serialized_audit_connection(
+    method: Callable[..., _AuditOutboxMethodResult],
+) -> Callable[..., _AuditOutboxMethodResult]:
+    @wraps(method)
+    def locked(
+        self: SQLiteAuditOutbox,
+        *args: object,
+        **kwargs: object,
+    ) -> _AuditOutboxMethodResult:
+        with self._lock:
+            if self._closed:
+                raise AuditOutboxError("audit outbox is closed")
+            return method(self, *args, **kwargs)
+
+    return locked
+
+
 @dataclass(slots=True)
 class SQLiteAuditOutbox:
     path: str | Path
@@ -389,13 +410,28 @@ class SQLiteAuditOutbox:
         repr=False,
     )
     _connection: sqlite3.Connection = field(init=False, repr=False)
+    _lock: RLock = field(default_factory=RLock, init=False, repr=False)
+    _closed: bool = field(default=False, init=False, repr=False)
 
     def __post_init__(self) -> None:
         if not callable(self.clock_ms):
             raise ValueError("audit outbox clock_ms must be callable")
-        self._connection = sqlite3.connect(str(self.path))
+        self._connection = sqlite3.connect(
+            str(self.path),
+            check_same_thread=False,
+            timeout=_AUDIT_SQLITE_BUSY_TIMEOUT_MS / 1_000,
+        )
         self._connection.row_factory = sqlite3.Row
         try:
+            self._connection.execute(
+                f"PRAGMA busy_timeout = {_AUDIT_SQLITE_BUSY_TIMEOUT_MS}"
+            )
+            if str(self.path) != ":memory:":
+                try:
+                    self._connection.execute("PRAGMA journal_mode = WAL")
+                except sqlite3.OperationalError as error:
+                    if "locked" not in str(error).casefold():
+                        raise
             self._connection.execute("BEGIN IMMEDIATE")
             self._connection.execute(
                 """
@@ -459,8 +495,13 @@ class SQLiteAuditOutbox:
         return cls(":memory:")
 
     def close(self) -> None:
-        self._connection.close()
+        with self._lock:
+            if self._closed:
+                return
+            self._connection.close()
+            self._closed = True
 
+    @_with_serialized_audit_connection
     def append(
         self,
         record_type: str,
@@ -520,6 +561,7 @@ class SQLiteAuditOutbox:
             raise AuditOutboxConflictError(f"audit outbox record {actual_record_id!r} already exists") from error
         return self.get(actual_record_id)
 
+    @_with_serialized_audit_connection
     def get(self, record_id: str) -> AuditOutboxRecord:
         record_id = _validate_audit_string("record_id", record_id)
         row = self._connection.execute(
@@ -530,6 +572,7 @@ class SQLiteAuditOutbox:
             raise AuditOutboxRecordNotFoundError(f"audit outbox record {record_id!r} does not exist")
         return self._record_from_row(row)
 
+    @_with_serialized_audit_connection
     def pending(self, *, limit: int | None = None) -> list[AuditOutboxRecord]:
         sql = "SELECT * FROM audit_outbox_records WHERE status IN ('pending', 'failed') ORDER BY sequence"
         parameters: tuple[object, ...] = ()
@@ -543,6 +586,7 @@ class SQLiteAuditOutbox:
         rows = self._connection.execute(sql, parameters).fetchall()
         return [self._record_from_row(row) for row in rows]
 
+    @_with_serialized_audit_connection
     def claim_pending(
         self,
         *,
@@ -637,6 +681,7 @@ class SQLiteAuditOutbox:
             self._connection.rollback()
             raise
 
+    @_with_serialized_audit_connection
     def renew_claim(
         self,
         claim: AuditOutboxClaim,
@@ -711,6 +756,7 @@ class SQLiteAuditOutbox:
             self._connection.rollback()
             raise
 
+    @_with_serialized_audit_connection
     def mark_published(
         self,
         claim: AuditOutboxClaim,
@@ -794,6 +840,7 @@ class SQLiteAuditOutbox:
             self._connection.rollback()
             raise
 
+    @_with_serialized_audit_connection
     def mark_failed(
         self,
         claim: AuditOutboxClaim,
