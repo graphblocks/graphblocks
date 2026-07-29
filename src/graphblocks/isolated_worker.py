@@ -25,6 +25,10 @@ MAX_PROCESS_WORKER_PAYLOAD_BYTES = 67_108_864
 MAX_PROCESS_WORKER_TIMEOUT_SECONDS = 86_400.0
 MAX_PROCESS_WORKER_TERMINATION_GRACE_SECONDS = 60.0
 _MAX_PROCESS_WORKER_ERROR_BYTES = 512
+ProcessWorkerAuthorityValidator = Callable[
+    [WorkerInvokeRequest, WorkerInvokeResult],
+    None,
+]
 
 
 class ProcessWorkerError(RuntimeError):
@@ -335,12 +339,15 @@ def _decode_process_worker_response(
 class ProcessWorkerExecutor:
     target: ProcessWorkerTarget
     policy: ProcessWorkerPolicy
+    authority_validator: ProcessWorkerAuthorityValidator
 
     def __post_init__(self) -> None:
         if not isinstance(self.target, ProcessWorkerTarget):
             raise TypeError("process worker target must be ProcessWorkerTarget")
         if not isinstance(self.policy, ProcessWorkerPolicy):
             raise TypeError("process worker policy must be ProcessWorkerPolicy")
+        if not callable(self.authority_validator):
+            raise TypeError("process worker authority_validator must be callable")
 
     def invoke(self, request: WorkerInvokeRequest) -> WorkerInvokeResult:
         if not isinstance(request, WorkerInvokeRequest):
@@ -436,13 +443,29 @@ class ProcessWorkerExecutor:
                     worker_pid,
                     process.exitcode,
                 )
-            return _decode_process_worker_response(
+            result = _decode_process_worker_response(
                 encoded,
                 request=request,
                 worker_pid=worker_pid,
                 exitcode=process.exitcode,
                 max_result_bytes=self.policy.max_result_bytes,
             )
+            authority_validator = cast(
+                Callable[[WorkerInvokeRequest, WorkerInvokeResult], object],
+                self.authority_validator,
+            )
+            authority_result = authority_validator(request, result)
+            if authority_result is not None:
+                raise ProcessWorkerProtocolError(
+                    "process worker authority_validator must return None"
+                )
+            if time.monotonic() > deadline:
+                raise ProcessWorkerDeadlineExceeded(
+                    self.policy.timeout_seconds,
+                    worker_pid,
+                    process.exitcode,
+                )
+            return result
         finally:
             receiver.close()
             sender.close()
@@ -462,6 +485,7 @@ __all__ = [
     "MAX_PROCESS_WORKER_PAYLOAD_BYTES",
     "MAX_PROCESS_WORKER_TERMINATION_GRACE_SECONDS",
     "MAX_PROCESS_WORKER_TIMEOUT_SECONDS",
+    "ProcessWorkerAuthorityValidator",
     "ProcessWorkerDeadlineExceeded",
     "ProcessWorkerError",
     "ProcessWorkerExecutor",

@@ -183,20 +183,31 @@ the worker exits within the configured deadline. On timeout it terminates and,
 if necessary, kills and reaps the worker before reporting
 `ProcessWorkerDeadlineExceeded`.
 
-The parent validates invocation ID, node-attempt ID, and lease epoch before
-returning a result, so a result produced under stale authority cannot be
-published through this boundary. The deadline covers process startup,
+The parent first validates invocation ID, node-attempt ID, and lease epoch
+against the request. It then calls the executor's mandatory
+`authority_validator` after the worker exits and immediately before returning
+the result. That validator MUST read the current authoritative lease/fence and
+raise when the request no longer owns it; returning a boolean decision is
+rejected rather than interpreted. The validator MUST be read-only and MUST
+apply its own bounded storage timeout; its result is also rejected if the
+overall execution deadline has elapsed. The deadline covers process startup,
 execution, response transfer, and worker exit. Request and response byte
 limits are mandatory and bounded.
+
+Live validation before return narrows the stale-result window but is not an
+atomic publication transaction. The repository that records an authoritative
+result or outbox effect MUST revalidate the same lease/fence in the transaction
+that commits it. A caller MUST NOT treat a successful
+`authority_validator` call alone as permission for a later unfenced write.
 
 This boundary controls the worker process only. A handler that delegates work
 to an untracked child, background service, or provider MUST NOT claim
 `force_terminable` without proving that delegated work is also terminated or
 fenced. External effects still require provider cancellation plus a durable
 outbox or idempotency key checked under the current lease/fencing token. The
-preview executor therefore supplies the killable-process and stale-result
-pieces of the stronger timeout contract; it does not by itself prove rollback
-or exactly-once effects.
+preview executor therefore supplies the killable-process, structural result
+validation, and live-revalidation hook of the stronger timeout contract; it
+does not by itself prove atomic publication, rollback, or exactly-once effects.
 
 ### Local timeout and retry
 

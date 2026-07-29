@@ -4,6 +4,7 @@ from multiprocessing import active_children
 import os
 from pathlib import Path
 from textwrap import dedent
+from threading import Timer
 import time
 
 import pytest
@@ -13,6 +14,7 @@ from graphblocks.isolated_worker import (
     ProcessWorkerExecutor,
     ProcessWorkerFailed,
     ProcessWorkerPolicy,
+    ProcessWorkerProtocolError,
     ProcessWorkerRequestTooLarge,
     ProcessWorkerResponseTooLarge,
     ProcessWorkerTarget,
@@ -20,8 +22,12 @@ from graphblocks.isolated_worker import (
 from graphblocks.worker import (
     WorkerInvocationContext,
     WorkerInvokeRequest,
+    WorkerInvokeResult,
     WorkerStaleLeaseEpochError,
 )
+
+
+_SUCCESS_TIMEOUT_SECONDS = 15
 
 
 def _write_handler_module(tmp_path: Path) -> str:
@@ -74,6 +80,16 @@ def _write_handler_module(tmp_path: Path) -> str:
                 )
 
 
+            def return_after_delay(request):
+                time.sleep(request.config["delaySeconds"])
+                return WorkerInvokeResult(
+                    invocation_id=request.invocation_id,
+                    node_attempt_id=request.node_attempt_id,
+                    lease_epoch=request.lease_epoch,
+                    outputs={"completed": True},
+                )
+
+
             def fail(request):
                 del request
                 raise ValueError("provider failed")
@@ -111,6 +127,13 @@ def _request(
     )
 
 
+def _allow_test_authority(
+    _request: WorkerInvokeRequest,
+    _result: WorkerInvokeResult,
+) -> None:
+    return None
+
+
 def test_process_worker_executes_in_fresh_process_and_validates_result(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -119,7 +142,8 @@ def test_process_worker_executes_in_fresh_process_and_validates_result(
     monkeypatch.syspath_prepend(str(tmp_path))
     executor = ProcessWorkerExecutor(
         ProcessWorkerTarget(module_name, "succeed"),
-        ProcessWorkerPolicy(timeout_seconds=5),
+        ProcessWorkerPolicy(timeout_seconds=_SUCCESS_TIMEOUT_SECONDS),
+        authority_validator=_allow_test_authority,
     )
 
     result = executor.invoke(_request(inputs={"value": "ok"}))
@@ -140,6 +164,7 @@ def test_process_worker_reaps_infinite_loop_at_hard_deadline(
             timeout_seconds=0.5,
             termination_grace_seconds=0.2,
         ),
+        authority_validator=_allow_test_authority,
     )
     started = time.monotonic()
 
@@ -165,6 +190,7 @@ def test_process_worker_cannot_publish_after_deadline(
             timeout_seconds=0.3,
             termination_grace_seconds=0.2,
         ),
+        authority_validator=_allow_test_authority,
     )
 
     with pytest.raises(ProcessWorkerDeadlineExceeded):
@@ -187,7 +213,8 @@ def test_process_worker_rejects_stale_lease_result_before_publication(
     monkeypatch.syspath_prepend(str(tmp_path))
     executor = ProcessWorkerExecutor(
         ProcessWorkerTarget(module_name, "return_stale_result"),
-        ProcessWorkerPolicy(timeout_seconds=5),
+        ProcessWorkerPolicy(timeout_seconds=_SUCCESS_TIMEOUT_SECONDS),
+        authority_validator=_allow_test_authority,
     )
 
     with pytest.raises(WorkerStaleLeaseEpochError) as error:
@@ -195,6 +222,70 @@ def test_process_worker_rejects_stale_lease_result_before_publication(
 
     assert error.value.expected == 7
     assert error.value.actual == 6
+
+
+def test_process_worker_revalidates_live_authority_after_execution(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module_name = _write_handler_module(tmp_path)
+    monkeypatch.syspath_prepend(str(tmp_path))
+    current_epoch = {"value": 7}
+
+    def validate_current_authority(
+        request: WorkerInvokeRequest,
+        _result: WorkerInvokeResult,
+    ) -> None:
+        if current_epoch["value"] != request.lease_epoch:
+            raise WorkerStaleLeaseEpochError(
+                current_epoch["value"],
+                request.lease_epoch,
+            )
+
+    executor = ProcessWorkerExecutor(
+        ProcessWorkerTarget(module_name, "return_after_delay"),
+        ProcessWorkerPolicy(timeout_seconds=_SUCCESS_TIMEOUT_SECONDS),
+        authority_validator=validate_current_authority,
+    )
+    reassign = Timer(0.1, lambda: current_epoch.__setitem__("value", 8))
+    reassign.start()
+
+    try:
+        with pytest.raises(WorkerStaleLeaseEpochError) as error:
+            executor.invoke(_request(config={"delaySeconds": 0.4}))
+    finally:
+        reassign.join()
+
+    assert error.value.expected == 8
+    assert error.value.actual == 7
+
+
+def test_process_worker_fails_closed_for_invalid_authority_validator(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module_name = _write_handler_module(tmp_path)
+    monkeypatch.syspath_prepend(str(tmp_path))
+    with pytest.raises(
+        TypeError,
+        match="authority_validator must be callable",
+    ):
+        ProcessWorkerExecutor(
+            ProcessWorkerTarget(module_name, "succeed"),
+            ProcessWorkerPolicy(timeout_seconds=_SUCCESS_TIMEOUT_SECONDS),
+            authority_validator=object(),  # type: ignore[arg-type]
+        )
+
+    executor = ProcessWorkerExecutor(
+        ProcessWorkerTarget(module_name, "succeed"),
+        ProcessWorkerPolicy(timeout_seconds=_SUCCESS_TIMEOUT_SECONDS),
+        authority_validator=lambda _request, _result: False,  # type: ignore[arg-type,return-value]
+    )
+    with pytest.raises(
+        ProcessWorkerProtocolError,
+        match="authority_validator must return None",
+    ):
+        executor.invoke(_request(inputs={"value": "ok"}))
 
 
 def test_process_worker_reports_bounded_child_failure(
@@ -205,7 +296,8 @@ def test_process_worker_reports_bounded_child_failure(
     monkeypatch.syspath_prepend(str(tmp_path))
     executor = ProcessWorkerExecutor(
         ProcessWorkerTarget(module_name, "fail"),
-        ProcessWorkerPolicy(timeout_seconds=5),
+        ProcessWorkerPolicy(timeout_seconds=_SUCCESS_TIMEOUT_SECONDS),
+        authority_validator=_allow_test_authority,
     )
 
     with pytest.raises(ProcessWorkerFailed) as error:
@@ -223,6 +315,7 @@ def test_process_worker_rejects_oversized_request_before_starting() -> None:
             timeout_seconds=1,
             max_request_bytes=32,
         ),
+        authority_validator=_allow_test_authority,
     )
 
     with pytest.raises(ProcessWorkerRequestTooLarge):
@@ -238,9 +331,10 @@ def test_process_worker_rejects_oversized_result(
     executor = ProcessWorkerExecutor(
         ProcessWorkerTarget(module_name, "return_large_result"),
         ProcessWorkerPolicy(
-            timeout_seconds=5,
+            timeout_seconds=_SUCCESS_TIMEOUT_SECONDS,
             max_result_bytes=512,
         ),
+        authority_validator=_allow_test_authority,
     )
 
     with pytest.raises(ProcessWorkerResponseTooLarge):
