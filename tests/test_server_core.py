@@ -119,6 +119,27 @@ def _seed_collectible_terminal_run(
     )
 
 
+def _seed_run_control_stream(
+    app: GraphBlocksServerApp,
+    run_id: str,
+    principal: PrincipalRef,
+) -> None:
+    _record_seeded_run_owner(app, run_id, principal)
+    app._events_by_run_id[run_id] = (
+        {
+            "kind": "RunStarted",
+            "payload": {"runId": run_id},
+            "metadata": {
+                "runId": run_id,
+                "sequence": 1,
+                "cursor": f"{run_id}:1",
+                "releaseId": "release-run-control-limit-1",
+                "occurredAt": "2026-07-29T00:00:00Z",
+            },
+        },
+    )
+
+
 def _record_failed_callback_delivery(
     app: GraphBlocksServerApp,
     delivery_id: str,
@@ -598,6 +619,8 @@ def test_server_app_validates_unauthenticated_development_mode_flag() -> None:
         "terminal_run_retention_seconds",
         "terminal_run_collection_interval_seconds",
         "terminal_run_collection_batch_size",
+        "max_run_controls_per_run",
+        "max_run_control_history_bytes_per_run",
     ),
 )
 def test_server_app_rejects_invalid_resource_limits(field_name: str) -> None:
@@ -5745,6 +5768,108 @@ def test_server_app_rejects_run_control_duplicate_with_conflicting_reason() -> N
         "error": "run control duplicate command conflicts with existing reason",
     }
     assert len(app.run_controls("run-control-duplicate-1")) == 1
+
+
+def test_server_app_bounds_run_control_count_before_terminal_mutation() -> None:
+    principal = PrincipalRef("user-1")
+    app = GraphBlocksServerApp(
+        auth_hook=StaticBearerAuthHook({"token-1": principal}),
+        max_run_controls_per_run=1,
+        max_run_control_history_bytes_per_run=4_096,
+    )
+    run_id = "run-control-count-limit-1"
+    _seed_run_control_stream(app, run_id, principal)
+    app._pending_accepted_runs_by_run_id[run_id] = {
+        "responseId": "response-control-count-limit-1",
+        "releaseId": "release-run-control-limit-1",
+        "policySnapshotId": "policy-run-control-limit-1",
+        "turnId": None,
+    }
+
+    first = app.handle(
+        ServerRequest(
+            method="POST",
+            path=f"/runs/{run_id}/pause",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps({"reason": "operator_hold"}).encode("utf-8"),
+            requested_at="2026-07-29T00:00:01Z",
+        )
+    )
+    duplicate = app.handle(
+        ServerRequest(
+            method="POST",
+            path=f"/runs/{run_id}/pause",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps({"reason": "operator_hold"}).encode("utf-8"),
+            requested_at="2026-07-29T00:00:02Z",
+        )
+    )
+    rejected = app.handle(
+        ServerRequest(
+            method="POST",
+            path=f"/runs/{run_id}/cancel",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps({"reason": "operator_cancel"}).encode("utf-8"),
+            requested_at="2026-07-29T00:00:03Z",
+        )
+    )
+
+    assert first.status_code == 202
+    assert duplicate.status_code == 200
+    assert json.loads(duplicate.body.decode("utf-8"))["duplicate"] is True
+    assert rejected.status_code == 429
+    assert json.loads(rejected.body.decode("utf-8")) == {
+        "ok": False,
+        "runId": run_id,
+        "reasonCode": "server.run_control_capacity_exhausted",
+        "maxRunControlsPerRun": 1,
+        "maxRunControlHistoryBytesPerRun": 4_096,
+        "error": "server run control history capacity is exhausted",
+    }
+    assert len(app._events_by_run_id[run_id]) == 1
+    assert run_id in app._pending_accepted_runs_by_run_id
+    assert len(app.run_controls(run_id)) == 1
+    assert app.run_controls(run_id)[0]["status"] == "paused_operator"
+
+
+def test_server_app_bounds_run_control_canonical_bytes() -> None:
+    principal = PrincipalRef("user-1")
+    app = GraphBlocksServerApp(
+        auth_hook=StaticBearerAuthHook({"token-1": principal}),
+        max_run_controls_per_run=10,
+        max_run_control_history_bytes_per_run=1,
+    )
+    run_id = "run-control-byte-limit-1"
+    _seed_run_control_stream(app, run_id, principal)
+
+    rejected = app.handle(
+        ServerRequest(
+            method="POST",
+            path=f"/runs/{run_id}/pause",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps({"reason": "operator_hold"}).encode("utf-8"),
+            requested_at="2026-07-29T00:00:01Z",
+        )
+    )
+
+    assert rejected.status_code == 429
+    assert json.loads(rejected.body.decode("utf-8")) == {
+        "ok": False,
+        "runId": run_id,
+        "reasonCode": "server.run_control_capacity_exhausted",
+        "maxRunControlsPerRun": 10,
+        "maxRunControlHistoryBytesPerRun": 1,
+        "error": "server run control history capacity is exhausted",
+    }
+    assert app.run_controls(run_id) == ()
 
 
 def test_server_app_projects_typed_pause_wait_reason() -> None:

@@ -131,6 +131,8 @@ DEFAULT_MAX_SERVER_EVENT_PAGE_BYTES = 1024 * 1024
 DEFAULT_MAX_IN_MEMORY_RUNS = 10_000
 DEFAULT_MAX_IN_MEMORY_RUNS_PER_TENANT = 1_000
 DEFAULT_MAX_RETIRED_RUN_TOMBSTONES = 10_000
+DEFAULT_MAX_RUN_CONTROLS_PER_RUN = 256
+DEFAULT_MAX_RUN_CONTROL_HISTORY_BYTES_PER_RUN = 1024 * 1024
 DEFAULT_MAX_DETACHMENTS_PER_RUN = 256
 DEFAULT_MAX_DETACHMENT_HISTORY_BYTES_PER_RUN = 256 * 1024
 DEFAULT_MAX_SUBSCRIPTIONS_PER_RUN = 256
@@ -2569,6 +2571,10 @@ class GraphBlocksServerApp:
     max_retired_run_tombstones: int = (
         DEFAULT_MAX_RETIRED_RUN_TOMBSTONES
     )
+    max_run_controls_per_run: int = DEFAULT_MAX_RUN_CONTROLS_PER_RUN
+    max_run_control_history_bytes_per_run: int = (
+        DEFAULT_MAX_RUN_CONTROL_HISTORY_BYTES_PER_RUN
+    )
     max_detachments_per_run: int = DEFAULT_MAX_DETACHMENTS_PER_RUN
     max_detachment_history_bytes_per_run: int = (
         DEFAULT_MAX_DETACHMENT_HISTORY_BYTES_PER_RUN
@@ -2786,6 +2792,8 @@ class GraphBlocksServerApp:
             "max_in_memory_runs",
             "max_in_memory_runs_per_tenant",
             "max_retired_run_tombstones",
+            "max_run_controls_per_run",
+            "max_run_control_history_bytes_per_run",
             "max_detachments_per_run",
             "max_detachment_history_bytes_per_run",
             "max_subscriptions_per_run",
@@ -5075,6 +5083,15 @@ class GraphBlocksServerApp:
                                 ),
                             },
                         )
+                        assert isinstance(paused_record, Mapping)
+                        capacity_response = (
+                            self._run_control_capacity_response(
+                                submission.run_id,
+                                paused_record,
+                            )
+                        )
+                        if capacity_response is not None:
+                            return capacity_response
                         self._run_controls_by_run_id[submission.run_id] = (
                             *self._run_controls_by_run_id.get(
                                 submission.run_id,
@@ -5107,6 +5124,15 @@ class GraphBlocksServerApp:
                             ),
                         },
                     )
+                    assert isinstance(paused_record, Mapping)
+                    capacity_response = (
+                        self._run_control_capacity_response(
+                            submission.run_id,
+                            paused_record,
+                        )
+                    )
+                    if capacity_response is not None:
+                        return capacity_response
                     self._run_controls_by_run_id[submission.run_id] = (
                         *self._run_controls_by_run_id.get(
                             submission.run_id,
@@ -6766,6 +6792,16 @@ class GraphBlocksServerApp:
                     ),
                 },
             )
+            assert isinstance(paused_record, Mapping)
+            if (
+                self._run_control_capacity_response(
+                    run_id,
+                    paused_record,
+                )
+                is not None
+            ):
+                self._accepted_run_condition.notify_all()
+                return
             self._run_controls_by_run_id[run_id] = (
                 *self._run_controls_by_run_id.get(run_id, ()),
                 paused_record,
@@ -7645,6 +7681,44 @@ class GraphBlocksServerApp:
             return {"ok": True, **payload}
         return payload
 
+    def _run_control_capacity_response(
+        self,
+        run_id: str,
+        record: Mapping[str, object],
+    ) -> ServerResponse | None:
+        existing = self._run_controls_by_run_id.get(run_id, ())
+        retained_bytes = sum(
+            _canonical_json_size_bytes(existing_record)
+            for existing_record in existing
+        )
+        if (
+            len(existing) >= self.max_run_controls_per_run
+            or (
+                retained_bytes + _canonical_json_size_bytes(record)
+                > self.max_run_control_history_bytes_per_run
+            )
+        ):
+            return ServerResponse.json(
+                429,
+                {
+                    "ok": False,
+                    "runId": run_id,
+                    "reasonCode": (
+                        "server.run_control_capacity_exhausted"
+                    ),
+                    "maxRunControlsPerRun": (
+                        self.max_run_controls_per_run
+                    ),
+                    "maxRunControlHistoryBytesPerRun": (
+                        self.max_run_control_history_bytes_per_run
+                    ),
+                    "error": (
+                        "server run control history capacity is exhausted"
+                    ),
+                },
+            )
+        return None
+
     def _run_control_response(
         self,
         run_id: str,
@@ -7891,6 +7965,30 @@ class GraphBlocksServerApp:
                     },
                 )
         pending_run = self._pending_accepted_runs_by_run_id.get(run_id)
+        record_sequence = self._last_event_sequence(events)
+        if status in {"cancelled", "expired"} and pending_run is not None:
+            record_sequence += 1
+        record_payload: dict[str, object] = {
+            "operation": operation,
+            "status": status,
+            "reason": reason,
+            "occurredAt": occurred_at,
+            "lastCursor": f"{run_id}:{record_sequence}",
+        }
+        if actor is not None:
+            record_payload["actor"] = _principal_response_payload(actor)
+        record = _freeze_json_value(
+            "run control record",
+            "record",
+            record_payload,
+        )
+        assert isinstance(record, Mapping)
+        capacity_response = self._run_control_capacity_response(
+            run_id,
+            record,
+        )
+        if capacity_response is not None:
+            return capacity_response
         promoted_on_control: tuple[AdmissionTicket, ...] = ()
         if status in {"cancelled", "expired"} and pending_run is not None:
             if events:
@@ -8081,16 +8179,6 @@ class GraphBlocksServerApp:
                         ),
                     },
                 )
-        record_payload: dict[str, object] = {
-            "operation": operation,
-            "status": status,
-            "reason": reason,
-            "occurredAt": occurred_at,
-            "lastCursor": f"{run_id}:{self._last_event_sequence(events)}",
-        }
-        if actor is not None:
-            record_payload["actor"] = _principal_response_payload(actor)
-        record = _freeze_json_value("run control record", "record", record_payload)
         self._run_controls_by_run_id[run_id] = (*existing, record)
         self._accepted_run_condition.notify_all()
         self._dispatch_admitted_tickets(promoted_on_control)
