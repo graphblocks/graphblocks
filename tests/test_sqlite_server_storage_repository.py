@@ -10,12 +10,15 @@ import pytest
 from graphblocks.canonical import canonical_dumps, canonical_hash
 from graphblocks.server_storage import (
     AcceptedRunAdmission,
+    AcceptedRunClaimRequest,
     AcceptedRunEventIntent,
     AcceptedRunIdConflictError,
     AcceptedRunNotFoundError,
     AcceptedRunPhase,
     AdmissionIdempotencyConflictError,
     AdmissionIdentity,
+    StaleAcceptedRunClaimError,
+    assert_current_claim,
 )
 from graphblocks.sqlite_server_storage import (
     MAX_ACCEPTED_RUN_EVENT_PAGE_SIZE,
@@ -336,6 +339,322 @@ def test_sqlite_repository_hides_cross_tenant_run_existence(tmp_path) -> None:
             run_id="run-1",
             after_sequence=0,
             limit=10,
+        )
+
+
+def test_sqlite_repository_claims_ready_run_with_fenced_authority(
+    tmp_path,
+) -> None:
+    repository = SQLiteAcceptedRunRepository(
+        tmp_path / "accepted-runs.sqlite3"
+    )
+    repository.accept_run(_admission())
+
+    claim = repository.claim_run(
+        AcceptedRunClaimRequest(
+            tenant_id="tenant-1",
+            run_id="run-1",
+            lease_owner_id="worker-1",
+            now_unix_ms=2_000,
+            lease_duration_ms=500,
+        )
+    )
+
+    assert claim is not None
+    assert claim.lease_generation == 1
+    assert claim.fencing_token == 1
+    assert claim.lease_expires_at_unix_ms == 2_500
+    snapshot = repository.get_run(tenant_id="tenant-1", run_id="run-1")
+    assert snapshot is not None
+    assert snapshot.phase is AcceptedRunPhase.RUNNING
+    assert snapshot.claim == claim
+    assert snapshot.state_version == 2
+    assert snapshot.event_high_watermark == 2
+    events = repository.read_events(
+        tenant_id="tenant-1",
+        run_id="run-1",
+        after_sequence=1,
+        limit=10,
+    )
+    assert [(event.sequence, event.kind) for event in events.events] == [
+        (2, "run_claimed")
+    ]
+
+
+def test_sqlite_repository_pages_committed_events_across_claim(
+    tmp_path,
+) -> None:
+    repository = SQLiteAcceptedRunRepository(
+        tmp_path / "accepted-runs.sqlite3"
+    )
+    repository.accept_run(_admission())
+    repository.claim_run(
+        AcceptedRunClaimRequest(
+            tenant_id="tenant-1",
+            run_id="run-1",
+            lease_owner_id="worker-1",
+            now_unix_ms=2_000,
+            lease_duration_ms=500,
+        )
+    )
+
+    first = repository.read_events(
+        tenant_id="tenant-1",
+        run_id="run-1",
+        after_sequence=0,
+        limit=1,
+    )
+    second = repository.read_events(
+        tenant_id="tenant-1",
+        run_id="run-1",
+        after_sequence=first.next_after_sequence,
+        limit=1,
+    )
+
+    assert [(event.sequence, event.kind) for event in first.events] == [
+        (1, "run_accepted")
+    ]
+    assert first.next_after_sequence == 1
+    assert [(event.sequence, event.kind) for event in second.events] == [
+        (2, "run_claimed")
+    ]
+    assert second.next_after_sequence is None
+
+
+def test_sqlite_repository_allows_only_one_concurrent_claim(tmp_path) -> None:
+    path = tmp_path / "accepted-runs.sqlite3"
+    repository = SQLiteAcceptedRunRepository(path)
+    repository.accept_run(_admission())
+    request = AcceptedRunClaimRequest(
+        tenant_id="tenant-1",
+        run_id="run-1",
+        lease_owner_id="worker-1",
+        now_unix_ms=2_000,
+        lease_duration_ms=500,
+    )
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        claims = tuple(
+            executor.map(
+                lambda worker: SQLiteAcceptedRunRepository(path).claim_run(
+                    replace(request, lease_owner_id=worker)
+                ),
+                ("worker-1", "worker-2"),
+            )
+        )
+
+    granted = tuple(claim for claim in claims if claim is not None)
+    assert len(granted) == 1
+    assert granted[0].lease_generation == 1
+    assert granted[0].fencing_token == 1
+    assert (
+        repository.get_run(tenant_id="tenant-1", run_id="run-1").claim
+        == granted[0]
+    )
+
+
+def test_sqlite_repository_does_not_reclaim_unexpired_lease(
+    tmp_path,
+) -> None:
+    repository = SQLiteAcceptedRunRepository(
+        tmp_path / "accepted-runs.sqlite3"
+    )
+    repository.accept_run(_admission())
+    first = repository.claim_run(
+        AcceptedRunClaimRequest(
+            tenant_id="tenant-1",
+            run_id="run-1",
+            lease_owner_id="worker-1",
+            now_unix_ms=2_000,
+            lease_duration_ms=500,
+        )
+    )
+
+    second = repository.claim_run(
+        AcceptedRunClaimRequest(
+            tenant_id="tenant-1",
+            run_id="run-1",
+            lease_owner_id="worker-2",
+            now_unix_ms=2_499,
+            lease_duration_ms=500,
+        )
+    )
+
+    assert first is not None
+    assert second is None
+    snapshot = repository.get_run(tenant_id="tenant-1", run_id="run-1")
+    assert snapshot is not None
+    assert snapshot.claim == first
+    assert snapshot.state_version == 2
+    assert snapshot.event_high_watermark == 2
+
+
+def test_sqlite_repository_reclaims_expired_lease_with_new_fence(
+    tmp_path,
+) -> None:
+    repository = SQLiteAcceptedRunRepository(
+        tmp_path / "accepted-runs.sqlite3"
+    )
+    repository.accept_run(_admission())
+    first = repository.claim_run(
+        AcceptedRunClaimRequest(
+            tenant_id="tenant-1",
+            run_id="run-1",
+            lease_owner_id="worker-1",
+            now_unix_ms=2_000,
+            lease_duration_ms=500,
+        )
+    )
+    assert first is not None
+
+    reclaimed = repository.claim_run(
+        AcceptedRunClaimRequest(
+            tenant_id="tenant-1",
+            run_id="run-1",
+            lease_owner_id="worker-2",
+            now_unix_ms=2_500,
+            lease_duration_ms=750,
+        )
+    )
+
+    assert reclaimed is not None
+    assert reclaimed.lease_owner_id == "worker-2"
+    assert reclaimed.lease_generation == 2
+    assert reclaimed.fencing_token == 2
+    assert reclaimed.lease_expires_at_unix_ms == 3_250
+    with pytest.raises(StaleAcceptedRunClaimError):
+        assert_current_claim(current=reclaimed, provided=first)
+    snapshot = repository.get_run(tenant_id="tenant-1", run_id="run-1")
+    assert snapshot is not None
+    assert snapshot.claim == reclaimed
+    assert snapshot.state_version == 3
+    assert snapshot.event_high_watermark == 3
+    events = repository.read_events(
+        tenant_id="tenant-1",
+        run_id="run-1",
+        after_sequence=2,
+        limit=10,
+    )
+    assert [(event.sequence, event.kind) for event in events.events] == [
+        (3, "run_reclaimed")
+    ]
+
+
+def test_sqlite_repository_claim_is_tenant_scoped(tmp_path) -> None:
+    repository = SQLiteAcceptedRunRepository(
+        tmp_path / "accepted-runs.sqlite3"
+    )
+    repository.accept_run(_admission())
+
+    with pytest.raises(AcceptedRunNotFoundError):
+        repository.claim_run(
+            AcceptedRunClaimRequest(
+                tenant_id="tenant-2",
+                run_id="run-1",
+                lease_owner_id="worker-2",
+                now_unix_ms=2_000,
+                lease_duration_ms=500,
+            )
+        )
+
+
+@pytest.mark.parametrize(
+    "failpoint",
+    [
+        "claim_run.after_state_update",
+        "claim_run.after_event_insert",
+    ],
+)
+def test_sqlite_repository_rolls_back_precommit_claim_failure(
+    tmp_path,
+    failpoint: str,
+) -> None:
+    path = tmp_path / f"{failpoint}.sqlite3"
+    SQLiteAcceptedRunRepository(path).accept_run(_admission())
+
+    def inject(point: str) -> None:
+        if point == failpoint:
+            raise RuntimeError(f"injected {point}")
+
+    repository = SQLiteAcceptedRunRepository(path, failpoint=inject)
+    request = AcceptedRunClaimRequest(
+        tenant_id="tenant-1",
+        run_id="run-1",
+        lease_owner_id="worker-1",
+        now_unix_ms=2_000,
+        lease_duration_ms=500,
+    )
+    with pytest.raises(RuntimeError, match=f"injected {failpoint}"):
+        repository.claim_run(request)
+
+    reopened = SQLiteAcceptedRunRepository(path)
+    snapshot = reopened.get_run(tenant_id="tenant-1", run_id="run-1")
+    assert snapshot is not None
+    assert snapshot.phase is AcceptedRunPhase.READY_INITIAL
+    assert snapshot.state_version == 1
+    assert snapshot.event_high_watermark == 1
+    claim = reopened.claim_run(request)
+    assert claim is not None
+    assert claim.lease_generation == 1
+    assert claim.fencing_token == 1
+
+
+def test_sqlite_repository_recovers_claim_after_response_loss(
+    tmp_path,
+) -> None:
+    path = tmp_path / "accepted-runs.sqlite3"
+    SQLiteAcceptedRunRepository(path).accept_run(_admission())
+
+    def inject(point: str) -> None:
+        if point == "claim_run.after_commit":
+            raise RuntimeError("injected claim response loss")
+
+    request = AcceptedRunClaimRequest(
+        tenant_id="tenant-1",
+        run_id="run-1",
+        lease_owner_id="worker-1",
+        now_unix_ms=2_000,
+        lease_duration_ms=500,
+    )
+    with pytest.raises(RuntimeError, match="injected claim response loss"):
+        SQLiteAcceptedRunRepository(path, failpoint=inject).claim_run(request)
+
+    reopened = SQLiteAcceptedRunRepository(path)
+    snapshot = reopened.get_run(tenant_id="tenant-1", run_id="run-1")
+    assert snapshot is not None
+    assert snapshot.phase is AcceptedRunPhase.RUNNING
+    assert snapshot.claim is not None
+    assert snapshot.claim.lease_generation == 1
+    assert reopened.claim_run(replace(request, lease_owner_id="worker-2")) is None
+    reclaimed = reopened.claim_run(
+        replace(
+            request,
+            lease_owner_id="worker-2",
+            now_unix_ms=2_500,
+        )
+    )
+    assert reclaimed is not None
+    assert reclaimed.lease_generation == 2
+    assert reclaimed.fencing_token == 2
+
+
+def test_sqlite_repository_rejects_claim_time_outside_sqlite_range(
+    tmp_path,
+) -> None:
+    repository = SQLiteAcceptedRunRepository(
+        tmp_path / "accepted-runs.sqlite3"
+    )
+    repository.accept_run(_admission())
+
+    with pytest.raises(ValueError, match="lease expiration exceeds SQLite"):
+        repository.claim_run(
+            AcceptedRunClaimRequest(
+                tenant_id="tenant-1",
+                run_id="run-1",
+                lease_owner_id="worker-1",
+                now_unix_ms=(1 << 63) - 1,
+                lease_duration_ms=1,
+            )
         )
 
 

@@ -9,11 +9,12 @@ import time
 from typing import TypeVar
 import uuid
 
-from .canonical import canonical_hash, canonical_loads
+from .canonical import canonical_dumps, canonical_hash, canonical_loads
 from .server_storage import (
     CHECKPOINT_FORMAT_VERSION,
     AcceptedRunAdmission,
     AcceptedRunClaim,
+    AcceptedRunClaimRequest,
     AcceptedRunEvent,
     AcceptedRunEventPage,
     AcceptedRunIdConflictError,
@@ -23,6 +24,7 @@ from .server_storage import (
     AcceptedRunStorageError,
     AdmissionIdentity,
     AdmissionResult,
+    assert_accepted_run_transition,
     resolve_admission_replay,
 )
 
@@ -1163,6 +1165,183 @@ class SQLiteAcceptedRunRepository:
         result = self._database._run_immediate(transition)
         self._hit_failpoint("accept_run.after_commit")
         return result
+
+    def claim_run(
+        self,
+        request: AcceptedRunClaimRequest,
+    ) -> AcceptedRunClaim | None:
+        if not isinstance(request, AcceptedRunClaimRequest):
+            raise TypeError(
+                "accepted-run SQLite claim must be an "
+                "AcceptedRunClaimRequest"
+            )
+        lease_expires_at_unix_ms = (
+            request.now_unix_ms + request.lease_duration_ms
+        )
+        if lease_expires_at_unix_ms > _MAX_SQLITE_INTEGER:
+            raise ValueError(
+                "accepted-run SQLite claim lease expiration exceeds SQLite "
+                "integer range"
+            )
+
+        def transition(
+            connection: sqlite3.Connection,
+        ) -> AcceptedRunClaim | None:
+            row = connection.execute(
+                """
+                SELECT *
+                FROM accepted_runs
+                WHERE tenant_id = ? AND external_run_id = ?
+                """,
+                (request.tenant_id, request.run_id),
+            ).fetchone()
+            if row is None:
+                raise AcceptedRunNotFoundError(
+                    request.tenant_id,
+                    request.run_id,
+                )
+            try:
+                phase = AcceptedRunPhase(
+                    _decode_sqlite_text("phase", row["phase"])
+                )
+            except ValueError as error:
+                raise SQLiteAcceptedRunCorruptionError(
+                    "accepted-run SQLite phase is invalid"
+                ) from error
+            if phase is AcceptedRunPhase.RUNNING:
+                current_expiry = _decode_sqlite_integer(
+                    "lease_expires_at_unix_ms",
+                    row["lease_expires_at_unix_ms"],
+                )
+                if current_expiry > request.now_unix_ms:
+                    return None
+                event_kind = "run_reclaimed"
+            elif phase is AcceptedRunPhase.READY_INITIAL:
+                assert_accepted_run_transition(
+                    phase,
+                    AcceptedRunPhase.RUNNING,
+                )
+                event_kind = "run_claimed"
+            elif phase is AcceptedRunPhase.READY_RESUME:
+                assert_accepted_run_transition(
+                    phase,
+                    AcceptedRunPhase.RUNNING,
+                )
+                event_kind = "run_resume_claimed"
+            else:
+                return None
+
+            internal_id = _decode_sqlite_text(
+                "internal_id",
+                row["internal_id"],
+            )
+            state_version = _decode_sqlite_integer(
+                "state_version",
+                row["state_version"],
+            )
+            event_sequence = _decode_sqlite_integer(
+                "event_high_watermark",
+                row["event_high_watermark"],
+            )
+            lease_generation = _decode_sqlite_integer(
+                "lease_generation",
+                row["lease_generation"],
+            )
+            fencing_token = _decode_sqlite_integer(
+                "fencing_token",
+                row["fencing_token"],
+            )
+            if (
+                state_version >= _MAX_SQLITE_INTEGER
+                or event_sequence >= _MAX_SQLITE_INTEGER
+                or lease_generation >= _MAX_SQLITE_INTEGER
+                or fencing_token >= _MAX_SQLITE_INTEGER
+            ):
+                raise OverflowError(
+                    "accepted-run SQLite claim counters are exhausted"
+                )
+            next_state_version = state_version + 1
+            next_event_sequence = event_sequence + 1
+            next_lease_generation = lease_generation + 1
+            next_fencing_token = fencing_token + 1
+            claim = AcceptedRunClaim(
+                run_id=request.run_id,
+                lease_owner_id=request.lease_owner_id,
+                lease_generation=next_lease_generation,
+                fencing_token=next_fencing_token,
+                lease_expires_at_unix_ms=lease_expires_at_unix_ms,
+            )
+            updated = connection.execute(
+                """
+                UPDATE accepted_runs
+                SET phase = 'running',
+                    state_version = ?,
+                    event_high_watermark = ?,
+                    updated_at_unix_ms = ?,
+                    lease_owner_id = ?,
+                    lease_generation = ?,
+                    fencing_token = ?,
+                    lease_expires_at_unix_ms = ?
+                WHERE internal_id = ?
+                  AND phase = ?
+                  AND state_version = ?
+                  AND lease_generation = ?
+                  AND fencing_token = ?
+                """,
+                (
+                    next_state_version,
+                    next_event_sequence,
+                    request.now_unix_ms,
+                    request.lease_owner_id,
+                    next_lease_generation,
+                    next_fencing_token,
+                    lease_expires_at_unix_ms,
+                    internal_id,
+                    phase.value,
+                    state_version,
+                    lease_generation,
+                    fencing_token,
+                ),
+            )
+            if updated.rowcount != 1:
+                raise SQLiteAcceptedRunCorruptionError(
+                    "accepted-run SQLite claim lost its locked state"
+                )
+            self._hit_failpoint("claim_run.after_state_update")
+            event_payload = {
+                "leaseGeneration": next_lease_generation,
+                "runId": request.run_id,
+                "state": "running",
+            }
+            event_json = canonical_dumps(event_payload)
+            connection.execute(
+                """
+                INSERT INTO run_events (
+                  run_internal_id,
+                  sequence,
+                  kind,
+                  payload_json,
+                  payload_digest,
+                  created_at_unix_ms
+                )
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    internal_id,
+                    next_event_sequence,
+                    event_kind,
+                    event_json,
+                    canonical_hash(event_payload),
+                    request.now_unix_ms,
+                ),
+            )
+            self._hit_failpoint("claim_run.after_event_insert")
+            return claim
+
+        claim = self._database._run_immediate(transition)
+        if claim is not None:
+            self._hit_failpoint("claim_run.after_commit")
+        return claim
 
     def get_run(
         self,
