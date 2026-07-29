@@ -137,6 +137,8 @@ DEFAULT_MAX_SUBSCRIPTIONS_PER_RUN = 256
 DEFAULT_MAX_SUBSCRIPTION_HISTORY_BYTES_PER_RUN = 1024 * 1024
 DEFAULT_MAX_EVENT_ACKS_PER_SUBSCRIPTION = 4_096
 DEFAULT_MAX_EVENT_ACK_HISTORY_BYTES_PER_SUBSCRIPTION = 1024 * 1024
+DEFAULT_MAX_CALLBACK_OPERATION_HISTORIES = 4_096
+DEFAULT_MAX_CALLBACK_SUBMISSION_HISTORY_BYTES = 64 * 1024 * 1024
 
 
 def _utc_now_iso() -> str:
@@ -1280,6 +1282,12 @@ class ServerAsyncCallbackSubmission:
         if self.provider_operation_id is not None:
             payload["providerOperationId"] = self.provider_operation_id
         return payload
+
+    def _retained_size_bytes(self) -> int:
+        retained_value = self.response_payload()
+        retained_value["payload"] = _thaw_json_value(self.payload)
+        retained_value["receivedAt"] = self.received_at
+        return _canonical_json_size_bytes(retained_value)
 
     def duplicate_response_payload(self) -> dict[str, object]:
         payload: dict[str, object] = {
@@ -2506,6 +2514,12 @@ class GraphBlocksServerApp:
     max_event_ack_history_bytes_per_subscription: int = (
         DEFAULT_MAX_EVENT_ACK_HISTORY_BYTES_PER_SUBSCRIPTION
     )
+    max_callback_operation_histories: int = (
+        DEFAULT_MAX_CALLBACK_OPERATION_HISTORIES
+    )
+    max_callback_submission_history_bytes: int = (
+        DEFAULT_MAX_CALLBACK_SUBMISSION_HISTORY_BYTES
+    )
     _events_by_run_id: dict[str, tuple[Mapping[str, object], ...]] = field(default_factory=dict, init=False, repr=False)
     _run_authorization_by_run_id: dict[str, _ServerRunAuthorizationRecord] = field(
         default_factory=dict,
@@ -2519,6 +2533,11 @@ class GraphBlocksServerApp:
     )
     _callbacks_by_operation_id: dict[str, tuple[ServerAsyncCallbackSubmission, ...]] = field(
         default_factory=dict,
+        init=False,
+        repr=False,
+    )
+    _callback_submission_history_bytes: int = field(
+        default=0,
         init=False,
         repr=False,
     )
@@ -2666,6 +2685,8 @@ class GraphBlocksServerApp:
             "max_subscription_history_bytes_per_run",
             "max_event_acks_per_subscription",
             "max_event_ack_history_bytes_per_subscription",
+            "max_callback_operation_histories",
+            "max_callback_submission_history_bytes",
         ):
             value = getattr(self, field_name)
             if isinstance(value, bool) or not isinstance(value, int) or value < 1:
@@ -2959,6 +2980,11 @@ class GraphBlocksServerApp:
                         operation_id,
                         None,
                     )
+            self._callback_submission_history_bytes = sum(
+                submission._retained_size_bytes()
+                for submissions in self._callbacks_by_operation_id.values()
+                for submission in submissions
+            )
             for operation_id, rejections in tuple(
                 self._async_callback_rejections_by_operation_id.items()
             ):
@@ -4388,6 +4414,36 @@ class GraphBlocksServerApp:
                     if submission.node_id is not None:
                         payload["nodeId"] = submission.node_id
                     return ServerResponse.json(409, payload)
+                retained_submission_bytes = submission._retained_size_bytes()
+                if (
+                    len(self._callbacks_by_operation_id)
+                    >= self.max_callback_operation_histories
+                    or (
+                        self._callback_submission_history_bytes
+                        + retained_submission_bytes
+                        > self.max_callback_submission_history_bytes
+                    )
+                ):
+                    return ServerResponse.json(
+                        429,
+                        {
+                            "ok": False,
+                            "operationId": submission.operation_id,
+                            "reasonCode": (
+                                "server.callback_submission_capacity_exhausted"
+                            ),
+                            "maxCallbackOperationHistories": (
+                                self.max_callback_operation_histories
+                            ),
+                            "maxCallbackSubmissionHistoryBytes": (
+                                self.max_callback_submission_history_bytes
+                            ),
+                            "error": (
+                                "server callback submission history capacity "
+                                "is exhausted"
+                            ),
+                        },
+                    )
                 resumable_execution = (
                     self._accepted_run_executions_by_run_id.get(
                         submission.run_id
@@ -4699,7 +4755,13 @@ class GraphBlocksServerApp:
                         )
                     )
                     resumable_execution.callback_receipt = callback_receipt
-                self._callbacks_by_operation_id[submission.operation_id] = (*existing, submission)
+                self._callbacks_by_operation_id[submission.operation_id] = (
+                    *existing,
+                    submission,
+                )
+                self._callback_submission_history_bytes += (
+                    retained_submission_bytes
+                )
                 self._append_async_callback_diagnostic_event(
                     "ExternalCallbackReceived",
                     submission,

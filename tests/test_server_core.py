@@ -554,6 +554,8 @@ def test_server_app_validates_unauthenticated_development_mode_flag() -> None:
         "max_subscription_history_bytes_per_run",
         "max_event_acks_per_subscription",
         "max_event_ack_history_bytes_per_subscription",
+        "max_callback_operation_histories",
+        "max_callback_submission_history_bytes",
     ),
 )
 def test_server_app_rejects_invalid_resource_limits(field_name: str) -> None:
@@ -4596,6 +4598,23 @@ def test_server_app_terminal_deletion_cleans_run_scoped_state_and_bounds_tombsto
     app._callback_delivery_dead_letter_moves[
         ("callback-delete-cleanup-1", delivery.delivery_id)
     ] = ({"status": "dead_letter_requested"},)
+    callback_submission = ServerAsyncCallbackSubmission(
+        operation_id="operation-delete-cleanup-1",
+        callback_id="callback-submission-delete-cleanup-1",
+        idempotency_key="callback-submission-delete-cleanup-idem-1",
+        payload={"status": "completed"},
+        run_id=first_run_id,
+        node_id="wait",
+        attempt_id="attempt-1",
+        received_at="2026-07-29T00:00:03Z",
+        verified_by=principal.principal_id,
+    )
+    app._callbacks_by_operation_id[
+        callback_submission.operation_id
+    ] = (callback_submission,)
+    app._callback_submission_history_bytes = (
+        callback_submission._retained_size_bytes()
+    )
 
     deleted = app.delete_terminal_run(
         first_run_id,
@@ -4619,6 +4638,8 @@ def test_server_app_terminal_deletion_cleans_run_scoped_state_and_bounds_tombsto
     )
     assert app._callback_delivery_redrives == {}
     assert app._callback_delivery_dead_letter_moves == {}
+    assert app._callbacks_by_operation_id == {}
+    assert app._callback_submission_history_bytes == 0
 
     second_run_id = "run-delete-cleanup-2"
     assert _invoke_capacity_run(
@@ -6519,6 +6540,68 @@ def test_server_app_deduplicates_async_callback_submission_by_idempotency_key() 
         "duplicate": True,
     }
     assert len(app.callback_submissions("op-ci-1")) == 1
+
+
+def test_server_app_bounds_callback_submission_history_and_preserves_duplicates() -> None:
+    principal = PrincipalRef("callback-relay")
+    count_app = GraphBlocksServerApp(
+        auth_hook=StaticBearerAuthHook({"token-1": principal}),
+        max_callback_operation_histories=1,
+        max_callback_submission_history_bytes=4_096,
+    )
+    requests = tuple(
+        ServerRequest(
+            method="POST",
+            path=f"/callbacks/{operation_id}",
+            headers={
+                "Authorization": "Bearer token-1",
+                "GraphBlocks-Idempotency-Key": f"idem-{operation_id}",
+            },
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "callbackId": f"callback-{operation_id}",
+                    "attemptId": "attempt-1",
+                    "payload": {"status": "completed"},
+                }
+            ).encode("utf-8"),
+            requested_at="2026-07-29T00:00:00Z",
+        )
+        for operation_id in ("operation-capacity-1", "operation-capacity-2")
+    )
+
+    first = count_app.handle(requests[0])
+    retained_bytes = count_app._callback_submission_history_bytes
+    duplicate = count_app.handle(requests[0])
+    exhausted = count_app.handle(requests[1])
+
+    assert first.status_code == 202
+    assert duplicate.status_code == 200
+    assert exhausted.status_code == 429
+    assert json.loads(exhausted.body.decode("utf-8")) == {
+        "ok": False,
+        "operationId": "operation-capacity-2",
+        "reasonCode": "server.callback_submission_capacity_exhausted",
+        "maxCallbackOperationHistories": 1,
+        "maxCallbackSubmissionHistoryBytes": 4_096,
+        "error": "server callback submission history capacity is exhausted",
+    }
+    assert len(count_app.callback_submissions("operation-capacity-1")) == 1
+    assert count_app.callback_submissions("operation-capacity-2") == ()
+    assert retained_bytes > 0
+    assert count_app._callback_submission_history_bytes == retained_bytes
+
+    byte_app = GraphBlocksServerApp(
+        auth_hook=StaticBearerAuthHook({"token-1": principal}),
+        max_callback_operation_histories=10,
+        max_callback_submission_history_bytes=1,
+    )
+    byte_exhausted = byte_app.handle(requests[0])
+
+    assert byte_exhausted.status_code == 429
+    assert byte_app.callback_submissions("operation-capacity-1") == ()
+    assert byte_app._callback_submission_history_bytes == 0
 
 
 def test_server_app_rejects_conflicting_async_callback_idempotency_replay() -> None:
