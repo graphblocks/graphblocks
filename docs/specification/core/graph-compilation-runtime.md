@@ -173,6 +173,31 @@ adapter past its deadline and prove that a late return cannot publish a result,
 record success, commit an effect under stale authority, or overwrite the
 terminal timeout/cancellation outcome.
 
+### Process-isolated worker deadline (preview)
+
+The Python reference package exposes `graphblocks.isolated_worker` as an
+opt-in, preview force-termination boundary. `ProcessWorkerExecutor` starts a
+fresh worker process with the portable `spawn` model, sends a bounded canonical
+`WorkerInvokeRequest`, and accepts a bounded `WorkerInvokeResult` only after
+the worker exits within the configured deadline. On timeout it terminates and,
+if necessary, kills and reaps the worker before reporting
+`ProcessWorkerDeadlineExceeded`.
+
+The parent validates invocation ID, node-attempt ID, and lease epoch before
+returning a result, so a result produced under stale authority cannot be
+published through this boundary. The deadline covers process startup,
+execution, response transfer, and worker exit. Request and response byte
+limits are mandatory and bounded.
+
+This boundary controls the worker process only. A handler that delegates work
+to an untracked child, background service, or provider MUST NOT claim
+`force_terminable` without proving that delegated work is also terminated or
+fenced. External effects still require provider cancellation plus a durable
+outbox or idempotency key checked under the current lease/fencing token. The
+preview executor therefore supplies the killable-process and stale-result
+pieces of the stronger timeout contract; it does not by itself prove rollback
+or exactly-once effects.
+
 ### Local timeout and retry
 
 <a id="GB-GCR-TIMEOUT-RETRY-001"></a>
