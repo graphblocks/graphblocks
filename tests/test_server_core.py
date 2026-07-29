@@ -62,6 +62,28 @@ def _record_seeded_run_owner(
     )
 
 
+def _seed_succeeded_run(
+    app: GraphBlocksServerApp,
+    run_id: str,
+    principal: PrincipalRef,
+    *,
+    event_count: int = 1,
+) -> None:
+    _record_seeded_run_owner(app, run_id, principal)
+    app._events_by_run_id[run_id] = tuple(
+        {
+            "kind": "RunSucceeded",
+            "metadata": {
+                "eventId": f"evt-{run_id}-{sequence}",
+                "runId": run_id,
+                "sequence": sequence,
+            },
+            "payload": {},
+        }
+        for sequence in range(1, event_count + 1)
+    )
+
+
 def _record_failed_callback_delivery(
     app: GraphBlocksServerApp,
     delivery_id: str,
@@ -526,6 +548,12 @@ def test_server_app_validates_unauthenticated_development_mode_flag() -> None:
         "max_in_memory_runs",
         "max_in_memory_runs_per_tenant",
         "max_retired_run_tombstones",
+        "max_detachments_per_run",
+        "max_detachment_history_bytes_per_run",
+        "max_subscriptions_per_run",
+        "max_subscription_history_bytes_per_run",
+        "max_event_acks_per_subscription",
+        "max_event_ack_history_bytes_per_subscription",
     ),
 )
 def test_server_app_rejects_invalid_resource_limits(field_name: str) -> None:
@@ -9806,6 +9834,78 @@ def test_server_app_treats_repeated_detach_from_same_client_as_idempotent() -> N
     )
 
 
+def test_server_app_bounds_detachment_history_by_count_and_encoded_bytes() -> None:
+    principal = PrincipalRef("user-1")
+    count_app = GraphBlocksServerApp(
+        auth_hook=StaticBearerAuthHook({"token-1": principal}),
+        max_detachments_per_run=1,
+        max_detachment_history_bytes_per_run=1_024,
+    )
+    count_run_id = "run-detach-capacity-count-1"
+    _seed_succeeded_run(count_app, count_run_id, principal)
+    count_responses = tuple(
+        count_app.handle(
+            ServerRequest(
+                method="POST",
+                path=f"/runs/{count_run_id}/detach",
+                headers={"Authorization": "Bearer token-1"},
+                query={},
+                cookies={},
+                body=json.dumps(
+                    {
+                        "clientId": client_id,
+                        "reason": "capacity test",
+                    }
+                ).encode("utf-8"),
+                requested_at=f"2026-07-29T00:00:0{index}Z",
+            )
+        )
+        for index, client_id in enumerate(
+            ("client-1", "client-1", "client-2"),
+            start=1,
+        )
+    )
+
+    assert [response.status_code for response in count_responses] == [
+        202,
+        200,
+        429,
+    ]
+    assert json.loads(count_responses[-1].body.decode("utf-8")) == {
+        "ok": False,
+        "runId": count_run_id,
+        "reasonCode": "server.run_detachment_capacity_exhausted",
+        "maxDetachmentsPerRun": 1,
+        "maxDetachmentHistoryBytesPerRun": 1_024,
+        "error": "server run detachment history capacity is exhausted",
+    }
+    assert len(count_app.detachments(count_run_id)) == 1
+
+    byte_app = GraphBlocksServerApp(
+        auth_hook=StaticBearerAuthHook({"token-1": principal}),
+        max_detachments_per_run=10,
+        max_detachment_history_bytes_per_run=1,
+    )
+    byte_run_id = "run-detach-capacity-bytes-1"
+    _seed_succeeded_run(byte_app, byte_run_id, principal)
+    byte_response = byte_app.handle(
+        ServerRequest(
+            method="POST",
+            path=f"/runs/{byte_run_id}/detach",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {"clientId": "client-1", "reason": "capacity test"}
+            ).encode("utf-8"),
+            requested_at="2026-07-29T00:00:01Z",
+        )
+    )
+
+    assert byte_response.status_code == 429
+    assert byte_app.detachments(byte_run_id) == ()
+
+
 def test_server_app_rejects_detach_for_missing_run_or_client_id() -> None:
     app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
     graph = {
@@ -10221,6 +10321,88 @@ def test_server_app_rejects_duplicate_subscription_id_without_overwrite() -> Non
             owner=PrincipalRef("user-1"),
         ),
     )
+
+
+def test_server_app_bounds_subscription_history_by_count_and_encoded_bytes() -> None:
+    principal = PrincipalRef("user-1")
+    count_app = GraphBlocksServerApp(
+        auth_hook=StaticBearerAuthHook({"token-1": principal}),
+        max_subscriptions_per_run=1,
+        max_subscription_history_bytes_per_run=4_096,
+    )
+    count_run_id = "run-subscribe-capacity-count-1"
+    _seed_succeeded_run(count_app, count_run_id, principal)
+    count_responses = tuple(
+        count_app.handle(
+            ServerRequest(
+                method="POST",
+                path=f"/runs/{count_run_id}/subscriptions",
+                headers={"Authorization": "Bearer token-1"},
+                query={},
+                cookies={},
+                body=json.dumps(
+                    {
+                        "subscriptionId": subscription_id,
+                        "eventFilter": {"types": ["RunSucceeded"]},
+                        "delivery": {
+                            "kind": "local_callback",
+                            "callback_name": "capacity",
+                        },
+                    }
+                ).encode("utf-8"),
+                requested_at=f"2026-07-29T00:00:0{index}Z",
+            )
+        )
+        for index, subscription_id in enumerate(
+            ("sub-capacity-1", "sub-capacity-2"),
+            start=1,
+        )
+    )
+
+    assert [response.status_code for response in count_responses] == [201, 429]
+    assert json.loads(count_responses[-1].body.decode("utf-8")) == {
+        "ok": False,
+        "runId": count_run_id,
+        "reasonCode": "server.run_subscription_capacity_exhausted",
+        "maxSubscriptionsPerRun": 1,
+        "maxSubscriptionHistoryBytesPerRun": 4_096,
+        "error": "server run subscription history capacity is exhausted",
+    }
+    assert [
+        subscription.subscription_id
+        for subscription in count_app.subscriptions(count_run_id)
+    ] == ["sub-capacity-1"]
+
+    byte_app = GraphBlocksServerApp(
+        auth_hook=StaticBearerAuthHook({"token-1": principal}),
+        max_subscriptions_per_run=10,
+        max_subscription_history_bytes_per_run=1,
+    )
+    byte_run_id = "run-subscribe-capacity-bytes-1"
+    _seed_succeeded_run(byte_app, byte_run_id, principal)
+    byte_response = byte_app.handle(
+        ServerRequest(
+            method="POST",
+            path=f"/runs/{byte_run_id}/subscriptions",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "subscriptionId": "sub-capacity-bytes-1",
+                    "eventFilter": {"types": ["RunSucceeded"]},
+                    "delivery": {
+                        "kind": "local_callback",
+                        "callback_name": "capacity",
+                    },
+                }
+            ).encode("utf-8"),
+            requested_at="2026-07-29T00:00:01Z",
+        )
+    )
+
+    assert byte_response.status_code == 429
+    assert byte_app.subscriptions(byte_run_id) == ()
 
 
 def test_server_app_serializes_conflicting_event_subscription_registration() -> None:
@@ -12511,6 +12693,117 @@ def test_server_app_deduplicates_repeated_subscription_ack_by_event_identity() -
             "acknowledgedAt": "2026-07-02T00:00:00Z",
         },
     )
+
+
+def test_server_app_bounds_ack_history_by_count_and_encoded_bytes() -> None:
+    principal = PrincipalRef("user-1")
+    count_app = GraphBlocksServerApp(
+        auth_hook=StaticBearerAuthHook({"token-1": principal}),
+        max_event_acks_per_subscription=1,
+        max_event_ack_history_bytes_per_subscription=1_024,
+    )
+    count_run_id = "run-ack-capacity-count-1"
+    count_subscription_id = "sub-ack-capacity-count-1"
+    _seed_succeeded_run(
+        count_app,
+        count_run_id,
+        principal,
+        event_count=2,
+    )
+    count_app._subscriptions_by_run_id[count_run_id] = (
+        ServerEventSubscription(
+            subscription_id=count_subscription_id,
+            run_id=count_run_id,
+            event_filter={"types": ("RunSucceeded",)},
+            delivery={
+                "kind": "local_callback",
+                "callback_name": "capacity",
+            },
+            created_at="2026-07-29T00:00:00Z",
+            owner=principal,
+        ),
+    )
+    count_responses = tuple(
+        count_app.handle(
+            ServerRequest(
+                method="POST",
+                path=(
+                    f"/runs/{count_run_id}/subscriptions/"
+                    f"{count_subscription_id}/ack"
+                ),
+                headers={"Authorization": "Bearer token-1"},
+                query={},
+                cookies={},
+                body=json.dumps({"cursor": cursor}).encode("utf-8"),
+                requested_at=f"2026-07-29T00:00:0{index}Z",
+            )
+        )
+        for index, cursor in enumerate(
+            (
+                f"{count_run_id}:1",
+                f"{count_run_id}:1",
+                f"{count_run_id}:2",
+            ),
+            start=1,
+        )
+    )
+
+    assert [response.status_code for response in count_responses] == [
+        202,
+        200,
+        429,
+    ]
+    assert json.loads(count_responses[-1].body.decode("utf-8")) == {
+        "ok": False,
+        "runId": count_run_id,
+        "subscriptionId": count_subscription_id,
+        "reasonCode": "server.subscription_ack_capacity_exhausted",
+        "maxEventAcksPerSubscription": 1,
+        "maxEventAckHistoryBytesPerSubscription": 1_024,
+        "error": "server subscription ack history capacity is exhausted",
+    }
+    assert len(
+        count_app.event_acks(count_run_id, count_subscription_id)
+    ) == 1
+
+    byte_app = GraphBlocksServerApp(
+        auth_hook=StaticBearerAuthHook({"token-1": principal}),
+        max_event_acks_per_subscription=10,
+        max_event_ack_history_bytes_per_subscription=1,
+    )
+    byte_run_id = "run-ack-capacity-bytes-1"
+    byte_subscription_id = "sub-ack-capacity-bytes-1"
+    _seed_succeeded_run(byte_app, byte_run_id, principal)
+    byte_app._subscriptions_by_run_id[byte_run_id] = (
+        ServerEventSubscription(
+            subscription_id=byte_subscription_id,
+            run_id=byte_run_id,
+            event_filter={"types": ("RunSucceeded",)},
+            delivery={
+                "kind": "local_callback",
+                "callback_name": "capacity",
+            },
+            created_at="2026-07-29T00:00:00Z",
+            owner=principal,
+        ),
+    )
+    byte_response = byte_app.handle(
+        ServerRequest(
+            method="POST",
+            path=(
+                f"/runs/{byte_run_id}/subscriptions/"
+                f"{byte_subscription_id}/ack"
+            ),
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps({"cursor": f"{byte_run_id}:1"}).encode("utf-8"),
+            requested_at="2026-07-29T00:00:01Z",
+        )
+    )
+
+    assert byte_response.status_code == 429
+    assert byte_app.event_acks(byte_run_id, byte_subscription_id) == ()
 
 
 def test_server_app_serializes_concurrent_subscription_acknowledgements() -> None:

@@ -131,10 +131,20 @@ DEFAULT_MAX_SERVER_EVENT_PAGE_BYTES = 1024 * 1024
 DEFAULT_MAX_IN_MEMORY_RUNS = 10_000
 DEFAULT_MAX_IN_MEMORY_RUNS_PER_TENANT = 1_000
 DEFAULT_MAX_RETIRED_RUN_TOMBSTONES = 10_000
+DEFAULT_MAX_DETACHMENTS_PER_RUN = 256
+DEFAULT_MAX_DETACHMENT_HISTORY_BYTES_PER_RUN = 256 * 1024
+DEFAULT_MAX_SUBSCRIPTIONS_PER_RUN = 256
+DEFAULT_MAX_SUBSCRIPTION_HISTORY_BYTES_PER_RUN = 1024 * 1024
+DEFAULT_MAX_EVENT_ACKS_PER_SUBSCRIPTION = 4_096
+DEFAULT_MAX_EVENT_ACK_HISTORY_BYTES_PER_SUBSCRIPTION = 1024 * 1024
 
 
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+
+def _canonical_json_size_bytes(value: object) -> int:
+    return len(canonical_dumps(value).encode("utf-8"))
 
 
 def _validate_non_empty_string(owner: str, field_name: str, value: object) -> str:
@@ -2482,6 +2492,20 @@ class GraphBlocksServerApp:
     max_retired_run_tombstones: int = (
         DEFAULT_MAX_RETIRED_RUN_TOMBSTONES
     )
+    max_detachments_per_run: int = DEFAULT_MAX_DETACHMENTS_PER_RUN
+    max_detachment_history_bytes_per_run: int = (
+        DEFAULT_MAX_DETACHMENT_HISTORY_BYTES_PER_RUN
+    )
+    max_subscriptions_per_run: int = DEFAULT_MAX_SUBSCRIPTIONS_PER_RUN
+    max_subscription_history_bytes_per_run: int = (
+        DEFAULT_MAX_SUBSCRIPTION_HISTORY_BYTES_PER_RUN
+    )
+    max_event_acks_per_subscription: int = (
+        DEFAULT_MAX_EVENT_ACKS_PER_SUBSCRIPTION
+    )
+    max_event_ack_history_bytes_per_subscription: int = (
+        DEFAULT_MAX_EVENT_ACK_HISTORY_BYTES_PER_SUBSCRIPTION
+    )
     _events_by_run_id: dict[str, tuple[Mapping[str, object], ...]] = field(default_factory=dict, init=False, repr=False)
     _run_authorization_by_run_id: dict[str, _ServerRunAuthorizationRecord] = field(
         default_factory=dict,
@@ -2636,6 +2660,12 @@ class GraphBlocksServerApp:
             "max_in_memory_runs",
             "max_in_memory_runs_per_tenant",
             "max_retired_run_tombstones",
+            "max_detachments_per_run",
+            "max_detachment_history_bytes_per_run",
+            "max_subscriptions_per_run",
+            "max_subscription_history_bytes_per_run",
+            "max_event_acks_per_subscription",
+            "max_event_ack_history_bytes_per_subscription",
         ):
             value = getattr(self, field_name)
             if isinstance(value, bool) or not isinstance(value, int) or value < 1:
@@ -3365,6 +3395,53 @@ class GraphBlocksServerApp:
                                 "error": (
                                     f"subscription {subscription.subscription_id!r} "
                                     f"already exists for run {run_id!r}"
+                                ),
+                            },
+                        )
+                    retained_subscription_bytes = 0
+                    for retained_subscription in existing:
+                        retained_value = retained_subscription.response_payload(
+                            [],
+                            f"{run_id}:0",
+                        )
+                        retained_value["createdAt"] = (
+                            retained_subscription.created_at
+                        )
+                        retained_value["status"] = "revoked"
+                        retained_subscription_bytes += (
+                            _canonical_json_size_bytes(retained_value)
+                        )
+                    candidate_value = subscription.response_payload(
+                        [],
+                        f"{run_id}:0",
+                    )
+                    candidate_value["createdAt"] = subscription.created_at
+                    candidate_value["status"] = "revoked"
+                    if (
+                        len(existing) >= self.max_subscriptions_per_run
+                        or (
+                            retained_subscription_bytes
+                            + _canonical_json_size_bytes(candidate_value)
+                            > self.max_subscription_history_bytes_per_run
+                        )
+                    ):
+                        return ServerResponse.json(
+                            429,
+                            {
+                                "ok": False,
+                                "runId": run_id,
+                                "reasonCode": (
+                                    "server.run_subscription_capacity_exhausted"
+                                ),
+                                "maxSubscriptionsPerRun": (
+                                    self.max_subscriptions_per_run
+                                ),
+                                "maxSubscriptionHistoryBytesPerRun": (
+                                    self.max_subscription_history_bytes_per_run
+                                ),
+                                "error": (
+                                    "server run subscription history capacity "
+                                    "is exhausted"
                                 ),
                             },
                         )
@@ -7804,6 +7881,34 @@ class GraphBlocksServerApp:
                         "duplicate": True,
                     },
                 )
+        retained_bytes = sum(
+            _canonical_json_size_bytes(detached)
+            for detached in existing
+        )
+        if (
+            len(existing) >= self.max_detachments_per_run
+            or retained_bytes + _canonical_json_size_bytes(record)
+            > self.max_detachment_history_bytes_per_run
+        ):
+            return ServerResponse.json(
+                429,
+                {
+                    "ok": False,
+                    "runId": run_id,
+                    "reasonCode": (
+                        "server.run_detachment_capacity_exhausted"
+                    ),
+                    "maxDetachmentsPerRun": (
+                        self.max_detachments_per_run
+                    ),
+                    "maxDetachmentHistoryBytesPerRun": (
+                        self.max_detachment_history_bytes_per_run
+                    ),
+                    "error": (
+                        "server run detachment history capacity is exhausted"
+                    ),
+                },
+            )
         self._detachments_by_run_id[run_id] = (*existing, record)
         return ServerResponse.json(
             202,
@@ -8234,6 +8339,35 @@ class GraphBlocksServerApp:
                         "acknowledgedAt": ack.get("acknowledgedAt"),
                     },
                 )
+        retained_bytes = sum(
+            _canonical_json_size_bytes(ack)
+            for ack in existing
+        )
+        if (
+            len(existing) >= self.max_event_acks_per_subscription
+            or retained_bytes + _canonical_json_size_bytes(record)
+            > self.max_event_ack_history_bytes_per_subscription
+        ):
+            return ServerResponse.json(
+                429,
+                {
+                    "ok": False,
+                    "runId": run_id,
+                    "subscriptionId": subscription_id,
+                    "reasonCode": (
+                        "server.subscription_ack_capacity_exhausted"
+                    ),
+                    "maxEventAcksPerSubscription": (
+                        self.max_event_acks_per_subscription
+                    ),
+                    "maxEventAckHistoryBytesPerSubscription": (
+                        self.max_event_ack_history_bytes_per_subscription
+                    ),
+                    "error": (
+                        "server subscription ack history capacity is exhausted"
+                    ),
+                },
+            )
         self._acks_by_subscription[key] = (*existing, record)
         return ServerResponse.json(
             202,
