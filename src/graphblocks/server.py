@@ -141,6 +141,10 @@ DEFAULT_MAX_CALLBACK_OPERATION_HISTORIES = 4_096
 DEFAULT_MAX_CALLBACK_SUBMISSION_HISTORY_BYTES = 64 * 1024 * 1024
 DEFAULT_MAX_CALLBACK_REGISTRATIONS = 4_096
 DEFAULT_MAX_CALLBACK_REGISTRATION_HISTORY_BYTES = 64 * 1024 * 1024
+DEFAULT_MAX_CALLBACK_DELIVERY_CONTROLS_PER_DELIVERY = 256
+DEFAULT_MAX_CALLBACK_DELIVERY_CONTROL_HISTORY_BYTES_PER_DELIVERY = (
+    1024 * 1024
+)
 
 
 def _utc_now_iso() -> str:
@@ -2542,6 +2546,12 @@ class GraphBlocksServerApp:
     max_callback_registration_history_bytes: int = (
         DEFAULT_MAX_CALLBACK_REGISTRATION_HISTORY_BYTES
     )
+    max_callback_delivery_controls_per_delivery: int = (
+        DEFAULT_MAX_CALLBACK_DELIVERY_CONTROLS_PER_DELIVERY
+    )
+    max_callback_delivery_control_history_bytes_per_delivery: int = (
+        DEFAULT_MAX_CALLBACK_DELIVERY_CONTROL_HISTORY_BYTES_PER_DELIVERY
+    )
     _events_by_run_id: dict[str, tuple[Mapping[str, object], ...]] = field(default_factory=dict, init=False, repr=False)
     _run_authorization_by_run_id: dict[str, _ServerRunAuthorizationRecord] = field(
         default_factory=dict,
@@ -2716,6 +2726,8 @@ class GraphBlocksServerApp:
             "max_callback_submission_history_bytes",
             "max_callback_registrations",
             "max_callback_registration_history_bytes",
+            "max_callback_delivery_controls_per_delivery",
+            "max_callback_delivery_control_history_bytes_per_delivery",
         ):
             value = getattr(self, field_name)
             if isinstance(value, bool) or not isinstance(value, int) or value < 1:
@@ -8004,8 +8016,18 @@ class GraphBlocksServerApp:
                 )
 
             control_key = (subscription_id, delivery_id)
+            redrive_history = self._callback_delivery_redrives.get(
+                control_key,
+                (),
+            )
+            dead_letter_history = (
+                self._callback_delivery_dead_letter_moves.get(
+                    control_key,
+                    (),
+                )
+            )
             if operation == "redrive_callback_delivery":
-                existing = self._callback_delivery_redrives.get(control_key, ())
+                existing = redrive_history
                 duplicate = next(
                     (
                         item
@@ -8017,7 +8039,7 @@ class GraphBlocksServerApp:
                 )
                 allowed_states = {"failed", "dead_lettered"}
             else:
-                existing = self._callback_delivery_dead_letter_moves.get(control_key, ())
+                existing = dead_letter_history
                 duplicate = next(
                     (
                         item
@@ -8081,6 +8103,44 @@ class GraphBlocksServerApp:
                 "record",
                 record_payload,
             )
+            retained_controls = (
+                *redrive_history,
+                *dead_letter_history,
+            )
+            retained_control_bytes = sum(
+                _canonical_json_size_bytes(retained_control)
+                for retained_control in retained_controls
+            )
+            if (
+                len(retained_controls)
+                >= self.max_callback_delivery_controls_per_delivery
+                or (
+                    retained_control_bytes
+                    + _canonical_json_size_bytes(record)
+                    > self.max_callback_delivery_control_history_bytes_per_delivery
+                )
+            ):
+                return ServerResponse.json(
+                    429,
+                    {
+                        "ok": False,
+                        "deliveryId": delivery_id,
+                        "reasonCode": (
+                            "server.callback_delivery_control_"
+                            "capacity_exhausted"
+                        ),
+                        "maxCallbackDeliveryControlsPerDelivery": (
+                            self.max_callback_delivery_controls_per_delivery
+                        ),
+                        "maxCallbackDeliveryControlHistoryBytesPerDelivery": (
+                            self.max_callback_delivery_control_history_bytes_per_delivery
+                        ),
+                        "error": (
+                            "server callback delivery control history "
+                            "capacity is exhausted"
+                        ),
+                    },
+                )
             deliveries = list(
                 self._callback_delivery_results_by_subscription_id[subscription_id]
             )

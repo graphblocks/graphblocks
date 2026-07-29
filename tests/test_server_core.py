@@ -558,6 +558,8 @@ def test_server_app_validates_unauthenticated_development_mode_flag() -> None:
         "max_callback_submission_history_bytes",
         "max_callback_registrations",
         "max_callback_registration_history_bytes",
+        "max_callback_delivery_controls_per_delivery",
+        "max_callback_delivery_control_history_bytes_per_delivery",
     ),
 )
 def test_server_app_rejects_invalid_resource_limits(field_name: str) -> None:
@@ -15481,6 +15483,122 @@ def test_server_app_treats_repeated_callback_redrive_as_idempotent() -> None:
     }
     assert len(app.callback_delivery_redrives("del-redrive-idempotent")) == 1
     assert app.callback_delivery_results(subscription_id)[0]["attempt"] == 2
+
+
+def test_server_app_bounds_callback_delivery_control_history() -> None:
+    principal = PrincipalRef("operator-1", tenant_id="tenant-1")
+    count_app = GraphBlocksServerApp(
+        auth_hook=StaticBearerAuthHook({"token-1": principal}),
+        max_callback_delivery_controls_per_delivery=1,
+        max_callback_delivery_control_history_bytes_per_delivery=4_096,
+    )
+    subscription_id = _record_failed_callback_delivery(
+        count_app,
+        "delivery-control-capacity-1",
+        principal,
+    )
+    redrive_request = ServerRequest(
+        method="POST",
+        path="/callbacks/deliveries/delivery-control-capacity-1/redrive",
+        headers={"Authorization": "Bearer token-1"},
+        query={},
+        cookies={},
+        body=json.dumps({"reason": "receiver recovered"}).encode("utf-8"),
+        requested_at="2026-07-29T00:00:00Z",
+    )
+
+    first = count_app.handle(redrive_request)
+    duplicate = count_app.handle(redrive_request)
+    with count_app._callback_registration_condition:
+        pending_delivery = (
+            count_app._callback_delivery_results_by_subscription_id[
+                subscription_id
+            ][0]
+        )
+        count_app._callback_delivery_results_by_subscription_id[
+            subscription_id
+        ] = (
+            replace(
+                pending_delivery,
+                status="failed",
+                status_code=503,
+                last_error="receiver failed again",
+            ),
+        )
+    exhausted = count_app.handle(
+        ServerRequest(
+            method="POST",
+            path=(
+                "/callbacks/deliveries/"
+                "delivery-control-capacity-1/dead-letter"
+            ),
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps({"reason": "retry budget exhausted"}).encode(
+                "utf-8"
+            ),
+            requested_at="2026-07-29T00:00:01Z",
+        )
+    )
+
+    assert first.status_code == 202
+    assert duplicate.status_code == 200
+    assert exhausted.status_code == 429
+    assert json.loads(exhausted.body.decode("utf-8")) == {
+        "ok": False,
+        "deliveryId": "delivery-control-capacity-1",
+        "reasonCode": (
+            "server.callback_delivery_control_capacity_exhausted"
+        ),
+        "maxCallbackDeliveryControlsPerDelivery": 1,
+        "maxCallbackDeliveryControlHistoryBytesPerDelivery": 4_096,
+        "error": "server callback delivery control history capacity is exhausted",
+    }
+    assert len(
+        count_app.callback_delivery_redrives(
+            "delivery-control-capacity-1"
+        )
+    ) == 1
+    assert (
+        count_app.callback_delivery_dead_letter_moves(
+            "delivery-control-capacity-1"
+        )
+        == ()
+    )
+    retained_delivery = count_app.callback_delivery_results(
+        subscription_id
+    )[0]
+    assert retained_delivery["attempt"] == 2
+    assert retained_delivery["status"] == "failed"
+
+    byte_app = GraphBlocksServerApp(
+        auth_hook=StaticBearerAuthHook({"token-1": principal}),
+        max_callback_delivery_controls_per_delivery=10,
+        max_callback_delivery_control_history_bytes_per_delivery=1,
+    )
+    byte_subscription_id = _record_failed_callback_delivery(
+        byte_app,
+        "delivery-control-byte-capacity-1",
+        principal,
+    )
+    byte_exhausted = byte_app.handle(
+        replace(
+            redrive_request,
+            path=(
+                "/callbacks/deliveries/"
+                "delivery-control-byte-capacity-1/redrive"
+            ),
+        )
+    )
+
+    assert byte_exhausted.status_code == 429
+    assert byte_app.callback_delivery_redrives(
+        "delivery-control-byte-capacity-1"
+    ) == ()
+    assert byte_app.callback_delivery_results(byte_subscription_id)[0][
+        "status"
+    ] == "failed"
 
 
 def test_server_app_hides_foreign_callback_delivery_from_control_request() -> None:
