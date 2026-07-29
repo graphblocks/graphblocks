@@ -30,6 +30,7 @@ VALID_RESERVATION_STATUSES = frozenset(get_args(ReservationStatus))
 VALID_COMPLETION_RESERVE_PURPOSES = frozenset(get_args(CompletionReservePurpose))
 VALID_COMPLETION_RESERVE_STATUSES = frozenset(get_args(CompletionReserveStatus))
 _MAX_BUDGET_COUNTER = (1 << 64) - 1
+_SQLITE_BUDGET_BUSY_TIMEOUT_MS = 5_000
 
 
 class _FrozenUsageAmounts(tuple[object, ...]):
@@ -56,6 +57,27 @@ def _with_in_memory_budget_ledger_lock(
 
 class BudgetError(RuntimeError):
     pass
+
+
+class BudgetLedgerClosedError(BudgetError):
+    pass
+
+
+def _with_sqlite_budget_ledger_lock(
+    method: Callable[BudgetLedgerParams, BudgetLedgerResult],
+) -> Callable[BudgetLedgerParams, BudgetLedgerResult]:
+    @wraps(method)
+    def locked(
+        *args: BudgetLedgerParams.args,
+        **kwargs: BudgetLedgerParams.kwargs,
+    ) -> BudgetLedgerResult:
+        ledger = cast("SQLiteBudgetLedger", args[0])
+        with ledger._lock:
+            if ledger._closed:
+                raise BudgetLedgerClosedError("SQLite budget ledger is closed")
+            return method(*args, **kwargs)
+
+    return locked
 
 
 class BudgetNotFoundError(BudgetError):
@@ -2073,10 +2095,26 @@ class SQLiteBudgetLedger:
     path: str | Path
     _connection: sqlite3.Connection = field(init=False, repr=False)
     _ledger: InMemoryBudgetLedger = field(init=False, repr=False)
+    _lock: RLock = field(default_factory=RLock, init=False, repr=False)
+    _closed: bool = field(default=False, init=False, repr=False)
 
     def __post_init__(self) -> None:
-        self._connection = sqlite3.connect(str(self.path), isolation_level=None)
+        self._connection = sqlite3.connect(
+            str(self.path),
+            isolation_level=None,
+            check_same_thread=False,
+            timeout=_SQLITE_BUDGET_BUSY_TIMEOUT_MS / 1_000,
+        )
         self._connection.row_factory = sqlite3.Row
+        self._connection.execute(
+            f"PRAGMA busy_timeout = {_SQLITE_BUDGET_BUSY_TIMEOUT_MS}"
+        )
+        if str(self.path) != ":memory:":
+            try:
+                self._connection.execute("PRAGMA journal_mode = WAL")
+            except sqlite3.OperationalError as error:
+                if "locked" not in str(error).casefold():
+                    raise
         self._connection.execute(
             """
             CREATE TABLE IF NOT EXISTS budget_ledger_snapshots (
@@ -2096,8 +2134,13 @@ class SQLiteBudgetLedger:
         return cls(path)
 
     def close(self) -> None:
-        self._connection.close()
+        with self._lock:
+            if self._closed:
+                return
+            self._connection.close()
+            self._closed = True
 
+    @_with_sqlite_budget_ledger_lock
     def allocate(
         self,
         budget_id: str,
@@ -2117,6 +2160,7 @@ class SQLiteBudgetLedger:
             )
         )
 
+    @_with_sqlite_budget_ledger_lock
     def reserve(
         self,
         budget_id: str,
@@ -2138,6 +2182,7 @@ class SQLiteBudgetLedger:
             )
         )
 
+    @_with_sqlite_budget_ledger_lock
     def commit(
         self,
         reservation_id: str,
@@ -2153,12 +2198,15 @@ class SQLiteBudgetLedger:
             )
         )
 
+    @_with_sqlite_budget_ledger_lock
     def release(self, reservation_id: str) -> BudgetSettlement:
         return self._mutate(lambda ledger: ledger.release(reservation_id))
 
+    @_with_sqlite_budget_ledger_lock
     def expire(self, reservation_id: str) -> BudgetSettlement:
         return self._mutate(lambda ledger: ledger.expire(reservation_id))
 
+    @_with_sqlite_budget_ledger_lock
     def issue_permit(
         self,
         permit_id: str,
@@ -2186,6 +2234,7 @@ class SQLiteBudgetLedger:
             )
         )
 
+    @_with_sqlite_budget_ledger_lock
     def commit_with_permit(
         self,
         permit_id: str,
@@ -2205,6 +2254,7 @@ class SQLiteBudgetLedger:
             )
         )
 
+    @_with_sqlite_budget_ledger_lock
     def commit_with_permit_at(
         self,
         permit_id: str,
@@ -2224,12 +2274,15 @@ class SQLiteBudgetLedger:
             )
         )
 
+    @_with_sqlite_budget_ledger_lock
     def release_with_permit(self, permit_id: str, reservation_id: str, *, now: str) -> BudgetSettlement:
         return self._mutate(lambda ledger: ledger.release_with_permit(permit_id, reservation_id, now=now))
 
+    @_with_sqlite_budget_ledger_lock
     def release_with_permit_at(self, permit_id: str, reservation_id: str, *, now: str) -> BudgetSettlement:
         return self._mutate(lambda ledger: ledger.release_with_permit_at(permit_id, reservation_id, now=now))
 
+    @_with_sqlite_budget_ledger_lock
     def create_completion_reserve(
         self,
         reserve_id: str,
@@ -2251,10 +2304,12 @@ class SQLiteBudgetLedger:
             )
         )
 
+    @_with_sqlite_budget_ledger_lock
     def completion_reserve(self, reserve_id: str) -> CompletionReserve:
         self._ledger = self._load_snapshot()
         return self._ledger.completion_reserve(reserve_id)
 
+    @_with_sqlite_budget_ledger_lock
     def spend_completion_reserve(
         self,
         reserve_id: str,
@@ -2270,12 +2325,15 @@ class SQLiteBudgetLedger:
             )
         )
 
+    @_with_sqlite_budget_ledger_lock
     def release_completion_reserve(self, reserve_id: str) -> CompletionReserve:
         return self._mutate(lambda ledger: ledger.release_completion_reserve(reserve_id))
 
+    @_with_sqlite_budget_ledger_lock
     def expire_completion_reserve(self, reserve_id: str) -> CompletionReserve:
         return self._mutate(lambda ledger: ledger.expire_completion_reserve(reserve_id))
 
+    @_with_sqlite_budget_ledger_lock
     def balance(self, budget_id: str) -> BudgetBalance:
         self._ledger = self._load_snapshot()
         return self._ledger.balance(budget_id)
@@ -2372,6 +2430,7 @@ __all__ = [
     "BudgetConflictError",
     "BudgetError",
     "BudgetExceededError",
+    "BudgetLedgerClosedError",
     "BudgetNotFoundError",
     "BudgetPermit",
     "BudgetPermitExpiredError",
