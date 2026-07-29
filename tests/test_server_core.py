@@ -441,9 +441,14 @@ def test_server_app_validates_unauthenticated_development_mode_flag() -> None:
 
 @pytest.mark.parametrize(
     "field_name",
-    ("max_request_body_bytes", "max_async_callback_request_body_bytes"),
+    (
+        "max_request_body_bytes",
+        "max_async_callback_request_body_bytes",
+        "max_event_page_events",
+        "max_event_page_bytes",
+    ),
 )
-def test_server_app_rejects_invalid_request_body_limits(field_name: str) -> None:
+def test_server_app_rejects_invalid_resource_limits(field_name: str) -> None:
     for value in (True, 0, -1, "1024"):
         with pytest.raises(ValueError, match=field_name):
             GraphBlocksServerApp(
@@ -7776,6 +7781,215 @@ def test_server_app_replays_stored_run_events_after_cursor_query() -> None:
     assert payload["events"][0]["payload"]["outputs"] == {"prompt": "Events cursor"}
 
 
+def test_server_app_pages_stored_run_events_by_count_and_cursor() -> None:
+    run_id = "run-events-page-count-1"
+    app = GraphBlocksServerApp(
+        auth_hook=StaticBearerAuthHook(
+            {"token-1": PrincipalRef("user-1")}
+        ),
+        max_event_page_events=2,
+        max_event_page_bytes=4096,
+    )
+    app._events_by_run_id[run_id] = tuple(
+        {
+            "kind": "RunProgressed",
+            "metadata": {
+                "eventId": f"event-page-count-{sequence}",
+                "runId": run_id,
+                "sequence": sequence,
+                "cursor": f"{run_id}:{sequence}",
+                "occurredAt": f"2026-07-29T00:00:0{sequence}Z",
+            },
+            "payload": {"value": f"event-{sequence}"},
+        }
+        for sequence in range(1, 4)
+    )
+    _record_seeded_run_owner(app, run_id, PrincipalRef("user-1"))
+
+    first = app.handle(
+        ServerRequest(
+            method="GET",
+            path=f"/runs/{run_id}/events",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+        )
+    )
+    first_payload = json.loads(first.body)
+    second = app.handle(
+        ServerRequest(
+            method="GET",
+            path=f"/runs/{run_id}/events",
+            headers={"Authorization": "Bearer token-1"},
+            query={"cursor": first_payload["nextCursor"]},
+            cookies={},
+        )
+    )
+    second_payload = json.loads(second.body)
+
+    assert first.status_code == 200
+    assert len(first.body) <= 4096
+    assert [event["metadata"]["sequence"] for event in first_payload["events"]] == [
+        1,
+        2,
+    ]
+    assert first_payload["lastCursor"] == f"{run_id}:3"
+    assert first_payload["hasMore"] is True
+    assert first_payload["nextCursor"] == f"{run_id}:2"
+    assert second.status_code == 200
+    assert len(second.body) <= 4096
+    assert [event["metadata"]["sequence"] for event in second_payload["events"]] == [
+        3
+    ]
+    assert second_payload["lastCursor"] == f"{run_id}:3"
+    assert second_payload["hasMore"] is False
+    assert second_payload["nextCursor"] is None
+
+
+def test_server_app_applies_exact_serialized_byte_budget_to_event_pages() -> None:
+    run_id = "run-events-page-bytes-1"
+    app = GraphBlocksServerApp(
+        auth_hook=StaticBearerAuthHook(
+            {"token-1": PrincipalRef("user-1")}
+        ),
+        max_event_page_events=2,
+        max_event_page_bytes=8192,
+    )
+    app._events_by_run_id[run_id] = tuple(
+        {
+            "kind": "RunProgressed",
+            "metadata": {
+                "eventId": f"event-page-bytes-{sequence}",
+                "runId": run_id,
+                "sequence": sequence,
+                "cursor": f"{run_id}:{sequence}",
+                "occurredAt": f"2026-07-29T00:00:0{sequence}Z",
+            },
+            "payload": {"value": "한글" * 64},
+        }
+        for sequence in range(1, 3)
+    )
+    _record_seeded_run_owner(app, run_id, PrincipalRef("user-1"))
+
+    one_event = app.handle(
+        ServerRequest(
+            method="GET",
+            path=f"/runs/{run_id}/events",
+            headers={"Authorization": "Bearer token-1"},
+            query={"maxEvents": "1"},
+            cookies={},
+        )
+    )
+    exact_budget = len(one_event.body)
+    bounded = app.handle(
+        ServerRequest(
+            method="GET",
+            path=f"/runs/{run_id}/events",
+            headers={"Authorization": "Bearer token-1"},
+            query={"maxBytes": str(exact_budget)},
+            cookies={},
+        )
+    )
+    too_small = app.handle(
+        ServerRequest(
+            method="GET",
+            path=f"/runs/{run_id}/events",
+            headers={"Authorization": "Bearer token-1"},
+            query={"maxBytes": str(exact_budget - 1)},
+            cookies={},
+        )
+    )
+
+    bounded_payload = json.loads(bounded.body)
+    too_small_payload = json.loads(too_small.body)
+    assert one_event.status_code == 200
+    assert bounded.status_code == 200
+    assert len(bounded.body) == exact_budget
+    assert len(bounded_payload["events"]) == 1
+    assert bounded_payload["hasMore"] is True
+    assert bounded_payload["nextCursor"] == f"{run_id}:1"
+    assert too_small.status_code == 413
+    assert too_small_payload == {
+        "ok": False,
+        "error": "EventPageTooLarge",
+        "runId": run_id,
+        "maxBytes": exact_budget - 1,
+        "requiredBytes": exact_budget,
+        "nextEventCursor": f"{run_id}:1",
+    }
+
+
+def test_server_app_fails_closed_when_empty_event_page_exceeds_byte_budget() -> None:
+    run_id = "run-events-empty-page-bytes-1"
+    app = GraphBlocksServerApp(
+        auth_hook=StaticBearerAuthHook(
+            {"token-1": PrincipalRef("user-1")}
+        ),
+        max_event_page_bytes=1,
+    )
+    app._events_by_run_id[run_id] = ()
+    _record_seeded_run_owner(app, run_id, PrincipalRef("user-1"))
+
+    response = app.handle(
+        ServerRequest(
+            method="GET",
+            path=f"/runs/{run_id}/events",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+        )
+    )
+
+    payload = json.loads(response.body)
+    assert response.status_code == 413
+    assert payload["ok"] is False
+    assert payload["error"] == "EventPageTooLarge"
+    assert payload["runId"] == run_id
+    assert payload["maxBytes"] == 1
+    assert payload["requiredBytes"] > 1
+    assert payload["nextEventCursor"] is None
+
+
+@pytest.mark.parametrize(
+    "query",
+    (
+        {"maxEvents": "0"},
+        {"maxEvents": " 1"},
+        {"maxEvents": "١"},
+        {"maxEvents": "1.0"},
+        {"maxEvents": "3"},
+        {"maxBytes": "1001"},
+        {"maxBytes": "9" * 10_000},
+    ),
+)
+def test_server_app_rejects_invalid_event_page_limits(
+    query: dict[str, str],
+) -> None:
+    run_id = "run-events-page-limit-invalid-1"
+    app = GraphBlocksServerApp(
+        auth_hook=StaticBearerAuthHook(
+            {"token-1": PrincipalRef("user-1")}
+        ),
+        max_event_page_events=2,
+        max_event_page_bytes=1000,
+    )
+    app._events_by_run_id[run_id] = ()
+    _record_seeded_run_owner(app, run_id, PrincipalRef("user-1"))
+
+    response = app.handle(
+        ServerRequest(
+            method="GET",
+            path=f"/runs/{run_id}/events",
+            headers={"Authorization": "Bearer token-1"},
+            query=query,
+            cookies={},
+        )
+    )
+
+    assert response.status_code == 400
+    assert json.loads(response.body)["error"].startswith("application events ")
+
+
 def test_server_app_run_event_replay_filters_visibility_by_principal() -> None:
     app = GraphBlocksServerApp(
         auth_hook=StaticBearerAuthHook(
@@ -7964,6 +8178,46 @@ def test_server_app_rejects_stored_event_replay_with_malformed_sequence() -> Non
     assert json.loads(response.body.decode("utf-8")) == {
         "ok": False,
         "error": "application events sequence must be an integer",
+    }
+
+
+@pytest.mark.parametrize("sequences", ((1, 1), (2, 1)))
+def test_server_app_rejects_non_monotonic_stored_event_sequences(
+    sequences: tuple[int, int],
+) -> None:
+    run_id = "run-events-sequence-order-1"
+    app = GraphBlocksServerApp(
+        auth_hook=StaticBearerAuthHook(
+            {"token-1": PrincipalRef("user-1")}
+        )
+    )
+    app._events_by_run_id[run_id] = tuple(
+        {
+            "kind": "RunProgressed",
+            "metadata": {
+                "eventId": f"event-sequence-order-{index}",
+                "sequence": sequence,
+            },
+            "payload": {},
+        }
+        for index, sequence in enumerate(sequences, start=1)
+    )
+    _record_seeded_run_owner(app, run_id, PrincipalRef("user-1"))
+
+    response = app.handle(
+        ServerRequest(
+            method="GET",
+            path=f"/runs/{run_id}/events",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+        )
+    )
+
+    assert response.status_code == 400
+    assert json.loads(response.body) == {
+        "ok": False,
+        "error": "application events sequence must be strictly increasing",
     }
 
 

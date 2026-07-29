@@ -13,7 +13,7 @@ import sys
 from threading import Thread
 from types import SimpleNamespace
 from urllib.error import HTTPError
-from urllib.parse import urlparse
+from urllib.parse import parse_qsl, urlparse
 
 import pytest
 
@@ -1151,7 +1151,11 @@ def test_http_client_rejects_unusable_transport_configuration(monkeypatch) -> No
             transport=object(),
         )
 
-    for field_name in ("max_response_bytes", "max_error_body_bytes"):
+    for field_name in (
+        "max_response_bytes",
+        "max_error_body_bytes",
+        "max_event_pages",
+    ):
         for invalid_limit in (True, 0, -1, "1024"):
             with pytest.raises(ValueError, match=field_name):
                 graphblocks_client.HttpGraphBlocksClient(
@@ -3017,7 +3021,12 @@ def test_client_package_reads_run_events_over_http_transport(monkeypatch) -> Non
             }
         },
     }
-    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+    app = GraphBlocksServerApp(
+        auth_hook=StaticBearerAuthHook(
+            {"token-1": PrincipalRef("user-1")}
+        ),
+        max_event_page_events=1,
+    )
     app.handle(
         ServerRequest(
             method="POST",
@@ -3036,16 +3045,20 @@ def test_client_package_reads_run_events_over_http_transport(monkeypatch) -> Non
         )
     )
 
+    requests: list[object] = []
+
     def transport(request: object, *, timeout: float) -> object:
         assert timeout == 4.0
-        path = urlparse(request.full_url).path.removeprefix("/api")
+        requests.append(request)
+        parsed = urlparse(request.full_url)
+        path = parsed.path.removeprefix("/api")
         assert path == "/runs/run-events-http-1/events"
         return app.handle(
             ServerRequest(
                 method=request.get_method(),
                 path=path,
                 headers=dict(request.headers),
-                query={},
+                query=dict(parse_qsl(parsed.query)),
                 cookies={},
                 body=request.data or b"",
             )
@@ -3058,11 +3071,33 @@ def test_client_package_reads_run_events_over_http_transport(monkeypatch) -> Non
         transport=transport,
     )
 
+    first_page = client.run_event_page(
+        "run-events-http-1",
+        max_events=1,
+        max_bytes=4096,
+    )
     events = client.run_events("run-events-http-1")
 
+    assert isinstance(first_page, graphblocks_client.RunEventPage)
+    assert first_page.run_id == "run-events-http-1"
+    assert [event.kind for event in first_page.events] == ["RunStarted"]
+    assert first_page.last_cursor == "run-events-http-1:2"
+    assert first_page.replay_from_cursor is None
+    assert first_page.next_cursor == "run-events-http-1:1"
+    assert first_page.has_more is True
     assert [event.kind for event in events] == ["RunStarted", "RunSucceeded"]
     assert events[0].metadata.response_id == "response-events-http-1"
     assert events[1].payload["outputs"] == {"prompt": "Client events ok"}
+    assert len(requests) == 3
+    assert dict(parse_qsl(urlparse(requests[0].full_url).query)) == {
+        "maxEvents": "1",
+        "maxBytes": "4096",
+    }
+    assert urlparse(requests[1].full_url).query == ""
+    assert dict(parse_qsl(urlparse(requests[2].full_url).query)) == {
+        "cursor": "run-events-http-1:1"
+    }
+    assert "RunEventPage" in graphblocks_client.__all__
 
 
 def test_client_package_reads_run_events_with_cursor_query(monkeypatch) -> None:
@@ -3091,6 +3126,102 @@ def test_client_package_reads_run_events_with_cursor_query(monkeypatch) -> None:
     assert events == ()
     assert parsed.path == "/api/runs/run%2Fevents%3Fquery%23fragment/events"
     assert parsed.query == "cursor=run%2Fevents%3Fquery%23fragment%3A1"
+
+
+def test_client_package_rejects_invalid_event_page_limits() -> None:
+    graphblocks_client = importlib.import_module("graphblocks.client")
+    client = graphblocks_client.HttpGraphBlocksClient(
+        "https://graphblocks.example/api",
+        transport=lambda request, *, timeout: None,
+    )
+
+    for field_name in ("max_events", "max_bytes"):
+        for value in (True, 0, -1, "1", 1 << 64):
+            with pytest.raises(ValueError, match=field_name):
+                client.run_event_page(
+                    "run-events-limit-1",
+                    **{field_name: value},
+                )
+
+
+def test_client_package_fails_closed_on_non_advancing_event_page_cursor() -> None:
+    graphblocks_client = importlib.import_module("graphblocks.client")
+    responses = (
+        {
+            "ok": True,
+            "runId": "run-events-stalled-1",
+            "replayFromCursor": None,
+            "lastCursor": "run-events-stalled-1:2",
+            "hasMore": True,
+            "nextCursor": "run-events-stalled-1:1",
+            "events": [],
+        },
+        {
+            "ok": True,
+            "runId": "run-events-stalled-1",
+            "replayFromCursor": "run-events-stalled-1:1",
+            "lastCursor": "run-events-stalled-1:2",
+            "hasMore": True,
+            "nextCursor": "run-events-stalled-1:1",
+            "events": [],
+        },
+    )
+    response_index = 0
+
+    class FakeResponse:
+        status = 200
+        headers: dict[str, str] = {}
+
+        def __init__(self, payload: dict[str, object]) -> None:
+            self.payload = payload
+
+        def read(self) -> bytes:
+            return json.dumps(self.payload).encode("utf-8")
+
+    def transport(request: object, *, timeout: float) -> FakeResponse:
+        del request, timeout
+        nonlocal response_index
+        response = FakeResponse(responses[response_index])
+        response_index += 1
+        return response
+
+    client = graphblocks_client.HttpGraphBlocksClient(
+        "https://graphblocks.example/api",
+        transport=transport,
+    )
+
+    with pytest.raises(ValueError, match="next_cursor must advance"):
+        client.run_events("run-events-stalled-1")
+
+
+def test_client_package_caps_automatic_event_page_continuation() -> None:
+    graphblocks_client = importlib.import_module("graphblocks.client")
+
+    class FakeResponse:
+        status = 200
+        headers: dict[str, str] = {}
+
+        def read(self) -> bytes:
+            return json.dumps(
+                {
+                    "ok": True,
+                    "runId": "run-events-page-cap-1",
+                    "replayFromCursor": None,
+                    "lastCursor": "run-events-page-cap-1:2",
+                    "hasMore": True,
+                    "nextCursor": "run-events-page-cap-1:1",
+                    "events": [],
+                }
+            ).encode("utf-8")
+
+    client = graphblocks_client.HttpGraphBlocksClient(
+        "https://graphblocks.example/api",
+        transport=lambda request, *, timeout: FakeResponse(),
+        max_event_pages=1,
+    )
+
+    with pytest.raises(ValueError, match="exceeded max_event_pages 1"):
+        client.run_events("run-events-page-cap-1")
 
 
 def test_client_package_raises_http_error_for_missing_run_events(monkeypatch) -> None:

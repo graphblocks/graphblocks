@@ -61,6 +61,7 @@ from graphblocks.server import ApplicationProtocolCapabilities
 _MAX_RUN_CURSOR_SEQUENCE = (1 << 64) - 1
 _DEFAULT_MAX_HTTP_RESPONSE_BYTES = 8 * 1024 * 1024
 _DEFAULT_MAX_HTTP_ERROR_BODY_BYTES = 64 * 1024
+_DEFAULT_MAX_HTTP_EVENT_PAGES = 10_000
 _HTTP_RESPONSE_READ_CHUNK_BYTES = 64 * 1024
 
 
@@ -273,6 +274,58 @@ class RunGraphResponse:
             _stable_non_empty_string("run graph response", field_name, value)
             if field_name == "initial_cursor":
                 _validate_run_cursor("run graph response", field_name, self.run_id, value)
+
+
+@dataclass(frozen=True, slots=True)
+class RunEventPage:
+    run_id: str
+    events: tuple[ApplicationEvent, ...]
+    last_cursor: str
+    replay_from_cursor: str | None = None
+    next_cursor: str | None = None
+    has_more: bool = False
+
+    def __post_init__(self) -> None:
+        _stable_non_empty_string("run event page", "run_id", self.run_id)
+        object.__setattr__(
+            self,
+            "events",
+            _application_event_snapshot("run event page", self.events),
+        )
+        _validate_run_cursor(
+            "run event page",
+            "last_cursor",
+            self.run_id,
+            _stable_non_empty_string(
+                "run event page",
+                "last_cursor",
+                self.last_cursor,
+            ),
+        )
+        for field_name in ("replay_from_cursor", "next_cursor"):
+            value = getattr(self, field_name)
+            if value is not None:
+                _validate_run_cursor(
+                    "run event page",
+                    field_name,
+                    self.run_id,
+                    _stable_non_empty_string(
+                        "run event page",
+                        field_name,
+                        value,
+                    ),
+                )
+        if type(self.has_more) is not bool:
+            raise ValueError("run event page has_more must be a boolean")
+        if self.has_more != (self.next_cursor is not None):
+            raise ValueError(
+                "run event page next_cursor must be present exactly when has_more is true"
+            )
+        if (
+            self.next_cursor is not None
+            and self.next_cursor == self.replay_from_cursor
+        ):
+            raise ValueError("run event page next_cursor must advance")
 
 
 @dataclass(frozen=True, slots=True)
@@ -1121,6 +1174,7 @@ class HttpGraphBlocksClient:
     transport: Callable[..., object] | None = None
     max_response_bytes: int = _DEFAULT_MAX_HTTP_RESPONSE_BYTES
     max_error_body_bytes: int = _DEFAULT_MAX_HTTP_ERROR_BODY_BYTES
+    max_event_pages: int = _DEFAULT_MAX_HTTP_EVENT_PAGES
 
     def __post_init__(self) -> None:
         if (
@@ -1179,7 +1233,11 @@ class HttpGraphBlocksClient:
         self.timeout = timeout
         if self.transport is not None and not callable(self.transport):
             raise ValueError("GraphBlocks HTTP transport must be callable")
-        for field_name in ("max_response_bytes", "max_error_body_bytes"):
+        for field_name in (
+            "max_response_bytes",
+            "max_error_body_bytes",
+            "max_event_pages",
+        ):
             value = getattr(self, field_name)
             if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
                 raise ValueError(
@@ -1474,10 +1532,18 @@ class HttpGraphBlocksClient:
                 )
         return response_payload
 
-    def run_events(self, run_id: str, *, cursor: object | None = None) -> tuple[ApplicationEvent, ...]:
+    def run_event_page(
+        self,
+        run_id: str,
+        *,
+        cursor: object | None = None,
+        max_events: object | None = None,
+        max_bytes: object | None = None,
+    ) -> RunEventPage:
         requested_run_id = _http_non_empty_string("run_id", run_id)
         run_id = quote(requested_run_id, safe="")
         url = f"{self.base_url.rstrip('/')}/runs/{run_id}/events"
+        query: dict[str, str] = {}
         if cursor is not None:
             cursor = _validate_run_cursor(
                 "GraphBlocks HTTP",
@@ -1485,7 +1551,26 @@ class HttpGraphBlocksClient:
                 requested_run_id,
                 _http_non_empty_string("cursor", cursor),
             )
-            url = f"{url}?{urlencode({'cursor': cursor})}"
+            query["cursor"] = cursor
+        for field_name, query_name, value in (
+            ("max_events", "maxEvents", max_events),
+            ("max_bytes", "maxBytes", max_bytes),
+        ):
+            if value is None:
+                continue
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, int)
+                or value < 1
+                or value > _MAX_RUN_CURSOR_SEQUENCE
+            ):
+                raise ValueError(
+                    f"GraphBlocks HTTP {field_name} must be a positive integer "
+                    f"at most {_MAX_RUN_CURSOR_SEQUENCE}"
+                )
+            query[query_name] = str(value)
+        if query:
+            url = f"{url}?{urlencode(query)}"
         headers = {"Accept": "application/json"}
         if self.bearer_token is not None:
             headers["Authorization"] = f"Bearer {self.bearer_token}"
@@ -1495,10 +1580,154 @@ class HttpGraphBlocksClient:
             method="GET",
         )
         payload = self._request_json(request, "GraphBlocks run events response")
-        return _events_from_payload(
+        response_run_id = _payload_alias_value(
+            payload,
+            "GraphBlocks run events response",
+            "run_id",
+            "runId",
+            "run_id",
+            default=requested_run_id,
+        )
+        _validate_response_run_id(
+            "GraphBlocks run events response",
+            requested_run_id,
+            _stable_non_empty_string(
+                "GraphBlocks run events response",
+                "run_id",
+                response_run_id,
+            ),
+        )
+        events = _events_from_payload(
             payload,
             "GraphBlocks run events response",
             expected_run_id=requested_run_id,
+        )
+        replay_from_cursor = _payload_alias_value(
+            payload,
+            "GraphBlocks run events response",
+            "replay_from_cursor",
+            "replayFromCursor",
+            "replay_from_cursor",
+            default=cursor,
+        )
+        if replay_from_cursor is not None:
+            replay_from_cursor = _validate_run_cursor(
+                "GraphBlocks run events response",
+                "replay_from_cursor",
+                requested_run_id,
+                _stable_non_empty_string(
+                    "GraphBlocks run events response",
+                    "replay_from_cursor",
+                    replay_from_cursor,
+                ),
+            )
+        if replay_from_cursor != cursor:
+            raise ValueError(
+                "GraphBlocks run events response replay_from_cursor must match "
+                "the requested cursor"
+            )
+        last_cursor = _payload_alias_value(
+            payload,
+            "GraphBlocks run events response",
+            "last_cursor",
+            "lastCursor",
+            "last_cursor",
+            default=(
+                events[-1].metadata.cursor
+                if events and events[-1].metadata.cursor is not None
+                else cursor or f"{requested_run_id}:0"
+            ),
+        )
+        last_cursor = _validate_run_cursor(
+            "GraphBlocks run events response",
+            "last_cursor",
+            requested_run_id,
+            _stable_non_empty_string(
+                "GraphBlocks run events response",
+                "last_cursor",
+                last_cursor,
+            ),
+        )
+        has_more = _payload_alias_value(
+            payload,
+            "GraphBlocks run events response",
+            "has_more",
+            "hasMore",
+            "has_more",
+            default=False,
+        )
+        if type(has_more) is not bool:
+            raise ValueError(
+                "GraphBlocks run events response has_more must be a boolean"
+            )
+        next_cursor = _payload_alias_value(
+            payload,
+            "GraphBlocks run events response",
+            "next_cursor",
+            "nextCursor",
+            "next_cursor",
+        )
+        if next_cursor is not None:
+            next_cursor = _validate_run_cursor(
+                "GraphBlocks run events response",
+                "next_cursor",
+                requested_run_id,
+                _stable_non_empty_string(
+                    "GraphBlocks run events response",
+                    "next_cursor",
+                    next_cursor,
+                ),
+            )
+        return RunEventPage(
+            run_id=requested_run_id,
+            events=events,
+            last_cursor=last_cursor,
+            replay_from_cursor=replay_from_cursor,
+            next_cursor=next_cursor,
+            has_more=has_more,
+        )
+
+    def run_events(self, run_id: str, *, cursor: object | None = None) -> tuple[ApplicationEvent, ...]:
+        requested_run_id = _http_non_empty_string("run_id", run_id)
+        requested_cursor = (
+            _validate_run_cursor(
+                "GraphBlocks HTTP",
+                "cursor",
+                requested_run_id,
+                _http_non_empty_string("cursor", cursor),
+            )
+            if cursor is not None
+            else None
+        )
+        seen_cursors = (
+            {requested_cursor}
+            if requested_cursor is not None
+            else set()
+        )
+        events: list[ApplicationEvent] = []
+        for _ in range(self.max_event_pages):
+            page = self.run_event_page(
+                requested_run_id,
+                cursor=requested_cursor,
+            )
+            events.extend(page.events)
+            if not page.has_more:
+                return tuple(events)
+            next_cursor = page.next_cursor
+            if next_cursor is None:
+                raise ValueError(
+                    "GraphBlocks run events response must provide next_cursor "
+                    "when has_more is true"
+                )
+            if next_cursor in seen_cursors:
+                raise ValueError(
+                    "GraphBlocks run events response next_cursor must advance"
+                )
+            seen_cursors.add(next_cursor)
+            requested_cursor = next_cursor
+        raise ValueError(
+            "GraphBlocks run events response exceeded max_event_pages "
+            f"{self.max_event_pages}"
         )
 
     def run_stream(self, run_id: str) -> RunStreamSnapshot:
@@ -2631,6 +2860,7 @@ __all__ = [
     "RemoteToolInvocation",
     "RunGraphCommand",
     "RunGraphResponse",
+    "RunEventPage",
     "RunStreamSnapshot",
     "ToolResult",
     "ToolResultEvent",
