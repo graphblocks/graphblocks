@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 import sqlite3
+from time import time
 from types import MappingProxyType
 from typing import Literal
 
@@ -47,6 +48,11 @@ class AuditOutboxRecordNotFoundError(AuditOutboxError):
 AuditOutboxStatus = Literal["pending", "published", "failed"]
 _AUDIT_OUTBOX_STATUSES = frozenset({"pending", "published", "failed"})
 _MAX_AUDIT_ATTEMPTS = (1 << 63) - 1
+_MAX_AUDIT_MILLISECONDS = (1 << 63) - 1
+
+
+def _audit_now_ms() -> int:
+    return int(time() * 1_000)
 
 
 class _FrozenAuditList(tuple[object, ...]):
@@ -186,6 +192,24 @@ def _validate_audit_string(field_name: str, value: object) -> str:
     return value
 
 
+def _validate_audit_integer(
+    field_name: str,
+    value: object,
+    *,
+    minimum: int = 0,
+) -> int:
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, int)
+        or not minimum <= value <= _MAX_AUDIT_MILLISECONDS
+    ):
+        raise ValueError(
+            f"audit outbox {field_name} must be an integer between "
+            f"{minimum} and {_MAX_AUDIT_MILLISECONDS}"
+        )
+    return value
+
+
 def _loads_strict_json(field_name: str, value: object) -> object:
     if not isinstance(value, str):
         raise ValueError(f"audit outbox {field_name} must be valid strict JSON")
@@ -314,31 +338,121 @@ class AuditOutboxRecord:
         object.__setattr__(self, "last_error", last_error)
 
 
+@dataclass(frozen=True, slots=True)
+class AuditOutboxClaim:
+    record: AuditOutboxRecord
+    claim_id: str
+    claimed_by: str
+    generation: int
+    claimed_at_ms: int
+    lease_expires_at_ms: int
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.record, AuditOutboxRecord):
+            raise ValueError(
+                "audit outbox claim record must be an AuditOutboxRecord"
+            )
+        if self.record.status == "published":
+            raise ValueError("audit outbox claim record must be unpublished")
+        object.__setattr__(
+            self,
+            "claim_id",
+            _validate_audit_string("claim_id", self.claim_id),
+        )
+        object.__setattr__(
+            self,
+            "claimed_by",
+            _validate_audit_string("claimed_by", self.claimed_by),
+        )
+        for field_name in (
+            "generation",
+            "claimed_at_ms",
+            "lease_expires_at_ms",
+        ):
+            minimum = 1 if field_name == "generation" else 0
+            _validate_audit_integer(
+                f"claim {field_name}",
+                getattr(self, field_name),
+                minimum=minimum,
+            )
+        if self.lease_expires_at_ms <= self.claimed_at_ms:
+            raise ValueError(
+                "audit outbox claim lease_expires_at_ms must be after claimed_at_ms"
+            )
+
+
 @dataclass(slots=True)
 class SQLiteAuditOutbox:
     path: str | Path
+    clock_ms: Callable[[], int] = field(
+        default=_audit_now_ms,
+        repr=False,
+    )
     _connection: sqlite3.Connection = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
+        if not callable(self.clock_ms):
+            raise ValueError("audit outbox clock_ms must be callable")
         self._connection = sqlite3.connect(str(self.path))
         self._connection.row_factory = sqlite3.Row
-        self._connection.execute(
-            """
-            CREATE TABLE IF NOT EXISTS audit_outbox_records (
-              sequence INTEGER PRIMARY KEY AUTOINCREMENT,
-              record_id TEXT NOT NULL UNIQUE,
-              record_type TEXT NOT NULL,
-              payload_json TEXT NOT NULL,
-              payload_digest TEXT NOT NULL,
-              occurred_at TEXT NOT NULL,
-              status TEXT NOT NULL,
-              attempts INTEGER NOT NULL,
-              published_at TEXT,
-              last_error TEXT
+        try:
+            self._connection.execute("BEGIN IMMEDIATE")
+            self._connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS audit_outbox_records (
+                  sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+                  record_id TEXT NOT NULL UNIQUE,
+                  record_type TEXT NOT NULL,
+                  payload_json TEXT NOT NULL,
+                  payload_digest TEXT NOT NULL,
+                  occurred_at TEXT NOT NULL,
+                  status TEXT NOT NULL,
+                  attempts INTEGER NOT NULL,
+                  published_at TEXT,
+                  last_error TEXT,
+                  claim_id TEXT,
+                  claimed_by TEXT,
+                  claim_generation INTEGER NOT NULL DEFAULT 0,
+                  claimed_at_ms INTEGER,
+                  claim_expires_at_ms INTEGER
+                )
+                """
             )
-            """
-        )
-        self._connection.commit()
+            existing_columns = {
+                row["name"]
+                for row in self._connection.execute(
+                    "PRAGMA table_info(audit_outbox_records)"
+                ).fetchall()
+            }
+            for column_name, column_definition in (
+                ("claim_id", "claim_id TEXT"),
+                ("claimed_by", "claimed_by TEXT"),
+                (
+                    "claim_generation",
+                    "claim_generation INTEGER NOT NULL DEFAULT 0",
+                ),
+                ("claimed_at_ms", "claimed_at_ms INTEGER"),
+                ("claim_expires_at_ms", "claim_expires_at_ms INTEGER"),
+            ):
+                if column_name not in existing_columns:
+                    self._connection.execute(
+                        f"ALTER TABLE audit_outbox_records ADD COLUMN {column_definition}"
+                    )
+            self._connection.execute(
+                """
+                CREATE INDEX IF NOT EXISTS audit_outbox_claimable
+                ON audit_outbox_records (
+                  status,
+                  claim_expires_at_ms,
+                  sequence
+                )
+                """
+            )
+            self._connection.commit()
+        except Exception:
+            self._connection.rollback()
+            self._connection.close()
+            raise
 
     @classmethod
     def in_memory(cls) -> SQLiteAuditOutbox:
@@ -429,49 +543,412 @@ class SQLiteAuditOutbox:
         rows = self._connection.execute(sql, parameters).fetchall()
         return [self._record_from_row(row) for row in rows]
 
-    def mark_published(self, record_id: str, *, published_at: str) -> AuditOutboxRecord:
-        record_id = _validate_audit_string("record_id", record_id)
-        published_at = _validate_audit_string("published_at", published_at)
-        if self._connection.execute(
-            """
-            UPDATE audit_outbox_records
-            SET status = ?, published_at = ?, last_error = NULL
-            WHERE record_id = ? AND status IN ('pending', 'failed')
-            """,
-            ("published", published_at, record_id),
-        ).rowcount == 0:
+    def claim_pending(
+        self,
+        *,
+        claim_id: str,
+        claimed_by: str,
+        lease_duration_ms: int,
+        limit: int = 1,
+    ) -> list[AuditOutboxClaim]:
+        claim_id = _validate_audit_string("claim_id", claim_id)
+        claimed_by = _validate_audit_string("claimed_by", claimed_by)
+        lease_duration_ms = _validate_audit_integer(
+            "lease_duration_ms",
+            lease_duration_ms,
+            minimum=1,
+        )
+        limit = _validate_audit_integer("claim limit", limit)
+        if limit == 0:
+            return []
+        try:
+            self._connection.execute("BEGIN IMMEDIATE")
+            claimed_at_ms = self._current_time_ms()
+            if claimed_at_ms > _MAX_AUDIT_MILLISECONDS - lease_duration_ms:
+                raise ValueError("audit outbox claim lease expiration overflows")
+            lease_expires_at_ms = claimed_at_ms + lease_duration_ms
+            available_rows = self._connection.execute(
+                """
+                SELECT *
+                FROM audit_outbox_records
+                WHERE status IN ('pending', 'failed')
+                  AND attempts < ?
+                  AND claim_generation < ?
+                  AND (
+                    claim_id IS NULL
+                    OR claim_expires_at_ms <= ?
+                  )
+                ORDER BY sequence
+                LIMIT ?
+                """,
+                (
+                    _MAX_AUDIT_ATTEMPTS,
+                    _MAX_AUDIT_ATTEMPTS,
+                    claimed_at_ms,
+                    limit,
+                ),
+            ).fetchall()
+            claims: list[AuditOutboxClaim] = []
+            for available_row in available_rows:
+                record_id = available_row["record_id"]
+                if self._connection.execute(
+                    """
+                    UPDATE audit_outbox_records
+                    SET claim_id = ?,
+                        claimed_by = ?,
+                        claim_generation = claim_generation + 1,
+                        claimed_at_ms = ?,
+                        claim_expires_at_ms = ?
+                    WHERE record_id = ?
+                      AND status IN ('pending', 'failed')
+                      AND attempts < ?
+                      AND claim_generation < ?
+                      AND (
+                        claim_id IS NULL
+                        OR claim_expires_at_ms <= ?
+                      )
+                    """,
+                    (
+                        claim_id,
+                        claimed_by,
+                        claimed_at_ms,
+                        lease_expires_at_ms,
+                        record_id,
+                        _MAX_AUDIT_ATTEMPTS,
+                        _MAX_AUDIT_ATTEMPTS,
+                        claimed_at_ms,
+                    ),
+                ).rowcount != 1:
+                    raise AuditOutboxError(
+                        f"audit outbox record {record_id!r} claim changed during transaction"
+                    )
+                claimed_row = self._connection.execute(
+                    "SELECT * FROM audit_outbox_records WHERE record_id = ?",
+                    (record_id,),
+                ).fetchone()
+                if claimed_row is None:
+                    raise AuditOutboxRecordNotFoundError(
+                        f"audit outbox record {record_id!r} does not exist"
+                    )
+                claims.append(self._claim_from_row(claimed_row))
+            self._connection.commit()
+            return claims
+        except Exception:
             self._connection.rollback()
-            current = self.get(record_id)
-            if current.status == "published" and current.published_at == published_at:
-                return current
-            raise AuditOutboxError(f"audit outbox record {record_id!r} is already published")
-        self._connection.commit()
-        return self.get(record_id)
+            raise
 
-    def mark_failed(self, record_id: str, *, error: str) -> AuditOutboxRecord:
-        record_id = _validate_audit_string("record_id", record_id)
-        error = _validate_audit_string("last_error", error)
-        if self._connection.execute(
-            """
-            UPDATE audit_outbox_records
-            SET status = ?, attempts = attempts + 1, last_error = ?
-            WHERE record_id = ?
-              AND status IN ('pending', 'failed')
-              AND attempts < ?
-            """,
-            ("failed", error, record_id, _MAX_AUDIT_ATTEMPTS),
-        ).rowcount == 0:
-            self._connection.rollback()
-            current = self.get(record_id)
-            if current.attempts == _MAX_AUDIT_ATTEMPTS:
-                raise AuditOutboxError(
-                    f"audit outbox record {record_id!r} exhausted its attempt counter"
+    def renew_claim(
+        self,
+        claim: AuditOutboxClaim,
+        *,
+        lease_duration_ms: int,
+    ) -> AuditOutboxClaim:
+        if not isinstance(claim, AuditOutboxClaim):
+            raise ValueError(
+                "audit outbox renewal requires an AuditOutboxClaim"
+            )
+        lease_duration_ms = _validate_audit_integer(
+            "lease_duration_ms",
+            lease_duration_ms,
+            minimum=1,
+        )
+        record_id = claim.record.record_id
+        try:
+            self._connection.execute("BEGIN IMMEDIATE")
+            current_time_ms = self._current_time_ms()
+            if current_time_ms < claim.claimed_at_ms:
+                raise ValueError(
+                    "audit outbox clock_ms must not precede claimed_at_ms"
                 )
-            raise AuditOutboxError(f"audit outbox record {record_id!r} is already published")
-        self._connection.commit()
-        return self.get(record_id)
+            if current_time_ms > _MAX_AUDIT_MILLISECONDS - lease_duration_ms:
+                raise ValueError("audit outbox claim lease expiration overflows")
+            lease_expires_at_ms = current_time_ms + lease_duration_ms
+            if lease_expires_at_ms <= claim.lease_expires_at_ms:
+                raise ValueError(
+                    "audit outbox claim renewal must extend the lease"
+                )
+            if self._connection.execute(
+                """
+                UPDATE audit_outbox_records
+                SET claim_expires_at_ms = ?
+                WHERE record_id = ?
+                  AND status IN ('pending', 'failed')
+                  AND claim_id = ?
+                  AND claimed_by = ?
+                  AND claim_generation = ?
+                  AND claimed_at_ms = ?
+                  AND claim_expires_at_ms = ?
+                  AND claim_expires_at_ms > ?
+                """,
+                (
+                    lease_expires_at_ms,
+                    record_id,
+                    claim.claim_id,
+                    claim.claimed_by,
+                    claim.generation,
+                    claim.claimed_at_ms,
+                    claim.lease_expires_at_ms,
+                    current_time_ms,
+                ),
+            ).rowcount == 0:
+                self._connection.rollback()
+                self.get(record_id)
+                raise AuditOutboxError(
+                    f"audit outbox record {record_id!r} claim is stale, expired, or not owned"
+                )
+            renewed_row = self._connection.execute(
+                "SELECT * FROM audit_outbox_records WHERE record_id = ?",
+                (record_id,),
+            ).fetchone()
+            if renewed_row is None:
+                raise AuditOutboxRecordNotFoundError(
+                    f"audit outbox record {record_id!r} does not exist"
+                )
+            renewed = self._claim_from_row(renewed_row)
+            self._connection.commit()
+            return renewed
+        except Exception:
+            self._connection.rollback()
+            raise
+
+    def mark_published(
+        self,
+        claim: AuditOutboxClaim,
+        *,
+        published_at: str,
+    ) -> AuditOutboxRecord:
+        if not isinstance(claim, AuditOutboxClaim):
+            raise ValueError(
+                "audit outbox publication requires an AuditOutboxClaim"
+            )
+        published_at = _validate_audit_string("published_at", published_at)
+        record_id = claim.record.record_id
+        try:
+            self._connection.execute("BEGIN IMMEDIATE")
+            completed_at_ms = self._current_time_ms()
+            if completed_at_ms < claim.claimed_at_ms:
+                raise AuditOutboxError(
+                    "audit outbox clock_ms moved before the claim timestamp"
+                )
+            if self._connection.execute(
+                """
+                UPDATE audit_outbox_records
+                SET status = ?,
+                    published_at = ?,
+                    last_error = NULL,
+                    claim_id = NULL,
+                    claimed_by = NULL,
+                    claimed_at_ms = NULL,
+                    claim_expires_at_ms = NULL
+                WHERE record_id = ?
+                  AND status IN ('pending', 'failed')
+                  AND claim_id = ?
+                  AND claimed_by = ?
+                  AND claim_generation = ?
+                  AND claimed_at_ms = ?
+                  AND claim_expires_at_ms = ?
+                  AND claim_expires_at_ms > ?
+                """,
+                (
+                    "published",
+                    published_at,
+                    record_id,
+                    claim.claim_id,
+                    claim.claimed_by,
+                    claim.generation,
+                    claim.claimed_at_ms,
+                    claim.lease_expires_at_ms,
+                    completed_at_ms,
+                ),
+            ).rowcount == 0:
+                row = self._connection.execute(
+                    "SELECT * FROM audit_outbox_records WHERE record_id = ?",
+                    (record_id,),
+                ).fetchone()
+                if row is None:
+                    raise AuditOutboxRecordNotFoundError(
+                        f"audit outbox record {record_id!r} does not exist"
+                    )
+                current = self._record_from_row(row)
+                current_generation = _validate_audit_integer(
+                    "claim_generation",
+                    row["claim_generation"],
+                )
+                if (
+                    current.status == "published"
+                    and current.published_at == published_at
+                    and current_generation == claim.generation
+                ):
+                    self._connection.rollback()
+                    return current
+                if current.status == "published":
+                    raise AuditOutboxError(
+                        f"audit outbox record {record_id!r} is already published"
+                    )
+                raise AuditOutboxError(
+                    f"audit outbox record {record_id!r} claim is stale, expired, or not owned"
+                )
+            self._connection.commit()
+            return self.get(record_id)
+        except Exception:
+            self._connection.rollback()
+            raise
+
+    def mark_failed(
+        self,
+        claim: AuditOutboxClaim,
+        *,
+        error: str,
+    ) -> AuditOutboxRecord:
+        if not isinstance(claim, AuditOutboxClaim):
+            raise ValueError("audit outbox failure requires an AuditOutboxClaim")
+        error = _validate_audit_string("last_error", error)
+        record_id = claim.record.record_id
+        try:
+            self._connection.execute("BEGIN IMMEDIATE")
+            completed_at_ms = self._current_time_ms()
+            if completed_at_ms < claim.claimed_at_ms:
+                raise AuditOutboxError(
+                    "audit outbox clock_ms moved before the claim timestamp"
+                )
+            if self._connection.execute(
+                """
+                UPDATE audit_outbox_records
+                SET status = ?,
+                    attempts = attempts + 1,
+                    last_error = ?,
+                    claim_id = NULL,
+                    claimed_by = NULL,
+                    claimed_at_ms = NULL,
+                    claim_expires_at_ms = NULL
+                WHERE record_id = ?
+                  AND status IN ('pending', 'failed')
+                  AND attempts < ?
+                  AND claim_id = ?
+                  AND claimed_by = ?
+                  AND claim_generation = ?
+                  AND claimed_at_ms = ?
+                  AND claim_expires_at_ms = ?
+                  AND claim_expires_at_ms > ?
+                """,
+                (
+                    "failed",
+                    error,
+                    record_id,
+                    _MAX_AUDIT_ATTEMPTS,
+                    claim.claim_id,
+                    claim.claimed_by,
+                    claim.generation,
+                    claim.claimed_at_ms,
+                    claim.lease_expires_at_ms,
+                    completed_at_ms,
+                ),
+            ).rowcount == 0:
+                row = self._connection.execute(
+                    "SELECT * FROM audit_outbox_records WHERE record_id = ?",
+                    (record_id,),
+                ).fetchone()
+                if row is None:
+                    raise AuditOutboxRecordNotFoundError(
+                        f"audit outbox record {record_id!r} does not exist"
+                    )
+                current = self._record_from_row(row)
+                if current.attempts == _MAX_AUDIT_ATTEMPTS:
+                    raise AuditOutboxError(
+                        f"audit outbox record {record_id!r} exhausted its attempt counter"
+                    )
+                if current.status == "published":
+                    raise AuditOutboxError(
+                        f"audit outbox record {record_id!r} is already published"
+                    )
+                raise AuditOutboxError(
+                    f"audit outbox record {record_id!r} claim is stale, expired, or not owned"
+                )
+            self._connection.commit()
+            return self.get(record_id)
+        except Exception:
+            self._connection.rollback()
+            raise
+
+    def _current_time_ms(self) -> int:
+        try:
+            current_time_ms = self.clock_ms()
+        except Exception as error:
+            raise AuditOutboxError("audit outbox clock_ms failed") from error
+        return _validate_audit_integer("clock_ms result", current_time_ms)
+
+    def _claim_metadata_from_row(
+        self,
+        row: sqlite3.Row,
+    ) -> tuple[str, str, int, int, int] | None:
+        generation = _validate_audit_integer(
+            "claim_generation",
+            row["claim_generation"],
+        )
+        claim_values = (
+            row["claim_id"],
+            row["claimed_by"],
+            row["claimed_at_ms"],
+            row["claim_expires_at_ms"],
+        )
+        if all(value is None for value in claim_values):
+            return None
+        if any(value is None for value in claim_values):
+            raise ValueError(
+                "audit outbox persisted claim fields must be all null or all present"
+            )
+        claim_id = _validate_audit_string("claim_id", claim_values[0])
+        claimed_by = _validate_audit_string("claimed_by", claim_values[1])
+        claimed_at_ms = _validate_audit_integer(
+            "claimed_at_ms",
+            claim_values[2],
+        )
+        claim_expires_at_ms = _validate_audit_integer(
+            "claim_expires_at_ms",
+            claim_values[3],
+        )
+        if generation < 1:
+            raise ValueError(
+                "audit outbox persisted active claim requires a positive generation"
+            )
+        if claim_expires_at_ms <= claimed_at_ms:
+            raise ValueError(
+                "audit outbox persisted claim expiration must be after claim time"
+            )
+        if row["status"] not in {"pending", "failed"}:
+            raise ValueError(
+                "audit outbox persisted active claim must be pending or failed"
+            )
+        return (
+            claim_id,
+            claimed_by,
+            generation,
+            claimed_at_ms,
+            claim_expires_at_ms,
+        )
+
+    def _claim_from_row(self, row: sqlite3.Row) -> AuditOutboxClaim:
+        claim_metadata = self._claim_metadata_from_row(row)
+        if claim_metadata is None:
+            raise ValueError("audit outbox claimed row has no active claim")
+        (
+            claim_id,
+            claimed_by,
+            generation,
+            claimed_at_ms,
+            claim_expires_at_ms,
+        ) = claim_metadata
+        return AuditOutboxClaim(
+            record=self._record_from_row(row),
+            claim_id=claim_id,
+            claimed_by=claimed_by,
+            generation=generation,
+            claimed_at_ms=claimed_at_ms,
+            lease_expires_at_ms=claim_expires_at_ms,
+        )
 
     def _record_from_row(self, row: sqlite3.Row) -> AuditOutboxRecord:
+        self._claim_metadata_from_row(row)
         payload = _loads_strict_json("payload_json", row["payload_json"])
         if not isinstance(payload, Mapping):
             raise ValueError("audit outbox payload_json must decode to an object")
@@ -711,6 +1188,7 @@ __all__ = [
     "ApplicationEventError",
     "ApplicationEventKind",
     "ApplicationEventMetadata",
+    "AuditOutboxClaim",
     "AuditOutboxConflictError",
     "AuditOutboxError",
     "AuditOutboxRecord",

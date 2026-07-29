@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 import importlib
 from decimal import Decimal
 from pathlib import Path
+import sqlite3
 import sys
+from threading import Barrier
 from types import SimpleNamespace
 
 import graphblocks
@@ -70,8 +73,11 @@ def test_audit_outbox_rejects_attempt_counter_overflow() -> None:
     )
     outbox._connection.commit()
 
-    with pytest.raises(graphblocks_audit.AuditOutboxError, match="exhausted"):
-        outbox.mark_failed("audit-overflow", error="still unavailable")
+    assert outbox.claim_pending(
+        claim_id="claim-overflow",
+        claimed_by="publisher-1",
+        lease_duration_ms=60_000,
+    ) == []
 
 
 def test_audit_outbox_normalizes_unstable_payload_mappings() -> None:
@@ -504,8 +510,20 @@ def test_audit_package_persists_outbox_records(monkeypatch, tmp_path) -> None:
     assert [record.record_id for record in reopened.pending()] == ["audit-1", "audit-2"]
     assert reopened.pending(limit=1) == [first]
 
-    published = reopened.mark_published("audit-1", published_at="2026-06-23T00:00:02Z")
-    failed = reopened.mark_failed("audit-2", error="sink unavailable")
+    claims = reopened.claim_pending(
+        claim_id="claim-batch-1",
+        claimed_by="publisher-1",
+        lease_duration_ms=60_000,
+        limit=2,
+    )
+    published = reopened.mark_published(
+        claims[0],
+        published_at="2026-06-23T00:00:02Z",
+    )
+    failed = reopened.mark_failed(
+        claims[1],
+        error="sink unavailable",
+    )
 
     assert published.status == "published"
     assert published.published_at == "2026-06-23T00:00:02Z"
@@ -514,6 +532,316 @@ def test_audit_package_persists_outbox_records(monkeypatch, tmp_path) -> None:
     assert failed.last_error == "sink unavailable"
     assert reopened.pending() == [failed]
     reopened.close()
+
+
+def test_audit_outbox_claims_each_record_once_across_publishers(
+    tmp_path,
+) -> None:
+    graphblocks_audit = importlib.import_module("graphblocks.audit")
+    path = tmp_path / "audit.sqlite3"
+    seed = graphblocks_audit.SQLiteAuditOutbox(path)
+    seed.append(
+        "application_event",
+        {"event_id": "event-1"},
+        occurred_at="2026-07-29T00:00:00Z",
+        record_id="audit-1",
+    )
+    seed.close()
+    barrier = Barrier(2)
+
+    def claim(worker_id: str):
+        outbox = graphblocks_audit.SQLiteAuditOutbox(
+            path,
+            clock_ms=lambda: 1_000,
+        )
+        barrier.wait()
+        try:
+            return outbox.claim_pending(
+                claim_id=f"claim-{worker_id}",
+                claimed_by=worker_id,
+                lease_duration_ms=60_000,
+            )
+        finally:
+            outbox.close()
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        first = executor.submit(claim, "publisher-1")
+        second = executor.submit(claim, "publisher-2")
+        claims = (*first.result(), *second.result())
+
+    assert len(claims) == 1
+    assert claims[0].record.record_id == "audit-1"
+    assert "AuditOutboxClaim" in graphblocks_audit.__all__
+    publisher = graphblocks_audit.SQLiteAuditOutbox(
+        path,
+        clock_ms=lambda: 1_500,
+    )
+    published = publisher.mark_published(
+        claims[0],
+        published_at="2026-07-29T00:00:01Z",
+    )
+    assert published.status == "published"
+    assert publisher.pending() == []
+    publisher.close()
+
+
+def test_audit_outbox_reclaims_expired_lease_and_fences_stale_claim(
+    tmp_path,
+) -> None:
+    graphblocks_audit = importlib.import_module("graphblocks.audit")
+    current_time_ms = [1_000]
+    outbox = graphblocks_audit.SQLiteAuditOutbox(
+        tmp_path / "audit.sqlite3",
+        clock_ms=lambda: current_time_ms[0],
+    )
+    outbox.append(
+        "application_event",
+        {"event_id": "event-1"},
+        occurred_at="2026-07-29T00:00:00Z",
+        record_id="audit-1",
+    )
+    first = outbox.claim_pending(
+        claim_id="claim-1",
+        claimed_by="publisher-1",
+        lease_duration_ms=100,
+    )[0]
+    assert outbox.claim_pending(
+        claim_id="claim-too-early",
+        claimed_by="publisher-2",
+        lease_duration_ms=100,
+    ) == []
+
+    current_time_ms[0] = 1_100
+    with pytest.raises(graphblocks_audit.AuditOutboxError, match="stale"):
+        outbox.mark_published(
+            first,
+            published_at="2026-07-29T00:00:01Z",
+        )
+
+    second = outbox.claim_pending(
+        claim_id="claim-2",
+        claimed_by="publisher-2",
+        lease_duration_ms=100,
+    )[0]
+    assert second.generation == first.generation + 1
+
+    with pytest.raises(graphblocks_audit.AuditOutboxError, match="stale"):
+        outbox.mark_published(
+            first,
+            published_at="2026-07-29T00:00:01Z",
+        )
+
+    current_time_ms[0] = 1_150
+    published = outbox.mark_published(
+        second,
+        published_at="2026-07-29T00:00:02Z",
+    )
+    assert published.status == "published"
+    with pytest.raises(graphblocks_audit.AuditOutboxError, match="already published"):
+        outbox.mark_published(
+            first,
+            published_at="2026-07-29T00:00:02Z",
+        )
+    outbox.close()
+
+
+def test_audit_outbox_renews_active_claim_before_completion(tmp_path) -> None:
+    graphblocks_audit = importlib.import_module("graphblocks.audit")
+    current_time_ms = [1_000]
+    outbox = graphblocks_audit.SQLiteAuditOutbox(
+        tmp_path / "audit.sqlite3",
+        clock_ms=lambda: current_time_ms[0],
+    )
+    outbox.append(
+        "application_event",
+        {"event_id": "event-1"},
+        occurred_at="2026-07-29T00:00:00Z",
+        record_id="audit-1",
+    )
+    claim = outbox.claim_pending(
+        claim_id="claim-1",
+        claimed_by="publisher-1",
+        lease_duration_ms=100,
+    )[0]
+
+    current_time_ms[0] = 999
+    with pytest.raises(graphblocks_audit.AuditOutboxError, match="clock_ms moved"):
+        outbox.mark_published(
+            claim,
+            published_at="2026-07-29T00:00:01Z",
+        )
+
+    current_time_ms[0] = 1_050
+    renewed = outbox.renew_claim(
+        claim,
+        lease_duration_ms=100,
+    )
+    current_time_ms[0] = 1_100
+    published = outbox.mark_published(
+        renewed,
+        published_at="2026-07-29T00:00:01Z",
+    )
+
+    assert renewed.generation == claim.generation
+    assert renewed.claimed_at_ms == claim.claimed_at_ms
+    assert renewed.lease_expires_at_ms == 1_150
+    assert published.status == "published"
+    outbox.close()
+
+
+def test_audit_outbox_requires_claim_for_terminal_transition() -> None:
+    graphblocks_audit = importlib.import_module("graphblocks.audit")
+    outbox = graphblocks_audit.SQLiteAuditOutbox.in_memory()
+    outbox.append(
+        "application_event",
+        {"event_id": "event-1"},
+        occurred_at="2026-07-29T00:00:00Z",
+        record_id="audit-1",
+    )
+
+    with pytest.raises(ValueError, match="requires an AuditOutboxClaim"):
+        outbox.mark_published(  # type: ignore[arg-type]
+            "audit-1",
+            published_at="2026-07-29T00:00:01Z",
+        )
+    with pytest.raises(ValueError, match="requires an AuditOutboxClaim"):
+        outbox.mark_failed(  # type: ignore[arg-type]
+            "audit-1",
+            error="sink unavailable",
+        )
+
+    assert outbox.get("audit-1").status == "pending"
+    outbox.close()
+
+
+def test_audit_outbox_failed_claim_can_be_retried_with_new_fence(
+    tmp_path,
+) -> None:
+    graphblocks_audit = importlib.import_module("graphblocks.audit")
+    outbox = graphblocks_audit.SQLiteAuditOutbox(
+        tmp_path / "audit.sqlite3"
+    )
+    outbox.append(
+        "application_event",
+        {"event_id": "event-1"},
+        occurred_at="2026-07-29T00:00:00Z",
+        record_id="audit-1",
+    )
+    first = outbox.claim_pending(
+        claim_id="claim-1",
+        claimed_by="publisher-1",
+        lease_duration_ms=60_000,
+    )[0]
+    failed = outbox.mark_failed(
+        first,
+        error="sink unavailable",
+    )
+    second = outbox.claim_pending(
+        claim_id="claim-2",
+        claimed_by="publisher-2",
+        lease_duration_ms=60_000,
+    )[0]
+
+    assert failed.status == "failed"
+    assert failed.attempts == 1
+    assert second.record == failed
+    assert second.generation == first.generation + 1
+    outbox.close()
+
+
+def test_audit_outbox_migrates_existing_table_for_claims(tmp_path) -> None:
+    graphblocks_audit = importlib.import_module("graphblocks.audit")
+    path = tmp_path / "audit.sqlite3"
+    connection = sqlite3.connect(path)
+    connection.execute(
+        """
+        CREATE TABLE audit_outbox_records (
+          sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+          record_id TEXT NOT NULL UNIQUE,
+          record_type TEXT NOT NULL,
+          payload_json TEXT NOT NULL,
+          payload_digest TEXT NOT NULL,
+          occurred_at TEXT NOT NULL,
+          status TEXT NOT NULL,
+          attempts INTEGER NOT NULL,
+          published_at TEXT,
+          last_error TEXT
+        )
+        """
+    )
+    connection.commit()
+    connection.close()
+
+    outbox = graphblocks_audit.SQLiteAuditOutbox(path)
+    outbox.append(
+        "application_event",
+        {"event_id": "event-1"},
+        occurred_at="2026-07-29T00:00:00Z",
+        record_id="audit-1",
+    )
+    claim = outbox.claim_pending(
+        claim_id="claim-1",
+        claimed_by="publisher-1",
+        lease_duration_ms=60_000,
+    )[0]
+
+    assert claim.record.record_id == "audit-1"
+    assert claim.generation == 1
+    outbox.close()
+
+
+def test_audit_outbox_serializes_concurrent_claim_schema_migrations(
+    tmp_path,
+) -> None:
+    graphblocks_audit = importlib.import_module("graphblocks.audit")
+    path = tmp_path / "audit.sqlite3"
+    connection = sqlite3.connect(path)
+    connection.execute(
+        """
+        CREATE TABLE audit_outbox_records (
+          sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+          record_id TEXT NOT NULL UNIQUE,
+          record_type TEXT NOT NULL,
+          payload_json TEXT NOT NULL,
+          payload_digest TEXT NOT NULL,
+          occurred_at TEXT NOT NULL,
+          status TEXT NOT NULL,
+          attempts INTEGER NOT NULL,
+          published_at TEXT,
+          last_error TEXT
+        )
+        """
+    )
+    connection.commit()
+    connection.close()
+    barrier = Barrier(2)
+
+    def migrate() -> set[str]:
+        barrier.wait()
+        outbox = graphblocks_audit.SQLiteAuditOutbox(path)
+        try:
+            return {
+                row["name"]
+                for row in outbox._connection.execute(
+                    "PRAGMA table_info(audit_outbox_records)"
+                )
+            }
+        finally:
+            outbox.close()
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        first = executor.submit(migrate)
+        second = executor.submit(migrate)
+        column_sets = (first.result(), second.result())
+
+    expected_claim_columns = {
+        "claim_id",
+        "claimed_by",
+        "claim_generation",
+        "claimed_at_ms",
+        "claim_expires_at_ms",
+    }
+    assert all(expected_claim_columns <= columns for columns in column_sets)
 
 
 @pytest.mark.parametrize("limit", (True, -1, 1.5))
@@ -783,18 +1111,35 @@ def test_audit_outbox_treats_published_records_as_terminal(monkeypatch) -> None:
     graphblocks_audit = importlib.import_module("graphblocks.audit")
     outbox = graphblocks_audit.SQLiteAuditOutbox.in_memory()
     outbox.append("application_event", {"event_id": "event-1"}, occurred_at="2026-06-23T00:00:00Z", record_id="audit-1")
-    published = outbox.mark_published("audit-1", published_at="2026-06-23T00:00:01Z")
+    claim = outbox.claim_pending(
+        claim_id="claim-1",
+        claimed_by="publisher-1",
+        lease_duration_ms=60_000,
+    )[0]
+    published = outbox.mark_published(
+        claim,
+        published_at="2026-06-23T00:00:01Z",
+    )
 
     try:
-        outbox.mark_failed("audit-1", error="sink unavailable")
+        outbox.mark_failed(
+            claim,
+            error="sink unavailable",
+        )
     except graphblocks_audit.AuditOutboxError as error:
         assert "already published" in str(error)
     else:
         raise AssertionError("published audit records should not be marked failed")
 
-    assert outbox.mark_published("audit-1", published_at="2026-06-23T00:00:01Z") == published
+    assert outbox.mark_published(
+        claim,
+        published_at="2026-06-23T00:00:01Z",
+    ) == published
     try:
-        outbox.mark_published("audit-1", published_at="2026-06-23T00:00:02Z")
+        outbox.mark_published(
+            claim,
+            published_at="2026-06-23T00:00:02Z",
+        )
     except graphblocks_audit.AuditOutboxError as error:
         assert "already published" in str(error)
     else:
@@ -815,10 +1160,21 @@ def test_audit_outbox_rejects_invalid_transition_details_without_mutating(monkey
         occurred_at="2026-06-23T00:00:00Z",
         record_id="audit-1",
     )
+    claim = outbox.claim_pending(
+        claim_id="claim-1",
+        claimed_by="publisher-1",
+        lease_duration_ms=60_000,
+    )[0]
 
     for transition in (
-        lambda: outbox.mark_published("audit-1", published_at=" "),
-        lambda: outbox.mark_failed("audit-1", error=" "),
+        lambda: outbox.mark_published(
+            claim,
+            published_at=" ",
+        ),
+        lambda: outbox.mark_failed(
+            claim,
+            error=" ",
+        ),
     ):
         try:
             transition()
