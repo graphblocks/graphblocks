@@ -14,11 +14,13 @@ from .server_storage import (
     CHECKPOINT_FORMAT_VERSION,
     AcceptedRunAdmission,
     AcceptedRunCallbackCommit,
+    AcceptedRunCallbackInput,
     AcceptedRunCallbackExpiredError,
     AcceptedRunClaim,
     AcceptedRunClaimRequest,
     AcceptedRunEvent,
     AcceptedRunEventPage,
+    AcceptedRunExecutionEnvelope,
     AcceptedRunIdConflictError,
     AcceptedRunLeaseExpiredError,
     AcceptedRunNotFoundError,
@@ -29,6 +31,7 @@ from .server_storage import (
     AcceptedRunTerminalCommit,
     AcceptedRunTerminalConflictError,
     AcceptedRunWaitingCommit,
+    AcceptedRunWorkItem,
     AdmissionIdentity,
     AdmissionResult,
     CallbackAcceptance,
@@ -1039,6 +1042,106 @@ class SQLiteAcceptedRunRepository:
         )
 
     @staticmethod
+    def _stored_checkpoint_from_row(
+        row: sqlite3.Row,
+    ) -> StoredRuntimeCheckpoint:
+        try:
+            return StoredRuntimeCheckpoint(
+                format_version=_decode_sqlite_text(
+                    "checkpoint_format_version",
+                    row["checkpoint_format_version"],
+                ),
+                checkpoint_digest=_decode_sqlite_text(
+                    "checkpoint_digest",
+                    row["checkpoint_digest"],
+                ),
+                checkpoint_json=_decode_sqlite_text(
+                    "checkpoint_json",
+                    row["checkpoint_json"],
+                ),
+            )
+        except ValueError as error:
+            raise SQLiteAcceptedRunCorruptionError(
+                "accepted-run SQLite checkpoint is invalid"
+            ) from error
+
+    @staticmethod
+    def _callback_issuance_from_checkpoint_row(
+        run_id: str,
+        row: sqlite3.Row,
+    ) -> CallbackIssuanceIdentity:
+        try:
+            return CallbackIssuanceIdentity(
+                run_id=run_id,
+                checkpoint_digest=_decode_sqlite_text(
+                    "checkpoint_digest",
+                    row["checkpoint_digest"],
+                ),
+                operation_id=_decode_sqlite_text(
+                    "operation_id",
+                    row["operation_id"],
+                ),
+                operation_attempt_id=_decode_sqlite_text(
+                    "operation_attempt_id",
+                    row["operation_attempt_id"],
+                ),
+                callback_idempotency_key=_decode_sqlite_text(
+                    "callback_idempotency_key",
+                    row["callback_idempotency_key"],
+                ),
+                lease_generation=_decode_sqlite_integer(
+                    "issuing_lease_generation",
+                    row["issuing_lease_generation"],
+                ),
+                fencing_token=_decode_sqlite_integer(
+                    "issuing_fencing_token",
+                    row["issuing_fencing_token"],
+                ),
+            )
+        except ValueError as error:
+            raise SQLiteAcceptedRunCorruptionError(
+                "accepted-run SQLite callback issuance is invalid"
+            ) from error
+
+    @classmethod
+    def _callback_acceptance_from_rows(
+        cls,
+        run_id: str,
+        checkpoint_row: sqlite3.Row,
+        inbox_row: sqlite3.Row,
+    ) -> CallbackAcceptance:
+        issuance = cls._callback_issuance_from_checkpoint_row(
+            run_id,
+            checkpoint_row,
+        )
+        try:
+            return CallbackAcceptance(
+                submission=CallbackSubmissionIdentity(
+                    issuance=issuance,
+                    payload_digest=_decode_sqlite_text(
+                        "callback payload_digest",
+                        inbox_row["payload_digest"],
+                    ),
+                ),
+                receipt_json=_decode_sqlite_text(
+                    "callback receipt_json",
+                    inbox_row["receipt_json"],
+                ),
+                accepted_event_sequence=_decode_sqlite_integer(
+                    "callback accepted_event_sequence",
+                    inbox_row["accepted_event_sequence"],
+                ),
+                state_version=_decode_sqlite_integer(
+                    "callback accepted_state_version",
+                    inbox_row["accepted_state_version"],
+                ),
+            )
+        except ValueError as error:
+            raise SQLiteAcceptedRunCorruptionError(
+                "accepted-run SQLite callback acceptance is invalid"
+            ) from error
+
+    @staticmethod
     def _snapshot_from_row(row: sqlite3.Row) -> AcceptedRunSnapshot:
         try:
             external_run_id = _decode_sqlite_text(
@@ -1347,10 +1450,10 @@ class SQLiteAcceptedRunRepository:
         self._hit_failpoint("accept_run.after_commit")
         return result
 
-    def claim_run(
+    def claim_work(
         self,
         request: AcceptedRunClaimRequest,
-    ) -> AcceptedRunClaim | None:
+    ) -> AcceptedRunWorkItem | None:
         if not isinstance(request, AcceptedRunClaimRequest):
             raise TypeError(
                 "accepted-run SQLite claim must be an "
@@ -1367,7 +1470,7 @@ class SQLiteAcceptedRunRepository:
 
         def transition(
             connection: sqlite3.Connection,
-        ) -> AcceptedRunClaim | None:
+        ) -> AcceptedRunWorkItem | None:
             row = connection.execute(
                 """
                 SELECT *
@@ -1518,12 +1621,127 @@ class SQLiteAcceptedRunRepository:
                 ),
             )
             self._hit_failpoint("claim_run.after_event_insert")
-            return claim
+            try:
+                envelope = AcceptedRunExecutionEnvelope(
+                    run_id=request.run_id,
+                    identity=self._stored_admission_identity(row),
+                    graph_json=_decode_sqlite_text(
+                        "graph_json",
+                        row["graph_json"],
+                    ),
+                    graph_hash=_decode_sqlite_text(
+                        "graph_hash",
+                        row["graph_hash"],
+                    ),
+                    inputs_json=_decode_sqlite_text(
+                        "inputs_json",
+                        row["inputs_json"],
+                    ),
+                    invocation_json=_decode_sqlite_text(
+                        "invocation_json",
+                        row["invocation_json"],
+                    ),
+                    ticket_json=_decode_sqlite_text(
+                        "ticket_json",
+                        row["ticket_json"],
+                    ),
+                    graph_format_version=_decode_sqlite_text(
+                        "graph_format_version",
+                        row["graph_format_version"],
+                    ),
+                    runtime_format_version=_decode_sqlite_text(
+                        "runtime_format_version",
+                        row["runtime_format_version"],
+                    ),
+                    checkpoint_format_version=_decode_sqlite_text(
+                        "checkpoint_format_version",
+                        row["checkpoint_format_version"],
+                    ),
+                    created_at_unix_ms=_decode_sqlite_integer(
+                        "created_at_unix_ms",
+                        row["created_at_unix_ms"],
+                    ),
+                )
+                stored_checkpoint = None
+                callback_input = None
+                raw_checkpoint_digest = row["current_checkpoint_digest"]
+                if raw_checkpoint_digest is not None:
+                    checkpoint_digest = _decode_sqlite_text(
+                        "current_checkpoint_digest",
+                        raw_checkpoint_digest,
+                    )
+                    checkpoint_row = connection.execute(
+                        """
+                        SELECT *
+                        FROM run_checkpoints
+                        WHERE run_internal_id = ?
+                          AND checkpoint_digest = ?
+                        """,
+                        (internal_id, checkpoint_digest),
+                    ).fetchone()
+                    if checkpoint_row is None:
+                        raise SQLiteAcceptedRunCorruptionError(
+                            "accepted-run SQLite claimed checkpoint is missing"
+                        )
+                    inbox_row = connection.execute(
+                        """
+                        SELECT *
+                        FROM callback_inbox
+                        WHERE run_internal_id = ?
+                          AND checkpoint_digest = ?
+                        """,
+                        (internal_id, checkpoint_digest),
+                    ).fetchone()
+                    if inbox_row is None:
+                        raise SQLiteAcceptedRunCorruptionError(
+                            "accepted-run SQLite claimed callback is missing"
+                        )
+                    stored_checkpoint = self._stored_checkpoint_from_row(
+                        checkpoint_row
+                    )
+                    callback_input = AcceptedRunCallbackInput(
+                        acceptance=self._callback_acceptance_from_rows(
+                            request.run_id,
+                            checkpoint_row,
+                            inbox_row,
+                        ),
+                        payload_json=_decode_sqlite_text(
+                            "callback payload_json",
+                            inbox_row["payload_json"],
+                        ),
+                        received_at_unix_ms=_decode_sqlite_integer(
+                            "callback received_at_unix_ms",
+                            inbox_row["received_at_unix_ms"],
+                        ),
+                    )
+                return AcceptedRunWorkItem(
+                    claim=claim,
+                    envelope=envelope,
+                    state_version=next_state_version,
+                    event_high_watermark=next_event_sequence,
+                    checkpoint=stored_checkpoint,
+                    callback=callback_input,
+                )
+            except (
+                CheckpointIntegrityError,
+                SQLiteAcceptedRunCorruptionError,
+                ValueError,
+            ) as error:
+                raise SQLiteAcceptedRunCorruptionError(
+                    "accepted-run SQLite claimed work is invalid"
+                ) from error
 
-        claim = self._database._run_immediate(transition)
-        if claim is not None:
+        work = self._database._run_immediate(transition)
+        if work is not None:
             self._hit_failpoint("claim_run.after_commit")
-        return claim
+        return work
+
+    def claim_run(
+        self,
+        request: AcceptedRunClaimRequest,
+    ) -> AcceptedRunClaim | None:
+        work = self.claim_work(request)
+        return None if work is None else work.claim
 
     def commit_waiting(
         self,
@@ -1970,37 +2188,6 @@ class SQLiteAcceptedRunRepository:
                 run["internal_id"],
             )
 
-            def checkpoint_issuance(
-                checkpoint_row: sqlite3.Row,
-            ) -> CallbackIssuanceIdentity:
-                return CallbackIssuanceIdentity(
-                    run_id=requested_issuance.run_id,
-                    checkpoint_digest=_decode_sqlite_text(
-                        "checkpoint_digest",
-                        checkpoint_row["checkpoint_digest"],
-                    ),
-                    operation_id=_decode_sqlite_text(
-                        "operation_id",
-                        checkpoint_row["operation_id"],
-                    ),
-                    operation_attempt_id=_decode_sqlite_text(
-                        "operation_attempt_id",
-                        checkpoint_row["operation_attempt_id"],
-                    ),
-                    callback_idempotency_key=_decode_sqlite_text(
-                        "callback_idempotency_key",
-                        checkpoint_row["callback_idempotency_key"],
-                    ),
-                    lease_generation=_decode_sqlite_integer(
-                        "issuing_lease_generation",
-                        checkpoint_row["issuing_lease_generation"],
-                    ),
-                    fencing_token=_decode_sqlite_integer(
-                        "issuing_fencing_token",
-                        checkpoint_row["issuing_fencing_token"],
-                    ),
-                )
-
             def replay_existing(
                 inbox_row: sqlite3.Row,
             ) -> CallbackAcceptance:
@@ -2022,27 +2209,14 @@ class SQLiteAcceptedRunRepository:
                     raise SQLiteAcceptedRunCorruptionError(
                         "accepted-run SQLite callback inbox has no checkpoint"
                     )
-                expected = checkpoint_issuance(checkpoint_row)
-                acceptance = CallbackAcceptance(
-                    submission=CallbackSubmissionIdentity(
-                        issuance=expected,
-                        payload_digest=_decode_sqlite_text(
-                            "callback payload_digest",
-                            inbox_row["payload_digest"],
-                        ),
-                    ),
-                    receipt_json=_decode_sqlite_text(
-                        "callback receipt_json",
-                        inbox_row["receipt_json"],
-                    ),
-                    accepted_event_sequence=_decode_sqlite_integer(
-                        "callback accepted_event_sequence",
-                        inbox_row["accepted_event_sequence"],
-                    ),
-                    state_version=_decode_sqlite_integer(
-                        "callback accepted_state_version",
-                        inbox_row["accepted_state_version"],
-                    ),
+                expected = self._callback_issuance_from_checkpoint_row(
+                    requested_issuance.run_id,
+                    checkpoint_row,
+                )
+                acceptance = self._callback_acceptance_from_rows(
+                    requested_issuance.run_id,
+                    checkpoint_row,
+                    inbox_row,
                 )
                 replay = resolve_callback_replay(
                     expected_issuance=expected,
@@ -2102,7 +2276,10 @@ class SQLiteAcceptedRunRepository:
                 raise SQLiteAcceptedRunCorruptionError(
                     "accepted-run SQLite callback target checkpoint is missing"
                 )
-            expected_issuance = checkpoint_issuance(checkpoint_row)
+            expected_issuance = self._callback_issuance_from_checkpoint_row(
+                requested_issuance.run_id,
+                checkpoint_row,
+            )
             resolve_callback_replay(
                 expected_issuance=expected_issuance,
                 existing_acceptance=None,
@@ -2121,16 +2298,8 @@ class SQLiteAcceptedRunRepository:
                     snapshot.state_version,
                 )
             try:
-                stored_checkpoint = StoredRuntimeCheckpoint(
-                    format_version=_decode_sqlite_text(
-                        "checkpoint_format_version",
-                        checkpoint_row["checkpoint_format_version"],
-                    ),
-                    checkpoint_digest=expected_issuance.checkpoint_digest,
-                    checkpoint_json=_decode_sqlite_text(
-                        "checkpoint_json",
-                        checkpoint_row["checkpoint_json"],
-                    ),
+                stored_checkpoint = self._stored_checkpoint_from_row(
+                    checkpoint_row
                 )
                 checkpoint = decode_runtime_checkpoint(stored_checkpoint)
             except (CheckpointIntegrityError, ValueError) as error:
@@ -2671,25 +2840,7 @@ class SQLiteAcceptedRunRepository:
             ).fetchone()
             if row is None:
                 return None
-            try:
-                return StoredRuntimeCheckpoint(
-                    format_version=_decode_sqlite_text(
-                        "checkpoint_format_version",
-                        row["checkpoint_format_version"],
-                    ),
-                    checkpoint_digest=_decode_sqlite_text(
-                        "checkpoint_digest",
-                        row["checkpoint_digest"],
-                    ),
-                    checkpoint_json=_decode_sqlite_text(
-                        "checkpoint_json",
-                        row["checkpoint_json"],
-                    ),
-                )
-            except ValueError as error:
-                raise SQLiteAcceptedRunCorruptionError(
-                    "accepted-run SQLite checkpoint is invalid"
-                ) from error
+            return self._stored_checkpoint_from_row(row)
 
         return self._database._run_read(read)
 

@@ -28,6 +28,7 @@ from graphblocks.server_storage import (
     CallbackIssuanceIdentity,
     CallbackPayloadConflictError,
     CallbackSubmissionIdentity,
+    decode_runtime_checkpoint,
     encode_runtime_checkpoint,
 )
 from graphblocks.sqlite_outbox import SQLiteOutboxDispatcherRepository
@@ -532,10 +533,11 @@ def test_sqlite_repository_resumes_callback_after_process_restart(
 ) -> None:
     path = tmp_path / "accepted-runs.sqlite3"
     repository, waiting = _waiting_run(path)
-    repository.accept_callback_and_queue_resume(_callback_command(waiting))
+    command = _callback_command(waiting)
+    acceptance = repository.accept_callback_and_queue_resume(command)
 
     restarted = SQLiteAcceptedRunRepository(path)
-    claim = restarted.claim_run(
+    work = restarted.claim_work(
         AcceptedRunClaimRequest(
             tenant_id="tenant-1",
             run_id="run-1",
@@ -545,9 +547,19 @@ def test_sqlite_repository_resumes_callback_after_process_restart(
         )
     )
 
-    assert claim is not None
-    assert claim.lease_generation == 2
-    assert claim.fencing_token == 2
+    assert work is not None
+    assert work.is_resume
+    assert work.claim.lease_generation == 2
+    assert work.claim.fencing_token == 2
+    assert work.checkpoint == waiting.checkpoint
+    assert decode_runtime_checkpoint(work.checkpoint) == _checkpoint(
+        waiting.claim
+    )
+    assert work.callback is not None
+    assert work.callback.acceptance == acceptance
+    assert work.callback.payload_json == command.payload_json
+    assert work.callback.received_at_unix_ms == command.received_at_unix_ms
+    assert work.envelope.invocation_json == _admission().invocation_json
     snapshot = restarted.get_run(tenant_id="tenant-1", run_id="run-1")
     assert snapshot is not None
     assert snapshot.phase is AcceptedRunPhase.RUNNING

@@ -34,6 +34,7 @@ from graphblocks.server_storage import (
 )
 from graphblocks.sqlite_server_storage import (
     MAX_ACCEPTED_RUN_EVENT_PAGE_SIZE,
+    SQLiteAcceptedRunCorruptionError,
     SQLiteAcceptedRunRepository,
 )
 
@@ -502,6 +503,79 @@ def test_sqlite_repository_claims_ready_run_with_fenced_authority(
     assert [(event.sequence, event.kind) for event in events.events] == [
         (2, "run_claimed")
     ]
+
+
+def test_sqlite_repository_claim_work_returns_complete_initial_envelope(
+    tmp_path,
+) -> None:
+    repository = SQLiteAcceptedRunRepository(
+        tmp_path / "accepted-runs.sqlite3"
+    )
+    admission = _admission()
+    repository.accept_run(admission)
+
+    work = repository.claim_work(
+        AcceptedRunClaimRequest(
+            tenant_id="tenant-1",
+            run_id="run-1",
+            lease_owner_id="worker-1",
+            now_unix_ms=2_000,
+            lease_duration_ms=500,
+        )
+    )
+
+    assert work is not None
+    assert not work.is_resume
+    assert work.claim.lease_generation == 1
+    assert work.state_version == 2
+    assert work.event_high_watermark == 2
+    assert work.envelope.run_id == admission.run_id
+    assert work.envelope.identity == admission.identity
+    assert work.envelope.graph_json == admission.graph_json
+    assert work.envelope.graph_hash == admission.graph_hash
+    assert work.envelope.inputs_json == admission.inputs_json
+    assert work.envelope.invocation_json == admission.invocation_json
+    assert work.envelope.ticket_json == admission.ticket_json
+    assert work.envelope.created_at_unix_ms == admission.created_at_unix_ms
+    assert work.checkpoint is None
+    assert work.callback is None
+
+
+def test_sqlite_repository_claim_work_fails_closed_on_tampered_envelope(
+    tmp_path,
+) -> None:
+    path = tmp_path / "accepted-runs.sqlite3"
+    repository = SQLiteAcceptedRunRepository(path)
+    repository.accept_run(_admission())
+    connection = sqlite3.connect(path)
+    connection.execute(
+        """
+        UPDATE accepted_runs
+        SET invocation_json = '{ "responseId":"r-1","releaseId":"release-1" }'
+        """
+    )
+    connection.commit()
+    connection.close()
+
+    with pytest.raises(
+        SQLiteAcceptedRunCorruptionError,
+        match="claimed work is invalid",
+    ):
+        repository.claim_work(
+            AcceptedRunClaimRequest(
+                tenant_id="tenant-1",
+                run_id="run-1",
+                lease_owner_id="worker-1",
+                now_unix_ms=2_000,
+                lease_duration_ms=500,
+            )
+        )
+
+    snapshot = repository.get_run(tenant_id="tenant-1", run_id="run-1")
+    assert snapshot is not None
+    assert snapshot.phase is AcceptedRunPhase.READY_INITIAL
+    assert snapshot.state_version == 1
+    assert snapshot.event_high_watermark == 1
 
 
 def test_sqlite_repository_pages_committed_events_across_claim(
