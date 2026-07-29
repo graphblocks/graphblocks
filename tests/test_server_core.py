@@ -123,6 +123,7 @@ def _invoke_capacity_run(
     run_id: str,
     response_id: str,
     token: str | None = None,
+    response_mode: str = "accepted",
 ) -> ServerResponse:
     return app.handle(
         ServerRequest(
@@ -141,10 +142,29 @@ def _invoke_capacity_run(
                     "inputs": {"message": {"text": run_id}},
                     "runId": run_id,
                     "responseId": response_id,
-                    "responseMode": "accepted",
+                    "responseMode": response_mode,
                     "occurredAt": "2026-07-29T00:00:00Z",
                 }
             ).encode("utf-8"),
+        )
+    )
+
+
+def _delete_server_run(
+    app: GraphBlocksServerApp,
+    *,
+    run_id: str,
+    token: str,
+    deleted_at: str,
+) -> ServerResponse:
+    return app.handle(
+        ServerRequest(
+            method="DELETE",
+            path=f"/runs/{run_id}",
+            headers={"Authorization": f"Bearer {token}"},
+            query={},
+            cookies={},
+            requested_at=deleted_at,
         )
     )
 
@@ -284,10 +304,17 @@ def test_server_route_manifest_decodes_encoded_path_parameters() -> None:
 
 def test_server_route_manifest_matches_run_status_path() -> None:
     route_match = default_server_route_manifest().match("GET", "/runs/run-123")
+    delete_match = default_server_route_manifest().match(
+        "DELETE",
+        "/runs/run-123",
+    )
 
     assert route_match.endpoint.operation == "get_run_status"
     assert route_match.endpoint.auth_required is True
     assert route_match.path_params == {"run_id": "run-123"}
+    assert delete_match.endpoint.operation == "delete_run"
+    assert delete_match.endpoint.auth_required is True
+    assert delete_match.path_params == {"run_id": "run-123"}
 
 
 def test_server_route_manifest_matches_attach_to_run_path() -> None:
@@ -498,6 +525,7 @@ def test_server_app_validates_unauthenticated_development_mode_flag() -> None:
         "max_event_page_bytes",
         "max_in_memory_runs",
         "max_in_memory_runs_per_tenant",
+        "max_retired_run_tombstones",
     ),
 )
 def test_server_app_rejects_invalid_resource_limits(field_name: str) -> None:
@@ -4305,6 +4333,534 @@ def test_server_app_releases_tenant_reservation_after_executor_failure() -> None
     assert app._admitting_accepted_run_ids == set()
     assert app._admitting_run_tenant_by_run_id == {}
     assert app._events_by_run_id == {}
+
+
+def test_server_app_deletes_only_owner_visible_terminal_runs_and_reclaims_capacity(
+    monkeypatch,
+) -> None:
+    app = GraphBlocksServerApp(
+        auth_hook=StaticBearerAuthHook(
+            {
+                "alice-token": PrincipalRef("alice", tenant_id="tenant-a"),
+                "bob-token": PrincipalRef("bob", tenant_id="tenant-b"),
+            }
+        ),
+        max_in_memory_runs=1,
+        max_in_memory_runs_per_tenant=1,
+        max_retired_run_tombstones=2,
+    )
+    completed = _invoke_capacity_run(
+        app,
+        run_id="run-delete-terminal-1",
+        response_id="response-delete-terminal-1",
+        token="alice-token",
+        response_mode="sync",
+    )
+    too_early = _delete_server_run(
+        app,
+        run_id="run-delete-terminal-1",
+        token="alice-token",
+        deleted_at="2026-07-28T23:59:59Z",
+    )
+    denied = _delete_server_run(
+        app,
+        run_id="run-delete-terminal-1",
+        token="bob-token",
+        deleted_at="2026-07-29T00:00:01Z",
+    )
+    deleted = _delete_server_run(
+        app,
+        run_id="run-delete-terminal-1",
+        token="alice-token",
+        deleted_at="2026-07-29T00:00:02Z",
+    )
+    duplicate = _delete_server_run(
+        app,
+        run_id="run-delete-terminal-1",
+        token="alice-token",
+        deleted_at="2026-07-29T00:00:03Z",
+    )
+
+    assert completed.status_code == 200
+    assert too_early.status_code == 400
+    assert json.loads(too_early.body.decode("utf-8")) == {
+        "ok": False,
+        "error": (
+            "server run deletion deleted_at must not precede run completion"
+        ),
+    }
+    assert denied.status_code == 404
+    assert deleted.status_code == 202
+    assert json.loads(deleted.body.decode("utf-8")) == {
+        "ok": True,
+        "runId": "run-delete-terminal-1",
+        "status": "deleted",
+        "previousState": "succeeded",
+        "lastCursor": "run-delete-terminal-1:2",
+        "deletedAt": "2026-07-29T00:00:02Z",
+        "duplicate": False,
+    }
+    assert duplicate.status_code == 200
+    assert json.loads(duplicate.body.decode("utf-8")) == {
+        **json.loads(deleted.body.decode("utf-8")),
+        "duplicate": True,
+    }
+    assert "run-delete-terminal-1" not in app._events_by_run_id
+    assert "run-delete-terminal-1" not in app._run_authorization_by_run_id
+    assert "run-delete-terminal-1" not in app._accepted_run_results_by_run_id
+    assert "run-delete-terminal-1" in app._retired_runs_by_run_id
+
+    def fail_if_compiled(*args, **kwargs):
+        del args, kwargs
+        raise AssertionError("retired run ID reached graph compiler")
+
+    with monkeypatch.context() as context:
+        context.setattr(
+            graphblocks_server,
+            "compile_graph",
+            fail_if_compiled,
+        )
+        retired_id_reuse = _invoke_capacity_run(
+            app,
+            run_id="run-delete-terminal-1",
+            response_id="response-delete-terminal-reused",
+            token="alice-token",
+        )
+    replacement = _invoke_capacity_run(
+        app,
+        run_id="run-delete-terminal-2",
+        response_id="response-delete-terminal-2",
+        token="alice-token",
+    )
+
+    assert retired_id_reuse.status_code == 409
+    assert replacement.status_code == 202
+    assert tuple(app._events_by_run_id) == ("run-delete-terminal-2",)
+
+
+def test_server_app_rejects_deletion_while_run_is_non_terminal() -> None:
+    app = GraphBlocksServerApp(
+        auth_hook=StaticBearerAuthHook(
+            {
+                "alice-token": PrincipalRef("alice", tenant_id="tenant-a"),
+            }
+        ),
+        defer_accepted_runs=True,
+    )
+    accepted = _invoke_capacity_run(
+        app,
+        run_id="run-delete-active-1",
+        response_id="response-delete-active-1",
+        token="alice-token",
+    )
+    rejected = _delete_server_run(
+        app,
+        run_id="run-delete-active-1",
+        token="alice-token",
+        deleted_at="2026-07-29T00:00:01Z",
+    )
+
+    assert accepted.status_code == 202
+    assert rejected.status_code == 409
+    assert json.loads(rejected.body.decode("utf-8")) == {
+        "ok": False,
+        "runId": "run-delete-active-1",
+        "state": "running",
+        "error": (
+            "run 'run-delete-active-1' in state 'running' cannot be deleted"
+        ),
+    }
+    assert "run-delete-active-1" in app._events_by_run_id
+    assert "run-delete-active-1" not in app._retired_runs_by_run_id
+
+
+def test_server_app_terminal_deletion_cleans_run_scoped_state_and_bounds_tombstones() -> None:
+    principal = PrincipalRef("alice", tenant_id="tenant-a")
+    app = GraphBlocksServerApp(
+        auth_hook=StaticBearerAuthHook({"alice-token": principal}),
+        max_retired_run_tombstones=1,
+    )
+    first_run_id = "run-delete-cleanup-1"
+    assert _invoke_capacity_run(
+        app,
+        run_id=first_run_id,
+        response_id="response-delete-cleanup-1",
+        token="alice-token",
+        response_mode="sync",
+    ).status_code == 200
+    assert app.handle(
+        ServerRequest(
+            method="POST",
+            path=f"/runs/{first_run_id}/detach",
+            headers={"Authorization": "Bearer alice-token"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {"clientId": "client-delete-1", "reason": "cleanup"}
+            ).encode("utf-8"),
+            requested_at="2026-07-29T00:00:01Z",
+        )
+    ).status_code == 202
+    assert app.handle(
+        ServerRequest(
+            method="POST",
+            path=f"/runs/{first_run_id}/subscriptions",
+            headers={"Authorization": "Bearer alice-token"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "subscriptionId": "sub-delete-cleanup-1",
+                    "eventFilter": {"types": ["RunSucceeded"]},
+                    "delivery": {
+                        "kind": "local_callback",
+                        "callback_name": "cleanup",
+                    },
+                }
+            ).encode("utf-8"),
+            requested_at="2026-07-29T00:00:02Z",
+        )
+    ).status_code == 201
+    assert app.handle(
+        ServerRequest(
+            method="POST",
+            path="/callbacks/register",
+            headers={"Authorization": "Bearer alice-token"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "subscriptionId": "callback-delete-cleanup-1",
+                    "scope": "run",
+                    "scopeId": first_run_id,
+                    "eventFilter": {"types": ["RunSucceeded"]},
+                    "delivery": {
+                        "kind": "local_callback",
+                        "callback_name": "cleanup",
+                    },
+                }
+            ).encode("utf-8"),
+            requested_at="2026-07-29T00:00:03Z",
+        )
+    ).status_code == 201
+    app._acks_by_subscription[
+        (first_run_id, "sub-delete-cleanup-1")
+    ] = ({"eventId": f"{first_run_id}:run-terminal"},)
+    delivery = ServerCallbackDeliveryResult(
+        delivery_id="delivery-delete-cleanup-1",
+        subscription_id="callback-delete-cleanup-1",
+        event_id=f"{first_run_id}:run-terminal",
+        run_id=first_run_id,
+        sequence=2,
+        cursor=f"{first_run_id}:2",
+        attempt=1,
+        idempotency_key="callback-delete-cleanup-1:terminal",
+        status="failed",
+        status_code=503,
+        last_error="receiver unavailable",
+    )
+    app._callback_delivery_results_by_subscription_id[
+        "callback-delete-cleanup-1"
+    ] = (delivery,)
+    app._callback_delivery_redrives[
+        ("callback-delete-cleanup-1", delivery.delivery_id)
+    ] = ({"status": "redrive_requested"},)
+    app._callback_delivery_dead_letter_moves[
+        ("callback-delete-cleanup-1", delivery.delivery_id)
+    ] = ({"status": "dead_letter_requested"},)
+
+    deleted = app.delete_terminal_run(
+        first_run_id,
+        principal=principal,
+        deleted_at="2026-07-29T00:00:04Z",
+    )
+
+    assert deleted["duplicate"] is False
+    assert first_run_id not in app._events_by_run_id
+    assert first_run_id not in app._run_authorization_by_run_id
+    assert first_run_id not in app._detachments_by_run_id
+    assert first_run_id not in app._run_controls_by_run_id
+    assert first_run_id not in app._subscriptions_by_run_id
+    assert not any(
+        key[0] == first_run_id for key in app._acks_by_subscription
+    )
+    assert "callback-delete-cleanup-1" not in app._callback_registrations
+    assert (
+        "callback-delete-cleanup-1"
+        not in app._callback_delivery_results_by_subscription_id
+    )
+    assert app._callback_delivery_redrives == {}
+    assert app._callback_delivery_dead_letter_moves == {}
+
+    second_run_id = "run-delete-cleanup-2"
+    assert _invoke_capacity_run(
+        app,
+        run_id=second_run_id,
+        response_id="response-delete-cleanup-2",
+        token="alice-token",
+        response_mode="sync",
+    ).status_code == 200
+    app.delete_terminal_run(
+        second_run_id,
+        principal=principal,
+        deleted_at="2026-07-29T00:00:05Z",
+    )
+
+    assert tuple(app._retired_runs_by_run_id) == (second_run_id,)
+    assert _invoke_capacity_run(
+        app,
+        run_id=first_run_id,
+        response_id="response-delete-cleanup-reused",
+        token="alice-token",
+    ).status_code == 202
+
+
+def test_server_app_defers_terminal_deletion_during_active_callback_delivery() -> None:
+    delivery_started = Event()
+    release_delivery = Event()
+
+    class BlockingDeliveryHook:
+        def deliver(
+            self,
+            registration: ServerCallbackRegistration,
+            event: dict[str, object],
+        ) -> ServerCallbackDeliveryResult:
+            metadata = event["metadata"]
+            assert isinstance(metadata, dict)
+            delivery_started.set()
+            if not release_delivery.wait(5):
+                raise TimeoutError("test did not release callback delivery")
+            return ServerCallbackDeliveryResult(
+                delivery_id="delivery-delete-active-1",
+                subscription_id=registration.subscription_id,
+                event_id=str(metadata["eventId"]),
+                run_id=str(metadata["runId"]),
+                sequence=int(metadata["sequence"]),
+                cursor=str(metadata["cursor"]),
+                attempt=1,
+                idempotency_key=(
+                    f"{registration.subscription_id}:{metadata['eventId']}"
+                ),
+                status="delivered",
+                status_code=200,
+                delivered_at="2026-07-29T00:00:02Z",
+            )
+
+    principal = PrincipalRef("alice", tenant_id="tenant-a")
+    app = GraphBlocksServerApp(
+        auth_hook=StaticBearerAuthHook({"alice-token": principal}),
+        callback_delivery_hook=BlockingDeliveryHook(),
+    )
+    run_id = "run-delete-active-delivery-1"
+    assert _invoke_capacity_run(
+        app,
+        run_id=run_id,
+        response_id="response-delete-active-delivery-1",
+        token="alice-token",
+        response_mode="sync",
+    ).status_code == 200
+    registration_request = ServerRequest(
+        method="POST",
+        path="/callbacks/register",
+        headers={"Authorization": "Bearer alice-token"},
+        query={},
+        cookies={},
+        body=json.dumps(
+            {
+                "subscriptionId": "callback-delete-active-1",
+                "scope": "run",
+                "scopeId": run_id,
+                "eventFilter": {"types": ["RunSucceeded"]},
+                "delivery": {
+                    "kind": "webhook",
+                    "url": "https://relay.example/events",
+                    "signing": {
+                        "algorithm": "hmac-sha256",
+                        "secret_ref": "secret://relay",
+                    },
+                },
+                "failurePolicy": "retry_then_dead_letter",
+                "deadLetterPolicy": "webhook-standard",
+            }
+        ).encode("utf-8"),
+        requested_at="2026-07-29T00:00:01Z",
+    )
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        registration_future = executor.submit(
+            app.handle,
+            registration_request,
+        )
+        assert delivery_started.wait(5)
+        blocked = _delete_server_run(
+            app,
+            run_id=run_id,
+            token="alice-token",
+            deleted_at="2026-07-29T00:00:02Z",
+        )
+        release_delivery.set()
+        registered = registration_future.result(timeout=5)
+
+    deleted = _delete_server_run(
+        app,
+        run_id=run_id,
+        token="alice-token",
+        deleted_at="2026-07-29T00:00:03Z",
+    )
+
+    assert blocked.status_code == 409
+    assert json.loads(blocked.body.decode("utf-8"))["state"] == (
+        "callback_delivery_in_progress"
+    )
+    assert registered.status_code == 201
+    assert deleted.status_code == 202
+    assert app._active_callback_delivery_registration_ids == set()
+    assert "callback-delete-active-1" not in app._callback_registrations
+    assert (
+        "callback-delete-active-1"
+        not in app._callback_delivery_results_by_subscription_id
+    )
+
+
+def test_server_app_fences_callback_registration_replay_after_run_deletion(
+    monkeypatch,
+) -> None:
+    replay_captured = Event()
+    release_replay = Event()
+    original_replay = GraphBlocksServerApp._callback_registration_replay
+
+    def delayed_replay(
+        app: GraphBlocksServerApp,
+        registration: ServerCallbackRegistration,
+    ):
+        replay = original_replay(app, registration)
+        replay_captured.set()
+        if not release_replay.wait(5):
+            raise TimeoutError("test did not release callback replay")
+        return replay
+
+    monkeypatch.setattr(
+        GraphBlocksServerApp,
+        "_callback_registration_replay",
+        delayed_replay,
+    )
+    principal = PrincipalRef("alice", tenant_id="tenant-a")
+    app = GraphBlocksServerApp(
+        auth_hook=StaticBearerAuthHook({"alice-token": principal}),
+    )
+    run_id = "run-delete-replay-1"
+    assert _invoke_capacity_run(
+        app,
+        run_id=run_id,
+        response_id="response-delete-replay-1",
+        token="alice-token",
+        response_mode="sync",
+    ).status_code == 200
+    registration_request = ServerRequest(
+        method="POST",
+        path="/callbacks/register",
+        headers={"Authorization": "Bearer alice-token"},
+        query={},
+        cookies={},
+        body=json.dumps(
+            {
+                "subscriptionId": "callback-delete-replay-1",
+                "scope": "run",
+                "scopeId": run_id,
+                "eventFilter": {"types": ["RunSucceeded"]},
+                "delivery": {
+                    "kind": "local_callback",
+                    "callback_name": "cleanup",
+                },
+            }
+        ).encode("utf-8"),
+        requested_at="2026-07-29T00:00:01Z",
+    )
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        registration_future = executor.submit(
+            app.handle,
+            registration_request,
+        )
+        assert replay_captured.wait(5)
+        deleted = _delete_server_run(
+            app,
+            run_id=run_id,
+            token="alice-token",
+            deleted_at="2026-07-29T00:00:02Z",
+        )
+        release_replay.set()
+        registration = registration_future.result(timeout=5)
+
+    assert deleted.status_code == 202
+    assert registration.status_code == 404
+    assert "callback-delete-replay-1" not in app._callback_registrations
+    assert (
+        "callback-delete-replay-1"
+        not in app._pending_callback_registration_ids
+    )
+    assert (
+        "callback-delete-replay-1"
+        not in app._incomplete_callback_registration_ids
+    )
+
+
+def test_server_app_fences_detach_mutation_after_run_deletion(
+    monkeypatch,
+) -> None:
+    detach_parsed = Event()
+    release_detach = Event()
+    original_parser = graphblocks_server._server_request_json_body
+
+    def delayed_parser(request: ServerRequest, owner: str):
+        payload = original_parser(request, owner)
+        if owner == "detach request":
+            detach_parsed.set()
+            if not release_detach.wait(5):
+                raise TimeoutError("test did not release detach request")
+        return payload
+
+    principal = PrincipalRef("alice", tenant_id="tenant-a")
+    app = GraphBlocksServerApp(
+        auth_hook=StaticBearerAuthHook({"alice-token": principal}),
+    )
+    run_id = "run-delete-detach-race-1"
+    assert _invoke_capacity_run(
+        app,
+        run_id=run_id,
+        response_id="response-delete-detach-race-1",
+        token="alice-token",
+        response_mode="sync",
+    ).status_code == 200
+    monkeypatch.setattr(
+        graphblocks_server,
+        "_server_request_json_body",
+        delayed_parser,
+    )
+    detach_request = ServerRequest(
+        method="POST",
+        path=f"/runs/{run_id}/detach",
+        headers={"Authorization": "Bearer alice-token"},
+        query={},
+        cookies={},
+        body=json.dumps(
+            {"clientId": "client-delete-race-1", "reason": "cleanup"}
+        ).encode("utf-8"),
+        requested_at="2026-07-29T00:00:01Z",
+    )
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        detach_future = executor.submit(app.handle, detach_request)
+        assert detach_parsed.wait(5)
+        deleted = _delete_server_run(
+            app,
+            run_id=run_id,
+            token="alice-token",
+            deleted_at="2026-07-29T00:00:02Z",
+        )
+        release_detach.set()
+        detached = detach_future.result(timeout=5)
+
+    assert deleted.status_code == 202
+    assert detached.status_code == 404
+    assert run_id not in app._detachments_by_run_id
 
 
 def test_server_app_rejects_invoke_graph_with_invalid_occurred_timestamp() -> None:

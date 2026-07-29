@@ -114,6 +114,14 @@ SERVER_TERMINAL_EVENT_KINDS = frozenset({
     "RunCompleted",
     "RunExpired",
 })
+SERVER_TERMINAL_RUN_STATES = frozenset({
+    "completed",
+    "succeeded",
+    "failed",
+    "cancelled",
+    "expired",
+    "policy_stopped",
+})
 MAX_SERVER_REQUEST_JSON_DEPTH = 64
 MAX_RUN_CURSOR_SEQUENCE = (1 << 64) - 1
 DEFAULT_MAX_SERVER_REQUEST_BODY_BYTES = 1024 * 1024
@@ -122,6 +130,7 @@ DEFAULT_MAX_SERVER_EVENT_PAGE_EVENTS = 100
 DEFAULT_MAX_SERVER_EVENT_PAGE_BYTES = 1024 * 1024
 DEFAULT_MAX_IN_MEMORY_RUNS = 10_000
 DEFAULT_MAX_IN_MEMORY_RUNS_PER_TENANT = 1_000
+DEFAULT_MAX_RETIRED_RUN_TOMBSTONES = 10_000
 
 
 def _utc_now_iso() -> str:
@@ -895,6 +904,7 @@ def default_server_route_manifest() -> ServerRouteManifest:
             ServerEndpoint("GET", "/runs", "http", "list_runs", auth_required=True),
             ServerEndpoint("POST", "/runs", "http", "invoke_graph", auth_required=True),
             ServerEndpoint("GET", "/runs/{run_id}", "http", "get_run_status", auth_required=True),
+            ServerEndpoint("DELETE", "/runs/{run_id}", "http", "delete_run", auth_required=True),
             ServerEndpoint("POST", "/runs/{run_id}/attach", "http", "attach_to_run", auth_required=True),
             ServerEndpoint("POST", "/runs/{run_id}/detach", "http", "detach_from_run", auth_required=True),
             ServerEndpoint("POST", "/runs/{run_id}/subscriptions", "http", "subscribe_events", auth_required=True),
@@ -2260,6 +2270,66 @@ class _ServerRunAuthorizationRecord:
 
 
 @dataclass(frozen=True, slots=True)
+class _ServerRetiredRunRecord:
+    authorization: _ServerRunAuthorizationRecord
+    previous_state: str
+    last_cursor: str
+    deleted_at: str
+
+    def __post_init__(self) -> None:
+        if not isinstance(
+            self.authorization,
+            _ServerRunAuthorizationRecord,
+        ):
+            raise ValueError(
+                "server retired run authorization must be a run authorization record"
+            )
+        if self.previous_state not in SERVER_TERMINAL_RUN_STATES:
+            raise ValueError(
+                "server retired run previous_state must be terminal"
+            )
+        object.__setattr__(
+            self,
+            "last_cursor",
+            _validate_run_cursor(
+                "server retired run",
+                "last_cursor",
+                self.authorization.external_run_id,
+                self.last_cursor,
+            ),
+        )
+        object.__setattr__(
+            self,
+            "deleted_at",
+            _validate_iso_datetime(
+                "server retired run",
+                "deleted_at",
+                self.deleted_at,
+            ),
+        )
+
+    def response_payload(self, *, duplicate: bool) -> dict[str, object]:
+        return {
+            "ok": True,
+            "runId": self.authorization.external_run_id,
+            "status": "deleted",
+            "previousState": self.previous_state,
+            "lastCursor": self.last_cursor,
+            "deletedAt": self.deleted_at,
+            "duplicate": duplicate,
+        }
+
+
+class _ServerRunDeletionConflictError(RuntimeError):
+    def __init__(self, run_id: str, state: str) -> None:
+        self.run_id = run_id
+        self.state = state
+        super().__init__(
+            f"run {run_id!r} in state {state!r} cannot be deleted"
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class StaticBearerAuthHook:
     principals_by_token: dict[str, PrincipalRef] = field(default_factory=dict)
 
@@ -2409,8 +2479,16 @@ class GraphBlocksServerApp:
     max_in_memory_runs_per_tenant: int = (
         DEFAULT_MAX_IN_MEMORY_RUNS_PER_TENANT
     )
+    max_retired_run_tombstones: int = (
+        DEFAULT_MAX_RETIRED_RUN_TOMBSTONES
+    )
     _events_by_run_id: dict[str, tuple[Mapping[str, object], ...]] = field(default_factory=dict, init=False, repr=False)
     _run_authorization_by_run_id: dict[str, _ServerRunAuthorizationRecord] = field(
+        default_factory=dict,
+        init=False,
+        repr=False,
+    )
+    _retired_runs_by_run_id: dict[str, _ServerRetiredRunRecord] = field(
         default_factory=dict,
         init=False,
         repr=False,
@@ -2457,6 +2535,11 @@ class GraphBlocksServerApp:
     )
     _pending_callback_registration_ids: set[str] = field(default_factory=set, init=False, repr=False)
     _incomplete_callback_registration_ids: set[str] = field(default_factory=set, init=False, repr=False)
+    _active_callback_delivery_registration_ids: set[str] = field(
+        default_factory=set,
+        init=False,
+        repr=False,
+    )
     _callback_registration_condition: Condition = field(
         default_factory=Condition,
         init=False,
@@ -2552,6 +2635,7 @@ class GraphBlocksServerApp:
             "max_event_page_bytes",
             "max_in_memory_runs",
             "max_in_memory_runs_per_tenant",
+            "max_retired_run_tombstones",
         ):
             value = getattr(self, field_name)
             if isinstance(value, bool) or not isinstance(value, int) or value < 1:
@@ -2591,6 +2675,286 @@ class GraphBlocksServerApp:
             principal,
             created_at,
         )
+
+    def delete_terminal_run(
+        self,
+        run_id: str,
+        *,
+        principal: PrincipalRef | None,
+        deleted_at: str,
+    ) -> dict[str, object]:
+        run_id = _validate_exact_non_empty_string(
+            "server run deletion",
+            "run_id",
+            run_id,
+        )
+        if principal is not None and not isinstance(principal, PrincipalRef):
+            raise ValueError(
+                "server run deletion principal must be a PrincipalRef or null"
+            )
+        deleted_at = _validate_iso_datetime(
+            "server run deletion",
+            "deleted_at",
+            deleted_at,
+        )
+        with self._accepted_run_condition:
+            retired = self._retired_runs_by_run_id.get(run_id)
+            if retired is not None:
+                if not retired.authorization.allows_read(principal):
+                    raise KeyError(run_id)
+                return retired.response_payload(duplicate=True)
+
+            authorization = self._run_authorization_by_run_id.get(run_id)
+            events = self._events_by_run_id.get(run_id)
+            if (
+                authorization is None
+                or events is None
+                or not authorization.allows_read(principal)
+            ):
+                raise KeyError(run_id)
+            projection = self._run_status_payload(
+                run_id,
+                events,
+                include_ok=False,
+            )
+            state = projection.get("state")
+            if not isinstance(state, str):
+                raise ValueError(
+                    "server run deletion projected state must be a string"
+                )
+            if state not in SERVER_TERMINAL_RUN_STATES:
+                raise _ServerRunDeletionConflictError(run_id, state)
+            if (
+                run_id in self._admitting_accepted_run_ids
+                or run_id in self._advancing_accepted_runs_by_run_id
+                or run_id in self._pending_accepted_runs_by_run_id
+                or run_id in self._accepted_run_executions_by_run_id
+            ):
+                raise _ServerRunDeletionConflictError(
+                    run_id,
+                    "terminal_cleanup_pending",
+                )
+            completed_at = projection.get("completedAt")
+            if not isinstance(completed_at, str):
+                raise ValueError(
+                    "server run deletion projected completedAt must be a string"
+                )
+            completed_at = _validate_iso_datetime(
+                "server run deletion",
+                "completed_at",
+                completed_at,
+            )
+            deleted_datetime = datetime.fromisoformat(
+                f"{deleted_at[:-1]}+00:00"
+                if deleted_at.endswith("Z")
+                else deleted_at
+            ).astimezone(timezone.utc)
+            completed_datetime = datetime.fromisoformat(
+                f"{completed_at[:-1]}+00:00"
+                if completed_at.endswith("Z")
+                else completed_at
+            ).astimezone(timezone.utc)
+            if deleted_datetime < completed_datetime:
+                raise ValueError(
+                    "server run deletion deleted_at must not precede run completion"
+                )
+            last_cursor = projection.get("lastCursor")
+            if not isinstance(last_cursor, str):
+                raise ValueError(
+                    "server run deletion projected lastCursor must be a string"
+                )
+            retired = _ServerRetiredRunRecord(
+                authorization=authorization,
+                previous_state=state,
+                last_cursor=last_cursor,
+                deleted_at=deleted_at,
+            )
+
+            with self._subscription_registration_condition:
+                subscriptions = self._subscriptions_by_run_id.get(
+                    run_id,
+                    (),
+                )
+                subscription_ids = {
+                    subscription.subscription_id
+                    for subscription in subscriptions
+                }
+
+                with self._callback_registration_condition:
+                    run_registration_ids = {
+                        subscription_id
+                        for subscription_id, registration in (
+                            self._callback_registrations.items()
+                        )
+                        if (
+                            registration.scope == "run"
+                            and registration.scope_id == run_id
+                        )
+                    }
+                    if any(
+                        registration is not None
+                        and (
+                            (
+                                registration.scope == "run"
+                                and registration.scope_id == run_id
+                            )
+                            or (
+                                registration.scope == "tenant"
+                                and authorization.tenant_id is not None
+                                and registration.scope_id
+                                == authorization.tenant_id
+                            )
+                            or (
+                                registration.scope
+                                in {
+                                    "conversation",
+                                    "project",
+                                    "deployment",
+                                }
+                            )
+                        )
+                        for registration in (
+                            self._callback_registrations.get(
+                                subscription_id
+                            )
+                            for subscription_id in (
+                                self._active_callback_delivery_registration_ids
+                            )
+                        )
+                    ):
+                        raise _ServerRunDeletionConflictError(
+                            run_id,
+                            "callback_delivery_in_progress",
+                        )
+                    while (
+                        len(self._retired_runs_by_run_id)
+                        >= self.max_retired_run_tombstones
+                    ):
+                        oldest_run_id = next(
+                            iter(self._retired_runs_by_run_id)
+                        )
+                        self._retired_runs_by_run_id.pop(oldest_run_id)
+                    self._retired_runs_by_run_id[run_id] = retired
+                    self._events_by_run_id.pop(run_id, None)
+                    self._run_authorization_by_run_id.pop(run_id, None)
+                    self._subscriptions_by_run_id.pop(run_id, None)
+                    for ack_key in tuple(self._acks_by_subscription):
+                        if ack_key[0] == run_id:
+                            self._acks_by_subscription.pop(
+                                ack_key,
+                                None,
+                            )
+                    subscription_ids.update(run_registration_ids)
+                    for subscription_id in run_registration_ids:
+                        self._callback_registrations.pop(
+                            subscription_id,
+                            None,
+                        )
+                        self._pending_callback_registration_ids.discard(
+                            subscription_id
+                        )
+                        self._incomplete_callback_registration_ids.discard(
+                            subscription_id
+                        )
+                        self._active_callback_delivery_registration_ids.discard(
+                            subscription_id
+                        )
+
+                    removed_delivery_keys: set[tuple[str, str]] = set()
+                    for subscription_id, deliveries in tuple(
+                        self._callback_delivery_results_by_subscription_id.items()
+                    ):
+                        retained_deliveries = tuple(
+                            delivery
+                            for delivery in deliveries
+                            if delivery.run_id != run_id
+                        )
+                        for delivery in deliveries:
+                            if delivery.run_id == run_id:
+                                removed_delivery_keys.add(
+                                    (
+                                        subscription_id,
+                                        delivery.delivery_id,
+                                    )
+                                )
+                        if (
+                            subscription_id in subscription_ids
+                            or not retained_deliveries
+                        ):
+                            self._callback_delivery_results_by_subscription_id.pop(
+                                subscription_id,
+                                None,
+                            )
+                        elif retained_deliveries != deliveries:
+                            self._callback_delivery_results_by_subscription_id[
+                                subscription_id
+                            ] = retained_deliveries
+                    for control_key in tuple(
+                        self._callback_delivery_redrives
+                    ):
+                        if (
+                            control_key in removed_delivery_keys
+                            or control_key[0] in subscription_ids
+                        ):
+                            self._callback_delivery_redrives.pop(
+                                control_key,
+                                None,
+                            )
+                    for control_key in tuple(
+                        self._callback_delivery_dead_letter_moves
+                    ):
+                        if (
+                            control_key in removed_delivery_keys
+                            or control_key[0] in subscription_ids
+                        ):
+                            self._callback_delivery_dead_letter_moves.pop(
+                                control_key,
+                                None,
+                            )
+
+            for operation_id, submissions in tuple(
+                self._callbacks_by_operation_id.items()
+            ):
+                retained_submissions = tuple(
+                    submission
+                    for submission in submissions
+                    if submission.run_id != run_id
+                )
+                if retained_submissions:
+                    self._callbacks_by_operation_id[
+                        operation_id
+                    ] = retained_submissions
+                else:
+                    self._callbacks_by_operation_id.pop(
+                        operation_id,
+                        None,
+                    )
+            for operation_id, rejections in tuple(
+                self._async_callback_rejections_by_operation_id.items()
+            ):
+                retained_rejections = tuple(
+                    rejection
+                    for rejection in rejections
+                    if rejection.run_id != run_id
+                )
+                if retained_rejections:
+                    self._async_callback_rejections_by_operation_id[
+                        operation_id
+                    ] = retained_rejections
+                else:
+                    self._async_callback_rejections_by_operation_id.pop(
+                        operation_id,
+                        None,
+                    )
+
+            self._detachments_by_run_id.pop(run_id, None)
+            self._run_controls_by_run_id.pop(run_id, None)
+            self._pending_accepted_runs_by_run_id.pop(run_id, None)
+            self._admission_ticket_ids_by_run_id.pop(run_id, None)
+            self._accepted_run_results_by_run_id.pop(run_id, None)
+            self._accepted_run_executions_by_run_id.pop(run_id, None)
+            self._accepted_run_condition.notify_all()
+            return retired.response_payload(duplicate=False)
 
     def handle(self, request: ServerRequest) -> ServerResponse:
         try:
@@ -2720,6 +3084,44 @@ class GraphBlocksServerApp:
                     },
                 )
             return ServerResponse.json(200, {"ok": True, "runs": runs})
+        if route.operation == "delete_run":
+            run_id = route_match.path_params.get("run_id", "")
+            try:
+                payload = self.delete_terminal_run(
+                    run_id,
+                    principal=auth_decision.principal,
+                    deleted_at=request.requested_at or _utc_now_iso(),
+                )
+            except KeyError:
+                return ServerResponse.json(
+                    404,
+                    {
+                        "ok": False,
+                        "error": f"run {run_id!r} was not found",
+                    },
+                )
+            except _ServerRunDeletionConflictError as error:
+                return ServerResponse.json(
+                    409,
+                    {
+                        "ok": False,
+                        "runId": error.run_id,
+                        "state": error.state,
+                        "error": str(error),
+                    },
+                )
+            except ValueError as error:
+                return ServerResponse.json(
+                    400,
+                    {
+                        "ok": False,
+                        "error": str(error),
+                    },
+                )
+            return ServerResponse.json(
+                200 if payload["duplicate"] else 202,
+                payload,
+            )
         if route.operation in {"cancel_run", "pause_run", "resume_run", "expire_run"}:
             try:
                 run_id = route_match.path_params.get("run_id", "")
@@ -2858,7 +3260,31 @@ class GraphBlocksServerApp:
                 payload = _server_request_json_body(request, "detach request")
                 if not isinstance(payload, Mapping):
                     raise ValueError("detach request body must be a JSON object")
-                return self._detach_from_run_response(run_id, events, payload, request.requested_at or _utc_now_iso())
+                with self._accepted_run_condition:
+                    events = self._events_by_run_id.get(run_id)
+                    if (
+                        events is None
+                        or not self._principal_can_access_run(
+                            run_id,
+                            auth_decision.principal,
+                        )
+                    ):
+                        return ServerResponse.json(
+                            404,
+                            {
+                                "ok": False,
+                                "error": (
+                                    "run detach stream not found for run "
+                                    f"{run_id!r}"
+                                ),
+                            },
+                        )
+                    return self._detach_from_run_response(
+                        run_id,
+                        events,
+                        payload,
+                        request.requested_at or _utc_now_iso(),
+                    )
             except (TypeError, ValueError, json.JSONDecodeError) as error:
                 return ServerResponse.json(
                     400,
@@ -2894,6 +3320,25 @@ class GraphBlocksServerApp:
                         },
                     )
                 with self._subscription_registration_condition:
+                    current_events = self._events_by_run_id.get(run_id)
+                    if (
+                        current_events is None
+                        or not self._principal_can_access_run(
+                            run_id,
+                            auth_decision.principal,
+                        )
+                    ):
+                        return ServerResponse.json(
+                            404,
+                            {
+                                "ok": False,
+                                "error": (
+                                    "run event stream not found for subscription "
+                                    f"run {run_id!r}"
+                                ),
+                            },
+                        )
+                    events = current_events
                     existing = self._subscriptions_by_run_id.get(run_id, ())
                     subscription = ServerEventSubscription.from_request(
                         run_id=run_id,
@@ -3198,13 +3643,50 @@ class GraphBlocksServerApp:
                             self._pending_callback_registration_ids.discard(registration.subscription_id)
 
                 with self._callback_registration_condition:
+                    if (
+                        registration.scope == "run"
+                        and (
+                            registration.scope_id
+                            not in self._events_by_run_id
+                            or not self._principal_can_access_run(
+                                registration.scope_id,
+                                auth_decision.principal,
+                            )
+                        )
+                    ):
+                        self._pending_callback_registration_ids.discard(
+                            registration.subscription_id
+                        )
+                        self._incomplete_callback_registration_ids.discard(
+                            registration.subscription_id
+                        )
+                        return ServerResponse.json(
+                            404,
+                            {
+                                "ok": False,
+                                "error": (
+                                    "run event stream not found for callback "
+                                    "registration scope "
+                                    f"{registration.scope_id!r}"
+                                ),
+                            },
+                        )
                     if not resuming_incomplete_registration:
                         self._callback_registrations[registration.subscription_id] = registration
+                    if (
+                        self.callback_delivery_hook is not None
+                        and registration.delivery.get("kind") == "webhook"
+                    ):
+                        self._incomplete_callback_registration_ids.add(
+                            registration.subscription_id
+                        )
+                        self._active_callback_delivery_registration_ids.add(
+                            registration.subscription_id
+                        )
 
                 delivery_results: tuple[ServerCallbackDeliveryResult, ...] = ()
                 if self.callback_delivery_hook is not None and registration.delivery.get("kind") == "webhook":
                     with self._callback_registration_condition:
-                        self._incomplete_callback_registration_ids.add(registration.subscription_id)
                         delivered = list(
                             self._callback_delivery_results_by_subscription_id.get(
                                 registration.subscription_id,
@@ -3268,6 +3750,9 @@ class GraphBlocksServerApp:
                     finally:
                         with self._callback_registration_condition:
                             self._pending_callback_registration_ids.discard(registration.subscription_id)
+                            self._active_callback_delivery_registration_ids.discard(
+                                registration.subscription_id
+                            )
                 else:
                     with self._callback_registration_condition:
                         self._pending_callback_registration_ids.discard(registration.subscription_id)
@@ -4799,6 +5284,7 @@ class GraphBlocksServerApp:
                     if (
                         run_id in self._events_by_run_id
                         or run_id in self._admitting_accepted_run_ids
+                        or run_id in self._retired_runs_by_run_id
                     ):
                         return ServerResponse.json(
                             409,
@@ -4978,6 +5464,7 @@ class GraphBlocksServerApp:
                         if (
                             run_id in self._events_by_run_id
                             or run_id in self._admitting_accepted_run_ids
+                            or run_id in self._retired_runs_by_run_id
                         ):
                             return ServerResponse.json(
                                 409,
@@ -5136,6 +5623,7 @@ class GraphBlocksServerApp:
                         if (
                             run_id in self._events_by_run_id
                             or run_id in self._admitting_accepted_run_ids
+                            or run_id in self._retired_runs_by_run_id
                         ):
                             return ServerResponse.json(
                                 409,
@@ -5268,6 +5756,7 @@ class GraphBlocksServerApp:
                         if (
                             run_id in self._events_by_run_id
                             or run_id in self._admitting_accepted_run_ids
+                            or run_id in self._retired_runs_by_run_id
                         ):
                             return ServerResponse.json(
                                 409,
