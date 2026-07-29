@@ -20,6 +20,7 @@ from graphblocks.server import (
     MAX_SERVER_REQUEST_JSON_DEPTH,
     ServerAsyncCallbackRejection,
     ServerAsyncCallbackSubmission,
+    ServerAuthAuditEvent,
     ServerAuthDecision,
     ServerAuthRequest,
     ServerCallbackDeliveryResult,
@@ -623,6 +624,7 @@ def test_server_app_validates_unauthenticated_development_mode_flag() -> None:
         "max_run_control_history_bytes_per_run",
         "max_optional_callback_diagnostic_events_per_run",
         "max_optional_callback_diagnostic_history_bytes_per_run",
+        "max_auth_audit_events",
     ),
 )
 def test_server_app_rejects_invalid_resource_limits(field_name: str) -> None:
@@ -651,12 +653,19 @@ def test_server_app_fails_closed_when_auth_hook_returns_wrong_type() -> None:
             del request
             return object()
 
-    app = GraphBlocksServerApp(auth_hook=InvalidAuthHook())  # type: ignore[arg-type]
+    observed_audit_events: list[ServerAuthAuditEvent] = []
+    app = GraphBlocksServerApp(  # type: ignore[arg-type]
+        auth_hook=InvalidAuthHook(),
+        auth_audit_hook=observed_audit_events.append,
+    )
     response = app.handle(
         ServerRequest(
             method="GET",
             path="/runs",
-            headers={},
+            headers={
+                "authorization": "Bearer must-not-be-audited",
+                "x-request-id": "request-invalid-decision",
+            },
             query={},
             cookies={},
         )
@@ -668,20 +677,54 @@ def test_server_app_fails_closed_when_auth_hook_returns_wrong_type() -> None:
         "ok": False,
         "reasonCodes": ["auth.invalid_decision"],
     }
+    assert observed_audit_events == list(app.auth_audit_events())
+    assert len(observed_audit_events) == 1
+    event = observed_audit_events[0]
+    assert event.event_kind == "auth.invalid_decision"
+    assert event.method == "GET"
+    assert event.route == "/runs"
+    assert event.operation == "list_runs"
+    assert event.request_id == "request-invalid-decision"
+    assert event.failure_type == "builtins.object"
+    assert event.credential_present
+    assert "must-not-be-audited" not in repr(event)
 
 
-def test_server_app_fails_closed_when_auth_hook_raises() -> None:
+@pytest.mark.parametrize(
+    ("raised_error", "failure_type"),
+    (
+        (
+            RuntimeError("credential backend unavailable"),
+            "builtins.RuntimeError",
+        ),
+        (
+            TimeoutError("credential backend timed out"),
+            "builtins.TimeoutError",
+        ),
+    ),
+)
+def test_server_app_fails_closed_when_auth_hook_raises(
+    raised_error: Exception,
+    failure_type: str,
+) -> None:
     class FailingAuthHook:
         def authorize(self, request: ServerAuthRequest) -> ServerAuthDecision:
             del request
-            raise RuntimeError("credential backend unavailable")
+            raise raised_error
 
-    app = GraphBlocksServerApp(auth_hook=FailingAuthHook())
+    observed_audit_events: list[ServerAuthAuditEvent] = []
+    app = GraphBlocksServerApp(
+        auth_hook=FailingAuthHook(),
+        auth_audit_hook=observed_audit_events.append,
+    )
     response = app.handle(
         ServerRequest(
             method="GET",
             path="/runs",
-            headers={},
+            headers={
+                "authorization": "Bearer must-not-be-audited",
+                "x-request-id": "request-hook-error",
+            },
             query={},
             cookies={},
         )
@@ -693,6 +736,111 @@ def test_server_app_fails_closed_when_auth_hook_raises() -> None:
         "ok": False,
         "reasonCodes": ["auth.hook_error"],
     }
+    assert observed_audit_events == list(app.auth_audit_events())
+    assert len(observed_audit_events) == 1
+    event = observed_audit_events[0]
+    assert event.event_kind == "auth.hook_error"
+    assert event.request_id == "request-hook-error"
+    assert event.failure_type == failure_type
+    assert event.credential_present
+    assert "must-not-be-audited" not in repr(event)
+
+
+def test_server_app_bounds_auth_hook_audit_history() -> None:
+    class FailingAuthHook:
+        def authorize(self, request: ServerAuthRequest) -> ServerAuthDecision:
+            del request
+            raise RuntimeError("credential backend unavailable")
+
+    app = GraphBlocksServerApp(
+        auth_hook=FailingAuthHook(),
+        max_auth_audit_events=1,
+    )
+    for request_id in ("request-1", "request-2"):
+        response = app.handle(
+            ServerRequest(
+                method="GET",
+                path="/runs",
+                headers={"x-request-id": request_id},
+                query={},
+                cookies={},
+            )
+        )
+        assert response.status_code == 401
+
+    events = app.auth_audit_events()
+    assert len(events) == 1
+    assert events[0].request_id == "request-2"
+
+
+def test_server_app_auth_audit_sink_failure_does_not_mask_auth_failure() -> None:
+    class FailingAuthHook:
+        def authorize(self, request: ServerAuthRequest) -> ServerAuthDecision:
+            del request
+            raise RuntimeError("credential backend unavailable")
+
+    def fail_audit_sink(event: ServerAuthAuditEvent) -> None:
+        del event
+        raise RuntimeError("audit sink unavailable")
+
+    app = GraphBlocksServerApp(
+        auth_hook=FailingAuthHook(),
+        auth_audit_hook=fail_audit_sink,
+    )
+
+    response = app.handle(
+        ServerRequest(
+            method="GET",
+            path="/runs",
+            headers={"x-request-id": "request-audit-sink-failure"},
+            query={},
+            cookies={},
+        )
+    )
+
+    assert response.status_code == 401
+    assert len(app.auth_audit_events()) == 1
+    assert (
+        app.auth_audit_events()[0].request_id
+        == "request-audit-sink-failure"
+    )
+
+
+def test_server_app_requires_callable_auth_audit_hook() -> None:
+    with pytest.raises(
+        ValueError,
+        match="server auth_audit_hook must be callable",
+    ):
+        GraphBlocksServerApp(  # type: ignore[arg-type]
+            auth_hook=StaticBearerAuthHook({}),
+            auth_audit_hook=object(),
+        )
+
+
+def test_server_app_bounds_auth_audit_failure_type() -> None:
+    oversized_decision_type = type("D" * 300, (), {})
+
+    class InvalidAuthHook:
+        def authorize(self, request: ServerAuthRequest) -> object:
+            del request
+            return oversized_decision_type()
+
+    app = GraphBlocksServerApp(
+        auth_hook=InvalidAuthHook(),  # type: ignore[arg-type]
+    )
+
+    response = app.handle(
+        ServerRequest(
+            method="GET",
+            path="/runs",
+            headers={},
+            query={},
+            cookies={},
+        )
+    )
+
+    assert response.status_code == 401
+    assert app.auth_audit_events()[0].failure_type.startswith("sha256:")
 
 
 def test_server_app_returns_forbidden_for_authenticated_authz_denial() -> None:

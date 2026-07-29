@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import deque
 from collections.abc import Callable, Mapping
 from concurrent.futures import Executor, Future
 from dataclasses import dataclass, field, replace
@@ -154,12 +155,15 @@ DEFAULT_MAX_CALLBACK_DELIVERY_CONTROLS_PER_DELIVERY = 256
 DEFAULT_MAX_CALLBACK_DELIVERY_CONTROL_HISTORY_BYTES_PER_DELIVERY = (
     1024 * 1024
 )
+DEFAULT_MAX_AUTH_AUDIT_EVENTS = 1_024
 DEFAULT_TERMINAL_RUN_RETENTION_SECONDS = 24 * 60 * 60
 DEFAULT_TERMINAL_RUN_COLLECTION_INTERVAL_SECONDS = 60
 DEFAULT_TERMINAL_RUN_COLLECTION_BATCH_SIZE = 100
 MAX_SERVER_CALLBACK_DELIVERY_IDENTIFIER_BYTES = 4_096
 MAX_SERVER_CALLBACK_DELIVERY_ERROR_BYTES = 16_384
 MAX_SERVER_CALLBACK_DELIVERY_TIMESTAMP_BYTES = 128
+MAX_SERVER_AUTH_AUDIT_REQUEST_ID_BYTES = 256
+MAX_SERVER_AUTH_AUDIT_FAILURE_TYPE_BYTES = 256
 
 
 def _utc_now_iso() -> str:
@@ -2264,6 +2268,85 @@ def _callback_idempotency_key(body: Mapping[str, object], headers: Mapping[str, 
 
 
 @dataclass(frozen=True, slots=True)
+class ServerAuthAuditEvent:
+    event_kind: Literal["auth.hook_error", "auth.invalid_decision"]
+    method: str
+    route: str
+    operation: str
+    failure_type: str
+    credential_present: bool
+    observed_at: str
+    request_id: str | None = None
+
+    def __post_init__(self) -> None:
+        owner = "server auth audit event"
+        if self.event_kind not in {
+            "auth.hook_error",
+            "auth.invalid_decision",
+        }:
+            raise ValueError(f"{owner} event_kind is invalid")
+        object.__setattr__(
+            self,
+            "method",
+            _validate_exact_non_empty_string(
+                owner,
+                "method",
+                self.method,
+            ).upper(),
+        )
+        object.__setattr__(
+            self,
+            "route",
+            _validate_route_path(owner, self.route),
+        )
+        object.__setattr__(
+            self,
+            "operation",
+            _validate_exact_non_empty_string(
+                owner,
+                "operation",
+                self.operation,
+            ),
+        )
+        failure_type = _validate_exact_non_empty_string(
+            owner,
+            "failure_type",
+            self.failure_type,
+        )
+        if (
+            len(failure_type.encode("utf-8"))
+            > MAX_SERVER_AUTH_AUDIT_FAILURE_TYPE_BYTES
+        ):
+            raise ValueError(f"{owner} failure_type exceeds byte limit")
+        object.__setattr__(self, "failure_type", failure_type)
+        if not isinstance(self.credential_present, bool):
+            raise ValueError(
+                f"{owner} credential_present must be a boolean"
+            )
+        object.__setattr__(
+            self,
+            "observed_at",
+            _validate_iso_datetime(
+                owner,
+                "observed_at",
+                self.observed_at,
+            ),
+        )
+        if self.request_id is not None:
+            request_id = _validate_exact_non_empty_string(
+                owner,
+                "request_id",
+                self.request_id,
+            )
+            if (
+                len(request_id.encode("utf-8"))
+                > MAX_SERVER_AUTH_AUDIT_REQUEST_ID_BYTES
+            ):
+                raise ValueError(f"{owner} request_id exceeds byte limit")
+            object.__setattr__(self, "request_id", request_id)
+
+
+@dataclass(frozen=True, slots=True)
 class ServerAuthDecision:
     allowed: bool
     principal: PrincipalRef | None = None
@@ -2567,6 +2650,10 @@ class _AcceptedCallbackReceiptCapability:
 class GraphBlocksServerApp:
     route_manifest: ServerRouteManifest = field(default_factory=default_server_route_manifest)
     auth_hook: ServerAuthHook | None = None
+    auth_audit_hook: Callable[[ServerAuthAuditEvent], None] | None = field(
+        default=None,
+        repr=False,
+    )
     allow_unauthenticated_dev: bool = False
     health: ServerHealth = field(default_factory=lambda: ServerHealth("graphblocks-api"))
     registry: RuntimeRegistry = field(default_factory=stdlib_registry)
@@ -2635,6 +2722,7 @@ class GraphBlocksServerApp:
     max_callback_delivery_control_history_bytes_per_delivery: int = (
         DEFAULT_MAX_CALLBACK_DELIVERY_CONTROL_HISTORY_BYTES_PER_DELIVERY
     )
+    max_auth_audit_events: int = DEFAULT_MAX_AUTH_AUDIT_EVENTS
     terminal_run_retention_seconds: int = (
         DEFAULT_TERMINAL_RUN_RETENTION_SECONDS
     )
@@ -2646,6 +2734,11 @@ class GraphBlocksServerApp:
     )
     terminal_run_collection_clock: Callable[[], str] = field(
         default=_utc_now_iso,
+        repr=False,
+    )
+    _auth_audit_events: deque[ServerAuthAuditEvent] = field(
+        default_factory=deque,
+        init=False,
         repr=False,
     )
     _events_by_run_id: dict[str, tuple[Mapping[str, object], ...]] = field(default_factory=dict, init=False, repr=False)
@@ -2815,6 +2908,10 @@ class GraphBlocksServerApp:
     def __post_init__(self) -> None:
         if not isinstance(self.allow_unauthenticated_dev, bool):
             raise ValueError("server allow_unauthenticated_dev must be a boolean")
+        if self.auth_audit_hook is not None and not callable(
+            self.auth_audit_hook
+        ):
+            raise ValueError("server auth_audit_hook must be callable")
         if (
             self.auth_hook is None
             and not self.allow_unauthenticated_dev
@@ -2854,6 +2951,7 @@ class GraphBlocksServerApp:
             "max_callback_registration_history_bytes",
             "max_callback_delivery_controls_per_delivery",
             "max_callback_delivery_control_history_bytes_per_delivery",
+            "max_auth_audit_events",
             "terminal_run_retention_seconds",
             "terminal_run_collection_interval_seconds",
             "terminal_run_collection_batch_size",
@@ -2861,6 +2959,9 @@ class GraphBlocksServerApp:
             value = getattr(self, field_name)
             if isinstance(value, bool) or not isinstance(value, int) or value < 1:
                 raise ValueError(f"server {field_name} must be a positive integer")
+        self._auth_audit_events = deque(
+            maxlen=self.max_auth_audit_events,
+        )
         if not isinstance(self.require_async_callback_authentication, bool):
             raise ValueError("server require_async_callback_authentication must be a boolean")
         if not isinstance(self.anti_enumerate_async_callbacks, bool):
@@ -2878,6 +2979,9 @@ class GraphBlocksServerApp:
             raise ValueError(
                 "server terminal_run_collection_clock must be callable"
             )
+
+    def auth_audit_events(self) -> tuple[ServerAuthAuditEvent, ...]:
+        return tuple(self._auth_audit_events)
 
     def _principal_can_access_run(
         self,
@@ -3321,6 +3425,18 @@ class GraphBlocksServerApp:
 
         auth_decision = ServerAuthDecision(True)
         if route.auth_required and self.auth_hook is not None:
+            auth_audit_request_id = request.headers.get("x-request-id")
+            if (
+                auth_audit_request_id is not None
+                and (
+                    not auth_audit_request_id
+                    or auth_audit_request_id
+                    != auth_audit_request_id.strip()
+                    or len(auth_audit_request_id.encode("utf-8"))
+                    > MAX_SERVER_AUTH_AUDIT_REQUEST_ID_BYTES
+                )
+            ):
+                auth_audit_request_id = None
             try:
                 hook_decision = self.auth_hook.authorize(
                     ServerAuthRequest(
@@ -3331,7 +3447,35 @@ class GraphBlocksServerApp:
                         requested_at=request.requested_at,
                     )
                 )
-            except Exception:
+            except Exception as error:
+                error_type = type(error)
+                error_type_name = (
+                    f"{error_type.__module__}."
+                    f"{error_type.__qualname__}"
+                )
+                if (
+                    len(error_type_name.encode("utf-8"))
+                    > MAX_SERVER_AUTH_AUDIT_FAILURE_TYPE_BYTES
+                ):
+                    error_type_name = canonical_hash(error_type_name)
+                audit_event = ServerAuthAuditEvent(
+                    event_kind="auth.hook_error",
+                    method=request.method,
+                    route=route.path,
+                    operation=route.operation,
+                    request_id=auth_audit_request_id,
+                    failure_type=error_type_name,
+                    credential_present=bool(
+                        request.headers.get("authorization")
+                    ),
+                    observed_at=_utc_now_iso(),
+                )
+                self._auth_audit_events.append(audit_event)
+                if self.auth_audit_hook is not None:
+                    try:
+                        self.auth_audit_hook(audit_event)
+                    except Exception:
+                        pass
                 return ServerResponse.json(
                     401,
                     {
@@ -3343,6 +3487,36 @@ class GraphBlocksServerApp:
                     },
                 )
             if not isinstance(hook_decision, ServerAuthDecision):
+                decision_type = type(hook_decision)
+                decision_type_name = (
+                    f"{decision_type.__module__}."
+                    f"{decision_type.__qualname__}"
+                )
+                if (
+                    len(decision_type_name.encode("utf-8"))
+                    > MAX_SERVER_AUTH_AUDIT_FAILURE_TYPE_BYTES
+                ):
+                    decision_type_name = canonical_hash(
+                        decision_type_name
+                    )
+                audit_event = ServerAuthAuditEvent(
+                    event_kind="auth.invalid_decision",
+                    method=request.method,
+                    route=route.path,
+                    operation=route.operation,
+                    request_id=auth_audit_request_id,
+                    failure_type=decision_type_name,
+                    credential_present=bool(
+                        request.headers.get("authorization")
+                    ),
+                    observed_at=_utc_now_iso(),
+                )
+                self._auth_audit_events.append(audit_event)
+                if self.auth_audit_hook is not None:
+                    try:
+                        self.auth_audit_hook(audit_event)
+                    except Exception:
+                        pass
                 return ServerResponse.json(
                     401,
                     {
