@@ -621,6 +621,8 @@ def test_server_app_validates_unauthenticated_development_mode_flag() -> None:
         "terminal_run_collection_batch_size",
         "max_run_controls_per_run",
         "max_run_control_history_bytes_per_run",
+        "max_optional_callback_diagnostic_events_per_run",
+        "max_optional_callback_diagnostic_history_bytes_per_run",
     ),
 )
 def test_server_app_rejects_invalid_resource_limits(field_name: str) -> None:
@@ -4797,6 +4799,16 @@ def test_server_app_terminal_deletion_cleans_run_scoped_state_and_bounds_tombsto
     app._callback_submission_history_bytes = (
         callback_submission._retained_size_bytes()
     )
+    app._append_async_callback_diagnostic_event(
+        "LateExternalCallbackReceived",
+        callback_submission,
+        "terminal_run",
+        status="succeeded",
+    )
+    assert (
+        app._optional_callback_diagnostic_event_count_by_run_id[first_run_id]
+        == 1
+    )
 
     deleted = app.delete_terminal_run(
         first_run_id,
@@ -4823,6 +4835,14 @@ def test_server_app_terminal_deletion_cleans_run_scoped_state_and_bounds_tombsto
     assert app._callback_delivery_dead_letter_moves == {}
     assert app._callbacks_by_operation_id == {}
     assert app._callback_submission_history_bytes == 0
+    assert (
+        first_run_id
+        not in app._optional_callback_diagnostic_event_count_by_run_id
+    )
+    assert (
+        first_run_id
+        not in app._optional_callback_diagnostic_history_bytes_by_run_id
+    )
 
     second_run_id = "run-delete-cleanup-2"
     assert _invoke_capacity_run(
@@ -5870,6 +5890,88 @@ def test_server_app_bounds_run_control_canonical_bytes() -> None:
         "error": "server run control history capacity is exhausted",
     }
     assert app.run_controls(run_id) == ()
+
+
+def test_server_app_bounds_optional_callback_diagnostic_event_count() -> None:
+    principal = PrincipalRef("user-1")
+    app = GraphBlocksServerApp(
+        auth_hook=StaticBearerAuthHook({"token-1": principal}),
+        max_optional_callback_diagnostic_events_per_run=1,
+        max_optional_callback_diagnostic_history_bytes_per_run=4_096,
+    )
+    run_id = "run-callback-diagnostic-count-limit-1"
+    _seed_run_control_stream(app, run_id, principal)
+    first = ServerAsyncCallbackSubmission(
+        operation_id="operation-diagnostic-limit-1",
+        callback_id="callback-diagnostic-limit-1",
+        idempotency_key="idempotency-diagnostic-limit-1",
+        payload={"status": "rejected"},
+        run_id=run_id,
+        node_id="node-1",
+        attempt_id="attempt-1",
+        received_at="2026-07-29T00:00:01Z",
+        verified_by="callback-relay",
+    )
+    second = replace(
+        first,
+        callback_id="callback-diagnostic-limit-2",
+        idempotency_key="idempotency-diagnostic-limit-2",
+        received_at="2026-07-29T00:00:02Z",
+    )
+
+    app._append_async_callback_diagnostic_event(
+        "ExternalCallbackRejected",
+        first,
+        "stale_attempt",
+    )
+    app._append_async_callback_diagnostic_event(
+        "LateExternalCallbackReceived",
+        second,
+        "terminal_run",
+    )
+    app._append_async_callback_diagnostic_event(
+        "RunResuming",
+        second,
+        None,
+    )
+
+    events = app._events_by_run_id[run_id]
+    assert [event["kind"] for event in events] == [
+        "RunStarted",
+        "ExternalCallbackRejected",
+        "RunResuming",
+    ]
+    assert [event["metadata"]["sequence"] for event in events] == [1, 2, 3]
+
+
+def test_server_app_bounds_optional_callback_diagnostic_canonical_bytes() -> None:
+    principal = PrincipalRef("user-1")
+    app = GraphBlocksServerApp(
+        auth_hook=StaticBearerAuthHook({"token-1": principal}),
+        max_optional_callback_diagnostic_events_per_run=10,
+        max_optional_callback_diagnostic_history_bytes_per_run=1,
+    )
+    run_id = "run-callback-diagnostic-byte-limit-1"
+    _seed_run_control_stream(app, run_id, principal)
+    submission = ServerAsyncCallbackSubmission(
+        operation_id="operation-diagnostic-byte-limit-1",
+        callback_id="callback-diagnostic-byte-limit-1",
+        idempotency_key="idempotency-diagnostic-byte-limit-1",
+        payload={"status": "rejected"},
+        run_id=run_id,
+        received_at="2026-07-29T00:00:01Z",
+        verified_by="callback-relay",
+    )
+
+    app._append_async_callback_diagnostic_event(
+        "ExternalCallbackRejected",
+        submission,
+        "authentication_failed",
+    )
+
+    assert [event["kind"] for event in app._events_by_run_id[run_id]] == [
+        "RunStarted"
+    ]
 
 
 def test_server_app_projects_typed_pause_wait_reason() -> None:

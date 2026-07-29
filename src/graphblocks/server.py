@@ -122,6 +122,10 @@ SERVER_TERMINAL_RUN_STATES = frozenset({
     "expired",
     "policy_stopped",
 })
+SERVER_OPTIONAL_CALLBACK_DIAGNOSTIC_EVENT_KINDS = frozenset({
+    "ExternalCallbackRejected",
+    "LateExternalCallbackReceived",
+})
 MAX_SERVER_REQUEST_JSON_DEPTH = 64
 MAX_RUN_CURSOR_SEQUENCE = (1 << 64) - 1
 DEFAULT_MAX_SERVER_REQUEST_BODY_BYTES = 1024 * 1024
@@ -141,6 +145,8 @@ DEFAULT_MAX_EVENT_ACKS_PER_SUBSCRIPTION = 4_096
 DEFAULT_MAX_EVENT_ACK_HISTORY_BYTES_PER_SUBSCRIPTION = 1024 * 1024
 DEFAULT_MAX_CALLBACK_OPERATION_HISTORIES = 4_096
 DEFAULT_MAX_CALLBACK_SUBMISSION_HISTORY_BYTES = 64 * 1024 * 1024
+DEFAULT_MAX_OPTIONAL_CALLBACK_DIAGNOSTIC_EVENTS_PER_RUN = 256
+DEFAULT_MAX_OPTIONAL_CALLBACK_DIAGNOSTIC_HISTORY_BYTES_PER_RUN = 1024 * 1024
 DEFAULT_MAX_CALLBACK_REGISTRATIONS = 4_096
 DEFAULT_MAX_CALLBACK_REGISTRATION_HISTORY_BYTES = 64 * 1024 * 1024
 DEFAULT_MAX_CALLBACK_DELIVERY_CONTROLS_PER_DELIVERY = 256
@@ -2595,6 +2601,12 @@ class GraphBlocksServerApp:
     max_callback_submission_history_bytes: int = (
         DEFAULT_MAX_CALLBACK_SUBMISSION_HISTORY_BYTES
     )
+    max_optional_callback_diagnostic_events_per_run: int = (
+        DEFAULT_MAX_OPTIONAL_CALLBACK_DIAGNOSTIC_EVENTS_PER_RUN
+    )
+    max_optional_callback_diagnostic_history_bytes_per_run: int = (
+        DEFAULT_MAX_OPTIONAL_CALLBACK_DIAGNOSTIC_HISTORY_BYTES_PER_RUN
+    )
     max_callback_registrations: int = DEFAULT_MAX_CALLBACK_REGISTRATIONS
     max_callback_registration_history_bytes: int = (
         DEFAULT_MAX_CALLBACK_REGISTRATION_HISTORY_BYTES
@@ -2636,6 +2648,22 @@ class GraphBlocksServerApp:
     )
     _callback_submission_history_bytes: int = field(
         default=0,
+        init=False,
+        repr=False,
+    )
+    _optional_callback_diagnostic_event_count_by_run_id: dict[
+        str,
+        int,
+    ] = field(
+        default_factory=dict,
+        init=False,
+        repr=False,
+    )
+    _optional_callback_diagnostic_history_bytes_by_run_id: dict[
+        str,
+        int,
+    ] = field(
+        default_factory=dict,
         init=False,
         repr=False,
     )
@@ -2802,6 +2830,8 @@ class GraphBlocksServerApp:
             "max_event_ack_history_bytes_per_subscription",
             "max_callback_operation_histories",
             "max_callback_submission_history_bytes",
+            "max_optional_callback_diagnostic_events_per_run",
+            "max_optional_callback_diagnostic_history_bytes_per_run",
             "max_callback_registrations",
             "max_callback_registration_history_bytes",
             "max_callback_delivery_controls_per_delivery",
@@ -3013,6 +3043,14 @@ class GraphBlocksServerApp:
                         self._retired_runs_by_run_id.pop(oldest_run_id)
                     self._retired_runs_by_run_id[run_id] = retired
                     self._events_by_run_id.pop(run_id, None)
+                    self._optional_callback_diagnostic_event_count_by_run_id.pop(
+                        run_id,
+                        None,
+                    )
+                    self._optional_callback_diagnostic_history_bytes_by_run_id.pop(
+                        run_id,
+                        None,
+                    )
                     self._run_authorization_by_run_id.pop(run_id, None)
                     self._subscriptions_by_run_id.pop(run_id, None)
                     for ack_key in tuple(self._acks_by_subscription):
@@ -8876,13 +8914,65 @@ class GraphBlocksServerApp:
                 metadata_payload["cursor"] = (
                     f"{submission.run_id}:{current_sequence}"
                 )
+            frozen_event = _freeze_json_value(
+                "application event stream",
+                "event",
+                event_payload,
+            )
+            assert isinstance(frozen_event, Mapping)
+            if kind in SERVER_OPTIONAL_CALLBACK_DIAGNOSTIC_EVENT_KINDS:
+                if (
+                    submission.run_id
+                    not in (
+                        self._optional_callback_diagnostic_event_count_by_run_id
+                    )
+                ):
+                    retained_diagnostics = tuple(
+                        retained_event
+                        for retained_event in current_events
+                        if retained_event.get("kind")
+                        in SERVER_OPTIONAL_CALLBACK_DIAGNOSTIC_EVENT_KINDS
+                    )
+                    self._optional_callback_diagnostic_event_count_by_run_id[
+                        submission.run_id
+                    ] = len(retained_diagnostics)
+                    self._optional_callback_diagnostic_history_bytes_by_run_id[
+                        submission.run_id
+                    ] = sum(
+                        _canonical_json_size_bytes(retained_event)
+                        for retained_event in retained_diagnostics
+                    )
+                retained_count = (
+                    self._optional_callback_diagnostic_event_count_by_run_id[
+                        submission.run_id
+                    ]
+                )
+                retained_bytes = (
+                    self._optional_callback_diagnostic_history_bytes_by_run_id[
+                        submission.run_id
+                    ]
+                )
+                candidate_bytes = _canonical_json_size_bytes(frozen_event)
+                if (
+                    retained_count
+                    >= self.max_optional_callback_diagnostic_events_per_run
+                    or (
+                        retained_bytes + candidate_bytes
+                        > (
+                            self.max_optional_callback_diagnostic_history_bytes_per_run
+                        )
+                    )
+                ):
+                    return
+                self._optional_callback_diagnostic_event_count_by_run_id[
+                    submission.run_id
+                ] = retained_count + 1
+                self._optional_callback_diagnostic_history_bytes_by_run_id[
+                    submission.run_id
+                ] = retained_bytes + candidate_bytes
             self._events_by_run_id[submission.run_id] = (
                 *current_events,
-                _freeze_json_value(
-                    "application event stream",
-                    "event",
-                    event_payload,
-                ),
+                frozen_event,
             )
 
     def _subscription_replay(
