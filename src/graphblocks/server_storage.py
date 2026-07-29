@@ -139,6 +139,53 @@ class AcceptedRunTerminalConflictError(AcceptedRunConflictError):
         self.run_id = run_id
 
 
+class AcceptedRunEffectNotFoundError(AcceptedRunStorageError):
+    def __init__(self, effect_id: str) -> None:
+        super().__init__(f"accepted run effect {effect_id!r} was not found")
+        self.effect_id = effect_id
+
+
+class StaleAcceptedRunEffectDeliveryClaimError(AcceptedRunConflictError):
+    def __init__(
+        self,
+        current: AcceptedRunEffectDeliveryClaim | None,
+        provided: AcceptedRunEffectDeliveryClaim,
+    ) -> None:
+        super().__init__(
+            "accepted run effect delivery claim is stale or no longer "
+            "authoritative"
+        )
+        self.current = current
+        self.provided = provided
+
+
+class AcceptedRunEffectDeliveryLeaseExpiredError(AcceptedRunConflictError):
+    def __init__(
+        self,
+        claim: AcceptedRunEffectDeliveryClaim,
+        operation: str,
+    ) -> None:
+        super().__init__(
+            f"accepted run effect delivery claim expired before {operation}"
+        )
+        self.claim = claim
+        self.operation = operation
+
+
+class AcceptedRunEffectDeliveryStateConflictError(AcceptedRunConflictError):
+    def __init__(
+        self,
+        effect_id: str,
+        state: AcceptedRunEffectDeliveryState,
+    ) -> None:
+        super().__init__(
+            f"accepted run effect {effect_id!r} cannot transition from "
+            f"delivery state {state.value!r}"
+        )
+        self.effect_id = effect_id
+        self.state = state
+
+
 class InvalidAcceptedRunTransitionError(AcceptedRunConflictError):
     def __init__(
         self,
@@ -687,6 +734,333 @@ class AcceptedRunEffectIntent:
             digest_field_name="payload_digest",
             digest=self.payload_digest,
         )
+
+
+class AcceptedRunEffectDeliveryState(StrEnum):
+    PENDING = "pending"
+    CLAIMED = "claimed"
+    DELIVERED = "delivered"
+    SATISFIED_BY_CALLBACK = "satisfied_by_callback"
+    DEAD_LETTER = "dead_letter"
+
+
+@dataclass(frozen=True, slots=True)
+class AcceptedRunEffectDeliveryClaim:
+    effect_id: str
+    delivery_owner_id: str
+    claim_generation: int
+    fencing_token: int
+    lease_expires_at_unix_ms: int
+
+    def __post_init__(self) -> None:
+        owner = "accepted run effect delivery claim"
+        for field_name in ("effect_id", "delivery_owner_id"):
+            object.__setattr__(
+                self,
+                field_name,
+                _validate_exact_string(
+                    owner,
+                    field_name,
+                    getattr(self, field_name),
+                ),
+            )
+        for field_name in ("claim_generation", "fencing_token"):
+            object.__setattr__(
+                self,
+                field_name,
+                _validate_u64(
+                    owner,
+                    field_name,
+                    getattr(self, field_name),
+                    positive=True,
+                ),
+            )
+        object.__setattr__(
+            self,
+            "lease_expires_at_unix_ms",
+            _validate_u64(
+                owner,
+                "lease_expires_at_unix_ms",
+                self.lease_expires_at_unix_ms,
+                positive=True,
+            ),
+        )
+
+
+def assert_current_effect_delivery_claim(
+    *,
+    current: AcceptedRunEffectDeliveryClaim | None,
+    provided: AcceptedRunEffectDeliveryClaim,
+) -> None:
+    if not isinstance(provided, AcceptedRunEffectDeliveryClaim):
+        raise TypeError(
+            "provided effect delivery claim must be an "
+            "AcceptedRunEffectDeliveryClaim"
+        )
+    if current is not None and not isinstance(
+        current,
+        AcceptedRunEffectDeliveryClaim,
+    ):
+        raise TypeError(
+            "current effect delivery claim must be an "
+            "AcceptedRunEffectDeliveryClaim or None"
+        )
+    if current != provided:
+        raise StaleAcceptedRunEffectDeliveryClaimError(current, provided)
+
+
+@dataclass(frozen=True, slots=True)
+class AcceptedRunEffectDeliveryRecord:
+    """One durable at-least-once effect and its current delivery authority."""
+
+    effect_id: str
+    tenant_id: str
+    run_id: str
+    owner_principal_id: str
+    checkpoint_digest: str | None
+    kind: AcceptedRunEffectKind
+    idempotency_key: str
+    payload_json: str
+    payload_digest: str
+    delivery_state: AcceptedRunEffectDeliveryState
+    attempt_count: int
+    available_at_unix_ms: int
+    claim: AcceptedRunEffectDeliveryClaim | None
+    created_at_unix_ms: int
+    delivered_at_unix_ms: int | None
+
+    def __post_init__(self) -> None:
+        owner = "accepted run effect delivery record"
+        for field_name in (
+            "effect_id",
+            "tenant_id",
+            "run_id",
+            "owner_principal_id",
+            "idempotency_key",
+        ):
+            object.__setattr__(
+                self,
+                field_name,
+                _validate_exact_string(
+                    owner,
+                    field_name,
+                    getattr(self, field_name),
+                ),
+            )
+        if not isinstance(self.kind, AcceptedRunEffectKind):
+            raise ValueError(
+                f"{owner} kind must be an AcceptedRunEffectKind"
+            )
+        checkpoint_digest = self.checkpoint_digest
+        if checkpoint_digest is not None:
+            checkpoint_digest = _validate_digest(
+                owner,
+                "checkpoint_digest",
+                checkpoint_digest,
+            )
+            object.__setattr__(
+                self,
+                "checkpoint_digest",
+                checkpoint_digest,
+            )
+        if (
+            self.kind is AcceptedRunEffectKind.OPERATION_DISPATCH
+            and checkpoint_digest is None
+        ) or (
+            self.kind is AcceptedRunEffectKind.COMPLETION
+            and checkpoint_digest is not None
+        ):
+            raise ValueError(
+                f"{owner} checkpoint_digest must match the effect kind"
+            )
+        object.__setattr__(
+            self,
+            "payload_json",
+            _validate_canonical_json(owner, "payload_json", self.payload_json),
+        )
+        object.__setattr__(
+            self,
+            "payload_digest",
+            _validate_digest(owner, "payload_digest", self.payload_digest),
+        )
+        _validate_json_digest(
+            owner,
+            json_field_name="payload_json",
+            encoded=self.payload_json,
+            digest_field_name="payload_digest",
+            digest=self.payload_digest,
+        )
+        if not isinstance(
+            self.delivery_state,
+            AcceptedRunEffectDeliveryState,
+        ):
+            raise ValueError(
+                f"{owner} delivery_state must be an "
+                "AcceptedRunEffectDeliveryState"
+            )
+        for field_name in (
+            "attempt_count",
+            "available_at_unix_ms",
+            "created_at_unix_ms",
+        ):
+            object.__setattr__(
+                self,
+                field_name,
+                _validate_u64(
+                    owner,
+                    field_name,
+                    getattr(self, field_name),
+                ),
+            )
+        if self.available_at_unix_ms < self.created_at_unix_ms:
+            raise ValueError(
+                f"{owner} available_at_unix_ms must not precede "
+                "created_at_unix_ms"
+            )
+        claim = self.claim
+        if claim is not None and not isinstance(
+            claim,
+            AcceptedRunEffectDeliveryClaim,
+        ):
+            raise ValueError(
+                f"{owner} claim must be an AcceptedRunEffectDeliveryClaim "
+                "or None"
+            )
+        claimed = (
+            self.delivery_state is AcceptedRunEffectDeliveryState.CLAIMED
+        )
+        if claimed != (claim is not None):
+            raise ValueError(
+                f"{owner} claim must be present only while delivery_state "
+                "is claimed"
+            )
+        if claim is not None and claim.effect_id != self.effect_id:
+            raise ValueError(
+                f"{owner} claim effect_id must match the record effect_id"
+            )
+        if claimed and self.attempt_count == 0:
+            raise ValueError(
+                f"{owner} claimed delivery must have a positive attempt_count"
+            )
+        delivered_at = self.delivered_at_unix_ms
+        if delivered_at is not None:
+            delivered_at = _validate_u64(
+                owner,
+                "delivered_at_unix_ms",
+                delivered_at,
+            )
+            object.__setattr__(
+                self,
+                "delivered_at_unix_ms",
+                delivered_at,
+            )
+            if delivered_at < self.created_at_unix_ms:
+                raise ValueError(
+                    f"{owner} delivered_at_unix_ms must not precede "
+                    "created_at_unix_ms"
+                )
+        settled = self.delivery_state in {
+            AcceptedRunEffectDeliveryState.DELIVERED,
+            AcceptedRunEffectDeliveryState.SATISFIED_BY_CALLBACK,
+        }
+        if settled != (delivered_at is not None):
+            raise ValueError(
+                f"{owner} delivered_at_unix_ms must be present only for "
+                "delivered or callback-satisfied effects"
+            )
+
+
+@dataclass(frozen=True, slots=True)
+class AcceptedRunEffectDeliveryClaimRequest:
+    delivery_owner_id: str
+    now_unix_ms: int
+    lease_duration_ms: int
+
+    def __post_init__(self) -> None:
+        owner = "accepted run effect delivery claim request"
+        object.__setattr__(
+            self,
+            "delivery_owner_id",
+            _validate_exact_string(
+                owner,
+                "delivery_owner_id",
+                self.delivery_owner_id,
+            ),
+        )
+        object.__setattr__(
+            self,
+            "now_unix_ms",
+            _validate_u64(owner, "now_unix_ms", self.now_unix_ms),
+        )
+        object.__setattr__(
+            self,
+            "lease_duration_ms",
+            _validate_u64(
+                owner,
+                "lease_duration_ms",
+                self.lease_duration_ms,
+                positive=True,
+            ),
+        )
+        if self.now_unix_ms > _MAX_U64 - self.lease_duration_ms:
+            raise ValueError(
+                f"{owner} lease expiry exceeds unsigned 64-bit range"
+            )
+
+    @property
+    def lease_expires_at_unix_ms(self) -> int:
+        return self.now_unix_ms + self.lease_duration_ms
+
+
+@dataclass(frozen=True, slots=True)
+class AcceptedRunEffectDeliveryAck:
+    claim: AcceptedRunEffectDeliveryClaim
+    delivered_at_unix_ms: int
+
+    def __post_init__(self) -> None:
+        owner = "accepted run effect delivery ack"
+        if not isinstance(self.claim, AcceptedRunEffectDeliveryClaim):
+            raise ValueError(
+                f"{owner} claim must be an AcceptedRunEffectDeliveryClaim"
+            )
+        object.__setattr__(
+            self,
+            "delivered_at_unix_ms",
+            _validate_u64(
+                owner,
+                "delivered_at_unix_ms",
+                self.delivered_at_unix_ms,
+            ),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class AcceptedRunEffectDeliveryRetry:
+    claim: AcceptedRunEffectDeliveryClaim
+    released_at_unix_ms: int
+    available_at_unix_ms: int
+
+    def __post_init__(self) -> None:
+        owner = "accepted run effect delivery retry"
+        if not isinstance(self.claim, AcceptedRunEffectDeliveryClaim):
+            raise ValueError(
+                f"{owner} claim must be an AcceptedRunEffectDeliveryClaim"
+            )
+        for field_name in ("released_at_unix_ms", "available_at_unix_ms"):
+            object.__setattr__(
+                self,
+                field_name,
+                _validate_u64(
+                    owner,
+                    field_name,
+                    getattr(self, field_name),
+                ),
+            )
+        if self.available_at_unix_ms < self.released_at_unix_ms:
+            raise ValueError(
+                f"{owner} available_at_unix_ms must not precede "
+                "released_at_unix_ms"
+            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -1265,4 +1639,33 @@ class AcceptedRunRepository(Protocol):
         self,
         command: AcceptedRunTerminalCommit,
     ) -> AcceptedRunSnapshot:
+        ...
+
+
+class OutboxDispatcherRepository(Protocol):
+    """Persistence boundary around the non-transactional external send."""
+
+    def get_effect(
+        self,
+        *,
+        effect_id: str,
+    ) -> AcceptedRunEffectDeliveryRecord | None:
+        ...
+
+    def claim_next_effect(
+        self,
+        request: AcceptedRunEffectDeliveryClaimRequest,
+    ) -> AcceptedRunEffectDeliveryRecord | None:
+        ...
+
+    def mark_effect_delivered(
+        self,
+        command: AcceptedRunEffectDeliveryAck,
+    ) -> AcceptedRunEffectDeliveryRecord:
+        ...
+
+    def release_effect_for_retry(
+        self,
+        command: AcceptedRunEffectDeliveryRetry,
+    ) -> AcceptedRunEffectDeliveryRecord:
         ...

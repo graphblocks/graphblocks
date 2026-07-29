@@ -9,6 +9,12 @@ from graphblocks.runtime import RuntimeCheckpoint
 from graphblocks.server_storage import (
     CHECKPOINT_FORMAT_VERSION,
     AcceptedRunClaim,
+    AcceptedRunEffectDeliveryAck,
+    AcceptedRunEffectDeliveryClaim,
+    AcceptedRunEffectDeliveryClaimRequest,
+    AcceptedRunEffectDeliveryRecord,
+    AcceptedRunEffectDeliveryRetry,
+    AcceptedRunEffectDeliveryState,
     AcceptedRunEffectIntent,
     AcceptedRunEffectKind,
     AcceptedRunEventIntent,
@@ -24,9 +30,11 @@ from graphblocks.server_storage import (
     CallbackSubmissionIdentity,
     CheckpointIntegrityError,
     InvalidAcceptedRunTransitionError,
+    StaleAcceptedRunEffectDeliveryClaimError,
     StaleAcceptedRunClaimError,
     assert_accepted_run_transition,
     assert_current_claim,
+    assert_current_effect_delivery_claim,
     decode_runtime_checkpoint,
     encode_runtime_checkpoint,
     resolve_admission_replay,
@@ -135,6 +143,21 @@ def _effect_intent(
         idempotency_key=f"effect-idempotency-{kind.value}-1",
         payload_json=payload_json,
         payload_digest=canonical_hash(canonical_loads(payload_json)),
+    )
+
+
+def _effect_delivery_claim(
+    *,
+    claim_generation: int = 1,
+    fencing_token: int = 1,
+    delivery_owner_id: str = "dispatcher-1",
+) -> AcceptedRunEffectDeliveryClaim:
+    return AcceptedRunEffectDeliveryClaim(
+        effect_id="effect-operation_dispatch-1",
+        delivery_owner_id=delivery_owner_id,
+        claim_generation=claim_generation,
+        fencing_token=fencing_token,
+        lease_expires_at_unix_ms=2_000,
     )
 
 
@@ -306,6 +329,138 @@ def test_stale_or_foreign_claim_cannot_commit(
         match="accepted run claim is stale or no longer authoritative",
     ):
         assert_current_claim(current=_claim(), provided=provided)
+
+
+@pytest.mark.parametrize(
+    "provided",
+    [
+        _effect_delivery_claim(claim_generation=2),
+        _effect_delivery_claim(fencing_token=2),
+        _effect_delivery_claim(delivery_owner_id="dispatcher-2"),
+        replace(
+            _effect_delivery_claim(),
+            lease_expires_at_unix_ms=2_001,
+        ),
+    ],
+)
+def test_stale_or_foreign_effect_delivery_claim_cannot_ack(
+    provided: AcceptedRunEffectDeliveryClaim,
+) -> None:
+    with pytest.raises(
+        StaleAcceptedRunEffectDeliveryClaimError,
+        match="effect delivery claim is stale or no longer authoritative",
+    ):
+        assert_current_effect_delivery_claim(
+            current=_effect_delivery_claim(),
+            provided=provided,
+        )
+
+
+def test_claimed_effect_delivery_record_binds_authority_and_payload() -> None:
+    payload_json = canonical_dumps(
+        {"operationId": "operation-1", "runId": "run-1"}
+    )
+    claim = _effect_delivery_claim()
+
+    record = AcceptedRunEffectDeliveryRecord(
+        effect_id=claim.effect_id,
+        tenant_id="tenant-1",
+        run_id="run-1",
+        owner_principal_id="principal-1",
+        checkpoint_digest=_DIGEST_B,
+        kind=AcceptedRunEffectKind.OPERATION_DISPATCH,
+        idempotency_key="dispatch-run-1-operation-1-attempt-1",
+        payload_json=payload_json,
+        payload_digest=canonical_hash(canonical_loads(payload_json)),
+        delivery_state=AcceptedRunEffectDeliveryState.CLAIMED,
+        attempt_count=1,
+        available_at_unix_ms=1_100,
+        claim=claim,
+        created_at_unix_ms=1_100,
+        delivered_at_unix_ms=None,
+    )
+
+    assert record.claim == claim
+    assert record.delivery_state is AcceptedRunEffectDeliveryState.CLAIMED
+    assert record.kind is AcceptedRunEffectKind.OPERATION_DISPATCH
+
+
+def test_effect_delivery_record_rejects_claim_outside_claimed_state() -> None:
+    payload_json = canonical_dumps({"runId": "run-1"})
+
+    with pytest.raises(
+        ValueError,
+        match="claim must be present only while delivery_state is claimed",
+    ):
+        AcceptedRunEffectDeliveryRecord(
+            effect_id="effect-completion-1",
+            tenant_id="tenant-1",
+            run_id="run-1",
+            owner_principal_id="principal-1",
+            checkpoint_digest=None,
+            kind=AcceptedRunEffectKind.COMPLETION,
+            idempotency_key="completion-run-1",
+            payload_json=payload_json,
+            payload_digest=canonical_hash(canonical_loads(payload_json)),
+            delivery_state=AcceptedRunEffectDeliveryState.PENDING,
+            attempt_count=0,
+            available_at_unix_ms=1_100,
+            claim=_effect_delivery_claim(),
+            created_at_unix_ms=1_100,
+            delivered_at_unix_ms=None,
+        )
+
+
+def test_effect_delivery_claim_request_requires_positive_bounded_lease() -> None:
+    with pytest.raises(
+        ValueError,
+        match="lease_duration_ms must be a positive unsigned 64-bit integer",
+    ):
+        AcceptedRunEffectDeliveryClaimRequest(
+            delivery_owner_id="dispatcher-1",
+            now_unix_ms=1_000,
+            lease_duration_ms=0,
+        )
+
+    with pytest.raises(
+        ValueError,
+        match="lease expiry exceeds unsigned 64-bit range",
+    ):
+        AcceptedRunEffectDeliveryClaimRequest(
+            delivery_owner_id="dispatcher-1",
+            now_unix_ms=(1 << 64) - 1,
+            lease_duration_ms=1,
+        )
+
+
+def test_effect_delivery_commands_bind_ack_and_retry_to_claim() -> None:
+    claim = _effect_delivery_claim()
+
+    ack = AcceptedRunEffectDeliveryAck(
+        claim=claim,
+        delivered_at_unix_ms=1_500,
+    )
+    retry = AcceptedRunEffectDeliveryRetry(
+        claim=claim,
+        released_at_unix_ms=1_500,
+        available_at_unix_ms=1_750,
+    )
+
+    assert ack.claim == claim
+    assert retry.claim == claim
+    assert retry.available_at_unix_ms == 1_750
+
+
+def test_effect_delivery_retry_cannot_be_available_before_release() -> None:
+    with pytest.raises(
+        ValueError,
+        match="available_at_unix_ms must not precede released_at_unix_ms",
+    ):
+        AcceptedRunEffectDeliveryRetry(
+            claim=_effect_delivery_claim(),
+            released_at_unix_ms=1_500,
+            available_at_unix_ms=1_499,
+        )
 
 
 def test_waiting_commit_binds_checkpoint_and_dispatch_outbox_to_claim() -> None:
