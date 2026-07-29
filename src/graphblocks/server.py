@@ -2816,6 +2816,17 @@ class GraphBlocksServerApp:
         if route.operation == "detach_from_run":
             try:
                 run_id = route_match.path_params.get("run_id", "")
+                if not self._principal_can_access_run(
+                    run_id,
+                    auth_decision.principal,
+                ):
+                    return ServerResponse.json(
+                        404,
+                        {
+                            "ok": False,
+                            "error": f"run detach stream not found for run {run_id!r}",
+                        },
+                    )
                 events = self._events_by_run_id.get(run_id)
                 if events is None:
                     return ServerResponse.json(
@@ -2840,6 +2851,20 @@ class GraphBlocksServerApp:
         if route.operation == "subscribe_events":
             try:
                 run_id = route_match.path_params.get("run_id", "")
+                if not self._principal_can_access_run(
+                    run_id,
+                    auth_decision.principal,
+                ):
+                    return ServerResponse.json(
+                        404,
+                        {
+                            "ok": False,
+                            "error": (
+                                "run event stream not found for subscription "
+                                f"run {run_id!r}"
+                            ),
+                        },
+                    )
                 events = self._events_by_run_id.get(run_id)
                 if events is None:
                     return ServerResponse.json(
@@ -2898,6 +2923,17 @@ class GraphBlocksServerApp:
         if route.operation == "unsubscribe_events":
             run_id = route_match.path_params.get("run_id", "")
             subscription_id = route_match.path_params.get("subscription_id", "")
+            if not self._principal_can_access_run(
+                run_id,
+                auth_decision.principal,
+            ):
+                return ServerResponse.json(
+                    404,
+                    {
+                        "ok": False,
+                        "error": f"run subscriptions not found for run {run_id!r}",
+                    },
+                )
             with self._subscription_registration_condition:
                 subscriptions = self._subscriptions_by_run_id.get(run_id)
                 if subscriptions is None:
@@ -2961,6 +2997,20 @@ class GraphBlocksServerApp:
             try:
                 run_id = route_match.path_params.get("run_id", "")
                 subscription_id = route_match.path_params.get("subscription_id", "")
+                if not self._principal_can_access_run(
+                    run_id,
+                    auth_decision.principal,
+                ):
+                    return ServerResponse.json(
+                        404,
+                        {
+                            "ok": False,
+                            "error": (
+                                "run event stream not found for ack "
+                                f"run {run_id!r}"
+                            ),
+                        },
+                    )
                 events = self._events_by_run_id.get(run_id)
                 if events is None:
                     return ServerResponse.json(
@@ -3061,6 +3111,24 @@ class GraphBlocksServerApp:
                                     f"callback registration tenant scope {registration.scope_id!r} "
                                     "is not allowed for principal tenant "
                                     f"{auth_decision.principal.tenant_id!r}"
+                                ),
+                            },
+                        )
+                    if (
+                        registration.scope == "run"
+                        and not self._principal_can_access_run(
+                            registration.scope_id,
+                            auth_decision.principal,
+                        )
+                    ):
+                        return ServerResponse.json(
+                            404,
+                            {
+                                "ok": False,
+                                "error": (
+                                    "run event stream not found for callback "
+                                    "registration scope "
+                                    f"{registration.scope_id!r}"
                                 ),
                             },
                         )
@@ -3280,6 +3348,28 @@ class GraphBlocksServerApp:
                         else "unauthenticated"
                     ),
                 )
+                if (
+                    submission.run_id is not None
+                    and not self._principal_can_access_run(
+                        submission.run_id,
+                        auth_decision.principal,
+                    )
+                ):
+                    if self.anti_enumerate_async_callbacks:
+                        return ServerResponse.json(
+                            202,
+                            {
+                                "ok": True,
+                                "status": "accepted",
+                            },
+                        )
+                    return ServerResponse.json(
+                        404,
+                        {
+                            "ok": False,
+                            "error": "async callback target not found",
+                        },
+                    )
                 payload_size_bytes = len(canonical_dumps(_thaw_json_value(submission.payload)).encode("utf-8"))
                 if payload_size_bytes > self.max_async_callback_payload_bytes:
                     rejection = ServerAsyncCallbackRejection.payload_too_large(submission)

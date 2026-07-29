@@ -814,7 +814,7 @@ def test_server_app_handles_health_auth_and_run_requests() -> None:
     assert "ServerResponse" not in graphblocks.__all__
 
 
-def test_server_app_hides_run_reads_from_other_principals_and_tenants() -> None:
+def test_server_app_hides_run_scoped_resources_from_other_principals_and_tenants() -> None:
     app = GraphBlocksServerApp(
         auth_hook=StaticBearerAuthHook(
             {
@@ -883,6 +883,7 @@ def test_server_app_hides_run_reads_from_other_principals_and_tenants() -> None:
     assert bob_list.status_code == 200
     assert json.loads(bob_list.body.decode("utf-8")) == {"ok": True, "runs": []}
 
+    original_events = app._events_by_run_id["run-tenant-authz-1"]
     hidden_requests = (
         ServerRequest(
             method="GET",
@@ -898,6 +899,68 @@ def test_server_app_hides_run_reads_from_other_principals_and_tenants() -> None:
             query={},
             cookies={},
             body=b"{}",
+        ),
+        ServerRequest(
+            method="POST",
+            path="/runs/run-tenant-authz-1/detach",
+            headers={"Authorization": "Bearer bob-token"},
+            query={},
+            cookies={},
+            body=json.dumps({"clientId": "bob-client"}).encode("utf-8"),
+        ),
+        ServerRequest(
+            method="POST",
+            path="/runs/run-tenant-authz-1/subscriptions",
+            headers={"Authorization": "Bearer bob-token"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "subscriptionId": "bob-subscription",
+                    "eventFilter": {"types": ["RunSucceeded"]},
+                    "delivery": {
+                        "kind": "local_callback",
+                        "callback_name": "bob",
+                    },
+                }
+            ).encode("utf-8"),
+        ),
+        ServerRequest(
+            method="POST",
+            path="/callbacks/register",
+            headers={"Authorization": "Bearer bob-token"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "subscriptionId": "bob-callback-registration",
+                    "scope": "run",
+                    "scopeId": "run-tenant-authz-1",
+                    "eventFilter": {"types": ["RunSucceeded"]},
+                    "delivery": {
+                        "kind": "local_callback",
+                        "callback_name": "bob",
+                    },
+                    "failurePolicy": "best_effort",
+                }
+            ).encode("utf-8"),
+        ),
+        ServerRequest(
+            method="POST",
+            path="/callbacks/op-bob-unauthorized",
+            headers={
+                "Authorization": "Bearer bob-token",
+                "GraphBlocks-Idempotency-Key": "bob-unauthorized",
+            },
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "callbackId": "bob-callback",
+                    "runId": "run-tenant-authz-1",
+                    "payload": {"status": "completed"},
+                }
+            ).encode("utf-8"),
         ),
         ServerRequest(
             method="GET",
@@ -922,6 +985,17 @@ def test_server_app_hides_run_reads_from_other_principals_and_tenants() -> None:
         ),
         ServerRequest(
             method="GET",
+            path="/runs/run-tenant-authz-1/stream",
+            headers={
+                "Authorization": "Bearer bob-token",
+                "Connection": "upgrade",
+                "Upgrade": "websocket",
+            },
+            query={},
+            cookies={},
+        ),
+        ServerRequest(
+            method="GET",
             path="/runs/run-tenant-authz-1",
             headers={"Authorization": "Bearer charlie-token"},
             query={},
@@ -933,6 +1007,62 @@ def test_server_app_hides_run_reads_from_other_principals_and_tenants() -> None:
 
         assert hidden.status_code == 404
         assert b"tenant-a-secret" not in hidden.body
+
+    assert app.detachments("run-tenant-authz-1") == ()
+    assert app.subscriptions("run-tenant-authz-1") == ()
+    assert app.callback_registrations() == ()
+    assert app.callback_submissions("op-bob-unauthorized") == ()
+    assert app.async_callback_rejections("op-bob-unauthorized") == ()
+    assert app._events_by_run_id["run-tenant-authz-1"] == original_events
+
+    alice_subscription = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs/run-tenant-authz-1/subscriptions",
+            headers={"Authorization": "Bearer alice-token"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "subscriptionId": "alice-subscription",
+                    "eventFilter": {"types": ["RunSucceeded"]},
+                    "delivery": {
+                        "kind": "local_callback",
+                        "callback_name": "alice",
+                    },
+                }
+            ).encode("utf-8"),
+        )
+    )
+    assert alice_subscription.status_code == 201
+
+    hidden_subscription_requests = (
+        ServerRequest(
+            method="DELETE",
+            path="/runs/run-tenant-authz-1/subscriptions/alice-subscription",
+            headers={"Authorization": "Bearer bob-token"},
+            query={},
+            cookies={},
+        ),
+        ServerRequest(
+            method="POST",
+            path="/runs/run-tenant-authz-1/subscriptions/alice-subscription/ack",
+            headers={"Authorization": "Bearer bob-token"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {"eventId": "run-tenant-authz-1:run-terminal"}
+            ).encode("utf-8"),
+        ),
+    )
+    for hidden_request in hidden_subscription_requests:
+        hidden = app.handle(hidden_request)
+
+        assert hidden.status_code == 404
+        assert b"tenant-a-secret" not in hidden.body
+
+    assert app.subscriptions("run-tenant-authz-1")[0].status == "active"
+    assert app.event_acks("run-tenant-authz-1", "alice-subscription") == ()
 
 
 def test_server_app_rejects_cross_tenant_run_controls_atomically() -> None:
@@ -1918,7 +2048,11 @@ def test_server_app_executor_resumes_authenticated_callback_checkpoint_once() ->
     assert json.loads(terminal_duplicate.body.decode("utf-8"))["status"] == (
         "duplicate"
     )
-    assert different_principal_replay.status_code == 409
+    assert different_principal_replay.status_code == 404
+    assert json.loads(different_principal_replay.body.decode("utf-8")) == {
+        "ok": False,
+        "error": "async callback target not found",
+    }
     assert different_policy_replay.status_code == 409
     assert prepare_calls == 1
     assert consume_calls == 1
@@ -1933,10 +2067,7 @@ def test_server_app_executor_resumes_authenticated_callback_checkpoint_once() ->
         "RunResuming",
         "RunSucceeded",
     ]
-    assert server_resume_event_kinds[5:] == [
-        "LateExternalCallbackReceived",
-        "LateExternalCallbackReceived",
-    ]
+    assert server_resume_event_kinds[5:] == ["LateExternalCallbackReceived"]
 
 
 def test_server_app_rejects_callback_before_wait_checkpoint_is_published() -> None:
@@ -5304,24 +5435,10 @@ def test_server_app_rejects_async_callback_for_unknown_declared_run() -> None:
     assert response.status_code == 404
     assert json.loads(response.body.decode("utf-8")) == {
         "ok": False,
-        "operationId": "op-ci-unknown-run",
-        "runId": "missing-run",
-        "error": "async callback run 'missing-run' not found",
+        "error": "async callback target not found",
     }
     assert app.callback_submissions("op-ci-unknown-run") == ()
-    assert app.async_callback_rejections("op-ci-unknown-run") == (
-        {
-            "operationId": "op-ci-unknown-run",
-            "callbackId": "cb-unknown-run",
-            "idempotencyKey": "idem-callback-unknown-run",
-            **_callback_rejection_metadata({"status": "completed"}),
-            "runId": "missing-run",
-            "nodeId": "waitCI",
-            "attemptId": "attempt-1",
-            "reason": "unknown_run",
-            "receivedAt": "2026-07-03T00:00:00Z",
-        },
-    )
+    assert app.async_callback_rejections("op-ci-unknown-run") == ()
 
 
 def test_server_app_can_anti_enumerate_unknown_declared_async_callback_run() -> None:
@@ -5356,19 +5473,7 @@ def test_server_app_can_anti_enumerate_unknown_declared_async_callback_run() -> 
         "status": "accepted",
     }
     assert app.callback_submissions("op-ci-unknown-run") == ()
-    assert app.async_callback_rejections("op-ci-unknown-run") == (
-        {
-            "operationId": "op-ci-unknown-run",
-            "callbackId": "cb-unknown-run",
-            "idempotencyKey": "idem-callback-unknown-run",
-            **_callback_rejection_metadata({"status": "completed"}),
-            "runId": "missing-run",
-            "nodeId": "waitCI",
-            "attemptId": "attempt-1",
-            "reason": "unknown_run",
-            "receivedAt": "2026-07-03T00:00:00Z",
-        },
-    )
+    assert app.async_callback_rejections("op-ci-unknown-run") == ()
 
 
 def test_server_app_rejects_async_callback_declared_run_without_attempt_fence() -> None:
@@ -5398,6 +5503,11 @@ def test_server_app_rejects_async_callback_declared_run_without_attempt_fence() 
     ):
         run_id = body.get("run_id", body.get("runId"))
         assert isinstance(run_id, str)
+        _record_seeded_run_owner(
+            app,
+            run_id,
+            PrincipalRef("callback-relay"),
+        )
         app._events_by_run_id[run_id] = (
             {
                 "kind": "RunStarted",
@@ -5456,6 +5566,11 @@ def test_server_app_rejects_async_callback_declared_run_without_attempt_fence() 
 
 def test_server_app_rejects_async_callback_declared_run_without_node_fence() -> None:
     app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("callback-relay")}))
+    _record_seeded_run_owner(
+        app,
+        "run-callback-node-fence-1",
+        PrincipalRef("callback-relay"),
+    )
     app._events_by_run_id["run-callback-node-fence-1"] = (
         {
             "kind": "RunStarted",
@@ -5890,6 +6005,11 @@ def test_server_app_rejects_stale_async_callback_attempt_for_existing_operation(
 
 def test_server_app_rejects_async_callback_for_different_node_on_existing_run_attempt() -> None:
     app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("callback-relay")}))
+    _record_seeded_run_owner(
+        app,
+        "run-1",
+        PrincipalRef("callback-relay"),
+    )
     app._events_by_run_id["run-1"] = (
         {
             "kind": "RunStarted",
@@ -5973,6 +6093,11 @@ def test_server_app_rejects_async_callback_for_different_node_on_existing_run_at
 def test_server_app_rejects_async_callback_for_different_run_on_existing_operation_attempt() -> None:
     app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("callback-relay")}))
     for run_id in ("run-1", "run-2"):
+        _record_seeded_run_owner(
+            app,
+            run_id,
+            PrincipalRef("callback-relay"),
+        )
         app._events_by_run_id[run_id] = (
             {
                 "kind": "RunStarted",
@@ -6054,6 +6179,11 @@ def test_server_app_rejects_async_callback_for_different_run_on_existing_operati
 
 def test_server_app_rejects_second_async_callback_for_same_operation_attempt() -> None:
     app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("callback-relay")}))
+    _record_seeded_run_owner(
+        app,
+        "run-1",
+        PrincipalRef("callback-relay"),
+    )
     app._events_by_run_id["run-1"] = (
         {
             "kind": "RunStarted",
@@ -6136,6 +6266,11 @@ def test_server_app_rejects_second_async_callback_for_same_operation_attempt() -
 
 def test_server_app_rejects_async_callback_provider_operation_mismatch() -> None:
     app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("callback-relay")}))
+    _record_seeded_run_owner(
+        app,
+        "run-1",
+        PrincipalRef("callback-relay"),
+    )
     app._events_by_run_id["run-1"] = (
         {
             "kind": "RunStarted",
@@ -6266,6 +6401,11 @@ def test_server_app_deterministic_callback_race_permutations_keep_first_receipt_
 
     for permutation_index, callback_order in enumerate(permutations(trailing_callbacks), start=1):
         app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("callback-relay")}))
+        _record_seeded_run_owner(
+            app,
+            "run-1",
+            PrincipalRef("callback-relay"),
+        )
         app._events_by_run_id["run-1"] = (
             {
                 "kind": "RunStarted",
@@ -6338,6 +6478,11 @@ def test_server_app_deterministic_callback_race_permutations_keep_first_receipt_
 
 def test_server_app_rejects_async_callback_scope_change_for_existing_operation() -> None:
     app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("callback-relay")}))
+    _record_seeded_run_owner(
+        app,
+        "run-1",
+        PrincipalRef("callback-relay"),
+    )
     app._events_by_run_id["run-1"] = (
         {
             "kind": "RunStarted",
@@ -8665,6 +8810,11 @@ def test_server_app_rejects_detach_with_whitespace_wrapped_client_id_or_reason()
     )
     for index, (body, expected_error) in enumerate(cases, start=1):
         app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+        _record_seeded_run_owner(
+            app,
+            f"run-detach-whitespace-{index}",
+            PrincipalRef("user-1"),
+        )
         app._events_by_run_id[f"run-detach-whitespace-{index}"] = (
             {
                 "kind": "RunStarted",
@@ -8701,6 +8851,11 @@ def test_server_app_rejects_detach_with_whitespace_wrapped_client_id_or_reason()
 
 def test_server_app_rejects_detach_with_invalid_timestamp() -> None:
     app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+    _record_seeded_run_owner(
+        app,
+        "run-detach-invalid-time-1",
+        PrincipalRef("user-1"),
+    )
     app._events_by_run_id["run-detach-invalid-time-1"] = (
         {
             "kind": "RunStarted",
@@ -8737,6 +8892,11 @@ def test_server_app_rejects_detach_with_invalid_timestamp() -> None:
 
 def test_server_app_rejects_detach_when_retained_event_sequence_is_malformed() -> None:
     app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+    _record_seeded_run_owner(
+        app,
+        "run-detach-bool-sequence-1",
+        PrincipalRef("user-1"),
+    )
     app._events_by_run_id["run-detach-bool-sequence-1"] = (
         {
             "kind": "RunStarted",
@@ -8999,6 +9159,11 @@ def test_server_app_serializes_conflicting_event_subscription_registration() -> 
     app = SlowReplayServerApp(
         auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")})
     )
+    _record_seeded_run_owner(
+        app,
+        "run-subscribe-race-1",
+        PrincipalRef("user-1"),
+    )
     app._events_by_run_id["run-subscribe-race-1"] = ()
     request = ServerRequest(
         method="POST",
@@ -9046,6 +9211,7 @@ def test_server_app_serializes_subscription_creation_with_revocation() -> None:
         auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")})
     )
     run_id = "run-subscribe-revoke-race-1"
+    _record_seeded_run_owner(app, run_id, PrincipalRef("user-1"))
     app._events_by_run_id[run_id] = ()
 
     def registration_request(subscription_id: str, requested_at: str) -> ServerRequest:
@@ -9121,6 +9287,11 @@ def test_server_terminal_event_filter_still_honors_requested_types() -> None:
 
 def test_server_app_rejects_impossible_ordered_event_subscription_delivery() -> None:
     app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+    _record_seeded_run_owner(
+        app,
+        "run-subscribe-ordering-1",
+        PrincipalRef("user-1"),
+    )
     app._events_by_run_id["run-subscribe-ordering-1"] = (
         {
             "kind": "RunStarted",
@@ -9232,6 +9403,11 @@ def test_server_app_subscription_replay_filters_visibility_node_operation_and_se
     app = GraphBlocksServerApp(
         auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("operator-1", roles=("operator",))})
     )
+    _record_seeded_run_owner(
+        app,
+        "run-subscribe-filter-1",
+        PrincipalRef("operator-1", roles=("operator",)),
+    )
     app._events_by_run_id["run-subscribe-filter-1"] = (
         {
             "kind": "JobProgress",
@@ -9308,6 +9484,11 @@ def test_server_app_subscription_replay_filters_top_level_node_and_operation_fie
     app = GraphBlocksServerApp(
         auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1", roles=("operator",))})
     )
+    _record_seeded_run_owner(
+        app,
+        "run-subscribe-top-level-filter-1",
+        PrincipalRef("user-1", roles=("operator",)),
+    )
     app._events_by_run_id["run-subscribe-top-level-filter-1"] = (
         {
             "kind": "JobProgress",
@@ -9356,6 +9537,11 @@ def test_server_app_subscription_replay_filters_top_level_visibility_field() -> 
     app = GraphBlocksServerApp(
         auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("operator-1", roles=("operator",))})
     )
+    _record_seeded_run_owner(
+        app,
+        "run-subscribe-top-level-visibility-1",
+        PrincipalRef("operator-1", roles=("operator",)),
+    )
     app._events_by_run_id["run-subscribe-top-level-visibility-1"] = (
         {
             "kind": "JobProgress",
@@ -9395,6 +9581,11 @@ def test_server_app_subscription_replay_filters_top_level_visibility_field() -> 
 
 def test_server_app_subscription_replay_rejects_malformed_visibility_as_hidden() -> None:
     app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+    _record_seeded_run_owner(
+        app,
+        "run-subscribe-malformed-visibility-1",
+        PrincipalRef("user-1"),
+    )
     app._events_by_run_id["run-subscribe-malformed-visibility-1"] = (
         {
             "kind": "JobProgress",
@@ -9432,6 +9623,11 @@ def test_server_app_subscription_replay_rejects_malformed_visibility_as_hidden()
 
 def test_server_app_subscription_replay_applies_type_filter_to_terminal_events() -> None:
     app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+    _record_seeded_run_owner(
+        app,
+        "run-subscribe-terminal-1",
+        PrincipalRef("user-1"),
+    )
     app._events_by_run_id["run-subscribe-terminal-1"] = (
         {
             "kind": "JobProgress",
@@ -9491,6 +9687,11 @@ def test_server_app_subscription_replay_applies_type_filter_to_terminal_events()
 
 def test_server_app_subscription_replay_excludes_terminal_events_from_broad_filter_when_disabled() -> None:
     app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+    _record_seeded_run_owner(
+        app,
+        "run-subscribe-terminal-broad-1",
+        PrincipalRef("user-1"),
+    )
     app._events_by_run_id["run-subscribe-terminal-broad-1"] = (
         {
             "kind": "JobProgress",
@@ -9528,6 +9729,11 @@ def test_server_app_subscription_replay_excludes_terminal_events_from_broad_filt
 
 def test_server_app_rejects_subscription_replay_with_malformed_sequence() -> None:
     app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+    _record_seeded_run_owner(
+        app,
+        "run-subscribe-bool-sequence-1",
+        PrincipalRef("user-1"),
+    )
     app._events_by_run_id["run-subscribe-bool-sequence-1"] = (
         {
             "kind": "JobProgress",
@@ -9640,6 +9846,11 @@ def test_server_app_subscribe_events_reports_cursor_expired() -> None:
 
 def test_server_app_rejects_subscription_replay_cursor_for_different_run() -> None:
     app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+    _record_seeded_run_owner(
+        app,
+        "run-subscribe-cursor-scope-1",
+        PrincipalRef("user-1"),
+    )
     app._events_by_run_id["run-subscribe-cursor-scope-1"] = (
         {
             "kind": "RunStarted",
@@ -9676,6 +9887,11 @@ def test_server_app_rejects_subscription_replay_cursor_for_different_run() -> No
 
 def test_server_app_rejects_malformed_subscription_replay_cursor() -> None:
     app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+    _record_seeded_run_owner(
+        app,
+        "run-subscribe-cursor-format-1",
+        PrincipalRef("user-1"),
+    )
     app._events_by_run_id["run-subscribe-cursor-format-1"] = (
         {
             "kind": "RunStarted",
@@ -9715,6 +9931,11 @@ def test_server_app_rejects_malformed_subscription_replay_cursor() -> None:
 
 def test_server_app_rejects_subscription_with_whitespace_wrapped_replay_cursor() -> None:
     app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+    _record_seeded_run_owner(
+        app,
+        "run-subscribe-cursor-whitespace-1",
+        PrincipalRef("user-1"),
+    )
     app._events_by_run_id["run-subscribe-cursor-whitespace-1"] = (
         {
             "kind": "RunStarted",
@@ -9811,6 +10032,11 @@ def test_server_app_rejects_subscription_without_delivery_kind() -> None:
 
 def test_server_app_rejects_subscription_with_invalid_failure_policy() -> None:
     app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+    _record_seeded_run_owner(
+        app,
+        "run-subscribe-policy-1",
+        PrincipalRef("user-1"),
+    )
     app._events_by_run_id["run-subscribe-policy-1"] = ()
 
     response = app.handle(
@@ -9841,6 +10067,11 @@ def test_server_app_rejects_subscription_with_invalid_failure_policy() -> None:
 
 def test_server_app_rejects_subscription_with_invalid_created_timestamp() -> None:
     app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+    _record_seeded_run_owner(
+        app,
+        "run-subscribe-created-time-1",
+        PrincipalRef("user-1"),
+    )
     app._events_by_run_id["run-subscribe-created-time-1"] = ()
 
     response = app.handle(
@@ -9871,6 +10102,11 @@ def test_server_app_rejects_subscription_with_invalid_created_timestamp() -> Non
 
 def test_server_app_rejects_mandatory_subscription_without_retry_or_dead_letter_policy() -> None:
     app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+    _record_seeded_run_owner(
+        app,
+        "run-subscribe-mandatory-1",
+        PrincipalRef("user-1"),
+    )
     app._events_by_run_id["run-subscribe-mandatory-1"] = ()
 
     response = app.handle(
@@ -9905,6 +10141,11 @@ def test_server_app_rejects_mandatory_subscription_without_retry_or_dead_letter_
 
 def test_server_app_rejects_mandatory_subscription_failure_policy_without_dead_letter_behavior() -> None:
     app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+    _record_seeded_run_owner(
+        app,
+        "run-subscribe-mandatory-policy-1",
+        PrincipalRef("user-1"),
+    )
     app._events_by_run_id["run-subscribe-mandatory-policy-1"] = ()
 
     response = app.handle(
@@ -9935,6 +10176,11 @@ def test_server_app_rejects_mandatory_subscription_failure_policy_without_dead_l
 
 def test_server_app_rejects_retrying_subscription_without_dead_letter_behavior() -> None:
     app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+    _record_seeded_run_owner(
+        app,
+        "run-subscribe-retry-policy-1",
+        PrincipalRef("user-1"),
+    )
     app._events_by_run_id["run-subscribe-retry-policy-1"] = ()
 
     response = app.handle(
@@ -9965,6 +10211,11 @@ def test_server_app_rejects_retrying_subscription_without_dead_letter_behavior()
 
 def test_server_app_rejects_subscription_with_whitespace_wrapped_failure_policy() -> None:
     app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+    _record_seeded_run_owner(
+        app,
+        "run-subscribe-failure-policy-whitespace-1",
+        PrincipalRef("user-1"),
+    )
     app._events_by_run_id["run-subscribe-failure-policy-whitespace-1"] = ()
 
     response = app.handle(
@@ -9995,6 +10246,11 @@ def test_server_app_rejects_subscription_with_whitespace_wrapped_failure_policy(
 
 def test_server_app_rejects_authoritative_event_subscription_projection() -> None:
     app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+    _record_seeded_run_owner(
+        app,
+        "run-subscribe-authoritative-1",
+        PrincipalRef("user-1"),
+    )
     app._events_by_run_id["run-subscribe-authoritative-1"] = ()
 
     response = app.handle(
@@ -10026,6 +10282,11 @@ def test_server_app_rejects_authoritative_event_subscription_projection() -> Non
 def test_server_app_rejects_subscription_with_invalid_event_filter_before_replay() -> None:
     for severity_min in ("panic", "error "):
         app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+        _record_seeded_run_owner(
+            app,
+            "run-subscribe-filter-invalid-1",
+            PrincipalRef("user-1"),
+        )
         app._events_by_run_id["run-subscribe-filter-invalid-1"] = ()
 
         response = app.handle(
@@ -10056,6 +10317,11 @@ def test_server_app_rejects_subscription_with_invalid_event_filter_before_replay
 def test_server_app_rejects_subscription_with_invalid_visibility_filter() -> None:
     for visibility in ("public", "client "):
         app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+        _record_seeded_run_owner(
+            app,
+            "run-subscribe-visibility-invalid-1",
+            PrincipalRef("user-1"),
+        )
         app._events_by_run_id["run-subscribe-visibility-invalid-1"] = ()
 
         response = app.handle(
@@ -10100,6 +10366,11 @@ def test_server_app_rejects_subscription_with_whitespace_wrapped_identity_filter
     )
     for index, (event_filter, expected_error) in enumerate(cases, start=1):
         app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+        _record_seeded_run_owner(
+            app,
+            "run-subscribe-identity-invalid-1",
+            PrincipalRef("user-1"),
+        )
         app._events_by_run_id["run-subscribe-identity-invalid-1"] = ()
 
         response = app.handle(
@@ -10152,6 +10423,11 @@ def test_server_app_rejects_object_valued_event_filter_sequences() -> None:
                 {"token-1": PrincipalRef("user-1")}
             )
         )
+        _record_seeded_run_owner(
+            app,
+            "run-subscribe-sequence-invalid-1",
+            PrincipalRef("user-1"),
+        )
         app._events_by_run_id["run-subscribe-sequence-invalid-1"] = ()
 
         response = app.handle(
@@ -10187,6 +10463,11 @@ def test_server_app_rejects_duplicate_event_filter_constraints() -> None:
         auth_hook=StaticBearerAuthHook(
             {"token-1": PrincipalRef("user-1")}
         )
+    )
+    _record_seeded_run_owner(
+        app,
+        "run-subscribe-duplicate-filter-1",
+        PrincipalRef("user-1"),
     )
     app._events_by_run_id["run-subscribe-duplicate-filter-1"] = ()
 
@@ -10226,6 +10507,11 @@ def test_server_app_rejects_duplicate_event_filter_constraints() -> None:
 def test_server_app_rejects_subscription_with_whitespace_wrapped_subscription_id() -> None:
     for index, subscription_id in enumerate((" sub-identity-invalid", "sub-identity-invalid "), start=1):
         app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+        _record_seeded_run_owner(
+            app,
+            f"run-subscribe-id-invalid-{index}",
+            PrincipalRef("user-1"),
+        )
         app._events_by_run_id[f"run-subscribe-id-invalid-{index}"] = ()
 
         response = app.handle(
@@ -10429,6 +10715,11 @@ def test_server_app_rejects_unsubscribe_from_non_owner_principal() -> None:
             }
         )
     )
+    _record_seeded_run_owner(
+        app,
+        "run-unsubscribe-owner-1",
+        PrincipalRef("user-1"),
+    )
     app._events_by_run_id["run-unsubscribe-owner-1"] = (
         {
             "kind": "RunStarted",
@@ -10472,13 +10763,10 @@ def test_server_app_rejects_unsubscribe_from_non_owner_principal() -> None:
     )
 
     assert created.status_code == 201
-    assert denied.status_code == 403
+    assert denied.status_code == 404
     assert json.loads(denied.body.decode("utf-8")) == {
         "ok": False,
-        "error": (
-            "subscription 'sub-unsubscribe-owner-1' for run 'run-unsubscribe-owner-1' "
-            "belongs to a different principal"
-        ),
+        "error": "run subscriptions not found for run 'run-unsubscribe-owner-1'",
     }
     assert app.subscriptions("run-unsubscribe-owner-1")[0].status == "active"
 
@@ -10491,6 +10779,11 @@ def test_server_app_rejects_unsubscribe_from_same_principal_different_tenant() -
                 "other-token": PrincipalRef("user-1", tenant_id="tenant-b"),
             }
         )
+    )
+    _record_seeded_run_owner(
+        app,
+        "run-unsubscribe-tenant-owner-1",
+        PrincipalRef("user-1", tenant_id="tenant-a"),
     )
     app._events_by_run_id["run-unsubscribe-tenant-owner-1"] = (
         {
@@ -10535,12 +10828,12 @@ def test_server_app_rejects_unsubscribe_from_same_principal_different_tenant() -
     )
 
     assert created.status_code == 201
-    assert denied.status_code == 403
+    assert denied.status_code == 404
     assert json.loads(denied.body.decode("utf-8")) == {
         "ok": False,
         "error": (
-            "subscription 'sub-unsubscribe-tenant-owner-1' for run 'run-unsubscribe-tenant-owner-1' "
-            "belongs to a different principal"
+            "run subscriptions not found for run "
+            "'run-unsubscribe-tenant-owner-1'"
         ),
     }
     assert app.subscriptions("run-unsubscribe-tenant-owner-1")[0].status == "active"
@@ -10638,6 +10931,11 @@ def test_server_app_rejects_ack_from_non_owner_principal() -> None:
             }
         )
     )
+    _record_seeded_run_owner(
+        app,
+        "run-ack-owner-1",
+        PrincipalRef("user-1"),
+    )
     app._events_by_run_id["run-ack-owner-1"] = (
         {
             "kind": "RunStarted",
@@ -10683,10 +10981,10 @@ def test_server_app_rejects_ack_from_non_owner_principal() -> None:
     )
 
     assert created.status_code == 201
-    assert denied.status_code == 403
+    assert denied.status_code == 404
     assert json.loads(denied.body.decode("utf-8")) == {
         "ok": False,
-        "error": "subscription 'sub-ack-owner-1' for run 'run-ack-owner-1' belongs to a different principal",
+        "error": "run event stream not found for ack run 'run-ack-owner-1'",
     }
     assert app.event_acks("run-ack-owner-1", "sub-ack-owner-1") == ()
 
@@ -10699,6 +10997,11 @@ def test_server_app_rejects_ack_from_same_principal_different_tenant() -> None:
                 "other-token": PrincipalRef("user-1", tenant_id="tenant-b"),
             }
         )
+    )
+    _record_seeded_run_owner(
+        app,
+        "run-ack-tenant-owner-1",
+        PrincipalRef("user-1", tenant_id="tenant-a"),
     )
     app._events_by_run_id["run-ack-tenant-owner-1"] = (
         {
@@ -10745,12 +11048,12 @@ def test_server_app_rejects_ack_from_same_principal_different_tenant() -> None:
     )
 
     assert created.status_code == 201
-    assert denied.status_code == 403
+    assert denied.status_code == 404
     assert json.loads(denied.body.decode("utf-8")) == {
         "ok": False,
         "error": (
-            "subscription 'sub-ack-tenant-owner-1' for run 'run-ack-tenant-owner-1' "
-            "belongs to a different principal"
+            "run event stream not found for ack run "
+            "'run-ack-tenant-owner-1'"
         ),
     }
     assert app.event_acks("run-ack-tenant-owner-1", "sub-ack-tenant-owner-1") == ()
@@ -10874,6 +11177,11 @@ def test_server_app_acknowledges_subscription_event_without_dropping_events() ->
 
 def test_server_app_rejects_ack_cursor_for_different_run() -> None:
     app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+    _record_seeded_run_owner(
+        app,
+        "run-ack-cursor-scope-1",
+        PrincipalRef("user-1"),
+    )
     app._events_by_run_id["run-ack-cursor-scope-1"] = (
         {
             "kind": "RunSucceeded",
@@ -10924,6 +11232,11 @@ def test_server_app_rejects_ack_cursor_for_different_run() -> None:
 
 def test_server_app_rejects_malformed_ack_cursor() -> None:
     app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+    _record_seeded_run_owner(
+        app,
+        "run-ack-cursor-format-1",
+        PrincipalRef("user-1"),
+    )
     app._events_by_run_id["run-ack-cursor-format-1"] = (
         {
             "kind": "RunSucceeded",
@@ -10974,6 +11287,11 @@ def test_server_app_rejects_malformed_ack_cursor() -> None:
 
 def test_server_app_rejects_ack_when_retained_event_sequence_is_malformed() -> None:
     app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+    _record_seeded_run_owner(
+        app,
+        "run-ack-bool-sequence-1",
+        PrincipalRef("user-1"),
+    )
     app._events_by_run_id["run-ack-bool-sequence-1"] = (
         {
             "kind": "RunSucceeded",
@@ -11141,6 +11459,11 @@ def test_server_app_serializes_concurrent_subscription_acknowledgements() -> Non
             return current
 
     app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+    _record_seeded_run_owner(
+        app,
+        "run-ack-concurrent-1",
+        PrincipalRef("user-1"),
+    )
     app._events_by_run_id["run-ack-concurrent-1"] = (
         {
             "kind": "RunSucceeded",
@@ -11193,6 +11516,11 @@ def test_server_app_serializes_concurrent_subscription_acknowledgements() -> Non
 
 def test_server_app_rejects_subscription_ack_with_invalid_timestamp() -> None:
     app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+    _record_seeded_run_owner(
+        app,
+        "run-ack-invalid-time-1",
+        PrincipalRef("user-1"),
+    )
     app._events_by_run_id["run-ack-invalid-time-1"] = (
         {
             "kind": "RunSucceeded",
@@ -11239,6 +11567,11 @@ def test_server_app_rejects_subscription_ack_with_invalid_timestamp() -> None:
 
 def test_server_app_rejects_ack_with_conflicting_event_id_and_cursor() -> None:
     app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+    _record_seeded_run_owner(
+        app,
+        "run-ack-conflict-1",
+        PrincipalRef("user-1"),
+    )
     app._events_by_run_id["run-ack-conflict-1"] = (
         {
             "kind": "RunStarted",
@@ -11294,6 +11627,11 @@ def test_server_app_rejects_ack_with_conflicting_event_id_and_cursor() -> None:
 
 def test_server_app_rejects_ack_for_event_outside_subscription_filter() -> None:
     app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+    _record_seeded_run_owner(
+        app,
+        "run-ack-filter-1",
+        PrincipalRef("user-1"),
+    )
     app._events_by_run_id["run-ack-filter-1"] = (
         {
             "kind": "RunStarted",
@@ -11349,6 +11687,11 @@ def test_server_app_rejects_ack_for_event_outside_subscription_filter() -> None:
 
 def test_server_app_rejects_ack_for_hidden_or_malformed_visibility_event() -> None:
     app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+    _record_seeded_run_owner(
+        app,
+        "run-ack-hidden-visibility-1",
+        PrincipalRef("user-1"),
+    )
     app._events_by_run_id["run-ack-hidden-visibility-1"] = (
         {
             "kind": "JobProgress",
@@ -11609,6 +11952,11 @@ def test_server_app_constrains_callback_registration_visibility_to_principal_aut
             }
         )
     )
+    _record_seeded_run_owner(
+        app,
+        "run-register-callback-visibility-1",
+        PrincipalRef("user-1"),
+    )
     app._events_by_run_id["run-register-callback-visibility-1"] = (
         {
             "kind": "JobProgress",
@@ -11688,6 +12036,11 @@ def test_server_app_callback_registration_filters_async_events_by_metadata() -> 
                 "operator-token": PrincipalRef("operator-1", roles=("operator",)),
             }
         )
+    )
+    _record_seeded_run_owner(
+        app,
+        "run-callback-filter-metadata-1",
+        PrincipalRef("callback-relay", roles=("operator",)),
     )
     app._events_by_run_id["run-callback-filter-metadata-1"] = (
         {

@@ -2695,6 +2695,11 @@ def test_client_package_submits_async_callback_over_http_transport(monkeypatch) 
     from graphblocks.server import GraphBlocksServerApp, ServerRequest, StaticBearerAuthHook
 
     app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("callback-relay")}))
+    app._record_run_authorization(
+        "run-client-callback-1",
+        PrincipalRef("callback-relay"),
+        "2026-07-03T00:00:00Z",
+    )
     app._events_by_run_id["run-client-callback-1"] = (
         {
             "kind": "RunStarted",

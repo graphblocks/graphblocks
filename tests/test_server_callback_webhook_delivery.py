@@ -77,6 +77,11 @@ def _app_with_terminal_event(
         auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1", tenant_id="tenant-1")}),
         callback_delivery_hook=dispatcher,
     )
+    app._record_run_authorization(
+        "run-delivery-1",
+        PrincipalRef("user-1", tenant_id="tenant-1"),
+        "2026-07-10T00:00:00Z",
+    )
     app._events_by_run_id["run-delivery-1"] = (
         {
             "kind": "RunStarted",
