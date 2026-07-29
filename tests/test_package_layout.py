@@ -263,10 +263,15 @@ def test_graphblocks_testing_is_the_only_additional_pure_python_artifact() -> No
 
     assert pyproject["project"]["name"] == "graphblocks-testing"
     dependencies = pyproject["project"]["dependencies"]
-    assert len(dependencies) == 1
-    dependency = Requirement(dependencies[0])
-    assert dependency.name == "graphblocks"
-    assert Version(pyproject["project"]["version"]) in dependency.specifier
+    requirements = {}
+    for dependency in dependencies:
+        requirement = Requirement(dependency)
+        requirements[requirement.name] = requirement
+    assert set(requirements) == {"graphblocks", "packaging"}
+    assert Version(pyproject["project"]["version"]) in requirements[
+        "graphblocks"
+    ].specifier
+    assert Version("24.0") in requirements["packaging"].specifier
     assert pyproject["project"]["scripts"] == {
         "graphblocks-tck": "graphblocks_testing:main"
     }

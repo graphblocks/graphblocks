@@ -72,13 +72,16 @@ Install the conformance tools separately when developing or verifying a
 profile implementation:
 
 ```bash
-python -m pip install -e ./packages/graphblocks-testing
+python -m pip install -e './packages/graphblocks-testing[runtime]'
 graphblocks-tck --help
 ```
 
 `graphblocks-testing` depends on `graphblocks` and owns the `graphblocks-tck`
 command. It is not part of the root `test` extra. Its `runtime` extra adds
-`graphblocks-runtime` for native-profile TCK work.
+`graphblocks-runtime` for release-evidence runs of the normative compiler and
+native runtime-profile TCK work. Ordinary compiler TCK runs remain an explicit
+Python reference-oracle path; listing fixtures and running reference suites does
+not require that extra.
 
 Continue with the [quickstart](quickstart.md).
 

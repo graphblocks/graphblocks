@@ -257,6 +257,24 @@ def _tck_expectations(
             implementation_version = str(project["version"])
         except (OSError, UnicodeError, KeyError, TypeError, tomllib.TOMLDecodeError) as error:
             raise RuntimeError("checked-in implementation version is invalid") from error
+    try:
+        native_compiler_project = tomllib.loads(
+            (
+                root
+                / "packages"
+                / "graphblocks-runtime"
+                / "pyproject.toml"
+            ).read_text(encoding="utf-8")
+        )["project"]
+        native_compiler_version = str(native_compiler_project["version"])
+    except (
+        OSError,
+        UnicodeError,
+        KeyError,
+        TypeError,
+        tomllib.TOMLDecodeError,
+    ) as error:
+        raise RuntimeError("checked-in native compiler version is invalid") from error
     suites: dict[str, dict[str, object]] = {}
     contracts: list[dict[str, object]] = []
     for cases_path in sorted(tck_root.glob("*/cases.json"), key=lambda path: path.parent.name):
@@ -307,14 +325,26 @@ def _tck_expectations(
         suite_manifest_digest = canonical_hash(contract)
         case_ids_digest = canonical_hash({"case_ids": case_ids})
         contracts.append(contract)
+        suite_implementation = (
+            "graphblocks-runtime" if suite == "compiler" else implementation
+        )
+        suite_implementation_version = (
+            native_compiler_version
+            if suite == "compiler"
+            else implementation_version
+        )
         suites[suite] = {
             "case_ids": tuple(case_ids),
             "case_ids_digest": case_ids_digest,
             "fixture_digest": fixture_digest,
-            "implementation": implementation,
-            "implementation_version": implementation_version,
+            "implementation": suite_implementation,
+            "implementation_version": suite_implementation_version,
             "suite_manifest_digest": suite_manifest_digest,
         }
+        if suite == "compiler":
+            suites[suite]["implementation_artifact_distribution"] = (
+                "graphblocks-runtime"
+            )
     if not suites:
         raise RuntimeError("bundled stable TCK contains no suites")
     profile_catalog_path = root / "src" / "graphblocks" / "data" / "conformance-profiles.yaml"
@@ -439,6 +469,7 @@ def _require_release_evidence(
     kind: str,
     expected_tck: Mapping[str, object] | None = None,
     expected_acceptance: Mapping[str, object] | None = None,
+    expected_compiler_artifact: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
     if not isinstance(payload, dict) or payload.get("ok") is not True:
         raise RuntimeError(f"installed {kind} evidence did not pass")
@@ -450,6 +481,28 @@ def _require_release_evidence(
             expected_tck.get("suites") if isinstance(expected_tck, Mapping) else None
         )
         if expected_tck is not None:
+            compiler_expectation = (
+                raw_expected_suites.get("compiler")
+                if isinstance(raw_expected_suites, Mapping)
+                else None
+            )
+            required_artifact_distribution = (
+                compiler_expectation.get("implementation_artifact_distribution")
+                if isinstance(compiler_expectation, Mapping)
+                else None
+            )
+            if required_artifact_distribution is not None:
+                if expected_compiler_artifact is None:
+                    raise RuntimeError(
+                        "checked-in TCK expectations require an exact compiler artifact"
+                    )
+                if (
+                    expected_compiler_artifact.get("distribution")
+                    != required_artifact_distribution
+                ):
+                    raise RuntimeError(
+                        "expected compiler artifact names another distribution"
+                    )
             if payload.get("profile") != "local":
                 raise RuntimeError("installed TCK evidence does not use the stable local profile")
             manifest_digest = _require_canonical_sha256(
@@ -548,6 +601,34 @@ def _require_release_evidence(
                     raise RuntimeError(
                         f"installed TCK suite {suite!r} cases do not match checked-in expectations"
                     )
+        if expected_compiler_artifact is not None:
+            compiler_report = reports.get("compiler")
+            compiler_evidence = (
+                compiler_report.get("evidence")
+                if isinstance(compiler_report, Mapping)
+                else None
+            )
+            observed_artifact = (
+                compiler_evidence.get("implementation_artifact")
+                if isinstance(compiler_evidence, Mapping)
+                else None
+            )
+            expected_artifact = dict(expected_compiler_artifact)
+            if observed_artifact != expected_artifact:
+                raise RuntimeError(
+                    "installed compiler TCK evidence does not bind the exact "
+                    "graphblocks-runtime wheel"
+                )
+            if (
+                compiler_evidence.get("implementation")
+                != expected_artifact.get("distribution")
+                or compiler_evidence.get("implementation_version")
+                != expected_artifact.get("version")
+            ):
+                raise RuntimeError(
+                    "installed compiler TCK implementation identity does not "
+                    "match its wheel artifact"
+                )
     elif kind == "acceptance":
         manifest_digest = _require_canonical_sha256(
             payload.get("manifest_digest"),
@@ -645,6 +726,7 @@ def _run_json_command(
     kind: str,
     expected_tck: Mapping[str, object] | None = None,
     expected_acceptance: Mapping[str, object] | None = None,
+    expected_compiler_artifact: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
     completed = subprocess.run(
         command,
@@ -663,6 +745,7 @@ def _run_json_command(
         kind=kind,
         expected_tck=expected_tck,
         expected_acceptance=expected_acceptance,
+        expected_compiler_artifact=expected_compiler_artifact,
     )
 
 
@@ -682,6 +765,7 @@ def validate_release_evidence_payloads(
     acceptance_payload: object,
     root: Path = ROOT,
     expectations: Mapping[str, object] | None = None,
+    expected_compiler_artifact: Mapping[str, object] | None = None,
 ) -> dict[str, dict[str, object]]:
     frozen_expectations = (
         release_evidence_expectations(root) if expectations is None else expectations
@@ -697,6 +781,7 @@ def validate_release_evidence_payloads(
             tck_payload,
             kind="TCK",
             expected_tck=expected_tck,
+            expected_compiler_artifact=expected_compiler_artifact,
         ),
         "acceptance": _require_release_evidence(
             acceptance_payload,
@@ -1259,6 +1344,22 @@ def main(argv: list[str] | None = None) -> int:
         raise RuntimeError(
             f"expected {len(manifests)} first-party sdist artifacts, found {len(built_sdists)}"
         )
+    native_compiler_wheels = tuple(
+        path
+        for path in built_wheels
+        if _artifact_identity(path)[:2]
+        == (
+            "graphblocks-runtime",
+            expected_distributions["graphblocks-runtime"],
+        )
+    )
+    if len(native_compiler_wheels) != 1:
+        raise RuntimeError(
+            "first-party wheelhouse must contain exactly one "
+            "graphblocks-runtime compiler artifact"
+        )
+    native_compiler_wheel = native_compiler_wheels[0]
+    native_compiler_artifact = _artifact_record(native_compiler_wheel)
     observed_sdist_versions = {
         distribution: version
         for distribution, version, artifact_type in (
@@ -1351,6 +1452,10 @@ def main(argv: list[str] | None = None) -> int:
             cwd=ROOT,
             env=install_environment,
         )
+        if _artifact_record(native_compiler_wheel) != native_compiler_artifact:
+            raise RuntimeError(
+                "graphblocks-runtime compiler wheel changed during installation"
+            )
         installed_schema_manifest = subprocess.run(
             [str(isolated_python), "-m", "graphblocks", "schemas", "manifest"],
             check=True,
@@ -1377,12 +1482,23 @@ def main(argv: list[str] | None = None) -> int:
             )
             evidence_expectations = release_evidence_expectations(ROOT)
             tck_payload = _run_json_command(
-                [str(tck_command), "run-all", "--json"],
+                [
+                    str(tck_command),
+                    "run-all",
+                    "--native-compiler-wheel",
+                    str(native_compiler_wheel.resolve()),
+                    "--json",
+                ],
                 cwd=install_root,
                 env=install_environment,
                 kind="TCK",
                 expected_tck=evidence_expectations["TCK"],
+                expected_compiler_artifact=native_compiler_artifact,
             )
+            if _artifact_record(native_compiler_wheel) != native_compiler_artifact:
+                raise RuntimeError(
+                    "graphblocks-runtime compiler wheel changed during TCK execution"
+                )
             acceptance_payload = _run_json_command(
                 [
                     str(tck_command),

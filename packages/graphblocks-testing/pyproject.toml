@@ -20,7 +20,10 @@ classifiers = [
   "Programming Language :: Python :: 3.12",
   "Typing :: Typed",
 ]
-dependencies = ["graphblocks>=1.0.0rc1,<2"]
+dependencies = [
+  "graphblocks>=1.0.0rc1,<2",
+  "packaging>=24.0",
+]
 
 [project.optional-dependencies]
 runtime = [

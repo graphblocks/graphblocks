@@ -504,16 +504,49 @@ def test_testing_package_runs_compiler_tck_case_and_reports_hash(monkeypatch) ->
         "metadata": {"name": "compiler-case"},
         "spec": {"nodes": {"source": {"block": "prompt.render@1"}}},
     }
-    expected_hash = graphblocks_testing.compile_graph(graph).graph_hash
+    expected_plan = graphblocks_testing.compile_graph(
+        graph,
+        block_catalog=graphblocks_testing.BlockCatalog.from_blocks(()),
+        allow_unknown_blocks=True,
+    )
+    expected_hash = expected_plan.graph_hash
     case = graphblocks_testing.TckCase.compiler(
         case_id="compiler/hash-stable",
         graph=graph,
         expected_hash=expected_hash,
     )
+    reference_calls: list[tuple[object, object, bool]] = []
+    reference_compile = graphblocks_testing.compile_graph
+
+    def observed_reference(
+        document: object,
+        block_catalog: object = None,
+        *,
+        allow_unknown_blocks: bool = False,
+    ) -> object:
+        reference_calls.append((document, block_catalog, allow_unknown_blocks))
+        return reference_compile(
+            document,
+            block_catalog=block_catalog,
+            allow_unknown_blocks=allow_unknown_blocks,
+        )
+
+    def unexpected_native(*args: object, **kwargs: object) -> object:
+        raise AssertionError("ordinary TckRunner must preserve reference semantics")
+
+    monkeypatch.setattr(
+        graphblocks_testing,
+        "_compile_graph_normative",
+        unexpected_native,
+    )
+    monkeypatch.setattr(graphblocks_testing, "compile_graph", observed_reference)
 
     report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry()).run_cases((case,))
 
     assert report.ok
+    assert len(reference_calls) == 1
+    assert reference_calls[0][0] == graph
+    assert reference_calls[0][2] is True
     contract = report.report_contract()
     evidence = contract.pop("evidence")
     assert contract == {
@@ -543,6 +576,13 @@ def test_testing_package_runs_compiler_tck_case_and_reports_hash(monkeypatch) ->
     }
     assert report.fixture_digest.startswith("sha256:")
     assert report.content_digest().startswith("sha256:")
+    custom_report = graphblocks_testing.TckRunner(
+        graphblocks_testing.stdlib_registry(),
+        implementation="custom-compiler",
+        implementation_version="9.1",
+    ).run_cases((case,))
+    assert custom_report.implementation == "custom-compiler"
+    assert custom_report.implementation_version == "9.1"
 
 
 def test_testing_package_loads_shared_compiler_tck_cases_with_diagnostic_expectations(monkeypatch) -> None:
@@ -563,7 +603,226 @@ def test_testing_package_loads_shared_compiler_tck_cases_with_diagnostic_expecta
         for case in cases
     )
     assert any(result.observed["error_codes"] for result in report.results)
+    assert report.implementation == "graphblocks-python"
+    assert report.implementation_version == "1.0.0rc1"
     assert "load_compiler_tck_cases" in graphblocks_testing.__all__
+
+
+def test_compiler_tck_never_falls_back_when_native_compiler_is_unavailable(
+    monkeypatch,
+) -> None:
+    monkeypatch.syspath_prepend(
+        str(ROOT / "packages" / "graphblocks-testing" / "src")
+    )
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+    compiler_module = importlib.import_module("graphblocks.compiler")
+    case = graphblocks_testing.TckCase.compiler(
+        case_id="compiler/native-required",
+        graph={
+            "apiVersion": "graphblocks.ai/v1",
+            "kind": "Graph",
+            "metadata": {"name": "native-required"},
+            "spec": {"nodes": {}},
+        },
+        expected_hash="sha256:" + "0" * 64,
+    )
+
+    def unavailable(*args: object, **kwargs: object) -> object:
+        raise compiler_module.NativeCompilerUnavailableError("native unavailable")
+
+    def unexpected_reference(*args: object, **kwargs: object) -> object:
+        raise AssertionError("reference compiler fallback must remain explicit")
+
+    monkeypatch.setattr(
+        graphblocks_testing,
+        "_compile_graph_normative",
+        unavailable,
+    )
+    monkeypatch.setattr(graphblocks_testing, "compile_graph", unexpected_reference)
+
+    with pytest.raises(
+        compiler_module.NativeCompilerUnavailableError,
+        match="native unavailable",
+    ):
+        graphblocks_testing._NormativeCompilerTckRunner(
+            graphblocks_testing.stdlib_registry(),
+            implementation="graphblocks-runtime",
+            implementation_version="0.1.0",
+        ).run_cases((case,))
+
+
+def test_native_compiler_wheel_artifact_binds_installed_binding(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monkeypatch.syspath_prepend(
+        str(ROOT / "packages" / "graphblocks-testing" / "src")
+    )
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+    wheel = tmp_path / "graphblocks_runtime-0.1.0-cp311-abi3-linux_x86_64.whl"
+    runtime_root = tmp_path / "installed" / "graphblocks_runtime"
+    runtime_root.mkdir(parents=True)
+    package_bytes = b"# installed runtime package\n"
+    native_bytes = b"installed native extension"
+    (runtime_root / "__init__.py").write_bytes(package_bytes)
+    (runtime_root / "_native.abi3.so").write_bytes(native_bytes)
+    with zipfile.ZipFile(wheel, "w") as archive:
+        archive.writestr("graphblocks_runtime/__init__.py", package_bytes)
+        archive.writestr("graphblocks_runtime/_native.abi3.so", native_bytes)
+    wheel_bytes = wheel.read_bytes()
+    monkeypatch.setattr(
+        graphblocks_testing,
+        "distribution_version",
+        lambda distribution: "0.1.0",
+    )
+    monkeypatch.setattr(
+        graphblocks_testing,
+        "installed_distribution",
+        lambda distribution: SimpleNamespace(
+            locate_file=lambda path: runtime_root.parent / path
+        ),
+    )
+    wheel_tags = graphblocks_testing.parse_wheel_filename(wheel.name)[3]
+    monkeypatch.setattr(graphblocks_testing, "sys_tags", lambda: iter(wheel_tags))
+    runtime_module = SimpleNamespace(
+        __file__=str(runtime_root / "__init__.py"),
+        native_extension_available=lambda: True,
+        binding_version=lambda: "0.1.0",
+    )
+    monkeypatch.setitem(sys.modules, "graphblocks_runtime", runtime_module)
+    monkeypatch.setitem(
+        sys.modules,
+        "graphblocks_runtime._native",
+        SimpleNamespace(__file__=str(runtime_root / "_native.abi3.so")),
+    )
+
+    artifact = graphblocks_testing._native_compiler_wheel_artifact(wheel)
+
+    assert artifact == {
+        "filename": wheel.name,
+        "sha256": hashlib.sha256(wheel_bytes).hexdigest(),
+        "size": len(wheel_bytes),
+        "distribution": "graphblocks-runtime",
+        "version": "0.1.0",
+        "artifactType": "wheel",
+    }
+    runtime_module.binding_version = lambda: "0.2.0"
+    with pytest.raises(RuntimeError, match="binding version"):
+        graphblocks_testing._native_compiler_wheel_artifact(wheel)
+    runtime_module.binding_version = lambda: "0.1.0"
+    runtime_module.native_extension_available = lambda: False
+    with pytest.raises(RuntimeError, match="native extension is unavailable"):
+        graphblocks_testing._native_compiler_wheel_artifact(wheel)
+
+
+def test_native_compiler_wheel_artifact_rejects_uninstalled_payload(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monkeypatch.syspath_prepend(
+        str(ROOT / "packages" / "graphblocks-testing" / "src")
+    )
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+    wheel = tmp_path / "graphblocks_runtime-0.1.0-cp311-abi3-linux_x86_64.whl"
+    runtime_root = tmp_path / "installed" / "graphblocks_runtime"
+    runtime_root.mkdir(parents=True)
+    (runtime_root / "__init__.py").write_bytes(b"# selected wheel\n")
+    (runtime_root / "_native.abi3.so").write_bytes(b"substituted native extension")
+    with zipfile.ZipFile(wheel, "w") as archive:
+        archive.writestr("graphblocks_runtime/__init__.py", b"# selected wheel\n")
+        archive.writestr(
+            "graphblocks_runtime/_native.abi3.so",
+            b"selected native extension",
+        )
+    monkeypatch.setattr(
+        graphblocks_testing,
+        "distribution_version",
+        lambda distribution: "0.1.0",
+    )
+    monkeypatch.setattr(
+        graphblocks_testing,
+        "installed_distribution",
+        lambda distribution: SimpleNamespace(
+            locate_file=lambda path: runtime_root.parent / path
+        ),
+    )
+    wheel_tags = graphblocks_testing.parse_wheel_filename(wheel.name)[3]
+    monkeypatch.setattr(graphblocks_testing, "sys_tags", lambda: iter(wheel_tags))
+
+    with pytest.raises(
+        RuntimeError,
+        match="installed graphblocks-runtime bytes do not match",
+    ):
+        graphblocks_testing._native_compiler_wheel_artifact(wheel)
+
+
+def test_native_compiler_wheel_artifact_rejects_incompatible_platform(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monkeypatch.syspath_prepend(
+        str(ROOT / "packages" / "graphblocks-testing" / "src")
+    )
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+    wheel = tmp_path / "graphblocks_runtime-0.1.0-cp311-abi3-win_amd64.whl"
+    wheel.write_bytes(b"foreign wheel")
+    monkeypatch.setattr(graphblocks_testing, "sys_tags", lambda: iter(()))
+
+    with pytest.raises(ValueError, match="not compatible"):
+        graphblocks_testing._native_compiler_wheel_artifact(wheel)
+
+
+def test_native_compiler_wheel_artifact_rejects_bytecode_cache(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monkeypatch.syspath_prepend(
+        str(ROOT / "packages" / "graphblocks-testing" / "src")
+    )
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+    wheel = tmp_path / "graphblocks_runtime-0.1.0-cp311-abi3-linux_x86_64.whl"
+    with zipfile.ZipFile(wheel, "w") as archive:
+        archive.writestr("graphblocks_runtime/__init__.py", b"# runtime\n")
+        archive.writestr("graphblocks_runtime/_native.abi3.so", b"native")
+        archive.writestr(
+            "graphblocks_runtime/__pycache__/__init__.cpython-311.pyc",
+            b"cache",
+        )
+    monkeypatch.setattr(
+        graphblocks_testing,
+        "distribution_version",
+        lambda distribution: "0.1.0",
+    )
+    wheel_tags = graphblocks_testing.parse_wheel_filename(wheel.name)[3]
+    monkeypatch.setattr(graphblocks_testing, "sys_tags", lambda: iter(wheel_tags))
+
+    with pytest.raises(ValueError, match="bytecode caches"):
+        graphblocks_testing._native_compiler_wheel_artifact(wheel)
+
+
+def test_native_compiler_wheel_artifact_rejects_unexpected_install_payload(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monkeypatch.syspath_prepend(
+        str(ROOT / "packages" / "graphblocks-testing" / "src")
+    )
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+    wheel = tmp_path / "graphblocks_runtime-0.1.0-cp311-abi3-linux_x86_64.whl"
+    with zipfile.ZipFile(wheel, "w") as archive:
+        archive.writestr("graphblocks_runtime/__init__.py", b"# runtime\n")
+        archive.writestr("graphblocks_runtime/_native.abi3.so", b"native")
+        archive.writestr("sitecustomize.py", b"raise RuntimeError('unexpected')\n")
+    monkeypatch.setattr(
+        graphblocks_testing,
+        "distribution_version",
+        lambda distribution: "0.1.0",
+    )
+    wheel_tags = graphblocks_testing.parse_wheel_filename(wheel.name)[3]
+    monkeypatch.setattr(graphblocks_testing, "sys_tags", lambda: iter(wheel_tags))
+
+    with pytest.raises(ValueError, match="unexpected install payload"):
+        graphblocks_testing._native_compiler_wheel_artifact(wheel)
 
 
 def test_testing_package_loads_shared_runtime_tck_cases_with_terminal_expectations(monkeypatch) -> None:
@@ -9343,14 +9602,58 @@ def test_testing_package_cli_runs_all_supported_tck_suites(monkeypatch, capsys) 
 def test_testing_package_cli_emits_observed_release_tck_identity(
     monkeypatch,
     capsys,
+    tmp_path,
 ) -> None:
     monkeypatch.syspath_prepend(
         str(ROOT / "packages" / "graphblocks-testing" / "src")
     )
     graphblocks_testing = importlib.import_module("graphblocks_testing")
     manifests = graphblocks_testing.load_bundled_tck_suite_manifests()
+    wheel = tmp_path / "graphblocks_runtime-0.1.0-cp311-abi3-linux_x86_64.whl"
+    wheel.write_bytes(b"release compiler wheel")
+    compiler_artifact = {
+        "filename": wheel.name,
+        "sha256": hashlib.sha256(wheel.read_bytes()).hexdigest(),
+        "size": wheel.stat().st_size,
+        "distribution": "graphblocks-runtime",
+        "version": "0.1.0",
+        "artifactType": "wheel",
+    }
+    native_calls: list[str] = []
+    reference_compile = graphblocks_testing.compile_graph
 
-    exit_code = graphblocks_testing.main(["run-all", "--json"])
+    def normative_compile(
+        document: dict[str, object],
+        block_catalog: object = None,
+        *,
+        allow_unknown_blocks: bool = False,
+    ) -> object:
+        native_calls.append(str(document["metadata"]["name"]))
+        return reference_compile(
+            document,
+            block_catalog=block_catalog,
+            allow_unknown_blocks=allow_unknown_blocks,
+        )
+
+    monkeypatch.setattr(
+        graphblocks_testing,
+        "_native_compiler_wheel_artifact",
+        lambda path: dict(compiler_artifact),
+    )
+    monkeypatch.setattr(
+        graphblocks_testing,
+        "_compile_graph_normative",
+        normative_compile,
+    )
+    monkeypatch.setattr(
+        graphblocks_testing,
+        "_native_compiler_version",
+        lambda: "0.1.0",
+    )
+
+    exit_code = graphblocks_testing.main(
+        ["run-all", "--native-compiler-wheel", str(wheel), "--json"]
+    )
 
     assert exit_code == 0
     payload = json.loads(capsys.readouterr().out, parse_float=Decimal)
@@ -9369,6 +9672,11 @@ def test_testing_package_cli_emits_observed_release_tck_identity(
             {"case_ids": list(manifest.case_ids)}
         )
         assert evidence["suite_manifest_digest"] == manifest.content_digest()
+    compiler_report = payload["reports"]["compiler"]
+    assert compiler_report["evidence"]["implementation"] == "graphblocks-runtime"
+    assert compiler_report["evidence"]["implementation_version"] == "0.1.0"
+    assert compiler_report["evidence"]["implementation_artifact"] == compiler_artifact
+    assert len(native_calls) == len(compiler_report["results"])
     assert payload["contentDigest"] == graphblocks_testing.canonical_hash(
         {key: value for key, value in payload.items() if key != "contentDigest"}
     )

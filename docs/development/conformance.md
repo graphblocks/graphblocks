@@ -18,8 +18,12 @@ the exact-name built-ins in `graphblocks`. It emits digest-bound evidence and
 fails closed for unknown gates, missing optional install dependencies,
 malformed scenarios, or stale identity. The
 `graphblocks-testing[runtime]` extra adds the actual `graphblocks-runtime`
-dependency for native-profile work; it does not assemble catalog identities or
-historical feature wheels.
+dependency for normative compiler release evidence and native runtime-profile
+work; ordinary `TckRunner` compiler cases retain their explicit reference-oracle
+and caller-supplied implementation semantics. Installed release verification
+binds the compiler report to the exact runtime wheel filename, version, size,
+and SHA-256 retained for that platform, and verifies that the loaded package and
+native-module bytes match that wheel.
 
 Add the narrowest applicable positive and negative fixture for a semantic
 change. Include replay, cancellation, invalid identity, policy rejection,

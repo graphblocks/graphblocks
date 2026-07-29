@@ -320,8 +320,11 @@ def test_stable_release_matrix_is_complete_and_machine_readable() -> None:
     assert "production-scheduler-and-durable-authority" in authority[
         "remainingPhases"
     ]
-    assert "supported-installed-native-compiler-tck-and-artifact-evidence" in (
+    assert "supported-installed-native-compiler-tck-and-artifact-evidence" not in (
         authority["remainingPhases"]
+    )
+    assert "supported-installed-native-compiler-tck-and-artifact-evidence" in (
+        authority["completedPhases"]
     )
     assert "control-plane-library-extraction" not in authority["remainingPhases"]
     assert "control-plane-library-extraction" in authority["completedPhases"]
@@ -381,13 +384,13 @@ def test_stable_release_matrix_is_complete_and_machine_readable() -> None:
     )
     assert (
         "installed-native-compiler-tck-differential-and-artifact-identity"
-        not in authority_gate["completedEvidence"]
+        in authority_gate["completedEvidence"]
     )
     assert "authority-transition-adr-not-accepted" not in authority_gate["blockers"]
     assert "production-runtime-authority-transition-incomplete" in authority_gate[
         "blockers"
     ]
-    assert "installed-native-compiler-tck-and-artifact-identity-incomplete" in (
+    assert "installed-native-compiler-tck-and-artifact-identity-incomplete" not in (
         authority_gate["blockers"]
     )
     assert "control-plane-dependency-inversion-incomplete" not in authority_gate[

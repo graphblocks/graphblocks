@@ -226,6 +226,17 @@ def _write_platform_input(
 
     expectations = module.release_evidence_expectations(module.ROOT)
     tck, acceptance = _release_evidence(module, expectations)
+    native_compiler_artifact = next(
+        record
+        for record in records
+        if record["distribution"] == "graphblocks-runtime"
+        and record["artifactType"] == "wheel"
+    )
+    tck["reports"]["compiler"]["evidence"]["implementation_artifact"] = dict(
+        native_compiler_artifact
+    )
+    tck.pop("contentDigest")
+    tck["contentDigest"] = canonical_hash(tck)
     (evidence_root / "tck.json").write_text(
         json.dumps(tck, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
@@ -279,7 +290,15 @@ def _write_platform_input(
         ],
         "dependencies": [
             {"ref": graphblocks_ref, "dependsOn": sorted(dependency_refs)},
-            {"ref": testing_ref, "dependsOn": [graphblocks_ref]},
+            {
+                "ref": testing_ref,
+                "dependsOn": sorted(
+                    [
+                        graphblocks_ref,
+                        "pkg:pypi/packaging@25.0",
+                    ]
+                ),
+            },
             {"ref": runtime_ref, "dependsOn": []},
             *[
                 {"ref": reference, "dependsOn": []}
@@ -1938,6 +1957,102 @@ def test_standalone_assembly_revalidates_exact_checked_in_tck_semantics(tmp_path
             release_ref=RELEASE_REF,
             builder_id=BUILDER_ID,
             invocation_id=INVOCATION_ID,
+        )
+
+
+def test_standalone_assembly_rejects_substituted_compiler_wheel_evidence(
+    tmp_path: Path,
+) -> None:
+    module = _load_module()
+    inputs = _inputs(module, tmp_path)
+    evidence_root = next(inputs.iterdir()) / "platform-evidence"
+    tck_path = evidence_root / "tck.json"
+    tck = json.loads(tck_path.read_text(encoding="utf-8"))
+    tck["reports"]["compiler"]["evidence"]["implementation_artifact"][
+        "sha256"
+    ] = "f" * 64
+    tck.pop("contentDigest")
+    tck["contentDigest"] = canonical_hash(tck)
+    tck_path.write_text(
+        json.dumps(tck, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    platform_path = evidence_root / "platform.json"
+    platform = json.loads(platform_path.read_text(encoding="utf-8"))
+    platform["evidence"]["tck"] = tck["contentDigest"]
+    platform.pop("contentDigest")
+    platform["contentDigest"] = canonical_hash(platform)
+    platform_path.write_text(
+        json.dumps(platform, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(
+        module.ReleaseBundleError,
+        match="exact graphblocks-runtime wheel",
+    ):
+        module.assemble_release_bundle(
+            platform_inputs_dir=inputs,
+            output_dir=tmp_path / "bundle",
+            git_commit=COMMIT,
+            release_ref=RELEASE_REF,
+            builder_id=BUILDER_ID,
+            invocation_id=INVOCATION_ID,
+        )
+
+
+def test_retained_evidence_rejects_substituted_compiler_wheel_identity(
+    tmp_path: Path,
+) -> None:
+    module = _load_module()
+    bundle = _assemble(module, tmp_path)
+    os_name, python_version = next(iter(module.SUPPORTED_PLATFORM_MATRIX))
+    evidence_root = (
+        bundle
+        / "evidence"
+        / f"{os_name}-py{python_version.replace('.', '')}"
+    )
+    tck_path = evidence_root / "tck.json"
+    tck = json.loads(tck_path.read_text(encoding="utf-8"))
+    tck["reports"]["compiler"]["evidence"]["implementation_artifact"][
+        "sha256"
+    ] = "f" * 64
+    tck.pop("contentDigest")
+    tck["contentDigest"] = canonical_hash(tck)
+    tck_path.write_text(
+        json.dumps(tck, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    platform_path = evidence_root / "platform.json"
+    platform = json.loads(platform_path.read_text(encoding="utf-8"))
+    platform["evidence"]["tck"] = tck["contentDigest"]
+    platform.pop("contentDigest")
+    platform["contentDigest"] = canonical_hash(platform)
+    platform_path.write_text(
+        json.dumps(platform, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    manifest_path = bundle / "release-manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    snapshots, _directories = module._bundle_snapshots(
+        bundle,
+        manifest_snapshot=module._snapshot_regular_file(
+            manifest_path,
+            owner="test release manifest",
+        ),
+    )
+
+    with pytest.raises(
+        module.ReleaseBundleError,
+        match="exact graphblocks-runtime wheel",
+    ):
+        module._verify_platform_evidence(
+            snapshots=snapshots,
+            artifacts={
+                record["path"]: record
+                for record in manifest["artifacts"]
+            },
+            expectations=module.release_evidence_expectations(module.ROOT),
         )
 
 

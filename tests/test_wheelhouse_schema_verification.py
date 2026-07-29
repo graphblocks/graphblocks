@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from decimal import Decimal
+import hashlib
 import importlib
 import importlib.util
 import io
@@ -99,6 +100,78 @@ def test_release_evidence_gate_requires_nonempty_identity_bound_tck_reports() ->
     invalid["reports"] = {"schema": {"ok": True, "evidence": {}, "results": []}}
     with pytest.raises(RuntimeError, match="contains no executed cases"):
         module._require_release_evidence(invalid, kind="TCK")
+
+
+def test_release_evidence_binds_compiler_report_to_exact_runtime_wheel() -> None:
+    module = _load_wheelhouse_module()
+    artifact = {
+        "filename": "graphblocks_runtime-0.1.0-cp311-abi3-linux_x86_64.whl",
+        "sha256": "a" * 64,
+        "size": 1024,
+        "distribution": "graphblocks-runtime",
+        "version": "0.1.0",
+        "artifactType": "wheel",
+    }
+
+    def payload(observed_artifact: object) -> dict[str, object]:
+        return _with_content_digest(
+            module,
+            {
+                "ok": True,
+                "reports": {
+                    "compiler": {
+                        "ok": True,
+                        "evidence": {
+                            "fixture_digest": "sha256:" + "b" * 64,
+                            "implementation": "graphblocks-runtime",
+                            "implementation_version": "0.1.0",
+                            "implementation_artifact": observed_artifact,
+                            "suite": "compiler",
+                        },
+                        "results": [
+                            {"case_id": "compiler/native", "status": "passed"}
+                        ],
+                    }
+                },
+            },
+        )
+
+    valid = payload(dict(artifact))
+    assert module._require_release_evidence(
+        valid,
+        kind="TCK",
+        expected_compiler_artifact=artifact,
+    ) == valid
+
+    substituted = dict(artifact)
+    substituted["sha256"] = "c" * 64
+    with pytest.raises(RuntimeError, match="exact graphblocks-runtime wheel"):
+        module._require_release_evidence(
+            payload(substituted),
+            kind="TCK",
+            expected_compiler_artifact=artifact,
+        )
+
+    with pytest.raises(RuntimeError, match="exact graphblocks-runtime wheel"):
+        module._require_release_evidence(
+            payload(None),
+            kind="TCK",
+            expected_compiler_artifact=artifact,
+        )
+    with pytest.raises(RuntimeError, match="require an exact compiler artifact"):
+        module._require_release_evidence(
+            valid,
+            kind="TCK",
+            expected_tck={
+                "suites": {
+                    "compiler": {
+                        "implementation_artifact_distribution": (
+                            "graphblocks-runtime"
+                        )
+                    }
+                }
+            },
+        )
 
 
 def test_release_tck_expectations_validate_observed_suite_identity(
@@ -201,6 +274,7 @@ def test_release_tck_expectations_validate_observed_suite_identity(
 def test_default_tck_output_matches_source_derived_release_expectations(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
 ) -> None:
     root = Path(__file__).parents[1]
     monkeypatch.syspath_prepend(
@@ -208,8 +282,36 @@ def test_default_tck_output_matches_source_derived_release_expectations(
     )
     graphblocks_testing = importlib.import_module("graphblocks_testing")
     module = _load_wheelhouse_module()
+    wheel = tmp_path / "graphblocks_runtime-0.1.0-cp311-abi3-linux_x86_64.whl"
+    wheel.write_bytes(b"release compiler wheel")
+    compiler_artifact = {
+        "filename": wheel.name,
+        "sha256": hashlib.sha256(wheel.read_bytes()).hexdigest(),
+        "size": wheel.stat().st_size,
+        "distribution": "graphblocks-runtime",
+        "version": "0.1.0",
+        "artifactType": "wheel",
+    }
+    reference_compile = graphblocks_testing.compile_graph
+    monkeypatch.setattr(
+        graphblocks_testing,
+        "_native_compiler_wheel_artifact",
+        lambda path: dict(compiler_artifact),
+    )
+    monkeypatch.setattr(
+        graphblocks_testing,
+        "_compile_graph_normative",
+        reference_compile,
+    )
+    monkeypatch.setattr(
+        graphblocks_testing,
+        "_native_compiler_version",
+        lambda: "0.1.0",
+    )
 
-    exit_code = graphblocks_testing.main(["run-all", "--json"])
+    exit_code = graphblocks_testing.main(
+        ["run-all", "--native-compiler-wheel", str(wheel), "--json"]
+    )
 
     assert exit_code == 0
     payload = json.loads(capsys.readouterr().out, parse_float=Decimal)
@@ -218,6 +320,7 @@ def test_default_tck_output_matches_source_derived_release_expectations(
         payload,
         kind="TCK",
         expected_tck=expected,
+        expected_compiler_artifact=compiler_artifact,
     ) == payload
 
 
@@ -433,6 +536,20 @@ def test_stable_tck_expectations_bind_bundled_c0_c1_profiles_and_contract_digest
     }
     assert str(expectations["schema_manifest_digest"]).startswith("sha256:")
     assert str(expectations["profile_catalog_digest"]).startswith("sha256:")
+    assert expectations["suites"]["compiler"]["implementation"] == (
+        "graphblocks-runtime"
+    )
+    assert expectations["suites"]["compiler"]["implementation_version"] == (
+        "0.1.0"
+    )
+    assert expectations["suites"]["compiler"][
+        "implementation_artifact_distribution"
+    ] == "graphblocks-runtime"
+    assert {
+        expectation["implementation"]
+        for suite, expectation in expectations["suites"].items()
+        if suite != "compiler"
+    } == {"graphblocks-python"}
 
 
 def test_sbom_gate_requires_pinned_generator_and_first_party_coverage(
@@ -884,14 +1001,35 @@ def test_wheelhouse_gate_uses_pep503_distribution_identity(monkeypatch, tmp_path
 
     monkeypatch.setattr(module.venv, "EnvBuilder", FakeEnvBuilder)
     monkeypatch.setattr(module.subprocess, "run", fake_run)
-    monkeypatch.setattr(
-        module,
-        "_run_json_command",
-        lambda command, *, kind, **kwargs: _with_content_digest(
+    tck_commands: list[tuple[list[str], dict[str, object]]] = []
+
+    def fake_json_command(
+        command: list[str],
+        *,
+        kind: str,
+        **kwargs: object,
+    ) -> dict[str, object]:
+        if kind == "TCK":
+            tck_commands.append((command, kwargs))
+        return _with_content_digest(
             module,
             {"ok": True, "kind": kind},
-        ),
-    )
+        )
+
+    monkeypatch.setattr(module, "_run_json_command", fake_json_command)
+    artifact_record = module._artifact_record
+    runtime_artifact_records: list[dict[str, object]] = []
+
+    def recording_artifact_record(path: Path) -> dict[str, object]:
+        record = artifact_record(path)
+        if (
+            path.name.startswith("graphblocks_runtime-")
+            and record["artifactType"] == "wheel"
+        ):
+            runtime_artifact_records.append(record)
+        return record
+
+    monkeypatch.setattr(module, "_artifact_record", recording_artifact_record)
 
     generated_closures: list[dict[str, str]] = []
 
@@ -952,6 +1090,21 @@ def test_wheelhouse_gate_uses_pep503_distribution_identity(monkeypatch, tmp_path
         "sbom.cdx.json",
         "tck.json",
     }
+    assert len(tck_commands) == 1
+    tck_command, tck_arguments = tck_commands[0]
+    assert "--native-compiler-wheel" in tck_command
+    expected_compiler_artifact = tck_arguments["expected_compiler_artifact"]
+    runtime_wheel = next(
+        path
+        for path in wheelhouse.glob("*.whl")
+        if path.name.startswith("graphblocks_runtime-")
+    )
+    assert expected_compiler_artifact == module._artifact_record(runtime_wheel)
+    assert len(runtime_artifact_records) >= 3
+    assert all(
+        record == runtime_artifact_records[0]
+        for record in runtime_artifact_records
+    )
     standalone_sbom = tmp_path / "standalone-sbom.cdx.json"
     assert module.main(
         [

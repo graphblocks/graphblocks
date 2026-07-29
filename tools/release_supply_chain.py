@@ -112,7 +112,7 @@ PINNED_RELEASE_TOOLS = {
 FIRST_PARTY_RUNTIME_DEPENDENCIES = {
     "graphblocks": frozenset({"jsonschema", "packaging", "pyyaml"}),
     "graphblocks-runtime": frozenset(),
-    "graphblocks-testing": frozenset({"graphblocks"}),
+    "graphblocks-testing": frozenset({"graphblocks", "packaging"}),
 }
 
 
@@ -2258,6 +2258,22 @@ def _platform_artifact_records(
     return records
 
 
+def _native_compiler_wheel_record(
+    records: Sequence[Mapping[str, object]],
+) -> dict[str, object]:
+    matches = [
+        dict(record)
+        for record in records
+        if record.get("distribution") == "graphblocks-runtime"
+        and record.get("artifactType") == "wheel"
+    ]
+    if len(matches) != 1:
+        raise ReleaseBundleError(
+            "platform evidence must contain exactly one native compiler wheel"
+        )
+    return matches[0]
+
+
 def _platform_input(
     path: Path,
     *,
@@ -2361,6 +2377,9 @@ def _platform_input(
             tck_payload=tck_payload,
             acceptance_payload=acceptance_payload,
             expectations=expectations,
+            expected_compiler_artifact=_native_compiler_wheel_record(
+                artifact_records
+            ),
         )
     except RuntimeError as error:
         raise ReleaseBundleError(f"platform release evidence is invalid: {error}") from error
@@ -3351,14 +3370,6 @@ def _verify_platform_evidence(
             acceptance_snapshot,
             owner="retained acceptance evidence",
         )
-        try:
-            validate_release_evidence_payloads(
-                tck_payload=tck_payload,
-                acceptance_payload=acceptance_payload,
-                expectations=expectations,
-            )
-        except RuntimeError as error:
-            raise ReleaseBundleError(f"retained release evidence is invalid: {error}") from error
         if platform_payload.get("evidence") != {
             "tck": tck_payload.get("contentDigest"),
             "acceptance": acceptance_payload.get("contentDigest"),
@@ -3426,6 +3437,19 @@ def _verify_platform_evidence(
             raise ReleaseBundleError(
                 "retained platform evidence omits a first-party wheel or sdist"
             )
+        try:
+            validate_release_evidence_payloads(
+                tck_payload=tck_payload,
+                acceptance_payload=acceptance_payload,
+                expectations=expectations,
+                expected_compiler_artifact=_native_compiler_wheel_record(
+                    observed_records
+                ),
+            )
+        except RuntimeError as error:
+            raise ReleaseBundleError(
+                f"retained release evidence is invalid: {error}"
+            ) from error
         build_environments.append(
             {
                 "os": os_name,

@@ -151,10 +151,12 @@ executable harness. Those provenance and reconstruction gaps remain blocking.
 The profile tables now record the phase-scoped authority accepted by ADR-0001.
 `REL-NORMATIVE-AUTHORITY` still blocks 1.0 until canonical/schema facade routing,
 the runtime scheduler and protocol handshake, supported native artifacts, and
-the remaining installed differential evidence are complete. In particular, the
-current installed TCK report does not yet bind a native compiler run to the
-`graphblocks-runtime` version and wheel digest, so source-tree differential
-success is not installed-artifact authority evidence.
+the remaining phase-level differential evidence are complete. Installed
+compiler TCK reports now execute the normative facade and bind the
+`graphblocks-runtime` implementation version plus the exact platform wheel
+record and SHA-256. The evidence runner also compares the installed package and
+loaded native-module bytes with that wheel, while release assembly rechecks the
+artifact identity against retained artifacts.
 
 ## Release gates
 
@@ -176,7 +178,8 @@ from the exact release artifacts:
    are complete.
 5. Wheels and sdists are built once, installed into clean supported
    environments, and used for TCK execution. Reports bind implementation,
-   schema, fixture, profile-catalog, and acceptance-manifest digests.
+   implementation-artifact, schema, fixture, profile-catalog, and
+   acceptance-manifest digests.
 6. Supported Python/platform combinations pass install, type, and runtime
    tests, plus either upgrade testing or the closed first-stable upgrade
    exemption applicable only to `v1.0.0`. The exact matrix is published in the

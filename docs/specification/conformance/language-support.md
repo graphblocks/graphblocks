@@ -6,7 +6,7 @@ release compatibility promise.
 | Contract area | Python | Rust |
 | --- | --- | --- |
 | Schema and canonical authoring utilities | Implemented facade and deterministic reference oracle | Selected normative target; not yet the active public facade, so standalone routing remains transition-blocked |
-| Graph compiler and canonical Plan identity | `compile_graph` is a fail-closed native facade; `compile_graph_reference` is the explicit TCK oracle | Normative compiler, exposed through `graphblocks-runtime` and backed by exact differential TCK |
+| Graph compiler and canonical Plan identity | `compile_graph` is a fail-closed native facade; `compile_graph_reference` is the explicit differential oracle and ordinary compiler-TCK runner | Normative compiler, exposed through `graphblocks-runtime` and exercised by the installed release compiler TCK with exact differential coverage |
 | Cross-file YAML composition authoring | Implemented; materializes an expanded Graph | Does not resolve authoring sources; consumes expanded Graph YAML |
 | Typed code graph authoring | Implemented and mypy-tested for the stdlib RAG vertical slice; catalog-backed and materializes a portable Graph | Implemented and trybuild-tested for the stdlib RAG vertical slice; catalog-backed and materializes a portable Graph |
 | Local runtime, cancellation, tools, budget core | Implemented reference interpreter | Implemented target core; normative scheduler promotion remains blocked on protocol and durability evidence |

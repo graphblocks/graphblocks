@@ -1,24 +1,34 @@
 from __future__ import annotations
 
 import argparse
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import redirect_stdout
+from contextlib import contextmanager, redirect_stdout
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from decimal import Decimal
 import importlib
 from importlib import resources
+from importlib.metadata import (
+    PackageNotFoundError,
+    distribution as installed_distribution,
+    version as distribution_version,
+)
 import hashlib
 import io
 import json
 import math
-from pathlib import Path
+import os
+from pathlib import Path, PurePosixPath
+import stat
 from tempfile import TemporaryDirectory
 from types import MappingProxyType
-from typing import Literal, get_args
+from typing import BinaryIO, Literal, get_args
+import zipfile
 
+from packaging.tags import sys_tags
+from packaging.utils import canonicalize_name, parse_wheel_filename
 import yaml
 
 from graphblocks.application_event import (
@@ -42,7 +52,11 @@ from graphblocks.canonical import (
 )
 from graphblocks import __version__ as GRAPHBLOCKS_VERSION
 from graphblocks.cli import main as graphblocks_cli_main
-from graphblocks.compiler import compile_graph_reference as compile_graph
+from graphblocks.compiler import (
+    Plan,
+    compile_graph as _compile_graph_normative,
+    compile_graph_reference as compile_graph,
+)
 from graphblocks.conversation import (
     BranchRequest,
     CompactionRecord,
@@ -3065,6 +3079,274 @@ def load_bundled_tck_cases_for_suite(suite: str) -> tuple[TckCase, ...]:
     return load_tck_cases_for_suite(suite, bundled_tck_root() / suite / "cases.json")
 
 
+def _native_compiler_version() -> str:
+    try:
+        version = distribution_version("graphblocks-runtime")
+    except PackageNotFoundError:
+        try:
+            import graphblocks_runtime
+        except ImportError:
+            return "unavailable"
+        version = getattr(graphblocks_runtime, "__version__", None)
+    if not isinstance(version, str) or not version.strip():
+        raise RuntimeError("native compiler implementation version is unavailable")
+    return version
+
+
+def _stat_identity(value: os.stat_result) -> tuple[int, int, int, int, int, int]:
+    return (
+        value.st_dev,
+        value.st_ino,
+        value.st_mode,
+        value.st_size,
+        value.st_mtime_ns,
+        value.st_ctime_ns,
+    )
+
+
+@contextmanager
+def _verified_regular_file(
+    path: Path,
+    *,
+    label: str,
+) -> Iterator[tuple[BinaryIO, os.stat_result]]:
+    try:
+        path_status = path.lstat()
+    except OSError as error:
+        raise ValueError(f"{label} must be a readable regular file") from error
+    if not stat.S_ISREG(path_status.st_mode):
+        raise ValueError(f"{label} must be a regular file")
+    flags = os.O_RDONLY
+    flags |= getattr(os, "O_CLOEXEC", 0)
+    flags |= getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(path, flags)
+    except OSError as error:
+        raise ValueError(f"{label} must be a readable regular file") from error
+    try:
+        file = os.fdopen(descriptor, "rb")
+    except Exception:
+        os.close(descriptor)
+        raise
+    with file:
+        opened_status = os.fstat(file.fileno())
+        try:
+            current_status = path.lstat()
+        except OSError as error:
+            raise ValueError(f"{label} changed while it was opened") from error
+        if (
+            not stat.S_ISREG(opened_status.st_mode)
+            or _stat_identity(current_status) != _stat_identity(opened_status)
+        ):
+            raise ValueError(f"{label} changed while it was opened")
+        yield file, opened_status
+        final_status = os.fstat(file.fileno())
+        try:
+            current_status = path.lstat()
+        except OSError as error:
+            raise ValueError(f"{label} changed while it was read") from error
+        if (
+            _stat_identity(final_status) != _stat_identity(opened_status)
+            or _stat_identity(current_status) != _stat_identity(opened_status)
+        ):
+            raise ValueError(f"{label} changed while it was read")
+
+
+def _installed_runtime_from_wheel(
+    archive: zipfile.ZipFile,
+) -> object:
+    archive_members = archive.infolist()
+    archive_names = [member.filename for member in archive_members]
+    if len(archive_names) != len(set(archive_names)):
+        raise ValueError("native compiler wheel contains duplicate members")
+    runtime_members: list[tuple[zipfile.ZipInfo, PurePosixPath]] = []
+    native_members: list[PurePosixPath] = []
+    for member in archive_members:
+        archive_path = PurePosixPath(member.filename)
+        if (
+            archive_path.is_absolute()
+            or ".." in archive_path.parts
+            or not archive_path.parts
+        ):
+            raise ValueError("native compiler wheel contains an unsafe member")
+        if (
+            not member.is_dir()
+            and archive_path.parts[0] != "graphblocks_runtime"
+            and not archive_path.parts[0].endswith(".dist-info")
+        ):
+            raise ValueError(
+                "native compiler wheel contains an unexpected install payload"
+            )
+        if (
+            member.is_dir()
+            or archive_path.parts[0] != "graphblocks_runtime"
+        ):
+            continue
+        relative_path = PurePosixPath(*archive_path.parts[1:])
+        if (
+            not relative_path.parts
+            or relative_path.is_absolute()
+            or ".." in relative_path.parts
+            or stat.S_ISLNK(member.external_attr >> 16)
+        ):
+            raise ValueError("native compiler wheel contains an unsafe runtime member")
+        if "__pycache__" in relative_path.parts or relative_path.suffix == ".pyc":
+            raise ValueError(
+                "native compiler wheel must not contain runtime bytecode caches"
+            )
+        runtime_members.append((member, relative_path))
+        if (
+            len(relative_path.parts) == 1
+            and relative_path.name.startswith("_native.")
+            and any(
+                relative_path.name.endswith(suffix)
+                for suffix in importlib.machinery.EXTENSION_SUFFIXES
+            )
+        ):
+            native_members.append(relative_path)
+    runtime_paths = {relative_path for _member, relative_path in runtime_members}
+    if (
+        PurePosixPath("__init__.py") not in runtime_paths
+        or len(native_members) != 1
+    ):
+        raise ValueError(
+            "native compiler wheel must contain the runtime package and exactly "
+            "one native extension"
+        )
+
+    try:
+        runtime_distribution = installed_distribution("graphblocks-runtime")
+    except PackageNotFoundError as error:
+        raise RuntimeError("graphblocks-runtime is not installed") from error
+    runtime_root = Path(
+        runtime_distribution.locate_file("graphblocks_runtime")
+    )
+    if runtime_root.is_symlink() or not runtime_root.is_dir():
+        raise RuntimeError(
+            "installed graphblocks-runtime package must be a regular directory"
+        )
+    graphblocks_runtime: object | None = None
+    for verification_phase in range(2):
+        for member, relative_path in runtime_members:
+            installed_path = runtime_root.joinpath(*relative_path.parts)
+            with (
+                archive.open(member, "r") as wheel_member,
+                _verified_regular_file(
+                    installed_path,
+                    label=f"installed runtime member {relative_path.as_posix()}",
+                ) as (installed_member, installed_status),
+            ):
+                if member.file_size != installed_status.st_size:
+                    raise RuntimeError(
+                        "installed graphblocks-runtime bytes do not match the selected wheel"
+                    )
+                while True:
+                    expected_chunk = wheel_member.read(1024 * 1024)
+                    observed_chunk = installed_member.read(
+                        len(expected_chunk) if expected_chunk else 1
+                    )
+                    if expected_chunk != observed_chunk:
+                        raise RuntimeError(
+                            "installed graphblocks-runtime bytes do not match "
+                            "the selected wheel"
+                        )
+                    if not expected_chunk:
+                        break
+        if verification_phase != 0:
+            continue
+        graphblocks_runtime = importlib.import_module("graphblocks_runtime")
+        package_file = getattr(graphblocks_runtime, "__file__", None)
+        if not isinstance(package_file, str):
+            raise RuntimeError(
+                "loaded graphblocks-runtime package has no file identity"
+            )
+        try:
+            if not os.path.samefile(package_file, runtime_root / "__init__.py"):
+                raise RuntimeError(
+                    "loaded graphblocks-runtime package is not the installed distribution"
+                )
+        except OSError as error:
+            raise RuntimeError(
+                "loaded graphblocks-runtime package identity is unavailable"
+            ) from error
+        native_module = importlib.import_module("graphblocks_runtime._native")
+        native_file = getattr(native_module, "__file__", None)
+        if not isinstance(native_file, str):
+            raise RuntimeError(
+                "loaded graphblocks-runtime native module has no file identity"
+            )
+        try:
+            if not os.path.samefile(
+                native_file,
+                runtime_root.joinpath(*native_members[0].parts),
+            ):
+                raise RuntimeError(
+                    "loaded graphblocks-runtime native module is not from "
+                    "the selected package"
+                )
+        except OSError as error:
+            raise RuntimeError(
+                "loaded graphblocks-runtime native module identity is unavailable"
+            ) from error
+    if graphblocks_runtime is None:
+        raise RuntimeError("graphblocks-runtime could not be loaded")
+    return graphblocks_runtime
+
+
+def _native_compiler_wheel_artifact(path: Path) -> dict[str, object]:
+    try:
+        distribution, version, _build, wheel_tags = parse_wheel_filename(path.name)
+    except ValueError as error:
+        raise ValueError("native compiler artifact must be a valid wheel") from error
+    if canonicalize_name(str(distribution)) != "graphblocks-runtime":
+        raise ValueError("native compiler artifact must be a graphblocks-runtime wheel")
+    if wheel_tags.isdisjoint(sys_tags()):
+        raise ValueError(
+            "native compiler wheel is not compatible with the running interpreter"
+        )
+    installed_version = _native_compiler_version()
+    if str(version) != installed_version:
+        raise ValueError(
+            "native compiler wheel version does not match the installed distribution"
+        )
+    with _verified_regular_file(
+        path,
+        label="native compiler wheel",
+    ) as (wheel, wheel_status):
+        digest = hashlib.sha256()
+        while chunk := wheel.read(1024 * 1024):
+            digest.update(chunk)
+        wheel.seek(0)
+        try:
+            with zipfile.ZipFile(wheel) as archive:
+                graphblocks_runtime = _installed_runtime_from_wheel(archive)
+        except zipfile.BadZipFile as error:
+            raise ValueError("native compiler artifact must be a valid wheel") from error
+        native_extension_available = getattr(
+            graphblocks_runtime,
+            "native_extension_available",
+            None,
+        )
+        if (
+            not callable(native_extension_available)
+            or native_extension_available() is not True
+        ):
+            raise RuntimeError("graphblocks-runtime native extension is unavailable")
+        binding_version = getattr(graphblocks_runtime, "binding_version", None)
+        if not callable(binding_version) or binding_version() != installed_version:
+            raise RuntimeError(
+                "native compiler binding version does not match the installed distribution"
+            )
+    return {
+        "filename": path.name,
+        "sha256": digest.hexdigest(),
+        "size": wheel_status.st_size,
+        "distribution": "graphblocks-runtime",
+        "version": installed_version,
+        "artifactType": "wheel",
+    }
+
+
 def run_bundled_tck_suite(
     suite: str,
     *,
@@ -3144,6 +3426,11 @@ def main(argv: list[str] | None = None) -> int:
     run_all_parser.add_argument("root", nargs="?", type=Path)
     run_all_parser.add_argument("--profile", default="local", help="profile label for the generated reports")
     run_all_parser.add_argument("--evidence-dir", type=Path, help="directory for native runtime SQLite evidence")
+    run_all_parser.add_argument(
+        "--native-compiler-wheel",
+        type=Path,
+        help="bind compiler TCK evidence to an exact installed runtime wheel",
+    )
     run_all_parser.add_argument("--json", action="store_true", help="emit JSON")
     acceptance_parser = subparsers.add_parser(
         "run-acceptance",
@@ -3276,6 +3563,19 @@ def main(argv: list[str] | None = None) -> int:
             if args.root is None
             else load_tck_suite_manifests(tck_root)
         )
+        compiler_artifact = None
+        if args.native_compiler_wheel is not None:
+            if args.root is not None or args.profile != "local":
+                raise ValueError(
+                    "--native-compiler-wheel requires bundled local TCK execution"
+                )
+            if not any(manifest.suite_id == "compiler" for manifest in manifests):
+                raise ValueError(
+                    "--native-compiler-wheel requires the compiler TCK suite"
+                )
+            compiler_artifact = _native_compiler_wheel_artifact(
+                args.native_compiler_wheel
+            )
         if args.profile == "native" and any(
             manifest.suite_id != "runtime" for manifest in manifests
         ):
@@ -3293,13 +3593,25 @@ def main(argv: list[str] | None = None) -> int:
         for manifest in manifests:
             evidence_dir = args.evidence_dir / manifest.suite_id if args.evidence_dir is not None else None
             fixture_path = tck_root / manifest.path
-            report = TckRunner(
-                _tck_registry(manifest.suite_id),
-                profile=args.profile,
-                evidence_dir=evidence_dir,
-                suite=manifest.suite_id,
-                fixture_digest=manifest.fixture_digest,
-            ).run_cases(
+            if manifest.suite_id == "compiler" and compiler_artifact is not None:
+                runner = _NormativeCompilerTckRunner(
+                    _tck_registry(manifest.suite_id),
+                    profile=args.profile,
+                    evidence_dir=evidence_dir,
+                    suite=manifest.suite_id,
+                    fixture_digest=manifest.fixture_digest,
+                    implementation="graphblocks-runtime",
+                    implementation_version=_native_compiler_version(),
+                )
+            else:
+                runner = TckRunner(
+                    _tck_registry(manifest.suite_id),
+                    profile=args.profile,
+                    evidence_dir=evidence_dir,
+                    suite=manifest.suite_id,
+                    fixture_digest=manifest.fixture_digest,
+                )
+            report = runner.run_cases(
                 load_tck_cases_for_suite(manifest.suite_id, fixture_path)
             )
             report_contract = report.report_contract()
@@ -3308,6 +3620,8 @@ def main(argv: list[str] | None = None) -> int:
                 {"case_ids": list(manifest.case_ids)}
             )
             evidence["suite_manifest_digest"] = manifest.content_digest()
+            if manifest.suite_id == "compiler" and compiler_artifact is not None:
+                evidence["implementation_artifact"] = dict(compiler_artifact)
             report_contract["evidence"] = evidence
             reports[manifest.suite_id] = report_contract
             ok = ok and report.ok
@@ -7791,9 +8105,22 @@ class TckRunner:
             fixture_digest=fixture_digest,
         )
 
+    def _compile_compiler_graph(
+        self,
+        document: dict[str, object],
+        block_catalog: BlockCatalog,
+        *,
+        allow_unknown_blocks: bool,
+    ) -> Plan:
+        return compile_graph(
+            document,
+            block_catalog=block_catalog,
+            allow_unknown_blocks=allow_unknown_blocks,
+        )
+
     def _run_compiler_case(self, case: TckCase) -> TckResult:
         block_catalog = BlockCatalog.from_blocks(case.block_catalog)
-        plan = compile_graph(
+        plan = self._compile_compiler_graph(
             case.graph,
             block_catalog=block_catalog,
             allow_unknown_blocks=case.allow_unknown_blocks,
@@ -19808,6 +20135,23 @@ class TckRunner:
             status="passed" if not diagnostics else "failed",
             diagnostics=tuple(diagnostics),
             observed=observed,
+        )
+
+
+class _NormativeCompilerTckRunner(TckRunner):
+    __slots__ = ()
+
+    def _compile_compiler_graph(
+        self,
+        document: dict[str, object],
+        block_catalog: BlockCatalog,
+        *,
+        allow_unknown_blocks: bool,
+    ) -> Plan:
+        return _compile_graph_normative(
+            document,
+            block_catalog=block_catalog,
+            allow_unknown_blocks=allow_unknown_blocks,
         )
 
 
