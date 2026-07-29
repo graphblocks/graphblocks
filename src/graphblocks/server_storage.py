@@ -84,6 +84,17 @@ class CallbackPayloadConflictError(AcceptedRunConflictError):
         self.submission = submission
 
 
+class AcceptedRunCallbackExpiredError(AcceptedRunConflictError):
+    def __init__(
+        self,
+        issuance: CallbackIssuanceIdentity,
+        received_at_unix_ms: int,
+    ) -> None:
+        super().__init__("callback arrived after operation expiration")
+        self.issuance = issuance
+        self.received_at_unix_ms = received_at_unix_ms
+
+
 class StaleAcceptedRunClaimError(AcceptedRunConflictError):
     def __init__(
         self,

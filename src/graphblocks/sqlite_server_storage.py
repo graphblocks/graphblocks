@@ -13,6 +13,8 @@ from .canonical import canonical_dumps, canonical_hash, canonical_loads
 from .server_storage import (
     CHECKPOINT_FORMAT_VERSION,
     AcceptedRunAdmission,
+    AcceptedRunCallbackCommit,
+    AcceptedRunCallbackExpiredError,
     AcceptedRunClaim,
     AcceptedRunClaimRequest,
     AcceptedRunEvent,
@@ -27,6 +29,10 @@ from .server_storage import (
     AcceptedRunWaitingCommit,
     AdmissionIdentity,
     AdmissionResult,
+    CallbackAcceptance,
+    CallbackIssuanceConflictError,
+    CallbackIssuanceIdentity,
+    CallbackSubmissionIdentity,
     CheckpointIntegrityError,
     StaleAcceptedRunClaimError,
     StoredRuntimeCheckpoint,
@@ -34,6 +40,7 @@ from .server_storage import (
     assert_accepted_run_transition,
     decode_runtime_checkpoint,
     resolve_admission_replay,
+    resolve_callback_replay,
 )
 
 
@@ -1739,6 +1746,397 @@ class SQLiteAcceptedRunRepository:
                 "stored waiting transition conflicts with retry"
             )
         return snapshot
+
+    def accept_callback_and_queue_resume(
+        self,
+        command: AcceptedRunCallbackCommit,
+    ) -> CallbackAcceptance:
+        if not isinstance(command, AcceptedRunCallbackCommit):
+            raise TypeError(
+                "accepted-run SQLite callback command must be an "
+                "AcceptedRunCallbackCommit"
+            )
+        if command.accepted_event.kind != "external_callback_received":
+            raise ValueError(
+                "accepted-run SQLite callback event kind must be "
+                "external_callback_received"
+            )
+        if (
+            command.accepted_event.created_at_unix_ms
+            != command.received_at_unix_ms
+        ):
+            raise ValueError(
+                "accepted-run SQLite callback event time must match "
+                "received_at_unix_ms"
+            )
+        if command.received_at_unix_ms > _MAX_SQLITE_INTEGER:
+            raise ValueError(
+                "accepted-run SQLite callback timestamp exceeds SQLite "
+                "integer range"
+            )
+
+        def transition(connection: sqlite3.Connection) -> CallbackAcceptance:
+            requested = command.submission
+            requested_issuance = requested.issuance
+            run = connection.execute(
+                """
+                SELECT *
+                FROM accepted_runs
+                WHERE tenant_id = ? AND external_run_id = ?
+                """,
+                (command.tenant_id, requested_issuance.run_id),
+            ).fetchone()
+            if run is None:
+                raise AcceptedRunNotFoundError(
+                    command.tenant_id,
+                    requested_issuance.run_id,
+                )
+            stored_owner = _decode_sqlite_text(
+                "owner_principal_id",
+                run["owner_principal_id"],
+            )
+            if stored_owner != command.owner_principal_id:
+                raise AcceptedRunNotFoundError(
+                    command.tenant_id,
+                    requested_issuance.run_id,
+                )
+            internal_id = _decode_sqlite_text(
+                "internal_id",
+                run["internal_id"],
+            )
+
+            def checkpoint_issuance(
+                checkpoint_row: sqlite3.Row,
+            ) -> CallbackIssuanceIdentity:
+                return CallbackIssuanceIdentity(
+                    run_id=requested_issuance.run_id,
+                    checkpoint_digest=_decode_sqlite_text(
+                        "checkpoint_digest",
+                        checkpoint_row["checkpoint_digest"],
+                    ),
+                    operation_id=_decode_sqlite_text(
+                        "operation_id",
+                        checkpoint_row["operation_id"],
+                    ),
+                    operation_attempt_id=_decode_sqlite_text(
+                        "operation_attempt_id",
+                        checkpoint_row["operation_attempt_id"],
+                    ),
+                    callback_idempotency_key=_decode_sqlite_text(
+                        "callback_idempotency_key",
+                        checkpoint_row["callback_idempotency_key"],
+                    ),
+                    lease_generation=_decode_sqlite_integer(
+                        "issuing_lease_generation",
+                        checkpoint_row["issuing_lease_generation"],
+                    ),
+                    fencing_token=_decode_sqlite_integer(
+                        "issuing_fencing_token",
+                        checkpoint_row["issuing_fencing_token"],
+                    ),
+                )
+
+            def replay_existing(
+                inbox_row: sqlite3.Row,
+            ) -> CallbackAcceptance:
+                checkpoint_row = connection.execute(
+                    """
+                    SELECT *
+                    FROM run_checkpoints
+                    WHERE run_internal_id = ? AND checkpoint_digest = ?
+                    """,
+                    (
+                        internal_id,
+                        _decode_sqlite_text(
+                            "callback checkpoint_digest",
+                            inbox_row["checkpoint_digest"],
+                        ),
+                    ),
+                ).fetchone()
+                if checkpoint_row is None:
+                    raise SQLiteAcceptedRunCorruptionError(
+                        "accepted-run SQLite callback inbox has no checkpoint"
+                    )
+                expected = checkpoint_issuance(checkpoint_row)
+                acceptance = CallbackAcceptance(
+                    submission=CallbackSubmissionIdentity(
+                        issuance=expected,
+                        payload_digest=_decode_sqlite_text(
+                            "callback payload_digest",
+                            inbox_row["payload_digest"],
+                        ),
+                    ),
+                    receipt_json=_decode_sqlite_text(
+                        "callback receipt_json",
+                        inbox_row["receipt_json"],
+                    ),
+                    accepted_event_sequence=_decode_sqlite_integer(
+                        "callback accepted_event_sequence",
+                        inbox_row["accepted_event_sequence"],
+                    ),
+                    state_version=_decode_sqlite_integer(
+                        "callback accepted_state_version",
+                        inbox_row["accepted_state_version"],
+                    ),
+                )
+                replay = resolve_callback_replay(
+                    expected_issuance=expected,
+                    existing_acceptance=acceptance,
+                    requested_submission=requested,
+                )
+                if replay is None:
+                    raise SQLiteAcceptedRunCorruptionError(
+                        "accepted-run SQLite callback replay disappeared"
+                    )
+                return replay
+
+            existing = connection.execute(
+                """
+                SELECT *
+                FROM callback_inbox
+                WHERE run_internal_id = ? AND callback_idempotency_key = ?
+                """,
+                (
+                    internal_id,
+                    requested_issuance.callback_idempotency_key,
+                ),
+            ).fetchone()
+            if existing is not None:
+                return replay_existing(existing)
+            existing = connection.execute(
+                """
+                SELECT *
+                FROM callback_inbox
+                WHERE run_internal_id = ? AND checkpoint_digest = ?
+                """,
+                (internal_id, requested_issuance.checkpoint_digest),
+            ).fetchone()
+            if existing is not None:
+                return replay_existing(existing)
+
+            current_checkpoint_digest = run["current_checkpoint_digest"]
+            if current_checkpoint_digest is None:
+                raise SQLiteAcceptedRunCorruptionError(
+                    "accepted-run SQLite callback target has no checkpoint"
+                )
+            checkpoint_row = connection.execute(
+                """
+                SELECT *
+                FROM run_checkpoints
+                WHERE run_internal_id = ? AND checkpoint_digest = ?
+                """,
+                (
+                    internal_id,
+                    _decode_sqlite_text(
+                        "current_checkpoint_digest",
+                        current_checkpoint_digest,
+                    ),
+                ),
+            ).fetchone()
+            if checkpoint_row is None:
+                raise SQLiteAcceptedRunCorruptionError(
+                    "accepted-run SQLite callback target checkpoint is missing"
+                )
+            expected_issuance = checkpoint_issuance(checkpoint_row)
+            resolve_callback_replay(
+                expected_issuance=expected_issuance,
+                existing_acceptance=None,
+                requested_submission=requested,
+            )
+            snapshot = self._snapshot_from_row(run)
+            if snapshot.phase is not AcceptedRunPhase.WAITING_CALLBACK:
+                raise CallbackIssuanceConflictError(
+                    expected_issuance,
+                    requested_issuance,
+                )
+            if snapshot.state_version != command.expected_state_version:
+                raise AcceptedRunStateConflictError(
+                    requested_issuance.run_id,
+                    command.expected_state_version,
+                    snapshot.state_version,
+                )
+            try:
+                stored_checkpoint = StoredRuntimeCheckpoint(
+                    format_version=_decode_sqlite_text(
+                        "checkpoint_format_version",
+                        checkpoint_row["checkpoint_format_version"],
+                    ),
+                    checkpoint_digest=expected_issuance.checkpoint_digest,
+                    checkpoint_json=_decode_sqlite_text(
+                        "checkpoint_json",
+                        checkpoint_row["checkpoint_json"],
+                    ),
+                )
+                checkpoint = decode_runtime_checkpoint(stored_checkpoint)
+            except (CheckpointIntegrityError, ValueError) as error:
+                raise SQLiteAcceptedRunCorruptionError(
+                    "accepted-run SQLite callback checkpoint is invalid"
+                ) from error
+            submitted_at = checkpoint.operation["submitted_at_unix_ms"]
+            if (
+                not isinstance(submitted_at, int)
+                or isinstance(submitted_at, bool)
+                or command.received_at_unix_ms < submitted_at
+            ):
+                raise CallbackIssuanceConflictError(
+                    expected_issuance,
+                    requested_issuance,
+                )
+            expires_at = checkpoint.operation.get("expires_at_unix_ms")
+            if (
+                isinstance(expires_at, int)
+                and not isinstance(expires_at, bool)
+                and command.received_at_unix_ms >= expires_at
+            ):
+                raise AcceptedRunCallbackExpiredError(
+                    expected_issuance,
+                    command.received_at_unix_ms,
+                )
+            if snapshot.event_high_watermark >= _MAX_SQLITE_INTEGER:
+                raise OverflowError(
+                    "accepted-run SQLite callback event sequence is exhausted"
+                )
+            if snapshot.state_version >= _MAX_SQLITE_INTEGER:
+                raise OverflowError(
+                    "accepted-run SQLite callback state version is exhausted"
+                )
+            next_event_sequence = snapshot.event_high_watermark + 1
+            next_state_version = snapshot.state_version + 1
+            event = command.accepted_event
+            connection.execute(
+                """
+                INSERT INTO run_events (
+                  run_internal_id,
+                  sequence,
+                  kind,
+                  payload_json,
+                  payload_digest,
+                  created_at_unix_ms
+                )
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    internal_id,
+                    next_event_sequence,
+                    event.kind,
+                    event.payload_json,
+                    event.payload_digest,
+                    event.created_at_unix_ms,
+                ),
+            )
+            self._hit_failpoint("accept_callback.after_event_insert")
+            connection.execute(
+                """
+                INSERT INTO callback_inbox (
+                  run_internal_id,
+                  checkpoint_digest,
+                  callback_idempotency_key,
+                  payload_json,
+                  payload_digest,
+                  receipt_json,
+                  accepted_event_sequence,
+                  accepted_state_version,
+                  received_at_unix_ms
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    internal_id,
+                    expected_issuance.checkpoint_digest,
+                    expected_issuance.callback_idempotency_key,
+                    command.payload_json,
+                    command.submission.payload_digest,
+                    command.receipt_json,
+                    next_event_sequence,
+                    next_state_version,
+                    command.received_at_unix_ms,
+                ),
+            )
+            self._hit_failpoint("accept_callback.after_inbox_insert")
+            dispatch_effect_id = _decode_sqlite_text(
+                "dispatch_effect_id",
+                checkpoint_row["dispatch_effect_id"],
+            )
+            dispatch = connection.execute(
+                """
+                SELECT delivery_state
+                FROM effect_outbox
+                WHERE effect_id = ? AND run_internal_id = ?
+                """,
+                (dispatch_effect_id, internal_id),
+            ).fetchone()
+            if dispatch is None:
+                raise SQLiteAcceptedRunCorruptionError(
+                    "accepted-run SQLite callback dispatch effect is missing"
+                )
+            delivery_state = _decode_sqlite_text(
+                "delivery_state",
+                dispatch["delivery_state"],
+            )
+            if delivery_state in {"pending", "claimed", "dead_letter"}:
+                updated_dispatch = connection.execute(
+                    """
+                    UPDATE effect_outbox
+                    SET delivery_state = 'satisfied_by_callback',
+                        claim_owner_id = NULL,
+                        claim_expires_at_unix_ms = NULL
+                    WHERE effect_id = ?
+                      AND run_internal_id = ?
+                      AND delivery_state = ?
+                    """,
+                    (
+                        dispatch_effect_id,
+                        internal_id,
+                        delivery_state,
+                    ),
+                )
+                if updated_dispatch.rowcount != 1:
+                    raise SQLiteAcceptedRunCorruptionError(
+                        "accepted-run SQLite callback lost its dispatch effect"
+                    )
+            elif delivery_state not in {"delivered"}:
+                raise SQLiteAcceptedRunCorruptionError(
+                    "accepted-run SQLite callback dispatch state is invalid"
+                )
+            self._hit_failpoint("accept_callback.after_dispatch_satisfied")
+            updated = connection.execute(
+                """
+                UPDATE accepted_runs
+                SET phase = 'ready_resume',
+                    state_version = ?,
+                    event_high_watermark = ?,
+                    updated_at_unix_ms = ?
+                WHERE internal_id = ?
+                  AND phase = 'waiting_callback'
+                  AND state_version = ?
+                  AND current_checkpoint_digest = ?
+                """,
+                (
+                    next_state_version,
+                    next_event_sequence,
+                    command.received_at_unix_ms,
+                    internal_id,
+                    command.expected_state_version,
+                    expected_issuance.checkpoint_digest,
+                ),
+            )
+            if updated.rowcount != 1:
+                raise AcceptedRunStateConflictError(
+                    requested_issuance.run_id,
+                    command.expected_state_version,
+                    snapshot.state_version,
+                )
+            self._hit_failpoint("accept_callback.after_state_update")
+            return CallbackAcceptance(
+                submission=command.submission,
+                receipt_json=command.receipt_json,
+                accepted_event_sequence=next_event_sequence,
+                state_version=next_state_version,
+            )
+
+        acceptance = self._database._run_immediate(transition)
+        self._hit_failpoint("accept_callback.after_commit")
+        return acceptance
 
     def get_run(
         self,
