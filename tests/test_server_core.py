@@ -556,6 +556,8 @@ def test_server_app_validates_unauthenticated_development_mode_flag() -> None:
         "max_event_ack_history_bytes_per_subscription",
         "max_callback_operation_histories",
         "max_callback_submission_history_bytes",
+        "max_callback_registrations",
+        "max_callback_registration_history_bytes",
     ),
 )
 def test_server_app_rejects_invalid_resource_limits(field_name: str) -> None:
@@ -4573,6 +4575,7 @@ def test_server_app_terminal_deletion_cleans_run_scoped_state_and_bounds_tombsto
             requested_at="2026-07-29T00:00:03Z",
         )
     ).status_code == 201
+    assert app._callback_registration_history_bytes > 0
     app._acks_by_subscription[
         (first_run_id, "sub-delete-cleanup-1")
     ] = ({"eventId": f"{first_run_id}:run-terminal"},)
@@ -4632,6 +4635,7 @@ def test_server_app_terminal_deletion_cleans_run_scoped_state_and_bounds_tombsto
         key[0] == first_run_id for key in app._acks_by_subscription
     )
     assert "callback-delete-cleanup-1" not in app._callback_registrations
+    assert app._callback_registration_history_bytes == 0
     assert (
         "callback-delete-cleanup-1"
         not in app._callback_delivery_results_by_subscription_id
@@ -4850,6 +4854,7 @@ def test_server_app_fences_callback_registration_replay_after_run_deletion(
         "callback-delete-replay-1"
         not in app._incomplete_callback_registration_ids
     )
+    assert app._callback_registration_history_bytes == 0
 
 
 def test_server_app_fences_detach_mutation_after_run_deletion(
@@ -13643,6 +13648,181 @@ def test_server_app_rejects_duplicate_callback_registration_id_without_overwrite
             created_at="2026-07-03T00:00:00Z",
             owner=PrincipalRef("user-1"),
         ),
+    )
+
+
+def test_server_app_bounds_callback_registration_history_by_count_and_bytes() -> None:
+    principal = PrincipalRef("user-1")
+    count_app = GraphBlocksServerApp(
+        auth_hook=StaticBearerAuthHook({"token-1": principal}),
+        max_callback_registrations=1,
+        max_callback_registration_history_bytes=4_096,
+    )
+    first_request = ServerRequest(
+        method="POST",
+        path="/callbacks/register",
+        headers={"Authorization": "Bearer token-1"},
+        query={},
+        cookies={},
+        body=json.dumps(
+            {
+                "subscriptionId": "callback-capacity-1",
+                "scope": "tenant",
+                "scopeId": "tenant-1",
+                "eventFilter": {"types": ["RunSucceeded"]},
+                "delivery": {
+                    "kind": "local_callback",
+                    "callback_name": "capacity-test",
+                },
+                "failurePolicy": "best_effort",
+            }
+        ).encode("utf-8"),
+        requested_at="2026-07-29T00:00:00Z",
+    )
+    second_request = replace(
+        first_request,
+        body=json.dumps(
+            {
+                "subscriptionId": "callback-capacity-2",
+                "scope": "tenant",
+                "scopeId": "tenant-1",
+                "eventFilter": {"types": ["RunSucceeded"]},
+                "delivery": {
+                    "kind": "local_callback",
+                    "callback_name": "capacity-test",
+                },
+                "failurePolicy": "best_effort",
+            }
+        ).encode("utf-8"),
+    )
+
+    first = count_app.handle(first_request)
+    retained_bytes = count_app._callback_registration_history_bytes
+    duplicate = count_app.handle(first_request)
+    exhausted = count_app.handle(second_request)
+
+    assert first.status_code == 201
+    assert duplicate.status_code == 409
+    assert exhausted.status_code == 429
+    assert json.loads(exhausted.body.decode("utf-8")) == {
+        "ok": False,
+        "subscriptionId": "callback-capacity-2",
+        "reasonCode": "server.callback_registration_capacity_exhausted",
+        "maxCallbackRegistrations": 1,
+        "maxCallbackRegistrationHistoryBytes": 4_096,
+        "error": "server callback registration history capacity is exhausted",
+    }
+    assert tuple(
+        registration.subscription_id
+        for registration in count_app.callback_registrations()
+    ) == ("callback-capacity-1",)
+    assert retained_bytes > 0
+    assert count_app._callback_registration_history_bytes == retained_bytes
+
+    byte_app = GraphBlocksServerApp(
+        auth_hook=StaticBearerAuthHook({"token-1": principal}),
+        max_callback_registrations=10,
+        max_callback_registration_history_bytes=1,
+    )
+    byte_exhausted = byte_app.handle(first_request)
+
+    assert byte_exhausted.status_code == 429
+    assert byte_app.callback_registrations() == ()
+    assert byte_app._callback_registration_history_bytes == 0
+
+
+def test_server_app_reserves_callback_registration_capacity_during_replay(
+    monkeypatch,
+) -> None:
+    replay_started = Event()
+    release_replay = Event()
+    original_replay = GraphBlocksServerApp._callback_registration_replay
+
+    def delayed_replay(
+        app: GraphBlocksServerApp,
+        registration: ServerCallbackRegistration,
+    ):
+        replay = original_replay(app, registration)
+        if registration.subscription_id == "callback-pending-capacity-1":
+            replay_started.set()
+            if not release_replay.wait(5):
+                raise TimeoutError("test did not release callback replay")
+        return replay
+
+    monkeypatch.setattr(
+        GraphBlocksServerApp,
+        "_callback_registration_replay",
+        delayed_replay,
+    )
+    principal = PrincipalRef("user-1")
+    app = GraphBlocksServerApp(
+        auth_hook=StaticBearerAuthHook({"token-1": principal}),
+        max_callback_registrations=1,
+        max_callback_registration_history_bytes=4_096,
+    )
+    _seed_succeeded_run(
+        app,
+        "run-pending-callback-capacity-1",
+        principal,
+    )
+    pending_request = ServerRequest(
+        method="POST",
+        path="/callbacks/register",
+        headers={"Authorization": "Bearer token-1"},
+        query={},
+        cookies={},
+        body=json.dumps(
+            {
+                "subscriptionId": "callback-pending-capacity-1",
+                "scope": "run",
+                "scopeId": "run-pending-callback-capacity-1",
+                "eventFilter": {"types": ["RunSucceeded"]},
+                "delivery": {
+                    "kind": "local_callback",
+                    "callback_name": "capacity-test",
+                },
+                "failurePolicy": "best_effort",
+            }
+        ).encode("utf-8"),
+        requested_at="2026-07-29T00:00:00Z",
+    )
+    second_request = replace(
+        pending_request,
+        body=json.dumps(
+            {
+                "subscriptionId": "callback-pending-capacity-2",
+                "scope": "tenant",
+                "scopeId": "tenant-1",
+                "eventFilter": {"types": ["RunSucceeded"]},
+                "delivery": {
+                    "kind": "local_callback",
+                    "callback_name": "capacity-test",
+                },
+                "failurePolicy": "best_effort",
+            }
+        ).encode("utf-8"),
+    )
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        pending_future = executor.submit(app.handle, pending_request)
+        assert replay_started.wait(5)
+        assert app._callback_registration_history_bytes > 0
+        exhausted = app.handle(second_request)
+        release_replay.set()
+        registered = pending_future.result(timeout=5)
+
+    assert registered.status_code == 201
+    assert exhausted.status_code == 429
+    assert json.loads(exhausted.body.decode("utf-8"))["reasonCode"] == (
+        "server.callback_registration_capacity_exhausted"
+    )
+    assert tuple(
+        registration.subscription_id
+        for registration in app.callback_registrations()
+    ) == ("callback-pending-capacity-1",)
+    assert app._pending_callback_registration_ids == set()
+    assert app._callback_registration_history_bytes == (
+        app.callback_registrations()[0]._retained_size_bytes()
     )
 
 

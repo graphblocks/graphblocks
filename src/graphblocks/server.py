@@ -139,6 +139,8 @@ DEFAULT_MAX_EVENT_ACKS_PER_SUBSCRIPTION = 4_096
 DEFAULT_MAX_EVENT_ACK_HISTORY_BYTES_PER_SUBSCRIPTION = 1024 * 1024
 DEFAULT_MAX_CALLBACK_OPERATION_HISTORIES = 4_096
 DEFAULT_MAX_CALLBACK_SUBMISSION_HISTORY_BYTES = 64 * 1024 * 1024
+DEFAULT_MAX_CALLBACK_REGISTRATIONS = 4_096
+DEFAULT_MAX_CALLBACK_REGISTRATION_HISTORY_BYTES = 64 * 1024 * 1024
 
 
 def _utc_now_iso() -> str:
@@ -1995,6 +1997,22 @@ class ServerCallbackRegistration:
             payload["owner"] = _principal_response_payload(self.owner)
         return payload
 
+    def _retained_size_bytes(self) -> int:
+        retained_value: dict[str, object] = {
+            "subscriptionId": self.subscription_id,
+            "scope": self.scope,
+            "scopeId": self.scope_id,
+            "eventFilter": _thaw_json_value(self.event_filter),
+            "delivery": _thaw_json_value(self.delivery),
+            "status": "revoked",
+            "failurePolicy": self.failure_policy,
+            "replayFromCursor": self.replay_from_cursor,
+            "createdAt": self.created_at,
+        }
+        if self.owner is not None:
+            retained_value["owner"] = _principal_response_payload(self.owner)
+        return _canonical_json_size_bytes(retained_value)
+
 
 @dataclass(frozen=True, slots=True)
 class ServerCallbackDeliveryResult:
@@ -2520,6 +2538,10 @@ class GraphBlocksServerApp:
     max_callback_submission_history_bytes: int = (
         DEFAULT_MAX_CALLBACK_SUBMISSION_HISTORY_BYTES
     )
+    max_callback_registrations: int = DEFAULT_MAX_CALLBACK_REGISTRATIONS
+    max_callback_registration_history_bytes: int = (
+        DEFAULT_MAX_CALLBACK_REGISTRATION_HISTORY_BYTES
+    )
     _events_by_run_id: dict[str, tuple[Mapping[str, object], ...]] = field(default_factory=dict, init=False, repr=False)
     _run_authorization_by_run_id: dict[str, _ServerRunAuthorizationRecord] = field(
         default_factory=dict,
@@ -2573,6 +2595,11 @@ class GraphBlocksServerApp:
     )
     _callback_registrations: dict[str, ServerCallbackRegistration] = field(
         default_factory=dict,
+        init=False,
+        repr=False,
+    )
+    _callback_registration_history_bytes: int = field(
+        default=0,
         init=False,
         repr=False,
     )
@@ -2687,6 +2714,8 @@ class GraphBlocksServerApp:
             "max_event_ack_history_bytes_per_subscription",
             "max_callback_operation_histories",
             "max_callback_submission_history_bytes",
+            "max_callback_registrations",
+            "max_callback_registration_history_bytes",
         ):
             value = getattr(self, field_name)
             if isinstance(value, bool) or not isinstance(value, int) or value < 1:
@@ -2897,10 +2926,14 @@ class GraphBlocksServerApp:
                             )
                     subscription_ids.update(run_registration_ids)
                     for subscription_id in run_registration_ids:
-                        self._callback_registrations.pop(
+                        removed_registration = self._callback_registrations.pop(
                             subscription_id,
                             None,
                         )
+                        if removed_registration is not None:
+                            self._callback_registration_history_bytes -= (
+                                removed_registration._retained_size_bytes()
+                            )
                         self._pending_callback_registration_ids.discard(
                             subscription_id
                         )
@@ -3645,6 +3678,9 @@ class GraphBlocksServerApp:
                     },
                 )
         if route.operation == "register_callback":
+            reserved_callback_registration_bytes = 0
+            reserved_callback_registration_id: str | None = None
+            callback_registration_capacity_committed = False
             try:
                 with self._callback_registration_condition:
                     registration = ServerCallbackRegistration.from_request(
@@ -3731,6 +3767,57 @@ class GraphBlocksServerApp:
                             )
                         registration = existing
                         resuming_incomplete_registration = True
+                    if not resuming_incomplete_registration:
+                        retained_registration_bytes = (
+                            registration._retained_size_bytes()
+                        )
+                        pending_new_registration_count = sum(
+                            pending_subscription_id
+                            not in self._callback_registrations
+                            for pending_subscription_id in (
+                                self._pending_callback_registration_ids
+                            )
+                        )
+                        if (
+                            len(self._callback_registrations)
+                            + pending_new_registration_count
+                            >= self.max_callback_registrations
+                            or (
+                                self._callback_registration_history_bytes
+                                + retained_registration_bytes
+                                > self.max_callback_registration_history_bytes
+                            )
+                        ):
+                            return ServerResponse.json(
+                                429,
+                                {
+                                    "ok": False,
+                                    "subscriptionId": registration.subscription_id,
+                                    "reasonCode": (
+                                        "server.callback_registration_"
+                                        "capacity_exhausted"
+                                    ),
+                                    "maxCallbackRegistrations": (
+                                        self.max_callback_registrations
+                                    ),
+                                    "maxCallbackRegistrationHistoryBytes": (
+                                        self.max_callback_registration_history_bytes
+                                    ),
+                                    "error": (
+                                        "server callback registration history "
+                                        "capacity is exhausted"
+                                    ),
+                                },
+                            )
+                        self._callback_registration_history_bytes += (
+                            retained_registration_bytes
+                        )
+                        reserved_callback_registration_bytes = (
+                            retained_registration_bytes
+                        )
+                        reserved_callback_registration_id = (
+                            registration.subscription_id
+                        )
                     self._pending_callback_registration_ids.add(registration.subscription_id)
 
                 replay_ready = False
@@ -3776,6 +3863,7 @@ class GraphBlocksServerApp:
                         )
                     if not resuming_incomplete_registration:
                         self._callback_registrations[registration.subscription_id] = registration
+                        callback_registration_capacity_committed = True
                     if (
                         self.callback_delivery_hook is not None
                         and registration.delivery.get("kind") == "webhook"
@@ -3871,6 +3959,19 @@ class GraphBlocksServerApp:
                         "error": str(error),
                     },
                 )
+            finally:
+                if (
+                    reserved_callback_registration_bytes
+                    and not callback_registration_capacity_committed
+                ):
+                    with self._callback_registration_condition:
+                        self._callback_registration_history_bytes -= (
+                            reserved_callback_registration_bytes
+                        )
+                        if reserved_callback_registration_id is not None:
+                            self._pending_callback_registration_ids.discard(
+                                reserved_callback_registration_id
+                            )
         if route.operation == "revoke_callback":
             subscription_id = route_match.path_params.get("subscription_id", "")
             with self._callback_registration_condition:
