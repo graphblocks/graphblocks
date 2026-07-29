@@ -47,8 +47,9 @@ from .server_storage import (
 
 
 SQLITE_ACCEPTED_RUN_APPLICATION_ID = 0x47424152
-SQLITE_ACCEPTED_RUN_SCHEMA_VERSION = 1
+SQLITE_ACCEPTED_RUN_SCHEMA_VERSION = 2
 _SQLITE_ACCEPTED_RUN_SCHEMA_NAME = "graphblocks.accepted-runs.sqlite"
+_SQLITE_ACCEPTED_RUN_INITIAL_SCHEMA_VERSION = 1
 _MAX_BUSY_TIMEOUT_MS = 60_000
 _MAX_SQLITE_INTEGER = (1 << 63) - 1
 _MAX_UUID7_UNIX_MS = (1 << 48) - 1
@@ -305,7 +306,31 @@ _SCHEMA_V1_STATEMENTS = (
     """,
 )
 
-_REQUIRED_COLUMNS = {
+_SCHEMA_V2_MIGRATION_STATEMENTS = (
+    """
+    ALTER TABLE effect_outbox
+    ADD COLUMN available_at_unix_ms INTEGER NOT NULL DEFAULT 0
+      CHECK (available_at_unix_ms >= 0)
+    """,
+    """
+    UPDATE effect_outbox
+    SET available_at_unix_ms = created_at_unix_ms
+    """,
+    """
+    DROP INDEX effect_outbox_claimable
+    """,
+    """
+    CREATE INDEX effect_outbox_claimable
+    ON effect_outbox (
+      delivery_state,
+      available_at_unix_ms,
+      claim_expires_at_unix_ms,
+      created_at_unix_ms
+    )
+    """,
+)
+
+_REQUIRED_COLUMNS_V1 = {
     "accepted_run_storage_metadata": frozenset({"key", "value"}),
     "accepted_runs": frozenset(
         {
@@ -396,6 +421,13 @@ _REQUIRED_COLUMNS = {
             "created_at_unix_ms",
             "delivered_at_unix_ms",
         }
+    ),
+}
+_REQUIRED_COLUMNS = {
+    **_REQUIRED_COLUMNS_V1,
+    "effect_outbox": (
+        _REQUIRED_COLUMNS_V1["effect_outbox"]
+        | frozenset({"available_at_unix_ms"})
     ),
 }
 _REQUIRED_TABLES = frozenset(_REQUIRED_COLUMNS)
@@ -604,13 +636,19 @@ class SQLiteAcceptedRunDatabase:
             ).fetchall()
         )
 
-    def _assert_identity(self, connection: sqlite3.Connection) -> None:
+    def _assert_application_identity(
+        self,
+        connection: sqlite3.Connection,
+    ) -> None:
         application_id = self._application_id(connection)
         if application_id != SQLITE_ACCEPTED_RUN_APPLICATION_ID:
             raise SQLiteAcceptedRunSchemaMismatchError(
                 "SQLite file belongs to another application or has no "
                 "accepted-run identity"
             )
+
+    def _assert_identity(self, connection: sqlite3.Connection) -> None:
+        self._assert_application_identity(connection)
         user_version = self._user_version(connection)
         if user_version != SQLITE_ACCEPTED_RUN_SCHEMA_VERSION:
             raise SQLiteAcceptedRunSchemaVersionError(
@@ -628,7 +666,14 @@ class SQLiteAcceptedRunDatabase:
             if application_id == 0 and user_version == 0 and not tables:
                 self._initialize_empty_database(connection)
             else:
-                self._assert_identity(connection)
+                self._assert_application_identity(connection)
+                if (
+                    user_version
+                    == _SQLITE_ACCEPTED_RUN_INITIAL_SCHEMA_VERSION
+                ):
+                    self._migrate_v1_to_v2(connection)
+                else:
+                    self._assert_identity(connection)
                 self._validate_schema(connection)
                 self._ensure_wal(connection)
         except sqlite3.Error as error:
@@ -690,6 +735,8 @@ class SQLiteAcceptedRunDatabase:
             else:
                 for statement in _SCHEMA_V1_STATEMENTS:
                     connection.execute(statement)
+                for statement in _SCHEMA_V2_MIGRATION_STATEMENTS:
+                    connection.execute(statement)
                 connection.executemany(
                     """
                     INSERT INTO accepted_run_storage_metadata (key, value)
@@ -719,14 +766,79 @@ class SQLiteAcceptedRunDatabase:
         self._validate_schema(connection)
         self._ensure_wal(connection)
 
+    def _migrate_v1_to_v2(
+        self,
+        connection: sqlite3.Connection,
+    ) -> None:
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            self._assert_application_identity(connection)
+            user_version = self._user_version(connection)
+            if user_version == SQLITE_ACCEPTED_RUN_SCHEMA_VERSION:
+                self._validate_schema(connection)
+                connection.commit()
+                return
+            if user_version != _SQLITE_ACCEPTED_RUN_INITIAL_SCHEMA_VERSION:
+                raise SQLiteAcceptedRunSchemaVersionError(
+                    "unsupported accepted-run SQLite schema version "
+                    f"{user_version}; expected "
+                    f"{SQLITE_ACCEPTED_RUN_SCHEMA_VERSION}"
+                )
+            self._validate_schema_version(
+                connection,
+                schema_version=_SQLITE_ACCEPTED_RUN_INITIAL_SCHEMA_VERSION,
+                required_columns=_REQUIRED_COLUMNS_V1,
+            )
+            for statement in _SCHEMA_V2_MIGRATION_STATEMENTS:
+                connection.execute(statement)
+            updated = connection.execute(
+                """
+                UPDATE accepted_run_storage_metadata
+                SET value = ?
+                WHERE key = 'schema_version' AND value = ?
+                """,
+                (
+                    str(SQLITE_ACCEPTED_RUN_SCHEMA_VERSION),
+                    str(_SQLITE_ACCEPTED_RUN_INITIAL_SCHEMA_VERSION),
+                ),
+            )
+            if updated.rowcount != 1:
+                raise SQLiteAcceptedRunSchemaMismatchError(
+                    "accepted-run SQLite schema metadata version changed "
+                    "during migration"
+                )
+            connection.execute(
+                "PRAGMA user_version = "
+                f"{SQLITE_ACCEPTED_RUN_SCHEMA_VERSION}"
+            )
+            self._validate_schema(connection)
+            connection.commit()
+        except BaseException:
+            if connection.in_transaction:
+                connection.rollback()
+            raise
+
     def _validate_schema(self, connection: sqlite3.Connection) -> None:
+        self._validate_schema_version(
+            connection,
+            schema_version=SQLITE_ACCEPTED_RUN_SCHEMA_VERSION,
+            required_columns=_REQUIRED_COLUMNS,
+        )
+
+    def _validate_schema_version(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        schema_version: int,
+        required_columns: dict[str, frozenset[str]],
+    ) -> None:
         tables = self._table_names(connection)
         if tables != _REQUIRED_TABLES:
             raise SQLiteAcceptedRunSchemaMismatchError(
                 "accepted-run SQLite schema tables do not match "
-                f"version {SQLITE_ACCEPTED_RUN_SCHEMA_VERSION}"
+                f"version {schema_version}"
             )
-        for table_name, expected_columns in _REQUIRED_COLUMNS.items():
+        for table_name, expected_columns in required_columns.items():
             actual_columns = frozenset(
                 str(row["name"])
                 for row in connection.execute(
@@ -736,7 +848,7 @@ class SQLiteAcceptedRunDatabase:
             if actual_columns != expected_columns:
                 raise SQLiteAcceptedRunSchemaMismatchError(
                     "accepted-run SQLite schema columns do not match "
-                    f"version {SQLITE_ACCEPTED_RUN_SCHEMA_VERSION}: "
+                    f"version {schema_version}: "
                     f"{table_name}"
                 )
         metadata = {
@@ -749,9 +861,7 @@ class SQLiteAcceptedRunDatabase:
             raise SQLiteAcceptedRunSchemaMismatchError(
                 "accepted-run SQLite schema metadata name does not match"
             )
-        if metadata.get("schema_version") != str(
-            SQLITE_ACCEPTED_RUN_SCHEMA_VERSION
-        ):
+        if metadata.get("schema_version") != str(schema_version):
             raise SQLiteAcceptedRunSchemaMismatchError(
                 "accepted-run SQLite schema metadata version does not match"
             )
@@ -1504,6 +1614,7 @@ class SQLiteAcceptedRunRepository:
                   idempotency_key,
                   payload_json,
                   payload_digest,
+                  available_at_unix_ms,
                   delivery_state,
                   attempt_count,
                   claim_owner_id,
@@ -1514,7 +1625,8 @@ class SQLiteAcceptedRunRepository:
                   delivered_at_unix_ms
                 )
                 VALUES (
-                  ?, ?, ?, ?, ?, ?, ?, 'pending', 0, NULL, 0, 0, NULL, ?, NULL
+                  ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 0, NULL, 0, 0, NULL, ?,
+                  NULL
                 )
                 """,
                 (
@@ -1525,6 +1637,7 @@ class SQLiteAcceptedRunRepository:
                     effect.idempotency_key,
                     effect.payload_json,
                     effect.payload_digest,
+                    event.created_at_unix_ms,
                     event.created_at_unix_ms,
                 ),
             )
@@ -2237,6 +2350,7 @@ class SQLiteAcceptedRunRepository:
                   idempotency_key,
                   payload_json,
                   payload_digest,
+                  available_at_unix_ms,
                   delivery_state,
                   attempt_count,
                   claim_owner_id,
@@ -2247,7 +2361,7 @@ class SQLiteAcceptedRunRepository:
                   delivered_at_unix_ms
                 )
                 VALUES (
-                  ?, ?, NULL, ?, ?, ?, ?, 'pending', 0, NULL, 0, 0, NULL,
+                  ?, ?, NULL, ?, ?, ?, ?, ?, 'pending', 0, NULL, 0, 0, NULL,
                   ?, NULL
                 )
                 """,
@@ -2258,6 +2372,7 @@ class SQLiteAcceptedRunRepository:
                     effect.idempotency_key,
                     effect.payload_json,
                     effect.payload_digest,
+                    event.created_at_unix_ms,
                     event.created_at_unix_ms,
                 ),
             )
