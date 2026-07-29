@@ -113,6 +113,66 @@ def test_durable_service_executes_admitted_run_after_process_restart(
     ]
 
 
+def test_durable_service_executes_next_tenant_scoped_run_after_restart(
+    tmp_path,
+) -> None:
+    path = tmp_path / "durable-server-next.sqlite3"
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "durable-server-next"},
+        "spec": {"nodes": {}},
+    }
+    invocation = {
+        "policySnapshotId": "policy-1",
+        "releaseId": "release-1",
+        "responseId": "response-1",
+        "turnId": None,
+    }
+    admission_process = _service(
+        path,
+        worker_id="admission-process",
+        clock=lambda: 1_000,
+    )
+    admission_process.admit_run(
+        tenant_id="tenant-1",
+        owner_principal_id="principal-1",
+        run_id="tenant-1-run",
+        idempotency_key="tenant-1-request",
+        graph=graph,
+        inputs={},
+        invocation=invocation,
+    )
+    admission_process.admit_run(
+        tenant_id="tenant-2",
+        owner_principal_id="principal-2",
+        run_id="tenant-2-run",
+        idempotency_key="tenant-2-request",
+        graph=graph,
+        inputs={},
+        invocation=invocation,
+    )
+
+    restarted = _service(
+        path,
+        worker_id="worker-after-restart",
+        clock=lambda: 2_000,
+    )
+    tenant_work = restarted.advance_next_run(tenant_id="tenant-2")
+    remaining_work = restarted.advance_next_run()
+    no_work = restarted.advance_next_run()
+
+    assert tenant_work is not None
+    assert tenant_work.tenant_id == "tenant-2"
+    assert tenant_work.run_id == "tenant-2-run"
+    assert tenant_work.phase is AcceptedRunPhase.TERMINAL
+    assert remaining_work is not None
+    assert remaining_work.tenant_id == "tenant-1"
+    assert remaining_work.run_id == "tenant-1-run"
+    assert remaining_work.phase is AcceptedRunPhase.TERMINAL
+    assert no_work is None
+
+
 def test_durable_service_resumes_accepted_callback_after_process_restart(
     tmp_path,
 ) -> None:
@@ -286,11 +346,9 @@ def test_durable_service_resumes_accepted_callback_after_process_restart(
         worker_id="worker-after-callback",
         clock=lambda: 4_000,
     )
-    completed = restarted.advance_run(
-        tenant_id="tenant-1",
-        run_id=run_id,
-    )
+    completed = restarted.advance_next_run(tenant_id="tenant-1")
 
+    assert completed is not None
     assert completed.phase is AcceptedRunPhase.TERMINAL
     assert completed.terminal_status == "succeeded"
     assert completed.state_version == 6

@@ -32,11 +32,13 @@ from .server_storage import (
     AcceptedRunEventPage,
     AcceptedRunIdConflictError,
     AcceptedRunNotFoundError,
+    AcceptedRunQueueClaimRequest,
     AcceptedRunRepository,
     AcceptedRunSnapshot,
     AcceptedRunStorageError,
     AcceptedRunTerminalCommit,
     AcceptedRunWaitingCommit,
+    AcceptedRunWorkItem,
     AdmissionIdentity,
     AdmissionResult,
     CallbackAcceptance,
@@ -94,6 +96,7 @@ class DurableAcceptedRunService:
             "get_checkpoint",
             "claim_run",
             "claim_work",
+            "claim_next_work",
             "commit_waiting",
             "accept_callback_and_queue_resume",
             "commit_terminal",
@@ -321,7 +324,30 @@ class DurableAcceptedRunService:
             if snapshot is None:
                 raise AcceptedRunNotFoundError(tenant_id, run_id)
             return snapshot
+        return self._advance_work(work)
 
+    def advance_next_run(
+        self,
+        *,
+        tenant_id: str | None = None,
+    ) -> AcceptedRunSnapshot | None:
+        claimed_at_unix_ms = self._now_unix_ms()
+        work = self.repository.claim_next_work(
+            AcceptedRunQueueClaimRequest(
+                tenant_id=tenant_id,
+                lease_owner_id=self.lease_owner_id,
+                now_unix_ms=claimed_at_unix_ms,
+                lease_duration_ms=self.lease_duration_ms,
+            )
+        )
+        if work is None:
+            return None
+        return self._advance_work(work)
+
+    def _advance_work(
+        self,
+        work: AcceptedRunWorkItem,
+    ) -> AcceptedRunSnapshot:
         graph = canonical_loads(work.envelope.graph_json)
         inputs = canonical_loads(work.envelope.inputs_json)
         invocation = canonical_loads(work.envelope.invocation_json)
