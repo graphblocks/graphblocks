@@ -8235,7 +8235,22 @@ class GraphBlocksServerApp:
         events: tuple[dict[str, object], ...],
     ) -> list[dict[str, object]] | ServerResponse:
         replay_after_sequence = 0
-        sequence_by_cursor: dict[str, int] = {}
+        requested_cursor = subscription.replay_from_cursor
+        requested_sequence = 0
+        if requested_cursor is not None:
+            _validate_run_cursor(
+                "server event subscription",
+                "replay_from_cursor",
+                subscription.run_id,
+                requested_cursor,
+            )
+            requested_sequence = int(
+                requested_cursor[len(subscription.run_id) + 1 :]
+            )
+            replay_after_sequence = requested_sequence
+        cursor_found = requested_cursor is None or requested_sequence == 0
+        nearest_sequence: int | None = None
+        last_sequence = 0
         for event in events:
             metadata = event.get("metadata")
             if not isinstance(metadata, Mapping):
@@ -8245,38 +8260,36 @@ class GraphBlocksServerApp:
                 raise ValueError("server event subscription sequence must be an integer")
             if sequence < 0:
                 raise ValueError("server event subscription sequence must be non-negative")
-            sequence_by_cursor[f"{subscription.run_id}:{sequence}"] = sequence
-        if subscription.replay_from_cursor is not None:
-            _validate_run_cursor(
-                "server event subscription",
-                "replay_from_cursor",
-                subscription.run_id,
-                subscription.replay_from_cursor,
+            if nearest_sequence is None or sequence < nearest_sequence:
+                nearest_sequence = sequence
+            if sequence > last_sequence:
+                last_sequence = sequence
+            if sequence == requested_sequence:
+                cursor_found = True
+        if requested_cursor is not None and not cursor_found:
+            nearest_cursor = (
+                f"{subscription.run_id}:{nearest_sequence}"
+                if nearest_sequence is not None
+                else None
             )
-            if subscription.replay_from_cursor == f"{subscription.run_id}:0":
-                replay_after_sequence = 0
-            elif subscription.replay_from_cursor not in sequence_by_cursor:
-                last_sequence = self._last_event_sequence(events)
-                nearest_cursor = (
-                    f"{subscription.run_id}:{min(sequence_by_cursor.values())}" if sequence_by_cursor else None
-                )
-                return ServerResponse.json(
-                    409,
-                    {
-                        "ok": False,
-                        "error": "CursorExpired",
-                        "runId": subscription.run_id,
-                        "requestedCursor": subscription.replay_from_cursor,
-                        "nearestAvailableCursor": nearest_cursor,
-                        "lastCursor": f"{subscription.run_id}:{last_sequence}",
-                        "lastSequence": last_sequence,
-                        "runStatus": self._run_status_payload(subscription.run_id, events, include_ok=False),
-                    },
-                )
-            else:
-                replay_after_sequence = sequence_by_cursor[subscription.replay_from_cursor]
+            return ServerResponse.json(
+                409,
+                {
+                    "ok": False,
+                    "error": "CursorExpired",
+                    "runId": subscription.run_id,
+                    "requestedCursor": requested_cursor,
+                    "nearestAvailableCursor": nearest_cursor,
+                    "lastCursor": f"{subscription.run_id}:{last_sequence}",
+                    "lastSequence": last_sequence,
+                    "runStatus": self._run_status_payload(subscription.run_id, events, include_ok=False),
+                },
+            )
 
         replayed_events: list[dict[str, object]] = []
+        replayed_event_count = 0
+        replayed_event_bytes = 2
+        replay_capacity_exhausted = False
         for event in events:
             metadata = event.get("metadata")
             if not isinstance(metadata, Mapping):
@@ -8292,7 +8305,41 @@ class GraphBlocksServerApp:
                 _event_visible_to_principal(event, subscription.owner)
                 and self._event_matches_subscription_filter(event, subscription.event_filter)
             ):
-                replayed_events.append(_response_json_object(event))
+                replayed_event = _response_json_object(event)
+                replayed_event_count += 1
+                replayed_event_bytes += _canonical_json_size_bytes(
+                    replayed_event
+                )
+                if replayed_event_count > 1:
+                    replayed_event_bytes += 1
+                if (
+                    replayed_event_count > self.max_event_page_events
+                    or replayed_event_bytes > self.max_event_page_bytes
+                ):
+                    replay_capacity_exhausted = True
+                if not replay_capacity_exhausted:
+                    replayed_events.append(replayed_event)
+        if replay_capacity_exhausted:
+            return ServerResponse.json(
+                413,
+                {
+                    "ok": False,
+                    "error": "SubscriptionReplayTooLarge",
+                    "reasonCode": (
+                        "server.subscription_replay_capacity_exhausted"
+                    ),
+                    "runId": subscription.run_id,
+                    "subscriptionId": subscription.subscription_id,
+                    "replayFromCursor": subscription.replay_from_cursor,
+                    "lastCursor": (
+                        f"{subscription.run_id}:{last_sequence}"
+                    ),
+                    "maxEvents": self.max_event_page_events,
+                    "maxBytes": self.max_event_page_bytes,
+                    "requiredEvents": replayed_event_count,
+                    "requiredBytes": replayed_event_bytes,
+                },
+            )
         return replayed_events
 
     def _event_matches_subscription_filter(self, event: Mapping[str, object], event_filter: Mapping[str, object]) -> bool:

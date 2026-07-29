@@ -10300,6 +10300,184 @@ def test_server_app_subscribes_to_run_events_with_filtered_replay() -> None:
         app.subscriptions("run-subscribe-1")[0].delivery["options"]["priority"] = "high"  # type: ignore[index]
 
 
+def test_server_app_rejects_subscription_replay_over_count_or_byte_budget() -> None:
+    principal = PrincipalRef("user-1")
+    count_app = GraphBlocksServerApp(
+        auth_hook=StaticBearerAuthHook({"token-1": principal}),
+        max_event_page_events=1,
+        max_event_page_bytes=4_096,
+    )
+    count_run_id = "run-subscription-replay-count-1"
+    _seed_succeeded_run(
+        count_app,
+        count_run_id,
+        principal,
+        event_count=2,
+    )
+    count_request = ServerRequest(
+        method="POST",
+        path=f"/runs/{count_run_id}/subscriptions",
+        headers={"Authorization": "Bearer token-1"},
+        query={},
+        cookies={},
+        body=json.dumps(
+            {
+                "subscriptionId": "subscription-replay-count-1",
+                "eventFilter": {"types": ["RunSucceeded"]},
+                "delivery": {
+                    "kind": "local_callback",
+                    "callback_name": "capacity-test",
+                },
+                "failurePolicy": "best_effort",
+            }
+        ).encode("utf-8"),
+        requested_at="2026-07-29T00:00:00Z",
+    )
+
+    count_exhausted = count_app.handle(count_request)
+    required_count_bytes = len(
+        graphblocks.canonical_dumps(
+            list(count_app._events_by_run_id[count_run_id])
+        ).encode("utf-8")
+    )
+
+    assert count_exhausted.status_code == 413
+    assert json.loads(count_exhausted.body.decode("utf-8")) == {
+        "ok": False,
+        "error": "SubscriptionReplayTooLarge",
+        "reasonCode": "server.subscription_replay_capacity_exhausted",
+        "runId": count_run_id,
+        "subscriptionId": "subscription-replay-count-1",
+        "replayFromCursor": None,
+        "lastCursor": f"{count_run_id}:2",
+        "maxEvents": 1,
+        "maxBytes": 4_096,
+        "requiredEvents": 2,
+        "requiredBytes": required_count_bytes,
+    }
+    assert count_app.subscriptions(count_run_id) == ()
+
+    bounded_request = replace(
+        count_request,
+        body=json.dumps(
+            {
+                "subscriptionId": "subscription-replay-bounded-1",
+                "eventFilter": {"types": ["RunSucceeded"]},
+                "delivery": {
+                    "kind": "local_callback",
+                    "callback_name": "capacity-test",
+                },
+                "failurePolicy": "best_effort",
+                "replayFromCursor": f"{count_run_id}:1",
+            }
+        ).encode("utf-8"),
+    )
+    bounded = count_app.handle(bounded_request)
+
+    assert bounded.status_code == 201
+    assert [
+        event["metadata"]["sequence"]
+        for event in json.loads(bounded.body.decode("utf-8"))["events"]
+    ] == [2]
+
+    byte_app = GraphBlocksServerApp(
+        auth_hook=StaticBearerAuthHook({"token-1": principal}),
+        max_event_page_events=10,
+        max_event_page_bytes=1,
+    )
+    byte_run_id = "run-subscription-replay-bytes-1"
+    _seed_succeeded_run(byte_app, byte_run_id, principal)
+    byte_request = replace(
+        count_request,
+        path=f"/runs/{byte_run_id}/subscriptions",
+        body=json.dumps(
+            {
+                "subscriptionId": "subscription-replay-bytes-1",
+                "eventFilter": {"types": ["RunSucceeded"]},
+                "delivery": {
+                    "kind": "local_callback",
+                    "callback_name": "capacity-test",
+                },
+                "failurePolicy": "best_effort",
+            }
+        ).encode("utf-8"),
+    )
+
+    byte_exhausted = byte_app.handle(byte_request)
+    byte_payload = json.loads(byte_exhausted.body.decode("utf-8"))
+
+    assert byte_exhausted.status_code == 413
+    assert byte_payload["reasonCode"] == (
+        "server.subscription_replay_capacity_exhausted"
+    )
+    assert byte_payload["requiredEvents"] == 1
+    assert byte_payload["requiredBytes"] > 1
+    assert byte_app.subscriptions(byte_run_id) == ()
+
+
+def test_server_app_rejects_oversized_callback_replay_before_delivery() -> None:
+    delivery_calls: list[str] = []
+
+    class RecordingDeliveryHook:
+        def deliver(
+            self,
+            registration: ServerCallbackRegistration,
+            event: dict[str, object],
+        ) -> ServerCallbackDeliveryResult:
+            del event
+            delivery_calls.append(registration.subscription_id)
+            raise AssertionError("oversized callback replay must not deliver")
+
+    principal = PrincipalRef("user-1")
+    app = GraphBlocksServerApp(
+        auth_hook=StaticBearerAuthHook({"token-1": principal}),
+        callback_delivery_hook=RecordingDeliveryHook(),
+        max_event_page_events=1,
+        max_event_page_bytes=4_096,
+    )
+    run_id = "run-callback-replay-capacity-1"
+    _seed_succeeded_run(app, run_id, principal, event_count=2)
+
+    response = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/callbacks/register",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "subscriptionId": "callback-replay-capacity-1",
+                    "scope": "run",
+                    "scopeId": run_id,
+                    "eventFilter": {"types": ["RunSucceeded"]},
+                    "delivery": {
+                        "kind": "webhook",
+                        "url": "https://relay.example/events",
+                        "signing": {
+                            "algorithm": "hmac-sha256",
+                            "secret_ref": "secret://relay",
+                        },
+                    },
+                    "failurePolicy": "retry_then_dead_letter",
+                    "deadLetterPolicy": "webhook-standard",
+                }
+            ).encode("utf-8"),
+            requested_at="2026-07-29T00:00:00Z",
+        )
+    )
+
+    assert response.status_code == 413
+    assert json.loads(response.body.decode("utf-8"))["reasonCode"] == (
+        "server.subscription_replay_capacity_exhausted"
+    )
+    assert delivery_calls == []
+    assert app.callback_registrations() == ()
+    assert app._pending_callback_registration_ids == set()
+    assert app._callback_registration_history_bytes == 0
+    assert app._callback_delivery_results_by_subscription_id == {}
+
+
 def test_server_event_subscription_rejects_invalid_status() -> None:
     cases = (
         ("running", "server event subscription status must be one of active, paused, expired, or revoked"),
