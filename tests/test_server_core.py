@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from concurrent.futures import Executor, Future, ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from dataclasses import replace
+import hashlib
 from itertools import permutations
 import json
 import math
@@ -23,6 +24,8 @@ from graphblocks.server import (
     ServerAuthAuditEvent,
     ServerAuthDecision,
     ServerAuthRequest,
+    ServerAuthorizationDecision,
+    ServerAuthorizationRequest,
     ServerCallbackDeliveryResult,
     ServerCallbackRegistration,
     ServerEndpoint,
@@ -817,6 +820,17 @@ def test_server_app_requires_callable_auth_audit_hook() -> None:
         )
 
 
+def test_server_app_requires_authorization_hook_contract() -> None:
+    with pytest.raises(
+        ValueError,
+        match="server authorization_hook must define authorize",
+    ):
+        GraphBlocksServerApp(  # type: ignore[arg-type]
+            auth_hook=StaticBearerAuthHook({}),
+            authorization_hook=object(),
+        )
+
+
 def test_server_app_bounds_auth_audit_failure_type() -> None:
     oversized_decision_type = type("D" * 300, (), {})
 
@@ -900,6 +914,456 @@ def test_server_app_challenges_missing_bearer_authentication() -> None:
     assert json.loads(response.body.decode("utf-8")) == {
         "ok": False,
         "reasonCodes": ["auth.missing_bearer_token"],
+    }
+
+
+def test_server_app_authorizer_receives_tenant_scoped_run_context() -> None:
+    principal = PrincipalRef(
+        "user-1",
+        tenant_id="tenant-1",
+    )
+    observed_requests: list[ServerAuthorizationRequest] = []
+
+    class CapturingAuthorizer:
+        def authorize(
+            self,
+            request: ServerAuthorizationRequest,
+        ) -> ServerAuthorizationDecision:
+            observed_requests.append(request)
+            return ServerAuthorizationDecision(True)
+
+    app = GraphBlocksServerApp(
+        auth_hook=StaticBearerAuthHook({"token-1": principal}),
+        authorization_hook=CapturingAuthorizer(),
+    )
+    _seed_collectible_terminal_run(
+        app,
+        "run-1",
+        principal,
+        started_at="2026-07-28T00:00:00Z",
+        completed_at="2026-07-28T00:01:00Z",
+    )
+
+    response = app.handle(
+        ServerRequest(
+            method="GET",
+            path="/runs/run-1",
+            headers={"authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            requested_at="2026-07-29T00:00:00Z",
+        )
+    )
+
+    assert response.status_code == 200
+    assert len(observed_requests) == 1
+    authorization_request = observed_requests[0]
+    assert authorization_request.principal == principal
+    assert authorization_request.action == "get_run_status"
+    assert authorization_request.route.path == "/runs/{run_id}"
+    assert authorization_request.path_params == {"run_id": "run-1"}
+    assert authorization_request.tenant_id == "tenant-1"
+    assert authorization_request.request_digest is None
+    assert authorization_request.resource is not None
+    assert authorization_request.resource.resource_id == "run-1"
+    assert authorization_request.resource.resource_kind == "run"
+    assert authorization_request.resource.tenant_id == "tenant-1"
+    assert authorization_request.resource.attributes == {
+        "ownerPrincipalId": "user-1",
+    }
+
+
+def test_server_app_authorizer_receives_body_digest_without_body() -> None:
+    principal = PrincipalRef(
+        "user-1",
+        tenant_id="tenant-1",
+    )
+    observed_requests: list[ServerAuthorizationRequest] = []
+
+    class DenyingAuthorizer:
+        def authorize(
+            self,
+            request: ServerAuthorizationRequest,
+        ) -> ServerAuthorizationDecision:
+            observed_requests.append(request)
+            return ServerAuthorizationDecision(
+                False,
+                reason_codes=("authz.create_denied",),
+            )
+
+    app = GraphBlocksServerApp(
+        auth_hook=StaticBearerAuthHook({"token-1": principal}),
+        authorization_hook=DenyingAuthorizer(),
+    )
+    body = b'{"secret":"must-not-reach-authorizer"}'
+
+    response = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs",
+            headers={"authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=body,
+            requested_at="2026-07-29T00:00:00Z",
+        )
+    )
+
+    assert response.status_code == 403
+    assert json.loads(response.body) == {
+        "ok": False,
+        "reasonCodes": ["authz.create_denied"],
+    }
+    assert len(observed_requests) == 1
+    authorization_request = observed_requests[0]
+    assert authorization_request.action == "invoke_graph"
+    assert authorization_request.path_params == {}
+    assert authorization_request.resource is None
+    assert authorization_request.tenant_id == "tenant-1"
+    assert authorization_request.request_digest == (
+        "sha256:" + hashlib.sha256(body).hexdigest()
+    )
+    assert "must-not-reach-authorizer" not in repr(authorization_request)
+
+
+def test_server_app_resolves_cross_tenant_resource_before_authorization() -> None:
+    alice = PrincipalRef("alice", tenant_id="tenant-alice")
+    bob = PrincipalRef("bob", tenant_id="tenant-bob")
+    observed_requests: list[ServerAuthorizationRequest] = []
+
+    class TenantAuthorizer:
+        def authorize(
+            self,
+            request: ServerAuthorizationRequest,
+        ) -> ServerAuthorizationDecision:
+            observed_requests.append(request)
+            return ServerAuthorizationDecision(
+                request.principal.tenant_id == request.tenant_id,
+                reason_codes=("authz.cross_tenant",),
+                hide_resource=(
+                    request.principal.tenant_id != request.tenant_id
+                ),
+            )
+
+    app = GraphBlocksServerApp(
+        auth_hook=StaticBearerAuthHook({"bob-token": bob}),
+        authorization_hook=TenantAuthorizer(),
+    )
+    _record_seeded_run_owner(app, "alice-run", alice)
+
+    response = app.handle(
+        ServerRequest(
+            method="GET",
+            path="/runs/alice-run",
+            headers={"authorization": "Bearer bob-token"},
+            query={},
+            cookies={},
+        )
+    )
+
+    assert response.status_code == 404
+    assert len(observed_requests) == 1
+    request = observed_requests[0]
+    assert request.tenant_id == "tenant-alice"
+    assert request.resource is not None
+    assert request.resource.attributes["ownerPrincipalId"] == "alice"
+
+
+def test_server_app_authorizer_can_hide_resource_denials() -> None:
+    class HidingAuthorizer:
+        def authorize(
+            self,
+            request: ServerAuthorizationRequest,
+        ) -> ServerAuthorizationDecision:
+            del request
+            return ServerAuthorizationDecision(
+                False,
+                reason_codes=("authz.run_denied",),
+                hide_resource=True,
+            )
+
+    app = GraphBlocksServerApp(
+        auth_hook=StaticBearerAuthHook(
+            {
+                "token-1": PrincipalRef(
+                    "user-1",
+                    tenant_id="tenant-1",
+                )
+            }
+        ),
+        authorization_hook=HidingAuthorizer(),
+    )
+
+    response = app.handle(
+        ServerRequest(
+            method="GET",
+            path="/runs/hidden-run",
+            headers={"authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+        )
+    )
+
+    assert response.status_code == 404
+    assert json.loads(response.body) == {
+        "ok": False,
+        "reasonCodes": ["authz.resource_hidden"],
+    }
+
+
+@pytest.mark.parametrize(
+    (
+        "method",
+        "path",
+        "action",
+        "resource_id",
+        "resource_kind",
+        "path_params",
+    ),
+    (
+        (
+            "GET",
+            "/runs/run-1",
+            "get_run_status",
+            "run-1",
+            "run",
+            {"run_id": "run-1"},
+        ),
+        (
+            "POST",
+            "/runs/run-1/subscriptions/sub-1/ack",
+            "ack_event",
+            "sub-1",
+            "event_subscription",
+            {"run_id": "run-1", "subscription_id": "sub-1"},
+        ),
+        (
+            "DELETE",
+            "/callbacks/sub-1",
+            "revoke_callback",
+            "sub-1",
+            "callback_subscription",
+            {"subscription_id": "sub-1"},
+        ),
+        (
+            "POST",
+            "/callbacks/deliveries/delivery-1/redrive",
+            "redrive_callback_delivery",
+            "delivery-1",
+            "callback_delivery",
+            {"delivery_id": "delivery-1"},
+        ),
+        (
+            "POST",
+            "/callbacks/operation-1",
+            "submit_async_callback",
+            "operation-1",
+            "callback_operation",
+            {"operation_id": "operation-1"},
+        ),
+    ),
+)
+def test_server_app_authorization_resource_policy_matrix(
+    method: str,
+    path: str,
+    action: str,
+    resource_id: str,
+    resource_kind: str,
+    path_params: dict[str, str],
+) -> None:
+    observed_requests: list[ServerAuthorizationRequest] = []
+
+    class CapturingAuthorizer:
+        def authorize(
+            self,
+            request: ServerAuthorizationRequest,
+        ) -> ServerAuthorizationDecision:
+            observed_requests.append(request)
+            return ServerAuthorizationDecision(
+                False,
+                reason_codes=("authz.test_stop",),
+            )
+
+    app = GraphBlocksServerApp(
+        auth_hook=StaticBearerAuthHook(
+            {
+                "token-1": PrincipalRef(
+                    "user-1",
+                    tenant_id="tenant-1",
+                )
+            }
+        ),
+        authorization_hook=CapturingAuthorizer(),
+    )
+
+    response = app.handle(
+        ServerRequest(
+            method=method,
+            path=path,
+            headers={"authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+        )
+    )
+
+    assert response.status_code == 403
+    assert len(observed_requests) == 1
+    request = observed_requests[0]
+    assert request.action == action
+    assert request.path_params == path_params
+    assert request.resource is not None
+    assert request.resource.resource_id == resource_id
+    assert request.resource.resource_kind == resource_kind
+
+
+def test_default_protected_resource_routes_have_authorization_policy() -> None:
+    for endpoint in default_server_route_manifest().endpoints:
+        path_parameters = {
+            part[1:-1]
+            for part in endpoint.path.strip("/").split("/")
+            if part.startswith("{") and part.endswith("}")
+        }
+        if not endpoint.auth_required or not path_parameters:
+            continue
+        policy = (
+            graphblocks_server._SERVER_AUTHORIZATION_RESOURCE_POLICIES.get(
+                endpoint.operation
+            )
+        )
+        assert policy is not None, endpoint.operation
+        resource_parameter, _ = policy
+        assert resource_parameter in path_parameters
+
+
+@pytest.mark.parametrize(
+    ("mode", "reason_code", "event_kind", "failure_type"),
+    (
+        (
+            "raise",
+            "authz.hook_error",
+            "authz.hook_error",
+            "builtins.TimeoutError",
+        ),
+        (
+            "invalid",
+            "authz.invalid_decision",
+            "authz.invalid_decision",
+            "builtins.object",
+        ),
+    ),
+)
+def test_server_app_fails_closed_and_audits_authorizer_failures(
+    mode: str,
+    reason_code: str,
+    event_kind: str,
+    failure_type: str,
+) -> None:
+    class FailingAuthorizer:
+        def authorize(self, request: ServerAuthorizationRequest) -> object:
+            del request
+            if mode == "raise":
+                raise TimeoutError("authorization provider timed out")
+            return object()
+
+    app = GraphBlocksServerApp(
+        auth_hook=StaticBearerAuthHook(
+            {"token-1": PrincipalRef("user-1")}
+        ),
+        authorization_hook=FailingAuthorizer(),  # type: ignore[arg-type]
+    )
+
+    response = app.handle(
+        ServerRequest(
+            method="GET",
+            path="/runs",
+            headers={
+                "authorization": "Bearer token-1",
+                "x-request-id": "request-authz-failure",
+            },
+            query={},
+            cookies={},
+        )
+    )
+
+    assert response.status_code == 403
+    assert json.loads(response.body) == {
+        "ok": False,
+        "reasonCodes": [reason_code],
+    }
+    assert len(app.auth_audit_events()) == 1
+    audit_event = app.auth_audit_events()[0]
+    assert audit_event.event_kind == event_kind
+    assert audit_event.failure_type == failure_type
+    assert audit_event.request_id == "request-authz-failure"
+
+
+def test_server_app_authorizer_requires_authenticated_principal() -> None:
+    class PrincipallessAuthHook:
+        def authorize(self, request: ServerAuthRequest) -> ServerAuthDecision:
+            del request
+            return ServerAuthDecision(True)
+
+    class AllowingAuthorizer:
+        def authorize(
+            self,
+            request: ServerAuthorizationRequest,
+        ) -> ServerAuthorizationDecision:
+            del request
+            return ServerAuthorizationDecision(True)
+
+    app = GraphBlocksServerApp(
+        auth_hook=PrincipallessAuthHook(),
+        authorization_hook=AllowingAuthorizer(),
+    )
+
+    response = app.handle(
+        ServerRequest(
+            method="GET",
+            path="/runs",
+            headers={},
+            query={},
+            cookies={},
+        )
+    )
+
+    assert response.status_code == 401
+    assert response.headers["www-authenticate"] == 'Bearer realm="graphblocks"'
+    assert json.loads(response.body) == {
+        "ok": False,
+        "reasonCodes": ["auth.authentication_required"],
+    }
+
+
+def test_server_app_rejects_invalid_authorization_resource_context() -> None:
+    class AllowingAuthorizer:
+        def authorize(
+            self,
+            request: ServerAuthorizationRequest,
+        ) -> ServerAuthorizationDecision:
+            del request
+            return ServerAuthorizationDecision(True)
+
+    app = GraphBlocksServerApp(
+        auth_hook=StaticBearerAuthHook(
+            {"token-1": PrincipalRef("user-1")}
+        ),
+        authorization_hook=AllowingAuthorizer(),
+    )
+
+    response = app.handle(
+        ServerRequest(
+            method="GET",
+            path="/runs/%20",
+            headers={"authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+        )
+    )
+
+    assert response.status_code == 400
+    assert json.loads(response.body) == {
+        "ok": False,
+        "reasonCodes": ["authz.invalid_resource"],
     }
 
 
@@ -1069,6 +1533,39 @@ def test_server_request_auth_and_response_validate_contracts() -> None:
         )
     with pytest.raises(ValueError, match="server auth request requested_at must not be empty"):
         ServerAuthRequest(route=route, headers={}, query={}, cookies={}, requested_at=" ")
+
+    principal = PrincipalRef("user-1", tenant_id="tenant-1")
+    with pytest.raises(
+        ValueError,
+        match="action must match route operation",
+    ):
+        ServerAuthorizationRequest(
+            principal=principal,
+            action="wrong_action",
+            route=route,
+            path_params={},
+            resource=None,
+            tenant_id="tenant-1",
+            request_digest=None,
+        )
+    with pytest.raises(
+        ValueError,
+        match="request_digest must be a canonical SHA-256 digest",
+    ):
+        ServerAuthorizationRequest(
+            principal=principal,
+            action=route.operation,
+            route=route,
+            path_params={},
+            resource=None,
+            tenant_id="tenant-1",
+            request_digest="sha256:not-a-digest",
+        )
+    with pytest.raises(
+        ValueError,
+        match="allowed decisions must not hide resources",
+    ):
+        ServerAuthorizationDecision(True, hide_resource=True)
 
     with pytest.raises(ValueError, match="status_code must be an integer"):
         ServerResponse(status_code=True, headers={}, body=b"")  # type: ignore[arg-type]

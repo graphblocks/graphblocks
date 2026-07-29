@@ -5,6 +5,7 @@ from collections.abc import Callable, Mapping
 from concurrent.futures import Executor, Future
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
+import hashlib
 import json
 import math
 from threading import Condition, get_ident, TIMEOUT_MAX
@@ -36,7 +37,7 @@ from .application_event import (
 )
 from .canonical import canonical_dumps, canonical_hash
 from .compiler import compile_graph
-from .policy import PrincipalRef
+from .policy import PrincipalRef, ResourceRef
 from .runtime import (
     CancellationToken,
     ExecutionJournal,
@@ -164,6 +165,42 @@ MAX_SERVER_CALLBACK_DELIVERY_ERROR_BYTES = 16_384
 MAX_SERVER_CALLBACK_DELIVERY_TIMESTAMP_BYTES = 128
 MAX_SERVER_AUTH_AUDIT_REQUEST_ID_BYTES = 256
 MAX_SERVER_AUTH_AUDIT_FAILURE_TYPE_BYTES = 256
+_SERVER_AUTHORIZATION_RESOURCE_POLICIES = MappingProxyType(
+    {
+        "get_run_status": ("run_id", "run"),
+        "delete_run": ("run_id", "run"),
+        "attach_to_run": ("run_id", "run"),
+        "detach_from_run": ("run_id", "run"),
+        "subscribe_events": ("run_id", "run"),
+        "ack_event": ("subscription_id", "event_subscription"),
+        "unsubscribe_events": (
+            "subscription_id",
+            "event_subscription",
+        ),
+        "cancel_run": ("run_id", "run"),
+        "pause_run": ("run_id", "run"),
+        "resume_run": ("run_id", "run"),
+        "expire_run": ("run_id", "run"),
+        "revoke_callback": (
+            "subscription_id",
+            "callback_subscription",
+        ),
+        "redrive_callback_delivery": (
+            "delivery_id",
+            "callback_delivery",
+        ),
+        "move_callback_to_dead_letter": (
+            "delivery_id",
+            "callback_delivery",
+        ),
+        "submit_async_callback": (
+            "operation_id",
+            "callback_operation",
+        ),
+        "application_events": ("run_id", "run"),
+        "application_stream": ("run_id", "run"),
+    }
+)
 
 
 def _utc_now_iso() -> str:
@@ -2269,7 +2306,12 @@ def _callback_idempotency_key(body: Mapping[str, object], headers: Mapping[str, 
 
 @dataclass(frozen=True, slots=True)
 class ServerAuthAuditEvent:
-    event_kind: Literal["auth.hook_error", "auth.invalid_decision"]
+    event_kind: Literal[
+        "auth.hook_error",
+        "auth.invalid_decision",
+        "authz.hook_error",
+        "authz.invalid_decision",
+    ]
     method: str
     route: str
     operation: str
@@ -2283,6 +2325,8 @@ class ServerAuthAuditEvent:
         if self.event_kind not in {
             "auth.hook_error",
             "auth.invalid_decision",
+            "authz.hook_error",
+            "authz.invalid_decision",
         }:
             raise ValueError(f"{owner} event_kind is invalid")
         object.__setattr__(
@@ -2372,8 +2416,140 @@ class ServerAuthDecision:
         object.__setattr__(self, "reason_codes", reason_codes)
 
 
+@dataclass(frozen=True, slots=True)
+class ServerAuthorizationRequest:
+    principal: PrincipalRef
+    action: str
+    route: ServerEndpoint
+    path_params: Mapping[str, str]
+    resource: ResourceRef | None
+    tenant_id: str | None
+    request_digest: str | None
+    requested_at: str = ""
+
+    def __post_init__(self) -> None:
+        owner = "server authorization request"
+        if not isinstance(self.principal, PrincipalRef):
+            raise ValueError(f"{owner} principal must be a PrincipalRef")
+        action = _validate_exact_non_empty_string(
+            owner,
+            "action",
+            self.action,
+        )
+        if not isinstance(self.route, ServerEndpoint):
+            raise ValueError(f"{owner} route must be a ServerEndpoint")
+        if action != self.route.operation:
+            raise ValueError(f"{owner} action must match route operation")
+        object.__setattr__(self, "action", action)
+        path_params = _validate_string_mapping(
+            owner,
+            "path_params",
+            self.path_params,
+        )
+        object.__setattr__(self, "path_params", path_params)
+        if self.resource is not None and not isinstance(
+            self.resource,
+            ResourceRef,
+        ):
+            raise ValueError(f"{owner} resource must be a ResourceRef or None")
+        if self.tenant_id is not None:
+            object.__setattr__(
+                self,
+                "tenant_id",
+                _validate_exact_non_empty_string(
+                    owner,
+                    "tenant_id",
+                    self.tenant_id,
+                ),
+            )
+        if (
+            self.resource is not None
+            and self.resource.tenant_id is not None
+            and self.tenant_id != self.resource.tenant_id
+        ):
+            raise ValueError(
+                f"{owner} tenant_id must match resource tenant_id"
+            )
+        if self.request_digest is not None:
+            request_digest = _validate_exact_non_empty_string(
+                owner,
+                "request_digest",
+                self.request_digest,
+            )
+            if (
+                len(request_digest) != 71
+                or not request_digest.startswith("sha256:")
+                or any(
+                    character not in "0123456789abcdef"
+                    for character in request_digest[7:]
+                )
+            ):
+                raise ValueError(
+                    f"{owner} request_digest must be a canonical SHA-256 digest"
+                )
+            object.__setattr__(
+                self,
+                "request_digest",
+                request_digest,
+            )
+        object.__setattr__(
+            self,
+            "requested_at",
+            (
+                ""
+                if self.requested_at == ""
+                else _validate_non_empty_string(
+                    owner,
+                    "requested_at",
+                    self.requested_at,
+                )
+            ),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class ServerAuthorizationDecision:
+    allowed: bool
+    reason_codes: tuple[str, ...] = field(default_factory=tuple)
+    hide_resource: bool = False
+
+    def __post_init__(self) -> None:
+        owner = "server authorization decision"
+        if not isinstance(self.allowed, bool):
+            raise ValueError(f"{owner} allowed must be a boolean")
+        if not isinstance(self.reason_codes, (list, tuple)):
+            raise ValueError(f"{owner} reason_codes must be a sequence")
+        reason_codes = tuple(
+            _validate_exact_non_empty_string(
+                owner,
+                "reason_codes",
+                reason_code,
+            )
+            for reason_code in self.reason_codes
+        )
+        if len(set(reason_codes)) != len(reason_codes):
+            raise ValueError(
+                f"{owner} reason_codes must not contain duplicates"
+            )
+        object.__setattr__(self, "reason_codes", reason_codes)
+        if not isinstance(self.hide_resource, bool):
+            raise ValueError(f"{owner} hide_resource must be a boolean")
+        if self.allowed and self.hide_resource:
+            raise ValueError(
+                f"{owner} allowed decisions must not hide resources"
+            )
+
+
 class ServerAuthHook(Protocol):
     def authorize(self, request: ServerAuthRequest) -> ServerAuthDecision:
+        ...
+
+
+class ServerAuthorizationHook(Protocol):
+    def authorize(
+        self,
+        request: ServerAuthorizationRequest,
+    ) -> ServerAuthorizationDecision:
         ...
 
 
@@ -2650,6 +2826,10 @@ class _AcceptedCallbackReceiptCapability:
 class GraphBlocksServerApp:
     route_manifest: ServerRouteManifest = field(default_factory=default_server_route_manifest)
     auth_hook: ServerAuthHook | None = None
+    authorization_hook: ServerAuthorizationHook | None = field(
+        default=None,
+        repr=False,
+    )
     auth_audit_hook: Callable[[ServerAuthAuditEvent], None] | None = field(
         default=None,
         repr=False,
@@ -2908,6 +3088,15 @@ class GraphBlocksServerApp:
     def __post_init__(self) -> None:
         if not isinstance(self.allow_unauthenticated_dev, bool):
             raise ValueError("server allow_unauthenticated_dev must be a boolean")
+        if (
+            self.authorization_hook is not None
+            and not callable(
+                getattr(self.authorization_hook, "authorize", None)
+            )
+        ):
+            raise ValueError(
+                "server authorization_hook must define authorize"
+            )
         if self.auth_audit_hook is not None and not callable(
             self.auth_audit_hook
         ):
@@ -3572,6 +3761,289 @@ class GraphBlocksServerApp:
                     "www-authenticate": _SERVER_BEARER_CHALLENGE,
                 },
             )
+
+        if route.auth_required and self.authorization_hook is not None:
+            if auth_decision.principal is None:
+                return ServerResponse.json(
+                    401,
+                    {
+                        "ok": False,
+                        "reasonCodes": ["auth.authentication_required"],
+                    },
+                    headers={
+                        "www-authenticate": _SERVER_BEARER_CHALLENGE,
+                    },
+                )
+
+            resource: ResourceRef | None = None
+            resource_id: str | None = None
+            resource_kind: str | None = None
+            resource_tenant_id: str | None = None
+            resource_attributes: dict[str, object] = {}
+            run_authorization: _ServerRunAuthorizationRecord | None = None
+            linked_run_id: str | None = None
+            resource_policy = (
+                _SERVER_AUTHORIZATION_RESOURCE_POLICIES.get(
+                    route.operation
+                )
+            )
+            if resource_policy is not None:
+                resource_parameter, resource_kind = resource_policy
+                resource_id = route_match.path_params.get(
+                    resource_parameter
+                )
+
+            if resource_kind == "run":
+                linked_run_id = resource_id
+            elif (
+                resource_kind == "callback_subscription"
+                and resource_id is not None
+            ):
+                registration = self._callback_registrations.get(
+                    resource_id
+                )
+                if registration is not None:
+                    resource_attributes.update(
+                        {
+                            "scope": registration.scope,
+                            "scopeId": registration.scope_id,
+                        }
+                    )
+                    if registration.owner is not None:
+                        resource_tenant_id = registration.owner.tenant_id
+                        resource_attributes["ownerPrincipalId"] = (
+                            registration.owner.principal_id
+                        )
+                    if registration.scope == "run":
+                        linked_run_id = registration.scope_id
+            elif (
+                resource_kind == "event_subscription"
+                and resource_id is not None
+            ):
+                event_subscription = next(
+                    (
+                        subscription
+                        for subscriptions
+                        in self._subscriptions_by_run_id.values()
+                        for subscription in subscriptions
+                        if subscription.subscription_id == resource_id
+                    ),
+                    None,
+                )
+                if event_subscription is not None:
+                    linked_run_id = event_subscription.run_id
+                    resource_attributes["runId"] = linked_run_id
+                    if event_subscription.owner is not None:
+                        resource_tenant_id = (
+                            event_subscription.owner.tenant_id
+                        )
+                        resource_attributes["ownerPrincipalId"] = (
+                            event_subscription.owner.principal_id
+                        )
+            elif (
+                resource_kind == "callback_delivery"
+                and resource_id is not None
+            ):
+                delivery_result = next(
+                    (
+                        result
+                        for results
+                        in self._callback_delivery_results_by_subscription_id.values()
+                        for result in results
+                        if result.delivery_id == resource_id
+                    ),
+                    None,
+                )
+                if delivery_result is not None:
+                    linked_run_id = delivery_result.run_id
+                    resource_attributes.update(
+                        {
+                            "runId": linked_run_id,
+                            "subscriptionId": (
+                                delivery_result.subscription_id
+                            ),
+                        }
+                    )
+            elif (
+                resource_kind == "callback_operation"
+                and resource_id is not None
+            ):
+                submissions = self._callbacks_by_operation_id.get(
+                    resource_id,
+                    (),
+                )
+                linked_run_id = next(
+                    (
+                        submission.run_id
+                        for submission in reversed(submissions)
+                        if submission.run_id is not None
+                    ),
+                    None,
+                )
+                if linked_run_id is not None:
+                    resource_attributes["runId"] = linked_run_id
+
+            if linked_run_id is not None:
+                run_authorization = (
+                    self._run_authorization_by_run_id.get(
+                        linked_run_id
+                    )
+                )
+                if run_authorization is None:
+                    retired_run = self._retired_runs_by_run_id.get(
+                        linked_run_id
+                    )
+                    if retired_run is not None:
+                        run_authorization = retired_run.authorization
+
+            if run_authorization is not None:
+                resource_tenant_id = run_authorization.tenant_id
+                if run_authorization.owner_principal_id is not None:
+                    resource_attributes["ownerPrincipalId"] = (
+                        run_authorization.owner_principal_id
+                    )
+            if resource_id is not None:
+                try:
+                    resource = ResourceRef(
+                        resource_id=resource_id,
+                        resource_kind=resource_kind,
+                        tenant_id=resource_tenant_id,
+                        attributes=resource_attributes,
+                    )
+                except ValueError:
+                    return ServerResponse.json(
+                        400,
+                        {
+                            "ok": False,
+                            "reasonCodes": ["authz.invalid_resource"],
+                        },
+                    )
+
+            request_digest = None
+            if request.body:
+                request_digest = (
+                    "sha256:" + hashlib.sha256(request.body).hexdigest()
+                )
+            try:
+                authorization_request = ServerAuthorizationRequest(
+                    principal=auth_decision.principal,
+                    action=route.operation,
+                    route=route,
+                    path_params=route_match.path_params,
+                    resource=resource,
+                    tenant_id=(
+                        resource_tenant_id
+                        if resource_tenant_id is not None
+                        else auth_decision.principal.tenant_id
+                    ),
+                    request_digest=request_digest,
+                    requested_at=request.requested_at,
+                )
+            except ValueError:
+                return ServerResponse.json(
+                    400,
+                    {
+                        "ok": False,
+                        "reasonCodes": ["authz.invalid_context"],
+                    },
+                )
+            try:
+                authorization_decision = (
+                    self.authorization_hook.authorize(
+                        authorization_request
+                    )
+                )
+            except Exception as error:
+                error_type = type(error)
+                error_type_name = (
+                    f"{error_type.__module__}."
+                    f"{error_type.__qualname__}"
+                )
+                if (
+                    len(error_type_name.encode("utf-8"))
+                    > MAX_SERVER_AUTH_AUDIT_FAILURE_TYPE_BYTES
+                ):
+                    error_type_name = canonical_hash(error_type_name)
+                audit_event = ServerAuthAuditEvent(
+                    event_kind="authz.hook_error",
+                    method=request.method,
+                    route=route.path,
+                    operation=route.operation,
+                    request_id=auth_audit_request_id,
+                    failure_type=error_type_name,
+                    credential_present=bool(
+                        request.headers.get("authorization")
+                    ),
+                    observed_at=_utc_now_iso(),
+                )
+                self._auth_audit_events.append(audit_event)
+                if self.auth_audit_hook is not None:
+                    try:
+                        self.auth_audit_hook(audit_event)
+                    except Exception:
+                        pass
+                return ServerResponse.json(
+                    403,
+                    {
+                        "ok": False,
+                        "reasonCodes": ["authz.hook_error"],
+                    },
+                )
+            if not isinstance(
+                authorization_decision,
+                ServerAuthorizationDecision,
+            ):
+                decision_type = type(authorization_decision)
+                decision_type_name = (
+                    f"{decision_type.__module__}."
+                    f"{decision_type.__qualname__}"
+                )
+                if (
+                    len(decision_type_name.encode("utf-8"))
+                    > MAX_SERVER_AUTH_AUDIT_FAILURE_TYPE_BYTES
+                ):
+                    decision_type_name = canonical_hash(
+                        decision_type_name
+                    )
+                audit_event = ServerAuthAuditEvent(
+                    event_kind="authz.invalid_decision",
+                    method=request.method,
+                    route=route.path,
+                    operation=route.operation,
+                    request_id=auth_audit_request_id,
+                    failure_type=decision_type_name,
+                    credential_present=bool(
+                        request.headers.get("authorization")
+                    ),
+                    observed_at=_utc_now_iso(),
+                )
+                self._auth_audit_events.append(audit_event)
+                if self.auth_audit_hook is not None:
+                    try:
+                        self.auth_audit_hook(audit_event)
+                    except Exception:
+                        pass
+                return ServerResponse.json(
+                    403,
+                    {
+                        "ok": False,
+                        "reasonCodes": ["authz.invalid_decision"],
+                    },
+                )
+            if not authorization_decision.allowed:
+                return ServerResponse.json(
+                    404 if authorization_decision.hide_resource else 403,
+                    {
+                        "ok": False,
+                        "reasonCodes": (
+                            ["authz.resource_hidden"]
+                            if authorization_decision.hide_resource
+                            else list(
+                                authorization_decision.reason_codes
+                            )
+                        ),
+                    },
+                )
 
         if route.operation == "health":
             return ServerResponse.json(200, self.health.to_payload())
