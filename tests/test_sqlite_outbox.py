@@ -1,0 +1,526 @@
+from __future__ import annotations
+
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
+from dataclasses import replace
+from multiprocessing import get_context
+from threading import Barrier, Event
+
+import pytest
+
+from graphblocks.canonical import canonical_dumps, canonical_hash
+from graphblocks.server_storage import (
+    AcceptedRunAdmission,
+    AcceptedRunClaimRequest,
+    AcceptedRunEffectDeliveryAck,
+    AcceptedRunEffectDeliveryClaimRequest,
+    AcceptedRunEffectDeliveryLeaseExpiredError,
+    AcceptedRunEffectDeliveryRetry,
+    AcceptedRunEffectDeliveryState,
+    AcceptedRunEffectDeliveryStateConflictError,
+    AcceptedRunEffectIntent,
+    AcceptedRunEffectKind,
+    AcceptedRunEventIntent,
+    AcceptedRunTerminalCommit,
+    AdmissionIdentity,
+    StaleAcceptedRunEffectDeliveryClaimError,
+)
+from graphblocks.sqlite_outbox import SQLiteOutboxDispatcherRepository
+from graphblocks.sqlite_server_storage import SQLiteAcceptedRunRepository
+
+
+def _admission() -> AcceptedRunAdmission:
+    graph = {
+        "apiVersion": "graphblocks.ai/v1",
+        "kind": "Graph",
+        "metadata": {"name": "durable-outbox"},
+        "spec": {"nodes": {}, "edges": []},
+    }
+    inputs = {"request": {"value": "hello"}}
+    event_payload = {
+        "runId": "run-1",
+        "tenantId": "tenant-1",
+        "state": "ready_initial",
+    }
+    return AcceptedRunAdmission(
+        run_id="run-1",
+        identity=AdmissionIdentity(
+            tenant_id="tenant-1",
+            owner_principal_id="principal-1",
+            admission_scope="POST:/runs",
+            idempotency_key="admission-1",
+            request_digest=canonical_hash(
+                {"graph": graph, "inputs": inputs, "runId": "run-1"}
+            ),
+        ),
+        graph_json=canonical_dumps(graph),
+        graph_hash=canonical_hash(graph),
+        inputs_json=canonical_dumps(inputs),
+        ticket_json=canonical_dumps(
+            {"runId": "run-1", "state": "accepted"}
+        ),
+        graph_format_version="graphblocks.ai/Graph@v1",
+        runtime_format_version="graphblocks.runtime@v1",
+        checkpoint_format_version="graphblocks.runtime-checkpoint.v1",
+        created_at_unix_ms=1_000,
+        accepted_event=AcceptedRunEventIntent(
+            kind="run_accepted",
+            payload_json=canonical_dumps(event_payload),
+            payload_digest=canonical_hash(event_payload),
+            created_at_unix_ms=1_000,
+        ),
+    )
+
+
+def _seed_completion_effect(path) -> str:
+    repository = SQLiteAcceptedRunRepository(path)
+    repository.accept_run(_admission())
+    claim = repository.claim_run(
+        AcceptedRunClaimRequest(
+            tenant_id="tenant-1",
+            run_id="run-1",
+            lease_owner_id="worker-1",
+            now_unix_ms=2_000,
+            lease_duration_ms=1_000,
+        )
+    )
+    assert claim is not None
+    result = {"answer": "done"}
+    event_payload = {"runId": "run-1", "state": "succeeded"}
+    completion_payload = {
+        "resultDigest": canonical_hash(result),
+        "runId": "run-1",
+        "status": "succeeded",
+    }
+    repository.commit_terminal(
+        AcceptedRunTerminalCommit(
+            claim=claim,
+            expected_state_version=2,
+            terminal_status="succeeded",
+            result_json=canonical_dumps(result),
+            result_digest=canonical_hash(result),
+            terminal_event=AcceptedRunEventIntent(
+                kind="run_succeeded",
+                payload_json=canonical_dumps(event_payload),
+                payload_digest=canonical_hash(event_payload),
+                created_at_unix_ms=2_500,
+            ),
+            completion_effect=AcceptedRunEffectIntent(
+                effect_id="effect-completion-1",
+                kind=AcceptedRunEffectKind.COMPLETION,
+                idempotency_key="completion-run-1",
+                payload_json=canonical_dumps(completion_payload),
+                payload_digest=canonical_hash(completion_payload),
+            ),
+        )
+    )
+    return "effect-completion-1"
+
+
+@pytest.fixture
+def outbox_path(tmp_path):
+    path = tmp_path / "accepted-runs.sqlite3"
+    _seed_completion_effect(path)
+    return path
+
+
+def _claim_request(
+    *,
+    owner: str = "dispatcher-1",
+    now: int = 2_600,
+    lease_duration: int = 1_000,
+) -> AcceptedRunEffectDeliveryClaimRequest:
+    return AcceptedRunEffectDeliveryClaimRequest(
+        delivery_owner_id=owner,
+        now_unix_ms=now,
+        lease_duration_ms=lease_duration,
+    )
+
+
+def _claim_effect(
+    repository: SQLiteOutboxDispatcherRepository,
+    **request_overrides,
+):
+    claimed = repository.claim_next_effect(
+        _claim_request(**request_overrides)
+    )
+    assert claimed is not None
+    assert claimed.claim is not None
+    return claimed
+
+
+def _claim_effect_in_process(
+    arguments: tuple[str, str],
+) -> tuple[str, int, int] | None:
+    path, owner = arguments
+    claimed = SQLiteOutboxDispatcherRepository(path).claim_next_effect(
+        _claim_request(owner=owner)
+    )
+    if claimed is None:
+        return None
+    assert claimed.claim is not None
+    return (
+        claimed.effect_id,
+        claimed.claim.claim_generation,
+        claimed.claim.fencing_token,
+    )
+
+
+def test_sqlite_outbox_claim_returns_bound_effect_envelope(outbox_path) -> None:
+    repository = SQLiteOutboxDispatcherRepository(outbox_path)
+
+    claimed = _claim_effect(repository)
+
+    assert claimed.effect_id == "effect-completion-1"
+    assert claimed.tenant_id == "tenant-1"
+    assert claimed.run_id == "run-1"
+    assert claimed.owner_principal_id == "principal-1"
+    assert claimed.kind is AcceptedRunEffectKind.COMPLETION
+    assert claimed.delivery_state is AcceptedRunEffectDeliveryState.CLAIMED
+    assert claimed.attempt_count == 1
+    assert claimed.available_at_unix_ms == 2_500
+    assert claimed.claim.delivery_owner_id == "dispatcher-1"
+    assert claimed.claim.claim_generation == 1
+    assert claimed.claim.fencing_token == 1
+    assert claimed.claim.lease_expires_at_unix_ms == 3_600
+
+
+def test_two_sqlite_outbox_dispatchers_cannot_claim_same_effect(
+    outbox_path,
+) -> None:
+    repositories = (
+        SQLiteOutboxDispatcherRepository(outbox_path),
+        SQLiteOutboxDispatcherRepository(outbox_path),
+    )
+    starting = Barrier(2)
+
+    def claim(index: int):
+        starting.wait()
+        return repositories[index].claim_next_effect(
+            _claim_request(owner=f"dispatcher-{index + 1}")
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        claims = tuple(executor.map(claim, range(2)))
+
+    assert sum(item is not None for item in claims) == 1
+    winner = next(item for item in claims if item is not None)
+    assert winner.attempt_count == 1
+    assert winner.claim is not None
+    assert winner.claim.claim_generation == 1
+    assert winner.claim.fencing_token == 1
+
+
+def test_two_processes_cannot_claim_same_sqlite_outbox_effect(
+    outbox_path,
+) -> None:
+    arguments = (
+        (str(outbox_path), "dispatcher-1"),
+        (str(outbox_path), "dispatcher-2"),
+    )
+
+    with ProcessPoolExecutor(
+        max_workers=2,
+        mp_context=get_context("spawn"),
+    ) as executor:
+        claims = tuple(executor.map(_claim_effect_in_process, arguments))
+
+    assert sum(item is not None for item in claims) == 1
+    assert next(item for item in claims if item is not None) == (
+        "effect-completion-1",
+        1,
+        1,
+    )
+
+
+def test_sqlite_outbox_does_not_claim_effect_before_availability(
+    outbox_path,
+) -> None:
+    repository = SQLiteOutboxDispatcherRepository(outbox_path)
+
+    assert repository.claim_next_effect(
+        _claim_request(now=2_499)
+    ) is None
+    assert _claim_effect(repository, now=2_500).attempt_count == 1
+
+
+def test_sqlite_outbox_claim_is_not_visible_before_commit(outbox_path) -> None:
+    state_updated = Event()
+    allow_commit = Event()
+
+    def pause(point: str) -> None:
+        if point == "claim_next_effect.after_state_update":
+            state_updated.set()
+            assert allow_commit.wait(timeout=5)
+
+    claiming = SQLiteOutboxDispatcherRepository(
+        outbox_path,
+        failpoint=pause,
+    )
+    observing = SQLiteOutboxDispatcherRepository(outbox_path)
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(
+            claiming.claim_next_effect,
+            _claim_request(),
+        )
+        assert state_updated.wait(timeout=5)
+        visible = observing.get_effect(effect_id="effect-completion-1")
+        assert visible is not None
+        assert visible.delivery_state is AcceptedRunEffectDeliveryState.PENDING
+        assert visible.claim is None
+        allow_commit.set()
+        claimed = future.result(timeout=5)
+
+    assert claimed is not None
+    assert claimed.delivery_state is AcceptedRunEffectDeliveryState.CLAIMED
+
+
+def test_sqlite_outbox_takeover_requires_expired_lease(outbox_path) -> None:
+    first = SQLiteOutboxDispatcherRepository(outbox_path)
+    current = _claim_effect(first)
+    assert current.claim is not None
+    second = SQLiteOutboxDispatcherRepository(outbox_path)
+
+    assert (
+        second.claim_next_effect(
+            _claim_request(owner="dispatcher-2", now=3_599)
+        )
+        is None
+    )
+    takeover = _claim_effect(
+        second,
+        owner="dispatcher-2",
+        now=3_600,
+        lease_duration=500,
+    )
+
+    assert takeover.attempt_count == 2
+    assert takeover.claim is not None
+    assert takeover.claim.delivery_owner_id == "dispatcher-2"
+    assert takeover.claim.claim_generation == 2
+    assert takeover.claim.fencing_token == 2
+    assert takeover.claim.lease_expires_at_unix_ms == 4_100
+
+
+def test_sqlite_outbox_rejects_stale_ack_after_takeover(outbox_path) -> None:
+    repository = SQLiteOutboxDispatcherRepository(outbox_path)
+    stale = _claim_effect(repository)
+    assert stale.claim is not None
+    current = _claim_effect(
+        repository,
+        owner="dispatcher-2",
+        now=stale.claim.lease_expires_at_unix_ms,
+        lease_duration=500,
+    )
+    assert current.claim is not None
+
+    with pytest.raises(StaleAcceptedRunEffectDeliveryClaimError):
+        repository.mark_effect_delivered(
+            AcceptedRunEffectDeliveryAck(
+                claim=stale.claim,
+                delivered_at_unix_ms=3_000,
+            )
+        )
+
+    stored = repository.get_effect(effect_id=stale.effect_id)
+    assert stored is not None
+    assert stored.claim == current.claim
+    assert stored.delivery_state is AcceptedRunEffectDeliveryState.CLAIMED
+
+
+def test_sqlite_outbox_rejects_ack_at_lease_expiry(outbox_path) -> None:
+    repository = SQLiteOutboxDispatcherRepository(outbox_path)
+    claimed = _claim_effect(repository)
+    assert claimed.claim is not None
+
+    with pytest.raises(
+        AcceptedRunEffectDeliveryLeaseExpiredError,
+        match="effect delivery claim expired before delivery acknowledgement",
+    ):
+        repository.mark_effect_delivered(
+            AcceptedRunEffectDeliveryAck(
+                claim=claimed.claim,
+                delivered_at_unix_ms=claimed.claim.lease_expires_at_unix_ms,
+            )
+        )
+
+
+def test_sqlite_outbox_ack_is_fenced_and_idempotent(outbox_path) -> None:
+    repository = SQLiteOutboxDispatcherRepository(outbox_path)
+    claimed = _claim_effect(repository)
+    assert claimed.claim is not None
+    command = AcceptedRunEffectDeliveryAck(
+        claim=claimed.claim,
+        delivered_at_unix_ms=3_000,
+    )
+
+    delivered = repository.mark_effect_delivered(command)
+    replay = repository.mark_effect_delivered(command)
+
+    assert delivered == replay
+    assert delivered.delivery_state is AcceptedRunEffectDeliveryState.DELIVERED
+    assert delivered.claim is None
+    assert delivered.delivered_at_unix_ms == 3_000
+    assert repository.claim_next_effect(
+        _claim_request(owner="dispatcher-2", now=4_000)
+    ) is None
+
+
+def test_sqlite_outbox_ack_replays_after_response_loss(outbox_path) -> None:
+    repository = SQLiteOutboxDispatcherRepository(outbox_path)
+    claimed = _claim_effect(repository)
+    assert claimed.claim is not None
+    command = AcceptedRunEffectDeliveryAck(
+        claim=claimed.claim,
+        delivered_at_unix_ms=3_000,
+    )
+
+    def inject(point: str) -> None:
+        if point == "mark_effect_delivered.after_commit":
+            raise RuntimeError("injected acknowledgement response loss")
+
+    with pytest.raises(
+        RuntimeError,
+        match="injected acknowledgement response loss",
+    ):
+        SQLiteOutboxDispatcherRepository(
+            outbox_path,
+            failpoint=inject,
+        ).mark_effect_delivered(command)
+
+    replay = repository.mark_effect_delivered(command)
+    assert replay.delivery_state is AcceptedRunEffectDeliveryState.DELIVERED
+    assert replay.delivered_at_unix_ms == 3_000
+
+
+def test_sqlite_outbox_rolls_back_failed_ack_transaction(outbox_path) -> None:
+    repository = SQLiteOutboxDispatcherRepository(outbox_path)
+    claimed = _claim_effect(repository)
+    assert claimed.claim is not None
+
+    def inject(point: str) -> None:
+        if point == "mark_effect_delivered.after_state_update":
+            raise RuntimeError("injected acknowledgement failure")
+
+    with pytest.raises(RuntimeError, match="injected acknowledgement failure"):
+        SQLiteOutboxDispatcherRepository(
+            outbox_path,
+            failpoint=inject,
+        ).mark_effect_delivered(
+            AcceptedRunEffectDeliveryAck(
+                claim=claimed.claim,
+                delivered_at_unix_ms=3_000,
+            )
+        )
+
+    stored = repository.get_effect(effect_id=claimed.effect_id)
+    assert stored is not None
+    assert stored.delivery_state is AcceptedRunEffectDeliveryState.CLAIMED
+    assert stored.claim == claimed.claim
+
+
+def test_sqlite_outbox_retry_waits_until_scheduled_time(outbox_path) -> None:
+    repository = SQLiteOutboxDispatcherRepository(outbox_path)
+    claimed = _claim_effect(repository)
+    assert claimed.claim is not None
+
+    pending = repository.release_effect_for_retry(
+        AcceptedRunEffectDeliveryRetry(
+            claim=claimed.claim,
+            released_at_unix_ms=2_900,
+            available_at_unix_ms=4_000,
+        )
+    )
+
+    assert pending.delivery_state is AcceptedRunEffectDeliveryState.PENDING
+    assert pending.claim is None
+    assert pending.attempt_count == 1
+    assert pending.available_at_unix_ms == 4_000
+    assert repository.claim_next_effect(
+        _claim_request(owner="dispatcher-2", now=3_999)
+    ) is None
+    retried = _claim_effect(
+        repository,
+        owner="dispatcher-2",
+        now=4_000,
+        lease_duration=500,
+    )
+    assert retried.attempt_count == 2
+    assert retried.claim is not None
+    assert retried.claim.claim_generation == 2
+    assert retried.claim.fencing_token == 2
+    assert retried.idempotency_key == claimed.idempotency_key
+    assert retried.payload_json == claimed.payload_json
+    assert retried.payload_digest == claimed.payload_digest
+
+
+def test_sqlite_outbox_retry_replays_after_response_loss(outbox_path) -> None:
+    repository = SQLiteOutboxDispatcherRepository(outbox_path)
+    claimed = _claim_effect(repository)
+    assert claimed.claim is not None
+    command = AcceptedRunEffectDeliveryRetry(
+        claim=claimed.claim,
+        released_at_unix_ms=2_900,
+        available_at_unix_ms=4_000,
+    )
+
+    def inject(point: str) -> None:
+        if point == "release_effect_for_retry.after_commit":
+            raise RuntimeError("injected retry response loss")
+
+    with pytest.raises(RuntimeError, match="injected retry response loss"):
+        SQLiteOutboxDispatcherRepository(
+            outbox_path,
+            failpoint=inject,
+        ).release_effect_for_retry(command)
+
+    replay = repository.release_effect_for_retry(command)
+    assert replay.delivery_state is AcceptedRunEffectDeliveryState.PENDING
+    assert replay.available_at_unix_ms == 4_000
+    assert replay.attempt_count == 1
+
+
+def test_sqlite_outbox_rolls_back_failed_retry_transaction(outbox_path) -> None:
+    repository = SQLiteOutboxDispatcherRepository(outbox_path)
+    claimed = _claim_effect(repository)
+    assert claimed.claim is not None
+
+    def inject(point: str) -> None:
+        if point == "release_effect_for_retry.after_state_update":
+            raise RuntimeError("injected retry failure")
+
+    with pytest.raises(RuntimeError, match="injected retry failure"):
+        SQLiteOutboxDispatcherRepository(
+            outbox_path,
+            failpoint=inject,
+        ).release_effect_for_retry(
+            AcceptedRunEffectDeliveryRetry(
+                claim=claimed.claim,
+                released_at_unix_ms=2_900,
+                available_at_unix_ms=4_000,
+            )
+        )
+
+    stored = repository.get_effect(effect_id=claimed.effect_id)
+    assert stored is not None
+    assert stored.delivery_state is AcceptedRunEffectDeliveryState.CLAIMED
+    assert stored.claim == claimed.claim
+
+
+def test_sqlite_outbox_rejects_conflicting_retry_replay(outbox_path) -> None:
+    repository = SQLiteOutboxDispatcherRepository(outbox_path)
+    claimed = _claim_effect(repository)
+    assert claimed.claim is not None
+    command = AcceptedRunEffectDeliveryRetry(
+        claim=claimed.claim,
+        released_at_unix_ms=2_900,
+        available_at_unix_ms=4_000,
+    )
+    repository.release_effect_for_retry(command)
+
+    with pytest.raises(
+        AcceptedRunEffectDeliveryStateConflictError,
+        match="cannot transition from delivery state 'pending'",
+    ):
+        repository.release_effect_for_retry(
+            replace(command, available_at_unix_ms=4_500)
+        )

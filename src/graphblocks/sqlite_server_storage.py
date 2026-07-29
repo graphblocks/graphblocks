@@ -2202,12 +2202,14 @@ class SQLiteAcceptedRunRepository:
                     UPDATE effect_outbox
                     SET delivery_state = 'satisfied_by_callback',
                         claim_owner_id = NULL,
-                        claim_expires_at_unix_ms = NULL
+                        claim_expires_at_unix_ms = NULL,
+                        delivered_at_unix_ms = ?
                     WHERE effect_id = ?
                       AND run_internal_id = ?
                       AND delivery_state = ?
                     """,
                     (
+                        command.received_at_unix_ms,
                         dispatch_effect_id,
                         internal_id,
                         delivery_state,

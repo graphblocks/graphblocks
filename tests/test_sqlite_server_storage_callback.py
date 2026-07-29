@@ -14,6 +14,9 @@ from graphblocks.server_storage import (
     AcceptedRunCallbackExpiredError,
     AcceptedRunClaim,
     AcceptedRunClaimRequest,
+    AcceptedRunEffectDeliveryAck,
+    AcceptedRunEffectDeliveryClaimRequest,
+    AcceptedRunEffectDeliveryState,
     AcceptedRunEffectIntent,
     AcceptedRunEffectKind,
     AcceptedRunEventIntent,
@@ -27,6 +30,7 @@ from graphblocks.server_storage import (
     CallbackSubmissionIdentity,
     encode_runtime_checkpoint,
 )
+from graphblocks.sqlite_outbox import SQLiteOutboxDispatcherRepository
 from graphblocks.sqlite_server_storage import SQLiteAcceptedRunRepository
 
 
@@ -413,32 +417,31 @@ def test_sqlite_repository_callback_satisfies_claimed_dispatch(
 ) -> None:
     path = tmp_path / "accepted-runs.sqlite3"
     repository, waiting = _waiting_run(path)
-    connection = sqlite3.connect(path)
-    connection.execute(
-        """
-        UPDATE effect_outbox
-        SET delivery_state = 'claimed',
-            claim_owner_id = 'dispatcher-1',
-            claim_generation = 1,
-            claim_fencing_token = 1,
-            claim_expires_at_unix_ms = ?
-        """,
-        (4_000,),
+    dispatcher = SQLiteOutboxDispatcherRepository(path)
+    claimed = dispatcher.claim_next_effect(
+        AcceptedRunEffectDeliveryClaimRequest(
+            delivery_owner_id="dispatcher-1",
+            now_unix_ms=2_300,
+            lease_duration_ms=1_700,
+        )
     )
-    connection.commit()
-    connection.close()
+    assert claimed is not None
+    assert claimed.claim is not None
 
     repository.accept_callback_and_queue_resume(_callback_command(waiting))
 
-    connection = sqlite3.connect(path)
-    row = connection.execute(
-        """
-        SELECT delivery_state, claim_owner_id, claim_expires_at_unix_ms
-        FROM effect_outbox
-        """
-    ).fetchone()
-    connection.close()
-    assert row == ("satisfied_by_callback", None, None)
+    satisfied = dispatcher.mark_effect_delivered(
+        AcceptedRunEffectDeliveryAck(
+            claim=claimed.claim,
+            delivered_at_unix_ms=3_100,
+        )
+    )
+    assert (
+        satisfied.delivery_state
+        is AcceptedRunEffectDeliveryState.SATISFIED_BY_CALLBACK
+    )
+    assert satisfied.claim is None
+    assert satisfied.delivered_at_unix_ms == 3_000
 
 
 @pytest.mark.parametrize(
