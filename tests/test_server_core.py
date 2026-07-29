@@ -804,6 +804,111 @@ def test_server_request_auth_and_response_validate_contracts() -> None:
         ServerResponse.json(200, {"text": "\ud800"})
 
 
+@pytest.mark.parametrize(
+    "field_name",
+    (
+        "delivery_id",
+        "subscription_id",
+        "event_id",
+        "run_id",
+        "cursor",
+        "idempotency_key",
+    ),
+)
+def test_server_callback_delivery_result_bounds_identifier_bytes(
+    field_name: str,
+) -> None:
+    fields: dict[str, object] = {
+        "delivery_id": "delivery-1",
+        "subscription_id": "subscription-1",
+        "event_id": "event-1",
+        "run_id": "run-1",
+        "sequence": 1,
+        "cursor": "run-1:1",
+        "attempt": 1,
+        "idempotency_key": "subscription-1:event-1",
+        "status": "pending",
+    }
+    fields[field_name] = "x" * 4_097
+
+    with pytest.raises(
+        ValueError,
+        match=(
+            f"server callback delivery result {field_name} must be at most "
+            "4096 UTF-8 bytes"
+        ),
+    ):
+        ServerCallbackDeliveryResult(**fields)  # type: ignore[arg-type]
+
+
+def test_server_callback_delivery_result_bounds_error_utf8_bytes() -> None:
+    with pytest.raises(
+        ValueError,
+        match=(
+            "server callback delivery result last_error must be at most "
+            "16384 UTF-8 bytes"
+        ),
+    ):
+        ServerCallbackDeliveryResult(
+            delivery_id="delivery-1",
+            subscription_id="subscription-1",
+            event_id="event-1",
+            run_id="run-1",
+            sequence=1,
+            cursor="run-1:1",
+            attempt=1,
+            idempotency_key="subscription-1:event-1",
+            status="failed",
+            status_code=503,
+            last_error="가" * 5_462,
+        )
+
+
+def test_server_callback_delivery_result_bounds_timestamp_and_counters() -> None:
+    with pytest.raises(
+        ValueError,
+        match=(
+            "server callback delivery result delivered_at must be at most "
+            "128 UTF-8 bytes"
+        ),
+    ):
+        ServerCallbackDeliveryResult(
+            delivery_id="delivery-1",
+            subscription_id="subscription-1",
+            event_id="event-1",
+            run_id="run-1",
+            sequence=1,
+            cursor="run-1:1",
+            attempt=1,
+            idempotency_key="subscription-1:event-1",
+            status="delivered",
+            status_code=200,
+            delivered_at="2026-07-29T00:00:00Z" + ("0" * 128),
+        )
+
+    for field_name in ("sequence", "attempt"):
+        fields: dict[str, object] = {
+            "delivery_id": "delivery-1",
+            "subscription_id": "subscription-1",
+            "event_id": "event-1",
+            "run_id": "run-1",
+            "sequence": 1,
+            "cursor": "run-1:1",
+            "attempt": 1,
+            "idempotency_key": "subscription-1:event-1",
+            "status": "pending",
+        }
+        fields[field_name] = graphblocks_server.MAX_RUN_CURSOR_SEQUENCE + 1
+        with pytest.raises(
+            ValueError,
+            match=(
+                f"server callback delivery result {field_name} must be at most "
+                f"{graphblocks_server.MAX_RUN_CURSOR_SEQUENCE}"
+            ),
+        ):
+            ServerCallbackDeliveryResult(**fields)  # type: ignore[arg-type]
+
+
 def test_application_protocol_capabilities_negotiate_intersection() -> None:
     server = (
         ApplicationProtocolCapabilities("graphblocks.app.v1")

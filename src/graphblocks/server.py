@@ -145,6 +145,9 @@ DEFAULT_MAX_CALLBACK_DELIVERY_CONTROLS_PER_DELIVERY = 256
 DEFAULT_MAX_CALLBACK_DELIVERY_CONTROL_HISTORY_BYTES_PER_DELIVERY = (
     1024 * 1024
 )
+MAX_SERVER_CALLBACK_DELIVERY_IDENTIFIER_BYTES = 4_096
+MAX_SERVER_CALLBACK_DELIVERY_ERROR_BYTES = 16_384
+MAX_SERVER_CALLBACK_DELIVERY_TIMESTAMP_BYTES = 128
 
 
 def _utc_now_iso() -> str:
@@ -2042,19 +2045,38 @@ class ServerCallbackDeliveryResult:
             "cursor",
             "idempotency_key",
         ):
+            field_value = _validate_exact_non_empty_string(
+                "server callback delivery result",
+                field_name,
+                getattr(self, field_name),
+            )
+            if (
+                len(field_value.encode("utf-8"))
+                > MAX_SERVER_CALLBACK_DELIVERY_IDENTIFIER_BYTES
+            ):
+                raise ValueError(
+                    f"server callback delivery result {field_name} must be at most "
+                    f"{MAX_SERVER_CALLBACK_DELIVERY_IDENTIFIER_BYTES} UTF-8 bytes"
+                )
             object.__setattr__(
                 self,
                 field_name,
-                _validate_exact_non_empty_string(
-                    "server callback delivery result",
-                    field_name,
-                    getattr(self, field_name),
-                ),
+                field_value,
             )
         if isinstance(self.sequence, bool) or not isinstance(self.sequence, int) or self.sequence < 0:
             raise ValueError("server callback delivery result sequence must be a non-negative integer")
+        if self.sequence > MAX_RUN_CURSOR_SEQUENCE:
+            raise ValueError(
+                "server callback delivery result sequence must be at most "
+                f"{MAX_RUN_CURSOR_SEQUENCE}"
+            )
         if isinstance(self.attempt, bool) or not isinstance(self.attempt, int) or self.attempt < 1:
             raise ValueError("server callback delivery result attempt must be a positive integer")
+        if self.attempt > MAX_RUN_CURSOR_SEQUENCE:
+            raise ValueError(
+                "server callback delivery result attempt must be at most "
+                f"{MAX_RUN_CURSOR_SEQUENCE}"
+            )
         object.__setattr__(
             self,
             "status",
@@ -2077,24 +2099,46 @@ class ServerCallbackDeliveryResult:
         ):
             raise ValueError("server callback delivery result status_code must be a valid HTTP status")
         if self.delivered_at is not None:
+            delivered_at = _validate_exact_non_empty_string(
+                "server callback delivery result",
+                "delivered_at",
+                self.delivered_at,
+            )
+            if (
+                len(delivered_at.encode("utf-8"))
+                > MAX_SERVER_CALLBACK_DELIVERY_TIMESTAMP_BYTES
+            ):
+                raise ValueError(
+                    "server callback delivery result delivered_at must be at most "
+                    f"{MAX_SERVER_CALLBACK_DELIVERY_TIMESTAMP_BYTES} UTF-8 bytes"
+                )
             object.__setattr__(
                 self,
                 "delivered_at",
                 _validate_iso_datetime(
                     "server callback delivery result",
                     "delivered_at",
-                    self.delivered_at,
+                    delivered_at,
                 ),
             )
         if self.last_error is not None:
+            last_error = _validate_exact_non_empty_string(
+                "server callback delivery result",
+                "last_error",
+                self.last_error,
+            )
+            if (
+                len(last_error.encode("utf-8"))
+                > MAX_SERVER_CALLBACK_DELIVERY_ERROR_BYTES
+            ):
+                raise ValueError(
+                    "server callback delivery result last_error must be at most "
+                    f"{MAX_SERVER_CALLBACK_DELIVERY_ERROR_BYTES} UTF-8 bytes"
+                )
             object.__setattr__(
                 self,
                 "last_error",
-                _validate_exact_non_empty_string(
-                    "server callback delivery result",
-                    "last_error",
-                    self.last_error,
-                ),
+                last_error,
             )
         if self.status in {"delivered", "acknowledged"}:
             if self.status_code is None or self.delivered_at is None:
