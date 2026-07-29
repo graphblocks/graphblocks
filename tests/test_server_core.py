@@ -99,6 +99,56 @@ def _record_failed_callback_delivery(
     return subscription_id
 
 
+def _server_capacity_graph() -> dict[str, object]:
+    return {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "server-run-capacity"},
+        "spec": {
+            "nodes": {
+                "render": {
+                    "block": "prompt.render@1",
+                    "config": {"template": "Capacity {message.text}"},
+                    "inputs": {"message": "$input.message"},
+                    "outputs": {"prompt": "$output.prompt"},
+                }
+            }
+        },
+    }
+
+
+def _invoke_capacity_run(
+    app: GraphBlocksServerApp,
+    *,
+    run_id: str,
+    response_id: str,
+    token: str | None = None,
+) -> ServerResponse:
+    return app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs",
+            headers=(
+                {"Authorization": f"Bearer {token}"}
+                if token is not None
+                else {}
+            ),
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "graph": _server_capacity_graph(),
+                    "inputs": {"message": {"text": run_id}},
+                    "runId": run_id,
+                    "responseId": response_id,
+                    "responseMode": "accepted",
+                    "occurredAt": "2026-07-29T00:00:00Z",
+                }
+            ).encode("utf-8"),
+        )
+    )
+
+
 def test_server_route_manifest_groups_routes_and_hashes_stably() -> None:
     left = default_server_route_manifest().with_endpoint(
         "GET",
@@ -447,6 +497,7 @@ def test_server_app_validates_unauthenticated_development_mode_flag() -> None:
         "max_event_page_events",
         "max_event_page_bytes",
         "max_in_memory_runs",
+        "max_in_memory_runs_per_tenant",
     ),
 )
 def test_server_app_rejects_invalid_resource_limits(field_name: str) -> None:
@@ -4049,40 +4100,10 @@ def test_server_app_applies_in_memory_run_capacity_before_new_admission(
         defer_accepted_runs=True,
         max_in_memory_runs=1,
     )
-    graph = {
-        "apiVersion": "graphblocks.ai/v1alpha3",
-        "kind": "Graph",
-        "metadata": {"name": "server-run-capacity"},
-        "spec": {
-            "nodes": {
-                "render": {
-                    "block": "prompt.render@1",
-                    "config": {"template": "Capacity {message.text}"},
-                    "inputs": {"message": "$input.message"},
-                    "outputs": {"prompt": "$output.prompt"},
-                }
-            }
-        },
-    }
-
-    first = app.handle(
-        ServerRequest(
-            method="POST",
-            path="/runs",
-            headers={},
-            query={},
-            cookies={},
-            body=json.dumps(
-                {
-                    "graph": graph,
-                    "inputs": {"message": {"text": "run-capacity-1"}},
-                    "runId": "run-capacity-1",
-                    "responseId": "response-capacity-1",
-                    "responseMode": "accepted",
-                    "occurredAt": "2026-07-29T00:00:00Z",
-                }
-            ).encode("utf-8"),
-        )
+    first = _invoke_capacity_run(
+        app,
+        run_id="run-capacity-1",
+        response_id="response-capacity-1",
     )
 
     def fail_if_compiled(*args, **kwargs):
@@ -4090,33 +4111,16 @@ def test_server_app_applies_in_memory_run_capacity_before_new_admission(
         raise AssertionError("capacity-rejected run reached graph compiler")
 
     monkeypatch.setattr(graphblocks_server, "compile_graph", fail_if_compiled)
-    rejected_responses = []
-    for run_id, response_id in (
-        ("run-capacity-2", "response-capacity-2"),
-        ("run-capacity-1", "response-capacity-duplicate"),
-    ):
-        rejected_responses.append(
-            app.handle(
-                ServerRequest(
-                    method="POST",
-                    path="/runs",
-                    headers={},
-                    query={},
-                    cookies={},
-                    body=json.dumps(
-                        {
-                            "graph": graph,
-                            "inputs": {"message": {"text": run_id}},
-                            "runId": run_id,
-                            "responseId": response_id,
-                            "responseMode": "accepted",
-                            "occurredAt": "2026-07-29T00:00:00Z",
-                        }
-                    ).encode("utf-8"),
-                )
-            )
-        )
-    exhausted, duplicate = rejected_responses
+    exhausted = _invoke_capacity_run(
+        app,
+        run_id="run-capacity-2",
+        response_id="response-capacity-2",
+    )
+    duplicate = _invoke_capacity_run(
+        app,
+        run_id="run-capacity-1",
+        response_id="response-capacity-duplicate",
+    )
 
     assert first.status_code == 202
     assert exhausted.status_code == 429
@@ -4135,6 +4139,172 @@ def test_server_app_applies_in_memory_run_capacity_before_new_admission(
     }
     assert tuple(app._events_by_run_id) == ("run-capacity-1",)
     assert app.pending_accepted_run_ids() == ("run-capacity-1",)
+
+
+def test_server_app_isolates_in_memory_run_capacity_by_tenant(
+    monkeypatch,
+) -> None:
+    app = GraphBlocksServerApp(
+        auth_hook=StaticBearerAuthHook(
+            {
+                "alice-token": PrincipalRef("alice", tenant_id="tenant-a"),
+                "bob-token": PrincipalRef("bob", tenant_id="tenant-b"),
+            }
+        ),
+        defer_accepted_runs=True,
+        max_in_memory_runs=3,
+        max_in_memory_runs_per_tenant=1,
+    )
+    alice_first = _invoke_capacity_run(
+        app,
+        run_id="run-tenant-capacity-a1",
+        response_id="response-tenant-capacity-a1",
+        token="alice-token",
+    )
+
+    def fail_if_compiled(*args, **kwargs):
+        del args, kwargs
+        raise AssertionError("tenant quota-rejected run reached graph compiler")
+
+    with monkeypatch.context() as context:
+        context.setattr(
+            graphblocks_server,
+            "compile_graph",
+            fail_if_compiled,
+        )
+        alice_exhausted = _invoke_capacity_run(
+            app,
+            run_id="run-tenant-capacity-a2",
+            response_id="response-tenant-capacity-a2",
+            token="alice-token",
+        )
+
+    bob_first = _invoke_capacity_run(
+        app,
+        run_id="run-tenant-capacity-b1",
+        response_id="response-tenant-capacity-b1",
+        token="bob-token",
+    )
+
+    assert alice_first.status_code == 202
+    assert alice_exhausted.status_code == 429
+    assert json.loads(alice_exhausted.body.decode("utf-8")) == {
+        "ok": False,
+        "runId": "run-tenant-capacity-a2",
+        "tenantId": "tenant-a",
+        "reasonCode": "server.tenant_run_capacity_exhausted",
+        "maxInMemoryRunsPerTenant": 1,
+        "error": "server tenant in-memory run capacity is exhausted",
+    }
+    assert bob_first.status_code == 202
+    assert tuple(app._events_by_run_id) == (
+        "run-tenant-capacity-a1",
+        "run-tenant-capacity-b1",
+    )
+
+
+def test_server_app_counts_inflight_executor_reservation_against_tenant_quota() -> None:
+    reservation_started = Event()
+    release_reservation = Event()
+
+    class BlockingAcceptedExecutor(Executor):
+        calls = 0
+
+        def submit(self, fn, /, *args, **kwargs):
+            del fn, args, kwargs
+            self.calls += 1
+            future: Future[object] = Future()
+            if self.calls == 1:
+                future.set_result(-1)
+                return future
+            reservation_started.set()
+            if not release_reservation.wait(5):
+                future.set_exception(
+                    TimeoutError("test did not release accepted run reservation")
+                )
+                return future
+            future.set_result(None)
+            return future
+
+    app = GraphBlocksServerApp(
+        auth_hook=StaticBearerAuthHook(
+            {
+                "alice-token": PrincipalRef("alice", tenant_id="tenant-a"),
+            }
+        ),
+        defer_accepted_runs=True,
+        accepted_run_executor=BlockingAcceptedExecutor(),
+        max_in_memory_runs=2,
+        max_in_memory_runs_per_tenant=1,
+    )
+    with ThreadPoolExecutor(max_workers=1) as request_executor:
+        first_future = request_executor.submit(
+            _invoke_capacity_run,
+            app,
+            run_id="run-tenant-reservation-1",
+            response_id="response-tenant-reservation-1",
+            token="alice-token",
+        )
+        assert reservation_started.wait(5)
+        exhausted = _invoke_capacity_run(
+            app,
+            run_id="run-tenant-reservation-2",
+            response_id="response-tenant-reservation-2",
+            token="alice-token",
+        )
+        release_reservation.set()
+        first = first_future.result(timeout=5)
+
+    assert first.status_code == 202
+    assert exhausted.status_code == 429
+    assert json.loads(exhausted.body.decode("utf-8"))["reasonCode"] == (
+        "server.tenant_run_capacity_exhausted"
+    )
+    assert app._admitting_accepted_run_ids == set()
+    assert app._admitting_run_tenant_by_run_id == {}
+    assert tuple(app._events_by_run_id) == ("run-tenant-reservation-1",)
+
+
+def test_server_app_releases_tenant_reservation_after_executor_failure() -> None:
+    class FailingAcceptedExecutor(Executor):
+        calls = 0
+
+        def submit(self, fn, /, *args, **kwargs):
+            del fn, args, kwargs
+            self.calls += 1
+            if self.calls == 1:
+                future: Future[object] = Future()
+                future.set_result(-1)
+                return future
+            raise ValueError("executor failed unexpectedly")
+
+    app = GraphBlocksServerApp(
+        auth_hook=StaticBearerAuthHook(
+            {
+                "alice-token": PrincipalRef("alice", tenant_id="tenant-a"),
+            }
+        ),
+        defer_accepted_runs=True,
+        accepted_run_executor=FailingAcceptedExecutor(),
+        max_in_memory_runs=1,
+        max_in_memory_runs_per_tenant=1,
+    )
+
+    failed = _invoke_capacity_run(
+        app,
+        run_id="run-tenant-reservation-failed",
+        response_id="response-tenant-reservation-failed",
+        token="alice-token",
+    )
+
+    assert failed.status_code == 400
+    assert json.loads(failed.body.decode("utf-8")) == {
+        "ok": False,
+        "error": "executor failed unexpectedly",
+    }
+    assert app._admitting_accepted_run_ids == set()
+    assert app._admitting_run_tenant_by_run_id == {}
+    assert app._events_by_run_id == {}
 
 
 def test_server_app_rejects_invoke_graph_with_invalid_occurred_timestamp() -> None:

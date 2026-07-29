@@ -121,6 +121,7 @@ DEFAULT_MAX_ASYNC_CALLBACK_REQUEST_BODY_BYTES = 512 * 1024
 DEFAULT_MAX_SERVER_EVENT_PAGE_EVENTS = 100
 DEFAULT_MAX_SERVER_EVENT_PAGE_BYTES = 1024 * 1024
 DEFAULT_MAX_IN_MEMORY_RUNS = 10_000
+DEFAULT_MAX_IN_MEMORY_RUNS_PER_TENANT = 1_000
 
 
 def _utc_now_iso() -> str:
@@ -2405,6 +2406,9 @@ class GraphBlocksServerApp:
     max_event_page_events: int = DEFAULT_MAX_SERVER_EVENT_PAGE_EVENTS
     max_event_page_bytes: int = DEFAULT_MAX_SERVER_EVENT_PAGE_BYTES
     max_in_memory_runs: int = DEFAULT_MAX_IN_MEMORY_RUNS
+    max_in_memory_runs_per_tenant: int = (
+        DEFAULT_MAX_IN_MEMORY_RUNS_PER_TENANT
+    )
     _events_by_run_id: dict[str, tuple[Mapping[str, object], ...]] = field(default_factory=dict, init=False, repr=False)
     _run_authorization_by_run_id: dict[str, _ServerRunAuthorizationRecord] = field(
         default_factory=dict,
@@ -2497,6 +2501,11 @@ class GraphBlocksServerApp:
         init=False,
         repr=False,
     )
+    _admitting_run_tenant_by_run_id: dict[str, str | None] = field(
+        default_factory=dict,
+        init=False,
+        repr=False,
+    )
     _accepted_run_condition: Condition = field(
         default_factory=Condition,
         init=False,
@@ -2542,6 +2551,7 @@ class GraphBlocksServerApp:
             "max_event_page_events",
             "max_event_page_bytes",
             "max_in_memory_runs",
+            "max_in_memory_runs_per_tenant",
         ):
             value = getattr(self, field_name)
             if isinstance(value, bool) or not isinstance(value, int) or value < 1:
@@ -4779,6 +4789,11 @@ class GraphBlocksServerApp:
                     or admission_units < 1
                 ):
                     raise ValueError("run request admissionUnits must be a positive integer")
+                run_tenant_id = (
+                    auth_decision.principal.tenant_id
+                    if auth_decision.principal is not None
+                    else None
+                )
 
                 with self._accepted_run_condition:
                     if (
@@ -4807,6 +4822,46 @@ class GraphBlocksServerApp:
                                 "maxInMemoryRuns": self.max_in_memory_runs,
                                 "error": (
                                     "server in-memory run capacity is exhausted"
+                                ),
+                            },
+                        )
+                    in_memory_tenant_run_count = sum(
+                        1
+                        for existing_run_id in self._events_by_run_id
+                        if (
+                            existing_run_id
+                            in self._run_authorization_by_run_id
+                            and self._run_authorization_by_run_id[
+                                existing_run_id
+                            ].tenant_id
+                            == run_tenant_id
+                        )
+                    ) + sum(
+                        1
+                        for admitting_tenant_id in (
+                            self._admitting_run_tenant_by_run_id.values()
+                        )
+                        if admitting_tenant_id == run_tenant_id
+                    )
+                    if (
+                        in_memory_tenant_run_count
+                        >= self.max_in_memory_runs_per_tenant
+                    ):
+                        return ServerResponse.json(
+                            429,
+                            {
+                                "ok": False,
+                                "runId": run_id,
+                                "tenantId": run_tenant_id,
+                                "reasonCode": (
+                                    "server.tenant_run_capacity_exhausted"
+                                ),
+                                "maxInMemoryRunsPerTenant": (
+                                    self.max_in_memory_runs_per_tenant
+                                ),
+                                "error": (
+                                    "server tenant in-memory run capacity "
+                                    "is exhausted"
                                 ),
                             },
                         )
@@ -4949,6 +5004,46 @@ class GraphBlocksServerApp:
                                     ),
                                 },
                             )
+                        in_memory_tenant_run_count = sum(
+                            1
+                            for existing_run_id in self._events_by_run_id
+                            if (
+                                existing_run_id
+                                in self._run_authorization_by_run_id
+                                and self._run_authorization_by_run_id[
+                                    existing_run_id
+                                ].tenant_id
+                                == run_tenant_id
+                            )
+                        ) + sum(
+                            1
+                            for admitting_tenant_id in (
+                                self._admitting_run_tenant_by_run_id.values()
+                            )
+                            if admitting_tenant_id == run_tenant_id
+                        )
+                        if (
+                            in_memory_tenant_run_count
+                            >= self.max_in_memory_runs_per_tenant
+                        ):
+                            return ServerResponse.json(
+                                429,
+                                {
+                                    "ok": False,
+                                    "runId": run_id,
+                                    "tenantId": run_tenant_id,
+                                    "reasonCode": (
+                                        "server.tenant_run_capacity_exhausted"
+                                    ),
+                                    "maxInMemoryRunsPerTenant": (
+                                        self.max_in_memory_runs_per_tenant
+                                    ),
+                                    "error": (
+                                        "server tenant in-memory run capacity "
+                                        "is exhausted"
+                                    ),
+                                },
+                            )
                         try:
                             submission = self.admission_ticket_queue.submit(
                                 run_id,
@@ -5067,7 +5162,50 @@ class GraphBlocksServerApp:
                                     ),
                                 },
                             )
+                        in_memory_tenant_run_count = sum(
+                            1
+                            for existing_run_id in self._events_by_run_id
+                            if (
+                                existing_run_id
+                                in self._run_authorization_by_run_id
+                                and self._run_authorization_by_run_id[
+                                    existing_run_id
+                                ].tenant_id
+                                == run_tenant_id
+                            )
+                        ) + sum(
+                            1
+                            for admitting_tenant_id in (
+                                self._admitting_run_tenant_by_run_id.values()
+                            )
+                            if admitting_tenant_id == run_tenant_id
+                        )
+                        if (
+                            in_memory_tenant_run_count
+                            >= self.max_in_memory_runs_per_tenant
+                        ):
+                            return ServerResponse.json(
+                                429,
+                                {
+                                    "ok": False,
+                                    "runId": run_id,
+                                    "tenantId": run_tenant_id,
+                                    "reasonCode": (
+                                        "server.tenant_run_capacity_exhausted"
+                                    ),
+                                    "maxInMemoryRunsPerTenant": (
+                                        self.max_in_memory_runs_per_tenant
+                                    ),
+                                    "error": (
+                                        "server tenant in-memory run capacity "
+                                        "is exhausted"
+                                    ),
+                                },
+                            )
                         self._admitting_accepted_run_ids.add(run_id)
+                        self._admitting_run_tenant_by_run_id[
+                            run_id
+                        ] = run_tenant_id
                     try:
                         self.accepted_run_executor.submit(
                             self.advance_accepted_run,
@@ -5076,6 +5214,10 @@ class GraphBlocksServerApp:
                     except RuntimeError as error:
                         with self._accepted_run_condition:
                             self._admitting_accepted_run_ids.discard(run_id)
+                            self._admitting_run_tenant_by_run_id.pop(
+                                run_id,
+                                None,
+                            )
                             self._accepted_run_condition.notify_all()
                         return ServerResponse.json(
                             503,
@@ -5088,20 +5230,39 @@ class GraphBlocksServerApp:
                                 ),
                             },
                         )
+                    except Exception:
+                        with self._accepted_run_condition:
+                            self._admitting_accepted_run_ids.discard(run_id)
+                            self._admitting_run_tenant_by_run_id.pop(
+                                run_id,
+                                None,
+                            )
+                            self._accepted_run_condition.notify_all()
+                        raise
                     with self._accepted_run_condition:
-                        assert frozen_start_event is not None
-                        self._record_run_authorization(
-                            run_id,
-                            auth_decision.principal,
-                            occurred_at,
-                        )
-                        self._events_by_run_id[run_id] = (frozen_start_event,)
-                        self._pending_accepted_runs_by_run_id[run_id] = pending_run
-                        self._accepted_run_executions_by_run_id[
-                            run_id
-                        ] = accepted_run_execution
-                        self._admitting_accepted_run_ids.discard(run_id)
-                        self._accepted_run_condition.notify_all()
+                        try:
+                            assert frozen_start_event is not None
+                            self._record_run_authorization(
+                                run_id,
+                                auth_decision.principal,
+                                occurred_at,
+                            )
+                            self._events_by_run_id[run_id] = (
+                                frozen_start_event,
+                            )
+                            self._pending_accepted_runs_by_run_id[
+                                run_id
+                            ] = pending_run
+                            self._accepted_run_executions_by_run_id[
+                                run_id
+                            ] = accepted_run_execution
+                        finally:
+                            self._admitting_accepted_run_ids.discard(run_id)
+                            self._admitting_run_tenant_by_run_id.pop(
+                                run_id,
+                                None,
+                            )
+                            self._accepted_run_condition.notify_all()
                 else:
                     with self._accepted_run_condition:
                         if (
@@ -5130,6 +5291,46 @@ class GraphBlocksServerApp:
                                     "maxInMemoryRuns": self.max_in_memory_runs,
                                     "error": (
                                         "server in-memory run capacity is exhausted"
+                                    ),
+                                },
+                            )
+                        in_memory_tenant_run_count = sum(
+                            1
+                            for existing_run_id in self._events_by_run_id
+                            if (
+                                existing_run_id
+                                in self._run_authorization_by_run_id
+                                and self._run_authorization_by_run_id[
+                                    existing_run_id
+                                ].tenant_id
+                                == run_tenant_id
+                            )
+                        ) + sum(
+                            1
+                            for admitting_tenant_id in (
+                                self._admitting_run_tenant_by_run_id.values()
+                            )
+                            if admitting_tenant_id == run_tenant_id
+                        )
+                        if (
+                            in_memory_tenant_run_count
+                            >= self.max_in_memory_runs_per_tenant
+                        ):
+                            return ServerResponse.json(
+                                429,
+                                {
+                                    "ok": False,
+                                    "runId": run_id,
+                                    "tenantId": run_tenant_id,
+                                    "reasonCode": (
+                                        "server.tenant_run_capacity_exhausted"
+                                    ),
+                                    "maxInMemoryRunsPerTenant": (
+                                        self.max_in_memory_runs_per_tenant
+                                    ),
+                                    "error": (
+                                        "server tenant in-memory run capacity "
+                                        "is exhausted"
                                     ),
                                 },
                             )
