@@ -14,6 +14,7 @@ from graphblocks.plugins import BlockCatalog, BlockDescriptor, PortDescriptor
 from graphblocks.runtime import (
     ExecutionJournal,
     InProcessRuntime,
+    JournalClosedError,
     JournalRecord,
     JournalStateError,
     LocalExecutionJournal,
@@ -2018,6 +2019,39 @@ def test_journal_backends_reject_noncanonical_run_identity(
             LocalExecutionJournal(run_id)
         else:
             SQLiteExecutionJournal(tmp_path / "journal.sqlite3", run_id)
+
+
+def test_sqlite_execution_journal_serializes_single_instance_across_threads() -> None:
+    journal = SQLiteExecutionJournal(":memory:", "run-threaded")
+
+    def append_record(index: int) -> int:
+        return journal.append("node_started", {"index": index}).sequence
+
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        sequences = tuple(executor.map(append_record, range(32)))
+
+    assert sorted(sequences) == list(range(1, 33))
+    assert [record.sequence for record in journal.records] == list(range(1, 33))
+    assert {
+        record.payload["index"] for record in journal.records
+    } == set(range(32))
+    journal.close()
+
+
+def test_sqlite_execution_journal_reports_cross_thread_use_after_close() -> None:
+    journal = SQLiteExecutionJournal(":memory:", "run-closed")
+    journal.append("run_started", {})
+    journal.close()
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(lambda: journal.records)
+        with pytest.raises(
+            JournalClosedError,
+            match="SQLite execution journal is closed",
+        ):
+            future.result()
+
+    journal.close()
 
 
 def test_runtime_fails_when_block_is_not_registered() -> None:

@@ -3,11 +3,12 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 import re
 from dataclasses import dataclass, field
+from functools import wraps
 from pathlib import Path
 import sqlite3
-from threading import Lock
+from threading import Lock, RLock
 import time
-from typing import Any, Callable, Literal, Protocol
+from typing import Any, Callable, Literal, ParamSpec, Protocol, TypeVar, cast
 
 from .async_operation import VALID_ASYNC_OPERATION_KINDS
 from .canonical import canonical_dumps, canonical_hash, canonical_loads
@@ -91,6 +92,23 @@ _TERMINAL_JOURNAL_KINDS = frozenset(
 )
 BlockCallable = Callable[[dict[str, Any], dict[str, Any], dict[str, Any]], dict[str, Any]]
 MAX_U64 = (1 << 64) - 1
+_SQLITE_JOURNAL_BUSY_TIMEOUT_MS = 5_000
+_JournalP = ParamSpec("_JournalP")
+_JournalR = TypeVar("_JournalR")
+
+
+def _with_sqlite_execution_journal_lock(
+    method: Callable[_JournalP, _JournalR],
+) -> Callable[_JournalP, _JournalR]:
+    @wraps(method)
+    def locked(*args: _JournalP.args, **kwargs: _JournalP.kwargs) -> _JournalR:
+        journal = cast("SQLiteExecutionJournal", args[0])
+        with journal._lock:
+            if journal._closed:
+                raise JournalClosedError("SQLite execution journal is closed")
+            return method(*args, **kwargs)
+
+    return locked
 
 
 class JournalLike(Protocol):
@@ -113,6 +131,10 @@ JournalFactory = Callable[[str], JournalLike]
 
 
 class JournalStateError(RuntimeError):
+    pass
+
+
+class JournalClosedError(RuntimeError):
     pass
 
 
@@ -448,6 +470,8 @@ class SQLiteExecutionJournal:
     path: Path | str
     run_id: str
     connection: sqlite3.Connection = field(init=False, repr=False)
+    _lock: RLock = field(default_factory=RLock, init=False, repr=False)
+    _closed: bool = field(default=False, init=False, repr=False)
 
     def __post_init__(self) -> None:
         _require_exact_nonempty_string(
@@ -455,8 +479,21 @@ class SQLiteExecutionJournal:
             self.run_id,
         )
         self.path = Path(self.path)
-        self.connection = sqlite3.connect(self.path)
+        self.connection = sqlite3.connect(
+            self.path,
+            check_same_thread=False,
+            timeout=_SQLITE_JOURNAL_BUSY_TIMEOUT_MS / 1_000,
+        )
         self.connection.row_factory = sqlite3.Row
+        self.connection.execute(
+            f"PRAGMA busy_timeout = {_SQLITE_JOURNAL_BUSY_TIMEOUT_MS}"
+        )
+        if str(self.path) != ":memory:":
+            try:
+                self.connection.execute("PRAGMA journal_mode = WAL")
+            except sqlite3.OperationalError as error:
+                if "locked" not in str(error).casefold():
+                    raise
         self.connection.execute(
             """
             CREATE TABLE IF NOT EXISTS journal_records (
@@ -486,6 +523,7 @@ class SQLiteExecutionJournal:
         raise JournalStateError("journal_records must include sequence or run_sequence")
 
     @property
+    @_with_sqlite_execution_journal_lock
     def terminal_kind(self) -> JournalKind | None:
         sequence_column = self._sequence_column()
         row = self.connection.execute(
@@ -500,6 +538,7 @@ class SQLiteExecutionJournal:
         return None if row is None else row["kind"]
 
     @property
+    @_with_sqlite_execution_journal_lock
     def records(self) -> list[JournalRecord]:
         sequence_column = self._sequence_column()
         rows = self.connection.execute(
@@ -588,6 +627,7 @@ class SQLiteExecutionJournal:
             _loads_strict_json("execution journal payload", payload_json),
         )
 
+    @_with_sqlite_execution_journal_lock
     def append(self, kind: JournalKind, payload: dict[str, Any]) -> JournalRecord:
         try:
             self.connection.execute("BEGIN IMMEDIATE")
@@ -598,6 +638,7 @@ class SQLiteExecutionJournal:
             raise
         return record
 
+    @_with_sqlite_execution_journal_lock
     def append_terminal(self, kind: JournalKind, payload: dict[str, Any]) -> JournalRecord:
         try:
             self.connection.execute("BEGIN IMMEDIATE")
@@ -609,7 +650,11 @@ class SQLiteExecutionJournal:
         return record
 
     def close(self) -> None:
-        self.connection.close()
+        with self._lock:
+            if self._closed:
+                return
+            self.connection.close()
+            self._closed = True
 
 
 @dataclass(frozen=True, slots=True)
