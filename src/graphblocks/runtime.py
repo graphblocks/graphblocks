@@ -847,6 +847,18 @@ class CallbackReceiptVerifier(Protocol):
         ...
 
 
+class CheckpointAuthorityVerifier(Protocol):
+    """Trusted boundary for restoring a checkpoint issued before restart."""
+
+    def __call__(
+        self,
+        checkpoint: RuntimeCheckpoint,
+        *,
+        expected_graph_hash: str,
+    ) -> bool:
+        ...
+
+
 @dataclass(frozen=True, slots=True)
 class RunResult:
     run_id: str
@@ -1020,6 +1032,10 @@ class InProcessRuntime:
     cancellation_token: CancellationToken | None = None
     journal_factory: JournalFactory | None = None
     lease_pool: InMemoryLeasePool | None = None
+    checkpoint_authority_verifier: CheckpointAuthorityVerifier | None = field(
+        default=None,
+        repr=False,
+    )
     callback_receipt_verifier: CallbackReceiptVerifier | None = field(
         default=None,
         repr=False,
@@ -1084,6 +1100,30 @@ class InProcessRuntime:
                 expected_checkpoint_digest = self._checkpoint_state_digests.get(
                     checkpoint.checkpoint_id
                 )
+            if (
+                expected_checkpoint_digest is None
+                and self.checkpoint_authority_verifier is not None
+            ):
+                try:
+                    checkpoint_verified = self.checkpoint_authority_verifier(
+                        checkpoint,
+                        expected_graph_hash=plan.graph_hash,
+                    )
+                except Exception as error:
+                    raise ValueError(
+                        "runtime checkpoint trusted authority failed"
+                    ) from error
+                if checkpoint_verified is not True:
+                    raise ValueError(
+                        "runtime checkpoint was rejected by the trusted authority"
+                    )
+                with self._checkpoint_lock:
+                    expected_checkpoint_digest = (
+                        self._checkpoint_state_digests.setdefault(
+                            checkpoint.checkpoint_id,
+                            checkpoint.state_digest,
+                        )
+                    )
             if (
                 expected_checkpoint_digest is None
                 or checkpoint.content_digest() != checkpoint.state_digest

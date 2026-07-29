@@ -744,6 +744,139 @@ def test_runtime_executes_conversation_vertical_slice() -> None:
     ]
 
 
+def test_runtime_restores_checkpoint_through_explicit_trusted_authority() -> None:
+    run_id = "run-durable-checkpoint-authority"
+    operation_id = "operation-durable-checkpoint-authority"
+    operation_idempotency_key = "idem-durable-checkpoint-authority"
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "durable-checkpoint-authority"},
+        "spec": {
+            "nodes": {
+                "start": {
+                    "block": "async.start_operation@1",
+                    "config": {
+                        "operationId": operation_id,
+                        "runId": run_id,
+                        "nodeId": "wait",
+                        "attemptId": "attempt-1",
+                        "kind": "ci_job",
+                        "providerOperationId": "provider-operation-1",
+                        "resumeTokenHash": VALID_RESUME_TOKEN_HASH,
+                        "idempotencyKey": operation_idempotency_key,
+                        "expectedSchema": "schemas/CICallback@1",
+                        "createdAtUnixMs": 1_000,
+                        "submittedAtUnixMs": 1_050,
+                        "timeoutMs": 60_000,
+                        "resume": {
+                            "requirePolicyReevaluation": True,
+                            "requireBudgetReservation": True,
+                            "requireReleaseCompatibility": True,
+                            "requireOwnershipFence": True,
+                        },
+                        "attemptFencing": True,
+                    },
+                },
+                "wait": {
+                    "block": "async.await_callback@1",
+                    "inputs": {"operation": "start.operation"},
+                    "config": {
+                        "checkpoint": True,
+                        "onTimeout": "fail",
+                        "timeoutMs": 60_000,
+                        "idempotencyKey": operation_idempotency_key,
+                        "callback": {"schema": "schemas/CICallback@1"},
+                        "resume": {
+                            "requirePolicyReevaluation": True,
+                            "requireBudgetReservation": True,
+                            "requireReleaseCompatibility": True,
+                            "requireOwnershipFence": True,
+                        },
+                        "attemptFencing": True,
+                    },
+                },
+            }
+        },
+    }
+    waiting = InProcessRuntime(stdlib_registry()).run(
+        graph,
+        {},
+        run_id=run_id,
+    )
+    assert waiting.checkpoint is not None
+    callback_payload = {"status": "completed"}
+    callback_receipt = {
+        "operation_id": operation_id,
+        "run_id": run_id,
+        "node_id": "wait",
+        "attempt_id": "attempt-1",
+        "provider_operation_id": "provider-operation-1",
+        "operation_idempotency_key": operation_idempotency_key,
+        "callback_idempotency_key": "callback-durable-authority",
+        "resume_token_hash": VALID_RESUME_TOKEN_HASH,
+        "schema_id": "schemas/CICallback@1",
+        "schema_validated": True,
+        "payload": callback_payload,
+        "payload_digest": graphblocks.canonical_hash(callback_payload),
+        "received_at_unix_ms": 2_000,
+        "verified_by": "callback-relay",
+        "resume_admission": {
+            "policy_reevaluated": True,
+            "budget_reserved": True,
+            "release_compatible": True,
+            "ownership_fenced": True,
+        },
+    }
+    authority_calls = []
+
+    def verify_durable_checkpoint(
+        checkpoint,
+        *,
+        expected_graph_hash,
+    ) -> bool:
+        authority_calls.append((checkpoint, expected_graph_hash))
+        return checkpoint == waiting.checkpoint
+
+    restarted = InProcessRuntime(
+        stdlib_registry(),
+        checkpoint_authority_verifier=verify_durable_checkpoint,
+        callback_receipt_verifier=_accept_callback_receipt,
+    )
+
+    resumed = restarted.run(
+        graph,
+        {},
+        run_id=run_id,
+        checkpoint=waiting.checkpoint,
+        callback_receipt=callback_receipt,
+    )
+
+    assert resumed.status == "succeeded"
+    assert authority_calls == [
+        (waiting.checkpoint, waiting.checkpoint.graph_hash)
+    ]
+    assert restarted._checkpoint_state_digests == {}
+
+    rejected = InProcessRuntime(
+        stdlib_registry(),
+        checkpoint_authority_verifier=lambda checkpoint, *, expected_graph_hash: False,
+        callback_receipt_verifier=_accept_callback_receipt,
+    )
+    with pytest.raises(
+        ValueError,
+        match="runtime checkpoint was rejected by the trusted authority",
+    ):
+        rejected.run(
+            graph,
+            {},
+            run_id=run_id,
+            checkpoint=waiting.checkpoint,
+            callback_receipt=callback_receipt,
+        )
+    assert rejected._checkpoint_state_digests == {}
+
+
 def test_runtime_suspends_at_callback_wait_and_resumes_from_checkpoint() -> None:
     prepare_calls = 0
     consume_calls = 0
