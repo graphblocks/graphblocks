@@ -7925,7 +7925,13 @@ class GraphBlocksServerApp:
         ):
             raise ValueError("attach request capabilities must contain only supported attach capability literals")
 
-        sequence_by_cursor: dict[str, int] = {}
+        requested_sequence = (
+            int(last_cursor[len(run_id) + 1 :])
+            if last_cursor is not None
+            else 0
+        )
+        cursor_found = last_cursor is None or requested_sequence == 0
+        nearest_sequence: int | None = None
         last_sequence = 0
         for event in events:
             metadata = event.get("metadata")
@@ -7936,34 +7942,34 @@ class GraphBlocksServerApp:
                 raise ValueError("attach request sequence must be an integer")
             if sequence < 0:
                 raise ValueError("attach request sequence must be non-negative")
-            cursor = f"{run_id}:{sequence}"
-            sequence_by_cursor[cursor] = sequence
+            if nearest_sequence is None or sequence < nearest_sequence:
+                nearest_sequence = sequence
             if sequence > last_sequence:
                 last_sequence = sequence
+            if sequence == requested_sequence:
+                cursor_found = True
 
-        replay_after_sequence = 0
-        if last_cursor is not None:
-            if last_cursor == f"{run_id}:0":
-                replay_after_sequence = 0
-            elif last_cursor not in sequence_by_cursor:
-                nearest_cursor = f"{run_id}:{min(sequence_by_cursor.values())}" if sequence_by_cursor else None
-                return ServerResponse.json(
-                    409,
-                    {
-                        "ok": False,
-                        "error": "CursorExpired",
-                        "runId": run_id,
-                        "requestedCursor": last_cursor,
-                        "nearestAvailableCursor": nearest_cursor,
-                        "lastCursor": f"{run_id}:{last_sequence}",
-                        "lastSequence": last_sequence,
-                        "runStatus": self._run_status_payload(run_id, events, include_ok=False),
-                    },
-                )
-            else:
-                replay_after_sequence = sequence_by_cursor[last_cursor]
+        if last_cursor is not None and not cursor_found:
+            nearest_cursor = (
+                f"{run_id}:{nearest_sequence}"
+                if nearest_sequence is not None
+                else None
+            )
+            return ServerResponse.json(
+                409,
+                {
+                    "ok": False,
+                    "error": "CursorExpired",
+                    "runId": run_id,
+                    "requestedCursor": last_cursor,
+                    "nearestAvailableCursor": nearest_cursor,
+                    "lastCursor": f"{run_id}:{last_sequence}",
+                    "lastSequence": last_sequence,
+                    "runStatus": self._run_status_payload(run_id, events, include_ok=False),
+                },
+            )
 
-        replayed_events = []
+        page_candidates: list[tuple[dict[str, object], str]] = []
         for event in events:
             metadata = event.get("metadata")
             if not isinstance(metadata, Mapping):
@@ -7973,20 +7979,128 @@ class GraphBlocksServerApp:
                 raise ValueError("attach request sequence must be an integer")
             if sequence < 0:
                 raise ValueError("attach request sequence must be non-negative")
-            if sequence > replay_after_sequence and _event_visible_to_principal(event, principal):
-                replayed_events.append(_response_json_object(event))
+            if (
+                sequence > requested_sequence
+                and _event_visible_to_principal(event, principal)
+            ):
+                page_candidates.append(
+                    (
+                        _response_json_object(event),
+                        f"{run_id}:{sequence}",
+                    )
+                )
+                if len(page_candidates) > self.max_event_page_events:
+                    break
 
-        last_cursor_value = f"{run_id}:{last_sequence}"
+        live_cursor = f"{run_id}:{last_sequence}"
+        if not page_candidates:
+            empty_replay_response = ServerResponse.json(
+                200,
+                {
+                    "ok": True,
+                    "runId": run_id,
+                    "lastCursor": live_cursor,
+                    "liveCursor": live_cursor,
+                    "replayComplete": True,
+                    "capabilities": list(capabilities_tuple),
+                    "events": [],
+                },
+            )
+            if len(empty_replay_response.body) <= self.max_event_page_bytes:
+                return empty_replay_response
+            return ServerResponse.json(
+                413,
+                {
+                    "ok": False,
+                    "error": "AttachReplayTooLarge",
+                    "reasonCode": "server.attach_replay_capacity_exhausted",
+                    "runId": run_id,
+                    "maxBytes": self.max_event_page_bytes,
+                    "requiredBytes": len(empty_replay_response.body),
+                    "nextEventCursor": None,
+                },
+            )
+
+        prefix_event_bytes = 0
+        candidate_sizes: list[int] = []
+        available_count = min(
+            self.max_event_page_events,
+            len(page_candidates),
+        )
+        for candidate_index in range(available_count):
+            candidate_event, candidate_cursor = page_candidates[
+                candidate_index
+            ]
+            encoded_candidate_event = json.dumps(
+                candidate_event,
+                separators=(",", ":"),
+                sort_keys=True,
+                allow_nan=False,
+            ).encode("utf-8")
+            prefix_event_bytes += len(encoded_candidate_event)
+            candidate_count = candidate_index + 1
+            candidate_has_more = candidate_count < len(page_candidates)
+            candidate_last_cursor = (
+                candidate_cursor if candidate_has_more else live_cursor
+            )
+            candidate_envelope = ServerResponse.json(
+                200,
+                {
+                    "ok": True,
+                    "runId": run_id,
+                    "lastCursor": candidate_last_cursor,
+                    "liveCursor": live_cursor,
+                    "replayComplete": not candidate_has_more,
+                    "capabilities": list(capabilities_tuple),
+                    "events": [],
+                },
+            )
+            candidate_sizes.append(
+                len(candidate_envelope.body)
+                + prefix_event_bytes
+                + max(0, candidate_count - 1)
+            )
+
+        page_event_count = 0
+        for candidate_count, candidate_size in enumerate(
+            candidate_sizes,
+            start=1,
+        ):
+            if candidate_size <= self.max_event_page_bytes:
+                page_event_count = candidate_count
+        if page_event_count == 0:
+            return ServerResponse.json(
+                413,
+                {
+                    "ok": False,
+                    "error": "AttachReplayTooLarge",
+                    "reasonCode": "server.attach_replay_capacity_exhausted",
+                    "runId": run_id,
+                    "maxBytes": self.max_event_page_bytes,
+                    "requiredBytes": candidate_sizes[0],
+                    "nextEventCursor": page_candidates[0][1],
+                },
+            )
+
+        replay_has_more = page_event_count < len(page_candidates)
+        replay_last_cursor = (
+            page_candidates[page_event_count - 1][1]
+            if replay_has_more
+            else live_cursor
+        )
         return ServerResponse.json(
             200,
             {
                 "ok": True,
                 "runId": run_id,
-                "lastCursor": last_cursor_value,
-                "liveCursor": last_cursor_value,
-                "replayComplete": True,
+                "lastCursor": replay_last_cursor,
+                "liveCursor": live_cursor,
+                "replayComplete": not replay_has_more,
                 "capabilities": list(capabilities_tuple),
-                "events": replayed_events,
+                "events": [
+                    event
+                    for event, _ in page_candidates[:page_event_count]
+                ],
             },
         )
 

@@ -9552,6 +9552,92 @@ def test_server_app_attaches_to_run_after_cursor() -> None:
     assert [event["kind"] for event in payload["events"]] == ["RunSucceeded"]
 
 
+def test_server_app_pages_attach_replay_by_count_and_byte_budget() -> None:
+    principal = PrincipalRef("user-1")
+    count_app = GraphBlocksServerApp(
+        auth_hook=StaticBearerAuthHook({"token-1": principal}),
+        max_event_page_events=1,
+        max_event_page_bytes=4_096,
+    )
+    count_run_id = "run-attach-page-count-1"
+    _seed_succeeded_run(
+        count_app,
+        count_run_id,
+        principal,
+        event_count=2,
+    )
+    first = count_app.handle(
+        ServerRequest(
+            method="POST",
+            path=f"/runs/{count_run_id}/attach",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps({}).encode("utf-8"),
+        )
+    )
+    first_payload = json.loads(first.body.decode("utf-8"))
+    second = count_app.handle(
+        ServerRequest(
+            method="POST",
+            path=f"/runs/{count_run_id}/attach",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {"lastCursor": first_payload["lastCursor"]}
+            ).encode("utf-8"),
+        )
+    )
+    second_payload = json.loads(second.body.decode("utf-8"))
+
+    assert first.status_code == 200
+    assert len(first.body) <= count_app.max_event_page_bytes
+    assert first_payload["lastCursor"] == f"{count_run_id}:1"
+    assert first_payload["liveCursor"] == f"{count_run_id}:2"
+    assert first_payload["replayComplete"] is False
+    assert [
+        event["metadata"]["sequence"] for event in first_payload["events"]
+    ] == [1]
+    assert second.status_code == 200
+    assert len(second.body) <= count_app.max_event_page_bytes
+    assert second_payload["lastCursor"] == f"{count_run_id}:2"
+    assert second_payload["liveCursor"] == f"{count_run_id}:2"
+    assert second_payload["replayComplete"] is True
+    assert [
+        event["metadata"]["sequence"] for event in second_payload["events"]
+    ] == [2]
+
+    byte_app = GraphBlocksServerApp(
+        auth_hook=StaticBearerAuthHook({"token-1": principal}),
+        max_event_page_events=10,
+        max_event_page_bytes=1,
+    )
+    byte_run_id = "run-attach-page-bytes-1"
+    _seed_succeeded_run(byte_app, byte_run_id, principal)
+    oversized = byte_app.handle(
+        ServerRequest(
+            method="POST",
+            path=f"/runs/{byte_run_id}/attach",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps({}).encode("utf-8"),
+        )
+    )
+    oversized_payload = json.loads(oversized.body.decode("utf-8"))
+
+    assert oversized.status_code == 413
+    assert oversized_payload["error"] == "AttachReplayTooLarge"
+    assert oversized_payload["reasonCode"] == (
+        "server.attach_replay_capacity_exhausted"
+    )
+    assert oversized_payload["runId"] == byte_run_id
+    assert oversized_payload["maxBytes"] == 1
+    assert oversized_payload["requiredBytes"] > 1
+    assert oversized_payload["nextEventCursor"] == f"{byte_run_id}:1"
+
+
 def test_server_app_rejects_attach_with_invalid_capabilities() -> None:
     cases = (
         (["assistant_drafts "], "attach request capabilities must contain only supported attach capability literals"),
