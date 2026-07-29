@@ -199,6 +199,20 @@ atomic publication transaction. The repository that records an authoritative
 result or outbox effect MUST revalidate the same lease/fence in the transaction
 that commits it. A caller MUST NOT treat a successful
 `authority_validator` call alone as permission for a later unfenced write.
+`graphblocks.isolated_worker_server.AcceptedRunWorkerAuthorityValidator`
+provides the reference bridge for durable accepted runs: it maps the worker
+request's `lease_epoch` to the accepted-run claim's `fencing_token`, reads the
+tenant-scoped run, compares the complete current claim, and rejects authority
+at or after lease expiry.
+
+After the isolated executor returns, a durable server MUST construct its
+`AcceptedRunTerminalCommit` with that same claim and call
+`AcceptedRunRepository.commit_terminal`. The SQLite reference repository
+performs the state-version, owner, lease-generation, fencing-token, and expiry
+checks in the transaction that records the result, terminal event, and
+completion outbox intent. The validator and terminal commit are both required:
+the first rejects authority lost while the worker ran, and the second closes
+the validation-to-publication race.
 
 This boundary controls the worker process only. A handler that delegates work
 to an untracked child, background service, or provider MUST NOT claim
