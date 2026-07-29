@@ -23,6 +23,20 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace --all-targets
 ```
 
+The normal Python and Rust suites include bounded property-based security
+gates for canonical JSON, duplicate-key parsing, depth and integer budgets,
+YAML loading, and schema identities. Run them directly while changing one of
+those boundaries:
+
+```bash
+python -m pytest tests/test_canonical_properties.py
+cargo test -p graphblocks-schema --test canonical_properties --locked
+```
+
+Hypothesis and proptest shrink a failing generated input and print the minimal
+reproducer. Keep a discovered regression as an explicit example test when it
+documents a distinct contract boundary.
+
 Before a release, build the complete three-distribution Python surface and
 prove that those artifacts install without an index from the resulting
 wheelhouse:

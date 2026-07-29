@@ -36,6 +36,7 @@ pdf = [
   "pypdf>=4.0",
 ]
 test = [
+  "hypothesis>=6.160,<7",
   "mypy>=1.15,<2",
   "pytest>=8.0",
 ]
