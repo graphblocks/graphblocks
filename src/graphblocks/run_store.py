@@ -83,6 +83,7 @@ _P = ParamSpec("_P")
 _R = TypeVar("_R")
 _MAX_RUN_JSON_DEPTH = 64
 _MAX_SQLITE_INTEGER = (1 << 63) - 1
+_RUN_STORE_SQLITE_BUSY_TIMEOUT_MS = 5_000
 
 
 def _with_in_memory_run_store_lock(
@@ -92,6 +93,20 @@ def _with_in_memory_run_store_lock(
     def locked(*args: _P.args, **kwargs: _P.kwargs) -> _R:
         store = cast("InMemoryRunStore", args[0])
         with store._lock:
+            return method(*args, **kwargs)
+
+    return locked
+
+
+def _with_sqlite_run_store_lock(
+    method: Callable[_P, _R],
+) -> Callable[_P, _R]:
+    @wraps(method)
+    def locked(*args: _P.args, **kwargs: _P.kwargs) -> _R:
+        store = cast("SQLiteRunStore", args[0])
+        with store._lock:
+            if store._closed:
+                raise RunStoreClosedError("SQLite run store is closed")
             return method(*args, **kwargs)
 
     return locked
@@ -257,6 +272,10 @@ class RunTerminalStateError(RuntimeError):
         super().__init__(f"run {run_id} is terminal with status {status}")
         self.run_id = run_id
         self.status = status
+
+
+class RunStoreClosedError(RuntimeError):
+    pass
 
 
 @dataclass(frozen=True, slots=True)
@@ -580,11 +599,26 @@ class InMemoryRunStore:
 class SQLiteRunStore:
     path: Path | str
     connection: sqlite3.Connection = field(init=False, repr=False)
+    _lock: RLock = field(default_factory=RLock, init=False, repr=False)
+    _closed: bool = field(default=False, init=False, repr=False)
 
     def __post_init__(self) -> None:
         self.path = Path(self.path)
-        self.connection = sqlite3.connect(self.path)
+        self.connection = sqlite3.connect(
+            self.path,
+            check_same_thread=False,
+            timeout=_RUN_STORE_SQLITE_BUSY_TIMEOUT_MS / 1_000,
+        )
         self.connection.row_factory = sqlite3.Row
+        self.connection.execute(
+            f"PRAGMA busy_timeout = {_RUN_STORE_SQLITE_BUSY_TIMEOUT_MS}"
+        )
+        if str(self.path) != ":memory:":
+            try:
+                self.connection.execute("PRAGMA journal_mode = WAL")
+            except sqlite3.OperationalError as error:
+                if "locked" not in str(error).casefold():
+                    raise
         self.connection.execute(
             """
             CREATE TABLE IF NOT EXISTS runs (
@@ -630,8 +664,13 @@ class SQLiteRunStore:
         self.connection.commit()
 
     def close(self) -> None:
-        self.connection.close()
+        with self._lock:
+            if self._closed:
+                return
+            self.connection.close()
+            self._closed = True
 
+    @_with_sqlite_run_store_lock
     def create_run(
         self,
         graph_hash: str,
@@ -720,6 +759,7 @@ class SQLiteRunStore:
             raise
         return deepcopy(record)
 
+    @_with_sqlite_run_store_lock
     def get_run(self, run_id: str) -> RunRecord:
         run_id = _validate_non_empty_string("run store", "run_id", run_id)
         row = self.connection.execute(
@@ -757,6 +797,7 @@ class SQLiteRunStore:
             state_revision=row["state_revision"],
         )
 
+    @_with_sqlite_run_store_lock
     def patch_state(self, run_id: str, patch: dict[str, Any], expected_revision: int) -> RunRecord:
         run_id = _validate_non_empty_string("run store", "run_id", run_id)
         patch = _validate_json_object("run store", "patch", patch)
@@ -811,6 +852,7 @@ class SQLiteRunStore:
         self.connection.commit()
         return self.get_run(run_id)
 
+    @_with_sqlite_run_store_lock
     def record_model_visible_tools(
         self,
         run_id: str,
@@ -838,6 +880,7 @@ class SQLiteRunStore:
         self.connection.commit()
         return self.get_run(run_id)
 
+    @_with_sqlite_run_store_lock
     def set_status(self, run_id: str, status: MutableRunStatus) -> RunRecord:
         run_id = _validate_non_empty_string("run store", "run_id", run_id)
         if status not in VALID_RUN_STATUSES or status == "created":

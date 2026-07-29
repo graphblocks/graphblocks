@@ -13,6 +13,7 @@ from graphblocks.run_store import (
     InMemoryRunStore,
     RunDeploymentProvenance,
     RunRecord,
+    RunStoreClosedError,
     RunTerminalStateError,
     SQLiteRunStore,
     StateConflictError,
@@ -510,6 +511,41 @@ def test_sqlite_run_store_assigns_unique_sequences_to_concurrent_writers(
         run_ids = list(executor.map(create_run, range(writer_count)))
 
     assert sorted(run_ids) == [f"run-{index:06d}" for index in range(1, 9)]
+
+
+def test_sqlite_run_store_serializes_single_instance_across_threads() -> None:
+    store = SQLiteRunStore(":memory:")
+
+    def create_run(index: int) -> str:
+        return store.create_run(f"sha256:{index}", {}).run_id
+
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        run_ids = tuple(executor.map(create_run, range(32)))
+
+    assert sorted(run_ids) == [
+        f"run-{index:06d}" for index in range(1, 33)
+    ]
+    assert {
+        store.get_run(run_id).graph_hash
+        for run_id in run_ids
+    } == {f"sha256:{index}" for index in range(32)}
+    store.close()
+
+
+def test_sqlite_run_store_reports_cross_thread_use_after_close() -> None:
+    store = SQLiteRunStore(":memory:")
+    record = store.create_run("sha256:test", {})
+    store.close()
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(store.get_run, record.run_id)
+        with pytest.raises(
+            RunStoreClosedError,
+            match="SQLite run store is closed",
+        ):
+            future.result()
+
+    store.close()
 
 
 def test_sqlite_run_store_persists_invocation_mode_across_instances(tmp_path) -> None:
