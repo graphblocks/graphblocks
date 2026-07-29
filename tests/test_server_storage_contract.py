@@ -18,8 +18,11 @@ from graphblocks.server_storage import (
     AcceptedRunEffectIntent,
     AcceptedRunEffectKind,
     AcceptedRunEventIntent,
+    AcceptedRunExecutionEnvelope,
     AcceptedRunPhase,
     AcceptedRunWaitingCommit,
+    AcceptedRunCallbackInput,
+    AcceptedRunWorkItem,
     AdmissionIdempotencyConflictError,
     AdmissionIdentity,
     AdmissionResult,
@@ -158,6 +161,39 @@ def _effect_delivery_claim(
         claim_generation=claim_generation,
         fencing_token=fencing_token,
         lease_expires_at_unix_ms=2_000,
+    )
+
+
+def _execution_envelope() -> AcceptedRunExecutionEnvelope:
+    graph = {
+        "apiVersion": "graphblocks.ai/v1",
+        "kind": "Graph",
+        "metadata": {"name": "restartable"},
+        "spec": {"edges": [], "nodes": {}},
+    }
+    return AcceptedRunExecutionEnvelope(
+        run_id="run-1",
+        identity=_admission_identity(),
+        graph_json=canonical_dumps(graph),
+        graph_hash=_DIGEST_A,
+        inputs_json=canonical_dumps(
+            {"request": {"value": "hello"}}
+        ),
+        invocation_json=canonical_dumps(
+            {
+                "policySnapshotId": "policy-1",
+                "releaseId": "release-1",
+                "responseId": "response-1",
+                "turnId": None,
+            }
+        ),
+        ticket_json=canonical_dumps(
+            {"runId": "run-1", "state": "accepted"}
+        ),
+        graph_format_version="graphblocks.ai/Graph@v1",
+        runtime_format_version="graphblocks.runtime@v1",
+        checkpoint_format_version=CHECKPOINT_FORMAT_VERSION,
+        created_at_unix_ms=1_000,
     )
 
 
@@ -460,6 +496,97 @@ def test_effect_delivery_retry_cannot_be_available_before_release() -> None:
             claim=_effect_delivery_claim(),
             released_at_unix_ms=1_500,
             available_at_unix_ms=1_499,
+        )
+
+
+def test_initial_claimed_work_contains_complete_execution_envelope() -> None:
+    work = AcceptedRunWorkItem(
+        claim=_claim(),
+        envelope=_execution_envelope(),
+        state_version=2,
+        event_high_watermark=2,
+        checkpoint=None,
+        callback=None,
+    )
+
+    assert not work.is_resume
+    assert work.envelope.identity.tenant_id == work.claim.tenant_id
+    assert work.envelope.run_id == work.claim.run_id
+    assert canonical_loads(work.envelope.invocation_json)["releaseId"] == (
+        "release-1"
+    )
+
+
+def test_resume_claimed_work_binds_checkpoint_and_callback_payload() -> None:
+    checkpoint = encode_runtime_checkpoint(_runtime_checkpoint())
+    issuance = replace(
+        _callback_issuance(),
+        checkpoint_digest=checkpoint.checkpoint_digest,
+    )
+    callback_payload = {"conclusion": "success", "status": "completed"}
+    callback = AcceptedRunCallbackInput(
+        acceptance=CallbackAcceptance(
+            submission=CallbackSubmissionIdentity(
+                issuance=issuance,
+                payload_digest=canonical_hash(callback_payload),
+            ),
+            receipt_json=canonical_dumps(
+                {"accepted": True, "callbackId": "callback-1"}
+            ),
+            accepted_event_sequence=4,
+            state_version=4,
+        ),
+        payload_json=canonical_dumps(callback_payload),
+        received_at_unix_ms=1_500,
+    )
+
+    work = AcceptedRunWorkItem(
+        claim=_claim(lease_generation=2, fencing_token=2),
+        envelope=_execution_envelope(),
+        state_version=5,
+        event_high_watermark=5,
+        checkpoint=checkpoint,
+        callback=callback,
+    )
+
+    assert work.is_resume
+    assert work.checkpoint == checkpoint
+    assert work.callback == callback
+
+
+def test_claimed_work_rejects_partial_resume_base() -> None:
+    with pytest.raises(
+        ValueError,
+        match="checkpoint and callback must either both be present or both be absent",
+    ):
+        AcceptedRunWorkItem(
+            claim=_claim(),
+            envelope=_execution_envelope(),
+            state_version=2,
+            event_high_watermark=2,
+            checkpoint=encode_runtime_checkpoint(_runtime_checkpoint()),
+            callback=None,
+        )
+
+
+def test_claimed_work_rejects_cross_tenant_envelope() -> None:
+    with pytest.raises(
+        ValueError,
+        match="claim identity must match its execution envelope",
+    ):
+        AcceptedRunWorkItem(
+            claim=_claim(),
+            envelope=replace(
+                _execution_envelope(),
+                identity=replace(
+                    _admission_identity(),
+                    tenant_id="tenant-2",
+                ),
+            ),
+            state_version=2,
+            event_high_watermark=2,
+            checkpoint=None,
+            callback=None,
         )
 
 

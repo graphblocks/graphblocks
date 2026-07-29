@@ -1345,6 +1345,211 @@ class AcceptedRunEventPage:
 
 
 @dataclass(frozen=True, slots=True)
+class AcceptedRunExecutionEnvelope:
+    """Immutable data required to reconstruct one accepted run."""
+
+    run_id: str
+    identity: AdmissionIdentity
+    graph_json: str
+    graph_hash: str
+    inputs_json: str
+    invocation_json: str
+    ticket_json: str
+    graph_format_version: str
+    runtime_format_version: str
+    checkpoint_format_version: str
+    created_at_unix_ms: int
+
+    def __post_init__(self) -> None:
+        owner = "accepted run execution envelope"
+        object.__setattr__(
+            self,
+            "run_id",
+            _validate_exact_string(owner, "run_id", self.run_id),
+        )
+        if not isinstance(self.identity, AdmissionIdentity):
+            raise ValueError(
+                f"{owner} identity must be an AdmissionIdentity"
+            )
+        for field_name in (
+            "graph_json",
+            "inputs_json",
+            "invocation_json",
+            "ticket_json",
+        ):
+            object.__setattr__(
+                self,
+                field_name,
+                _validate_canonical_json(
+                    owner,
+                    field_name,
+                    getattr(self, field_name),
+                ),
+            )
+        object.__setattr__(
+            self,
+            "graph_hash",
+            _validate_digest(owner, "graph_hash", self.graph_hash),
+        )
+        for field_name in (
+            "graph_format_version",
+            "runtime_format_version",
+            "checkpoint_format_version",
+        ):
+            object.__setattr__(
+                self,
+                field_name,
+                _validate_exact_string(
+                    owner,
+                    field_name,
+                    getattr(self, field_name),
+                ),
+            )
+        object.__setattr__(
+            self,
+            "created_at_unix_ms",
+            _validate_u64(
+                owner,
+                "created_at_unix_ms",
+                self.created_at_unix_ms,
+            ),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class AcceptedRunCallbackInput:
+    """The exact accepted callback used to resume a claimed checkpoint."""
+
+    acceptance: CallbackAcceptance
+    payload_json: str
+    received_at_unix_ms: int
+
+    def __post_init__(self) -> None:
+        owner = "accepted run callback input"
+        if not isinstance(self.acceptance, CallbackAcceptance):
+            raise ValueError(
+                f"{owner} acceptance must be a CallbackAcceptance"
+            )
+        object.__setattr__(
+            self,
+            "payload_json",
+            _validate_canonical_json(
+                owner,
+                "payload_json",
+                self.payload_json,
+            ),
+        )
+        _validate_json_digest(
+            owner,
+            json_field_name="payload_json",
+            encoded=self.payload_json,
+            digest_field_name="acceptance.submission.payload_digest",
+            digest=self.acceptance.submission.payload_digest,
+        )
+        object.__setattr__(
+            self,
+            "received_at_unix_ms",
+            _validate_u64(
+                owner,
+                "received_at_unix_ms",
+                self.received_at_unix_ms,
+            ),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class AcceptedRunWorkItem:
+    """A fenced claim plus every durable value needed for reconstruction."""
+
+    claim: AcceptedRunClaim
+    envelope: AcceptedRunExecutionEnvelope
+    state_version: int
+    event_high_watermark: int
+    checkpoint: StoredRuntimeCheckpoint | None
+    callback: AcceptedRunCallbackInput | None
+
+    def __post_init__(self) -> None:
+        owner = "accepted run work item"
+        if not isinstance(self.claim, AcceptedRunClaim):
+            raise ValueError(f"{owner} claim must be an AcceptedRunClaim")
+        if not isinstance(self.envelope, AcceptedRunExecutionEnvelope):
+            raise ValueError(
+                f"{owner} envelope must be an AcceptedRunExecutionEnvelope"
+            )
+        if (
+            self.claim.run_id != self.envelope.run_id
+            or self.claim.tenant_id != self.envelope.identity.tenant_id
+        ):
+            raise ValueError(
+                f"{owner} claim identity must match its execution envelope"
+            )
+        for field_name in ("state_version", "event_high_watermark"):
+            object.__setattr__(
+                self,
+                field_name,
+                _validate_u64(
+                    owner,
+                    field_name,
+                    getattr(self, field_name),
+                    positive=True,
+                ),
+            )
+        if self.checkpoint is not None and not isinstance(
+            self.checkpoint,
+            StoredRuntimeCheckpoint,
+        ):
+            raise ValueError(
+                f"{owner} checkpoint must be a StoredRuntimeCheckpoint or None"
+            )
+        if self.callback is not None and not isinstance(
+            self.callback,
+            AcceptedRunCallbackInput,
+        ):
+            raise ValueError(
+                f"{owner} callback must be an AcceptedRunCallbackInput or None"
+            )
+        if (self.checkpoint is None) != (self.callback is None):
+            raise ValueError(
+                f"{owner} checkpoint and callback must either both be present "
+                "or both be absent"
+            )
+        if self.checkpoint is None:
+            return
+        assert self.callback is not None
+        checkpoint = decode_runtime_checkpoint(self.checkpoint)
+        acceptance = self.callback.acceptance
+        issuance = acceptance.submission.issuance
+        if (
+            self.checkpoint.format_version
+            != self.envelope.checkpoint_format_version
+            or checkpoint.run_id != self.claim.run_id
+            or checkpoint.graph_hash != self.envelope.graph_hash
+            or canonical_dumps(checkpoint.inputs)
+            != self.envelope.inputs_json
+            or issuance.run_id != self.claim.run_id
+            or issuance.checkpoint_digest
+            != self.checkpoint.checkpoint_digest
+        ):
+            raise ValueError(
+                f"{owner} resume identities must match its durable envelope"
+            )
+        if (
+            acceptance.state_version >= self.state_version
+            or acceptance.accepted_event_sequence
+            >= self.event_high_watermark
+            or issuance.lease_generation >= self.claim.lease_generation
+            or issuance.fencing_token >= self.claim.fencing_token
+        ):
+            raise ValueError(
+                f"{owner} resume claim must advance callback state and fencing"
+            )
+
+    @property
+    def is_resume(self) -> bool:
+        return self.checkpoint is not None
+
+
+@dataclass(frozen=True, slots=True)
 class AcceptedRunClaimRequest:
     tenant_id: str
     run_id: str
@@ -1621,6 +1826,12 @@ class AcceptedRunRepository(Protocol):
         self,
         request: AcceptedRunClaimRequest,
     ) -> AcceptedRunClaim | None:
+        ...
+
+    def claim_work(
+        self,
+        request: AcceptedRunClaimRequest,
+    ) -> AcceptedRunWorkItem | None:
         ...
 
     def commit_waiting(
