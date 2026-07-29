@@ -131,6 +131,14 @@ class AcceptedRunStateConflictError(AcceptedRunConflictError):
         self.current_state_version = current_state_version
 
 
+class AcceptedRunTerminalConflictError(AcceptedRunConflictError):
+    def __init__(self, run_id: str) -> None:
+        super().__init__(
+            f"accepted run {run_id!r} terminal commit conflicts with stored result"
+        )
+        self.run_id = run_id
+
+
 class InvalidAcceptedRunTransitionError(AcceptedRunConflictError):
     def __init__(
         self,

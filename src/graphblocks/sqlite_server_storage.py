@@ -26,6 +26,8 @@ from .server_storage import (
     AcceptedRunSnapshot,
     AcceptedRunStateConflictError,
     AcceptedRunStorageError,
+    AcceptedRunTerminalCommit,
+    AcceptedRunTerminalConflictError,
     AcceptedRunWaitingCommit,
     AdmissionIdentity,
     AdmissionResult,
@@ -51,6 +53,14 @@ _MAX_BUSY_TIMEOUT_MS = 60_000
 _MAX_SQLITE_INTEGER = (1 << 63) - 1
 _MAX_UUID7_UNIX_MS = (1 << 48) - 1
 MAX_ACCEPTED_RUN_EVENT_PAGE_SIZE = 1_000
+_TERMINAL_EVENT_KINDS = {
+    "cancelled": "run_cancelled",
+    "completed": "run_completed",
+    "expired": "run_expired",
+    "failed": "run_failed",
+    "policy_stopped": "run_policy_stopped",
+    "succeeded": "run_succeeded",
+}
 _T = TypeVar("_T")
 
 _SCHEMA_V1_STATEMENTS = (
@@ -2137,6 +2147,295 @@ class SQLiteAcceptedRunRepository:
         acceptance = self._database._run_immediate(transition)
         self._hit_failpoint("accept_callback.after_commit")
         return acceptance
+
+    def commit_terminal(
+        self,
+        command: AcceptedRunTerminalCommit,
+    ) -> AcceptedRunSnapshot:
+        if not isinstance(command, AcceptedRunTerminalCommit):
+            raise TypeError(
+                "accepted-run SQLite terminal command must be an "
+                "AcceptedRunTerminalCommit"
+            )
+        expected_event_kind = _TERMINAL_EVENT_KINDS.get(
+            command.terminal_status
+        )
+        if expected_event_kind is None:
+            raise ValueError(
+                "accepted-run SQLite terminal_status is unsupported"
+            )
+        if command.terminal_event.kind != expected_event_kind:
+            raise ValueError(
+                "accepted-run SQLite terminal event kind must match "
+                "terminal_status"
+            )
+        if command.terminal_event.created_at_unix_ms > _MAX_SQLITE_INTEGER:
+            raise ValueError(
+                "accepted-run SQLite terminal timestamp exceeds SQLite "
+                "integer range"
+            )
+
+        def transition(connection: sqlite3.Connection) -> AcceptedRunSnapshot:
+            claim = command.claim
+            row = connection.execute(
+                """
+                SELECT *
+                FROM accepted_runs
+                WHERE tenant_id = ? AND external_run_id = ?
+                """,
+                (claim.tenant_id, claim.run_id),
+            ).fetchone()
+            if row is None:
+                raise AcceptedRunNotFoundError(
+                    claim.tenant_id,
+                    claim.run_id,
+                )
+            snapshot = self._snapshot_from_row(row)
+            if snapshot.phase is AcceptedRunPhase.TERMINAL:
+                return self._replay_terminal_commit(
+                    connection,
+                    row,
+                    snapshot,
+                    command,
+                )
+            if snapshot.phase is not AcceptedRunPhase.RUNNING:
+                raise StaleAcceptedRunClaimError(snapshot.claim, claim)
+            assert_current_claim(current=snapshot.claim, provided=claim)
+            if snapshot.state_version != command.expected_state_version:
+                raise AcceptedRunStateConflictError(
+                    claim.run_id,
+                    command.expected_state_version,
+                    snapshot.state_version,
+                )
+            event = command.terminal_event
+            if event.created_at_unix_ms >= claim.lease_expires_at_unix_ms:
+                raise AcceptedRunLeaseExpiredError(
+                    claim,
+                    "terminal commit",
+                )
+            if (
+                snapshot.state_version >= _MAX_SQLITE_INTEGER
+                or snapshot.event_high_watermark >= _MAX_SQLITE_INTEGER
+            ):
+                raise OverflowError(
+                    "accepted-run SQLite terminal counters are exhausted"
+                )
+            internal_id = _decode_sqlite_text(
+                "internal_id",
+                row["internal_id"],
+            )
+            next_state_version = snapshot.state_version + 1
+            next_event_sequence = snapshot.event_high_watermark + 1
+            effect = command.completion_effect
+            connection.execute(
+                """
+                INSERT INTO effect_outbox (
+                  effect_id,
+                  run_internal_id,
+                  checkpoint_digest,
+                  effect_kind,
+                  idempotency_key,
+                  payload_json,
+                  payload_digest,
+                  delivery_state,
+                  attempt_count,
+                  claim_owner_id,
+                  claim_generation,
+                  claim_fencing_token,
+                  claim_expires_at_unix_ms,
+                  created_at_unix_ms,
+                  delivered_at_unix_ms
+                )
+                VALUES (
+                  ?, ?, NULL, ?, ?, ?, ?, 'pending', 0, NULL, 0, 0, NULL,
+                  ?, NULL
+                )
+                """,
+                (
+                    effect.effect_id,
+                    internal_id,
+                    effect.kind.value,
+                    effect.idempotency_key,
+                    effect.payload_json,
+                    effect.payload_digest,
+                    event.created_at_unix_ms,
+                ),
+            )
+            self._hit_failpoint("commit_terminal.after_outbox_insert")
+            connection.execute(
+                """
+                INSERT INTO run_events (
+                  run_internal_id,
+                  sequence,
+                  kind,
+                  payload_json,
+                  payload_digest,
+                  created_at_unix_ms
+                )
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    internal_id,
+                    next_event_sequence,
+                    event.kind,
+                    event.payload_json,
+                    event.payload_digest,
+                    event.created_at_unix_ms,
+                ),
+            )
+            self._hit_failpoint("commit_terminal.after_event_insert")
+            updated = connection.execute(
+                """
+                UPDATE accepted_runs
+                SET phase = 'terminal',
+                    state_version = ?,
+                    event_high_watermark = ?,
+                    updated_at_unix_ms = ?,
+                    terminal_status = ?,
+                    terminal_result_json = ?,
+                    terminal_result_digest = ?,
+                    lease_owner_id = NULL,
+                    lease_expires_at_unix_ms = NULL
+                WHERE internal_id = ?
+                  AND phase = 'running'
+                  AND state_version = ?
+                  AND lease_owner_id = ?
+                  AND lease_generation = ?
+                  AND fencing_token = ?
+                  AND lease_expires_at_unix_ms = ?
+                """,
+                (
+                    next_state_version,
+                    next_event_sequence,
+                    event.created_at_unix_ms,
+                    command.terminal_status,
+                    command.result_json,
+                    command.result_digest,
+                    internal_id,
+                    command.expected_state_version,
+                    claim.lease_owner_id,
+                    claim.lease_generation,
+                    claim.fencing_token,
+                    claim.lease_expires_at_unix_ms,
+                ),
+            )
+            if updated.rowcount != 1:
+                raise StaleAcceptedRunClaimError(snapshot.claim, claim)
+            self._hit_failpoint("commit_terminal.after_state_update")
+            updated_row = connection.execute(
+                "SELECT * FROM accepted_runs WHERE internal_id = ?",
+                (internal_id,),
+            ).fetchone()
+            if updated_row is None:
+                raise SQLiteAcceptedRunCorruptionError(
+                    "accepted-run SQLite terminal transition lost its run"
+                )
+            return self._snapshot_from_row(updated_row)
+
+        snapshot = self._database._run_immediate(transition)
+        self._hit_failpoint("commit_terminal.after_commit")
+        return snapshot
+
+    def _replay_terminal_commit(
+        self,
+        connection: sqlite3.Connection,
+        row: sqlite3.Row,
+        snapshot: AcceptedRunSnapshot,
+        command: AcceptedRunTerminalCommit,
+    ) -> AcceptedRunSnapshot:
+        claim = command.claim
+        if (
+            _decode_sqlite_integer(
+                "lease_generation",
+                row["lease_generation"],
+            )
+            != claim.lease_generation
+            or _decode_sqlite_integer(
+                "fencing_token",
+                row["fencing_token"],
+            )
+            != claim.fencing_token
+        ):
+            raise StaleAcceptedRunClaimError(None, claim)
+        if snapshot.state_version != command.expected_state_version + 1:
+            raise AcceptedRunTerminalConflictError(claim.run_id)
+        stored_result_digest = _decode_sqlite_text(
+            "terminal_result_digest",
+            row["terminal_result_digest"],
+        )
+        if (
+            snapshot.terminal_status != command.terminal_status
+            or snapshot.terminal_result_json != command.result_json
+            or stored_result_digest != command.result_digest
+        ):
+            raise AcceptedRunTerminalConflictError(claim.run_id)
+        internal_id = _decode_sqlite_text(
+            "internal_id",
+            row["internal_id"],
+        )
+        effects = connection.execute(
+            """
+            SELECT *
+            FROM effect_outbox
+            WHERE run_internal_id = ? AND effect_kind = 'completion'
+            """,
+            (internal_id,),
+        ).fetchall()
+        event_row = connection.execute(
+            """
+            SELECT *
+            FROM run_events
+            WHERE run_internal_id = ? AND sequence = ?
+            """,
+            (internal_id, snapshot.event_high_watermark),
+        ).fetchone()
+        if len(effects) != 1 or event_row is None:
+            raise SQLiteAcceptedRunCorruptionError(
+                "accepted-run SQLite terminal transition is incomplete"
+            )
+        effect_row = effects[0]
+        effect = command.completion_effect
+        effect_matches = (
+            _decode_sqlite_text("effect_id", effect_row["effect_id"])
+            == effect.effect_id
+            and _decode_sqlite_text(
+                "effect idempotency_key",
+                effect_row["idempotency_key"],
+            )
+            == effect.idempotency_key
+            and _decode_sqlite_text(
+                "effect payload_json",
+                effect_row["payload_json"],
+            )
+            == effect.payload_json
+            and _decode_sqlite_text(
+                "effect payload_digest",
+                effect_row["payload_digest"],
+            )
+            == effect.payload_digest
+        )
+        event = command.terminal_event
+        event_matches = (
+            _decode_sqlite_text("event kind", event_row["kind"]) == event.kind
+            and _decode_sqlite_text(
+                "event payload_json",
+                event_row["payload_json"],
+            )
+            == event.payload_json
+            and _decode_sqlite_text(
+                "event payload_digest",
+                event_row["payload_digest"],
+            )
+            == event.payload_digest
+            and _decode_sqlite_integer(
+                "event created_at_unix_ms",
+                event_row["created_at_unix_ms"],
+            )
+            == event.created_at_unix_ms
+        )
+        if not effect_matches or not event_matches:
+            raise AcceptedRunTerminalConflictError(claim.run_id)
+        return snapshot
 
     def get_run(
         self,
