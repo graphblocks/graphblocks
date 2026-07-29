@@ -1,18 +1,18 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+import sqlite3
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from decimal import Decimal
+from functools import wraps
 from pathlib import Path
-import sqlite3
 from threading import RLock
-from typing import Literal
+from typing import Literal, ParamSpec, TypeVar, cast
 
 from .budget import UsageAmount
 from .canonical import MAX_CANONICAL_JSON_DEPTH, canonical_dumps, canonical_loads
 from .documents import FrozenDict
-
 
 UsageSource = Literal[
     "provider_reported",
@@ -32,9 +32,16 @@ VALID_USAGE_SOURCES = frozenset(
     }
 )
 VALID_USAGE_CONFIDENCES = frozenset({"exact", "provider_exact", "estimated", "unknown"})
+_P = ParamSpec("_P")
+_R = TypeVar("_R")
+_SQLITE_USAGE_BUSY_TIMEOUT_MS = 5_000
 
 
 class UsageLedgerError(RuntimeError):
+    pass
+
+
+class UsageLedgerClosedError(UsageLedgerError):
     pass
 
 
@@ -44,6 +51,20 @@ class UsageRecordNotFoundError(UsageLedgerError):
 
 class UsageRecordConflictError(UsageLedgerError):
     pass
+
+
+def _with_sqlite_usage_ledger_lock(
+    method: Callable[_P, _R],
+) -> Callable[_P, _R]:
+    @wraps(method)
+    def locked(*args: _P.args, **kwargs: _P.kwargs) -> _R:
+        ledger = cast("SQLiteUsageLedger", args[0])
+        with ledger._lock:
+            if ledger._closed:
+                raise UsageLedgerClosedError("SQLite usage ledger is closed")
+            return method(*args, **kwargs)
+
+    return locked
 
 
 def _validate_usage_identity(field_name: str, value: object) -> str:
@@ -457,10 +478,25 @@ class InMemoryUsageLedger:
 class SQLiteUsageLedger:
     path: str | Path
     _connection: sqlite3.Connection = field(init=False, repr=False)
+    _lock: RLock = field(default_factory=RLock, init=False, repr=False)
+    _closed: bool = field(default=False, init=False, repr=False)
 
     def __post_init__(self) -> None:
-        self._connection = sqlite3.connect(str(self.path))
+        self._connection = sqlite3.connect(
+            str(self.path),
+            check_same_thread=False,
+            timeout=_SQLITE_USAGE_BUSY_TIMEOUT_MS / 1_000,
+        )
         self._connection.row_factory = sqlite3.Row
+        self._connection.execute(
+            f"PRAGMA busy_timeout = {_SQLITE_USAGE_BUSY_TIMEOUT_MS}"
+        )
+        if str(self.path) != ":memory:":
+            try:
+                self._connection.execute("PRAGMA journal_mode = WAL")
+            except sqlite3.OperationalError as error:
+                if "locked" not in str(error).casefold():
+                    raise
         self._connection.execute(
             """
             CREATE TABLE IF NOT EXISTS usage_records (
@@ -513,8 +549,13 @@ class SQLiteUsageLedger:
         return cls(":memory:")
 
     def close(self) -> None:
-        self._connection.close()
+        with self._lock:
+            if self._closed:
+                return
+            self._connection.close()
+            self._closed = True
 
+    @_with_sqlite_usage_ledger_lock
     def append(self, record: UsageRecord) -> UsageRecord:
         if not isinstance(record, UsageRecord):
             raise ValueError("usage ledger record must be a UsageRecord")
@@ -624,6 +665,7 @@ class SQLiteUsageLedger:
             raise UsageRecordConflictError(f"usage record {record.record_id!r} already exists") from error
         return record
 
+    @_with_sqlite_usage_ledger_lock
     def get(self, record_id: str) -> UsageRecord:
         record_id = _validate_usage_identity("record_id", record_id)
         row = self._connection.execute(
@@ -634,6 +676,7 @@ class SQLiteUsageLedger:
             raise UsageRecordNotFoundError(f"usage record {record_id!r} does not exist")
         return self._record_from_row(row)
 
+    @_with_sqlite_usage_ledger_lock
     def records_for_run(self, run_id: str) -> list[UsageRecord]:
         run_id = _validate_usage_identity("run_id", run_id)
         rows = self._connection.execute(
@@ -642,6 +685,7 @@ class SQLiteUsageLedger:
         ).fetchall()
         return [self._record_from_row(row) for row in rows]
 
+    @_with_sqlite_usage_ledger_lock
     def totals_for_run(self, run_id: str) -> list[UsageAmount]:
         records = self.records_for_run(run_id)
         superseded_record_ids = {
@@ -660,6 +704,7 @@ class SQLiteUsageLedger:
             if totals[(kind, unit, dimensions)] != 0
         ]
 
+    @_with_sqlite_usage_ledger_lock
     def reconcile(
         self,
         source_record_id: str,
@@ -770,16 +815,17 @@ def evaluate_native_usage_ledger(
 
 
 __all__ = [
+    "VALID_USAGE_CONFIDENCES",
+    "VALID_USAGE_SOURCES",
     "InMemoryUsageLedger",
     "SQLiteUsageLedger",
     "UsageAmount",
     "UsageConfidence",
+    "UsageLedgerClosedError",
     "UsageLedgerError",
     "UsageRecord",
     "UsageRecordConflictError",
     "UsageRecordNotFoundError",
     "UsageSource",
-    "VALID_USAGE_CONFIDENCES",
-    "VALID_USAGE_SOURCES",
     "evaluate_native_usage_ledger",
 ]
