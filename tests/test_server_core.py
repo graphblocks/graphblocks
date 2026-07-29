@@ -15876,6 +15876,179 @@ def test_server_app_serves_application_stream_snapshot_for_existing_run() -> Non
     assert payload["events"][1]["payload"]["outputs"] == {"prompt": "Stream ok"}
 
 
+def test_server_app_pages_application_stream_snapshot_by_count_and_bytes() -> None:
+    principal = PrincipalRef("user-1")
+    count_app = GraphBlocksServerApp(
+        auth_hook=StaticBearerAuthHook({"token-1": principal}),
+        max_event_page_events=1,
+        max_event_page_bytes=4_096,
+    )
+    count_run_id = "run-stream-page-count-1"
+    _seed_succeeded_run(
+        count_app,
+        count_run_id,
+        principal,
+        event_count=2,
+    )
+    first = count_app.handle(
+        ServerRequest(
+            method="GET",
+            path=f"/runs/{count_run_id}/stream",
+            headers={
+                "Authorization": "Bearer token-1",
+                "Connection": "Upgrade",
+                "Upgrade": "websocket",
+            },
+            query={},
+            cookies={},
+        )
+    )
+    first_payload = json.loads(first.body.decode("utf-8"))
+
+    assert first.status_code == 200
+    assert len(first.body) <= count_app.max_event_page_bytes
+    assert first_payload["replayFromCursor"] is None
+    assert first_payload["lastCursor"] == f"{count_run_id}:2"
+    assert first_payload["hasMore"] is True
+    assert first_payload["nextCursor"] == f"{count_run_id}:1"
+    assert first_payload["stream"]["cursor"] == f"{count_run_id}:2"
+    assert first_payload["stream"]["eventCount"] == 1
+    assert [
+        event["metadata"]["sequence"] for event in first_payload["events"]
+    ] == [1]
+
+    second = count_app.handle(
+        ServerRequest(
+            method="GET",
+            path=f"/runs/{count_run_id}/stream",
+            headers={
+                "Authorization": "Bearer token-1",
+                "Connection": "Upgrade",
+                "Upgrade": "websocket",
+            },
+            query={"cursor": first_payload["nextCursor"]},
+            cookies={},
+        )
+    )
+    second_payload = json.loads(second.body.decode("utf-8"))
+
+    assert second.status_code == 200
+    assert len(second.body) <= count_app.max_event_page_bytes
+    assert second_payload["replayFromCursor"] == f"{count_run_id}:1"
+    assert second_payload["lastCursor"] == f"{count_run_id}:2"
+    assert second_payload["hasMore"] is False
+    assert second_payload["nextCursor"] is None
+    assert second_payload["stream"]["eventCount"] == 1
+    assert [
+        event["metadata"]["sequence"] for event in second_payload["events"]
+    ] == [2]
+
+    byte_app = GraphBlocksServerApp(
+        auth_hook=StaticBearerAuthHook({"token-1": principal}),
+        max_event_page_events=10,
+        max_event_page_bytes=1,
+    )
+    byte_run_id = "run-stream-page-bytes-1"
+    _seed_succeeded_run(byte_app, byte_run_id, principal)
+    oversized = byte_app.handle(
+        ServerRequest(
+            method="GET",
+            path=f"/runs/{byte_run_id}/stream",
+            headers={
+                "Authorization": "Bearer token-1",
+                "Connection": "Upgrade",
+                "Upgrade": "websocket",
+            },
+            query={},
+            cookies={},
+        )
+    )
+    oversized_payload = json.loads(oversized.body.decode("utf-8"))
+
+    assert oversized.status_code == 413
+    assert oversized_payload["error"] == "StreamSnapshotTooLarge"
+    assert oversized_payload["reasonCode"] == (
+        "server.stream_snapshot_capacity_exhausted"
+    )
+    assert oversized_payload["runId"] == byte_run_id
+    assert oversized_payload["maxBytes"] == 1
+    assert oversized_payload["requiredBytes"] > 1
+    assert oversized_payload["nextEventCursor"] == f"{byte_run_id}:1"
+
+
+def test_server_app_validates_application_stream_replay_cursor() -> None:
+    principal = PrincipalRef("user-1")
+    app = GraphBlocksServerApp(
+        auth_hook=StaticBearerAuthHook({"token-1": principal}),
+    )
+    run_id = "run-stream-cursor-1"
+    _record_seeded_run_owner(app, run_id, principal)
+    app._events_by_run_id[run_id] = tuple(
+        {
+            "kind": "RunSucceeded",
+            "metadata": {
+                "eventId": f"evt-{run_id}-{sequence}",
+                "runId": run_id,
+                "sequence": sequence,
+                "releaseId": "release-stream-cursor-1",
+                "occurredAt": f"2026-07-29T00:00:0{sequence}Z",
+            },
+            "payload": {},
+        }
+        for sequence in range(1, 3)
+    )
+    headers = {
+        "Authorization": "Bearer token-1",
+        "Connection": "Upgrade",
+        "Upgrade": "websocket",
+    }
+
+    wrong_run = app.handle(
+        ServerRequest(
+            method="GET",
+            path=f"/runs/{run_id}/stream",
+            headers=headers,
+            query={"cursor": "other-run:1"},
+            cookies={},
+        )
+    )
+    malformed = app.handle(
+        ServerRequest(
+            method="GET",
+            path=f"/runs/{run_id}/stream",
+            headers=headers,
+            query={"cursor": f"{run_id}:not-a-sequence"},
+            cookies={},
+        )
+    )
+    expired = app.handle(
+        ServerRequest(
+            method="GET",
+            path=f"/runs/{run_id}/stream",
+            headers=headers,
+            query={"cursor": f"{run_id}:99"},
+            cookies={},
+        )
+    )
+    expired_payload = json.loads(expired.body.decode("utf-8"))
+
+    assert wrong_run.status_code == 400
+    assert json.loads(wrong_run.body.decode("utf-8"))["error"] == (
+        f"application stream cursor must belong to run {run_id!r}"
+    )
+    assert malformed.status_code == 400
+    assert json.loads(malformed.body.decode("utf-8"))["error"] == (
+        "application stream cursor must use '<run_id>:<sequence>' with a "
+        "non-negative integer sequence"
+    )
+    assert expired.status_code == 409
+    assert expired_payload["error"] == "CursorExpired"
+    assert expired_payload["requestedCursor"] == f"{run_id}:99"
+    assert expired_payload["nearestAvailableCursor"] == f"{run_id}:1"
+    assert expired_payload["lastCursor"] == f"{run_id}:2"
+    assert expired_payload["lastSequence"] == 2
+
+
 def test_server_app_rejects_boolean_event_sequence_for_stream_cursor() -> None:
     app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
     app._events_by_run_id["run-stream-bool-sequence-1"] = (

@@ -5312,46 +5312,246 @@ class GraphBlocksServerApp:
                         "error": f"application stream not found for run {run_id!r}",
                     },
                 )
-            last_sequence = 0
-            for event in events:
-                metadata = event.get("metadata")
-                if isinstance(metadata, Mapping):
+            try:
+                cursor = request.query.get("cursor")
+                if cursor is not None:
+                    cursor = _validate_run_cursor(
+                        "application stream",
+                        "cursor",
+                        run_id,
+                        cursor,
+                    )
+                requested_sequence = (
+                    int(cursor[len(run_id) + 1 :])
+                    if cursor is not None
+                    else 0
+                )
+                cursor_found = cursor is None or requested_sequence == 0
+                nearest_sequence: int | None = None
+                last_sequence = 0
+                previous_sequence: int | None = None
+                for event in events:
+                    metadata = event.get("metadata")
+                    if not isinstance(metadata, Mapping):
+                        continue
                     sequence = metadata.get("sequence")
                     if not isinstance(sequence, int) or isinstance(sequence, bool):
-                        return ServerResponse.json(
-                            400,
-                            {
-                                "ok": False,
-                                "error": "application stream sequence must be an integer",
-                            },
+                        raise ValueError(
+                            "application stream sequence must be an integer"
                         )
                     if sequence < 0:
-                        return ServerResponse.json(
-                            400,
-                            {
-                                "ok": False,
-                                "error": "application stream sequence must be non-negative",
-                            },
+                        raise ValueError(
+                            "application stream sequence must be non-negative"
                         )
+                    if (
+                        previous_sequence is not None
+                        and sequence <= previous_sequence
+                    ):
+                        raise ValueError(
+                            "application stream sequence must be strictly increasing"
+                        )
+                    previous_sequence = sequence
+                    if nearest_sequence is None or sequence < nearest_sequence:
+                        nearest_sequence = sequence
                     if sequence > last_sequence:
                         last_sequence = sequence
-            visible_events = [
-                _response_json_object(event)
-                for event in events
-                if _event_visible_to_principal(event, auth_decision.principal)
-            ]
+                    if sequence == requested_sequence:
+                        cursor_found = True
+                if cursor is not None and not cursor_found:
+                    nearest_cursor = (
+                        f"{run_id}:{nearest_sequence}"
+                        if nearest_sequence is not None
+                        else None
+                    )
+                    return ServerResponse.json(
+                        409,
+                        {
+                            "ok": False,
+                            "error": "CursorExpired",
+                            "runId": run_id,
+                            "requestedCursor": cursor,
+                            "nearestAvailableCursor": nearest_cursor,
+                            "lastCursor": f"{run_id}:{last_sequence}",
+                            "lastSequence": last_sequence,
+                            "runStatus": self._run_status_payload(
+                                run_id,
+                                events,
+                                include_ok=False,
+                            ),
+                        },
+                    )
+            except ValueError as error:
+                return ServerResponse.json(
+                    400,
+                    {
+                        "ok": False,
+                        "error": str(error),
+                    },
+                )
+
+            page_candidates: list[tuple[dict[str, object], str]] = []
+            for event in events:
+                metadata = event.get("metadata")
+                if not isinstance(metadata, Mapping):
+                    continue
+                sequence = metadata.get("sequence")
+                if (
+                    not isinstance(sequence, int)
+                    or isinstance(sequence, bool)
+                    or sequence < 0
+                    or sequence <= requested_sequence
+                    or not _event_visible_to_principal(
+                        event,
+                        auth_decision.principal,
+                    )
+                ):
+                    continue
+                page_candidates.append(
+                    (
+                        _response_json_object(event),
+                        f"{run_id}:{sequence}",
+                    )
+                )
+                if len(page_candidates) > self.max_event_page_events:
+                    break
+
+            stream_last_cursor = f"{run_id}:{last_sequence}"
+            if not page_candidates:
+                empty_stream_response = ServerResponse.json(
+                    200,
+                    {
+                        "ok": True,
+                        "runId": run_id,
+                        "replayFromCursor": cursor,
+                        "lastCursor": stream_last_cursor,
+                        "hasMore": False,
+                        "nextCursor": None,
+                        "stream": {
+                            "transport": "websocket",
+                            "status": "accepted",
+                            "cursor": stream_last_cursor,
+                            "eventCount": 0,
+                        },
+                        "events": [],
+                    },
+                )
+                if (
+                    len(empty_stream_response.body)
+                    <= self.max_event_page_bytes
+                ):
+                    return empty_stream_response
+                return ServerResponse.json(
+                    413,
+                    {
+                        "ok": False,
+                        "error": "StreamSnapshotTooLarge",
+                        "reasonCode": (
+                            "server.stream_snapshot_capacity_exhausted"
+                        ),
+                        "runId": run_id,
+                        "maxBytes": self.max_event_page_bytes,
+                        "requiredBytes": len(empty_stream_response.body),
+                        "nextEventCursor": None,
+                    },
+                )
+
+            prefix_event_bytes = 0
+            candidate_sizes: list[int] = []
+            available_count = min(
+                self.max_event_page_events,
+                len(page_candidates),
+            )
+            for candidate_index in range(available_count):
+                candidate_event, candidate_cursor = page_candidates[
+                    candidate_index
+                ]
+                encoded_candidate_event = json.dumps(
+                    candidate_event,
+                    separators=(",", ":"),
+                    sort_keys=True,
+                    allow_nan=False,
+                ).encode("utf-8")
+                prefix_event_bytes += len(encoded_candidate_event)
+                candidate_count = candidate_index + 1
+                candidate_has_more = candidate_count < len(
+                    page_candidates
+                )
+                candidate_envelope = ServerResponse.json(
+                    200,
+                    {
+                        "ok": True,
+                        "runId": run_id,
+                        "replayFromCursor": cursor,
+                        "lastCursor": stream_last_cursor,
+                        "hasMore": candidate_has_more,
+                        "nextCursor": (
+                            candidate_cursor
+                            if candidate_has_more
+                            else None
+                        ),
+                        "stream": {
+                            "transport": "websocket",
+                            "status": "accepted",
+                            "cursor": stream_last_cursor,
+                            "eventCount": candidate_count,
+                        },
+                        "events": [],
+                    },
+                )
+                candidate_sizes.append(
+                    len(candidate_envelope.body)
+                    + prefix_event_bytes
+                    + max(0, candidate_count - 1)
+                )
+
+            page_event_count = 0
+            for candidate_count, candidate_size in enumerate(
+                candidate_sizes,
+                start=1,
+            ):
+                if candidate_size <= self.max_event_page_bytes:
+                    page_event_count = candidate_count
+            if page_event_count == 0:
+                return ServerResponse.json(
+                    413,
+                    {
+                        "ok": False,
+                        "error": "StreamSnapshotTooLarge",
+                        "reasonCode": (
+                            "server.stream_snapshot_capacity_exhausted"
+                        ),
+                        "runId": run_id,
+                        "maxBytes": self.max_event_page_bytes,
+                        "requiredBytes": candidate_sizes[0],
+                        "nextEventCursor": page_candidates[0][1],
+                    },
+                )
+
+            stream_has_more = page_event_count < len(page_candidates)
+            stream_next_cursor = (
+                page_candidates[page_event_count - 1][1]
+                if stream_has_more
+                else None
+            )
             return ServerResponse.json(
                 200,
                 {
                     "ok": True,
                     "runId": run_id,
+                    "replayFromCursor": cursor,
+                    "lastCursor": stream_last_cursor,
+                    "hasMore": stream_has_more,
+                    "nextCursor": stream_next_cursor,
                     "stream": {
                         "transport": "websocket",
                         "status": "accepted",
-                        "cursor": f"{run_id}:{last_sequence}",
-                        "eventCount": len(visible_events),
+                        "cursor": stream_last_cursor,
+                        "eventCount": page_event_count,
                     },
-                    "events": visible_events,
+                    "events": [
+                        event
+                        for event, _ in page_candidates[:page_event_count]
+                    ],
                 },
             )
         if route.operation == "invoke_graph":
