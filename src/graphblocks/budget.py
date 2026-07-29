@@ -31,6 +31,7 @@ VALID_COMPLETION_RESERVE_PURPOSES = frozenset(get_args(CompletionReservePurpose)
 VALID_COMPLETION_RESERVE_STATUSES = frozenset(get_args(CompletionReserveStatus))
 _MAX_BUDGET_COUNTER = (1 << 64) - 1
 _SQLITE_BUDGET_BUSY_TIMEOUT_MS = 5_000
+_SQLITE_BUDGET_SCHEMA_VERSION = 1
 
 
 class _FrozenUsageAmounts(tuple[object, ...]):
@@ -2095,6 +2096,7 @@ class SQLiteBudgetLedger:
     path: str | Path
     _connection: sqlite3.Connection = field(init=False, repr=False)
     _ledger: InMemoryBudgetLedger = field(init=False, repr=False)
+    _generation: int = field(default=0, init=False, repr=False)
     _lock: RLock = field(default_factory=RLock, init=False, repr=False)
     _closed: bool = field(default=False, init=False, repr=False)
 
@@ -2115,15 +2117,18 @@ class SQLiteBudgetLedger:
             except sqlite3.OperationalError as error:
                 if "locked" not in str(error).casefold():
                     raise
-        self._connection.execute(
-            """
-            CREATE TABLE IF NOT EXISTS budget_ledger_snapshots (
-              snapshot_id TEXT PRIMARY KEY,
-              state_json TEXT NOT NULL
-            )
-            """
+        self._connection.create_function(
+            "graphblocks_budget_snapshot",
+            0,
+            self._compatibility_snapshot_json,
         )
-        self._ledger = self._load_snapshot()
+        try:
+            self._initialize_storage()
+            self._ledger, self._generation = self._load_normalized_state()
+        except Exception:
+            self._connection.close()
+            self._closed = True
+            raise
 
     @classmethod
     def in_memory(cls) -> SQLiteBudgetLedger:
@@ -2157,7 +2162,12 @@ class SQLiteBudgetLedger:
                 amounts,
                 policy_ref=policy_ref,
                 parent_budget_id=parent_budget_id,
-            )
+            ),
+            lambda ledger, _result: self._persist_account_row(
+                ledger,
+                budget_id,
+            ),
+            mutation_kind="allocate",
         )
 
     @_with_sqlite_budget_ledger_lock
@@ -2179,7 +2189,12 @@ class SQLiteBudgetLedger:
                 purpose=purpose,
                 expires_at=expires_at,
                 reservation_id=reservation_id,
-            )
+            ),
+            lambda ledger, result: self._persist_reservation_state(
+                ledger,
+                result.reservation_id,
+            ),
+            mutation_kind="reserve",
         )
 
     @_with_sqlite_budget_ledger_lock
@@ -2195,16 +2210,35 @@ class SQLiteBudgetLedger:
                 reservation_id,
                 actual_amounts,
                 max_overdraft=max_overdraft,
-            )
+            ),
+            lambda ledger, _result: self._persist_reservation_state(
+                ledger,
+                reservation_id,
+            ),
+            mutation_kind="commit",
         )
 
     @_with_sqlite_budget_ledger_lock
     def release(self, reservation_id: str) -> BudgetSettlement:
-        return self._mutate(lambda ledger: ledger.release(reservation_id))
+        return self._mutate(
+            lambda ledger: ledger.release(reservation_id),
+            lambda ledger, _result: self._persist_reservation_state(
+                ledger,
+                reservation_id,
+            ),
+            mutation_kind="release",
+        )
 
     @_with_sqlite_budget_ledger_lock
     def expire(self, reservation_id: str) -> BudgetSettlement:
-        return self._mutate(lambda ledger: ledger.expire(reservation_id))
+        return self._mutate(
+            lambda ledger: ledger.expire(reservation_id),
+            lambda ledger, _result: self._persist_reservation_state(
+                ledger,
+                reservation_id,
+            ),
+            mutation_kind="expire",
+        )
 
     @_with_sqlite_budget_ledger_lock
     def issue_permit(
@@ -2231,7 +2265,12 @@ class SQLiteBudgetLedger:
                 policy_snapshot_digest=policy_snapshot_digest,
                 expires_at=expires_at,
                 low_watermark=low_watermark,
-            )
+            ),
+            lambda ledger, _result: self._persist_permit_row(
+                ledger,
+                permit_id,
+            ),
+            mutation_kind="issue_permit",
         )
 
     @_with_sqlite_budget_ledger_lock
@@ -2251,7 +2290,13 @@ class SQLiteBudgetLedger:
                 actual_amounts,
                 now=now,
                 max_overdraft=max_overdraft,
-            )
+            ),
+            lambda ledger, _result: self._persist_reservation_state(
+                ledger,
+                reservation_id,
+                permit_id=permit_id,
+            ),
+            mutation_kind="commit_with_permit",
         )
 
     @_with_sqlite_budget_ledger_lock
@@ -2271,16 +2316,44 @@ class SQLiteBudgetLedger:
                 actual_amounts,
                 now=now,
                 max_overdraft=max_overdraft,
-            )
+            ),
+            lambda ledger, _result: self._persist_reservation_state(
+                ledger,
+                reservation_id,
+                permit_id=permit_id,
+            ),
+            mutation_kind="commit_with_permit",
         )
 
     @_with_sqlite_budget_ledger_lock
     def release_with_permit(self, permit_id: str, reservation_id: str, *, now: str) -> BudgetSettlement:
-        return self._mutate(lambda ledger: ledger.release_with_permit(permit_id, reservation_id, now=now))
+        return self._mutate(
+            lambda ledger: ledger.release_with_permit(
+                permit_id,
+                reservation_id,
+                now=now,
+            ),
+            lambda ledger, _result: self._persist_reservation_state(
+                ledger,
+                reservation_id,
+            ),
+            mutation_kind="release_with_permit",
+        )
 
     @_with_sqlite_budget_ledger_lock
     def release_with_permit_at(self, permit_id: str, reservation_id: str, *, now: str) -> BudgetSettlement:
-        return self._mutate(lambda ledger: ledger.release_with_permit_at(permit_id, reservation_id, now=now))
+        return self._mutate(
+            lambda ledger: ledger.release_with_permit_at(
+                permit_id,
+                reservation_id,
+                now=now,
+            ),
+            lambda ledger, _result: self._persist_reservation_state(
+                ledger,
+                reservation_id,
+            ),
+            mutation_kind="release_with_permit",
+        )
 
     @_with_sqlite_budget_ledger_lock
     def create_completion_reserve(
@@ -2301,12 +2374,17 @@ class SQLiteBudgetLedger:
                 amounts=amounts,
                 spendable_by=spendable_by,
                 expires_at=expires_at,
-            )
+            ),
+            lambda ledger, _result: self._persist_completion_reserve_state(
+                ledger,
+                reserve_id,
+            ),
+            mutation_kind="create_completion_reserve",
         )
 
     @_with_sqlite_budget_ledger_lock
     def completion_reserve(self, reserve_id: str) -> CompletionReserve:
-        self._ledger = self._load_snapshot()
+        self._refresh_for_read()
         return self._ledger.completion_reserve(reserve_id)
 
     @_with_sqlite_budget_ledger_lock
@@ -2322,60 +2400,827 @@ class SQLiteBudgetLedger:
                 reserve_id,
                 spender,
                 expires_at=expires_at,
-            )
+            ),
+            lambda ledger, result: self._persist_spent_completion_reserve(
+                ledger,
+                reserve_id,
+                result.reservation_id,
+            ),
+            mutation_kind="spend_completion_reserve",
         )
 
     @_with_sqlite_budget_ledger_lock
     def release_completion_reserve(self, reserve_id: str) -> CompletionReserve:
-        return self._mutate(lambda ledger: ledger.release_completion_reserve(reserve_id))
+        return self._mutate(
+            lambda ledger: ledger.release_completion_reserve(reserve_id),
+            lambda ledger, _result: self._persist_completion_reserve_state(
+                ledger,
+                reserve_id,
+            ),
+            mutation_kind="release_completion_reserve",
+        )
 
     @_with_sqlite_budget_ledger_lock
     def expire_completion_reserve(self, reserve_id: str) -> CompletionReserve:
-        return self._mutate(lambda ledger: ledger.expire_completion_reserve(reserve_id))
+        return self._mutate(
+            lambda ledger: ledger.expire_completion_reserve(reserve_id),
+            lambda ledger, _result: self._persist_completion_reserve_state(
+                ledger,
+                reserve_id,
+            ),
+            mutation_kind="expire_completion_reserve",
+        )
 
     @_with_sqlite_budget_ledger_lock
     def balance(self, budget_id: str) -> BudgetBalance:
-        self._ledger = self._load_snapshot()
+        self._refresh_for_read()
         return self._ledger.balance(budget_id)
 
-    def _load_snapshot(self) -> InMemoryBudgetLedger:
-        row = self._connection.execute(
-            "SELECT state_json FROM budget_ledger_snapshots WHERE snapshot_id = ?",
-            ("default",),
-        ).fetchone()
-        if row is None:
-            return InMemoryBudgetLedger()
-        snapshot = _loads_strict_json("state_json", row["state_json"])
+    def _initialize_storage(self) -> None:
+        self._connection.execute("BEGIN IMMEDIATE")
+        try:
+            legacy_snapshot_json: str | None = None
+            snapshot_object = self._connection.execute(
+                """
+                SELECT type
+                FROM sqlite_master
+                WHERE name = 'budget_ledger_snapshots'
+                """
+            ).fetchone()
+            if snapshot_object is not None:
+                snapshot_object_type = snapshot_object["type"]
+                if snapshot_object_type == "table":
+                    row = self._connection.execute(
+                        """
+                        SELECT state_json
+                        FROM budget_ledger_snapshots
+                        WHERE snapshot_id = ?
+                        """,
+                        ("default",),
+                    ).fetchone()
+                    if row is not None:
+                        legacy_snapshot_json = row["state_json"]
+                    existing_legacy = self._connection.execute(
+                        """
+                        SELECT 1
+                        FROM sqlite_master
+                        WHERE name = 'budget_ledger_legacy_snapshots'
+                        """
+                    ).fetchone()
+                    if existing_legacy is not None:
+                        raise ValueError(
+                            "budget ledger contains conflicting legacy snapshot tables"
+                        )
+                    self._connection.execute(
+                        """
+                        ALTER TABLE budget_ledger_snapshots
+                        RENAME TO budget_ledger_legacy_snapshots
+                        """
+                    )
+                elif snapshot_object_type != "view":
+                    raise ValueError(
+                        "budget ledger snapshot compatibility object has an invalid type"
+                    )
+
+            self._create_normalized_tables()
+            metadata = self._connection.execute(
+                """
+                SELECT schema_version, generation
+                FROM budget_ledger_metadata
+                WHERE singleton_id = 1
+                """
+            ).fetchone()
+            if metadata is None:
+                self._connection.execute(
+                    """
+                    INSERT INTO budget_ledger_metadata (
+                      singleton_id,
+                      schema_version,
+                      generation,
+                      reservation_counter,
+                      fencing_counter
+                    )
+                    VALUES (1, ?, 0, 0, 0)
+                    """,
+                    (_SQLITE_BUDGET_SCHEMA_VERSION,),
+                )
+                if legacy_snapshot_json is not None:
+                    legacy_ledger = self._decode_snapshot(
+                        legacy_snapshot_json
+                    )
+                    self._replace_normalized_entity_rows(legacy_ledger)
+                    self._update_metadata(
+                        expected_generation=0,
+                        next_generation=1,
+                        ledger=legacy_ledger,
+                    )
+                    self._append_mutation(
+                        1,
+                        "legacy_snapshot_migrated",
+                        {"snapshot_ids": ("default",)},
+                    )
+            else:
+                self._validate_metadata_row(metadata)
+                if legacy_snapshot_json is not None:
+                    raise ValueError(
+                        "budget ledger contains both normalized state and a legacy snapshot"
+                    )
+
+            self._apply_pending_snapshot_import()
+            self._create_snapshot_compatibility_view()
+            self._connection.commit()
+        except Exception:
+            self._connection.rollback()
+            raise
+
+    def _create_normalized_tables(self) -> None:
+        statements = (
+            """
+            CREATE TABLE IF NOT EXISTS budget_ledger_metadata (
+              singleton_id INTEGER PRIMARY KEY CHECK (singleton_id = 1),
+              schema_version INTEGER NOT NULL,
+              generation INTEGER NOT NULL,
+              reservation_counter INTEGER NOT NULL,
+              fencing_counter INTEGER NOT NULL
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS budget_ledger_accounts (
+              budget_id TEXT PRIMARY KEY,
+              account_json TEXT NOT NULL,
+              allocated_json TEXT NOT NULL,
+              reserved_json TEXT NOT NULL,
+              committed_json TEXT NOT NULL,
+              overdraft_json TEXT NOT NULL
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS budget_ledger_reservations (
+              reservation_id TEXT PRIMARY KEY,
+              reservation_json TEXT NOT NULL,
+              holds_json TEXT NOT NULL
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS budget_ledger_permits (
+              permit_id TEXT PRIMARY KEY,
+              permit_json TEXT NOT NULL,
+              spent_json TEXT NOT NULL
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS budget_ledger_completion_reserves (
+              reserve_id TEXT PRIMARY KEY,
+              reserve_json TEXT NOT NULL,
+              holds_json TEXT NOT NULL
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS budget_ledger_mutations (
+              generation INTEGER PRIMARY KEY,
+              mutation_kind TEXT NOT NULL,
+              touched_json TEXT NOT NULL
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS budget_ledger_snapshot_imports (
+              snapshot_id TEXT PRIMARY KEY,
+              state_json TEXT NOT NULL
+            )
+            """,
+        )
+        for statement in statements:
+            self._connection.execute(statement)
+
+    def _create_snapshot_compatibility_view(self) -> None:
+        self._connection.execute(
+            """
+            CREATE VIEW IF NOT EXISTS budget_ledger_snapshots AS
+            SELECT
+              'default' AS snapshot_id,
+              graphblocks_budget_snapshot() AS state_json
+            """
+        )
+        self._connection.execute(
+            """
+            CREATE TRIGGER IF NOT EXISTS budget_ledger_snapshot_update
+            INSTEAD OF UPDATE OF state_json ON budget_ledger_snapshots
+            BEGIN
+              INSERT OR REPLACE INTO budget_ledger_snapshot_imports (
+                snapshot_id,
+                state_json
+              )
+              VALUES (NEW.snapshot_id, NEW.state_json);
+            END
+            """
+        )
+
+    def _compatibility_snapshot_json(self) -> str:
+        ledger = getattr(self, "_ledger", None)
+        if ledger is None:
+            ledger = InMemoryBudgetLedger()
+        return _dumps_strict_json(
+            "state_json",
+            _budget_ledger_to_snapshot(ledger),
+        )
+
+    @staticmethod
+    def _decode_snapshot(state_json: object) -> InMemoryBudgetLedger:
+        if not isinstance(state_json, str):
+            raise ValueError("budget ledger state_json must be a string")
+        snapshot = _loads_strict_json("state_json", state_json)
         if not isinstance(snapshot, dict):
             raise ValueError("budget ledger state_json must decode to an object")
         return _budget_ledger_from_snapshot(snapshot)
 
-    def _save_snapshot(self, ledger: InMemoryBudgetLedger) -> None:
+    @staticmethod
+    def _load_json_field(field_name: str, value: object) -> object:
+        if not isinstance(value, str):
+            raise ValueError(f"budget ledger {field_name} must be a string")
+        return _loads_strict_json(field_name, value)
+
+    @staticmethod
+    def _validate_metadata_row(row: sqlite3.Row) -> tuple[int, int, int]:
+        schema_version = row["schema_version"]
+        generation = row["generation"]
+        metadata_columns = frozenset(row.keys())
+        reservation_counter = (
+            row["reservation_counter"]
+            if "reservation_counter" in metadata_columns
+            else 0
+        )
+        fencing_counter = (
+            row["fencing_counter"]
+            if "fencing_counter" in metadata_columns
+            else 0
+        )
+        if (
+            not isinstance(schema_version, int)
+            or schema_version != _SQLITE_BUDGET_SCHEMA_VERSION
+        ):
+            raise ValueError(
+                "budget ledger normalized schema version is unsupported"
+            )
+        for field_name, value in (
+            ("generation", generation),
+            ("reservation_counter", reservation_counter),
+            ("fencing_counter", fencing_counter),
+        ):
+            if (
+                not isinstance(value, int)
+                or not 0 <= value <= _MAX_BUDGET_COUNTER
+            ):
+                raise ValueError(
+                    f"budget ledger normalized {field_name} must be a "
+                    "non-negative integer"
+                )
+        return generation, reservation_counter, fencing_counter
+
+    def _metadata_row(self) -> sqlite3.Row:
+        row = self._connection.execute(
+            """
+            SELECT
+              schema_version,
+              generation,
+              reservation_counter,
+              fencing_counter
+            FROM budget_ledger_metadata
+            WHERE singleton_id = 1
+            """
+        ).fetchone()
+        if row is None:
+            raise ValueError("budget ledger normalized metadata is missing")
+        return cast(sqlite3.Row, row)
+
+    def _load_normalized_state(self) -> tuple[InMemoryBudgetLedger, int]:
+        metadata = self._metadata_row()
+        generation, reservation_counter, fencing_counter = (
+            self._validate_metadata_row(metadata)
+        )
+        ledger = InMemoryBudgetLedger()
+        for row in self._connection.execute(
+            """
+            SELECT
+              budget_id,
+              account_json,
+              allocated_json,
+              reserved_json,
+              committed_json,
+              overdraft_json
+            FROM budget_ledger_accounts
+            ORDER BY budget_id
+            """
+        ):
+            budget_id = row["budget_id"]
+            account_json = self._load_json_field(
+                "account_json",
+                row["account_json"],
+            )
+            if not isinstance(account_json, dict):
+                raise ValueError(
+                    "budget ledger account_json must decode to an object"
+                )
+            account = _account_from_json(account_json)
+            if account.budget_id != budget_id:
+                raise ValueError(
+                    "budget ledger account row key must match budget_id"
+                )
+            ledger._accounts[budget_id] = account
+            ledger._allocated[budget_id] = _amount_map_from_json(
+                self._load_json_field(
+                    "allocated_json",
+                    row["allocated_json"],
+                )
+            )
+            ledger._reserved[budget_id] = _amount_map_from_json(
+                self._load_json_field(
+                    "reserved_json",
+                    row["reserved_json"],
+                )
+            )
+            ledger._committed[budget_id] = _amount_map_from_json(
+                self._load_json_field(
+                    "committed_json",
+                    row["committed_json"],
+                )
+            )
+            ledger._overdraft[budget_id] = _amount_map_from_json(
+                self._load_json_field(
+                    "overdraft_json",
+                    row["overdraft_json"],
+                )
+            )
+
+        for row in self._connection.execute(
+            """
+            SELECT reservation_id, reservation_json, holds_json
+            FROM budget_ledger_reservations
+            ORDER BY reservation_id
+            """
+        ):
+            reservation_id = row["reservation_id"]
+            reservation_json = self._load_json_field(
+                "reservation_json",
+                row["reservation_json"],
+            )
+            if not isinstance(reservation_json, dict):
+                raise ValueError(
+                    "budget ledger reservation_json must decode to an object"
+                )
+            reservation = _reservation_from_json(reservation_json)
+            if reservation.reservation_id != reservation_id:
+                raise ValueError(
+                    "budget ledger reservation row key must match reservation_id"
+                )
+            holds = self._load_json_field("holds_json", row["holds_json"])
+            if not isinstance(holds, list):
+                raise ValueError(
+                    "budget ledger reservation holds_json must decode to an array"
+                )
+            ledger._reservations[reservation_id] = reservation
+            ledger._reservation_holds[reservation_id] = (
+                _validate_string_tuple(
+                    "budget ledger reservation",
+                    "holds",
+                    holds,
+                )
+            )
+
+        for row in self._connection.execute(
+            """
+            SELECT permit_id, permit_json, spent_json
+            FROM budget_ledger_permits
+            ORDER BY permit_id
+            """
+        ):
+            permit_id = row["permit_id"]
+            permit_json = self._load_json_field(
+                "permit_json",
+                row["permit_json"],
+            )
+            if not isinstance(permit_json, dict):
+                raise ValueError(
+                    "budget ledger permit_json must decode to an object"
+                )
+            permit = _permit_from_json(permit_json)
+            if permit.permit_id != permit_id:
+                raise ValueError(
+                    "budget ledger permit row key must match permit_id"
+                )
+            ledger._permits[permit_id] = permit
+            ledger._permit_spent[permit_id] = _amount_map_from_json(
+                self._load_json_field(
+                    "spent_json",
+                    row["spent_json"],
+                )
+            )
+
+        for row in self._connection.execute(
+            """
+            SELECT reserve_id, reserve_json, holds_json
+            FROM budget_ledger_completion_reserves
+            ORDER BY reserve_id
+            """
+        ):
+            reserve_id = row["reserve_id"]
+            reserve_json = self._load_json_field(
+                "reserve_json",
+                row["reserve_json"],
+            )
+            if not isinstance(reserve_json, dict):
+                raise ValueError(
+                    "budget ledger reserve_json must decode to an object"
+                )
+            reserve = _completion_reserve_from_json(reserve_json)
+            if reserve.reserve_id != reserve_id:
+                raise ValueError(
+                    "budget ledger completion reserve row key must match reserve_id"
+                )
+            holds = self._load_json_field("holds_json", row["holds_json"])
+            if not isinstance(holds, list):
+                raise ValueError(
+                    "budget ledger completion reserve holds_json must decode "
+                    "to an array"
+                )
+            ledger._completion_reserves[reserve_id] = reserve
+            ledger._completion_reserve_holds[reserve_id] = (
+                _validate_string_tuple(
+                    "budget ledger completion reserve",
+                    "holds",
+                    holds,
+                )
+            )
+
+        ledger._reservation_counter = reservation_counter
+        ledger._fencing_counter = fencing_counter
+        _validate_budget_ledger_snapshot_consistency(ledger)
+        return ledger, generation
+
+    def _replace_normalized_entity_rows(
+        self,
+        ledger: InMemoryBudgetLedger,
+    ) -> None:
+        for table_name in (
+            "budget_ledger_accounts",
+            "budget_ledger_reservations",
+            "budget_ledger_permits",
+            "budget_ledger_completion_reserves",
+        ):
+            self._connection.execute(f"DELETE FROM {table_name}")
+        for budget_id in sorted(ledger._accounts):
+            self._persist_account_row(ledger, budget_id)
+        for reservation_id in sorted(ledger._reservations):
+            self._persist_reservation_row(ledger, reservation_id)
+        for permit_id in sorted(ledger._permits):
+            self._persist_permit_row(ledger, permit_id)
+        for reserve_id in sorted(ledger._completion_reserves):
+            self._persist_completion_reserve_row(ledger, reserve_id)
+
+    def _persist_account_row(
+        self,
+        ledger: InMemoryBudgetLedger,
+        budget_id: str,
+    ) -> dict[str, tuple[str, ...]]:
+        account = ledger._accounts[budget_id]
         self._connection.execute(
             """
-            INSERT INTO budget_ledger_snapshots (snapshot_id, state_json)
-            VALUES (?, ?)
-            ON CONFLICT(snapshot_id) DO UPDATE SET state_json = excluded.state_json
+            INSERT INTO budget_ledger_accounts (
+              budget_id,
+              account_json,
+              allocated_json,
+              reserved_json,
+              committed_json,
+              overdraft_json
+            )
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(budget_id) DO UPDATE SET
+              account_json = excluded.account_json,
+              allocated_json = excluded.allocated_json,
+              reserved_json = excluded.reserved_json,
+              committed_json = excluded.committed_json,
+              overdraft_json = excluded.overdraft_json
             """,
             (
-                "default",
+                budget_id,
                 _dumps_strict_json(
-                    "state_json",
-                    _budget_ledger_to_snapshot(ledger),
+                    "account_json",
+                    _account_to_json(account),
+                ),
+                _dumps_strict_json(
+                    "allocated_json",
+                    _amount_map_to_json(ledger._allocated[budget_id]),
+                ),
+                _dumps_strict_json(
+                    "reserved_json",
+                    _amount_map_to_json(ledger._reserved[budget_id]),
+                ),
+                _dumps_strict_json(
+                    "committed_json",
+                    _amount_map_to_json(ledger._committed[budget_id]),
+                ),
+                _dumps_strict_json(
+                    "overdraft_json",
+                    _amount_map_to_json(ledger._overdraft[budget_id]),
+                ),
+            ),
+        )
+        return {"account_ids": (budget_id,)}
+
+    def _persist_reservation_row(
+        self,
+        ledger: InMemoryBudgetLedger,
+        reservation_id: str,
+    ) -> None:
+        self._connection.execute(
+            """
+            INSERT INTO budget_ledger_reservations (
+              reservation_id,
+              reservation_json,
+              holds_json
+            )
+            VALUES (?, ?, ?)
+            ON CONFLICT(reservation_id) DO UPDATE SET
+              reservation_json = excluded.reservation_json,
+              holds_json = excluded.holds_json
+            """,
+            (
+                reservation_id,
+                _dumps_strict_json(
+                    "reservation_json",
+                    _reservation_to_json(
+                        ledger._reservations[reservation_id]
+                    ),
+                ),
+                _dumps_strict_json(
+                    "holds_json",
+                    list(ledger._reservation_holds[reservation_id]),
                 ),
             ),
         )
 
-    def _mutate(self, action: Callable[[InMemoryBudgetLedger], BudgetLedgerResult]) -> BudgetLedgerResult:
-        self._connection.execute("BEGIN IMMEDIATE")
+    def _persist_permit_row(
+        self,
+        ledger: InMemoryBudgetLedger,
+        permit_id: str,
+    ) -> dict[str, tuple[str, ...]]:
+        self._connection.execute(
+            """
+            INSERT INTO budget_ledger_permits (
+              permit_id,
+              permit_json,
+              spent_json
+            )
+            VALUES (?, ?, ?)
+            ON CONFLICT(permit_id) DO UPDATE SET
+              permit_json = excluded.permit_json,
+              spent_json = excluded.spent_json
+            """,
+            (
+                permit_id,
+                _dumps_strict_json(
+                    "permit_json",
+                    _permit_to_json(ledger._permits[permit_id]),
+                ),
+                _dumps_strict_json(
+                    "spent_json",
+                    _amount_map_to_json(ledger._permit_spent[permit_id]),
+                ),
+            ),
+        )
+        return {"permit_ids": (permit_id,)}
+
+    def _persist_completion_reserve_row(
+        self,
+        ledger: InMemoryBudgetLedger,
+        reserve_id: str,
+    ) -> None:
+        self._connection.execute(
+            """
+            INSERT INTO budget_ledger_completion_reserves (
+              reserve_id,
+              reserve_json,
+              holds_json
+            )
+            VALUES (?, ?, ?)
+            ON CONFLICT(reserve_id) DO UPDATE SET
+              reserve_json = excluded.reserve_json,
+              holds_json = excluded.holds_json
+            """,
+            (
+                reserve_id,
+                _dumps_strict_json(
+                    "reserve_json",
+                    _completion_reserve_to_json(
+                        ledger._completion_reserves[reserve_id]
+                    ),
+                ),
+                _dumps_strict_json(
+                    "holds_json",
+                    list(ledger._completion_reserve_holds[reserve_id]),
+                ),
+            ),
+        )
+
+    def _persist_reservation_state(
+        self,
+        ledger: InMemoryBudgetLedger,
+        reservation_id: str,
+        *,
+        permit_id: str | None = None,
+    ) -> dict[str, tuple[str, ...]]:
+        account_ids = ledger._reservation_holds[reservation_id]
+        for budget_id in account_ids:
+            self._persist_account_row(ledger, budget_id)
+        self._persist_reservation_row(ledger, reservation_id)
+        touched = {
+            "account_ids": account_ids,
+            "reservation_ids": (reservation_id,),
+        }
+        if permit_id is not None:
+            self._persist_permit_row(ledger, permit_id)
+            touched["permit_ids"] = (permit_id,)
+        return touched
+
+    def _persist_completion_reserve_state(
+        self,
+        ledger: InMemoryBudgetLedger,
+        reserve_id: str,
+    ) -> dict[str, tuple[str, ...]]:
+        account_ids = ledger._completion_reserve_holds[reserve_id]
+        for budget_id in account_ids:
+            self._persist_account_row(ledger, budget_id)
+        self._persist_completion_reserve_row(ledger, reserve_id)
+        return {
+            "account_ids": account_ids,
+            "completion_reserve_ids": (reserve_id,),
+        }
+
+    def _persist_spent_completion_reserve(
+        self,
+        ledger: InMemoryBudgetLedger,
+        reserve_id: str,
+        reservation_id: str,
+    ) -> dict[str, tuple[str, ...]]:
+        self._persist_completion_reserve_row(ledger, reserve_id)
+        self._persist_reservation_row(ledger, reservation_id)
+        return {
+            "completion_reserve_ids": (reserve_id,),
+            "reservation_ids": (reservation_id,),
+        }
+
+    def _update_metadata(
+        self,
+        *,
+        expected_generation: int,
+        next_generation: int,
+        ledger: InMemoryBudgetLedger,
+    ) -> None:
+        cursor = self._connection.execute(
+            """
+            UPDATE budget_ledger_metadata
+            SET
+              generation = ?,
+              reservation_counter = ?,
+              fencing_counter = ?
+            WHERE singleton_id = 1
+              AND generation = ?
+            """,
+            (
+                next_generation,
+                ledger._reservation_counter,
+                ledger._fencing_counter,
+                expected_generation,
+            ),
+        )
+        if cursor.rowcount != 1:
+            raise BudgetConflictError(
+                "budget ledger generation changed during mutation"
+            )
+
+    def _append_mutation(
+        self,
+        generation: int,
+        mutation_kind: str,
+        touched: Mapping[str, tuple[str, ...]],
+    ) -> None:
+        self._connection.execute(
+            """
+            INSERT INTO budget_ledger_mutations (
+              generation,
+              mutation_kind,
+              touched_json
+            )
+            VALUES (?, ?, ?)
+            """,
+            (
+                generation,
+                mutation_kind,
+                _dumps_strict_json(
+                    "touched_json",
+                    {
+                        key: list(values)
+                        for key, values in sorted(touched.items())
+                    },
+                ),
+            ),
+        )
+
+    def _apply_pending_snapshot_import(self) -> bool:
+        row = self._connection.execute(
+            """
+            SELECT state_json
+            FROM budget_ledger_snapshot_imports
+            WHERE snapshot_id = ?
+            """,
+            ("default",),
+        ).fetchone()
+        if row is None:
+            return False
+        ledger = self._decode_snapshot(row["state_json"])
+        metadata = self._metadata_row()
+        generation, _reservation_counter, _fencing_counter = (
+            self._validate_metadata_row(metadata)
+        )
+        next_generation = _increment_budget_counter(
+            "SQLite generation",
+            generation,
+        )
+        self._replace_normalized_entity_rows(ledger)
+        self._update_metadata(
+            expected_generation=generation,
+            next_generation=next_generation,
+            ledger=ledger,
+        )
+        self._append_mutation(
+            next_generation,
+            "compatibility_snapshot_imported",
+            {"snapshot_ids": ("default",)},
+        )
+        self._connection.execute(
+            """
+            DELETE FROM budget_ledger_snapshot_imports
+            WHERE snapshot_id = ?
+            """,
+            ("default",),
+        )
+        return True
+
+    def _refresh_in_transaction(self) -> None:
+        imported = self._apply_pending_snapshot_import()
+        metadata = self._metadata_row()
+        generation, _reservation_counter, _fencing_counter = (
+            self._validate_metadata_row(metadata)
+        )
+        if imported or generation != self._generation:
+            self._ledger, self._generation = (
+                self._load_normalized_state()
+            )
+
+    def _refresh_for_read(self) -> None:
+        self._connection.execute("BEGIN")
         try:
-            self._ledger = self._load_snapshot()
-            result = action(self._ledger)
-            self._save_snapshot(self._ledger)
+            self._refresh_in_transaction()
             self._connection.commit()
         except Exception:
             self._connection.rollback()
-            self._ledger = self._load_snapshot()
+            raise
+
+    def _mutate(
+        self,
+        action: Callable[[InMemoryBudgetLedger], BudgetLedgerResult],
+        persist: Callable[
+            [InMemoryBudgetLedger, BudgetLedgerResult],
+            Mapping[str, tuple[str, ...]],
+        ],
+        *,
+        mutation_kind: str,
+    ) -> BudgetLedgerResult:
+        self._connection.execute("BEGIN IMMEDIATE")
+        try:
+            self._refresh_in_transaction()
+            result = action(self._ledger)
+            touched = persist(self._ledger, result)
+            next_generation = _increment_budget_counter(
+                "SQLite generation",
+                self._generation,
+            )
+            self._update_metadata(
+                expected_generation=self._generation,
+                next_generation=next_generation,
+                ledger=self._ledger,
+            )
+            self._append_mutation(
+                next_generation,
+                mutation_kind,
+                touched,
+            )
+            self._connection.commit()
+            self._generation = next_generation
+        except Exception:
+            self._connection.rollback()
+            self._ledger, self._generation = (
+                self._load_normalized_state()
+            )
             raise
         return result
 
