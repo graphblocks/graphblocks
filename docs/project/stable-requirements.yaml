@@ -72,6 +72,7 @@ profiles:
           - GB-GCR-ENDPOINTS-001
           - GB-GCR-PLAN-001
           - GB-GCR-SINGLE-WRITER-001
+          - GB-GCR-LANGUAGE-BOUNDARY-002
         implementations:
           normative:
             - crates/graphblocks-compiler/src/compiler.rs
@@ -81,6 +82,7 @@ profiles:
             - packages/graphblocks-runtime/src/graphblocks_runtime/__init__.py
           pythonFacadeAndReference:
             - src/graphblocks/canonical.py
+            - src/graphblocks/cli.py
             - src/graphblocks/compiler.py
         schemas:
           - schemas/graphblocks.ai/v1/graph.schema.json
@@ -91,6 +93,8 @@ profiles:
           - tests/test_compiler_validation.py
           - tests/test_compiler_differential.py
           - tests/test_compiler_native_bridge.py
+          - tests/test_cli.py
+          - compatibility/stable-cli-contracts.json
           - tck/compiler/cases.json
       - id: plugin-manifest-validation
         clauses:

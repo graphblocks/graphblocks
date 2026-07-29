@@ -219,6 +219,8 @@ diagnostics, hashes, journal order, cancellation, and terminal outcome. See
 [ADR-0001](../decisions/0001-rust-normative-authority.md) and
 [language support](../conformance/language-support.md).
 
+<a id="GB-GCR-LANGUAGE-BOUNDARY-002"></a>
+
 Compiler-backed CLI commands MUST translate an unavailable native compiler to
 `GB1056` and exit with status 1 without emitting a traceback. Commands with a
 machine-readable output contract MUST return that diagnostic in their JSON
