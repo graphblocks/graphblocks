@@ -41,6 +41,20 @@ class AcceptedRunConflictError(AcceptedRunStorageError):
     """Base error for a rejected state, identity, or idempotency conflict."""
 
 
+class AcceptedRunIdConflictError(AcceptedRunConflictError):
+    def __init__(self, tenant_id: str, run_id: str, reason: str) -> None:
+        super().__init__(reason)
+        self.tenant_id = tenant_id
+        self.run_id = run_id
+
+
+class AcceptedRunNotFoundError(AcceptedRunStorageError):
+    def __init__(self, tenant_id: str, run_id: str) -> None:
+        super().__init__(f"accepted run {run_id!r} was not found in tenant")
+        self.tenant_id = tenant_id
+        self.run_id = run_id
+
+
 class AdmissionIdempotencyConflictError(AcceptedRunConflictError):
     def __init__(self, identity: AdmissionIdentity) -> None:
         super().__init__(

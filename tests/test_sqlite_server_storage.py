@@ -70,7 +70,10 @@ def test_sqlite_accepted_run_database_serializes_concurrent_initialization(
 
     def initialize(_: int):
         starting.wait()
-        return SQLiteAcceptedRunDatabase(path).schema_info()
+        return SQLiteAcceptedRunDatabase(
+            path,
+            busy_timeout_ms=250,
+        ).schema_info()
 
     with ThreadPoolExecutor(max_workers=2) as executor:
         infos = tuple(executor.map(initialize, range(2)))
