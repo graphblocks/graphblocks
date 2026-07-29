@@ -70,6 +70,7 @@ modules:
     symbols:
       - graphblocks.Plan
       - graphblocks.Plan.to_dict
+      - graphblocks.NativeCompilerUnavailableError
       - graphblocks.compile_graph
 
   - module: graphblocks.runtime

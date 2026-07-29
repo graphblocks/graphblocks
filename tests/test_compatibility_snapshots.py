@@ -295,6 +295,49 @@ def test_stable_callable_names_do_not_count_as_public_types(
         )
 
 
+def test_stable_exception_snapshot_binds_direct_base_classes(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    class StableError(RuntimeError):
+        pass
+
+    monkeypatch.setattr(graphblocks, "StableError", StableError, raising=False)
+    policy_path = tmp_path / "exception-surface.yaml"
+    policy_path.write_text(
+        yaml.safe_dump(
+            {
+                "snapshotVersion": 1,
+                "targetRelease": "1.0.0",
+                "readiness": "candidate",
+                "symbols": [
+                    {
+                        "path": "graphblocks.StableError",
+                        "profile": "GB-C0-SCHEMA",
+                        "kind": "exception",
+                    }
+                ],
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+
+    snapshot = compatibility_module._build_python_snapshot(
+        policy_path,
+        package="graphblocks",
+    )
+
+    assert snapshot["symbols"] == [
+        {
+            "path": "graphblocks.StableError",
+            "profile": "GB-C0-SCHEMA",
+            "kind": "exception",
+            "bases": ["builtins.RuntimeError"],
+        }
+    ]
+
+
 def test_dataclass_snapshot_captures_behavioral_contracts() -> None:
     class ContractBase:
         __slots__ = ()
@@ -396,7 +439,7 @@ def test_stable_python_surface_is_deliberate_and_profile_bounded() -> None:
     assert len(snapshot["symbols"]) < 55
     assert all(entry["path"].startswith("graphblocks.") for entry in snapshot["symbols"])
     assert all(
-        "signature" in entry or entry["kind"] == "type-alias"
+        "signature" in entry or entry["kind"] in {"exception", "type-alias"}
         for entry in snapshot["symbols"]
     )
     stable_type_names = {
@@ -470,6 +513,26 @@ def test_stable_cli_snapshot_covers_success_failure_json_and_exit_codes() -> Non
         and case["exitCode"] == 0
         and case["stdoutJson"]["ok"] is True
         for case in unknown_opt_in_cases.values()
+    )
+    native_unavailable_cases = {
+        case["id"]: case
+        for case in snapshot["cases"]
+        if case["id"]
+        in {
+            "validate-native-compiler-unavailable",
+            "plan-native-compiler-unavailable",
+        }
+    }
+    assert set(native_unavailable_cases) == {
+        "validate-native-compiler-unavailable",
+        "plan-native-compiler-unavailable",
+    }
+    assert all(
+        case["nativeCompiler"] == "unavailable"
+        and case["exitCode"] == 1
+        and case["stdoutJson"]["ok"] is False
+        and case["stdoutJson"]["diagnostics"][0]["code"] == "GB1056"
+        for case in native_unavailable_cases.values()
     )
 
 

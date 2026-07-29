@@ -41,6 +41,7 @@ symbols:
   - {path: graphblocks.BlockCatalog.get, profile: GB-C0-SCHEMA}
   - {path: graphblocks.Plan, profile: GB-C0-SCHEMA}
   - {path: graphblocks.Plan.to_dict, profile: GB-C0-SCHEMA}
+  - {path: graphblocks.NativeCompilerUnavailableError, profile: GB-C0-SCHEMA, kind: exception}
   - {path: graphblocks.compile_graph, profile: GB-C0-SCHEMA}
 
   # C1 deterministic in-process execution and its observable result/journal.

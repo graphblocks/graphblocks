@@ -192,6 +192,57 @@ def test_plan_cli_prints_hash(tmp_path, capsys) -> None:
     assert '"hash": "sha256:' in capsys.readouterr().out
 
 
+@pytest.mark.parametrize(
+    "argv",
+    (
+        ["validate", "--json"],
+        ["plan"],
+    ),
+)
+def test_compiler_backed_cli_fails_closed_without_native_compiler(
+    argv,
+    tmp_path,
+    capsys,
+    monkeypatch,
+) -> None:
+    graph = {
+        "apiVersion": "graphblocks.ai/v1",
+        "kind": "Graph",
+        "metadata": {"name": "native-unavailable"},
+        "spec": {"nodes": {}},
+    }
+    path = tmp_path / "graph.yaml"
+    path.write_text(yaml.safe_dump(graph), encoding="utf-8")
+    monkeypatch.setitem(
+        sys.modules,
+        "graphblocks_runtime",
+        SimpleNamespace(
+            native_extension_available=lambda: False,
+            native_extension_status=lambda: {"error": "extension missing"},
+        ),
+    )
+
+    arguments = [argv[0], str(path), *argv[1:]]
+    assert main(arguments) == 1
+
+    captured = capsys.readouterr()
+    assert captured.err == ""
+    assert json.loads(captured.out) == {
+        "ok": False,
+        "diagnostics": [
+            {
+                "code": "GB1056",
+                "message": (
+                    "normative native GraphBlocks compiler is unavailable; "
+                    "install graphblocks[runtime]"
+                ),
+                "path": "$.compiler",
+                "severity": "error",
+            }
+        ],
+    }
+
+
 def test_validate_cli_rejects_unknown_blocks_without_explicit_discovery_mode(
     tmp_path, capsys
 ) -> None:

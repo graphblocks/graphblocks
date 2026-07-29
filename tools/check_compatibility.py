@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import argparse
 import ast
-from contextlib import redirect_stderr, redirect_stdout
+from contextlib import nullcontext, redirect_stderr, redirect_stdout
 import dataclasses
 import difflib
 import importlib
@@ -14,7 +14,9 @@ from io import StringIO
 import json
 from pathlib import Path
 import sys
+from types import SimpleNamespace
 from typing import Any
+from unittest.mock import patch
 
 import yaml
 
@@ -311,6 +313,24 @@ def _build_python_snapshot(policy_path: Path, *, package: str) -> dict[str, obje
                 }
             )
             continue
+        if declared_kind == "exception":
+            if not inspect.isclass(value) or not issubclass(value, BaseException):
+                raise ValueError(
+                    f"stable Python exception {path!r} must resolve to an "
+                    "exception class"
+                )
+            symbols.append(
+                {
+                    "path": path,
+                    "profile": profile,
+                    "kind": "exception",
+                    "bases": [
+                        f"{base.__module__}.{base.__qualname__}"
+                        for base in value.__bases__
+                    ],
+                }
+            )
+            continue
         if declared_kind != "callable":
             raise ValueError(
                 f"stable Python symbol {path!r} has unsupported kind {declared_kind!r}"
@@ -393,16 +413,39 @@ def build_cli_snapshot() -> dict[str, object]:
         command = entry.get("command")
         profile = entry.get("profile")
         argv = entry.get("argv")
+        native_compiler = entry.get("nativeCompiler")
         if not all(isinstance(value, str) for value in (case_id, command, profile)):
             raise ValueError("stable CLI cases require string id, command, and profile")
         if command not in {"validate", "plan", "run"}:
             raise ValueError(f"unsupported stable CLI command: {command!r}")
         if not isinstance(argv, list) or not argv or argv[0] != command:
             raise ValueError(f"stable CLI case {case_id!r} argv must start with its command")
+        if native_compiler not in {None, "unavailable"}:
+            raise ValueError(
+                f"stable CLI case {case_id!r} has unsupported nativeCompiler "
+                f"condition {native_compiler!r}"
+            )
 
         stdout = StringIO()
         stderr = StringIO()
-        with redirect_stdout(stdout), redirect_stderr(stderr):
+        native_compiler_context = nullcontext()
+        if native_compiler == "unavailable":
+            native_compiler_context = patch.dict(
+                sys.modules,
+                {
+                    "graphblocks_runtime": SimpleNamespace(
+                        native_extension_available=lambda: False,
+                        native_extension_status=lambda: {
+                            "error": "compatibility fixture unavailable"
+                        },
+                    )
+                },
+            )
+        with (
+            native_compiler_context,
+            redirect_stdout(stdout),
+            redirect_stderr(stderr),
+        ):
             exit_code = main(_resolve_cli_argv(argv))
         raw_stdout = stdout.getvalue()
         try:
@@ -413,17 +456,18 @@ def build_cli_snapshot() -> dict[str, object]:
             ) from error
         if not isinstance(exit_code, int) or isinstance(exit_code, bool):
             raise ValueError(f"stable CLI case {case_id!r} returned a non-integer exit code")
-        cases.append(
-            {
-                "id": case_id,
-                "profile": profile,
-                "command": command,
-                "argv": argv,
-                "exitCode": exit_code,
-                "stdoutJson": stdout_json,
-                "stderr": stderr.getvalue(),
-            }
-        )
+        case_contract = {
+            "id": case_id,
+            "profile": profile,
+            "command": command,
+            "argv": argv,
+            "exitCode": exit_code,
+            "stdoutJson": stdout_json,
+            "stderr": stderr.getvalue(),
+        }
+        if native_compiler is not None:
+            case_contract["nativeCompiler"] = native_compiler
+        cases.append(case_contract)
         case_ids.append(case_id)
 
     if len(case_ids) != len(set(case_ids)):

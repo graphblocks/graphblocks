@@ -11,6 +11,11 @@ cases:
     profile: GB-C0-SCHEMA
     command: validate
     argv: [validate, fixtures/cli-success.yaml, --json]
+  - id: validate-native-compiler-unavailable
+    profile: GB-C0-SCHEMA
+    command: validate
+    nativeCompiler: unavailable
+    argv: [validate, fixtures/cli-success.yaml, --json]
   - id: validate-unknown-block
     profile: GB-C0-SCHEMA
     command: validate
@@ -22,6 +27,11 @@ cases:
   - id: plan-success
     profile: GB-C0-SCHEMA
     command: plan
+    argv: [plan, fixtures/cli-success.yaml]
+  - id: plan-native-compiler-unavailable
+    profile: GB-C0-SCHEMA
+    command: plan
+    nativeCompiler: unavailable
     argv: [plan, fixtures/cli-success.yaml]
   - id: plan-expand-success
     profile: GB-C0-SCHEMA

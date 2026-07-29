@@ -90,6 +90,7 @@ codes:
   - {code: GB1053, status: active, tier: stable, owner: tools, profile: GB-C1-LOCAL-RUNTIME, defaultSeverity: error, meaning: Parallel state-changing tools lack a serialization key.}
   - {code: GB1054, status: active, tier: stable, owner: output-policy, profile: GB-C1-LOCAL-RUNTIME, defaultSeverity: error, meaning: Holdback bounds are configured for a delivery mode that does not hold output back.}
   - {code: GB1055, status: candidate, tier: preview, owner: remote-boundary, profile: GB-C4-PRODUCTION, defaultSeverity: error, meaning: A remote inline payload exceeds its configured size boundary.}
+  - {code: GB1056, status: active, tier: stable, owner: compiler, profile: GB-C0-SCHEMA, defaultSeverity: error, meaning: The normative native compiler is unavailable to a compiler-backed command.}
 
   - {code: GB2001, status: active, tier: stable, owner: plugins, profile: GB-C0-SCHEMA, defaultSeverity: error, meaning: A plugin manifest is not a mapping.}
   - {code: GB2002, status: active, tier: stable, owner: plugins, profile: GB-C0-SCHEMA, defaultSeverity: error, meaning: A plugin manifest apiVersion is unsupported.}

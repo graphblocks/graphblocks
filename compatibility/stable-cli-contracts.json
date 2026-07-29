@@ -19,6 +19,30 @@
     {
       "argv": [
         "validate",
+        "fixtures/cli-success.yaml",
+        "--json"
+      ],
+      "command": "validate",
+      "exitCode": 1,
+      "id": "validate-native-compiler-unavailable",
+      "nativeCompiler": "unavailable",
+      "profile": "GB-C0-SCHEMA",
+      "stderr": "",
+      "stdoutJson": {
+        "diagnostics": [
+          {
+            "code": "GB1056",
+            "message": "normative native GraphBlocks compiler is unavailable; install graphblocks[runtime]",
+            "path": "$.compiler",
+            "severity": "error"
+          }
+        ],
+        "ok": false
+      }
+    },
+    {
+      "argv": [
+        "validate",
         "fixtures/cli-unknown-block.yaml",
         "--json"
       ],
@@ -72,6 +96,29 @@
         "hash": "sha256:1a1a04e66fcd2ae003b42fbe82275edf65e8b2e46a276a052e99489a5cff8340",
         "ok": true,
         "target": "local-python"
+      }
+    },
+    {
+      "argv": [
+        "plan",
+        "fixtures/cli-success.yaml"
+      ],
+      "command": "plan",
+      "exitCode": 1,
+      "id": "plan-native-compiler-unavailable",
+      "nativeCompiler": "unavailable",
+      "profile": "GB-C0-SCHEMA",
+      "stderr": "",
+      "stdoutJson": {
+        "diagnostics": [
+          {
+            "code": "GB1056",
+            "message": "normative native GraphBlocks compiler is unavailable; install graphblocks[runtime]",
+            "path": "$.compiler",
+            "severity": "error"
+          }
+        ],
+        "ok": false
       }
     },
     {

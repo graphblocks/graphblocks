@@ -14,7 +14,7 @@ import yaml
 
 from . import __version__
 from .canonical import canonical_dumps, canonical_hash, canonical_loads, normalize_graph
-from .compiler import compile_graph
+from .compiler import NativeCompilerUnavailableError, compile_graph
 from .composition import CompositionError, compose_documents
 from .deployment import (
     DeploymentRevision,
@@ -2592,6 +2592,30 @@ def _main(argv: list[str] | None = None) -> int:
 def main(argv: list[str] | None = None) -> int:
     try:
         return _main(argv)
+    except NativeCompilerUnavailableError:
+        arguments = argv if argv is not None else sys.argv[1:]
+        diagnostic = Diagnostic(
+            "GB1056",
+            "normative native GraphBlocks compiler is unavailable; "
+            "install graphblocks[runtime]",
+            "$.compiler",
+        ).to_dict()
+        if "--json" in arguments or (
+            arguments and arguments[0] in {"lock", "plan", "run"}
+        ):
+            print(
+                json.dumps(
+                    {"ok": False, "diagnostics": [diagnostic]},
+                    indent=2,
+                    sort_keys=True,
+                )
+            )
+        else:
+            print(
+                f"{diagnostic['severity']} {diagnostic['code']} "
+                f"{diagnostic['path']}: {diagnostic['message']}"
+            )
+        return 1
     except CompositionError as error:
         arguments = argv if argv is not None else sys.argv[1:]
         if "--json" in arguments:

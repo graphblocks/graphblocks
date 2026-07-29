@@ -1013,6 +1013,14 @@
       "typeReferences": []
     },
     {
+      "bases": [
+        "builtins.RuntimeError"
+      ],
+      "kind": "exception",
+      "path": "graphblocks.NativeCompilerUnavailableError",
+      "profile": "GB-C0-SCHEMA"
+    },
+    {
       "kind": "function",
       "path": "graphblocks.compile_graph",
       "profile": "GB-C0-SCHEMA",

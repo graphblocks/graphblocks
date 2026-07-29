@@ -122,7 +122,12 @@ from .budget import (
     VALID_RESERVATION_STATUSES,
 )
 from .canonical import canonical_dumps, canonical_hash, canonical_loads, normalize_graph
-from .compiler import Plan, compile_graph, compile_graph_native
+from .compiler import (
+    NativeCompilerUnavailableError,
+    Plan,
+    compile_graph,
+    compile_graph_native,
+)
 from .conversation import (
     BranchRequest,
     CompactionRecord,
@@ -1285,6 +1290,7 @@ __all__ = [
     "BlockDescriptor",
     "BlockCatalog",
     "Plan",
+    "NativeCompilerUnavailableError",
     "compile_graph",
     "BlockCallable",
     "LocalJournalKind",
