@@ -3,22 +3,34 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 import sqlite3
+from threading import Event
 import uuid
 
 import pytest
 
 from graphblocks.canonical import canonical_dumps, canonical_hash
+from graphblocks.runtime import RuntimeCheckpoint
 from graphblocks.server_storage import (
     AcceptedRunAdmission,
+    AcceptedRunClaim,
     AcceptedRunClaimRequest,
+    AcceptedRunEffectIntent,
+    AcceptedRunEffectKind,
     AcceptedRunEventIntent,
     AcceptedRunIdConflictError,
+    AcceptedRunLeaseExpiredError,
     AcceptedRunNotFoundError,
     AcceptedRunPhase,
+    AcceptedRunStateConflictError,
+    AcceptedRunWaitingCommit,
     AdmissionIdempotencyConflictError,
     AdmissionIdentity,
+    CallbackIssuanceIdentity,
+    CheckpointIntegrityError,
     StaleAcceptedRunClaimError,
     assert_current_claim,
+    decode_runtime_checkpoint,
+    encode_runtime_checkpoint,
 )
 from graphblocks.sqlite_server_storage import (
     MAX_ACCEPTED_RUN_EVENT_PAGE_SIZE,
@@ -85,6 +97,106 @@ def _admission(
             created_at_unix_ms=1_000,
         ),
     )
+
+
+def _runtime_checkpoint(
+    claim: AcceptedRunClaim,
+    *,
+    graph_hash: str | None = None,
+) -> RuntimeCheckpoint:
+    values: dict[str, object] = {
+        "checkpoint_id": "checkpoint-1",
+        "run_id": claim.run_id,
+        "graph_hash": graph_hash or _admission().graph_hash,
+        "wait_node": "wait",
+        "remaining_nodes": ("wait",),
+        "inputs": {"request": {"value": "hello"}},
+        "node_outputs": {},
+        "output_values": {},
+        "operation": {
+            "operation_id": "operation-1",
+            "run_id": claim.run_id,
+            "node_id": "wait",
+            "attempt_id": "attempt-1",
+            "kind": "ci_job",
+            "resume_token_hash": "sha256:" + ("c" * 64),
+            "idempotency_key": "operation-idempotency-1",
+            "expected_schema": "schemas/CICallback@1",
+            "state": "waiting_callback",
+            "created_at_unix_ms": 2_050,
+            "submitted_at_unix_ms": 2_100,
+            "expires_at_unix_ms": 60_000,
+        },
+    }
+    state_digest = canonical_hash(values)
+    return RuntimeCheckpoint(**values, state_digest=state_digest)  # type: ignore[arg-type]
+
+
+def _waiting_commit(
+    claim: AcceptedRunClaim,
+    *,
+    event_time: int = 2_200,
+    graph_hash: str | None = None,
+) -> AcceptedRunWaitingCommit:
+    checkpoint = _runtime_checkpoint(claim, graph_hash=graph_hash)
+    waiting_payload = {
+        "checkpointDigest": checkpoint.state_digest,
+        "runId": claim.run_id,
+        "state": "waiting_callback",
+    }
+    waiting_json = canonical_dumps(waiting_payload)
+    dispatch_payload = {
+        "operationId": "operation-1",
+        "runId": claim.run_id,
+    }
+    dispatch_json = canonical_dumps(dispatch_payload)
+    return AcceptedRunWaitingCommit(
+        claim=claim,
+        expected_state_version=2,
+        checkpoint=encode_runtime_checkpoint(checkpoint),
+        callback_issuance=CallbackIssuanceIdentity(
+            run_id=claim.run_id,
+            checkpoint_digest=checkpoint.state_digest,
+            operation_id="operation-1",
+            operation_attempt_id="attempt-1",
+            callback_idempotency_key="callback-1",
+            lease_generation=claim.lease_generation,
+            fencing_token=claim.fencing_token,
+        ),
+        waiting_event=AcceptedRunEventIntent(
+            kind="run_waiting_callback",
+            payload_json=waiting_json,
+            payload_digest=canonical_hash(waiting_payload),
+            created_at_unix_ms=event_time,
+        ),
+        dispatch_effect=AcceptedRunEffectIntent(
+            effect_id="effect-operation-dispatch-1",
+            kind=AcceptedRunEffectKind.OPERATION_DISPATCH,
+            idempotency_key="dispatch-operation-1",
+            payload_json=dispatch_json,
+            payload_digest=canonical_hash(dispatch_payload),
+        ),
+    )
+
+
+def _claim_ready_run(
+    repository: SQLiteAcceptedRunRepository,
+    *,
+    lease_owner_id: str = "worker-1",
+    now_unix_ms: int = 2_000,
+    lease_duration_ms: int = 500,
+) -> AcceptedRunClaim:
+    claim = repository.claim_run(
+        AcceptedRunClaimRequest(
+            tenant_id="tenant-1",
+            run_id="run-1",
+            lease_owner_id=lease_owner_id,
+            now_unix_ms=now_unix_ms,
+            lease_duration_ms=lease_duration_ms,
+        )
+    )
+    assert claim is not None
+    return claim
 
 
 def test_sqlite_repository_accepts_run_and_initial_event_atomically(
@@ -361,6 +473,7 @@ def test_sqlite_repository_claims_ready_run_with_fenced_authority(
     )
 
     assert claim is not None
+    assert claim.tenant_id == "tenant-1"
     assert claim.lease_generation == 1
     assert claim.fencing_token == 1
     assert claim.lease_expires_at_unix_ms == 2_500
@@ -656,6 +769,366 @@ def test_sqlite_repository_rejects_claim_time_outside_sqlite_range(
                 lease_duration_ms=1,
             )
         )
+
+
+def test_sqlite_repository_commits_waiting_checkpoint_and_dispatch_atomically(
+    tmp_path,
+) -> None:
+    path = tmp_path / "accepted-runs.sqlite3"
+    repository = SQLiteAcceptedRunRepository(path)
+    repository.accept_run(_admission())
+    claim = _claim_ready_run(repository)
+    command = _waiting_commit(claim)
+
+    snapshot = repository.commit_waiting(command)
+
+    assert snapshot.phase is AcceptedRunPhase.WAITING_CALLBACK
+    assert snapshot.claim is None
+    assert snapshot.state_version == 3
+    assert snapshot.event_high_watermark == 3
+    assert snapshot.checkpoint_digest == command.checkpoint.checkpoint_digest
+    events = repository.read_events(
+        tenant_id="tenant-1",
+        run_id="run-1",
+        after_sequence=2,
+        limit=10,
+    )
+    assert [(event.sequence, event.kind) for event in events.events] == [
+        (3, "run_waiting_callback")
+    ]
+
+    reopened = SQLiteAcceptedRunRepository(path)
+    stored = reopened.get_checkpoint(
+        tenant_id="tenant-1",
+        run_id="run-1",
+        checkpoint_digest=command.checkpoint.checkpoint_digest,
+    )
+    assert stored == command.checkpoint
+    assert decode_runtime_checkpoint(stored) == decode_runtime_checkpoint(
+        command.checkpoint
+    )
+    connection = sqlite3.connect(path)
+    checkpoint_count = int(
+        connection.execute("SELECT COUNT(*) FROM run_checkpoints").fetchone()[0]
+    )
+    effect = connection.execute(
+        """
+        SELECT effect_id, effect_kind, delivery_state, attempt_count
+        FROM effect_outbox
+        """
+    ).fetchone()
+    connection.close()
+    assert checkpoint_count == 1
+    assert effect == (
+        "effect-operation-dispatch-1",
+        "operation_dispatch",
+        "pending",
+        0,
+    )
+
+
+def test_sqlite_repository_does_not_expose_uncommitted_dispatch_effect(
+    tmp_path,
+) -> None:
+    path = tmp_path / "accepted-runs.sqlite3"
+    repository = SQLiteAcceptedRunRepository(path)
+    repository.accept_run(_admission())
+    command = _waiting_commit(_claim_ready_run(repository))
+    outbox_inserted = Event()
+    allow_commit = Event()
+
+    def pause(point: str) -> None:
+        if point == "commit_waiting.after_outbox_insert":
+            outbox_inserted.set()
+            assert allow_commit.wait(timeout=5)
+
+    paused = SQLiteAcceptedRunRepository(path, failpoint=pause)
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(paused.commit_waiting, command)
+        assert outbox_inserted.wait(timeout=5)
+        connection = sqlite3.connect(path)
+        visible_count = int(
+            connection.execute(
+                "SELECT COUNT(*) FROM effect_outbox"
+            ).fetchone()[0]
+        )
+        connection.close()
+        assert visible_count == 0
+        allow_commit.set()
+        snapshot = future.result(timeout=5)
+
+    assert snapshot.phase is AcceptedRunPhase.WAITING_CALLBACK
+    connection = sqlite3.connect(path)
+    committed_count = int(
+        connection.execute("SELECT COUNT(*) FROM effect_outbox").fetchone()[0]
+    )
+    connection.close()
+    assert committed_count == 1
+
+
+@pytest.mark.parametrize(
+    "failpoint",
+    [
+        "commit_waiting.after_checkpoint_insert",
+        "commit_waiting.after_outbox_insert",
+        "commit_waiting.after_event_insert",
+        "commit_waiting.after_state_update",
+    ],
+)
+def test_sqlite_repository_rolls_back_precommit_waiting_failure(
+    tmp_path,
+    failpoint: str,
+) -> None:
+    path = tmp_path / f"{failpoint}.sqlite3"
+    repository = SQLiteAcceptedRunRepository(path)
+    repository.accept_run(_admission())
+    claim = _claim_ready_run(repository)
+    command = _waiting_commit(claim)
+
+    def inject(point: str) -> None:
+        if point == failpoint:
+            raise RuntimeError(f"injected {point}")
+
+    with pytest.raises(RuntimeError, match=f"injected {failpoint}"):
+        SQLiteAcceptedRunRepository(
+            path,
+            failpoint=inject,
+        ).commit_waiting(command)
+
+    reopened = SQLiteAcceptedRunRepository(path)
+    snapshot = reopened.get_run(tenant_id="tenant-1", run_id="run-1")
+    assert snapshot is not None
+    assert snapshot.phase is AcceptedRunPhase.RUNNING
+    assert snapshot.claim == claim
+    assert snapshot.state_version == 2
+    assert snapshot.event_high_watermark == 2
+    connection = sqlite3.connect(path)
+    counts = (
+        int(
+            connection.execute(
+                "SELECT COUNT(*) FROM run_checkpoints"
+            ).fetchone()[0]
+        ),
+        int(
+            connection.execute(
+                "SELECT COUNT(*) FROM effect_outbox"
+            ).fetchone()[0]
+        ),
+    )
+    connection.close()
+    assert counts == (0, 0)
+
+
+def test_sqlite_repository_replays_identical_waiting_commit_after_response_loss(
+    tmp_path,
+) -> None:
+    path = tmp_path / "accepted-runs.sqlite3"
+    repository = SQLiteAcceptedRunRepository(path)
+    repository.accept_run(_admission())
+    command = _waiting_commit(_claim_ready_run(repository))
+
+    def inject(point: str) -> None:
+        if point == "commit_waiting.after_commit":
+            raise RuntimeError("injected waiting response loss")
+
+    with pytest.raises(RuntimeError, match="injected waiting response loss"):
+        SQLiteAcceptedRunRepository(
+            path,
+            failpoint=inject,
+        ).commit_waiting(command)
+
+    reopened = SQLiteAcceptedRunRepository(path)
+    replay = reopened.commit_waiting(command)
+    assert replay.phase is AcceptedRunPhase.WAITING_CALLBACK
+    assert replay.state_version == 3
+    assert replay.event_high_watermark == 3
+    connection = sqlite3.connect(path)
+    counts = (
+        int(
+            connection.execute(
+                "SELECT COUNT(*) FROM run_checkpoints"
+            ).fetchone()[0]
+        ),
+        int(
+            connection.execute(
+                "SELECT COUNT(*) FROM effect_outbox"
+            ).fetchone()[0]
+        ),
+    )
+    connection.close()
+    assert counts == (1, 1)
+
+
+def test_sqlite_repository_rejects_conflicting_waiting_commit_retry(
+    tmp_path,
+) -> None:
+    repository = SQLiteAcceptedRunRepository(
+        tmp_path / "accepted-runs.sqlite3"
+    )
+    repository.accept_run(_admission())
+    command = _waiting_commit(_claim_ready_run(repository))
+    repository.commit_waiting(command)
+    conflicting_payload = {
+        "operationId": "operation-1",
+        "runId": "run-1",
+        "variant": "conflicting",
+    }
+
+    with pytest.raises(
+        CheckpointIntegrityError,
+        match="stored waiting transition conflicts with retry",
+    ):
+        repository.commit_waiting(
+            replace(
+                command,
+                dispatch_effect=replace(
+                    command.dispatch_effect,
+                    payload_json=canonical_dumps(conflicting_payload),
+                    payload_digest=canonical_hash(conflicting_payload),
+                ),
+            )
+        )
+
+    snapshot = repository.get_run(tenant_id="tenant-1", run_id="run-1")
+    assert snapshot is not None
+    assert snapshot.state_version == 3
+    assert snapshot.event_high_watermark == 3
+
+
+def test_sqlite_repository_rejects_waiting_commit_from_stale_claim(
+    tmp_path,
+) -> None:
+    path = tmp_path / "accepted-runs.sqlite3"
+    repository = SQLiteAcceptedRunRepository(path)
+    repository.accept_run(_admission())
+    stale = _claim_ready_run(repository)
+    current = repository.claim_run(
+        AcceptedRunClaimRequest(
+            tenant_id="tenant-1",
+            run_id="run-1",
+            lease_owner_id="worker-2",
+            now_unix_ms=2_500,
+            lease_duration_ms=500,
+        )
+    )
+    assert current is not None
+
+    with pytest.raises(StaleAcceptedRunClaimError):
+        repository.commit_waiting(
+            _waiting_commit(stale, event_time=2_400)
+        )
+
+    snapshot = repository.get_run(tenant_id="tenant-1", run_id="run-1")
+    assert snapshot is not None
+    assert snapshot.claim == current
+    assert snapshot.state_version == 3
+    assert snapshot.event_high_watermark == 3
+    connection = sqlite3.connect(path)
+    counts = (
+        int(
+            connection.execute(
+                "SELECT COUNT(*) FROM run_checkpoints"
+            ).fetchone()[0]
+        ),
+        int(
+            connection.execute(
+                "SELECT COUNT(*) FROM effect_outbox"
+            ).fetchone()[0]
+        ),
+    )
+    connection.close()
+    assert counts == (0, 0)
+
+
+def test_sqlite_repository_rejects_waiting_commit_at_lease_expiry(
+    tmp_path,
+) -> None:
+    repository = SQLiteAcceptedRunRepository(
+        tmp_path / "accepted-runs.sqlite3"
+    )
+    repository.accept_run(_admission())
+    claim = _claim_ready_run(repository)
+
+    with pytest.raises(
+        AcceptedRunLeaseExpiredError,
+        match="accepted run claim expired before waiting commit",
+    ):
+        repository.commit_waiting(
+            _waiting_commit(
+                claim,
+                event_time=claim.lease_expires_at_unix_ms,
+            )
+        )
+
+    snapshot = repository.get_run(tenant_id="tenant-1", run_id="run-1")
+    assert snapshot is not None
+    assert snapshot.phase is AcceptedRunPhase.RUNNING
+    assert snapshot.claim == claim
+
+
+def test_sqlite_repository_rejects_waiting_commit_state_version_conflict(
+    tmp_path,
+) -> None:
+    repository = SQLiteAcceptedRunRepository(
+        tmp_path / "accepted-runs.sqlite3"
+    )
+    repository.accept_run(_admission())
+    claim = _claim_ready_run(repository)
+
+    with pytest.raises(
+        AcceptedRunStateConflictError,
+        match="state version conflict",
+    ):
+        repository.commit_waiting(
+            replace(
+                _waiting_commit(claim),
+                expected_state_version=1,
+            )
+        )
+
+    snapshot = repository.get_run(tenant_id="tenant-1", run_id="run-1")
+    assert snapshot is not None
+    assert snapshot.phase is AcceptedRunPhase.RUNNING
+    assert snapshot.claim == claim
+
+
+def test_sqlite_repository_rejects_checkpoint_for_different_graph(
+    tmp_path,
+) -> None:
+    repository = SQLiteAcceptedRunRepository(
+        tmp_path / "accepted-runs.sqlite3"
+    )
+    repository.accept_run(_admission())
+    claim = _claim_ready_run(repository)
+
+    with pytest.raises(
+        CheckpointIntegrityError,
+        match="checkpoint graph hash does not match accepted run",
+    ):
+        repository.commit_waiting(
+            _waiting_commit(
+                claim,
+                graph_hash="sha256:" + ("d" * 64),
+            )
+        )
+
+
+def test_sqlite_repository_hides_cross_tenant_checkpoint(tmp_path) -> None:
+    repository = SQLiteAcceptedRunRepository(
+        tmp_path / "accepted-runs.sqlite3"
+    )
+    repository.accept_run(_admission())
+    command = _waiting_commit(_claim_ready_run(repository))
+    repository.commit_waiting(command)
+
+    assert (
+        repository.get_checkpoint(
+            tenant_id="tenant-2",
+            run_id="run-1",
+            checkpoint_digest=command.checkpoint.checkpoint_digest,
+        )
+        is None
+    )
 
 
 @pytest.mark.parametrize(

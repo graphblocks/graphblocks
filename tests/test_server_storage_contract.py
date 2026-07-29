@@ -55,6 +55,7 @@ def _claim(
     fencing_token: int = 1,
 ) -> AcceptedRunClaim:
     return AcceptedRunClaim(
+        tenant_id="tenant-1",
         run_id="run-1",
         lease_owner_id="worker-1",
         lease_generation=lease_generation,

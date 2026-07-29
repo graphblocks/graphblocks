@@ -97,6 +97,29 @@ class StaleAcceptedRunClaimError(AcceptedRunConflictError):
         self.provided = provided
 
 
+class AcceptedRunLeaseExpiredError(AcceptedRunConflictError):
+    def __init__(self, claim: AcceptedRunClaim, operation: str) -> None:
+        super().__init__(f"accepted run claim expired before {operation}")
+        self.claim = claim
+        self.operation = operation
+
+
+class AcceptedRunStateConflictError(AcceptedRunConflictError):
+    def __init__(
+        self,
+        run_id: str,
+        expected_state_version: int,
+        current_state_version: int,
+    ) -> None:
+        super().__init__(
+            f"accepted run {run_id!r} state version conflict: expected "
+            f"{expected_state_version}, current {current_state_version}"
+        )
+        self.run_id = run_id
+        self.expected_state_version = expected_state_version
+        self.current_state_version = current_state_version
+
+
 class InvalidAcceptedRunTransitionError(AcceptedRunConflictError):
     def __init__(
         self,
@@ -314,6 +337,7 @@ def resolve_admission_replay(
 
 @dataclass(frozen=True, slots=True)
 class AcceptedRunClaim:
+    tenant_id: str
     run_id: str
     lease_owner_id: str
     lease_generation: int
@@ -322,7 +346,7 @@ class AcceptedRunClaim:
 
     def __post_init__(self) -> None:
         owner = "accepted run claim"
-        for field_name in ("run_id", "lease_owner_id"):
+        for field_name in ("tenant_id", "run_id", "lease_owner_id"):
             object.__setattr__(
                 self,
                 field_name,
@@ -772,6 +796,11 @@ class AcceptedRunSnapshot:
                 raise ValueError(
                     "accepted run snapshot claim run_id must match snapshot run_id"
                 )
+            if self.claim.tenant_id != self.tenant_id:
+                raise ValueError(
+                    "accepted run snapshot claim tenant_id must match snapshot "
+                    "tenant_id"
+                )
         if self.phase is AcceptedRunPhase.RUNNING and self.claim is None:
             raise ValueError(
                 "running accepted run snapshot must include its current claim"
@@ -1184,6 +1213,15 @@ class AcceptedRunRepository(Protocol):
         after_sequence: int,
         limit: int,
     ) -> AcceptedRunEventPage:
+        ...
+
+    def get_checkpoint(
+        self,
+        *,
+        tenant_id: str,
+        run_id: str,
+        checkpoint_digest: str,
+    ) -> StoredRuntimeCheckpoint | None:
         ...
 
     def claim_run(
