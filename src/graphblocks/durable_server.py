@@ -4,20 +4,33 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from time import time
 from typing import Protocol
+from urllib.parse import quote
 
 from .canonical import canonical_dumps, canonical_hash, canonical_loads
 from .compiler import Plan, compile_graph
 from .plugins import BlockCatalog
 from .runtime import InProcessRuntime, RuntimeCheckpoint, RuntimeRegistry, stdlib_registry
+from .server import (
+    ServerAuthDecision,
+    ServerAuthHook,
+    ServerAuthRequest,
+    ServerEndpoint,
+    ServerRequest,
+    ServerResponse,
+    ServerRouteManifest,
+    ServerRouteNotFoundError,
+)
 from .server_storage import (
     CHECKPOINT_FORMAT_VERSION,
     AcceptedRunAdmission,
     AcceptedRunCallbackCommit,
     AcceptedRunClaimRequest,
+    AcceptedRunConflictError,
     AcceptedRunEffectIntent,
     AcceptedRunEffectKind,
     AcceptedRunEventIntent,
     AcceptedRunEventPage,
+    AcceptedRunIdConflictError,
     AcceptedRunNotFoundError,
     AcceptedRunRepository,
     AcceptedRunSnapshot,
@@ -36,6 +49,7 @@ from .server_storage import (
 DURABLE_GRAPH_FORMAT_VERSION = "graphblocks.ai/Graph@v1"
 DURABLE_RUNTIME_FORMAT_VERSION = "graphblocks.runtime@v1"
 _MAX_SQLITE_UNIX_MS = (1 << 63) - 1
+DEFAULT_DURABLE_SERVER_MAX_REQUEST_BODY_BYTES = 1_048_576
 
 
 class DurableAcceptedRunIntegrityError(AcceptedRunStorageError):
@@ -551,4 +565,403 @@ class DurableAcceptedRunService:
                     payload_digest=completion_digest,
                 ),
             )
+        )
+
+
+def durable_server_route_manifest() -> ServerRouteManifest:
+    """Return the intentionally narrow route set for the durable preview."""
+
+    return ServerRouteManifest(
+        (
+            ServerEndpoint(
+                "GET",
+                "/health",
+                "http",
+                "health",
+                auth_required=False,
+            ),
+            ServerEndpoint(
+                "POST",
+                "/runs",
+                "http",
+                "admit_run",
+                auth_required=True,
+            ),
+            ServerEndpoint(
+                "GET",
+                "/runs/{run_id}",
+                "http",
+                "get_run",
+                auth_required=True,
+            ),
+            ServerEndpoint(
+                "GET",
+                "/runs/{run_id}/events",
+                "http",
+                "read_run_events",
+                auth_required=True,
+            ),
+        )
+    )
+
+
+@dataclass(slots=True)
+class DurableAcceptedRunServerApp:
+    """Fail-closed HTTP adapter for the repository-authoritative preview."""
+
+    service: DurableAcceptedRunService
+    auth_hook: ServerAuthHook
+    route_manifest: ServerRouteManifest = field(
+        default_factory=durable_server_route_manifest
+    )
+    max_request_body_bytes: int = (
+        DEFAULT_DURABLE_SERVER_MAX_REQUEST_BODY_BYTES
+    )
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.service, DurableAcceptedRunService):
+            raise ValueError(
+                "durable accepted-run server requires a "
+                "DurableAcceptedRunService"
+            )
+        if not callable(getattr(self.auth_hook, "authorize", None)):
+            raise ValueError(
+                "durable accepted-run server requires an auth_hook"
+            )
+        if not isinstance(self.route_manifest, ServerRouteManifest):
+            raise ValueError(
+                "durable accepted-run server route_manifest must be a "
+                "ServerRouteManifest"
+            )
+        if (
+            isinstance(self.max_request_body_bytes, bool)
+            or not isinstance(self.max_request_body_bytes, int)
+            or self.max_request_body_bytes < 1
+        ):
+            raise ValueError(
+                "durable accepted-run server max_request_body_bytes must be "
+                "a positive integer"
+            )
+
+    def handle(self, request: ServerRequest) -> ServerResponse:
+        if not isinstance(request, ServerRequest):
+            raise TypeError(
+                "durable accepted-run server request must be a ServerRequest"
+            )
+        try:
+            route = self.route_manifest.match(
+                request.method,
+                request.path,
+                transport="http",
+            )
+        except ServerRouteNotFoundError:
+            return ServerResponse.json(
+                404,
+                {
+                    "ok": False,
+                    "error": "NotFound",
+                },
+            )
+        if route.endpoint.operation == "health":
+            return ServerResponse.json(
+                200,
+                {
+                    "ok": True,
+                    "profile": "durable-preview",
+                    "status": "healthy",
+                },
+            )
+
+        try:
+            auth_decision = self.auth_hook.authorize(
+                ServerAuthRequest(
+                    route=route.endpoint,
+                    headers=request.headers,
+                    query=request.query,
+                    cookies=request.cookies,
+                    requested_at=request.requested_at,
+                )
+            )
+        except Exception:
+            return ServerResponse.json(
+                503,
+                {
+                    "ok": False,
+                    "error": "AuthenticationUnavailable",
+                },
+            )
+        if not isinstance(auth_decision, ServerAuthDecision):
+            return ServerResponse.json(
+                503,
+                {
+                    "ok": False,
+                    "error": "AuthenticationUnavailable",
+                },
+            )
+        if not auth_decision.allowed:
+            return ServerResponse.json(
+                401,
+                {
+                    "ok": False,
+                    "error": "Unauthorized",
+                    "reasonCodes": list(auth_decision.reason_codes),
+                },
+            )
+        principal = auth_decision.principal
+        if principal is None or principal.tenant_id is None:
+            return ServerResponse.json(
+                403,
+                {
+                    "ok": False,
+                    "error": "TenantPrincipalRequired",
+                },
+            )
+
+        try:
+            if route.endpoint.operation == "admit_run":
+                if len(request.body) > self.max_request_body_bytes:
+                    return ServerResponse.json(
+                        413,
+                        {
+                            "ok": False,
+                            "error": "RequestBodyTooLarge",
+                            "maxBytes": self.max_request_body_bytes,
+                        },
+                    )
+                payload = canonical_loads(request.body)
+                if not isinstance(payload, dict):
+                    raise ValueError(
+                        "durable run request body must be a JSON object"
+                    )
+                allowed_fields = {
+                    "graph",
+                    "inputs",
+                    "invocation",
+                    "requestId",
+                    "responseMode",
+                    "runId",
+                }
+                unknown_fields = sorted(set(payload) - allowed_fields)
+                if unknown_fields:
+                    raise ValueError(
+                        "durable run request contains unknown fields: "
+                        + ", ".join(unknown_fields)
+                    )
+                graph = payload.get("graph")
+                inputs = payload.get("inputs", {})
+                invocation = payload.get("invocation", {})
+                if not isinstance(graph, dict):
+                    raise ValueError(
+                        "durable run request graph must be a JSON object"
+                    )
+                if not isinstance(inputs, dict):
+                    raise ValueError(
+                        "durable run request inputs must be a JSON object"
+                    )
+                if not isinstance(invocation, dict):
+                    raise ValueError(
+                        "durable run request invocation must be a JSON object"
+                    )
+                run_id = payload.get("runId")
+                request_id = payload.get("requestId", run_id)
+                response_mode = payload.get("responseMode", "accepted")
+                for field_name, value in (
+                    ("runId", run_id),
+                    ("requestId", request_id),
+                    ("responseMode", response_mode),
+                ):
+                    if (
+                        type(value) is not str
+                        or not value
+                        or value != value.strip()
+                    ):
+                        raise ValueError(
+                            f"durable run request {field_name} must be an "
+                            "exact non-empty string"
+                        )
+                assert isinstance(run_id, str)
+                assert isinstance(request_id, str)
+                assert isinstance(response_mode, str)
+                if response_mode not in {"accepted", "background"}:
+                    raise ValueError(
+                        "durable run request responseMode must be accepted "
+                        "or background"
+                    )
+                admission = self.service.admit_run(
+                    tenant_id=principal.tenant_id,
+                    owner_principal_id=principal.principal_id,
+                    run_id=run_id,
+                    idempotency_key=request_id,
+                    graph=graph,
+                    inputs=inputs,
+                    invocation=invocation,
+                )
+                snapshot = self.service.get_run(
+                    tenant_id=principal.tenant_id,
+                    run_id=run_id,
+                )
+                if (
+                    snapshot is None
+                    or snapshot.owner_principal_id
+                    != principal.principal_id
+                ):
+                    raise DurableAcceptedRunIntegrityError(
+                        "durable admission did not resolve to its owner"
+                    )
+                encoded_run_id = quote(run_id, safe="")
+                return ServerResponse.json(
+                    202,
+                    {
+                        "duplicate": admission.replayed,
+                        "events": f"/runs/{encoded_run_id}/events",
+                        "ok": True,
+                        "runId": run_id,
+                        "state": snapshot.phase.value,
+                        "status": response_mode,
+                    },
+                )
+
+            run_id = route.path_params["run_id"]
+            snapshot = self.service.get_run(
+                tenant_id=principal.tenant_id,
+                run_id=run_id,
+            )
+            if (
+                snapshot is None
+                or snapshot.owner_principal_id != principal.principal_id
+            ):
+                return ServerResponse.json(
+                    404,
+                    {
+                        "ok": False,
+                        "error": "NotFound",
+                    },
+                )
+
+            if route.endpoint.operation == "get_run":
+                response_payload: dict[str, object] = {
+                    "eventHighWatermark": snapshot.event_high_watermark,
+                    "eventLowWatermark": snapshot.event_low_watermark,
+                    "ok": True,
+                    "runId": snapshot.run_id,
+                    "state": snapshot.phase.value,
+                    "stateVersion": snapshot.state_version,
+                }
+                if snapshot.checkpoint_digest is not None:
+                    response_payload["checkpointDigest"] = (
+                        snapshot.checkpoint_digest
+                    )
+                if snapshot.terminal_status is not None:
+                    response_payload["terminalStatus"] = (
+                        snapshot.terminal_status
+                    )
+                if snapshot.terminal_result_json is not None:
+                    response_payload["result"] = canonical_loads(
+                        snapshot.terminal_result_json
+                    )
+                return ServerResponse.json(200, response_payload)
+
+            if route.endpoint.operation == "read_run_events":
+                raw_after = request.query.get("after", "0")
+                raw_limit = request.query.get("limit", "100")
+                if (
+                    not raw_after
+                    or not raw_after.isascii()
+                    or not raw_after.isdigit()
+                    or not raw_limit
+                    or not raw_limit.isascii()
+                    or not raw_limit.isdigit()
+                ):
+                    raise ValueError(
+                        "durable event cursor and limit must be decimal integers"
+                    )
+                page = self.service.read_events(
+                    tenant_id=principal.tenant_id,
+                    run_id=run_id,
+                    after_sequence=int(raw_after),
+                    limit=int(raw_limit),
+                )
+                return ServerResponse.json(
+                    200,
+                    {
+                        "events": [
+                            {
+                                "kind": event.kind,
+                                "payload": canonical_loads(
+                                    event.payload_json
+                                ),
+                                "sequence": event.sequence,
+                            }
+                            for event in page.events
+                        ],
+                        "highWatermark": page.high_watermark,
+                        "lowWatermark": page.low_watermark,
+                        "nextAfter": page.next_after_sequence,
+                        "ok": True,
+                        "runId": run_id,
+                    },
+                )
+        except AcceptedRunIdConflictError as error:
+            existing = self.service.get_run(
+                tenant_id=principal.tenant_id,
+                run_id=error.run_id,
+            )
+            if (
+                existing is not None
+                and existing.owner_principal_id
+                != principal.principal_id
+            ):
+                return ServerResponse.json(
+                    404,
+                    {
+                        "ok": False,
+                        "error": "NotFound",
+                    },
+                )
+            return ServerResponse.json(
+                409,
+                {
+                    "ok": False,
+                    "error": str(error),
+                },
+            )
+        except AcceptedRunConflictError as error:
+            return ServerResponse.json(
+                409,
+                {
+                    "ok": False,
+                    "error": str(error),
+                },
+            )
+        except AcceptedRunStorageError as error:
+            return ServerResponse.json(
+                503,
+                {
+                    "ok": False,
+                    "error": str(error),
+                },
+            )
+        except (TypeError, ValueError) as error:
+            return ServerResponse.json(
+                400,
+                {
+                    "ok": False,
+                    "error": str(error),
+                },
+            )
+        except RuntimeError as error:
+            return ServerResponse.json(
+                503,
+                {
+                    "ok": False,
+                    "error": str(error),
+                },
+            )
+
+        return ServerResponse.json(
+            404,
+            {
+                "ok": False,
+                "error": "NotFound",
+            },
         )
