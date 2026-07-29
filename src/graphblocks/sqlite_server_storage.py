@@ -47,7 +47,7 @@ from .server_storage import (
 
 
 SQLITE_ACCEPTED_RUN_APPLICATION_ID = 0x47424152
-SQLITE_ACCEPTED_RUN_SCHEMA_VERSION = 2
+SQLITE_ACCEPTED_RUN_SCHEMA_VERSION = 3
 _SQLITE_ACCEPTED_RUN_SCHEMA_NAME = "graphblocks.accepted-runs.sqlite"
 _SQLITE_ACCEPTED_RUN_INITIAL_SCHEMA_VERSION = 1
 _MAX_BUSY_TIMEOUT_MS = 60_000
@@ -330,6 +330,13 @@ _SCHEMA_V2_MIGRATION_STATEMENTS = (
     """,
 )
 
+_SCHEMA_V3_MIGRATION_STATEMENTS = (
+    """
+    ALTER TABLE accepted_runs
+    ADD COLUMN invocation_json TEXT NOT NULL DEFAULT '{}'
+    """,
+)
+
 _REQUIRED_COLUMNS_V1 = {
     "accepted_run_storage_metadata": frozenset({"key", "value"}),
     "accepted_runs": frozenset(
@@ -423,11 +430,18 @@ _REQUIRED_COLUMNS_V1 = {
         }
     ),
 }
-_REQUIRED_COLUMNS = {
+_REQUIRED_COLUMNS_V2 = {
     **_REQUIRED_COLUMNS_V1,
     "effect_outbox": (
         _REQUIRED_COLUMNS_V1["effect_outbox"]
         | frozenset({"available_at_unix_ms"})
+    ),
+}
+_REQUIRED_COLUMNS = {
+    **_REQUIRED_COLUMNS_V2,
+    "accepted_runs": (
+        _REQUIRED_COLUMNS_V2["accepted_runs"]
+        | frozenset({"invocation_json"})
     ),
 }
 _REQUIRED_TABLES = frozenset(_REQUIRED_COLUMNS)
@@ -667,11 +681,11 @@ class SQLiteAcceptedRunDatabase:
                 self._initialize_empty_database(connection)
             else:
                 self._assert_application_identity(connection)
-                if (
-                    user_version
-                    == _SQLITE_ACCEPTED_RUN_INITIAL_SCHEMA_VERSION
-                ):
-                    self._migrate_v1_to_v2(connection)
+                if user_version in {
+                    _SQLITE_ACCEPTED_RUN_INITIAL_SCHEMA_VERSION,
+                    2,
+                }:
+                    self._migrate_to_current(connection)
                 else:
                     self._assert_identity(connection)
                 self._validate_schema(connection)
@@ -737,6 +751,8 @@ class SQLiteAcceptedRunDatabase:
                     connection.execute(statement)
                 for statement in _SCHEMA_V2_MIGRATION_STATEMENTS:
                     connection.execute(statement)
+                for statement in _SCHEMA_V3_MIGRATION_STATEMENTS:
+                    connection.execute(statement)
                 connection.executemany(
                     """
                     INSERT INTO accepted_run_storage_metadata (key, value)
@@ -766,7 +782,7 @@ class SQLiteAcceptedRunDatabase:
         self._validate_schema(connection)
         self._ensure_wal(connection)
 
-    def _migrate_v1_to_v2(
+    def _migrate_to_current(
         self,
         connection: sqlite3.Connection,
     ) -> None:
@@ -778,39 +794,63 @@ class SQLiteAcceptedRunDatabase:
                 self._validate_schema(connection)
                 connection.commit()
                 return
-            if user_version != _SQLITE_ACCEPTED_RUN_INITIAL_SCHEMA_VERSION:
+            if user_version not in {
+                _SQLITE_ACCEPTED_RUN_INITIAL_SCHEMA_VERSION,
+                2,
+            }:
                 raise SQLiteAcceptedRunSchemaVersionError(
                     "unsupported accepted-run SQLite schema version "
                     f"{user_version}; expected "
                     f"{SQLITE_ACCEPTED_RUN_SCHEMA_VERSION}"
                 )
-            self._validate_schema_version(
-                connection,
-                schema_version=_SQLITE_ACCEPTED_RUN_INITIAL_SCHEMA_VERSION,
-                required_columns=_REQUIRED_COLUMNS_V1,
-            )
-            for statement in _SCHEMA_V2_MIGRATION_STATEMENTS:
-                connection.execute(statement)
-            updated = connection.execute(
-                """
-                UPDATE accepted_run_storage_metadata
-                SET value = ?
-                WHERE key = 'schema_version' AND value = ?
-                """,
-                (
-                    str(SQLITE_ACCEPTED_RUN_SCHEMA_VERSION),
-                    str(_SQLITE_ACCEPTED_RUN_INITIAL_SCHEMA_VERSION),
-                ),
-            )
-            if updated.rowcount != 1:
-                raise SQLiteAcceptedRunSchemaMismatchError(
-                    "accepted-run SQLite schema metadata version changed "
-                    "during migration"
+            if user_version == _SQLITE_ACCEPTED_RUN_INITIAL_SCHEMA_VERSION:
+                self._validate_schema_version(
+                    connection,
+                    schema_version=(
+                        _SQLITE_ACCEPTED_RUN_INITIAL_SCHEMA_VERSION
+                    ),
+                    required_columns=_REQUIRED_COLUMNS_V1,
                 )
-            connection.execute(
-                "PRAGMA user_version = "
-                f"{SQLITE_ACCEPTED_RUN_SCHEMA_VERSION}"
-            )
+                for statement in _SCHEMA_V2_MIGRATION_STATEMENTS:
+                    connection.execute(statement)
+                updated = connection.execute(
+                    """
+                    UPDATE accepted_run_storage_metadata
+                    SET value = '2'
+                    WHERE key = 'schema_version' AND value = '1'
+                    """
+                )
+                if updated.rowcount != 1:
+                    raise SQLiteAcceptedRunSchemaMismatchError(
+                        "accepted-run SQLite schema metadata version changed "
+                        "during v2 migration"
+                    )
+                connection.execute("PRAGMA user_version = 2")
+                user_version = 2
+            if user_version == 2:
+                self._validate_schema_version(
+                    connection,
+                    schema_version=2,
+                    required_columns=_REQUIRED_COLUMNS_V2,
+                )
+                for statement in _SCHEMA_V3_MIGRATION_STATEMENTS:
+                    connection.execute(statement)
+                updated = connection.execute(
+                    """
+                    UPDATE accepted_run_storage_metadata
+                    SET value = '3'
+                    WHERE key = 'schema_version' AND value = '2'
+                    """
+                )
+                if updated.rowcount != 1:
+                    raise SQLiteAcceptedRunSchemaMismatchError(
+                        "accepted-run SQLite schema metadata version changed "
+                        "during v3 migration"
+                    )
+                connection.execute(
+                    "PRAGMA user_version = "
+                    f"{SQLITE_ACCEPTED_RUN_SCHEMA_VERSION}"
+                )
             self._validate_schema(connection)
             connection.commit()
         except BaseException:
@@ -1230,6 +1270,7 @@ class SQLiteAcceptedRunRepository:
                   graph_json,
                   graph_hash,
                   inputs_json,
+                  invocation_json,
                   graph_format_version,
                   runtime_format_version,
                   checkpoint_format_version,
@@ -1249,7 +1290,7 @@ class SQLiteAcceptedRunRepository:
                   lease_expires_at_unix_ms
                 )
                 VALUES (
-                  ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                  ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
                   'ready_initial', 1, 1, 1, NULL, NULL, NULL, NULL,
                   NULL, 0, 0, NULL
                 )
@@ -1266,6 +1307,7 @@ class SQLiteAcceptedRunRepository:
                     admission.graph_json,
                     admission.graph_hash,
                     admission.inputs_json,
+                    admission.invocation_json,
                     admission.graph_format_version,
                     admission.runtime_format_version,
                     admission.checkpoint_format_version,

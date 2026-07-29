@@ -36,6 +36,12 @@ def _admission() -> AcceptedRunAdmission:
         "spec": {"nodes": {}, "edges": []},
     }
     inputs = {"request": {"value": "hello"}}
+    invocation = {
+        "policySnapshotId": "policy-1",
+        "releaseId": "release-1",
+        "responseId": "response-1",
+        "turnId": None,
+    }
     event_payload = {
         "runId": "run-1",
         "tenantId": "tenant-1",
@@ -49,12 +55,18 @@ def _admission() -> AcceptedRunAdmission:
             admission_scope="POST:/runs",
             idempotency_key="admission-1",
             request_digest=canonical_hash(
-                {"graph": graph, "inputs": inputs, "runId": "run-1"}
+                {
+                    "graph": graph,
+                    "inputs": inputs,
+                    "invocation": invocation,
+                    "runId": "run-1",
+                }
             ),
         ),
         graph_json=canonical_dumps(graph),
         graph_hash=canonical_hash(graph),
         inputs_json=canonical_dumps(inputs),
+        invocation_json=canonical_dumps(invocation),
         ticket_json=canonical_dumps(
             {"runId": "run-1", "state": "accepted"}
         ),

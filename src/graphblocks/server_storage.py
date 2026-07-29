@@ -1070,6 +1070,7 @@ class AcceptedRunAdmission:
     graph_json: str
     graph_hash: str
     inputs_json: str
+    invocation_json: str
     ticket_json: str
     graph_format_version: str
     runtime_format_version: str
@@ -1088,7 +1089,12 @@ class AcceptedRunAdmission:
             raise ValueError(
                 "accepted run admission identity must be an AdmissionIdentity"
             )
-        for field_name in ("graph_json", "inputs_json", "ticket_json"):
+        for field_name in (
+            "graph_json",
+            "inputs_json",
+            "invocation_json",
+            "ticket_json",
+        ):
             object.__setattr__(
                 self,
                 field_name,

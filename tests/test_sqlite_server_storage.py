@@ -11,6 +11,7 @@ from graphblocks.sqlite_server_storage import (
     SQLITE_ACCEPTED_RUN_APPLICATION_ID,
     SQLITE_ACCEPTED_RUN_SCHEMA_VERSION,
     _SCHEMA_V1_STATEMENTS,
+    _SCHEMA_V2_MIGRATION_STATEMENTS,
     SQLiteAcceptedRunBusyError,
     SQLiteAcceptedRunCorruptionError,
     SQLiteAcceptedRunDatabase,
@@ -132,6 +133,26 @@ def _insert_version_one_completion_effect(path) -> None:
         connection.close()
 
 
+def _upgrade_version_one_database_to_version_two(path) -> None:
+    connection = sqlite3.connect(path, isolation_level=None)
+    try:
+        connection.execute("PRAGMA foreign_keys = ON")
+        connection.execute("BEGIN IMMEDIATE")
+        for statement in _SCHEMA_V2_MIGRATION_STATEMENTS:
+            connection.execute(statement)
+        connection.execute(
+            """
+            UPDATE accepted_run_storage_metadata
+            SET value = '2'
+            WHERE key = 'schema_version' AND value = '1'
+            """
+        )
+        connection.execute("PRAGMA user_version = 2")
+        connection.commit()
+    finally:
+        connection.close()
+
+
 def test_sqlite_accepted_run_database_initializes_dedicated_schema(
     tmp_path,
 ) -> None:
@@ -149,10 +170,10 @@ def test_sqlite_accepted_run_database_initializes_dedicated_schema(
     assert schema.synchronous == 2
     assert schema.busy_timeout_ms == 250
     assert schema.tables == _EXPECTED_TABLES
-    assert SQLITE_ACCEPTED_RUN_SCHEMA_VERSION == 2
+    assert SQLITE_ACCEPTED_RUN_SCHEMA_VERSION == 3
 
 
-def test_sqlite_accepted_run_database_migrates_v1_outbox_availability(
+def test_sqlite_accepted_run_database_migrates_v1_to_current_schema(
     tmp_path,
 ) -> None:
     path = tmp_path / "accepted-runs-v1.sqlite3"
@@ -170,8 +191,8 @@ def test_sqlite_accepted_run_database_migrates_v1_outbox_availability(
         )
     )
 
-    assert schema.user_version == 2
-    assert schema.schema_version == 2
+    assert schema.user_version == 3
+    assert schema.schema_version == 3
     assert "available_at_unix_ms" in effect_columns
     assert database._run_read(
         lambda connection: int(
@@ -184,6 +205,37 @@ def test_sqlite_accepted_run_database_migrates_v1_outbox_availability(
             ).fetchone()[0]
         )
     ) == 1_250
+    assert database._run_read(
+        lambda connection: str(
+            connection.execute(
+                """
+                SELECT invocation_json
+                FROM accepted_runs
+                WHERE external_run_id = 'run-1'
+                """
+            ).fetchone()[0]
+        )
+    ) == "{}"
+
+
+def test_sqlite_accepted_run_database_migrates_v2_invocation_metadata(
+    tmp_path,
+) -> None:
+    path = tmp_path / "accepted-runs-v2.sqlite3"
+    _initialize_version_one_database(path)
+    _insert_version_one_completion_effect(path)
+    _upgrade_version_one_database_to_version_two(path)
+
+    database = SQLiteAcceptedRunDatabase(path)
+
+    assert database.schema_info().schema_version == 3
+    assert database._run_read(
+        lambda connection: str(
+            connection.execute(
+                "SELECT invocation_json FROM accepted_runs"
+            ).fetchone()[0]
+        )
+    ) == "{}"
 
 
 def test_sqlite_accepted_run_database_serializes_concurrent_v1_migration(
@@ -204,7 +256,7 @@ def test_sqlite_accepted_run_database_serializes_concurrent_v1_migration(
         infos = tuple(executor.map(migrate, range(2)))
 
     assert infos == (infos[0], infos[0])
-    assert infos[0].schema_version == 2
+    assert infos[0].schema_version == 3
 
 
 def test_sqlite_accepted_run_database_reopens_without_recreating_schema(

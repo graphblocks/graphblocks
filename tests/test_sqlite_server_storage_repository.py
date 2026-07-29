@@ -56,6 +56,12 @@ def _admission(
         "spec": {"nodes": {}, "edges": []},
     }
     inputs = {"request": {"value": "hello"}}
+    invocation = {
+        "policySnapshotId": "policy-1",
+        "releaseId": "release-1",
+        "responseId": "response-1",
+        "turnId": None,
+    }
     request_digest = canonical_hash(
         {
             "tenantId": tenant_id,
@@ -63,6 +69,7 @@ def _admission(
             "runId": run_id,
             "graph": graph,
             "inputs": inputs,
+            "invocation": invocation,
         }
     )
     event_payload = {
@@ -83,6 +90,7 @@ def _admission(
         graph_json=canonical_dumps(graph),
         graph_hash=canonical_hash(graph),
         inputs_json=canonical_dumps(inputs),
+        invocation_json=canonical_dumps(invocation),
         ticket_json=canonical_dumps(
             {"runId": run_id, "state": ticket_state}
         ),
@@ -236,13 +244,15 @@ def test_sqlite_repository_accepts_run_and_initial_event_atomically(
     )
 
     connection = sqlite3.connect(path)
-    internal_id = str(
-        connection.execute(
-            "SELECT internal_id FROM accepted_runs"
-        ).fetchone()[0]
-    )
+    stored = connection.execute(
+        "SELECT internal_id, invocation_json FROM accepted_runs"
+    ).fetchone()
+    assert stored is not None
+    internal_id = str(stored[0])
+    invocation_json = str(stored[1])
     connection.close()
     assert uuid.UUID(internal_id).version == 7
+    assert invocation_json == admission.invocation_json
 
 
 def test_sqlite_repository_replays_same_admission_ticket_after_restart(
