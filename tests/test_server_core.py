@@ -663,6 +663,7 @@ def test_server_app_fails_closed_when_auth_hook_returns_wrong_type() -> None:
     )
 
     assert response.status_code == 401
+    assert response.headers["www-authenticate"] == 'Bearer realm="graphblocks"'
     assert json.loads(response.body.decode("utf-8")) == {
         "ok": False,
         "reasonCodes": ["auth.invalid_decision"],
@@ -687,9 +688,70 @@ def test_server_app_fails_closed_when_auth_hook_raises() -> None:
     )
 
     assert response.status_code == 401
+    assert response.headers["www-authenticate"] == 'Bearer realm="graphblocks"'
     assert json.loads(response.body.decode("utf-8")) == {
         "ok": False,
         "reasonCodes": ["auth.hook_error"],
+    }
+
+
+def test_server_app_returns_forbidden_for_authenticated_authz_denial() -> None:
+    class DenyingAuthHook:
+        def authorize(
+            self,
+            request: ServerAuthRequest,
+        ) -> ServerAuthDecision:
+            del request
+            return ServerAuthDecision(
+                False,
+                principal=PrincipalRef(
+                    "user-1",
+                    tenant_id="tenant-1",
+                ),
+                reason_codes=("auth.insufficient_role",),
+            )
+
+    app = GraphBlocksServerApp(auth_hook=DenyingAuthHook())
+    response = app.handle(
+        ServerRequest(
+            method="GET",
+            path="/runs",
+            headers={"authorization": "Bearer valid-token"},
+            query={},
+            cookies={},
+        )
+    )
+
+    assert response.status_code == 403
+    assert "www-authenticate" not in response.headers
+    assert json.loads(response.body.decode("utf-8")) == {
+        "ok": False,
+        "reasonCodes": ["auth.insufficient_role"],
+    }
+
+
+def test_server_app_challenges_missing_bearer_authentication() -> None:
+    app = GraphBlocksServerApp(
+        auth_hook=StaticBearerAuthHook(
+            {"valid-token": PrincipalRef("user-1")}
+        )
+    )
+
+    response = app.handle(
+        ServerRequest(
+            method="GET",
+            path="/runs",
+            headers={},
+            query={},
+            cookies={},
+        )
+    )
+
+    assert response.status_code == 401
+    assert response.headers["www-authenticate"] == 'Bearer realm="graphblocks"'
+    assert json.loads(response.body.decode("utf-8")) == {
+        "ok": False,
+        "reasonCodes": ["auth.missing_bearer_token"],
     }
 
 
@@ -768,6 +830,26 @@ def test_server_request_and_response_maps_are_read_only_snapshots() -> None:
     assert response.headers == {"content-type": "application/json"}
     with pytest.raises(TypeError):
         response.headers["content-type"] = "text/plain"
+
+    challenged = ServerResponse.json(
+        401,
+        {"ok": False},
+        headers={"WWW-Authenticate": 'Bearer realm="graphblocks"'},
+    )
+
+    assert challenged.headers == {
+        "content-type": "application/json",
+        "www-authenticate": 'Bearer realm="graphblocks"',
+    }
+    with pytest.raises(
+        ValueError,
+        match="must not override content-type",
+    ):
+        ServerResponse.json(
+            200,
+            {"ok": True},
+            headers={"content-type": "text/plain"},
+        )
 
 
 def test_server_request_auth_and_response_validate_contracts() -> None:
@@ -6584,6 +6666,7 @@ def test_server_app_rejects_async_callback_when_required_authentication_is_uncon
     )
 
     assert response.status_code == 401
+    assert response.headers["www-authenticate"] == 'Bearer realm="graphblocks"'
     assert json.loads(response.body.decode("utf-8")) == {
         "ok": False,
         "reasonCodes": ["auth.callback_authentication_required"],
@@ -6614,6 +6697,7 @@ def test_server_app_required_callback_authentication_rejects_principalless_allow
     )
 
     assert response.status_code == 401
+    assert response.headers["www-authenticate"] == 'Bearer realm="graphblocks"'
     assert json.loads(response.body) == {
         "ok": False,
         "reasonCodes": ["auth.callback_authentication_required"],

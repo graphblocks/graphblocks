@@ -106,6 +106,7 @@ SERVER_EVENT_SEVERITY_RANKS = {
     "critical": 60,
     "fatal": 60,
 }
+_SERVER_BEARER_CHALLENGE = 'Bearer realm="graphblocks"'
 SERVER_TERMINAL_EVENT_KINDS = frozenset({
     "RunSucceeded",
     "RunFailed",
@@ -1071,14 +1072,31 @@ class ServerResponse:
         return self.body
 
     @classmethod
-    def json(cls, status_code: int, payload: Mapping[str, object]) -> ServerResponse:
+    def json(
+        cls,
+        status_code: int,
+        payload: Mapping[str, object],
+        *,
+        headers: Mapping[str, str] | None = None,
+    ) -> ServerResponse:
         if not isinstance(payload, Mapping):
             raise ValueError("server response JSON payload must be a mapping")
         payload_copy = _response_json_object(_freeze_json_value("server response JSON", "payload", payload))
         canonical_dumps(payload_copy)
+        response_headers = {"content-type": "application/json"}
+        if headers is not None:
+            additional_headers = _validate_http_headers(
+                "server response JSON",
+                headers,
+            )
+            if "content-type" in additional_headers:
+                raise ValueError(
+                    "server response JSON headers must not override content-type"
+                )
+            response_headers.update(additional_headers)
         return cls(
             status_code=status_code,
-            headers={"content-type": "application/json"},
+            headers=response_headers,
             body=json.dumps(payload_copy, separators=(",", ":"), sort_keys=True, allow_nan=False).encode("utf-8"),
         )
 
@@ -3320,6 +3338,9 @@ class GraphBlocksServerApp:
                         "ok": False,
                         "reasonCodes": ["auth.hook_error"],
                     },
+                    headers={
+                        "www-authenticate": _SERVER_BEARER_CHALLENGE,
+                    },
                 )
             if not isinstance(hook_decision, ServerAuthDecision):
                 return ServerResponse.json(
@@ -3327,6 +3348,9 @@ class GraphBlocksServerApp:
                     {
                         "ok": False,
                         "reasonCodes": ["auth.invalid_decision"],
+                    },
+                    headers={
+                        "www-authenticate": _SERVER_BEARER_CHALLENGE,
                     },
                 )
             auth_decision = hook_decision
@@ -3344,12 +3368,20 @@ class GraphBlocksServerApp:
                         )
                     except (TypeError, ValueError, json.JSONDecodeError):
                         pass
+                authentication_failed = auth_decision.principal is None
                 return ServerResponse.json(
-                    401,
+                    401 if authentication_failed else 403,
                     {
                         "ok": False,
                         "reasonCodes": list(auth_decision.reason_codes),
                     },
+                    headers=(
+                        {
+                            "www-authenticate": _SERVER_BEARER_CHALLENGE,
+                        }
+                        if authentication_failed
+                        else None
+                    ),
                 )
         if (
             route.operation == "submit_async_callback"
@@ -3361,6 +3393,9 @@ class GraphBlocksServerApp:
                 {
                     "ok": False,
                     "reasonCodes": ["auth.callback_authentication_required"],
+                },
+                headers={
+                    "www-authenticate": _SERVER_BEARER_CHALLENGE,
                 },
             )
 
@@ -4795,6 +4830,9 @@ class GraphBlocksServerApp:
                                 "operationId": submission.operation_id,
                                 "runId": submission.run_id,
                                 "error": "resumable async callback requires authenticated principal",
+                            },
+                            headers={
+                                "www-authenticate": _SERVER_BEARER_CHALLENGE,
                             },
                         )
                     for submission_field, operation_field in (
