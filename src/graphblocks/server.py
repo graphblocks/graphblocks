@@ -120,6 +120,7 @@ DEFAULT_MAX_SERVER_REQUEST_BODY_BYTES = 1024 * 1024
 DEFAULT_MAX_ASYNC_CALLBACK_REQUEST_BODY_BYTES = 512 * 1024
 DEFAULT_MAX_SERVER_EVENT_PAGE_EVENTS = 100
 DEFAULT_MAX_SERVER_EVENT_PAGE_BYTES = 1024 * 1024
+DEFAULT_MAX_IN_MEMORY_RUNS = 10_000
 
 
 def _utc_now_iso() -> str:
@@ -2403,6 +2404,7 @@ class GraphBlocksServerApp:
     )
     max_event_page_events: int = DEFAULT_MAX_SERVER_EVENT_PAGE_EVENTS
     max_event_page_bytes: int = DEFAULT_MAX_SERVER_EVENT_PAGE_BYTES
+    max_in_memory_runs: int = DEFAULT_MAX_IN_MEMORY_RUNS
     _events_by_run_id: dict[str, tuple[Mapping[str, object], ...]] = field(default_factory=dict, init=False, repr=False)
     _run_authorization_by_run_id: dict[str, _ServerRunAuthorizationRecord] = field(
         default_factory=dict,
@@ -2539,6 +2541,7 @@ class GraphBlocksServerApp:
             "max_async_callback_request_body_bytes",
             "max_event_page_events",
             "max_event_page_bytes",
+            "max_in_memory_runs",
         ):
             value = getattr(self, field_name)
             if isinstance(value, bool) or not isinstance(value, int) or value < 1:
@@ -4777,6 +4780,37 @@ class GraphBlocksServerApp:
                 ):
                     raise ValueError("run request admissionUnits must be a positive integer")
 
+                with self._accepted_run_condition:
+                    if (
+                        run_id in self._events_by_run_id
+                        or run_id in self._admitting_accepted_run_ids
+                    ):
+                        return ServerResponse.json(
+                            409,
+                            {
+                                "ok": False,
+                                "runId": run_id,
+                                "error": f"run {run_id!r} already exists",
+                            },
+                        )
+                    if (
+                        len(self._events_by_run_id)
+                        + len(self._admitting_accepted_run_ids)
+                        >= self.max_in_memory_runs
+                    ):
+                        return ServerResponse.json(
+                            429,
+                            {
+                                "ok": False,
+                                "runId": run_id,
+                                "reasonCode": "server.run_capacity_exhausted",
+                                "maxInMemoryRuns": self.max_in_memory_runs,
+                                "error": (
+                                    "server in-memory run capacity is exhausted"
+                                ),
+                            },
+                        )
+
                 block_catalog = self.registry.compilation_catalog()
                 plan = (
                     compile_graph(graph, block_catalog=block_catalog)
@@ -4898,6 +4932,23 @@ class GraphBlocksServerApp:
                                     "error": f"run {run_id!r} already exists",
                                 },
                             )
+                        if (
+                            len(self._events_by_run_id)
+                            + len(self._admitting_accepted_run_ids)
+                            >= self.max_in_memory_runs
+                        ):
+                            return ServerResponse.json(
+                                429,
+                                {
+                                    "ok": False,
+                                    "runId": run_id,
+                                    "reasonCode": "server.run_capacity_exhausted",
+                                    "maxInMemoryRuns": self.max_in_memory_runs,
+                                    "error": (
+                                        "server in-memory run capacity is exhausted"
+                                    ),
+                                },
+                            )
                         try:
                             submission = self.admission_ticket_queue.submit(
                                 run_id,
@@ -4999,6 +5050,23 @@ class GraphBlocksServerApp:
                                     "error": f"run {run_id!r} already exists",
                                 },
                             )
+                        if (
+                            len(self._events_by_run_id)
+                            + len(self._admitting_accepted_run_ids)
+                            >= self.max_in_memory_runs
+                        ):
+                            return ServerResponse.json(
+                                429,
+                                {
+                                    "ok": False,
+                                    "runId": run_id,
+                                    "reasonCode": "server.run_capacity_exhausted",
+                                    "maxInMemoryRuns": self.max_in_memory_runs,
+                                    "error": (
+                                        "server in-memory run capacity is exhausted"
+                                    ),
+                                },
+                            )
                         self._admitting_accepted_run_ids.add(run_id)
                     try:
                         self.accepted_run_executor.submit(
@@ -5046,6 +5114,23 @@ class GraphBlocksServerApp:
                                     "ok": False,
                                     "runId": run_id,
                                     "error": f"run {run_id!r} already exists",
+                                },
+                            )
+                        if (
+                            len(self._events_by_run_id)
+                            + len(self._admitting_accepted_run_ids)
+                            >= self.max_in_memory_runs
+                        ):
+                            return ServerResponse.json(
+                                429,
+                                {
+                                    "ok": False,
+                                    "runId": run_id,
+                                    "reasonCode": "server.run_capacity_exhausted",
+                                    "maxInMemoryRuns": self.max_in_memory_runs,
+                                    "error": (
+                                        "server in-memory run capacity is exhausted"
+                                    ),
                                 },
                             )
                         assert frozen_start_event is not None

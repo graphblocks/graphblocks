@@ -446,6 +446,7 @@ def test_server_app_validates_unauthenticated_development_mode_flag() -> None:
         "max_async_callback_request_body_bytes",
         "max_event_page_events",
         "max_event_page_bytes",
+        "max_in_memory_runs",
     ),
 )
 def test_server_app_rejects_invalid_resource_limits(field_name: str) -> None:
@@ -4038,6 +4039,102 @@ def test_server_app_rejects_duplicate_invoke_run_id_without_overwriting_events()
     assert attach.status_code == 200
     assert attach_payload["events"][0]["metadata"]["responseId"] == "response-duplicate-first"
     assert attach_payload["events"][1]["payload"]["outputs"] == {"prompt": "Duplicate first"}
+
+
+def test_server_app_applies_in_memory_run_capacity_before_new_admission(
+    monkeypatch,
+) -> None:
+    app = GraphBlocksServerApp(
+        allow_unauthenticated_dev=True,
+        defer_accepted_runs=True,
+        max_in_memory_runs=1,
+    )
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "server-run-capacity"},
+        "spec": {
+            "nodes": {
+                "render": {
+                    "block": "prompt.render@1",
+                    "config": {"template": "Capacity {message.text}"},
+                    "inputs": {"message": "$input.message"},
+                    "outputs": {"prompt": "$output.prompt"},
+                }
+            }
+        },
+    }
+
+    first = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs",
+            headers={},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "graph": graph,
+                    "inputs": {"message": {"text": "run-capacity-1"}},
+                    "runId": "run-capacity-1",
+                    "responseId": "response-capacity-1",
+                    "responseMode": "accepted",
+                    "occurredAt": "2026-07-29T00:00:00Z",
+                }
+            ).encode("utf-8"),
+        )
+    )
+
+    def fail_if_compiled(*args, **kwargs):
+        del args, kwargs
+        raise AssertionError("capacity-rejected run reached graph compiler")
+
+    monkeypatch.setattr(graphblocks_server, "compile_graph", fail_if_compiled)
+    rejected_responses = []
+    for run_id, response_id in (
+        ("run-capacity-2", "response-capacity-2"),
+        ("run-capacity-1", "response-capacity-duplicate"),
+    ):
+        rejected_responses.append(
+            app.handle(
+                ServerRequest(
+                    method="POST",
+                    path="/runs",
+                    headers={},
+                    query={},
+                    cookies={},
+                    body=json.dumps(
+                        {
+                            "graph": graph,
+                            "inputs": {"message": {"text": run_id}},
+                            "runId": run_id,
+                            "responseId": response_id,
+                            "responseMode": "accepted",
+                            "occurredAt": "2026-07-29T00:00:00Z",
+                        }
+                    ).encode("utf-8"),
+                )
+            )
+        )
+    exhausted, duplicate = rejected_responses
+
+    assert first.status_code == 202
+    assert exhausted.status_code == 429
+    assert json.loads(exhausted.body.decode("utf-8")) == {
+        "ok": False,
+        "runId": "run-capacity-2",
+        "reasonCode": "server.run_capacity_exhausted",
+        "maxInMemoryRuns": 1,
+        "error": "server in-memory run capacity is exhausted",
+    }
+    assert duplicate.status_code == 409
+    assert json.loads(duplicate.body.decode("utf-8")) == {
+        "ok": False,
+        "runId": "run-capacity-1",
+        "error": "run 'run-capacity-1' already exists",
+    }
+    assert tuple(app._events_by_run_id) == ("run-capacity-1",)
+    assert app.pending_accepted_run_ids() == ("run-capacity-1",)
 
 
 def test_server_app_rejects_invoke_graph_with_invalid_occurred_timestamp() -> None:
