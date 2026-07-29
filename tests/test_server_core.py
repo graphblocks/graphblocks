@@ -84,6 +84,41 @@ def _seed_succeeded_run(
     )
 
 
+def _seed_collectible_terminal_run(
+    app: GraphBlocksServerApp,
+    run_id: str,
+    principal: PrincipalRef,
+    *,
+    started_at: str,
+    completed_at: str,
+) -> None:
+    _record_seeded_run_owner(app, run_id, principal)
+    app._events_by_run_id[run_id] = (
+        {
+            "kind": "RunStarted",
+            "metadata": {
+                "eventId": f"{run_id}:started",
+                "runId": run_id,
+                "sequence": 1,
+                "releaseId": "release-terminal-collection-1",
+                "occurredAt": started_at,
+            },
+            "payload": {},
+        },
+        {
+            "kind": "RunSucceeded",
+            "metadata": {
+                "eventId": f"{run_id}:succeeded",
+                "runId": run_id,
+                "sequence": 2,
+                "releaseId": "release-terminal-collection-1",
+                "occurredAt": completed_at,
+            },
+            "payload": {"outputs": {}},
+        },
+    )
+
+
 def _record_failed_callback_delivery(
     app: GraphBlocksServerApp,
     delivery_id: str,
@@ -560,6 +595,9 @@ def test_server_app_validates_unauthenticated_development_mode_flag() -> None:
         "max_callback_registration_history_bytes",
         "max_callback_delivery_controls_per_delivery",
         "max_callback_delivery_control_history_bytes_per_delivery",
+        "terminal_run_retention_seconds",
+        "terminal_run_collection_interval_seconds",
+        "terminal_run_collection_batch_size",
     ),
 )
 def test_server_app_rejects_invalid_resource_limits(field_name: str) -> None:
@@ -569,6 +607,17 @@ def test_server_app_rejects_invalid_resource_limits(field_name: str) -> None:
                 allow_unauthenticated_dev=True,
                 **{field_name: value},
             )
+
+
+def test_server_app_requires_callable_terminal_collection_clock() -> None:
+    with pytest.raises(
+        ValueError,
+        match="server terminal_run_collection_clock must be callable",
+    ):
+        GraphBlocksServerApp(
+            allow_unauthenticated_dev=True,
+            terminal_run_collection_clock=None,  # type: ignore[arg-type]
+        )
 
 
 def test_server_app_fails_closed_when_auth_hook_returns_wrong_type() -> None:
@@ -4773,6 +4822,104 @@ def test_server_app_terminal_deletion_cleans_run_scoped_state_and_bounds_tombsto
         response_id="response-delete-cleanup-reused",
         token="alice-token",
     ).status_code == 202
+
+
+def test_server_app_collects_expired_terminal_runs_in_bounded_batches() -> None:
+    principal = PrincipalRef("alice", tenant_id="tenant-a")
+    app = GraphBlocksServerApp(
+        auth_hook=StaticBearerAuthHook({"alice-token": principal}),
+        terminal_run_retention_seconds=60,
+        terminal_run_collection_batch_size=1,
+    )
+    _seed_collectible_terminal_run(
+        app,
+        "run-collect-old-1",
+        principal,
+        started_at="2026-07-29T00:00:00Z",
+        completed_at="2026-07-29T00:01:00Z",
+    )
+    _seed_collectible_terminal_run(
+        app,
+        "run-collect-old-2",
+        principal,
+        started_at="2026-07-29T00:02:00Z",
+        completed_at="2026-07-29T00:03:00Z",
+    )
+    _seed_collectible_terminal_run(
+        app,
+        "run-collect-recent-1",
+        principal,
+        started_at="2026-07-29T00:59:00Z",
+        completed_at="2026-07-29T00:59:30Z",
+    )
+
+    first = app.collect_expired_terminal_runs(
+        now="2026-07-29T01:00:00Z",
+    )
+    second = app.collect_expired_terminal_runs(
+        now="2026-07-29T01:00:00Z",
+    )
+    third = app.collect_expired_terminal_runs(
+        now="2026-07-29T01:00:00Z",
+    )
+
+    assert first == ("run-collect-old-1",)
+    assert second == ("run-collect-old-2",)
+    assert third == ()
+    assert tuple(app._events_by_run_id) == ("run-collect-recent-1",)
+    assert tuple(app._retired_runs_by_run_id) == (
+        "run-collect-old-1",
+        "run-collect-old-2",
+    )
+
+
+def test_server_app_collects_terminal_runs_before_capacity_admission() -> None:
+    principal = PrincipalRef("alice", tenant_id="tenant-a")
+    app = GraphBlocksServerApp(
+        auth_hook=StaticBearerAuthHook({"alice-token": principal}),
+        max_in_memory_runs=1,
+        max_in_memory_runs_per_tenant=1,
+        terminal_run_retention_seconds=60,
+        terminal_run_collection_interval_seconds=300,
+        terminal_run_collection_batch_size=10,
+        terminal_run_collection_clock=lambda: "2026-07-29T02:00:00Z",
+    )
+    _seed_collectible_terminal_run(
+        app,
+        "run-collect-before-admission-old-1",
+        principal,
+        started_at="2026-07-29T00:00:00Z",
+        completed_at="2026-07-29T00:01:00Z",
+    )
+
+    admitted = _invoke_capacity_run(
+        app,
+        run_id="run-collect-before-admission-new-1",
+        response_id="response-collect-before-admission-new-1",
+        token="alice-token",
+        response_mode="sync",
+    )
+    throttled = _invoke_capacity_run(
+        app,
+        run_id="run-collect-before-admission-new-2",
+        response_id="response-collect-before-admission-new-2",
+        token="alice-token",
+        response_mode="sync",
+    )
+
+    assert admitted.status_code == 200
+    assert (
+        "run-collect-before-admission-old-1"
+        not in app._events_by_run_id
+    )
+    assert (
+        "run-collect-before-admission-old-1"
+        in app._retired_runs_by_run_id
+    )
+    assert throttled.status_code == 429
+    assert json.loads(throttled.body.decode("utf-8"))["reasonCode"] == (
+        "server.run_capacity_exhausted"
+    )
 
 
 def test_server_app_defers_terminal_deletion_during_active_callback_delivery() -> None:

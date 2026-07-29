@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from concurrent.futures import Executor, Future
 from dataclasses import dataclass, field, replace
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import json
 import math
 from threading import Condition, get_ident, TIMEOUT_MAX
@@ -145,6 +145,9 @@ DEFAULT_MAX_CALLBACK_DELIVERY_CONTROLS_PER_DELIVERY = 256
 DEFAULT_MAX_CALLBACK_DELIVERY_CONTROL_HISTORY_BYTES_PER_DELIVERY = (
     1024 * 1024
 )
+DEFAULT_TERMINAL_RUN_RETENTION_SECONDS = 24 * 60 * 60
+DEFAULT_TERMINAL_RUN_COLLECTION_INTERVAL_SECONDS = 60
+DEFAULT_TERMINAL_RUN_COLLECTION_BATCH_SIZE = 100
 MAX_SERVER_CALLBACK_DELIVERY_IDENTIFIER_BYTES = 4_096
 MAX_SERVER_CALLBACK_DELIVERY_ERROR_BYTES = 16_384
 MAX_SERVER_CALLBACK_DELIVERY_TIMESTAMP_BYTES = 128
@@ -2596,6 +2599,19 @@ class GraphBlocksServerApp:
     max_callback_delivery_control_history_bytes_per_delivery: int = (
         DEFAULT_MAX_CALLBACK_DELIVERY_CONTROL_HISTORY_BYTES_PER_DELIVERY
     )
+    terminal_run_retention_seconds: int = (
+        DEFAULT_TERMINAL_RUN_RETENTION_SECONDS
+    )
+    terminal_run_collection_interval_seconds: int = (
+        DEFAULT_TERMINAL_RUN_COLLECTION_INTERVAL_SECONDS
+    )
+    terminal_run_collection_batch_size: int = (
+        DEFAULT_TERMINAL_RUN_COLLECTION_BATCH_SIZE
+    )
+    terminal_run_collection_clock: Callable[[], str] = field(
+        default=_utc_now_iso,
+        repr=False,
+    )
     _events_by_run_id: dict[str, tuple[Mapping[str, object], ...]] = field(default_factory=dict, init=False, repr=False)
     _run_authorization_by_run_id: dict[str, _ServerRunAuthorizationRecord] = field(
         default_factory=dict,
@@ -2718,6 +2734,16 @@ class GraphBlocksServerApp:
         init=False,
         repr=False,
     )
+    _last_terminal_run_collection_at: datetime | None = field(
+        default=None,
+        init=False,
+        repr=False,
+    )
+    _terminal_run_collection_in_progress: bool = field(
+        default=False,
+        init=False,
+        repr=False,
+    )
     _advancing_accepted_runs_by_run_id: dict[str, CancellationToken] = field(
         default_factory=dict,
         init=False,
@@ -2772,6 +2798,9 @@ class GraphBlocksServerApp:
             "max_callback_registration_history_bytes",
             "max_callback_delivery_controls_per_delivery",
             "max_callback_delivery_control_history_bytes_per_delivery",
+            "terminal_run_retention_seconds",
+            "terminal_run_collection_interval_seconds",
+            "terminal_run_collection_batch_size",
         ):
             value = getattr(self, field_name)
             if isinstance(value, bool) or not isinstance(value, int) or value < 1:
@@ -2789,6 +2818,10 @@ class GraphBlocksServerApp:
             raise ValueError("server admission_ticket_queue must be AdmissionTicketQueue or null")
         if not callable(self.admission_clock):
             raise ValueError("server admission_clock must be callable")
+        if not callable(self.terminal_run_collection_clock):
+            raise ValueError(
+                "server terminal_run_collection_clock must be callable"
+            )
 
     def _principal_can_access_run(
         self,
@@ -3100,6 +3133,83 @@ class GraphBlocksServerApp:
             self._accepted_run_executions_by_run_id.pop(run_id, None)
             self._accepted_run_condition.notify_all()
             return retired.response_payload(duplicate=False)
+
+    def collect_expired_terminal_runs(
+        self,
+        *,
+        now: str,
+    ) -> tuple[str, ...]:
+        now = _validate_iso_datetime(
+            "server terminal run collection",
+            "now",
+            now,
+        )
+        now_datetime = datetime.fromisoformat(
+            f"{now[:-1]}+00:00" if now.endswith("Z") else now
+        ).astimezone(timezone.utc)
+        cutoff = now_datetime - timedelta(
+            seconds=self.terminal_run_retention_seconds
+        )
+        candidates: list[tuple[str, PrincipalRef | None]] = []
+        with self._accepted_run_condition:
+            for run_id, events in self._events_by_run_id.items():
+                projection = self._run_status_payload(
+                    run_id,
+                    events,
+                    include_ok=False,
+                )
+                if projection.get("state") not in SERVER_TERMINAL_RUN_STATES:
+                    continue
+                completed_at = projection.get("completedAt")
+                if not isinstance(completed_at, str):
+                    continue
+                completed_at = _validate_iso_datetime(
+                    "server terminal run collection",
+                    "completed_at",
+                    completed_at,
+                )
+                completed_datetime = datetime.fromisoformat(
+                    (
+                        f"{completed_at[:-1]}+00:00"
+                        if completed_at.endswith("Z")
+                        else completed_at
+                    )
+                ).astimezone(timezone.utc)
+                if completed_datetime > cutoff:
+                    continue
+                authorization = self._run_authorization_by_run_id.get(
+                    run_id
+                )
+                if authorization is None:
+                    continue
+                principal = (
+                    PrincipalRef(
+                        authorization.owner_principal_id,
+                        tenant_id=authorization.tenant_id,
+                    )
+                    if authorization.owner_principal_id is not None
+                    else None
+                )
+                candidates.append((run_id, principal))
+                if (
+                    len(candidates)
+                    >= self.terminal_run_collection_batch_size
+                ):
+                    break
+
+        collected_run_ids: list[str] = []
+        for run_id, principal in candidates:
+            try:
+                result = self.delete_terminal_run(
+                    run_id,
+                    principal=principal,
+                    deleted_at=now,
+                )
+            except (KeyError, _ServerRunDeletionConflictError):
+                continue
+            if result.get("duplicate") is False:
+                collected_run_ids.append(run_id)
+        return tuple(collected_run_ids)
 
     def handle(self, request: ServerRequest) -> ServerResponse:
         try:
@@ -5775,6 +5885,46 @@ class GraphBlocksServerApp:
                     if auth_decision.principal is not None
                     else None
                 )
+                terminal_collection_now = _validate_iso_datetime(
+                    "server terminal run collection clock",
+                    "now",
+                    self.terminal_run_collection_clock(),
+                )
+                terminal_collection_datetime = datetime.fromisoformat(
+                    (
+                        f"{terminal_collection_now[:-1]}+00:00"
+                        if terminal_collection_now.endswith("Z")
+                        else terminal_collection_now
+                    )
+                ).astimezone(timezone.utc)
+                collect_terminal_runs = False
+                with self._accepted_run_condition:
+                    while self._terminal_run_collection_in_progress:
+                        self._accepted_run_condition.wait()
+                    if (
+                        self._last_terminal_run_collection_at is None
+                        or terminal_collection_datetime
+                        - self._last_terminal_run_collection_at
+                        >= timedelta(
+                            seconds=(
+                                self.terminal_run_collection_interval_seconds
+                            )
+                        )
+                    ):
+                        self._terminal_run_collection_in_progress = True
+                        collect_terminal_runs = True
+                if collect_terminal_runs:
+                    try:
+                        self.collect_expired_terminal_runs(
+                            now=terminal_collection_now
+                        )
+                    finally:
+                        with self._accepted_run_condition:
+                            self._last_terminal_run_collection_at = (
+                                terminal_collection_datetime
+                            )
+                            self._terminal_run_collection_in_progress = False
+                            self._accepted_run_condition.notify_all()
 
                 with self._accepted_run_condition:
                     if (
