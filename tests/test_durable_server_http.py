@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 import json
 from pathlib import Path
+import sqlite3
 
 import pytest
 
@@ -94,10 +96,14 @@ def _app(
     path: Path,
     *,
     clock_value: int,
+    failpoint: Callable[[str], None] | None = None,
 ) -> DurableAcceptedRunServerApp:
     return DurableAcceptedRunServerApp(
         service=DurableAcceptedRunService(
-            repository=SQLiteAcceptedRunRepository(path),
+            repository=SQLiteAcceptedRunRepository(
+                path,
+                failpoint=failpoint,
+            ),
             lease_owner_id=f"worker-{clock_value}",
             lease_duration_ms=10_000,
             compiler=compile_graph_reference,
@@ -796,6 +802,232 @@ def test_durable_http_cancel_fences_ready_resume_before_worker_claim(
         "external_callback_received",
         "run_cancelled",
     ]
+
+
+def test_durable_http_expire_is_restart_safe_idempotent_and_owner_scoped(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "durable-http-expire.sqlite3"
+    run_id = "run-expire-http"
+    admitted = _app(path, clock_value=1_000).handle(
+        _request(
+            "POST",
+            "/runs",
+            token="alice-token",
+            body={
+                "graph": {
+                    "apiVersion": "graphblocks.ai/v1alpha3",
+                    "kind": "Graph",
+                    "metadata": {"name": "durable-http-expire"},
+                    "spec": {"nodes": {}},
+                },
+                "inputs": {},
+                "invocation": _CALLBACK_INVOCATION,
+                "requestId": "request-expire-http",
+                "responseMode": "accepted",
+                "runId": run_id,
+            },
+        )
+    )
+    assert admitted.status_code == 202
+    expire_body = {
+        "expectedStateVersion": 1,
+        "reason": "deadline_elapsed",
+        "requestId": "expire-request-1",
+    }
+
+    expired = _app(path, clock_value=2_000).handle(
+        _request(
+            "POST",
+            f"/runs/{run_id}/expire",
+            token="alice-token",
+            body=expire_body,
+        )
+    )
+    limited = _app(path, clock_value=3_000)
+    limited.max_request_body_bytes = 16
+    oversized = limited.handle(
+        _request(
+            "POST",
+            f"/runs/{run_id}/expire",
+            token="alice-token",
+            body=expire_body,
+        )
+    )
+    replayed = _app(path, clock_value=3_000).handle(
+        _request(
+            "POST",
+            f"/runs/{run_id}/expire",
+            token="alice-token",
+            body=expire_body,
+        )
+    )
+    cross_tenant = _app(path, clock_value=3_000).handle(
+        _request(
+            "POST",
+            f"/runs/{run_id}/expire",
+            token="bob-token",
+            body=expire_body,
+        )
+    )
+    same_tenant_other_owner = _app(path, clock_value=3_000).handle(
+        _request(
+            "POST",
+            f"/runs/{run_id}/expire",
+            token="charlie-token",
+            body=expire_body,
+        )
+    )
+
+    expected = {
+        "acceptedEventSequence": 2,
+        "duplicate": False,
+        "ok": True,
+        "runId": run_id,
+        "state": "terminal",
+        "stateVersion": 2,
+        "terminalStatus": "expired",
+    }
+    assert expired.status_code == 202
+    assert json.loads(expired.body) == expected
+    assert replayed.status_code == 202
+    assert json.loads(replayed.body) == {
+        **expected,
+        "duplicate": True,
+    }
+    assert cross_tenant.status_code == 404
+    assert same_tenant_other_owner.status_code == 404
+    assert oversized.status_code == 413
+
+    restarted = _app(path, clock_value=4_000)
+    status = restarted.handle(
+        _request("GET", f"/runs/{run_id}", token="alice-token")
+    )
+    events = restarted.handle(
+        _request(
+            "GET",
+            f"/runs/{run_id}/events",
+            token="alice-token",
+            query={"after": "0", "limit": "10"},
+        )
+    )
+    assert status.status_code == 200
+    assert json.loads(status.body) == {
+        "eventHighWatermark": 2,
+        "eventLowWatermark": 1,
+        "ok": True,
+        "result": {
+            "reason": "deadline_elapsed",
+            "requestId": "expire-request-1",
+            "status": "expired",
+        },
+        "runId": run_id,
+        "state": "terminal",
+        "stateVersion": 2,
+        "terminalStatus": "expired",
+    }
+    assert [
+        event["kind"]
+        for event in json.loads(events.body)["events"]
+    ] == ["run_accepted", "run_expired"]
+
+
+def test_durable_http_expire_suppresses_callback_and_fences_resume(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "durable-http-expire-callback.sqlite3"
+    waiting, issuance = _prepare_waiting_callback(path)
+    expired = _app(path, clock_value=3_000).handle(
+        _request(
+            "POST",
+            f"/runs/{_CALLBACK_RUN_ID}/expire",
+            token="alice-token",
+            body={
+                "expectedStateVersion": waiting.state_version,
+                "reason": "callback_deadline",
+                "requestId": "expire-callback-run",
+            },
+        )
+    )
+    callback_after_expire = _app(path, clock_value=4_000).handle(
+        _request(
+            "POST",
+            (
+                f"/runs/{_CALLBACK_RUN_ID}/callbacks/"
+                f"{_CALLBACK_OPERATION_ID}"
+            ),
+            token="alice-token",
+            body=_callback_body(waiting, issuance),
+        )
+    )
+
+    assert expired.status_code == 202
+    assert json.loads(expired.body)["terminalStatus"] == "expired"
+    assert callback_after_expire.status_code == 409
+    restarted = _app(path, clock_value=5_000)
+    assert restarted.service.advance_next_run(tenant_id="tenant-a") is None
+    connection = sqlite3.connect(path)
+    dispatch_state = connection.execute(
+        """
+        SELECT delivery_state, cancelled_at_unix_ms
+        FROM effect_outbox
+        WHERE effect_kind = 'operation_dispatch'
+        """
+    ).fetchone()
+    connection.close()
+    assert dispatch_state == ("pending", 3_000)
+
+
+def test_durable_expire_rolls_back_callback_dispatch_suppression(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "durable-expire-dispatch-rollback.sqlite3"
+    waiting, _ = _prepare_waiting_callback(path)
+
+    def inject(point: str) -> None:
+        if point == "expire_run.after_dispatch_cancellation":
+            raise RuntimeError("injected dispatch suppression failure")
+
+    with pytest.raises(
+        RuntimeError,
+        match="injected dispatch suppression failure",
+    ):
+        _app(
+            path,
+            clock_value=3_000,
+            failpoint=inject,
+        ).service.expire_run(
+            tenant_id="tenant-a",
+            owner_principal_id="alice",
+            run_id=_CALLBACK_RUN_ID,
+            expected_state_version=waiting.state_version,
+            idempotency_key="expire-dispatch-rollback",
+            reason="rollback",
+        )
+
+    status = _app(path, clock_value=4_000).handle(
+        _request(
+            "GET",
+            f"/runs/{_CALLBACK_RUN_ID}",
+            token="alice-token",
+        )
+    )
+    assert status.status_code == 200
+    assert json.loads(status.body)["state"] == "waiting_callback"
+    connection = sqlite3.connect(path)
+    dispatch_state = connection.execute(
+        """
+        SELECT delivery_state, cancelled_at_unix_ms
+        FROM effect_outbox
+        WHERE effect_kind = 'operation_dispatch'
+        """
+    ).fetchone()
+    control_count = int(
+        connection.execute("SELECT COUNT(*) FROM run_controls").fetchone()[0]
+    )
+    connection.close()
+    assert dispatch_state == ("claimed", None)
+    assert control_count == 0
 
 
 def test_durable_http_pause_and_resume_are_restart_safe_and_owner_scoped(

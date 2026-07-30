@@ -33,6 +33,7 @@ from .server_storage import (
     AcceptedRunEffectKind,
     AcceptedRunEventIntent,
     AcceptedRunEventPage,
+    AcceptedRunExpireCommand,
     AcceptedRunIdConflictError,
     AcceptedRunNotFoundError,
     AcceptedRunQueueClaimRequest,
@@ -105,6 +106,7 @@ class DurableAcceptedRunService:
             "commit_waiting",
             "accept_callback_and_queue_resume",
             "cancel_run",
+            "expire_run",
             "pause_run",
             "resume_run",
             "commit_terminal",
@@ -396,9 +398,66 @@ class DurableAcceptedRunService:
         reason: str,
         requested_at_unix_ms: int | None = None,
     ) -> AcceptedRunControlAcceptance:
+        return self._apply_terminal_control(
+            tenant_id=tenant_id,
+            owner_principal_id=owner_principal_id,
+            run_id=run_id,
+            action=AcceptedRunControlAction.CANCEL,
+            expected_state_version=expected_state_version,
+            idempotency_key=idempotency_key,
+            reason=reason,
+            requested_at_unix_ms=requested_at_unix_ms,
+        )
+
+    def expire_run(
+        self,
+        *,
+        tenant_id: str,
+        owner_principal_id: str,
+        run_id: str,
+        expected_state_version: int,
+        idempotency_key: str,
+        reason: str,
+        requested_at_unix_ms: int | None = None,
+    ) -> AcceptedRunControlAcceptance:
+        return self._apply_terminal_control(
+            tenant_id=tenant_id,
+            owner_principal_id=owner_principal_id,
+            run_id=run_id,
+            action=AcceptedRunControlAction.EXPIRE,
+            expected_state_version=expected_state_version,
+            idempotency_key=idempotency_key,
+            reason=reason,
+            requested_at_unix_ms=requested_at_unix_ms,
+        )
+
+    def _apply_terminal_control(
+        self,
+        *,
+        tenant_id: str,
+        owner_principal_id: str,
+        run_id: str,
+        action: AcceptedRunControlAction,
+        expected_state_version: int,
+        idempotency_key: str,
+        reason: str,
+        requested_at_unix_ms: int | None,
+    ) -> AcceptedRunControlAcceptance:
+        if action not in {
+            AcceptedRunControlAction.CANCEL,
+            AcceptedRunControlAction.EXPIRE,
+        }:
+            raise ValueError(
+                "durable accepted-run terminal control action must be cancel "
+                "or expire"
+            )
+        control_name = {
+            AcceptedRunControlAction.CANCEL: "cancellation",
+            AcceptedRunControlAction.EXPIRE: "expiration",
+        }[action]
         if type(reason) is not str or not reason or reason != reason.strip():
             raise ValueError(
-                "durable accepted-run cancellation reason must be an exact "
+                f"durable accepted-run {control_name} reason must be an exact "
                 "non-empty string"
             )
         requested_at = (
@@ -406,8 +465,12 @@ class DurableAcceptedRunService:
             if requested_at_unix_ms is None
             else requested_at_unix_ms
         )
+        terminal_status = {
+            AcceptedRunControlAction.CANCEL: "cancelled",
+            AcceptedRunControlAction.EXPIRE: "expired",
+        }[action]
         request_value = {
-            "action": "cancel",
+            "action": action.value,
             "expectedStateVersion": expected_state_version,
             "ownerPrincipalId": owner_principal_id,
             "reason": reason,
@@ -418,14 +481,14 @@ class DurableAcceptedRunService:
         result_value = {
             "reason": reason,
             "requestId": idempotency_key,
-            "status": "cancelled",
+            "status": terminal_status,
         }
         result_digest = canonical_hash(result_value)
         event_value = {
             "reason": reason,
             "requestId": idempotency_key,
             "runId": run_id,
-            "state": "cancelled",
+            "state": terminal_status,
         }
         completion_value = {
             "result": result_value,
@@ -440,8 +503,42 @@ class DurableAcceptedRunService:
                 "tenantId": tenant_id,
             }
         )
-        return self.repository.cancel_run(
-            AcceptedRunCancelCommand(
+        completion_effect = AcceptedRunEffectIntent(
+            effect_id=(
+                "effect-completion:"
+                f"{completion_digest.removeprefix('sha256:')}"
+            ),
+            kind=AcceptedRunEffectKind.COMPLETION,
+            idempotency_key=(
+                "completion:"
+                f"{completion_identity_digest.removeprefix('sha256:')}"
+            ),
+            payload_json=canonical_dumps(completion_value),
+            payload_digest=completion_digest,
+        )
+        if action is AcceptedRunControlAction.CANCEL:
+            return self.repository.cancel_run(
+                AcceptedRunCancelCommand(
+                    tenant_id=tenant_id,
+                    owner_principal_id=owner_principal_id,
+                    run_id=run_id,
+                    expected_state_version=expected_state_version,
+                    idempotency_key=idempotency_key,
+                    request_digest=request_digest,
+                    requested_at_unix_ms=requested_at,
+                    result_json=canonical_dumps(result_value),
+                    result_digest=result_digest,
+                    cancelled_event=AcceptedRunEventIntent(
+                        kind="run_cancelled",
+                        payload_json=canonical_dumps(event_value),
+                        payload_digest=canonical_hash(event_value),
+                        created_at_unix_ms=requested_at,
+                    ),
+                    completion_effect=completion_effect,
+                )
+            )
+        return self.repository.expire_run(
+            AcceptedRunExpireCommand(
                 tenant_id=tenant_id,
                 owner_principal_id=owner_principal_id,
                 run_id=run_id,
@@ -451,25 +548,13 @@ class DurableAcceptedRunService:
                 requested_at_unix_ms=requested_at,
                 result_json=canonical_dumps(result_value),
                 result_digest=result_digest,
-                cancelled_event=AcceptedRunEventIntent(
-                    kind="run_cancelled",
+                expired_event=AcceptedRunEventIntent(
+                    kind="run_expired",
                     payload_json=canonical_dumps(event_value),
                     payload_digest=canonical_hash(event_value),
                     created_at_unix_ms=requested_at,
                 ),
-                completion_effect=AcceptedRunEffectIntent(
-                    effect_id=(
-                        "effect-completion:"
-                        f"{completion_digest.removeprefix('sha256:')}"
-                    ),
-                    kind=AcceptedRunEffectKind.COMPLETION,
-                    idempotency_key=(
-                        "completion:"
-                        f"{completion_identity_digest.removeprefix('sha256:')}"
-                    ),
-                    payload_json=canonical_dumps(completion_value),
-                    payload_digest=completion_digest,
-                ),
+                completion_effect=completion_effect,
             )
         )
 
@@ -928,6 +1013,13 @@ def durable_server_route_manifest() -> ServerRouteManifest:
             ),
             ServerEndpoint(
                 "POST",
+                "/runs/{run_id}/expire",
+                "http",
+                "expire_run",
+                auth_required=True,
+            ),
+            ServerEndpoint(
+                "POST",
                 "/runs/{run_id}/pause",
                 "http",
                 "pause_run",
@@ -1062,6 +1154,7 @@ class DurableAcceptedRunServerApp:
                 in {
                     "admit_run",
                     "cancel_run",
+                    "expire_run",
                     "pause_run",
                     "resume_run",
                     "submit_run_callback",
@@ -1273,11 +1366,17 @@ class DurableAcceptedRunServerApp:
                     },
                 )
 
-            if route.endpoint.operation == "cancel_run":
+            if route.endpoint.operation in {"cancel_run", "expire_run"}:
+                control_name = (
+                    "cancellation"
+                    if route.endpoint.operation == "cancel_run"
+                    else "expiration"
+                )
                 payload = canonical_loads(request.body)
                 if not isinstance(payload, dict):
                     raise ValueError(
-                        "durable cancellation request body must be a JSON object"
+                        f"durable {control_name} request body must be a JSON "
+                        "object"
                     )
                 expected_fields = {
                     "expectedStateVersion",
@@ -1286,7 +1385,8 @@ class DurableAcceptedRunServerApp:
                 }
                 if set(payload) != expected_fields:
                     raise ValueError(
-                        "durable cancellation request fields must match version 1"
+                        f"durable {control_name} request fields must match "
+                        "version 1"
                     )
                 request_id = payload["requestId"]
                 reason = payload["reason"]
@@ -1300,21 +1400,38 @@ class DurableAcceptedRunServerApp:
                         or value != value.strip()
                     ):
                         raise ValueError(
-                            f"durable cancellation request {field_name} must "
-                            "be an exact non-empty string"
+                            f"durable {control_name} request {field_name} "
+                            "must be an exact non-empty string"
                         )
                 assert isinstance(request_id, str)
                 assert isinstance(reason, str)
-                control_acceptance = self.service.cancel_run(
-                    tenant_id=principal.tenant_id,
-                    owner_principal_id=principal.principal_id,
-                    run_id=run_id,
-                    expected_state_version=payload[
-                        "expectedStateVersion"
-                    ],
-                    idempotency_key=request_id,
-                    reason=reason,
+                terminal_status = (
+                    "cancelled"
+                    if route.endpoint.operation == "cancel_run"
+                    else "expired"
                 )
+                if route.endpoint.operation == "cancel_run":
+                    control_acceptance = self.service.cancel_run(
+                        tenant_id=principal.tenant_id,
+                        owner_principal_id=principal.principal_id,
+                        run_id=run_id,
+                        expected_state_version=payload[
+                            "expectedStateVersion"
+                        ],
+                        idempotency_key=request_id,
+                        reason=reason,
+                    )
+                else:
+                    control_acceptance = self.service.expire_run(
+                        tenant_id=principal.tenant_id,
+                        owner_principal_id=principal.principal_id,
+                        run_id=run_id,
+                        expected_state_version=payload[
+                            "expectedStateVersion"
+                        ],
+                        idempotency_key=request_id,
+                        reason=reason,
+                    )
                 return ServerResponse.json(
                     202,
                     {
@@ -1326,7 +1443,7 @@ class DurableAcceptedRunServerApp:
                         "runId": run_id,
                         "state": "terminal",
                         "stateVersion": control_acceptance.state_version,
-                        "terminalStatus": "cancelled",
+                        "terminalStatus": terminal_status,
                     },
                 )
 

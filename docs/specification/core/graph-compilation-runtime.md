@@ -205,6 +205,16 @@ replays the stored acceptance after restart. A conflicting request, late
 callback, or worker commit using the invalidated fence MUST be rejected without
 publishing another result.
 
+Durable expiration uses `POST /runs/{run_id}/expire` with the same closed
+terminal-control fields. It is an explicit owner-scoped control: the caller
+supplies the authoritative expiration reason and expected state version. The
+repository MUST atomically append `run_expired`, persist the `expired` terminal
+result and completion outbox intent, invalidate the current lease and fencing
+token, clear any pause marker, and suppress an undelivered callback-dispatch
+effect. Identical requests MUST replay after restart; a late callback, worker
+commit, foreign owner, or conflicting state version MUST not mutate the
+terminal run.
+
 Durable non-terminal suspension uses `POST /runs/{run_id}/pause` and
 `POST /runs/{run_id}/resume` with the same closed control fields. Pause MUST
 atomically append its control event, preserve the exact resumable phase,
@@ -225,9 +235,10 @@ non-disclosing `404`. This control-plane pause is a non-terminal scheduling
 state, distinct from a terminal paused outcome.
 
 Repository implementations claiming this preview contract revision MUST
-implement `pause_run` and `resume_run`, and control acceptances MUST identify
-their `resulting_phase`. Custom repositories targeting the prior preview
-contract are not compatible until they implement that capability boundary.
+implement `expire_run`, `pause_run`, and `resume_run`, and control acceptances
+MUST identify their `resulting_phase`. Custom repositories targeting the prior
+preview contract are not compatible until they implement that capability
+boundary.
 
 Callback acceptance only makes the run ready for resume. A worker must claim
 the reconstructable work with fresh lease and fencing authority before

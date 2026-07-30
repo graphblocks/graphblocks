@@ -2008,6 +2008,99 @@ class AcceptedRunCancelCommand:
 
 
 @dataclass(frozen=True, slots=True)
+class AcceptedRunExpireCommand:
+    tenant_id: str
+    owner_principal_id: str
+    run_id: str
+    expected_state_version: int
+    idempotency_key: str
+    request_digest: str
+    requested_at_unix_ms: int
+    result_json: str
+    result_digest: str
+    expired_event: AcceptedRunEventIntent
+    completion_effect: AcceptedRunEffectIntent
+
+    def __post_init__(self) -> None:
+        owner = "accepted run expire command"
+        for field_name in (
+            "tenant_id",
+            "owner_principal_id",
+            "run_id",
+            "idempotency_key",
+        ):
+            object.__setattr__(
+                self,
+                field_name,
+                _validate_exact_string(
+                    owner,
+                    field_name,
+                    getattr(self, field_name),
+                ),
+            )
+        object.__setattr__(
+            self,
+            "expected_state_version",
+            _validate_u64(
+                owner,
+                "expected_state_version",
+                self.expected_state_version,
+            ),
+        )
+        object.__setattr__(
+            self,
+            "request_digest",
+            _validate_digest(owner, "request_digest", self.request_digest),
+        )
+        object.__setattr__(
+            self,
+            "requested_at_unix_ms",
+            _validate_u64(
+                owner,
+                "requested_at_unix_ms",
+                self.requested_at_unix_ms,
+            ),
+        )
+        object.__setattr__(
+            self,
+            "result_json",
+            _validate_canonical_json(owner, "result_json", self.result_json),
+        )
+        object.__setattr__(
+            self,
+            "result_digest",
+            _validate_digest(owner, "result_digest", self.result_digest),
+        )
+        _validate_json_digest(
+            owner,
+            json_field_name="result_json",
+            encoded=self.result_json,
+            digest_field_name="result_digest",
+            digest=self.result_digest,
+        )
+        if not isinstance(self.expired_event, AcceptedRunEventIntent):
+            raise ValueError(
+                f"{owner} expired_event must be an AcceptedRunEventIntent"
+            )
+        if self.expired_event.kind != "run_expired":
+            raise ValueError(
+                f"{owner} expired_event kind must be run_expired"
+            )
+        if self.expired_event.created_at_unix_ms != self.requested_at_unix_ms:
+            raise ValueError(
+                f"{owner} event timestamp must match requested_at_unix_ms"
+            )
+        if not isinstance(self.completion_effect, AcceptedRunEffectIntent):
+            raise ValueError(
+                f"{owner} completion_effect must be an AcceptedRunEffectIntent"
+            )
+        if self.completion_effect.kind is not AcceptedRunEffectKind.COMPLETION:
+            raise ValueError(
+                f"{owner} requires a completion effect"
+            )
+
+
+@dataclass(frozen=True, slots=True)
 class AcceptedRunStateControlCommand:
     tenant_id: str
     owner_principal_id: str
@@ -2220,6 +2313,12 @@ class AcceptedRunRepository(Protocol):
     def cancel_run(
         self,
         command: AcceptedRunCancelCommand,
+    ) -> AcceptedRunControlAcceptance:
+        ...
+
+    def expire_run(
+        self,
+        command: AcceptedRunExpireCommand,
     ) -> AcceptedRunControlAcceptance:
         ...
 

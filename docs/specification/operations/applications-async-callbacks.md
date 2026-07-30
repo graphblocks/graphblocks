@@ -233,9 +233,11 @@ project a paused callback-delivery state for explicit retry. The process-local
 continuation does not survive process restart. The preview
 `DurableAcceptedRunServerApp` instead delegates accepted runs, events,
 checkpoints, callback inbox/outbox state, and idempotent cancellation,
-pause, and resume controls to `AcceptedRunRepository`; its SQLite
-implementation preserves these transitions across restart. Pausing a waiting
-run preserves its callback admission boundary: a valid callback may be
+expiration, pause, and resume controls to `AcceptedRunRepository`; its SQLite
+implementation preserves these transitions across restart. Expiration
+terminalizes the run, suppresses an undelivered operation-dispatch effect, and
+rejects later callback or worker commits under their stale fences. Pausing a
+waiting run preserves its callback admission boundary: a valid callback may be
 journaled and settle its dispatch effect, but it only advances the stored
 resume target to `ready_resume`. Its issuance-time expected state version
 remains admissible across pause/resume controls, while the repository applies

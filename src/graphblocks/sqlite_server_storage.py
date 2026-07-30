@@ -23,8 +23,10 @@ from .server_storage import (
     AcceptedRunControlAction,
     AcceptedRunControlConflictError,
     AcceptedRunEvent,
+    AcceptedRunEventIntent,
     AcceptedRunEventPage,
     AcceptedRunExecutionEnvelope,
+    AcceptedRunExpireCommand,
     AcceptedRunIdConflictError,
     AcceptedRunLeaseExpiredError,
     AcceptedRunNotFoundError,
@@ -3307,9 +3309,59 @@ class SQLiteAcceptedRunRepository:
                 "accepted-run SQLite cancellation command must be an "
                 "AcceptedRunCancelCommand"
             )
+        return self._apply_terminal_control(
+            command,
+            action=AcceptedRunControlAction.CANCEL,
+            terminal_status="cancelled",
+            terminal_event=command.cancelled_event,
+            operation="cancel_run",
+        )
+
+    def expire_run(
+        self,
+        command: AcceptedRunExpireCommand,
+    ) -> AcceptedRunControlAcceptance:
+        if not isinstance(command, AcceptedRunExpireCommand):
+            raise TypeError(
+                "accepted-run SQLite expiration command must be an "
+                "AcceptedRunExpireCommand"
+            )
+        return self._apply_terminal_control(
+            command,
+            action=AcceptedRunControlAction.EXPIRE,
+            terminal_status="expired",
+            terminal_event=command.expired_event,
+            operation="expire_run",
+        )
+
+    def _apply_terminal_control(
+        self,
+        command: AcceptedRunCancelCommand | AcceptedRunExpireCommand,
+        *,
+        action: AcceptedRunControlAction,
+        terminal_status: str,
+        terminal_event: AcceptedRunEventIntent,
+        operation: str,
+    ) -> AcceptedRunControlAcceptance:
+        if action not in {
+            AcceptedRunControlAction.CANCEL,
+            AcceptedRunControlAction.EXPIRE,
+        }:
+            raise ValueError(
+                "accepted-run SQLite terminal control action must be cancel "
+                "or expire"
+            )
+        expected_status = {
+            AcceptedRunControlAction.CANCEL: "cancelled",
+            AcceptedRunControlAction.EXPIRE: "expired",
+        }[action]
+        if terminal_status != expected_status:
+            raise ValueError(
+                "accepted-run SQLite terminal control status must match action"
+            )
         if command.requested_at_unix_ms > _MAX_SQLITE_INTEGER:
             raise ValueError(
-                "accepted-run SQLite cancellation timestamp exceeds SQLite "
+                "accepted-run SQLite terminal control timestamp exceeds SQLite "
                 "integer range"
             )
 
@@ -3353,11 +3405,13 @@ class SQLiteAcceptedRunRepository:
                 (internal_id, command.idempotency_key),
             ).fetchone()
             if existing_control is not None:
-                return self._replay_cancel(
+                return self._replay_terminal_control(
                     row,
                     snapshot,
                     existing_control,
                     command,
+                    action=action,
+                    terminal_status=terminal_status,
                 )
             if snapshot.state_version != command.expected_state_version:
                 raise AcceptedRunStateConflictError(
@@ -3375,7 +3429,7 @@ class SQLiteAcceptedRunRepository:
             )
             if command.requested_at_unix_ms < updated_at:
                 raise ValueError(
-                    "accepted-run SQLite cancellation timestamp must not "
+                    "accepted-run SQLite terminal control timestamp must not "
                     "precede the current run state"
                 )
             lease_generation = _decode_sqlite_integer(
@@ -3393,7 +3447,8 @@ class SQLiteAcceptedRunRepository:
                 or fencing_token >= _MAX_SQLITE_INTEGER
             ):
                 raise OverflowError(
-                    "accepted-run SQLite cancellation counters are exhausted"
+                    "accepted-run SQLite terminal control counters are "
+                    "exhausted"
                 )
             next_state_version = snapshot.state_version + 1
             next_event_sequence = snapshot.event_high_watermark + 1
@@ -3422,7 +3477,8 @@ class SQLiteAcceptedRunRepository:
                 ).fetchone()
                 if dispatch is None:
                     raise SQLiteAcceptedRunCorruptionError(
-                        "accepted-run SQLite cancellation checkpoint has no "
+                        "accepted-run SQLite terminal control checkpoint has "
+                        "no "
                         "dispatch effect"
                     )
                 if dispatch["cancelled_at_unix_ms"] is not None:
@@ -3448,7 +3504,7 @@ class SQLiteAcceptedRunRepository:
                         or claim_fencing_token >= _MAX_SQLITE_INTEGER
                     ):
                         raise OverflowError(
-                            "accepted-run SQLite dispatch cancellation "
+                            "accepted-run SQLite dispatch suppression "
                             "counters are exhausted"
                         )
                     suppressed = connection.execute(
@@ -3482,19 +3538,19 @@ class SQLiteAcceptedRunRepository:
                     )
                     if suppressed.rowcount != 1:
                         raise SQLiteAcceptedRunCorruptionError(
-                            "accepted-run SQLite cancellation lost its "
+                            "accepted-run SQLite terminal control lost its "
                             "dispatch effect"
                         )
                     self._hit_failpoint(
-                        "cancel_run.after_dispatch_cancellation"
+                        f"{operation}.after_dispatch_cancellation"
                     )
                 elif delivery_state not in {
                     "delivered",
                     "satisfied_by_callback",
                 }:
                     raise SQLiteAcceptedRunCorruptionError(
-                        "accepted-run SQLite cancellation dispatch state is "
-                        "invalid"
+                        "accepted-run SQLite terminal control dispatch state "
+                        "is invalid"
                     )
 
             effect = command.completion_effect
@@ -3535,8 +3591,8 @@ class SQLiteAcceptedRunRepository:
                     command.requested_at_unix_ms,
                 ),
             )
-            self._hit_failpoint("cancel_run.after_outbox_insert")
-            event = command.cancelled_event
+            self._hit_failpoint(f"{operation}.after_outbox_insert")
+            event = terminal_event
             connection.execute(
                 """
                 INSERT INTO run_events (
@@ -3558,7 +3614,7 @@ class SQLiteAcceptedRunRepository:
                     event.created_at_unix_ms,
                 ),
             )
-            self._hit_failpoint("cancel_run.after_event_insert")
+            self._hit_failpoint(f"{operation}.after_event_insert")
             connection.execute(
                 """
                 INSERT INTO run_controls (
@@ -3578,7 +3634,7 @@ class SQLiteAcceptedRunRepository:
                 (
                     internal_id,
                     command.idempotency_key,
-                    AcceptedRunControlAction.CANCEL.value,
+                    action.value,
                     command.request_digest,
                     command.owner_principal_id,
                     command.expected_state_version,
@@ -3588,7 +3644,7 @@ class SQLiteAcceptedRunRepository:
                     AcceptedRunPhase.TERMINAL.value,
                 ),
             )
-            self._hit_failpoint("cancel_run.after_control_insert")
+            self._hit_failpoint(f"{operation}.after_control_insert")
             updated = connection.execute(
                 """
                 UPDATE accepted_runs
@@ -3596,7 +3652,7 @@ class SQLiteAcceptedRunRepository:
                     state_version = ?,
                     event_high_watermark = ?,
                     updated_at_unix_ms = ?,
-                    terminal_status = 'cancelled',
+                    terminal_status = ?,
                     terminal_result_json = ?,
                     terminal_result_digest = ?,
                     lease_owner_id = NULL,
@@ -3619,6 +3675,7 @@ class SQLiteAcceptedRunRepository:
                     next_state_version,
                     next_event_sequence,
                     command.requested_at_unix_ms,
+                    terminal_status,
                     command.result_json,
                     command.result_digest,
                     next_lease_generation,
@@ -3640,9 +3697,9 @@ class SQLiteAcceptedRunRepository:
                     command.expected_state_version,
                     snapshot.state_version,
                 )
-            self._hit_failpoint("cancel_run.after_state_update")
+            self._hit_failpoint(f"{operation}.after_state_update")
             return AcceptedRunControlAcceptance(
-                action=AcceptedRunControlAction.CANCEL,
+                action=action,
                 resulting_phase=AcceptedRunPhase.TERMINAL,
                 idempotency_key=command.idempotency_key,
                 request_digest=command.request_digest,
@@ -3651,15 +3708,18 @@ class SQLiteAcceptedRunRepository:
             )
 
         acceptance = self._database._run_immediate(transition)
-        self._hit_failpoint("cancel_run.after_commit")
+        self._hit_failpoint(f"{operation}.after_commit")
         return acceptance
 
     @staticmethod
-    def _replay_cancel(
+    def _replay_terminal_control(
         run_row: sqlite3.Row,
         snapshot: AcceptedRunSnapshot,
         control_row: sqlite3.Row,
-        command: AcceptedRunCancelCommand,
+        command: AcceptedRunCancelCommand | AcceptedRunExpireCommand,
+        *,
+        action: AcceptedRunControlAction,
+        terminal_status: str,
     ) -> AcceptedRunControlAcceptance:
         try:
             existing = AcceptedRunControlAcceptance(
@@ -3694,7 +3754,7 @@ class SQLiteAcceptedRunRepository:
             )
         except (TypeError, ValueError) as error:
             raise SQLiteAcceptedRunCorruptionError(
-                "accepted-run SQLite cancellation control is invalid"
+                "accepted-run SQLite terminal control is invalid"
             ) from error
         requested_by = _decode_sqlite_text(
             "control requested_by_principal_id",
@@ -3705,7 +3765,7 @@ class SQLiteAcceptedRunRepository:
             control_row["expected_state_version"],
         )
         if (
-            existing.action is not AcceptedRunControlAction.CANCEL
+            existing.action is not action
             or existing.resulting_phase is not AcceptedRunPhase.TERMINAL
             or existing.idempotency_key != command.idempotency_key
             or existing.request_digest != command.request_digest
@@ -3722,7 +3782,7 @@ class SQLiteAcceptedRunRepository:
         )
         if (
             snapshot.phase is not AcceptedRunPhase.TERMINAL
-            or snapshot.terminal_status != "cancelled"
+            or snapshot.terminal_status != terminal_status
             or snapshot.terminal_result_json != command.result_json
             or stored_result_digest != command.result_digest
             or snapshot.state_version != existing.state_version
@@ -3730,8 +3790,8 @@ class SQLiteAcceptedRunRepository:
             < existing.accepted_event_sequence
         ):
             raise SQLiteAcceptedRunCorruptionError(
-                "accepted-run SQLite cancellation replay does not match its "
-                "terminal state"
+                "accepted-run SQLite terminal control replay does not match "
+                "its terminal state"
             )
         return AcceptedRunControlAcceptance(
             action=existing.action,
