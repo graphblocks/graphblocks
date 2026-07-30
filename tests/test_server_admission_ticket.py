@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, wait
 import json
 from threading import Event, Lock
 
@@ -147,6 +147,156 @@ def test_ticketed_server_returns_cursor_zero_and_promotes_fifo() -> None:
         event["kind"] for event in app._events_by_run_id["run-ticket-2"]
     ] == ["RunStarted", "RunSucceeded"]
     assert queue.get("interactive-ticket-000002").state == "completed"
+
+
+def test_ticketed_server_reserves_run_id_before_concurrent_compilation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    compile_started = Event()
+    release_compile = Event()
+    compile_lock = Lock()
+    compile_calls = 0
+
+    def blocking_compile(*args, **kwargs):
+        nonlocal compile_calls
+        with compile_lock:
+            compile_calls += 1
+        compile_started.set()
+        if not release_compile.wait(10):
+            raise TimeoutError("test did not release graph compilation")
+        return compile_graph_reference(*args, **kwargs)
+
+    monkeypatch.setattr(graphblocks_server, "compile_graph", blocking_compile)
+    queue = AdmissionTicketQueue(
+        "compile-reservation",
+        max_concurrent=1,
+        rate_limit=100,
+        window_ms=1_000,
+        max_pending=100,
+        ticket_ttl_ms=60_000,
+    )
+    app = GraphBlocksServerApp(
+        allow_unauthenticated_dev=True,
+        admission_ticket_queue=queue,
+        admission_clock=lambda: 0,
+    )
+
+    def submit(response_id: str) -> graphblocks_server.ServerResponse:
+        return app.handle(
+            ServerRequest(
+                method="POST",
+                path="/runs",
+                headers={},
+                query={},
+                cookies={},
+                body=json.dumps(
+                    {
+                        "graph": _graph(),
+                        "inputs": {"message": {"text": response_id}},
+                        "runId": "run-ticket-compile-reservation",
+                        "requestId": "request-ticket-compile-reservation",
+                        "responseId": response_id,
+                        "responseMode": "accepted",
+                        "occurredAt": "2026-07-30T00:00:00Z",
+                    }
+                ).encode(),
+            )
+        )
+
+    with ThreadPoolExecutor(max_workers=16) as request_executor:
+        first_future = request_executor.submit(
+            submit,
+            "response-ticket-compile-reservation-first",
+        )
+        if not compile_started.wait(5):
+            release_compile.set()
+            pytest.fail("graph compilation did not start")
+        duplicate_futures = tuple(
+            request_executor.submit(
+                submit,
+                f"response-ticket-compile-reservation-{index}",
+            )
+            for index in range(49)
+        )
+        try:
+            completed_duplicates, _ = wait(
+                duplicate_futures,
+                timeout=5,
+            )
+        finally:
+            release_compile.set()
+        first = first_future.result(timeout=10)
+        duplicates = tuple(
+            future.result(timeout=10)
+            for future in duplicate_futures
+        )
+
+    assert len(completed_duplicates) == 49
+    assert compile_calls == 1
+    assert first.status_code == 202
+    assert {response.status_code for response in duplicates} == {409}
+    assert {
+        json.loads(response.body)["error"]
+        for response in duplicates
+    } == {"run 'run-ticket-compile-reservation' already exists"}
+    assert queue.get("compile-reservation-ticket-000001").run_id == (
+        "run-ticket-compile-reservation"
+    )
+    assert app._accepted_run_reservations_by_run_id == {}
+
+
+def test_ticketed_server_releases_compile_reservation_when_queue_is_full(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        graphblocks_server,
+        "compile_graph",
+        compile_graph_reference,
+    )
+    queue = AdmissionTicketQueue(
+        "compile-queue-full",
+        max_concurrent=1,
+        rate_limit=100,
+        window_ms=1_000,
+        max_pending=1,
+        ticket_ttl_ms=60_000,
+    )
+    app = GraphBlocksServerApp(
+        allow_unauthenticated_dev=True,
+        admission_ticket_queue=queue,
+        admission_clock=lambda: 0,
+    )
+    _submit(app, "run-compile-queue-full-1")
+    _submit(app, "run-compile-queue-full-2")
+
+    rejected = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs",
+            headers={},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "graph": _graph(),
+                    "inputs": {"message": {"text": "rejected"}},
+                    "runId": "run-compile-queue-full-3",
+                    "requestId": "request-run-compile-queue-full-3",
+                    "responseMode": "accepted",
+                    "occurredAt": "2026-07-30T00:00:00Z",
+                }
+            ).encode(),
+        )
+    )
+
+    assert rejected.status_code == 429
+    assert "run-compile-queue-full-3" not in app._events_by_run_id
+    assert app._accepted_run_reservations_by_run_id == {}
+
+    app.advance_accepted_run("run-compile-queue-full-1")
+    retried = _submit(app, "run-compile-queue-full-3")
+
+    assert retried["admissionTicket"]["state"] == "queued"
 
 
 def test_ticketed_server_scopes_replay_subject_by_tenant(

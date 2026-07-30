@@ -1,6 +1,13 @@
 from __future__ import annotations
 
-from concurrent.futures import Executor, Future, ThreadPoolExecutor, TimeoutError as FutureTimeoutError
+from collections.abc import Callable
+from concurrent.futures import (
+    Executor,
+    Future,
+    ThreadPoolExecutor,
+    TimeoutError as FutureTimeoutError,
+    wait,
+)
 from dataclasses import replace
 import hashlib
 from itertools import permutations
@@ -5335,6 +5342,352 @@ def test_server_app_applies_in_memory_run_capacity_before_new_admission(
     assert app.pending_accepted_run_ids() == ("run-capacity-1",)
 
 
+@pytest.mark.parametrize(
+    ("response_mode", "expected_status"),
+    (("accepted", 202), ("sync", 200)),
+)
+def test_server_app_reserves_run_id_before_concurrent_graph_compilation(
+    monkeypatch: pytest.MonkeyPatch,
+    response_mode: str,
+    expected_status: int,
+) -> None:
+    compile_started = Event()
+    release_compile = Event()
+    compile_lock = Lock()
+    compile_calls = 0
+
+    def blocking_compile(*args, **kwargs):
+        nonlocal compile_calls
+        with compile_lock:
+            compile_calls += 1
+        compile_started.set()
+        if not release_compile.wait(10):
+            raise TimeoutError("test did not release graph compilation")
+        return compile_graph_reference(*args, **kwargs)
+
+    monkeypatch.setattr(graphblocks_server, "compile_graph", blocking_compile)
+    app = GraphBlocksServerApp(
+        allow_unauthenticated_dev=True,
+        defer_accepted_runs=True,
+    )
+    run_id = f"run-compile-reservation-{response_mode}"
+
+    with ThreadPoolExecutor(max_workers=32) as request_executor:
+        first_future = request_executor.submit(
+            _invoke_capacity_run,
+            app,
+            run_id=run_id,
+            response_id="response-compile-reservation-first",
+            response_mode=response_mode,
+        )
+        if not compile_started.wait(5):
+            release_compile.set()
+            pytest.fail("graph compilation did not start")
+        duplicate_futures = tuple(
+            request_executor.submit(
+                _invoke_capacity_run,
+                app,
+                run_id=run_id,
+                response_id=f"response-compile-reservation-{index}",
+                response_mode=response_mode,
+            )
+            for index in range(99)
+        )
+        try:
+            completed_duplicates, _ = wait(
+                duplicate_futures,
+                timeout=5,
+            )
+        finally:
+            release_compile.set()
+        first = first_future.result(timeout=10)
+        duplicates = tuple(
+            future.result(timeout=10)
+            for future in duplicate_futures
+        )
+
+    assert len(completed_duplicates) == 99
+    assert compile_calls == 1
+    assert first.status_code == expected_status
+    assert {response.status_code for response in duplicates} == {409}
+    assert {
+        json.loads(response.body)["error"]
+        for response in duplicates
+    } == {f"run {run_id!r} already exists"}
+    assert app._accepted_run_reservations_by_run_id == {}
+
+
+def test_server_app_hides_compile_reservation_from_other_owner(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    compile_started = Event()
+    release_compile = Event()
+    compile_calls = 0
+
+    def blocking_compile(*args, **kwargs):
+        nonlocal compile_calls
+        compile_calls += 1
+        compile_started.set()
+        if not release_compile.wait(10):
+            raise TimeoutError("test did not release graph compilation")
+        return compile_graph_reference(*args, **kwargs)
+
+    monkeypatch.setattr(graphblocks_server, "compile_graph", blocking_compile)
+    app = GraphBlocksServerApp(
+        auth_hook=StaticBearerAuthHook(
+            {
+                "alice-token": PrincipalRef(
+                    "alice",
+                    tenant_id="tenant-a",
+                ),
+                "bob-token": PrincipalRef(
+                    "bob",
+                    tenant_id="tenant-a",
+                ),
+            }
+        ),
+        defer_accepted_runs=True,
+    )
+
+    with ThreadPoolExecutor(max_workers=1) as request_executor:
+        owner_future = request_executor.submit(
+            _invoke_capacity_run,
+            app,
+            run_id="run-private-compile-reservation",
+            response_id="response-private-compile-reservation",
+            token="alice-token",
+        )
+        if not compile_started.wait(5):
+            release_compile.set()
+            pytest.fail("graph compilation did not start")
+        foreign = _invoke_capacity_run(
+            app,
+            run_id="run-private-compile-reservation",
+            response_id="response-private-compile-reservation-foreign",
+            token="bob-token",
+        )
+        release_compile.set()
+        owner = owner_future.result(timeout=10)
+
+    assert owner.status_code == 202
+    assert foreign.status_code == 404
+    assert json.loads(foreign.body) == {
+        "ok": False,
+        "error": "run 'run-private-compile-reservation' was not found",
+    }
+    assert compile_calls == 1
+
+
+def test_server_app_rejects_stale_worker_after_compile_reservation_retry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class CapturingAcceptedExecutor(Executor):
+        def __init__(self) -> None:
+            self.tasks: list[
+                tuple[
+                    Callable[..., object],
+                    tuple[object, ...],
+                    dict[str, object],
+                ]
+            ] = []
+
+        def submit(self, fn, /, *args, **kwargs):
+            future: Future[object] = Future()
+            if not args:
+                future.set_result(-1)
+                return future
+            self.tasks.append((fn, args, kwargs))
+            return future
+
+    monkeypatch.setattr(
+        graphblocks_server,
+        "compile_graph",
+        compile_graph_reference,
+    )
+    executor = CapturingAcceptedExecutor()
+    app = GraphBlocksServerApp(
+        allow_unauthenticated_dev=True,
+        defer_accepted_runs=True,
+        accepted_run_executor=executor,
+    )
+    original_record_authorization = (
+        GraphBlocksServerApp._record_run_authorization
+    )
+    publication_attempts = 0
+
+    def fail_first_publication(
+        server_app: GraphBlocksServerApp,
+        run_id: str,
+        principal: PrincipalRef | None,
+        created_at: str,
+    ) -> None:
+        nonlocal publication_attempts
+        publication_attempts += 1
+        if publication_attempts == 1:
+            raise ValueError("synthetic run publication failure")
+        original_record_authorization(
+            server_app,
+            run_id,
+            principal,
+            created_at,
+        )
+
+    monkeypatch.setattr(
+        GraphBlocksServerApp,
+        "_record_run_authorization",
+        fail_first_publication,
+    )
+
+    failed = _invoke_capacity_run(
+        app,
+        run_id="run-stale-compile-worker",
+        response_id="response-stale-compile-worker-failed",
+    )
+    retried = _invoke_capacity_run(
+        app,
+        run_id="run-stale-compile-worker",
+        response_id="response-stale-compile-worker-retried",
+    )
+
+    assert failed.status_code == 400
+    assert retried.status_code == 202
+    assert len(executor.tasks) == 2
+    stale_worker, stale_args, stale_kwargs = executor.tasks[0]
+    current_worker, current_args, current_kwargs = executor.tasks[1]
+    assert (
+        stale_kwargs["_expected_admission_reservation_id"]
+        != current_kwargs["_expected_admission_reservation_id"]
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="admission reservation changed before worker start",
+    ):
+        stale_worker(*stale_args, **stale_kwargs)
+
+    current = current_worker(*current_args, **current_kwargs)
+
+    assert isinstance(current, dict)
+    assert current["status"] == "succeeded"
+    assert app._accepted_run_reservations_by_run_id == {}
+
+
+@pytest.mark.parametrize(
+    ("tenant_scoped", "expected_reason_code"),
+    (
+        (False, "server.run_capacity_exhausted"),
+        (True, "server.tenant_run_capacity_exhausted"),
+    ),
+)
+def test_server_app_counts_compile_reservation_against_capacity(
+    monkeypatch: pytest.MonkeyPatch,
+    tenant_scoped: bool,
+    expected_reason_code: str,
+) -> None:
+    compile_started = Event()
+    release_compile = Event()
+    compile_calls = 0
+
+    def blocking_compile(*args, **kwargs):
+        nonlocal compile_calls
+        compile_calls += 1
+        compile_started.set()
+        if not release_compile.wait(10):
+            raise TimeoutError("test did not release graph compilation")
+        return compile_graph_reference(*args, **kwargs)
+
+    monkeypatch.setattr(graphblocks_server, "compile_graph", blocking_compile)
+    app = GraphBlocksServerApp(
+        auth_hook=(
+            StaticBearerAuthHook(
+                {
+                    "tenant-a-token": PrincipalRef(
+                        "alice",
+                        tenant_id="tenant-a",
+                    )
+                }
+            )
+            if tenant_scoped
+            else None
+        ),
+        allow_unauthenticated_dev=not tenant_scoped,
+        defer_accepted_runs=True,
+        max_in_memory_runs=2 if tenant_scoped else 1,
+        max_in_memory_runs_per_tenant=1,
+    )
+    token = "tenant-a-token" if tenant_scoped else None
+
+    with ThreadPoolExecutor(max_workers=2) as request_executor:
+        first_future = request_executor.submit(
+            _invoke_capacity_run,
+            app,
+            run_id="run-compile-capacity-1",
+            response_id="response-compile-capacity-1",
+            token=token,
+        )
+        if not compile_started.wait(5):
+            release_compile.set()
+            pytest.fail("graph compilation did not start")
+        second_future = request_executor.submit(
+            _invoke_capacity_run,
+            app,
+            run_id="run-compile-capacity-2",
+            response_id="response-compile-capacity-2",
+            token=token,
+        )
+        try:
+            second = second_future.result(timeout=5)
+        finally:
+            release_compile.set()
+        first = first_future.result(timeout=10)
+
+    assert first.status_code == 202
+    assert second.status_code == 429
+    assert json.loads(second.body)["reasonCode"] == expected_reason_code
+    assert compile_calls == 1
+    assert app._accepted_run_reservations_by_run_id == {}
+
+
+def test_server_app_releases_compile_reservation_after_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    compile_calls = 0
+
+    def fail_once(*args, **kwargs):
+        nonlocal compile_calls
+        compile_calls += 1
+        if compile_calls == 1:
+            raise ValueError("synthetic graph compilation failure")
+        return compile_graph_reference(*args, **kwargs)
+
+    monkeypatch.setattr(graphblocks_server, "compile_graph", fail_once)
+    app = GraphBlocksServerApp(
+        allow_unauthenticated_dev=True,
+        defer_accepted_runs=True,
+        max_in_memory_runs=1,
+    )
+
+    failed = _invoke_capacity_run(
+        app,
+        run_id="run-compile-retry-1",
+        response_id="response-compile-retry-failed",
+    )
+    retried = _invoke_capacity_run(
+        app,
+        run_id="run-compile-retry-1",
+        response_id="response-compile-retry-succeeded",
+    )
+
+    assert failed.status_code == 400
+    assert json.loads(failed.body) == {
+        "ok": False,
+        "error": "synthetic graph compilation failure",
+    }
+    assert retried.status_code == 202
+    assert compile_calls == 2
+    assert app._accepted_run_reservations_by_run_id == {}
+
+
 def test_server_app_isolates_in_memory_run_capacity_by_tenant(
     monkeypatch,
 ) -> None:
@@ -5455,8 +5808,7 @@ def test_server_app_counts_inflight_executor_reservation_against_tenant_quota() 
     assert json.loads(exhausted.body.decode("utf-8"))["reasonCode"] == (
         "server.tenant_run_capacity_exhausted"
     )
-    assert app._admitting_accepted_run_ids == set()
-    assert app._admitting_run_tenant_by_run_id == {}
+    assert app._accepted_run_reservations_by_run_id == {}
     assert tuple(app._events_by_run_id) == ("run-tenant-reservation-1",)
 
 
@@ -5497,8 +5849,7 @@ def test_server_app_releases_tenant_reservation_after_executor_failure() -> None
         "ok": False,
         "error": "executor failed unexpectedly",
     }
-    assert app._admitting_accepted_run_ids == set()
-    assert app._admitting_run_tenant_by_run_id == {}
+    assert app._accepted_run_reservations_by_run_id == {}
     assert app._events_by_run_id == {}
 
 

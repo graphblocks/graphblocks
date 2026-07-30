@@ -2643,6 +2643,31 @@ class _ServerRunAuthorizationRecord:
 
 
 @dataclass(frozen=True, slots=True)
+class _AcceptedRunAdmissionReservation:
+    authorization: _ServerRunAuthorizationRecord
+    reservation_id: str
+
+    def __post_init__(self) -> None:
+        if not isinstance(
+            self.authorization,
+            _ServerRunAuthorizationRecord,
+        ):
+            raise ValueError(
+                "server accepted run reservation authorization must be "
+                "a run authorization record"
+            )
+        object.__setattr__(
+            self,
+            "reservation_id",
+            _validate_exact_non_empty_string(
+                "server accepted run reservation",
+                "reservation_id",
+                self.reservation_id,
+            ),
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class _ServerRetiredRunRecord:
     authorization: _ServerRunAuthorizationRecord
     previous_state: str
@@ -2791,6 +2816,7 @@ class ServerHealth:
 
 @dataclass(slots=True)
 class _AcceptedRunExecution:
+    admission_reservation_id: str
     runtime: InProcessRuntime
     cancellation_token: CancellationToken
     journal: ExecutionJournal
@@ -3059,12 +3085,10 @@ class GraphBlocksServerApp:
         init=False,
         repr=False,
     )
-    _admitting_accepted_run_ids: set[str] = field(
-        default_factory=set,
-        init=False,
-        repr=False,
-    )
-    _admitting_run_tenant_by_run_id: dict[str, str | None] = field(
+    _accepted_run_reservations_by_run_id: dict[
+        str,
+        _AcceptedRunAdmissionReservation,
+    ] = field(
         default_factory=dict,
         init=False,
         repr=False,
@@ -3298,7 +3322,7 @@ class GraphBlocksServerApp:
             if state not in SERVER_TERMINAL_RUN_STATES:
                 raise _ServerRunDeletionConflictError(run_id, state)
             if (
-                run_id in self._admitting_accepted_run_ids
+                run_id in self._accepted_run_reservations_by_run_id
                 or run_id in self._advancing_accepted_runs_by_run_id
                 or run_id in self._pending_accepted_runs_by_run_id
                 or run_id in self._accepted_run_executions_by_run_id
@@ -6539,6 +6563,9 @@ class GraphBlocksServerApp:
                 },
             )
         if route.operation == "invoke_graph":
+            accepted_run_reservation: (
+                _AcceptedRunAdmissionReservation | None
+            ) = None
             try:
                 payload = _server_request_json_body(request, "run request")
                 if not isinstance(payload, dict):
@@ -6719,6 +6746,14 @@ class GraphBlocksServerApp:
                     or admission_units < 1
                 ):
                     raise ValueError("run request admissionUnits must be a positive integer")
+                reservation_candidate = _AcceptedRunAdmissionReservation(
+                    authorization=_ServerRunAuthorizationRecord.create(
+                        run_id,
+                        auth_decision.principal,
+                        occurred_at,
+                    ),
+                    reservation_id=f"admission-{uuid4().hex}",
+                )
                 terminal_collection_now = _validate_iso_datetime(
                     "server terminal run collection clock",
                     "now",
@@ -6761,11 +6796,46 @@ class GraphBlocksServerApp:
                             self._accepted_run_condition.notify_all()
 
                 with self._accepted_run_condition:
+                    active_reservation = (
+                        self._accepted_run_reservations_by_run_id.get(
+                            run_id
+                        )
+                    )
+                    active_authorization = (
+                        self._run_authorization_by_run_id.get(run_id)
+                        if run_id in self._events_by_run_id
+                        else (
+                            active_reservation.authorization
+                            if active_reservation is not None
+                            else (
+                                self._retired_runs_by_run_id[
+                                    run_id
+                                ].authorization
+                                if run_id in self._retired_runs_by_run_id
+                                else None
+                            )
+                        )
+                    )
                     if (
                         run_id in self._events_by_run_id
-                        or run_id in self._admitting_accepted_run_ids
+                        or active_reservation is not None
                         or run_id in self._retired_runs_by_run_id
                     ):
+                        if (
+                            active_authorization is None
+                            or not active_authorization.allows_read(
+                                auth_decision.principal
+                            )
+                        ):
+                            return ServerResponse.json(
+                                404,
+                                {
+                                    "ok": False,
+                                    "error": (
+                                        f"run {run_id!r} was not found"
+                                    ),
+                                },
+                            )
                         return ServerResponse.json(
                             409,
                             {
@@ -6776,7 +6846,9 @@ class GraphBlocksServerApp:
                         )
                     if (
                         len(self._events_by_run_id)
-                        + len(self._admitting_accepted_run_ids)
+                        + len(
+                            self._accepted_run_reservations_by_run_id
+                        )
                         >= self.max_in_memory_runs
                     ):
                         return ServerResponse.json(
@@ -6804,10 +6876,13 @@ class GraphBlocksServerApp:
                         )
                     ) + sum(
                         1
-                        for admitting_tenant_id in (
-                            self._admitting_run_tenant_by_run_id.values()
+                        for reservation in (
+                            self._accepted_run_reservations_by_run_id.values()
                         )
-                        if admitting_tenant_id == run_tenant_id
+                        if (
+                            reservation.authorization.tenant_id
+                            == run_tenant_id
+                        )
                     )
                     if (
                         in_memory_tenant_run_count
@@ -6831,6 +6906,10 @@ class GraphBlocksServerApp:
                                 ),
                             },
                         )
+                    self._accepted_run_reservations_by_run_id[
+                        run_id
+                    ] = reservation_candidate
+                    accepted_run_reservation = reservation_candidate
 
                 block_catalog = self.registry.compilation_catalog()
                 plan = (
@@ -6913,7 +6992,11 @@ class GraphBlocksServerApp:
                 assert isinstance(pending_run, Mapping)
                 accepted_run_cancellation_token = CancellationToken()
                 accepted_run_journal = ExecutionJournal(run_id)
+                assert accepted_run_reservation is not None
                 accepted_run_execution = _AcceptedRunExecution(
+                    admission_reservation_id=(
+                        accepted_run_reservation.reservation_id
+                    ),
                     runtime=InProcessRuntime(
                         self.registry,
                         cancellation_token=accepted_run_cancellation_token,
@@ -6937,74 +7020,13 @@ class GraphBlocksServerApp:
                     self.promote_admission_tickets(now_ms=admission_now_ms)
                     with self._accepted_run_condition:
                         if (
-                            run_id in self._events_by_run_id
-                            or run_id in self._admitting_accepted_run_ids
-                            or run_id in self._retired_runs_by_run_id
+                            self._accepted_run_reservations_by_run_id.get(
+                                run_id
+                            )
+                            is not accepted_run_reservation
                         ):
-                            return ServerResponse.json(
-                                409,
-                                {
-                                    "ok": False,
-                                    "runId": run_id,
-                                    "error": f"run {run_id!r} already exists",
-                                },
-                            )
-                        if (
-                            len(self._events_by_run_id)
-                            + len(self._admitting_accepted_run_ids)
-                            >= self.max_in_memory_runs
-                        ):
-                            return ServerResponse.json(
-                                429,
-                                {
-                                    "ok": False,
-                                    "runId": run_id,
-                                    "reasonCode": "server.run_capacity_exhausted",
-                                    "maxInMemoryRuns": self.max_in_memory_runs,
-                                    "error": (
-                                        "server in-memory run capacity is exhausted"
-                                    ),
-                                },
-                            )
-                        in_memory_tenant_run_count = sum(
-                            1
-                            for existing_run_id in self._events_by_run_id
-                            if (
-                                existing_run_id
-                                in self._run_authorization_by_run_id
-                                and self._run_authorization_by_run_id[
-                                    existing_run_id
-                                ].tenant_id
-                                == run_tenant_id
-                            )
-                        ) + sum(
-                            1
-                            for admitting_tenant_id in (
-                                self._admitting_run_tenant_by_run_id.values()
-                            )
-                            if admitting_tenant_id == run_tenant_id
-                        )
-                        if (
-                            in_memory_tenant_run_count
-                            >= self.max_in_memory_runs_per_tenant
-                        ):
-                            return ServerResponse.json(
-                                429,
-                                {
-                                    "ok": False,
-                                    "runId": run_id,
-                                    "tenantId": run_tenant_id,
-                                    "reasonCode": (
-                                        "server.tenant_run_capacity_exhausted"
-                                    ),
-                                    "maxInMemoryRunsPerTenant": (
-                                        self.max_in_memory_runs_per_tenant
-                                    ),
-                                    "error": (
-                                        "server tenant in-memory run capacity "
-                                        "is exhausted"
-                                    ),
-                                },
+                            raise ValueError(
+                                f"run {run_id!r} admission reservation changed"
                             )
                         try:
                             submission = self.admission_ticket_queue.submit(
@@ -7048,6 +7070,10 @@ class GraphBlocksServerApp:
                         self._admission_ticket_ids_by_run_id[
                             run_id
                         ] = admission_ticket.ticket_id
+                        self._accepted_run_reservations_by_run_id.pop(
+                            run_id,
+                        )
+                        accepted_run_reservation = None
                         self._accepted_run_condition.notify_all()
                     if admission_ticket.state == "admitted":
                         self._dispatch_admitted_tickets((admission_ticket,))
@@ -7095,94 +7121,15 @@ class GraphBlocksServerApp:
                                     ),
                                 },
                             )
-                    with self._accepted_run_condition:
-                        if (
-                            run_id in self._events_by_run_id
-                            or run_id in self._admitting_accepted_run_ids
-                            or run_id in self._retired_runs_by_run_id
-                        ):
-                            return ServerResponse.json(
-                                409,
-                                {
-                                    "ok": False,
-                                    "runId": run_id,
-                                    "error": f"run {run_id!r} already exists",
-                                },
-                            )
-                        if (
-                            len(self._events_by_run_id)
-                            + len(self._admitting_accepted_run_ids)
-                            >= self.max_in_memory_runs
-                        ):
-                            return ServerResponse.json(
-                                429,
-                                {
-                                    "ok": False,
-                                    "runId": run_id,
-                                    "reasonCode": "server.run_capacity_exhausted",
-                                    "maxInMemoryRuns": self.max_in_memory_runs,
-                                    "error": (
-                                        "server in-memory run capacity is exhausted"
-                                    ),
-                                },
-                            )
-                        in_memory_tenant_run_count = sum(
-                            1
-                            for existing_run_id in self._events_by_run_id
-                            if (
-                                existing_run_id
-                                in self._run_authorization_by_run_id
-                                and self._run_authorization_by_run_id[
-                                    existing_run_id
-                                ].tenant_id
-                                == run_tenant_id
-                            )
-                        ) + sum(
-                            1
-                            for admitting_tenant_id in (
-                                self._admitting_run_tenant_by_run_id.values()
-                            )
-                            if admitting_tenant_id == run_tenant_id
-                        )
-                        if (
-                            in_memory_tenant_run_count
-                            >= self.max_in_memory_runs_per_tenant
-                        ):
-                            return ServerResponse.json(
-                                429,
-                                {
-                                    "ok": False,
-                                    "runId": run_id,
-                                    "tenantId": run_tenant_id,
-                                    "reasonCode": (
-                                        "server.tenant_run_capacity_exhausted"
-                                    ),
-                                    "maxInMemoryRunsPerTenant": (
-                                        self.max_in_memory_runs_per_tenant
-                                    ),
-                                    "error": (
-                                        "server tenant in-memory run capacity "
-                                        "is exhausted"
-                                    ),
-                                },
-                            )
-                        self._admitting_accepted_run_ids.add(run_id)
-                        self._admitting_run_tenant_by_run_id[
-                            run_id
-                        ] = run_tenant_id
                     try:
                         self.accepted_run_executor.submit(
                             self.advance_accepted_run,
                             run_id,
+                            _expected_admission_reservation_id=(
+                                accepted_run_execution.admission_reservation_id
+                            ),
                         )
                     except RuntimeError as error:
-                        with self._accepted_run_condition:
-                            self._admitting_accepted_run_ids.discard(run_id)
-                            self._admitting_run_tenant_by_run_id.pop(
-                                run_id,
-                                None,
-                            )
-                            self._accepted_run_condition.notify_all()
                         return ServerResponse.json(
                             503,
                             {
@@ -7194,110 +7141,46 @@ class GraphBlocksServerApp:
                                 ),
                             },
                         )
-                    except Exception:
-                        with self._accepted_run_condition:
-                            self._admitting_accepted_run_ids.discard(run_id)
-                            self._admitting_run_tenant_by_run_id.pop(
-                                run_id,
-                                None,
-                            )
-                            self._accepted_run_condition.notify_all()
-                        raise
                     with self._accepted_run_condition:
-                        try:
-                            assert frozen_start_event is not None
-                            self._record_run_authorization(
-                                run_id,
-                                auth_decision.principal,
-                                occurred_at,
-                            )
-                            self._events_by_run_id[run_id] = (
-                                frozen_start_event,
-                            )
-                            self._pending_accepted_runs_by_run_id[
+                        if (
+                            self._accepted_run_reservations_by_run_id.get(
                                 run_id
-                            ] = pending_run
-                            self._accepted_run_executions_by_run_id[
-                                run_id
-                            ] = accepted_run_execution
-                        finally:
-                            self._admitting_accepted_run_ids.discard(run_id)
-                            self._admitting_run_tenant_by_run_id.pop(
-                                run_id,
-                                None,
                             )
-                            self._accepted_run_condition.notify_all()
+                            is not accepted_run_reservation
+                        ):
+                            raise ValueError(
+                                f"run {run_id!r} admission reservation changed"
+                            )
+                        assert frozen_start_event is not None
+                        self._record_run_authorization(
+                            run_id,
+                            auth_decision.principal,
+                            occurred_at,
+                        )
+                        self._events_by_run_id[run_id] = (
+                            frozen_start_event,
+                        )
+                        self._pending_accepted_runs_by_run_id[
+                            run_id
+                        ] = pending_run
+                        self._accepted_run_executions_by_run_id[
+                            run_id
+                        ] = accepted_run_execution
+                        self._accepted_run_reservations_by_run_id.pop(
+                            run_id,
+                        )
+                        accepted_run_reservation = None
+                        self._accepted_run_condition.notify_all()
                 else:
                     with self._accepted_run_condition:
                         if (
-                            run_id in self._events_by_run_id
-                            or run_id in self._admitting_accepted_run_ids
-                            or run_id in self._retired_runs_by_run_id
+                            self._accepted_run_reservations_by_run_id.get(
+                                run_id
+                            )
+                            is not accepted_run_reservation
                         ):
-                            return ServerResponse.json(
-                                409,
-                                {
-                                    "ok": False,
-                                    "runId": run_id,
-                                    "error": f"run {run_id!r} already exists",
-                                },
-                            )
-                        if (
-                            len(self._events_by_run_id)
-                            + len(self._admitting_accepted_run_ids)
-                            >= self.max_in_memory_runs
-                        ):
-                            return ServerResponse.json(
-                                429,
-                                {
-                                    "ok": False,
-                                    "runId": run_id,
-                                    "reasonCode": "server.run_capacity_exhausted",
-                                    "maxInMemoryRuns": self.max_in_memory_runs,
-                                    "error": (
-                                        "server in-memory run capacity is exhausted"
-                                    ),
-                                },
-                            )
-                        in_memory_tenant_run_count = sum(
-                            1
-                            for existing_run_id in self._events_by_run_id
-                            if (
-                                existing_run_id
-                                in self._run_authorization_by_run_id
-                                and self._run_authorization_by_run_id[
-                                    existing_run_id
-                                ].tenant_id
-                                == run_tenant_id
-                            )
-                        ) + sum(
-                            1
-                            for admitting_tenant_id in (
-                                self._admitting_run_tenant_by_run_id.values()
-                            )
-                            if admitting_tenant_id == run_tenant_id
-                        )
-                        if (
-                            in_memory_tenant_run_count
-                            >= self.max_in_memory_runs_per_tenant
-                        ):
-                            return ServerResponse.json(
-                                429,
-                                {
-                                    "ok": False,
-                                    "runId": run_id,
-                                    "tenantId": run_tenant_id,
-                                    "reasonCode": (
-                                        "server.tenant_run_capacity_exhausted"
-                                    ),
-                                    "maxInMemoryRunsPerTenant": (
-                                        self.max_in_memory_runs_per_tenant
-                                    ),
-                                    "error": (
-                                        "server tenant in-memory run capacity "
-                                        "is exhausted"
-                                    ),
-                                },
+                            raise ValueError(
+                                f"run {run_id!r} admission reservation changed"
                             )
                         assert frozen_start_event is not None
                         self._record_run_authorization(
@@ -7310,6 +7193,11 @@ class GraphBlocksServerApp:
                         self._accepted_run_executions_by_run_id[
                             run_id
                         ] = accepted_run_execution
+                        self._accepted_run_reservations_by_run_id.pop(
+                            run_id,
+                        )
+                        self._accepted_run_condition.notify_all()
+                        accepted_run_reservation = None
                 if not deferred:
                     completion = self.advance_accepted_run(
                         run_id,
@@ -7359,6 +7247,22 @@ class GraphBlocksServerApp:
                         "error": str(error),
                     },
                 )
+            finally:
+                if accepted_run_reservation is not None:
+                    with self._accepted_run_condition:
+                        reservation_run_id = (
+                            accepted_run_reservation.authorization.external_run_id
+                        )
+                        if (
+                            self._accepted_run_reservations_by_run_id.get(
+                                reservation_run_id
+                            )
+                            is accepted_run_reservation
+                        ):
+                            self._accepted_run_reservations_by_run_id.pop(
+                                reservation_run_id
+                            )
+                            self._accepted_run_condition.notify_all()
         return ServerResponse.json(
             501,
             {
@@ -7617,6 +7521,7 @@ class GraphBlocksServerApp:
         run_id: str,
         *,
         completed_at: str | None = None,
+        _expected_admission_reservation_id: str | None = None,
     ) -> dict[str, object]:
         run_id = _validate_exact_non_empty_string(
             "server pending accepted run",
@@ -7629,11 +7534,32 @@ class GraphBlocksServerApp:
                 "completed_at",
                 completed_at,
             )
+        if _expected_admission_reservation_id is not None:
+            _expected_admission_reservation_id = (
+                _validate_exact_non_empty_string(
+                    "server pending accepted run",
+                    "expected_admission_reservation_id",
+                    _expected_admission_reservation_id,
+                )
+            )
         admission_ticket_id = self._admission_ticket_ids_by_run_id.get(run_id)
         admission_fencing_token: int | None = None
         with self._accepted_run_condition:
-            while run_id in self._admitting_accepted_run_ids:
+            while run_id in self._accepted_run_reservations_by_run_id:
                 self._accepted_run_condition.wait()
+            if _expected_admission_reservation_id is not None:
+                expected_execution = (
+                    self._accepted_run_executions_by_run_id.get(run_id)
+                )
+                if (
+                    expected_execution is None
+                    or expected_execution.admission_reservation_id
+                    != _expected_admission_reservation_id
+                ):
+                    raise ValueError(
+                        f"pending accepted run {run_id!r} admission "
+                        "reservation changed before worker start"
+                    )
             while run_id in self._advancing_accepted_runs_by_run_id:
                 stored_result = self._accepted_run_results_by_run_id.get(run_id)
                 if stored_result is not None:
