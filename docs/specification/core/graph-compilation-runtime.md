@@ -245,7 +245,18 @@ the reconstructable work with fresh lease and fencing authority before
 execution. Process restart between admission, waiting, callback acceptance,
 resume, and terminal publication MUST preserve each observable transition.
 The process-local accepted-run mode in `GraphBlocksServerApp` is a bounded
-development/reference mode and MUST NOT be described as restart durable.
+development/reference mode and MUST NOT be described as restart durable or as
+a multi-tenant run authority. It has one fixed `reference_tenant_id`; a
+single-tenant `StaticBearerAuthHook` may establish that value at construction,
+while custom authentication MUST configure it explicitly. A principal from
+another tenant is rejected before resource resolution or authorization. The
+effective boundary is fixed at construction and later configuration-field
+mutation MUST NOT change it. The explicit
+`allow_unsafe_multi_tenant_dev=True` compatibility escape hatch is for legacy
+tests only and MUST NOT support a compatibility, production, or security
+claim. Multi-tenant accepted/background runs use
+`DurableAcceptedRunServerApp`, whose repository binds a tenant-scoped external
+run ID to a distinct immutable internal ID.
 
 ### Process-isolated worker deadline (preview)
 

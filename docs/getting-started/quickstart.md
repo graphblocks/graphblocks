@@ -68,9 +68,12 @@ acceptance runner. Install it explicitly for conformance work; see
 CLI commands require `graphblocks-runtime`; only explicit reference-oracle work
 can omit it.
 
-Server integrations construct `GraphBlocksServerApp` and adapt its
-request/response types to their transport. The `graphblocks` CLI does not bind a
-server socket.
+Single-tenant local/reference server integrations construct
+`GraphBlocksServerApp` and adapt its request/response types to their transport.
+Configure `reference_tenant_id` when using a custom authenticator. Multi-tenant
+accepted/background services use `DurableAcceptedRunServerApp` with an
+`AcceptedRunRepository`; the process-local app is not a multi-tenant authority.
+The `graphblocks` CLI does not bind a server socket.
 
 Next read [graphs and bindings](../concepts/graphs-and-bindings.md) and
 [conformance](../development/conformance.md).

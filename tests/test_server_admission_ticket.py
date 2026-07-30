@@ -174,6 +174,7 @@ def test_ticketed_server_scopes_replay_subject_by_tenant(
                 ),
             }
         ),
+        allow_unsafe_multi_tenant_dev=True,
         admission_ticket_queue=queue,
         admission_clock=lambda: 0,
     )

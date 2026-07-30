@@ -2825,6 +2825,8 @@ class _AcceptedCallbackReceiptCapability:
 
 @dataclass(slots=True)
 class GraphBlocksServerApp:
+    """Process-local, single-tenant reference server contract."""
+
     route_manifest: ServerRouteManifest = field(default_factory=default_server_route_manifest)
     auth_hook: ServerAuthHook | None = None
     authorization_hook: ServerAuthorizationHook | None = field(
@@ -2915,6 +2917,18 @@ class GraphBlocksServerApp:
     )
     terminal_run_collection_clock: Callable[[], str] = field(
         default=_utc_now_iso,
+        repr=False,
+    )
+    reference_tenant_id: str | None = None
+    allow_unsafe_multi_tenant_dev: bool = False
+    _effective_reference_tenant_id: str | None = field(
+        default=None,
+        init=False,
+        repr=False,
+    )
+    _unsafe_multi_tenant_dev_enabled: bool = field(
+        default=False,
+        init=False,
         repr=False,
     )
     _auth_audit_events: deque[ServerAuthAuditEvent] = field(
@@ -3089,6 +3103,46 @@ class GraphBlocksServerApp:
     def __post_init__(self) -> None:
         if not isinstance(self.allow_unauthenticated_dev, bool):
             raise ValueError("server allow_unauthenticated_dev must be a boolean")
+        if not isinstance(self.allow_unsafe_multi_tenant_dev, bool):
+            raise ValueError(
+                "server allow_unsafe_multi_tenant_dev must be a boolean"
+            )
+        if self.reference_tenant_id is not None:
+            self.reference_tenant_id = _validate_exact_non_empty_string(
+                "server",
+                "reference_tenant_id",
+                self.reference_tenant_id,
+            )
+        if (
+            self.allow_unsafe_multi_tenant_dev
+            and self.reference_tenant_id is not None
+        ):
+            raise ValueError(
+                "server reference_tenant_id cannot be combined with "
+                "allow_unsafe_multi_tenant_dev"
+            )
+        if (
+            not self.allow_unsafe_multi_tenant_dev
+            and self.reference_tenant_id is None
+            and isinstance(self.auth_hook, StaticBearerAuthHook)
+        ):
+            configured_tenant_ids = {
+                principal.tenant_id
+                for principal in self.auth_hook.principals_by_token.values()
+            }
+            if len(configured_tenant_ids) > 1:
+                raise ValueError(
+                    "server multi-tenant auth requires reference_tenant_id "
+                    "or explicit allow_unsafe_multi_tenant_dev=True"
+                )
+            if configured_tenant_ids:
+                self.reference_tenant_id = next(
+                    iter(configured_tenant_ids)
+                )
+        self._effective_reference_tenant_id = self.reference_tenant_id
+        self._unsafe_multi_tenant_dev_enabled = (
+            self.allow_unsafe_multi_tenant_dev
+        )
         if (
             self.authorization_hook is not None
             and not callable(
@@ -3762,6 +3816,21 @@ class GraphBlocksServerApp:
                     "www-authenticate": _SERVER_BEARER_CHALLENGE,
                 },
             )
+
+        if route.auth_required and not self._unsafe_multi_tenant_dev_enabled:
+            principal_tenant_id = (
+                auth_decision.principal.tenant_id
+                if auth_decision.principal is not None
+                else None
+            )
+            if principal_tenant_id != self._effective_reference_tenant_id:
+                return ServerResponse.json(
+                    403,
+                    {
+                        "ok": False,
+                        "reasonCodes": ["auth.tenant_scope_mismatch"],
+                    },
+                )
 
         if route.auth_required and self.authorization_hook is not None:
             if auth_decision.principal is None:

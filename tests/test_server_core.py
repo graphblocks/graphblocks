@@ -599,6 +599,29 @@ def test_server_app_validates_unauthenticated_development_mode_flag() -> None:
         GraphBlocksServerApp(allow_unauthenticated_dev="yes")  # type: ignore[arg-type]
 
 
+def test_server_app_validates_reference_tenant_boundary() -> None:
+    with pytest.raises(
+        ValueError,
+        match="allow_unsafe_multi_tenant_dev must be a boolean",
+    ):
+        GraphBlocksServerApp(
+            allow_unsafe_multi_tenant_dev="yes",  # type: ignore[arg-type]
+        )
+    with pytest.raises(
+        ValueError,
+        match="reference_tenant_id must not be empty",
+    ):
+        GraphBlocksServerApp(reference_tenant_id=" ")
+    with pytest.raises(
+        ValueError,
+        match="reference_tenant_id cannot be combined",
+    ):
+        GraphBlocksServerApp(
+            reference_tenant_id="tenant-1",
+            allow_unsafe_multi_tenant_dev=True,
+        )
+
+
 @pytest.mark.parametrize(
     "field_name",
     (
@@ -918,6 +941,166 @@ def test_server_app_challenges_missing_bearer_authentication() -> None:
     }
 
 
+def test_server_app_requires_explicit_scope_for_multi_tenant_static_auth() -> None:
+    same_tenant_app = GraphBlocksServerApp(
+        auth_hook=StaticBearerAuthHook(
+            {
+                "alice-token": PrincipalRef("alice", tenant_id="tenant-a"),
+                "bob-token": PrincipalRef("bob", tenant_id="tenant-a"),
+            }
+        )
+    )
+    assert same_tenant_app.reference_tenant_id == "tenant-a"
+
+    auth_hook = StaticBearerAuthHook(
+        {
+            "tenant-a-token": PrincipalRef(
+                "shared-principal",
+                tenant_id="tenant-a",
+            ),
+            "tenant-b-token": PrincipalRef(
+                "shared-principal",
+                tenant_id="tenant-b",
+            ),
+        }
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="multi-tenant auth requires reference_tenant_id",
+    ):
+        GraphBlocksServerApp(auth_hook=auth_hook)
+    with pytest.raises(
+        ValueError,
+        match="multi-tenant auth requires reference_tenant_id",
+    ):
+        GraphBlocksServerApp(
+            auth_hook=StaticBearerAuthHook(
+                {
+                    "tenantless-token": PrincipalRef("tenantless"),
+                    "tenant-a-token": PrincipalRef(
+                        "tenant-a-user",
+                        tenant_id="tenant-a",
+                    ),
+                }
+            )
+        )
+
+    unsafe_dev_app = GraphBlocksServerApp(
+        auth_hook=auth_hook,
+        allow_unsafe_multi_tenant_dev=True,
+    )
+    assert unsafe_dev_app.reference_tenant_id is None
+
+
+def test_server_app_rejects_principal_outside_fixed_reference_tenant() -> None:
+    observed_requests: list[ServerAuthorizationRequest] = []
+
+    class CapturingAuthorizer:
+        def authorize(
+            self,
+            request: ServerAuthorizationRequest,
+        ) -> ServerAuthorizationDecision:
+            observed_requests.append(request)
+            return ServerAuthorizationDecision(True)
+
+    app = GraphBlocksServerApp(
+        auth_hook=StaticBearerAuthHook(
+            {
+                "tenant-a-token": PrincipalRef(
+                    "shared-principal",
+                    tenant_id="tenant-a",
+                ),
+                "tenant-b-token": PrincipalRef(
+                    "shared-principal",
+                    tenant_id="tenant-b",
+                ),
+            }
+        ),
+        authorization_hook=CapturingAuthorizer(),
+        reference_tenant_id="tenant-a",
+    )
+    app.reference_tenant_id = "tenant-b"
+    app.allow_unsafe_multi_tenant_dev = True
+
+    rejected = app.handle(
+        ServerRequest(
+            method="GET",
+            path="/runs",
+            headers={"authorization": "Bearer tenant-b-token"},
+            query={},
+            cookies={},
+        )
+    )
+    accepted = app.handle(
+        ServerRequest(
+            method="GET",
+            path="/runs",
+            headers={"authorization": "Bearer tenant-a-token"},
+            query={},
+            cookies={},
+        )
+    )
+    health = app.handle(
+        ServerRequest(
+            method="GET",
+            path="/health",
+            headers={"authorization": "Bearer tenant-b-token"},
+            query={},
+            cookies={},
+        )
+    )
+
+    assert rejected.status_code == 403
+    assert json.loads(rejected.body) == {
+        "ok": False,
+        "reasonCodes": ["auth.tenant_scope_mismatch"],
+    }
+    assert accepted.status_code == 200
+    assert health.status_code == 200
+    assert len(observed_requests) == 1
+    assert observed_requests[0].principal.tenant_id == "tenant-a"
+
+
+def test_server_app_custom_auth_requires_explicit_reference_tenant() -> None:
+    class TenantAuthHook:
+        def authorize(
+            self,
+            request: ServerAuthRequest,
+        ) -> ServerAuthDecision:
+            del request
+            return ServerAuthDecision(
+                True,
+                principal=PrincipalRef(
+                    "user-1",
+                    tenant_id="tenant-1",
+                ),
+            )
+
+    unscoped = GraphBlocksServerApp(auth_hook=TenantAuthHook())
+    scoped = GraphBlocksServerApp(
+        auth_hook=TenantAuthHook(),
+        reference_tenant_id="tenant-1",
+    )
+    request = ServerRequest(
+        method="GET",
+        path="/runs",
+        headers={"authorization": "Bearer valid-token"},
+        query={},
+        cookies={},
+    )
+
+    rejected = unscoped.handle(request)
+    accepted = scoped.handle(request)
+
+    assert rejected.status_code == 403
+    assert json.loads(rejected.body) == {
+        "ok": False,
+        "reasonCodes": ["auth.tenant_scope_mismatch"],
+    }
+    assert accepted.status_code == 200
+
+
 def test_server_app_authorizer_receives_tenant_scoped_run_context() -> None:
     principal = PrincipalRef(
         "user-1",
@@ -937,6 +1120,7 @@ def test_server_app_authorizer_receives_tenant_scoped_run_context() -> None:
         auth_hook=StaticBearerAuthHook({"token-1": principal}),
         authorization_hook=CapturingAuthorizer(),
     )
+    assert app.reference_tenant_id == "tenant-1"
     _seed_collectible_terminal_run(
         app,
         "run-1",
@@ -1887,7 +2071,8 @@ def test_server_app_hides_run_scoped_resources_from_other_principals_and_tenants
                 "bob-token": PrincipalRef("bob", tenant_id="tenant-b"),
                 "charlie-token": PrincipalRef("charlie", tenant_id="tenant-a"),
             }
-        )
+        ),
+        allow_unsafe_multi_tenant_dev=True,
     )
     graph = {
         "apiVersion": "graphblocks.ai/v1alpha3",
@@ -2138,6 +2323,7 @@ def test_server_app_rejects_cross_tenant_run_controls_atomically() -> None:
                 "bob-token": PrincipalRef("bob", tenant_id="tenant-b"),
             }
         ),
+        allow_unsafe_multi_tenant_dev=True,
         defer_accepted_runs=True,
     )
     graph = {
@@ -5159,6 +5345,7 @@ def test_server_app_isolates_in_memory_run_capacity_by_tenant(
                 "bob-token": PrincipalRef("bob", tenant_id="tenant-b"),
             }
         ),
+        allow_unsafe_multi_tenant_dev=True,
         defer_accepted_runs=True,
         max_in_memory_runs=3,
         max_in_memory_runs_per_tenant=1,
@@ -5325,6 +5512,7 @@ def test_server_app_deletes_only_owner_visible_terminal_runs_and_reclaims_capaci
                 "bob-token": PrincipalRef("bob", tenant_id="tenant-b"),
             }
         ),
+        allow_unsafe_multi_tenant_dev=True,
         max_in_memory_runs=1,
         max_in_memory_runs_per_tenant=1,
         max_retired_run_tombstones=2,
@@ -13639,7 +13827,8 @@ def test_server_app_rejects_unsubscribe_from_same_principal_different_tenant() -
                 "owner-token": PrincipalRef("user-1", tenant_id="tenant-a"),
                 "other-token": PrincipalRef("user-1", tenant_id="tenant-b"),
             }
-        )
+        ),
+        allow_unsafe_multi_tenant_dev=True,
     )
     _record_seeded_run_owner(
         app,
@@ -13857,7 +14046,8 @@ def test_server_app_rejects_ack_from_same_principal_different_tenant() -> None:
                 "owner-token": PrincipalRef("user-1", tenant_id="tenant-a"),
                 "other-token": PrincipalRef("user-1", tenant_id="tenant-b"),
             }
-        )
+        ),
+        allow_unsafe_multi_tenant_dev=True,
     )
     _record_seeded_run_owner(
         app,
@@ -15486,7 +15676,8 @@ def test_server_app_rejects_callback_revoke_from_same_principal_different_tenant
                 "owner-token": PrincipalRef("user-1", tenant_id="tenant-a"),
                 "other-token": PrincipalRef("user-1", tenant_id="tenant-b"),
             }
-        )
+        ),
+        allow_unsafe_multi_tenant_dev=True,
     )
     registered = app.handle(
         ServerRequest(
@@ -16853,7 +17044,8 @@ def test_server_app_hides_foreign_callback_delivery_from_control_request() -> No
     alice = PrincipalRef("alice", tenant_id="tenant-a")
     bob = PrincipalRef("bob", tenant_id="tenant-b")
     app = GraphBlocksServerApp(
-        auth_hook=StaticBearerAuthHook({"alice-token": alice, "bob-token": bob})
+        auth_hook=StaticBearerAuthHook({"alice-token": alice, "bob-token": bob}),
+        allow_unsafe_multi_tenant_dev=True,
     )
     subscription_id = _record_failed_callback_delivery(app, "del-alice", alice)
 
@@ -16882,7 +17074,8 @@ def test_server_app_scopes_duplicate_callback_delivery_ids_to_owner() -> None:
     alice = PrincipalRef("alice", tenant_id="tenant-a")
     bob = PrincipalRef("bob", tenant_id="tenant-b")
     app = GraphBlocksServerApp(
-        auth_hook=StaticBearerAuthHook({"alice-token": alice, "bob-token": bob})
+        auth_hook=StaticBearerAuthHook({"alice-token": alice, "bob-token": bob}),
+        allow_unsafe_multi_tenant_dev=True,
     )
     alice_subscription_id = _record_failed_callback_delivery(
         app,
