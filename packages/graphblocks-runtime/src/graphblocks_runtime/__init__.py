@@ -7,6 +7,15 @@ import math
 
 _NATIVE_EXTENSION_MODULE = "graphblocks_runtime._native"
 _BINDING_CRATE = "graphblocks-python"
+_NATIVE_BINDING_PROTOCOL_VERSION = 1
+_REQUIRED_NATIVE_CAPABILITIES = (
+    "compiler.graph.v1",
+    "protocol.application.v1",
+    "protocol.worker.v1",
+)
+_MAX_NATIVE_BINDING_CONTRACT_BYTES = 16_384
+_MAX_NATIVE_CAPABILITIES = 64
+_MAX_NATIVE_CAPABILITY_LENGTH = 128
 MAX_CANONICAL_INTEGER_DIGITS = 10_000
 _MANUAL_INTEGER_BIT_LENGTH = 1_024
 _INTEGER_CHUNK_BASE = 1_000_000_000
@@ -20,11 +29,128 @@ class _NativeIntegerToken(str):
     pass
 
 
+def _binding_contract_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    result: dict[str, object] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"duplicate native binding contract field {key!r}")
+        result[key] = value
+    return result
+
+
+def _validate_native_binding_contract(
+    contract_json: object,
+    *,
+    extension_version: object,
+    reported_version: object,
+) -> tuple[int, tuple[str, ...]]:
+    if type(contract_json) is not str:
+        raise TypeError("native binding contract must be a JSON string")
+    if len(contract_json.encode("utf-8")) > _MAX_NATIVE_BINDING_CONTRACT_BYTES:
+        raise ValueError("native binding contract exceeds its byte limit")
+    try:
+        contract = json.loads(
+            contract_json,
+            object_pairs_hook=_binding_contract_object,
+        )
+    except json.JSONDecodeError as error:
+        raise ValueError("native binding contract must be valid JSON") from error
+    if not isinstance(contract, dict):
+        raise TypeError("native binding contract must be a JSON object")
+    expected_fields = {
+        "bindingProtocolVersion",
+        "implementation",
+        "implementationVersion",
+        "capabilities",
+    }
+    if set(contract) != expected_fields:
+        raise ValueError(
+            "native binding contract must contain only "
+            "bindingProtocolVersion, implementation, implementationVersion, "
+            "and capabilities"
+        )
+    protocol_version = contract["bindingProtocolVersion"]
+    if type(protocol_version) is not int:
+        raise TypeError("native binding protocol version must be an integer")
+    if protocol_version != _NATIVE_BINDING_PROTOCOL_VERSION:
+        raise ValueError(
+            "unsupported native binding protocol version "
+            f"{protocol_version}; expected {_NATIVE_BINDING_PROTOCOL_VERSION}"
+        )
+    implementation = contract["implementation"]
+    if type(implementation) is not str or implementation != _BINDING_CRATE:
+        raise ValueError(
+            f"native binding implementation must be {_BINDING_CRATE!r}"
+        )
+    implementation_version = contract["implementationVersion"]
+    if (
+        type(implementation_version) is not str
+        or not implementation_version
+        or implementation_version != implementation_version.strip()
+        or len(implementation_version) > 64
+    ):
+        raise ValueError(
+            "native binding implementation version must be a canonical "
+            "bounded non-empty string"
+        )
+    if (
+        type(extension_version) is not str
+        or type(reported_version) is not str
+        or implementation_version != extension_version
+        or implementation_version != reported_version
+    ):
+        raise ValueError(
+            "native binding implementation version does not match extension metadata"
+        )
+    raw_capabilities = contract["capabilities"]
+    if type(raw_capabilities) is not list or not (
+        1 <= len(raw_capabilities) <= _MAX_NATIVE_CAPABILITIES
+    ):
+        raise ValueError(
+            "native binding capabilities must be a non-empty bounded array"
+        )
+    capabilities: list[str] = []
+    for index, capability in enumerate(raw_capabilities):
+        if (
+            type(capability) is not str
+            or not capability
+            or capability != capability.strip()
+            or len(capability) > _MAX_NATIVE_CAPABILITY_LENGTH
+            or not all(
+                character.isascii()
+                and (character.isalnum() or character in "._-")
+                for character in capability
+            )
+        ):
+            raise ValueError(
+                f"native binding capability {index} must be a bounded identifier"
+            )
+        capabilities.append(capability)
+    if capabilities != sorted(set(capabilities)):
+        raise ValueError(
+            "native binding capabilities must be sorted and unique"
+        )
+    missing_capabilities = sorted(
+        set(_REQUIRED_NATIVE_CAPABILITIES).difference(capabilities)
+    )
+    if missing_capabilities:
+        raise ValueError(
+            "native binding contract is missing required capabilities: "
+            + ", ".join(missing_capabilities)
+        )
+    return protocol_version, tuple(capabilities)
+
+
+_NATIVE_BINDING_PROTOCOL: int | None = None
+_NATIVE_BINDING_CAPABILITIES: tuple[str, ...] = ()
+
+
 try:
     from ._native import (
         __version__,
         admit_exhaustion_work_json,
         admit_worker_message_json,
+        binding_contract_json as _binding_contract_json,
         binding_version,
         capture_telemetry_content_json,
         compile_graph_json,
@@ -66,9 +192,16 @@ try:
         validate_worker_protocol_message_json,
     )
 
+    _NATIVE_BINDING_PROTOCOL, _NATIVE_BINDING_CAPABILITIES = (
+        _validate_native_binding_contract(
+            _binding_contract_json(),
+            extension_version=__version__,
+            reported_version=binding_version(),
+        )
+    )
     _NATIVE_EXTENSION_AVAILABLE = True
-    _NATIVE_EXTENSION_ERROR: ImportError | None = None
-except ImportError as error:
+    _NATIVE_EXTENSION_ERROR: Exception | None = None
+except Exception as error:
     __version__ = "0.1.0"
     _NATIVE_EXTENSION_AVAILABLE = False
     _NATIVE_EXTENSION_ERROR = error
@@ -76,20 +209,24 @@ except ImportError as error:
     def native_extension_available() -> bool:
         return _NATIVE_EXTENSION_AVAILABLE
 
-    def native_extension_status() -> dict[str, bool | str | None]:
+    def native_extension_status() -> dict[str, object]:
         return {
             "available": _NATIVE_EXTENSION_AVAILABLE,
             "binding_crate": _BINDING_CRATE,
             "binding_version": None,
+            "binding_protocol_version": None,
+            "capabilities": (),
             "module": _NATIVE_EXTENSION_MODULE,
             "error": str(_NATIVE_EXTENSION_ERROR),
         }
 
     def require_native_extension() -> None:
         raise RuntimeError(
-            "graphblocks_runtime native extension is not built; build graphblocks-runtime "
-            "with maturin so the single PyO3 binding crate graphblocks-python is installed "
-            "as graphblocks_runtime._native"
+            "graphblocks_runtime native extension is unavailable; build "
+            "graphblocks-runtime with maturin so the single PyO3 binding crate "
+            "graphblocks-python is installed as graphblocks_runtime._native "
+            "with a compatible binding contract: "
+            f"{_NATIVE_EXTENSION_ERROR}"
         )
 
     def binding_version() -> str:
@@ -304,11 +441,13 @@ else:
     def native_extension_available() -> bool:
         return _NATIVE_EXTENSION_AVAILABLE
 
-    def native_extension_status() -> dict[str, bool | str | None]:
+    def native_extension_status() -> dict[str, object]:
         return {
             "available": _NATIVE_EXTENSION_AVAILABLE,
             "binding_crate": _BINDING_CRATE,
             "binding_version": binding_version(),
+            "binding_protocol_version": _NATIVE_BINDING_PROTOCOL,
+            "capabilities": _NATIVE_BINDING_CAPABILITIES,
             "module": _NATIVE_EXTENSION_MODULE,
             "error": None,
         }

@@ -328,6 +328,10 @@ def test_stable_release_matrix_is_complete_and_machine_readable() -> None:
     )
     assert "control-plane-library-extraction" not in authority["remainingPhases"]
     assert "control-plane-library-extraction" in authority["completedPhases"]
+    assert "runtime-protocol-capability-handshake" not in authority[
+        "remainingPhases"
+    ]
+    assert "runtime-protocol-capability-handshake" in authority["completedPhases"]
     assert authority["blocksTargetRelease"] is True
     assert authority["requiredGate"] == "REL-NORMATIVE-AUTHORITY"
     authority_decision = ROOT / authority["decision"]
@@ -398,6 +402,13 @@ def test_stable_release_matrix_is_complete_and_machine_readable() -> None:
     ]
     assert "python-binding-depends-on-control-plane-library-not-daemon" in (
         authority_gate["completedEvidence"]
+    )
+    assert "protocol-capability-and-unsupported-version-handshake" in (
+        authority_gate["completedEvidence"]
+    )
+    assert (
+        "protocol-capability-and-unsupported-version-handshake-incomplete"
+        not in authority_gate["blockers"]
     )
 
     traceability = yaml.safe_load(

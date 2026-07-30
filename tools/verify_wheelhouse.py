@@ -48,6 +48,12 @@ SUPPORTED_PLATFORM_MATRIX = {
     ("windows-latest", "3.12"),
 }
 STABLE_CONFORMANCE_PROFILES = ("GB-C0-SCHEMA", "GB-C1-LOCAL-RUNTIME")
+NATIVE_BINDING_PROTOCOL_VERSION = 1
+REQUIRED_NATIVE_BINDING_CAPABILITIES = (
+    "compiler.graph.v1",
+    "protocol.application.v1",
+    "protocol.worker.v1",
+)
 MAX_SDIST_MEMBER_COUNT = 100_000
 MAX_SDIST_UNPACKED_SIZE = 512 * 1024 * 1024
 WINDOWS_RESERVED_PATH_NAMES = {
@@ -123,6 +129,93 @@ def observe_rustc_identity(
             f"{_sanitized_process_output(str(error))}"
         ) from error
     return parse_rustc_identity(completed.stdout)
+
+
+def _validate_installed_native_binding(
+    payload: object,
+    *,
+    expected_distribution_version: str,
+) -> dict[str, object]:
+    if not isinstance(payload, dict) or set(payload) != {
+        "distributionVersion",
+        "status",
+    }:
+        raise RuntimeError(
+            "installed native binding handshake has an invalid envelope"
+        )
+    if payload["distributionVersion"] != expected_distribution_version:
+        raise RuntimeError(
+            "installed native binding distribution version does not match "
+            "the built graphblocks-runtime wheel"
+        )
+    status = payload["status"]
+    expected_status_fields = {
+        "available",
+        "binding_crate",
+        "binding_version",
+        "binding_protocol_version",
+        "capabilities",
+        "module",
+        "error",
+    }
+    if not isinstance(status, dict) or set(status) != expected_status_fields:
+        raise RuntimeError("installed native binding status has invalid fields")
+    if status["available"] is not True or status["error"] is not None:
+        raise RuntimeError("installed native binding handshake is unavailable")
+    if status["binding_crate"] != "graphblocks-python":
+        raise RuntimeError(
+            "installed native binding names an unexpected implementation"
+        )
+    if status["binding_version"] != expected_distribution_version:
+        raise RuntimeError(
+            "installed native binding implementation version does not match "
+            "the graphblocks-runtime distribution"
+        )
+    protocol_version = status["binding_protocol_version"]
+    if (
+        type(protocol_version) is not int
+        or protocol_version != NATIVE_BINDING_PROTOCOL_VERSION
+    ):
+        raise RuntimeError(
+            "installed native binding reports an unsupported protocol version"
+        )
+    capabilities = status["capabilities"]
+    if (
+        not isinstance(capabilities, list)
+        or not 1 <= len(capabilities) <= 64
+        or not all(
+            isinstance(capability, str)
+            and capability
+            and capability == capability.strip()
+            and len(capability) <= 128
+            and all(
+                character.isascii()
+                and (character.isalnum() or character in "._-")
+                for character in capability
+            )
+            for capability in capabilities
+        )
+    ):
+        raise RuntimeError(
+            "installed native binding reports invalid capabilities"
+        )
+    if capabilities != sorted(set(capabilities)):
+        raise RuntimeError(
+            "installed native binding reports invalid capabilities"
+        )
+    missing_capabilities = sorted(
+        set(REQUIRED_NATIVE_BINDING_CAPABILITIES).difference(capabilities)
+    )
+    if missing_capabilities:
+        raise RuntimeError(
+            "installed native binding is missing required capabilities: "
+            + ", ".join(missing_capabilities)
+        )
+    if status["module"] != "graphblocks_runtime._native":
+        raise RuntimeError(
+            "installed native binding reports an unexpected extension module"
+        )
+    return dict(status)
 
 
 def _require_canonical_sha256(value: object, *, owner: str) -> str:
@@ -1451,6 +1544,40 @@ def main(argv: list[str] | None = None) -> int:
             check=True,
             cwd=ROOT,
             env=install_environment,
+        )
+        installed_native_binding = subprocess.run(
+            [
+                str(isolated_python),
+                "-c",
+                (
+                    "import json; "
+                    "from importlib.metadata import version; "
+                    "import graphblocks_runtime; "
+                    "print(json.dumps({"
+                    "'distributionVersion': version('graphblocks-runtime'), "
+                    "'status': graphblocks_runtime.native_extension_status()"
+                    "}, sort_keys=True))"
+                ),
+            ],
+            check=True,
+            cwd=install_root,
+            env=install_environment,
+            capture_output=True,
+            text=True,
+        )
+        try:
+            installed_native_binding_payload = json.loads(
+                installed_native_binding.stdout
+            )
+        except json.JSONDecodeError as error:
+            raise RuntimeError(
+                "installed native binding handshake is not valid JSON"
+            ) from error
+        _validate_installed_native_binding(
+            installed_native_binding_payload,
+            expected_distribution_version=str(
+                native_compiler_artifact["version"]
+            ),
         )
         if _artifact_record(native_compiler_wheel) != native_compiler_artifact:
             raise RuntimeError(

@@ -51,9 +51,9 @@ authorityTransition:
     - exact-shared-compiler-tck-differential
     - control-plane-library-extraction
     - supported-installed-native-compiler-tck-and-artifact-evidence
+    - runtime-protocol-capability-handshake
   remainingPhases:
     - standalone-canonical-and-schema-facade-authority
-    - runtime-protocol-capability-handshake
     - production-scheduler-and-durable-authority
   targetMilestone: phase-2-before-1.0
   blocksTargetRelease: true
@@ -450,10 +450,10 @@ releaseGates:
       - source-exact-shared-compiler-tck-differential
       - python-binding-depends-on-control-plane-library-not-daemon
       - installed-native-compiler-tck-differential-and-artifact-identity
+      - protocol-capability-and-unsupported-version-handshake
     blockers:
       - standalone-canonical-and-schema-authority-transition-incomplete
       - production-runtime-authority-transition-incomplete
-      - protocol-capability-and-unsupported-version-handshake-incomplete
       - remaining-normative-phase-differential-evidence-incomplete
   - id: REL-PLATFORM-MATRIX
     description: Install typing and runtime gates pass on every published platform; upgrade is explicitly exempt only for v1.0.0.

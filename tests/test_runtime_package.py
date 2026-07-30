@@ -12,9 +12,32 @@ import pytest
 
 
 ROOT = Path(__file__).parents[1]
+VALID_NATIVE_CAPABILITIES = (
+    "compiler.graph.v1",
+    "protocol.application.v1",
+    "protocol.worker.v1",
+)
 
 
-def load_runtime_wrapper(fake_native=None):
+def _binding_contract_json(
+    *,
+    protocol_version: object = 1,
+    implementation: object = "graphblocks-python",
+    implementation_version: object = "0.1.0",
+    capabilities: object = VALID_NATIVE_CAPABILITIES,
+) -> str:
+    return json.dumps(
+        {
+            "bindingProtocolVersion": protocol_version,
+            "implementation": implementation,
+            "implementationVersion": implementation_version,
+            "capabilities": capabilities,
+        },
+        separators=(",", ":"),
+    )
+
+
+def load_runtime_wrapper(fake_native=None, *, inject_default_contract: bool = True):
     package_root = (
         ROOT / "packages" / "graphblocks-runtime" / "src" / "graphblocks_runtime"
     )
@@ -28,6 +51,8 @@ def load_runtime_wrapper(fake_native=None):
     assert spec is not None
     assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)
+    if fake_native is not None and inject_default_contract:
+        fake_native.binding_contract_json = _binding_contract_json
     sys.modules[module_name] = module
     sys.modules[native_module_name] = fake_native
     try:
@@ -49,6 +74,8 @@ def test_runtime_wrapper_reports_native_binding_readiness_without_second_impleme
         "available": False,
         "binding_crate": "graphblocks-python",
         "binding_version": None,
+        "binding_protocol_version": None,
+        "capabilities": (),
         "module": "graphblocks_runtime._native",
         "error": status["error"],
     }
@@ -56,10 +83,216 @@ def test_runtime_wrapper_reports_native_binding_readiness_without_second_impleme
     assert "native_extension_available" in runtime.__all__
     assert "native_extension_status" in runtime.__all__
     assert "require_native_extension" in runtime.__all__
+    assert "binding_contract_json" not in runtime.__all__
+    assert "native_extension_capabilities" not in runtime.__all__
     with pytest.raises(
         RuntimeError, match="single PyO3 binding crate graphblocks-python"
     ):
         runtime.require_native_extension()
+
+
+def test_runtime_wrapper_accepts_a_versioned_native_binding_contract() -> None:
+    class FakeNative:
+        __version__ = "0.1.0"
+
+        def __getattr__(self, name: str):
+            if name.endswith("_json"):
+                return lambda *args, **kwargs: '{"ok":true}'
+            raise AttributeError(name)
+
+        def binding_version(self) -> str:
+            return self.__version__
+
+    runtime = load_runtime_wrapper(FakeNative())
+
+    assert runtime.native_extension_available() is True
+    assert runtime.native_extension_status() == {
+        "available": True,
+        "binding_crate": "graphblocks-python",
+        "binding_version": "0.1.0",
+        "binding_protocol_version": 1,
+        "capabilities": VALID_NATIVE_CAPABILITIES,
+        "module": "graphblocks_runtime._native",
+        "error": None,
+    }
+
+
+@pytest.mark.parametrize(
+    ("contract_json", "message"),
+    (
+        (
+            _binding_contract_json(protocol_version=True),
+            "protocol version must be an integer",
+        ),
+        (
+            _binding_contract_json(protocol_version=2),
+            "unsupported native binding protocol version",
+        ),
+        (
+            _binding_contract_json(
+                capabilities=(
+                    "protocol.application.v1",
+                    "protocol.worker.v1",
+                )
+            ),
+            "missing required capabilities: compiler.graph.v1",
+        ),
+        (
+            _binding_contract_json(
+                capabilities=(
+                    "compiler.graph.v1",
+                    "compiler.graph.v1",
+                    "protocol.application.v1",
+                    "protocol.worker.v1",
+                )
+            ),
+            "capabilities must be sorted and unique",
+        ),
+        (
+            _binding_contract_json(
+                capabilities=(
+                    "compiler.graph.v1",
+                    "protocol.application.v1",
+                    " protocol.worker.v1",
+                )
+            ),
+            "capability 2 must be a bounded identifier",
+        ),
+        (
+            _binding_contract_json(implementation_version="0.2.0"),
+            "implementation version does not match extension metadata",
+        ),
+        (
+            _binding_contract_json(implementation_version=" 0.1.0"),
+            "implementation version must be a canonical bounded non-empty string",
+        ),
+        (
+            _binding_contract_json(implementation_version="1" * 65),
+            "implementation version must be a canonical bounded non-empty string",
+        ),
+        (
+            (
+                '{"bindingProtocolVersion":1,'
+                '"implementation":"graphblocks-python",'
+                '"implementationVersion":"0.1.0",'
+                '"capabilities":["compiler.graph.v1",'
+                '"protocol.application.v1","protocol.worker.v1"],'
+                '"unexpected":true}'
+            ),
+            "must contain only",
+        ),
+        (
+            (
+                '{"bindingProtocolVersion":1,'
+                '"bindingProtocolVersion":1,'
+                '"implementation":"graphblocks-python",'
+                '"implementationVersion":"0.1.0",'
+                '"capabilities":["compiler.graph.v1",'
+                '"protocol.application.v1","protocol.worker.v1"]}'
+            ),
+            "duplicate native binding contract field",
+        ),
+    ),
+)
+def test_runtime_wrapper_rejects_incompatible_native_binding_contracts(
+    contract_json: str,
+    message: str,
+) -> None:
+    class FakeNative:
+        __version__ = "0.1.0"
+
+        def __init__(self) -> None:
+            self.compile_calls = 0
+
+        def __getattr__(self, name: str):
+            if name.endswith("_json"):
+                return lambda *args, **kwargs: '{"ok":true}'
+            raise AttributeError(name)
+
+        def binding_version(self) -> str:
+            return self.__version__
+
+        def binding_contract_json(self) -> str:
+            return contract_json
+
+        def compile_graph_json(
+            self,
+            document_json: str,
+            block_catalog_json: str | None = None,
+            *,
+            allow_unknown_blocks: bool = False,
+        ) -> str:
+            self.compile_calls += 1
+            return '{"ok":true}'
+
+    native = FakeNative()
+    runtime = load_runtime_wrapper(
+        native,
+        inject_default_contract=False,
+    )
+
+    assert runtime.native_extension_available() is False
+    assert runtime.native_extension_status()["capabilities"] == ()
+    assert message in str(runtime.native_extension_status()["error"])
+    with pytest.raises(RuntimeError, match=message):
+        runtime.compile_graph({"kind": "Graph"})
+    assert native.compile_calls == 0
+
+
+def test_runtime_wrapper_rejects_a_missing_native_binding_contract() -> None:
+    class FakeNative:
+        __version__ = "0.1.0"
+
+        def __getattr__(self, name: str):
+            if name == "binding_contract_json":
+                raise AttributeError(name)
+            if name.endswith("_json"):
+                return lambda *args, **kwargs: '{"ok":true}'
+            raise AttributeError(name)
+
+        def binding_version(self) -> str:
+            return self.__version__
+
+    runtime = load_runtime_wrapper(
+        FakeNative(),
+        inject_default_contract=False,
+    )
+
+    assert runtime.native_extension_available() is False
+    with pytest.raises(RuntimeError, match="binding_contract_json"):
+        runtime.require_native_extension()
+
+
+def test_runtime_wrapper_allows_future_optional_native_capabilities() -> None:
+    class FakeNative:
+        __version__ = "0.1.0"
+
+        def __getattr__(self, name: str):
+            if name.endswith("_json"):
+                return lambda *args, **kwargs: '{"ok":true}'
+            raise AttributeError(name)
+
+        def binding_version(self) -> str:
+            return self.__version__
+
+        def binding_contract_json(self) -> str:
+            return _binding_contract_json(
+                capabilities=(
+                    *VALID_NATIVE_CAPABILITIES,
+                    "vendor.future.v1",
+                )
+            )
+
+    runtime = load_runtime_wrapper(
+        FakeNative(),
+        inject_default_contract=False,
+    )
+
+    assert runtime.native_extension_available() is True
+    assert runtime.native_extension_status()["capabilities"] == (
+        *VALID_NATIVE_CAPABILITIES,
+        "vendor.future.v1",
+    )
 
 
 def test_runtime_wrapper_rejects_non_standard_native_json_results() -> None:

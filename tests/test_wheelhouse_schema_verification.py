@@ -51,6 +51,31 @@ def _write_mock_sdist(module: ModuleType, *, source_root: Path, output_root: Pat
     return destination
 
 
+def _native_binding_payload(
+    *,
+    distribution_version: str = "0.1.0",
+    binding_version: str = "0.1.0",
+    protocol_version: object = 1,
+    capabilities: object = (
+        "compiler.graph.v1",
+        "protocol.application.v1",
+        "protocol.worker.v1",
+    ),
+) -> dict[str, object]:
+    return {
+        "distributionVersion": distribution_version,
+        "status": {
+            "available": True,
+            "binding_crate": "graphblocks-python",
+            "binding_version": binding_version,
+            "binding_protocol_version": protocol_version,
+            "capabilities": list(capabilities),
+            "module": "graphblocks_runtime._native",
+            "error": None,
+        },
+    }
+
+
 def test_release_json_writer_bypasses_text_newline_translation(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -73,6 +98,66 @@ def test_release_json_writer_bypasses_text_newline_translation(
     module._write_utf8_lf(output, '{"message":"stable"}\n')
 
     assert output.read_bytes() == b'{"message":"stable"}\n'
+
+
+def test_installed_native_binding_handshake_requires_versioned_capabilities() -> None:
+    module = _load_wheelhouse_module()
+    payload = _native_binding_payload(
+        capabilities=(
+            "compiler.graph.v1",
+            "protocol.application.v1",
+            "protocol.worker.v1",
+            "vendor.future.v1",
+        )
+    )
+
+    assert module._validate_installed_native_binding(
+        payload,
+        expected_distribution_version="0.1.0",
+    ) == payload["status"]
+
+
+@pytest.mark.parametrize(
+    ("payload", "message"),
+    (
+        (
+            _native_binding_payload(protocol_version=True),
+            "unsupported protocol version",
+        ),
+        (
+            _native_binding_payload(
+                capabilities=(
+                    "protocol.application.v1",
+                    "protocol.worker.v1",
+                )
+            ),
+            "missing required capabilities",
+        ),
+        (
+            _native_binding_payload(binding_version="0.2.0"),
+            "implementation version does not match",
+        ),
+        (
+            _native_binding_payload(capabilities=({},)),
+            "invalid capabilities",
+        ),
+        (
+            _native_binding_payload(distribution_version="0.2.0"),
+            "distribution version does not match",
+        ),
+    ),
+)
+def test_installed_native_binding_handshake_rejects_incompatible_artifacts(
+    payload: dict[str, object],
+    message: str,
+) -> None:
+    module = _load_wheelhouse_module()
+
+    with pytest.raises(RuntimeError, match=message):
+        module._validate_installed_native_binding(
+            payload,
+            expected_distribution_version="0.1.0",
+        )
 
 
 def test_release_evidence_gate_requires_nonempty_identity_bound_tck_reports() -> None:
@@ -886,6 +971,12 @@ def test_wheelhouse_gate_rejects_invalid_installed_schema_manifest(
                 (output_root / f"{wheel_name}-0.1.0-py3-none-any.whl").write_bytes(
                     b"wheel"
                 )
+        if any("native_extension_status" in part for part in command):
+            return subprocess.CompletedProcess(
+                command,
+                0,
+                stdout=json.dumps(_native_binding_payload()),
+            )
         if command[-4:] == ["-m", "graphblocks", "schemas", "manifest"]:
             return subprocess.CompletedProcess(
                 command,
@@ -944,6 +1035,7 @@ def test_wheelhouse_gate_uses_pep503_distribution_identity(monkeypatch, tmp_path
         )
     )["project"]["version"]
     wheel_source_roots: list[Path] = []
+    native_binding_commands: list[list[str]] = []
 
     class FakeEnvBuilder:
         def __init__(self, *, with_pip: bool) -> None:
@@ -981,6 +1073,18 @@ def test_wheelhouse_gate_uses_pep503_distribution_identity(monkeypatch, tmp_path
             dependency_root = Path(command[command.index("--dest") + 1])
             (dependency_root / "jsonschema-4.25.1-py3-none-any.whl").write_bytes(
                 b"dependency"
+            )
+        if any("native_extension_status" in part for part in command):
+            native_binding_commands.append(command)
+            return subprocess.CompletedProcess(
+                command,
+                0,
+                stdout=json.dumps(
+                    _native_binding_payload(
+                        distribution_version=runtime_version,
+                        binding_version=runtime_version,
+                    )
+                ),
             )
         if command[-4:] == ["-m", "graphblocks", "schemas", "manifest"]:
             return subprocess.CompletedProcess(command, 0, stdout=json.dumps(expected_schema))
@@ -1091,6 +1195,7 @@ def test_wheelhouse_gate_uses_pep503_distribution_identity(monkeypatch, tmp_path
         "tck.json",
     }
     assert len(tck_commands) == 1
+    assert len(native_binding_commands) == 1
     tck_command, tck_arguments = tck_commands[0]
     assert "--native-compiler-wheel" in tck_command
     expected_compiler_artifact = tck_arguments["expected_compiler_artifact"]

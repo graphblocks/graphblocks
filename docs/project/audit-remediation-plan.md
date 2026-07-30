@@ -232,10 +232,12 @@ accepts the target Rust authority and the public Python compiler now dispatches
 to it without an implicit reference fallback. The first-stable matrix records
 phase-scoped C0/C1 implementation roles rather than a blanket
 `python-reference` identity. Resolving `GB-ARCH-001` and `GB-ARCH-002` remains a
-1.0 blocker until standalone canonical/schema routing, production scheduler,
-protocol/version handshake, artifact promotion, and installed evidence are
-complete. During the transition, Python/Rust differential tests gate every
-normative phase.
+1.0 blocker until standalone canonical/schema routing and production scheduler
+authority are complete. The native binding now exposes a separate versioned,
+closed capability handshake; the Python wrapper rejects incompatible protocol,
+version, and required-capability contracts before native invocation, and the
+installed-wheel gate compares that contract with distribution metadata. During
+the transition, Python/Rust differential tests gate every normative phase.
 
 The reusable `graphblocks-control-plane` library boundary is extracted:
 `graphblocks-python` and the `graphblocksd` binary now depend on that library,

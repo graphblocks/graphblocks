@@ -7,6 +7,160 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 pub const WORKER_PROTOCOL_VERSION: u16 = 1;
+pub const NATIVE_BINDING_PROTOCOL_VERSION: u16 = 1;
+pub const NATIVE_CAPABILITY_GRAPH_COMPILER: &str = "compiler.graph.v1";
+pub const NATIVE_CAPABILITY_APPLICATION_PROTOCOL: &str = "protocol.application.v1";
+pub const NATIVE_CAPABILITY_WORKER_PROTOCOL: &str = "protocol.worker.v1";
+pub const MAX_NATIVE_BINDING_IMPLEMENTATION_LENGTH: usize = 128;
+pub const MAX_NATIVE_BINDING_IMPLEMENTATION_VERSION_LENGTH: usize = 64;
+pub const MAX_NATIVE_BINDING_CAPABILITIES: usize = 64;
+pub const MAX_NATIVE_BINDING_CAPABILITY_LENGTH: usize = 128;
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct NativeBindingAdvertisement {
+    pub binding_protocol_version: u16,
+    pub implementation: String,
+    pub implementation_version: String,
+    pub capabilities: Vec<String>,
+}
+
+impl NativeBindingAdvertisement {
+    pub fn new<I, S>(
+        implementation: impl Into<String>,
+        implementation_version: impl Into<String>,
+        capabilities: I,
+    ) -> Result<Self, NativeBindingAdvertisementError>
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        let mut advertisement = Self {
+            binding_protocol_version: NATIVE_BINDING_PROTOCOL_VERSION,
+            implementation: implementation.into(),
+            implementation_version: implementation_version.into(),
+            capabilities: capabilities.into_iter().map(Into::into).collect(),
+        };
+        advertisement.capabilities.sort();
+        validate_native_binding_advertisement(&NativeBindingPolicy::current(), &advertisement)?;
+        Ok(advertisement)
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NativeBindingPolicy {
+    pub binding_protocol_version: u16,
+    pub required_capabilities: BTreeSet<String>,
+}
+
+impl NativeBindingPolicy {
+    pub fn current() -> Self {
+        Self {
+            binding_protocol_version: NATIVE_BINDING_PROTOCOL_VERSION,
+            required_capabilities: BTreeSet::new(),
+        }
+    }
+
+    pub fn require_capability(mut self, capability: impl Into<String>) -> Self {
+        self.required_capabilities.insert(capability.into());
+        self
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum NativeBindingAdvertisementError {
+    IncompatibleProtocolVersion { expected: u16, actual: u16 },
+    EmptyImplementation,
+    InvalidImplementation,
+    EmptyImplementationVersion,
+    InvalidImplementationVersion,
+    EmptyCapabilities,
+    TooManyCapabilities,
+    EmptyCapability,
+    InvalidCapability,
+    NonCanonicalCapabilities,
+    MissingRequiredCapability { capability: String },
+}
+
+impl fmt::Display for NativeBindingAdvertisementError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "{self:?}")
+    }
+}
+
+impl std::error::Error for NativeBindingAdvertisementError {}
+
+pub fn validate_native_binding_advertisement(
+    policy: &NativeBindingPolicy,
+    advertisement: &NativeBindingAdvertisement,
+) -> Result<(), NativeBindingAdvertisementError> {
+    if advertisement.binding_protocol_version != policy.binding_protocol_version {
+        return Err(
+            NativeBindingAdvertisementError::IncompatibleProtocolVersion {
+                expected: policy.binding_protocol_version,
+                actual: advertisement.binding_protocol_version,
+            },
+        );
+    }
+    if advertisement.implementation.trim().is_empty() {
+        return Err(NativeBindingAdvertisementError::EmptyImplementation);
+    }
+    if advertisement.implementation != advertisement.implementation.trim()
+        || advertisement.implementation.len() > MAX_NATIVE_BINDING_IMPLEMENTATION_LENGTH
+    {
+        return Err(NativeBindingAdvertisementError::InvalidImplementation);
+    }
+    if advertisement.implementation_version.trim().is_empty() {
+        return Err(NativeBindingAdvertisementError::EmptyImplementationVersion);
+    }
+    if advertisement.implementation_version != advertisement.implementation_version.trim()
+        || advertisement.implementation_version.len()
+            > MAX_NATIVE_BINDING_IMPLEMENTATION_VERSION_LENGTH
+    {
+        return Err(NativeBindingAdvertisementError::InvalidImplementationVersion);
+    }
+    if advertisement.capabilities.is_empty() {
+        return Err(NativeBindingAdvertisementError::EmptyCapabilities);
+    }
+    if advertisement.capabilities.len() > MAX_NATIVE_BINDING_CAPABILITIES {
+        return Err(NativeBindingAdvertisementError::TooManyCapabilities);
+    }
+    if advertisement
+        .capabilities
+        .iter()
+        .any(|capability| capability.trim().is_empty())
+    {
+        return Err(NativeBindingAdvertisementError::EmptyCapability);
+    }
+    if advertisement.capabilities.iter().any(|capability| {
+        capability != capability.trim()
+            || capability.len() > MAX_NATIVE_BINDING_CAPABILITY_LENGTH
+            || !capability
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
+    }) {
+        return Err(NativeBindingAdvertisementError::InvalidCapability);
+    }
+    if advertisement
+        .capabilities
+        .windows(2)
+        .any(|pair| pair[0] >= pair[1])
+    {
+        return Err(NativeBindingAdvertisementError::NonCanonicalCapabilities);
+    }
+    for required_capability in &policy.required_capabilities {
+        if advertisement
+            .capabilities
+            .binary_search(required_capability)
+            .is_err()
+        {
+            return Err(NativeBindingAdvertisementError::MissingRequiredCapability {
+                capability: required_capability.clone(),
+            });
+        }
+    }
+    Ok(())
+}
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]

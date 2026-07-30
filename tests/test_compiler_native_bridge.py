@@ -89,11 +89,17 @@ def test_compile_graph_fails_closed_when_native_compiler_is_unavailable(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     reference_called = False
+    native_called = False
 
     def unexpected_reference(*args: object, **kwargs: object) -> Plan:
         nonlocal reference_called
         reference_called = True
         raise AssertionError("reference compiler fallback must be explicit")
+
+    def incompatible_native(*args: object, **kwargs: object) -> dict[str, object]:
+        nonlocal native_called
+        native_called = True
+        return _valid_native_result()
 
     monkeypatch.setattr(
         compiler_module,
@@ -104,19 +110,22 @@ def test_compile_graph_fails_closed_when_native_compiler_is_unavailable(
         sys.modules,
         "graphblocks_runtime",
         SimpleNamespace(
-            compile_graph=lambda *args, **kwargs: _valid_native_result(),
+            compile_graph=incompatible_native,
             native_extension_available=lambda: False,
-            native_extension_status=lambda: {"error": "missing native extension"},
+            native_extension_status=lambda: {
+                "error": "unsupported native binding protocol version 2"
+            },
         ),
     )
 
     with pytest.raises(
         NativeCompilerUnavailableError,
-        match="native GraphBlocks compiler is unavailable",
+        match="unsupported native binding protocol version",
     ):
         compile_graph(NORMALIZED_GRAPH)
 
     assert reference_called is False
+    assert native_called is False
 
 
 def test_native_compile_helper_serializes_python_catalog(
