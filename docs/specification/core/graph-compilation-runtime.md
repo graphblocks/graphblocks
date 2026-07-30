@@ -205,6 +205,30 @@ replays the stored acceptance after restart. A conflicting request, late
 callback, or worker commit using the invalidated fence MUST be rejected without
 publishing another result.
 
+Durable non-terminal suspension uses `POST /runs/{run_id}/pause` and
+`POST /runs/{run_id}/resume` with the same closed control fields. Pause MUST
+atomically append its control event, preserve the exact resumable phase,
+invalidate any active lease and fencing token, and prevent a worker from
+claiming the run. Resume MUST clear the pause marker and restore only that
+preserved phase with a new state version and fence. If a valid callback arrives
+while a waiting run is paused, the callback receipt, inbox entry, event, and
+dispatch-effect settlement MUST still commit; the preserved resumable phase
+becomes `ready_resume`, but the run remains paused and unclaimable until an
+authorized resume. Callback issuance MUST persist the waiting-state version,
+and that issuance version remains valid across intervening pause/resume
+controls; the repository still compare-and-swaps against the live state in the
+acceptance transaction. The `external_callback_received` event reports
+`resumeState: ready_resume` rather than claiming that the live run state is
+unpaused. Identical pause or resume requests MUST replay their original
+acceptance after restart, and foreign tenant or owner controls MUST return a
+non-disclosing `404`. This control-plane pause is a non-terminal scheduling
+state, distinct from a terminal paused outcome.
+
+Repository implementations claiming this preview contract revision MUST
+implement `pause_run` and `resume_run`, and control acceptances MUST identify
+their `resulting_phase`. Custom repositories targeting the prior preview
+contract are not compatible until they implement that capability boundary.
+
 Callback acceptance only makes the run ready for resume. A worker must claim
 the reconstructable work with fresh lease and fencing authority before
 execution. Process restart between admission, waiting, callback acceptance,

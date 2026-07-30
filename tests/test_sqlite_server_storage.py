@@ -14,6 +14,7 @@ from graphblocks.sqlite_server_storage import (
     _SCHEMA_V1_STATEMENTS,
     _SCHEMA_V2_MIGRATION_STATEMENTS,
     _SCHEMA_V3_MIGRATION_STATEMENTS,
+    _SCHEMA_V4_MIGRATION_STATEMENTS,
     SQLiteAcceptedRunBusyError,
     SQLiteAcceptedRunCorruptionError,
     SQLiteAcceptedRunDatabase,
@@ -176,6 +177,26 @@ def _upgrade_version_two_database_to_version_three(path: Path) -> None:
         connection.close()
 
 
+def _upgrade_version_three_database_to_version_four(path: Path) -> None:
+    connection = sqlite3.connect(path, isolation_level=None)
+    try:
+        connection.execute("PRAGMA foreign_keys = ON")
+        connection.execute("BEGIN IMMEDIATE")
+        for statement in _SCHEMA_V4_MIGRATION_STATEMENTS:
+            connection.execute(statement)
+        connection.execute(
+            """
+            UPDATE accepted_run_storage_metadata
+            SET value = '4'
+            WHERE key = 'schema_version' AND value = '3'
+            """
+        )
+        connection.execute("PRAGMA user_version = 4")
+        connection.commit()
+    finally:
+        connection.close()
+
+
 def test_sqlite_accepted_run_database_initializes_dedicated_schema(
     tmp_path,
 ) -> None:
@@ -193,7 +214,7 @@ def test_sqlite_accepted_run_database_initializes_dedicated_schema(
     assert schema.synchronous == 2
     assert schema.busy_timeout_ms == 250
     assert schema.tables == _EXPECTED_TABLES
-    assert SQLITE_ACCEPTED_RUN_SCHEMA_VERSION == 4
+    assert SQLITE_ACCEPTED_RUN_SCHEMA_VERSION == 5
 
 
 def test_sqlite_accepted_run_database_migrates_v1_to_current_schema(
@@ -214,8 +235,8 @@ def test_sqlite_accepted_run_database_migrates_v1_to_current_schema(
         )
     )
 
-    assert schema.user_version == 4
-    assert schema.schema_version == 4
+    assert schema.user_version == 5
+    assert schema.schema_version == 5
     assert "available_at_unix_ms" in effect_columns
     assert "cancelled_at_unix_ms" in effect_columns
     assert database._run_read(
@@ -252,7 +273,7 @@ def test_sqlite_accepted_run_database_migrates_v2_invocation_metadata(
 
     database = SQLiteAcceptedRunDatabase(path)
 
-    assert database.schema_info().schema_version == 4
+    assert database.schema_info().schema_version == 5
     assert database._run_read(
         lambda connection: str(
             connection.execute(
@@ -273,7 +294,7 @@ def test_sqlite_accepted_run_database_migrates_v3_control_schema(
 
     database = SQLiteAcceptedRunDatabase(path)
 
-    assert database.schema_info().schema_version == 4
+    assert database.schema_info().schema_version == 5
     assert database._run_read(
         lambda connection: frozenset(
             str(row["name"])
@@ -292,8 +313,114 @@ def test_sqlite_accepted_run_database_migrates_v3_control_schema(
             "accepted_state_version",
             "accepted_event_sequence",
             "requested_at_unix_ms",
+            "resulting_phase",
         }
     )
+
+
+def test_sqlite_accepted_run_database_migrates_v4_pause_schema(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "accepted-runs-v4.sqlite3"
+    _initialize_version_one_database(path)
+    _insert_version_one_completion_effect(path)
+    _upgrade_version_one_database_to_version_two(path)
+    _upgrade_version_two_database_to_version_three(path)
+    _upgrade_version_three_database_to_version_four(path)
+
+    database = SQLiteAcceptedRunDatabase(path)
+
+    assert database.schema_info().schema_version == 5
+    assert database._run_read(
+        lambda connection: frozenset(
+            str(row["name"])
+            for row in connection.execute(
+                'PRAGMA table_info("accepted_runs")'
+            ).fetchall()
+        )
+    ).issuperset({"paused_from_phase", "paused_at_unix_ms"})
+    assert database._run_read(
+        lambda connection: frozenset(
+            str(row["name"])
+            for row in connection.execute(
+                'PRAGMA table_info("run_checkpoints")'
+            ).fetchall()
+        )
+    ).issuperset({"callback_expected_state_version"})
+
+
+def test_sqlite_accepted_run_database_rejects_ambiguous_v4_state_control(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "accepted-runs-v4-pause.sqlite3"
+    _initialize_version_one_database(path)
+    _insert_version_one_completion_effect(path)
+    _upgrade_version_one_database_to_version_two(path)
+    _upgrade_version_two_database_to_version_three(path)
+    _upgrade_version_three_database_to_version_four(path)
+    digest = "sha256:" + ("b" * 64)
+    connection = sqlite3.connect(path, isolation_level=None)
+    try:
+        connection.execute("PRAGMA foreign_keys = ON")
+        connection.execute("BEGIN IMMEDIATE")
+        connection.execute(
+            """
+            INSERT INTO run_events (
+              run_internal_id,
+              sequence,
+              kind,
+              payload_json,
+              payload_digest,
+              created_at_unix_ms
+            )
+            VALUES (
+              'internal-1', 2, 'run_paused', '{}', ?, 2000
+            )
+            """,
+            (digest,),
+        )
+        connection.execute(
+            """
+            INSERT INTO run_controls (
+              run_internal_id,
+              idempotency_key,
+              action,
+              request_digest,
+              requested_by_principal_id,
+              expected_state_version,
+              accepted_state_version,
+              accepted_event_sequence,
+              requested_at_unix_ms
+            )
+            VALUES (
+              'internal-1', 'pause-v4', 'pause', ?, 'principal-1',
+              1, 2, 2, 2000
+            )
+            """,
+            (digest,),
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+    with pytest.raises(
+        SQLiteAcceptedRunSchemaMismatchError,
+        match="no recoverable resulting phase",
+    ):
+        SQLiteAcceptedRunDatabase(path)
+
+    connection = sqlite3.connect(path)
+    try:
+        assert int(connection.execute("PRAGMA user_version").fetchone()[0]) == 4
+        checkpoint_columns = {
+            str(row[1])
+            for row in connection.execute(
+                'PRAGMA table_info("run_checkpoints")'
+            ).fetchall()
+        }
+    finally:
+        connection.close()
+    assert "callback_expected_state_version" not in checkpoint_columns
 
 
 def test_sqlite_accepted_run_database_serializes_concurrent_v1_migration(
@@ -314,7 +441,7 @@ def test_sqlite_accepted_run_database_serializes_concurrent_v1_migration(
         infos = tuple(executor.map(migrate, range(2)))
 
     assert infos == (infos[0], infos[0])
-    assert infos[0].schema_version == 4
+    assert infos[0].schema_version == 5
 
 
 def test_sqlite_accepted_run_database_reopens_without_recreating_schema(

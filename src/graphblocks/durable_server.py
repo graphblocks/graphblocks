@@ -28,6 +28,7 @@ from .server_storage import (
     AcceptedRunClaimRequest,
     AcceptedRunConflictError,
     AcceptedRunControlAcceptance,
+    AcceptedRunControlAction,
     AcceptedRunEffectIntent,
     AcceptedRunEffectKind,
     AcceptedRunEventIntent,
@@ -37,6 +38,7 @@ from .server_storage import (
     AcceptedRunQueueClaimRequest,
     AcceptedRunRepository,
     AcceptedRunSnapshot,
+    AcceptedRunStateControlCommand,
     AcceptedRunStorageError,
     AcceptedRunTerminalCommit,
     AcceptedRunWaitingCommit,
@@ -103,6 +105,8 @@ class DurableAcceptedRunService:
             "commit_waiting",
             "accept_callback_and_queue_resume",
             "cancel_run",
+            "pause_run",
+            "resume_run",
             "commit_terminal",
         )
         if any(
@@ -357,8 +361,8 @@ class DurableAcceptedRunService:
         )
         event_value = {
             "checkpointDigest": checkpoint_digest,
+            "resumeState": "ready_resume",
             "runId": run_id,
-            "state": "ready_resume",
         }
         return self.accept_callback(
             AcceptedRunCallbackCommit(
@@ -468,6 +472,117 @@ class DurableAcceptedRunService:
                 ),
             )
         )
+
+    def pause_run(
+        self,
+        *,
+        tenant_id: str,
+        owner_principal_id: str,
+        run_id: str,
+        expected_state_version: int,
+        idempotency_key: str,
+        reason: str,
+        requested_at_unix_ms: int | None = None,
+    ) -> AcceptedRunControlAcceptance:
+        return self._apply_state_control(
+            tenant_id=tenant_id,
+            owner_principal_id=owner_principal_id,
+            run_id=run_id,
+            action=AcceptedRunControlAction.PAUSE,
+            expected_state_version=expected_state_version,
+            idempotency_key=idempotency_key,
+            reason=reason,
+            requested_at_unix_ms=requested_at_unix_ms,
+        )
+
+    def resume_run(
+        self,
+        *,
+        tenant_id: str,
+        owner_principal_id: str,
+        run_id: str,
+        expected_state_version: int,
+        idempotency_key: str,
+        reason: str,
+        requested_at_unix_ms: int | None = None,
+    ) -> AcceptedRunControlAcceptance:
+        return self._apply_state_control(
+            tenant_id=tenant_id,
+            owner_principal_id=owner_principal_id,
+            run_id=run_id,
+            action=AcceptedRunControlAction.RESUME,
+            expected_state_version=expected_state_version,
+            idempotency_key=idempotency_key,
+            reason=reason,
+            requested_at_unix_ms=requested_at_unix_ms,
+        )
+
+    def _apply_state_control(
+        self,
+        *,
+        tenant_id: str,
+        owner_principal_id: str,
+        run_id: str,
+        action: AcceptedRunControlAction,
+        expected_state_version: int,
+        idempotency_key: str,
+        reason: str,
+        requested_at_unix_ms: int | None,
+    ) -> AcceptedRunControlAcceptance:
+        if action not in {
+            AcceptedRunControlAction.PAUSE,
+            AcceptedRunControlAction.RESUME,
+        }:
+            raise ValueError(
+                "durable accepted-run state control action must be pause or "
+                "resume"
+            )
+        if type(reason) is not str or not reason or reason != reason.strip():
+            raise ValueError(
+                "durable accepted-run state control reason must be an exact "
+                "non-empty string"
+            )
+        requested_at = (
+            self._now_unix_ms()
+            if requested_at_unix_ms is None
+            else requested_at_unix_ms
+        )
+        request_value = {
+            "action": action.value,
+            "expectedStateVersion": expected_state_version,
+            "ownerPrincipalId": owner_principal_id,
+            "reason": reason,
+            "runId": run_id,
+            "tenantId": tenant_id,
+        }
+        event_value = {
+            "action": action.value,
+            "reason": reason,
+            "requestId": idempotency_key,
+            "runId": run_id,
+        }
+        command = AcceptedRunStateControlCommand(
+            tenant_id=tenant_id,
+            owner_principal_id=owner_principal_id,
+            run_id=run_id,
+            action=action,
+            expected_state_version=expected_state_version,
+            idempotency_key=idempotency_key,
+            request_digest=canonical_hash(request_value),
+            requested_at_unix_ms=requested_at,
+            control_event=AcceptedRunEventIntent(
+                kind={
+                    AcceptedRunControlAction.PAUSE: "run_paused",
+                    AcceptedRunControlAction.RESUME: "run_resumed",
+                }[action],
+                payload_json=canonical_dumps(event_value),
+                payload_digest=canonical_hash(event_value),
+                created_at_unix_ms=requested_at,
+            ),
+        )
+        if action is AcceptedRunControlAction.PAUSE:
+            return self.repository.pause_run(command)
+        return self.repository.resume_run(command)
 
     def advance_run(
         self,
@@ -654,6 +769,7 @@ class DurableAcceptedRunService:
                     callback_issuance.callback_idempotency_key
                 ),
                 "checkpointDigest": callback_issuance.checkpoint_digest,
+                "expectedStateVersion": work.state_version + 1,
                 "fencingToken": callback_issuance.fencing_token,
                 "leaseGeneration": callback_issuance.lease_generation,
                 "operationAttemptId": (
@@ -810,6 +926,20 @@ def durable_server_route_manifest() -> ServerRouteManifest:
                 "cancel_run",
                 auth_required=True,
             ),
+            ServerEndpoint(
+                "POST",
+                "/runs/{run_id}/pause",
+                "http",
+                "pause_run",
+                auth_required=True,
+            ),
+            ServerEndpoint(
+                "POST",
+                "/runs/{run_id}/resume",
+                "http",
+                "resume_run",
+                auth_required=True,
+            ),
         )
     )
 
@@ -929,7 +1059,13 @@ class DurableAcceptedRunServerApp:
         try:
             if (
                 route.endpoint.operation
-                in {"admit_run", "cancel_run", "submit_run_callback"}
+                in {
+                    "admit_run",
+                    "cancel_run",
+                    "pause_run",
+                    "resume_run",
+                    "submit_run_callback",
+                }
                 and len(request.body) > self.max_request_body_bytes
             ):
                 return ServerResponse.json(
@@ -1064,6 +1200,10 @@ class DurableAcceptedRunServerApp:
                     response_payload["checkpointDigest"] = (
                         snapshot.checkpoint_digest
                     )
+                if snapshot.paused_from_phase is not None:
+                    response_payload["resumeState"] = (
+                        snapshot.paused_from_phase.value
+                    )
                 if snapshot.terminal_status is not None:
                     response_payload["terminalStatus"] = (
                         snapshot.terminal_status
@@ -1187,6 +1327,75 @@ class DurableAcceptedRunServerApp:
                         "state": "terminal",
                         "stateVersion": control_acceptance.state_version,
                         "terminalStatus": "cancelled",
+                    },
+                )
+
+            if route.endpoint.operation in {"pause_run", "resume_run"}:
+                payload = canonical_loads(request.body)
+                if not isinstance(payload, dict):
+                    raise ValueError(
+                        "durable state control request body must be a JSON object"
+                    )
+                expected_fields = {
+                    "expectedStateVersion",
+                    "reason",
+                    "requestId",
+                }
+                if set(payload) != expected_fields:
+                    raise ValueError(
+                        "durable state control request fields must match version 1"
+                    )
+                request_id = payload["requestId"]
+                reason = payload["reason"]
+                for field_name, value in (
+                    ("requestId", request_id),
+                    ("reason", reason),
+                ):
+                    if (
+                        type(value) is not str
+                        or not value
+                        or value != value.strip()
+                    ):
+                        raise ValueError(
+                            f"durable state control request {field_name} must "
+                            "be an exact non-empty string"
+                        )
+                assert isinstance(request_id, str)
+                assert isinstance(reason, str)
+                if route.endpoint.operation == "pause_run":
+                    state_acceptance = self.service.pause_run(
+                        tenant_id=principal.tenant_id,
+                        owner_principal_id=principal.principal_id,
+                        run_id=run_id,
+                        expected_state_version=payload[
+                            "expectedStateVersion"
+                        ],
+                        idempotency_key=request_id,
+                        reason=reason,
+                    )
+                else:
+                    state_acceptance = self.service.resume_run(
+                        tenant_id=principal.tenant_id,
+                        owner_principal_id=principal.principal_id,
+                        run_id=run_id,
+                        expected_state_version=payload[
+                            "expectedStateVersion"
+                        ],
+                        idempotency_key=request_id,
+                        reason=reason,
+                    )
+                return ServerResponse.json(
+                    202,
+                    {
+                        "acceptedEventSequence": (
+                            state_acceptance.accepted_event_sequence
+                        ),
+                        "action": state_acceptance.action.value,
+                        "duplicate": state_acceptance.replayed,
+                        "ok": True,
+                        "runId": run_id,
+                        "state": state_acceptance.resulting_phase.value,
+                        "stateVersion": state_acceptance.state_version,
                     },
                 )
 

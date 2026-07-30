@@ -196,8 +196,8 @@ def _callback_command(
     }
     event_payload = {
         "callbackIdempotencyKey": "callback-1",
+        "resumeState": "ready_resume",
         "runId": waiting.claim.run_id,
-        "state": "ready_resume",
     }
     return AcceptedRunCallbackCommit(
         tenant_id=waiting.claim.tenant_id,

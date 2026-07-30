@@ -309,8 +309,8 @@ def test_durable_service_resumes_accepted_callback_after_process_restart(
     }
     accepted_event_payload = {
         "checkpointDigest": issuance.checkpoint_digest,
+        "resumeState": "ready_resume",
         "runId": run_id,
-        "state": "ready_resume",
     }
     acceptance = first_process.accept_callback(
         AcceptedRunCallbackCommit(

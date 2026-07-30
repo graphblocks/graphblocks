@@ -308,6 +308,7 @@ class AcceptedRunPhase(StrEnum):
     RUNNING = "running"
     WAITING_CALLBACK = "waiting_callback"
     READY_RESUME = "ready_resume"
+    PAUSED = "paused"
     TERMINAL = "terminal"
 
 
@@ -321,13 +322,21 @@ class AcceptedRunControlAction(StrEnum):
 _ALLOWED_ACCEPTED_RUN_TRANSITIONS = frozenset(
     {
         (AcceptedRunPhase.READY_INITIAL, AcceptedRunPhase.RUNNING),
+        (AcceptedRunPhase.READY_INITIAL, AcceptedRunPhase.PAUSED),
         (AcceptedRunPhase.READY_INITIAL, AcceptedRunPhase.TERMINAL),
         (AcceptedRunPhase.RUNNING, AcceptedRunPhase.WAITING_CALLBACK),
+        (AcceptedRunPhase.RUNNING, AcceptedRunPhase.PAUSED),
         (AcceptedRunPhase.RUNNING, AcceptedRunPhase.TERMINAL),
         (AcceptedRunPhase.WAITING_CALLBACK, AcceptedRunPhase.READY_RESUME),
+        (AcceptedRunPhase.WAITING_CALLBACK, AcceptedRunPhase.PAUSED),
         (AcceptedRunPhase.WAITING_CALLBACK, AcceptedRunPhase.TERMINAL),
         (AcceptedRunPhase.READY_RESUME, AcceptedRunPhase.RUNNING),
+        (AcceptedRunPhase.READY_RESUME, AcceptedRunPhase.PAUSED),
         (AcceptedRunPhase.READY_RESUME, AcceptedRunPhase.TERMINAL),
+        (AcceptedRunPhase.PAUSED, AcceptedRunPhase.READY_INITIAL),
+        (AcceptedRunPhase.PAUSED, AcceptedRunPhase.WAITING_CALLBACK),
+        (AcceptedRunPhase.PAUSED, AcceptedRunPhase.READY_RESUME),
+        (AcceptedRunPhase.PAUSED, AcceptedRunPhase.TERMINAL),
     }
 )
 
@@ -571,6 +580,7 @@ class CallbackAcceptance:
 @dataclass(frozen=True, slots=True)
 class AcceptedRunControlAcceptance:
     action: AcceptedRunControlAction
+    resulting_phase: AcceptedRunPhase
     idempotency_key: str
     request_digest: str
     accepted_event_sequence: int
@@ -582,6 +592,10 @@ class AcceptedRunControlAcceptance:
         if not isinstance(self.action, AcceptedRunControlAction):
             raise ValueError(
                 f"{owner} action must be an AcceptedRunControlAction"
+            )
+        if not isinstance(self.resulting_phase, AcceptedRunPhase):
+            raise ValueError(
+                f"{owner} resulting_phase must be an AcceptedRunPhase"
             )
         object.__setattr__(
             self,
@@ -1240,6 +1254,7 @@ class AcceptedRunSnapshot:
     event_low_watermark: int
     event_high_watermark: int
     checkpoint_digest: str | None = None
+    paused_from_phase: AcceptedRunPhase | None = None
     claim: AcceptedRunClaim | None = None
     terminal_status: str | None = None
     terminal_result_json: str | None = None
@@ -1280,6 +1295,29 @@ class AcceptedRunSnapshot:
                     "checkpoint_digest",
                     self.checkpoint_digest,
                 ),
+            )
+        if self.paused_from_phase is not None and not isinstance(
+            self.paused_from_phase,
+            AcceptedRunPhase,
+        ):
+            raise ValueError(
+                "accepted run snapshot paused_from_phase must be an "
+                "AcceptedRunPhase or None"
+            )
+        if self.phase is AcceptedRunPhase.PAUSED:
+            if self.paused_from_phase not in {
+                AcceptedRunPhase.READY_INITIAL,
+                AcceptedRunPhase.WAITING_CALLBACK,
+                AcceptedRunPhase.READY_RESUME,
+            }:
+                raise ValueError(
+                    "paused accepted run snapshot must include a resumable "
+                    "paused_from_phase"
+                )
+        elif self.paused_from_phase is not None:
+            raise ValueError(
+                "non-paused accepted run snapshot must not include "
+                "paused_from_phase"
             )
         if self.claim is not None:
             if not isinstance(self.claim, AcceptedRunClaim):
@@ -1970,6 +2008,86 @@ class AcceptedRunCancelCommand:
 
 
 @dataclass(frozen=True, slots=True)
+class AcceptedRunStateControlCommand:
+    tenant_id: str
+    owner_principal_id: str
+    run_id: str
+    action: AcceptedRunControlAction
+    expected_state_version: int
+    idempotency_key: str
+    request_digest: str
+    requested_at_unix_ms: int
+    control_event: AcceptedRunEventIntent
+
+    def __post_init__(self) -> None:
+        owner = "accepted run state control command"
+        for field_name in (
+            "tenant_id",
+            "owner_principal_id",
+            "run_id",
+            "idempotency_key",
+        ):
+            object.__setattr__(
+                self,
+                field_name,
+                _validate_exact_string(
+                    owner,
+                    field_name,
+                    getattr(self, field_name),
+                ),
+            )
+        if self.action not in {
+            AcceptedRunControlAction.PAUSE,
+            AcceptedRunControlAction.RESUME,
+        }:
+            raise ValueError(
+                f"{owner} action must be pause or resume"
+            )
+        object.__setattr__(
+            self,
+            "expected_state_version",
+            _validate_u64(
+                owner,
+                "expected_state_version",
+                self.expected_state_version,
+            ),
+        )
+        object.__setattr__(
+            self,
+            "request_digest",
+            _validate_digest(owner, "request_digest", self.request_digest),
+        )
+        object.__setattr__(
+            self,
+            "requested_at_unix_ms",
+            _validate_u64(
+                owner,
+                "requested_at_unix_ms",
+                self.requested_at_unix_ms,
+            ),
+        )
+        if not isinstance(self.control_event, AcceptedRunEventIntent):
+            raise ValueError(
+                f"{owner} control_event must be an AcceptedRunEventIntent"
+            )
+        expected_event_kind = {
+            AcceptedRunControlAction.PAUSE: "run_paused",
+            AcceptedRunControlAction.RESUME: "run_resumed",
+        }[self.action]
+        if self.control_event.kind != expected_event_kind:
+            raise ValueError(
+                f"{owner} control_event kind must match action"
+            )
+        if (
+            self.control_event.created_at_unix_ms
+            != self.requested_at_unix_ms
+        ):
+            raise ValueError(
+                f"{owner} event timestamp must match requested_at_unix_ms"
+            )
+
+
+@dataclass(frozen=True, slots=True)
 class AcceptedRunTerminalCommit:
     claim: AcceptedRunClaim
     expected_state_version: int
@@ -2102,6 +2220,18 @@ class AcceptedRunRepository(Protocol):
     def cancel_run(
         self,
         command: AcceptedRunCancelCommand,
+    ) -> AcceptedRunControlAcceptance:
+        ...
+
+    def pause_run(
+        self,
+        command: AcceptedRunStateControlCommand,
+    ) -> AcceptedRunControlAcceptance:
+        ...
+
+    def resume_run(
+        self,
+        command: AcceptedRunStateControlCommand,
     ) -> AcceptedRunControlAcceptance:
         ...
 

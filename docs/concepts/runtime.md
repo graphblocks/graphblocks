@@ -40,9 +40,13 @@ release, and ownership admission. `GraphBlocksServerApp` defines a
 framework-neutral request/response contract rather than binding a network
 socket. Its checkpoint continuation is process-local and is not restart-durable.
 The separate preview `DurableAcceptedRunServerApp` stores accepted runs,
-cursor events, callback continuation, cancellation controls, fencing state, and
-completion effects through a durable repository; the SQLite implementation can
-recover those transitions after process restart.
+cursor events, callback continuation, cancellation and pause/resume controls,
+fencing state, and completion effects through a durable repository; the SQLite
+implementation can recover those transitions after process restart. A paused
+run retains its exact resume phase and cannot be claimed. Valid callbacks may
+still be recorded with their issuance-time state version while paused, but
+execution remains gated until an owner-scoped resume establishes fresh state
+and fencing authority.
 
 See [async runs and callbacks](../guides/async-runs-and-callbacks.md) and the
 normative [runtime specification](../specification/operations/applications-async-callbacks.md).

@@ -232,10 +232,19 @@ project a paused callback-delivery state for explicit retry. The process-local
 `GraphBlocksServerApp` retains checkpoints and executors in process; this
 continuation does not survive process restart. The preview
 `DurableAcceptedRunServerApp` instead delegates accepted runs, events,
-checkpoints, callback inbox/outbox state, and idempotent cancellation controls
-to `AcceptedRunRepository`; its SQLite implementation preserves these
-transitions across restart. A remote-worker production claim still requires a
-durable runtime implementation and deployment-level lease/fence evidence.
+checkpoints, callback inbox/outbox state, and idempotent cancellation,
+pause, and resume controls to `AcceptedRunRepository`; its SQLite
+implementation preserves these transitions across restart. Pausing a waiting
+run preserves its callback admission boundary: a valid callback may be
+journaled and settle its dispatch effect, but it only advances the stored
+resume target to `ready_resume`. Its issuance-time expected state version
+remains admissible across pause/resume controls, while the repository applies
+the transition against the live version under the same write transaction. The
+callback event exposes this as `resumeState`, not as an unpaused live `state`.
+The run remains paused and no worker may claim it until an owner-scoped resume
+commits a fresh state version and fencing epoch. A remote-worker production
+claim still requires a durable runtime implementation and deployment-level
+lease/fence evidence.
 
 The native stdlib runtime provides a preview, local-filesystem SQLite
 continuation through `checkpointStorePath`. Cooperating processes that resume

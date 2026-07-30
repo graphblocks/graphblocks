@@ -31,6 +31,7 @@ from .server_storage import (
     AcceptedRunPhase,
     AcceptedRunQueueClaimRequest,
     AcceptedRunSnapshot,
+    AcceptedRunStateControlCommand,
     AcceptedRunStateConflictError,
     AcceptedRunStorageError,
     AcceptedRunTerminalCommit,
@@ -55,7 +56,7 @@ from .server_storage import (
 
 
 SQLITE_ACCEPTED_RUN_APPLICATION_ID = 0x47424152
-SQLITE_ACCEPTED_RUN_SCHEMA_VERSION = 4
+SQLITE_ACCEPTED_RUN_SCHEMA_VERSION = 5
 _SQLITE_ACCEPTED_RUN_SCHEMA_NAME = "graphblocks.accepted-runs.sqlite"
 _SQLITE_ACCEPTED_RUN_INITIAL_SCHEMA_VERSION = 1
 _MAX_BUSY_TIMEOUT_MS = 60_000
@@ -402,6 +403,50 @@ _SCHEMA_V4_MIGRATION_STATEMENTS = (
     """,
 )
 
+_SCHEMA_V5_MIGRATION_STATEMENTS = (
+    """
+    ALTER TABLE accepted_runs
+    ADD COLUMN paused_from_phase TEXT
+      CHECK (
+        paused_from_phase IS NULL
+        OR paused_from_phase IN (
+          'ready_initial',
+          'waiting_callback',
+          'ready_resume'
+        )
+      )
+    """,
+    """
+    ALTER TABLE accepted_runs
+    ADD COLUMN paused_at_unix_ms INTEGER
+      CHECK (
+        paused_at_unix_ms IS NULL OR paused_at_unix_ms >= 0
+      )
+    """,
+    """
+    ALTER TABLE run_checkpoints
+    ADD COLUMN callback_expected_state_version INTEGER
+      CHECK (
+        callback_expected_state_version IS NULL
+        OR callback_expected_state_version > 0
+      )
+    """,
+    """
+    ALTER TABLE run_controls
+    ADD COLUMN resulting_phase TEXT NOT NULL DEFAULT 'terminal'
+      CHECK (
+        resulting_phase IN (
+          'ready_initial',
+          'running',
+          'waiting_callback',
+          'ready_resume',
+          'paused',
+          'terminal'
+        )
+      )
+    """,
+)
+
 _REQUIRED_COLUMNS_V1 = {
     "accepted_run_storage_metadata": frozenset({"key", "value"}),
     "accepted_runs": frozenset(
@@ -509,7 +554,7 @@ _REQUIRED_COLUMNS_V3 = {
         | frozenset({"invocation_json"})
     ),
 }
-_REQUIRED_COLUMNS = {
+_REQUIRED_COLUMNS_V4 = {
     **_REQUIRED_COLUMNS_V3,
     "effect_outbox": (
         _REQUIRED_COLUMNS_V3["effect_outbox"]
@@ -527,6 +572,21 @@ _REQUIRED_COLUMNS = {
             "accepted_event_sequence",
             "requested_at_unix_ms",
         }
+    ),
+}
+_REQUIRED_COLUMNS = {
+    **_REQUIRED_COLUMNS_V4,
+    "accepted_runs": (
+        _REQUIRED_COLUMNS_V4["accepted_runs"]
+        | frozenset({"paused_from_phase", "paused_at_unix_ms"})
+    ),
+    "run_checkpoints": (
+        _REQUIRED_COLUMNS_V4["run_checkpoints"]
+        | frozenset({"callback_expected_state_version"})
+    ),
+    "run_controls": (
+        _REQUIRED_COLUMNS_V4["run_controls"]
+        | frozenset({"resulting_phase"})
     ),
 }
 
@@ -769,6 +829,7 @@ class SQLiteAcceptedRunDatabase:
                     _SQLITE_ACCEPTED_RUN_INITIAL_SCHEMA_VERSION,
                     2,
                     3,
+                    4,
                 }:
                     self._migrate_to_current(connection)
                 else:
@@ -840,6 +901,8 @@ class SQLiteAcceptedRunDatabase:
                     connection.execute(statement)
                 for statement in _SCHEMA_V4_MIGRATION_STATEMENTS:
                     connection.execute(statement)
+                for statement in _SCHEMA_V5_MIGRATION_STATEMENTS:
+                    connection.execute(statement)
                 connection.executemany(
                     """
                     INSERT INTO accepted_run_storage_metadata (key, value)
@@ -885,6 +948,7 @@ class SQLiteAcceptedRunDatabase:
                 _SQLITE_ACCEPTED_RUN_INITIAL_SCHEMA_VERSION,
                 2,
                 3,
+                4,
             }:
                 raise SQLiteAcceptedRunSchemaVersionError(
                     "unsupported accepted-run SQLite schema version "
@@ -958,6 +1022,43 @@ class SQLiteAcceptedRunDatabase:
                     raise SQLiteAcceptedRunSchemaMismatchError(
                         "accepted-run SQLite schema metadata version changed "
                         "during v4 migration"
+                    )
+                connection.execute(
+                    "PRAGMA user_version = 4"
+                )
+                user_version = 4
+            if user_version == 4:
+                self._validate_schema_version(
+                    connection,
+                    schema_version=4,
+                    required_columns=_REQUIRED_COLUMNS_V4,
+                )
+                legacy_state_control = connection.execute(
+                    """
+                    SELECT action
+                    FROM run_controls
+                    WHERE action IN ('pause', 'resume')
+                    LIMIT 1
+                    """
+                ).fetchone()
+                if legacy_state_control is not None:
+                    raise SQLiteAcceptedRunSchemaMismatchError(
+                        "accepted-run SQLite v4 pause/resume controls have "
+                        "no recoverable resulting phase"
+                    )
+                for statement in _SCHEMA_V5_MIGRATION_STATEMENTS:
+                    connection.execute(statement)
+                updated = connection.execute(
+                    """
+                    UPDATE accepted_run_storage_metadata
+                    SET value = '5'
+                    WHERE key = 'schema_version' AND value = '4'
+                    """
+                )
+                if updated.rowcount != 1:
+                    raise SQLiteAcceptedRunSchemaMismatchError(
+                        "accepted-run SQLite schema metadata version changed "
+                        "during v5 migration"
                     )
                 connection.execute(
                     "PRAGMA user_version = "
@@ -1257,9 +1358,47 @@ class SQLiteAcceptedRunRepository:
                 "external_run_id",
                 row["external_run_id"],
             )
-            phase = AcceptedRunPhase(
+            stored_phase = AcceptedRunPhase(
                 _decode_sqlite_text("phase", row["phase"])
             )
+            paused_from_value = row["paused_from_phase"]
+            paused_at_value = row["paused_at_unix_ms"]
+            if paused_from_value is None and paused_at_value is None:
+                phase = stored_phase
+                paused_from_phase = None
+            elif paused_from_value is not None and paused_at_value is not None:
+                paused_from_phase = AcceptedRunPhase(
+                    _decode_sqlite_text(
+                        "paused_from_phase",
+                        paused_from_value,
+                    )
+                )
+                paused_at = _decode_sqlite_integer(
+                    "paused_at_unix_ms",
+                    paused_at_value,
+                )
+                updated_at = _decode_sqlite_integer(
+                    "updated_at_unix_ms",
+                    row["updated_at_unix_ms"],
+                )
+                if (
+                    paused_from_phase is not stored_phase
+                    or paused_from_phase
+                    not in {
+                        AcceptedRunPhase.READY_INITIAL,
+                        AcceptedRunPhase.WAITING_CALLBACK,
+                        AcceptedRunPhase.READY_RESUME,
+                    }
+                    or paused_at > updated_at
+                ):
+                    raise SQLiteAcceptedRunCorruptionError(
+                        "accepted-run SQLite pause metadata is inconsistent"
+                    )
+                phase = AcceptedRunPhase.PAUSED
+            else:
+                raise SQLiteAcceptedRunCorruptionError(
+                    "accepted-run SQLite pause metadata is incomplete"
+                )
             claim = None
             if phase is AcceptedRunPhase.RUNNING:
                 claim = AcceptedRunClaim(
@@ -1319,6 +1458,7 @@ class SQLiteAcceptedRunRepository:
                         checkpoint_digest,
                     )
                 ),
+                paused_from_phase=paused_from_phase,
                 claim=claim,
                 terminal_status=(
                     None
@@ -1586,6 +1726,14 @@ class SQLiteAcceptedRunRepository:
                     request.tenant_id,
                     request.run_id,
                 )
+            paused_from = row["paused_from_phase"]
+            paused_at = row["paused_at_unix_ms"]
+            if paused_from is not None or paused_at is not None:
+                if paused_from is None or paused_at is None:
+                    raise SQLiteAcceptedRunCorruptionError(
+                        "accepted-run SQLite pause metadata is incomplete"
+                    )
+                return None
             try:
                 phase = AcceptedRunPhase(
                     _decode_sqlite_text("phase", row["phase"])
@@ -1674,6 +1822,8 @@ class SQLiteAcceptedRunRepository:
                   AND state_version = ?
                   AND lease_generation = ?
                   AND fencing_token = ?
+                  AND paused_from_phase IS NULL
+                  AND paused_at_unix_ms IS NULL
                 """,
                 (
                     next_state_version,
@@ -1870,6 +2020,8 @@ class SQLiteAcceptedRunRepository:
                         AND lease_expires_at_unix_ms <= ?
                     )
                 )
+                  AND paused_from_phase IS NULL
+                  AND paused_at_unix_ms IS NULL
                   AND (? IS NULL OR tenant_id = ?)
                 ORDER BY
                   CASE phase
@@ -2018,9 +2170,10 @@ class SQLiteAcceptedRunRepository:
                   issuing_lease_generation,
                   issuing_fencing_token,
                   dispatch_effect_id,
-                  created_at_unix_ms
+                  created_at_unix_ms,
+                  callback_expected_state_version
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     internal_id,
@@ -2035,6 +2188,7 @@ class SQLiteAcceptedRunRepository:
                     issuance.fencing_token,
                     effect.effect_id,
                     event.created_at_unix_ms,
+                    next_state_version,
                 ),
             )
             self._hit_failpoint("commit_waiting.after_checkpoint_insert")
@@ -2460,16 +2614,59 @@ class SQLiteAcceptedRunRepository:
                 requested_submission=requested,
             )
             snapshot = self._snapshot_from_row(run)
-            if snapshot.phase is not AcceptedRunPhase.WAITING_CALLBACK:
+            paused_waiting = (
+                snapshot.phase is AcceptedRunPhase.PAUSED
+                and snapshot.paused_from_phase
+                is AcceptedRunPhase.WAITING_CALLBACK
+            )
+            if (
+                snapshot.phase is not AcceptedRunPhase.WAITING_CALLBACK
+                and not paused_waiting
+            ):
                 raise CallbackIssuanceConflictError(
                     expected_issuance,
                     requested_issuance,
                 )
-            if snapshot.state_version != command.expected_state_version:
+            raw_callback_expected_state_version = checkpoint_row[
+                "callback_expected_state_version"
+            ]
+            callback_expected_state_version = (
+                None
+                if raw_callback_expected_state_version is None
+                else _decode_sqlite_integer(
+                    "callback_expected_state_version",
+                    raw_callback_expected_state_version,
+                )
+            )
+            if (
+                callback_expected_state_version is not None
+                and callback_expected_state_version > snapshot.state_version
+            ):
+                raise SQLiteAcceptedRunCorruptionError(
+                    "accepted-run SQLite callback version exceeds the "
+                    "current run state"
+                )
+            accepted_expected_state_versions = {snapshot.state_version}
+            if callback_expected_state_version is not None:
+                accepted_expected_state_versions.add(
+                    callback_expected_state_version
+                )
+            if (
+                command.expected_state_version
+                not in accepted_expected_state_versions
+            ):
                 raise AcceptedRunStateConflictError(
                     requested_issuance.run_id,
                     command.expected_state_version,
                     snapshot.state_version,
+                )
+            if command.received_at_unix_ms < _decode_sqlite_integer(
+                "updated_at_unix_ms",
+                run["updated_at_unix_ms"],
+            ):
+                raise ValueError(
+                    "accepted-run SQLite callback timestamp must not precede "
+                    "the current run state"
                 )
             try:
                 stored_checkpoint = self._stored_checkpoint_from_row(
@@ -2609,25 +2806,41 @@ class SQLiteAcceptedRunRepository:
                     "accepted-run SQLite callback dispatch state is invalid"
                 )
             self._hit_failpoint("accept_callback.after_dispatch_satisfied")
+            current_paused_from = run["paused_from_phase"]
+            current_paused_at = run["paused_at_unix_ms"]
+            next_paused_from = (
+                AcceptedRunPhase.READY_RESUME.value
+                if paused_waiting
+                else None
+            )
+            next_paused_at = current_paused_at if paused_waiting else None
             updated = connection.execute(
                 """
                 UPDATE accepted_runs
                 SET phase = 'ready_resume',
                     state_version = ?,
                     event_high_watermark = ?,
-                    updated_at_unix_ms = ?
+                    updated_at_unix_ms = ?,
+                    paused_from_phase = ?,
+                    paused_at_unix_ms = ?
                 WHERE internal_id = ?
                   AND phase = 'waiting_callback'
                   AND state_version = ?
                   AND current_checkpoint_digest = ?
+                  AND paused_from_phase IS ?
+                  AND paused_at_unix_ms IS ?
                 """,
                 (
                     next_state_version,
                     next_event_sequence,
                     command.received_at_unix_ms,
+                    next_paused_from,
+                    next_paused_at,
                     internal_id,
-                    command.expected_state_version,
+                    snapshot.state_version,
                     expected_issuance.checkpoint_digest,
+                    current_paused_from,
+                    current_paused_at,
                 ),
             )
             if updated.rowcount != 1:
@@ -2647,6 +2860,443 @@ class SQLiteAcceptedRunRepository:
         acceptance = self._database._run_immediate(transition)
         self._hit_failpoint("accept_callback.after_commit")
         return acceptance
+
+    def pause_run(
+        self,
+        command: AcceptedRunStateControlCommand,
+    ) -> AcceptedRunControlAcceptance:
+        if (
+            not isinstance(command, AcceptedRunStateControlCommand)
+            or command.action is not AcceptedRunControlAction.PAUSE
+        ):
+            raise TypeError(
+                "accepted-run SQLite pause command must be an "
+                "AcceptedRunStateControlCommand with pause action"
+            )
+        return self._apply_state_control(command)
+
+    def resume_run(
+        self,
+        command: AcceptedRunStateControlCommand,
+    ) -> AcceptedRunControlAcceptance:
+        if (
+            not isinstance(command, AcceptedRunStateControlCommand)
+            or command.action is not AcceptedRunControlAction.RESUME
+        ):
+            raise TypeError(
+                "accepted-run SQLite resume command must be an "
+                "AcceptedRunStateControlCommand with resume action"
+            )
+        return self._apply_state_control(command)
+
+    def _apply_state_control(
+        self,
+        command: AcceptedRunStateControlCommand,
+    ) -> AcceptedRunControlAcceptance:
+        if command.requested_at_unix_ms > _MAX_SQLITE_INTEGER:
+            raise ValueError(
+                "accepted-run SQLite state control timestamp exceeds SQLite "
+                "integer range"
+            )
+        operation = f"{command.action.value}_run"
+
+        def transition(
+            connection: sqlite3.Connection,
+        ) -> AcceptedRunControlAcceptance:
+            row = connection.execute(
+                """
+                SELECT *
+                FROM accepted_runs
+                WHERE tenant_id = ? AND external_run_id = ?
+                """,
+                (command.tenant_id, command.run_id),
+            ).fetchone()
+            if (
+                row is None
+                or _decode_sqlite_text(
+                    "owner_principal_id",
+                    row["owner_principal_id"],
+                )
+                != command.owner_principal_id
+            ):
+                raise AcceptedRunNotFoundError(
+                    command.tenant_id,
+                    command.run_id,
+                )
+            snapshot = self._snapshot_from_row(row)
+            internal_id = _decode_sqlite_text(
+                "internal_id",
+                row["internal_id"],
+            )
+            existing_control = connection.execute(
+                """
+                SELECT *
+                FROM run_controls
+                WHERE run_internal_id = ? AND idempotency_key = ?
+                """,
+                (internal_id, command.idempotency_key),
+            ).fetchone()
+            if existing_control is not None:
+                return self._replay_state_control(
+                    connection,
+                    internal_id,
+                    existing_control,
+                    command,
+                )
+            if snapshot.state_version != command.expected_state_version:
+                raise AcceptedRunStateConflictError(
+                    command.run_id,
+                    command.expected_state_version,
+                    snapshot.state_version,
+                )
+
+            if command.action is AcceptedRunControlAction.PAUSE:
+                assert_accepted_run_transition(
+                    snapshot.phase,
+                    AcceptedRunPhase.PAUSED,
+                )
+                if snapshot.phase is AcceptedRunPhase.RUNNING:
+                    resume_phase = (
+                        AcceptedRunPhase.READY_RESUME
+                        if snapshot.checkpoint_digest is not None
+                        else AcceptedRunPhase.READY_INITIAL
+                    )
+                else:
+                    resume_phase = snapshot.phase
+                resulting_phase = AcceptedRunPhase.PAUSED
+                next_paused_from: str | None = resume_phase.value
+                next_paused_at: int | None = command.requested_at_unix_ms
+                if snapshot.phase is AcceptedRunPhase.WAITING_CALLBACK:
+                    if snapshot.checkpoint_digest is None:
+                        raise SQLiteAcceptedRunCorruptionError(
+                            "accepted-run SQLite paused callback target has "
+                            "no checkpoint"
+                        )
+                    checkpoint_version_row = connection.execute(
+                        """
+                        SELECT callback_expected_state_version
+                        FROM run_checkpoints
+                        WHERE run_internal_id = ? AND checkpoint_digest = ?
+                        """,
+                        (internal_id, snapshot.checkpoint_digest),
+                    ).fetchone()
+                    if checkpoint_version_row is None:
+                        raise SQLiteAcceptedRunCorruptionError(
+                            "accepted-run SQLite paused callback checkpoint "
+                            "is missing"
+                        )
+                    callback_expected_state_version = checkpoint_version_row[
+                        "callback_expected_state_version"
+                    ]
+                    if callback_expected_state_version is None:
+                        backfilled = connection.execute(
+                            """
+                            UPDATE run_checkpoints
+                            SET callback_expected_state_version = ?
+                            WHERE run_internal_id = ?
+                              AND checkpoint_digest = ?
+                              AND callback_expected_state_version IS NULL
+                            """,
+                            (
+                                snapshot.state_version,
+                                internal_id,
+                                snapshot.checkpoint_digest,
+                            ),
+                        )
+                        if backfilled.rowcount != 1:
+                            raise SQLiteAcceptedRunCorruptionError(
+                                "accepted-run SQLite callback version "
+                                "backfill lost its checkpoint"
+                            )
+                    elif _decode_sqlite_integer(
+                        "callback_expected_state_version",
+                        callback_expected_state_version,
+                    ) > snapshot.state_version:
+                        raise SQLiteAcceptedRunCorruptionError(
+                            "accepted-run SQLite callback version exceeds "
+                            "the current run state"
+                        )
+            else:
+                if (
+                    snapshot.phase is not AcceptedRunPhase.PAUSED
+                    or snapshot.paused_from_phase is None
+                ):
+                    assert_accepted_run_transition(
+                        snapshot.phase,
+                        AcceptedRunPhase.READY_INITIAL,
+                    )
+                    raise SQLiteAcceptedRunCorruptionError(
+                        "accepted-run SQLite resume transition did not reject"
+                    )
+                resume_phase = snapshot.paused_from_phase
+                assert_accepted_run_transition(
+                    AcceptedRunPhase.PAUSED,
+                    resume_phase,
+                )
+                resulting_phase = resume_phase
+                next_paused_from = None
+                next_paused_at = None
+
+            updated_at = _decode_sqlite_integer(
+                "updated_at_unix_ms",
+                row["updated_at_unix_ms"],
+            )
+            if command.requested_at_unix_ms < updated_at:
+                raise ValueError(
+                    "accepted-run SQLite state control timestamp must not "
+                    "precede the current run state"
+                )
+            lease_generation = _decode_sqlite_integer(
+                "lease_generation",
+                row["lease_generation"],
+            )
+            fencing_token = _decode_sqlite_integer(
+                "fencing_token",
+                row["fencing_token"],
+            )
+            if (
+                snapshot.state_version >= _MAX_SQLITE_INTEGER
+                or snapshot.event_high_watermark >= _MAX_SQLITE_INTEGER
+                or lease_generation >= _MAX_SQLITE_INTEGER
+                or fencing_token >= _MAX_SQLITE_INTEGER
+            ):
+                raise OverflowError(
+                    "accepted-run SQLite state control counters are exhausted"
+                )
+            next_state_version = snapshot.state_version + 1
+            next_event_sequence = snapshot.event_high_watermark + 1
+            next_lease_generation = lease_generation + 1
+            next_fencing_token = fencing_token + 1
+            event = command.control_event
+            connection.execute(
+                """
+                INSERT INTO run_events (
+                  run_internal_id,
+                  sequence,
+                  kind,
+                  payload_json,
+                  payload_digest,
+                  created_at_unix_ms
+                )
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    internal_id,
+                    next_event_sequence,
+                    event.kind,
+                    event.payload_json,
+                    event.payload_digest,
+                    event.created_at_unix_ms,
+                ),
+            )
+            self._hit_failpoint(f"{operation}.after_event_insert")
+            connection.execute(
+                """
+                INSERT INTO run_controls (
+                  run_internal_id,
+                  idempotency_key,
+                  action,
+                  request_digest,
+                  requested_by_principal_id,
+                  expected_state_version,
+                  accepted_state_version,
+                  accepted_event_sequence,
+                  requested_at_unix_ms,
+                  resulting_phase
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    internal_id,
+                    command.idempotency_key,
+                    command.action.value,
+                    command.request_digest,
+                    command.owner_principal_id,
+                    command.expected_state_version,
+                    next_state_version,
+                    next_event_sequence,
+                    command.requested_at_unix_ms,
+                    resulting_phase.value,
+                ),
+            )
+            self._hit_failpoint(f"{operation}.after_control_insert")
+            physical_phase = _decode_sqlite_text("phase", row["phase"])
+            current_paused_from = row["paused_from_phase"]
+            current_paused_at = row["paused_at_unix_ms"]
+            updated = connection.execute(
+                """
+                UPDATE accepted_runs
+                SET phase = ?,
+                    state_version = ?,
+                    event_high_watermark = ?,
+                    updated_at_unix_ms = ?,
+                    lease_owner_id = NULL,
+                    lease_generation = ?,
+                    fencing_token = ?,
+                    lease_expires_at_unix_ms = NULL,
+                    paused_from_phase = ?,
+                    paused_at_unix_ms = ?
+                WHERE internal_id = ?
+                  AND tenant_id = ?
+                  AND owner_principal_id = ?
+                  AND phase = ?
+                  AND state_version = ?
+                  AND lease_generation = ?
+                  AND fencing_token = ?
+                  AND paused_from_phase IS ?
+                  AND paused_at_unix_ms IS ?
+                """,
+                (
+                    resume_phase.value,
+                    next_state_version,
+                    next_event_sequence,
+                    command.requested_at_unix_ms,
+                    next_lease_generation,
+                    next_fencing_token,
+                    next_paused_from,
+                    next_paused_at,
+                    internal_id,
+                    command.tenant_id,
+                    command.owner_principal_id,
+                    physical_phase,
+                    command.expected_state_version,
+                    lease_generation,
+                    fencing_token,
+                    current_paused_from,
+                    current_paused_at,
+                ),
+            )
+            if updated.rowcount != 1:
+                raise AcceptedRunStateConflictError(
+                    command.run_id,
+                    command.expected_state_version,
+                    snapshot.state_version,
+                )
+            self._hit_failpoint(f"{operation}.after_state_update")
+            return AcceptedRunControlAcceptance(
+                action=command.action,
+                resulting_phase=resulting_phase,
+                idempotency_key=command.idempotency_key,
+                request_digest=command.request_digest,
+                accepted_event_sequence=next_event_sequence,
+                state_version=next_state_version,
+            )
+
+        acceptance = self._database._run_immediate(transition)
+        self._hit_failpoint(f"{operation}.after_commit")
+        return acceptance
+
+    @staticmethod
+    def _replay_state_control(
+        connection: sqlite3.Connection,
+        internal_id: str,
+        control_row: sqlite3.Row,
+        command: AcceptedRunStateControlCommand,
+    ) -> AcceptedRunControlAcceptance:
+        try:
+            existing = AcceptedRunControlAcceptance(
+                action=AcceptedRunControlAction(
+                    _decode_sqlite_text(
+                        "control action",
+                        control_row["action"],
+                    )
+                ),
+                resulting_phase=AcceptedRunPhase(
+                    _decode_sqlite_text(
+                        "control resulting_phase",
+                        control_row["resulting_phase"],
+                    )
+                ),
+                idempotency_key=_decode_sqlite_text(
+                    "control idempotency_key",
+                    control_row["idempotency_key"],
+                ),
+                request_digest=_decode_sqlite_text(
+                    "control request_digest",
+                    control_row["request_digest"],
+                ),
+                accepted_event_sequence=_decode_sqlite_integer(
+                    "control accepted_event_sequence",
+                    control_row["accepted_event_sequence"],
+                ),
+                state_version=_decode_sqlite_integer(
+                    "control accepted_state_version",
+                    control_row["accepted_state_version"],
+                ),
+            )
+        except (TypeError, ValueError) as error:
+            raise SQLiteAcceptedRunCorruptionError(
+                "accepted-run SQLite state control is invalid"
+            ) from error
+        if (
+            existing.action is AcceptedRunControlAction.PAUSE
+            and existing.resulting_phase is not AcceptedRunPhase.PAUSED
+        ) or (
+            existing.action is AcceptedRunControlAction.RESUME
+            and existing.resulting_phase
+            not in {
+                AcceptedRunPhase.READY_INITIAL,
+                AcceptedRunPhase.WAITING_CALLBACK,
+                AcceptedRunPhase.READY_RESUME,
+            }
+        ):
+            raise SQLiteAcceptedRunCorruptionError(
+                "accepted-run SQLite state control result is invalid"
+            )
+        requested_by = _decode_sqlite_text(
+            "control requested_by_principal_id",
+            control_row["requested_by_principal_id"],
+        )
+        expected_state_version = _decode_sqlite_integer(
+            "control expected_state_version",
+            control_row["expected_state_version"],
+        )
+        if (
+            existing.action is not command.action
+            or existing.idempotency_key != command.idempotency_key
+            or existing.request_digest != command.request_digest
+            or requested_by != command.owner_principal_id
+            or expected_state_version != command.expected_state_version
+        ):
+            raise AcceptedRunControlConflictError(
+                command.run_id,
+                command.idempotency_key,
+            )
+        event_row = connection.execute(
+            """
+            SELECT *
+            FROM run_events
+            WHERE run_internal_id = ? AND sequence = ?
+            """,
+            (internal_id, existing.accepted_event_sequence),
+        ).fetchone()
+        if (
+            event_row is None
+            or _decode_sqlite_text("event kind", event_row["kind"])
+            != command.control_event.kind
+            or _decode_sqlite_text(
+                "event payload_json",
+                event_row["payload_json"],
+            )
+            != command.control_event.payload_json
+            or _decode_sqlite_text(
+                "event payload_digest",
+                event_row["payload_digest"],
+            )
+            != command.control_event.payload_digest
+        ):
+            raise SQLiteAcceptedRunCorruptionError(
+                "accepted-run SQLite state control event is invalid"
+            )
+        return AcceptedRunControlAcceptance(
+            action=existing.action,
+            resulting_phase=existing.resulting_phase,
+            idempotency_key=existing.idempotency_key,
+            request_digest=existing.request_digest,
+            accepted_event_sequence=existing.accepted_event_sequence,
+            state_version=existing.state_version,
+            replayed=True,
+        )
 
     def cancel_run(
         self,
@@ -2687,6 +3337,9 @@ class SQLiteAcceptedRunRepository:
                     command.run_id,
                 )
             snapshot = self._snapshot_from_row(row)
+            physical_phase = _decode_sqlite_text("phase", row["phase"])
+            paused_from_value = row["paused_from_phase"]
+            paused_at_value = row["paused_at_unix_ms"]
             internal_id = _decode_sqlite_text(
                 "internal_id",
                 row["internal_id"],
@@ -2917,9 +3570,10 @@ class SQLiteAcceptedRunRepository:
                   expected_state_version,
                   accepted_state_version,
                   accepted_event_sequence,
-                  requested_at_unix_ms
+                  requested_at_unix_ms,
+                  resulting_phase
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     internal_id,
@@ -2931,6 +3585,7 @@ class SQLiteAcceptedRunRepository:
                     next_state_version,
                     next_event_sequence,
                     command.requested_at_unix_ms,
+                    AcceptedRunPhase.TERMINAL.value,
                 ),
             )
             self._hit_failpoint("cancel_run.after_control_insert")
@@ -2947,7 +3602,9 @@ class SQLiteAcceptedRunRepository:
                     lease_owner_id = NULL,
                     lease_generation = ?,
                     fencing_token = ?,
-                    lease_expires_at_unix_ms = NULL
+                    lease_expires_at_unix_ms = NULL,
+                    paused_from_phase = NULL,
+                    paused_at_unix_ms = NULL
                 WHERE internal_id = ?
                   AND tenant_id = ?
                   AND owner_principal_id = ?
@@ -2955,6 +3612,8 @@ class SQLiteAcceptedRunRepository:
                   AND state_version = ?
                   AND lease_generation = ?
                   AND fencing_token = ?
+                  AND paused_from_phase IS ?
+                  AND paused_at_unix_ms IS ?
                 """,
                 (
                     next_state_version,
@@ -2967,10 +3626,12 @@ class SQLiteAcceptedRunRepository:
                     internal_id,
                     command.tenant_id,
                     command.owner_principal_id,
-                    snapshot.phase.value,
+                    physical_phase,
                     command.expected_state_version,
                     lease_generation,
                     fencing_token,
+                    paused_from_value,
+                    paused_at_value,
                 ),
             )
             if updated.rowcount != 1:
@@ -2982,6 +3643,7 @@ class SQLiteAcceptedRunRepository:
             self._hit_failpoint("cancel_run.after_state_update")
             return AcceptedRunControlAcceptance(
                 action=AcceptedRunControlAction.CANCEL,
+                resulting_phase=AcceptedRunPhase.TERMINAL,
                 idempotency_key=command.idempotency_key,
                 request_digest=command.request_digest,
                 accepted_event_sequence=next_event_sequence,
@@ -3005,6 +3667,12 @@ class SQLiteAcceptedRunRepository:
                     _decode_sqlite_text(
                         "control action",
                         control_row["action"],
+                    )
+                ),
+                resulting_phase=AcceptedRunPhase(
+                    _decode_sqlite_text(
+                        "control resulting_phase",
+                        control_row["resulting_phase"],
                     )
                 ),
                 idempotency_key=_decode_sqlite_text(
@@ -3038,6 +3706,7 @@ class SQLiteAcceptedRunRepository:
         )
         if (
             existing.action is not AcceptedRunControlAction.CANCEL
+            or existing.resulting_phase is not AcceptedRunPhase.TERMINAL
             or existing.idempotency_key != command.idempotency_key
             or existing.request_digest != command.request_digest
             or requested_by != command.owner_principal_id
@@ -3066,6 +3735,7 @@ class SQLiteAcceptedRunRepository:
             )
         return AcceptedRunControlAcceptance(
             action=existing.action,
+            resulting_phase=existing.resulting_phase,
             idempotency_key=command.idempotency_key,
             request_digest=existing.request_digest,
             accepted_event_sequence=existing.accepted_event_sequence,

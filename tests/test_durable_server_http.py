@@ -188,6 +188,7 @@ def _prepare_waiting_callback(
     assert isinstance(dispatch_payload, dict)
     issuance_payload = dispatch_payload["callbackIssuance"]
     assert isinstance(issuance_payload, dict)
+    assert issuance_payload["expectedStateVersion"] == waiting.state_version
     issuance = CallbackIssuanceIdentity(
         run_id=str(issuance_payload["runId"]),
         checkpoint_digest=str(issuance_payload["checkpointDigest"]),
@@ -795,6 +796,444 @@ def test_durable_http_cancel_fences_ready_resume_before_worker_claim(
         "external_callback_received",
         "run_cancelled",
     ]
+
+
+def test_durable_http_pause_and_resume_are_restart_safe_and_owner_scoped(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "durable-http-pause.sqlite3"
+    run_id = "run-pause-http"
+    admitted = _app(path, clock_value=1_000).handle(
+        _request(
+            "POST",
+            "/runs",
+            token="alice-token",
+            body={
+                "graph": {
+                    "apiVersion": "graphblocks.ai/v1alpha3",
+                    "kind": "Graph",
+                    "metadata": {"name": "durable-http-pause"},
+                    "spec": {"nodes": {}},
+                },
+                "inputs": {},
+                "invocation": _CALLBACK_INVOCATION,
+                "requestId": "request-pause-http",
+                "responseMode": "accepted",
+                "runId": run_id,
+            },
+        )
+    )
+    assert admitted.status_code == 202
+    pause_body = {
+        "expectedStateVersion": 1,
+        "reason": "operator_review",
+        "requestId": "pause-request-1",
+    }
+
+    paused = _app(path, clock_value=2_000).handle(
+        _request(
+            "POST",
+            f"/runs/{run_id}/pause",
+            token="alice-token",
+            body=pause_body,
+        )
+    )
+    replayed = _app(path, clock_value=3_000).handle(
+        _request(
+            "POST",
+            f"/runs/{run_id}/pause",
+            token="alice-token",
+            body=pause_body,
+        )
+    )
+    cross_tenant = _app(path, clock_value=3_000).handle(
+        _request(
+            "POST",
+            f"/runs/{run_id}/resume",
+            token="bob-token",
+            body={
+                "expectedStateVersion": 2,
+                "reason": "unauthorized",
+                "requestId": "foreign-resume",
+            },
+        )
+    )
+    same_tenant_other_owner = _app(path, clock_value=3_000).handle(
+        _request(
+            "POST",
+            f"/runs/{run_id}/resume",
+            token="charlie-token",
+            body={
+                "expectedStateVersion": 2,
+                "reason": "unauthorized",
+                "requestId": "foreign-owner-resume",
+            },
+        )
+    )
+
+    expected_pause = {
+        "acceptedEventSequence": 2,
+        "action": "pause",
+        "duplicate": False,
+        "ok": True,
+        "runId": run_id,
+        "state": "paused",
+        "stateVersion": 2,
+    }
+    assert paused.status_code == 202
+    assert json.loads(paused.body) == expected_pause
+    assert replayed.status_code == 202
+    assert json.loads(replayed.body) == {
+        **expected_pause,
+        "duplicate": True,
+    }
+    assert cross_tenant.status_code == 404
+    assert same_tenant_other_owner.status_code == 404
+
+    restarted = _app(path, clock_value=4_000)
+    status = restarted.handle(
+        _request("GET", f"/runs/{run_id}", token="alice-token")
+    )
+    assert status.status_code == 200
+    assert json.loads(status.body) == {
+        "eventHighWatermark": 2,
+        "eventLowWatermark": 1,
+        "ok": True,
+        "resumeState": "ready_initial",
+        "runId": run_id,
+        "state": "paused",
+        "stateVersion": 2,
+    }
+    assert restarted.service.advance_next_run(tenant_id="tenant-a") is None
+
+    resumed = restarted.handle(
+        _request(
+            "POST",
+            f"/runs/{run_id}/resume",
+            token="alice-token",
+            body={
+                "expectedStateVersion": 2,
+                "reason": "review_complete",
+                "requestId": "resume-request-1",
+            },
+        )
+    )
+    assert resumed.status_code == 202
+    assert json.loads(resumed.body) == {
+        "acceptedEventSequence": 3,
+        "action": "resume",
+        "duplicate": False,
+        "ok": True,
+        "runId": run_id,
+        "state": "ready_initial",
+        "stateVersion": 3,
+    }
+
+    events = _app(path, clock_value=5_000).handle(
+        _request(
+            "GET",
+            f"/runs/{run_id}/events",
+            token="alice-token",
+            query={"after": "0", "limit": "10"},
+        )
+    )
+    assert [
+        event["kind"]
+        for event in json.loads(events.body)["events"]
+    ] == ["run_accepted", "run_paused", "run_resumed"]
+
+
+def test_durable_http_pause_validates_body_state_and_request_budget(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "durable-http-pause-validation.sqlite3"
+    run_id = "run-pause-validation"
+    app = _app(path, clock_value=1_000)
+    admitted = app.handle(
+        _request(
+            "POST",
+            "/runs",
+            token="alice-token",
+            body={
+                "graph": {
+                    "apiVersion": "graphblocks.ai/v1alpha3",
+                    "kind": "Graph",
+                    "metadata": {"name": "durable-pause-validation"},
+                    "spec": {"nodes": {}},
+                },
+                "inputs": {},
+                "invocation": _CALLBACK_INVOCATION,
+                "requestId": "request-pause-validation",
+                "responseMode": "accepted",
+                "runId": run_id,
+            },
+        )
+    )
+    assert admitted.status_code == 202
+    malformed = app.handle(
+        _request(
+            "POST",
+            f"/runs/{run_id}/pause",
+            token="alice-token",
+            body={
+                "expectedStateVersion": 1,
+                "reason": "review",
+                "requestId": "pause-malformed",
+                "unknown": True,
+            },
+        )
+    )
+    stale = app.handle(
+        _request(
+            "POST",
+            f"/runs/{run_id}/pause",
+            token="alice-token",
+            body={
+                "expectedStateVersion": 0,
+                "reason": "review",
+                "requestId": "pause-stale",
+            },
+        )
+    )
+    invalid_resume = app.handle(
+        _request(
+            "POST",
+            f"/runs/{run_id}/resume",
+            token="alice-token",
+            body={
+                "expectedStateVersion": 1,
+                "reason": "not_paused",
+                "requestId": "resume-invalid-state",
+            },
+        )
+    )
+    limited = _app(path, clock_value=2_000)
+    limited.max_request_body_bytes = 16
+    oversized = limited.handle(
+        _request(
+            "POST",
+            f"/runs/{run_id}/pause",
+            token="alice-token",
+            body={
+                "expectedStateVersion": 1,
+                "reason": "review",
+                "requestId": "pause-oversized",
+            },
+        )
+    )
+
+    assert malformed.status_code == 400
+    assert stale.status_code == 409
+    assert invalid_resume.status_code == 409
+    assert oversized.status_code == 413
+
+
+def test_durable_http_callback_can_arrive_paused_but_resume_gates_worker(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "durable-http-paused-callback.sqlite3"
+    waiting, issuance = _prepare_waiting_callback(path)
+    paused = _app(path, clock_value=2_500).handle(
+        _request(
+            "POST",
+            f"/runs/{_CALLBACK_RUN_ID}/pause",
+            token="alice-token",
+            body={
+                "expectedStateVersion": waiting.state_version,
+                "reason": "hold_execution",
+                "requestId": "pause-waiting-callback",
+            },
+        )
+    )
+    assert paused.status_code == 202
+    assert json.loads(paused.body)["state"] == "paused"
+
+    callback_body = _callback_body(waiting, issuance)
+    callback = _app(path, clock_value=3_000).handle(
+        _request(
+            "POST",
+            (
+                f"/runs/{_CALLBACK_RUN_ID}/callbacks/"
+                f"{_CALLBACK_OPERATION_ID}"
+            ),
+            token="alice-token",
+            body=callback_body,
+        )
+    )
+    assert callback.status_code == 202
+    callback_payload = json.loads(callback.body)
+
+    restarted = _app(path, clock_value=3_500)
+    status = restarted.handle(
+        _request(
+            "GET",
+            f"/runs/{_CALLBACK_RUN_ID}",
+            token="alice-token",
+        )
+    )
+    assert status.status_code == 200
+    assert json.loads(status.body) == {
+        "checkpointDigest": waiting.checkpoint_digest,
+        "eventHighWatermark": 5,
+        "eventLowWatermark": 1,
+        "ok": True,
+        "resumeState": "ready_resume",
+        "runId": _CALLBACK_RUN_ID,
+        "state": "paused",
+        "stateVersion": callback_payload["stateVersion"],
+    }
+    events = restarted.handle(
+        _request(
+            "GET",
+            f"/runs/{_CALLBACK_RUN_ID}/events",
+            token="alice-token",
+            query={"after": "0", "limit": "10"},
+        )
+    )
+    callback_events = [
+        event
+        for event in json.loads(events.body)["events"]
+        if event["kind"] == "external_callback_received"
+    ]
+    assert callback_events == [
+        {
+            "kind": "external_callback_received",
+            "payload": {
+                "checkpointDigest": waiting.checkpoint_digest,
+                "resumeState": "ready_resume",
+                "runId": _CALLBACK_RUN_ID,
+            },
+            "sequence": 5,
+        }
+    ]
+    assert restarted.service.advance_next_run(tenant_id="tenant-a") is None
+
+    resumed = restarted.handle(
+        _request(
+            "POST",
+            f"/runs/{_CALLBACK_RUN_ID}/resume",
+            token="alice-token",
+            body={
+                "expectedStateVersion": callback_payload["stateVersion"],
+                "reason": "continue_execution",
+                "requestId": "resume-after-callback",
+            },
+        )
+    )
+    assert resumed.status_code == 202
+    assert json.loads(resumed.body)["state"] == "ready_resume"
+
+    completed = _app(path, clock_value=4_000).service.advance_next_run(
+        tenant_id="tenant-a"
+    )
+    assert completed is not None
+    assert completed.phase is AcceptedRunPhase.TERMINAL
+
+
+def test_durable_http_callback_then_pause_preserves_ready_resume_target(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "durable-http-callback-before-pause.sqlite3"
+    waiting, issuance = _prepare_waiting_callback(path)
+    callback = _app(path, clock_value=3_000).handle(
+        _request(
+            "POST",
+            (
+                f"/runs/{_CALLBACK_RUN_ID}/callbacks/"
+                f"{_CALLBACK_OPERATION_ID}"
+            ),
+            token="alice-token",
+            body=_callback_body(waiting, issuance),
+        )
+    )
+    assert callback.status_code == 202
+    callback_payload = json.loads(callback.body)
+
+    paused = _app(path, clock_value=3_500).handle(
+        _request(
+            "POST",
+            f"/runs/{_CALLBACK_RUN_ID}/pause",
+            token="alice-token",
+            body={
+                "expectedStateVersion": callback_payload["stateVersion"],
+                "reason": "hold_ready_resume",
+                "requestId": "pause-after-callback",
+            },
+        )
+    )
+    assert paused.status_code == 202
+    assert json.loads(paused.body)["state"] == "paused"
+
+    restarted = _app(path, clock_value=4_000)
+    status = restarted.handle(
+        _request(
+            "GET",
+            f"/runs/{_CALLBACK_RUN_ID}",
+            token="alice-token",
+        )
+    )
+    assert status.status_code == 200
+    status_payload = json.loads(status.body)
+    assert status_payload["state"] == "paused"
+    assert status_payload["resumeState"] == "ready_resume"
+    assert restarted.service.advance_next_run(tenant_id="tenant-a") is None
+
+
+def test_durable_http_issued_callback_survives_pause_resume_cycle(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "durable-http-callback-after-resume.sqlite3"
+    waiting, issuance = _prepare_waiting_callback(path)
+    paused = _app(path, clock_value=2_500).handle(
+        _request(
+            "POST",
+            f"/runs/{_CALLBACK_RUN_ID}/pause",
+            token="alice-token",
+            body={
+                "expectedStateVersion": waiting.state_version,
+                "reason": "brief_hold",
+                "requestId": "pause-before-callback",
+            },
+        )
+    )
+    assert paused.status_code == 202
+    paused_payload = json.loads(paused.body)
+    resumed = _app(path, clock_value=2_750).handle(
+        _request(
+            "POST",
+            f"/runs/{_CALLBACK_RUN_ID}/resume",
+            token="alice-token",
+            body={
+                "expectedStateVersion": paused_payload["stateVersion"],
+                "reason": "hold_released",
+                "requestId": "resume-before-callback",
+            },
+        )
+    )
+    assert resumed.status_code == 202
+    assert json.loads(resumed.body)["state"] == "waiting_callback"
+
+    callback = _app(path, clock_value=3_000).handle(
+        _request(
+            "POST",
+            (
+                f"/runs/{_CALLBACK_RUN_ID}/callbacks/"
+                f"{_CALLBACK_OPERATION_ID}"
+            ),
+            token="alice-token",
+            body=_callback_body(waiting, issuance),
+        )
+    )
+    assert callback.status_code == 202
+    status = _app(path, clock_value=3_500).handle(
+        _request(
+            "GET",
+            f"/runs/{_CALLBACK_RUN_ID}",
+            token="alice-token",
+        )
+    )
+    assert status.status_code == 200
+    assert json.loads(status.body)["state"] == "ready_resume"
 
 
 def test_durable_http_adapter_is_fail_closed_and_keeps_health_public(

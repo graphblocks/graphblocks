@@ -311,7 +311,7 @@ def test_sqlite_repository_cancels_and_replays_after_restart(
     control = connection.execute(
         """
         SELECT action, idempotency_key, accepted_state_version,
-               accepted_event_sequence
+               accepted_event_sequence, resulting_phase
         FROM run_controls
         """
     ).fetchone()
@@ -328,7 +328,7 @@ def test_sqlite_repository_cancels_and_replays_after_restart(
         "SELECT lease_generation, fencing_token FROM accepted_runs"
     ).fetchone()
     connection.close()
-    assert control == ("cancel", "cancel-1", 2, 2)
+    assert control == ("cancel", "cancel-1", 2, 2, "terminal")
     assert completion_count == 1
     assert run_fence == (1, 1)
 
