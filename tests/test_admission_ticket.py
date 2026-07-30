@@ -22,6 +22,8 @@ def test_admission_models_reject_controls_coerced_flags_and_counter_overflow() -
         _ticket(request_id="request\u0000hidden")
     with pytest.raises(AdmissionError, match="Unicode scalar values"):
         _ticket(request_id="request-\ud800")
+    with pytest.raises(AdmissionError, match="tenant_id must not be empty"):
+        _ticket(tenant_id=" ")
     with pytest.raises(AdmissionError, match="duplicate must be a boolean"):
         AdmissionSubmission(ticket, duplicate=1)  # type: ignore[arg-type]
 
@@ -60,6 +62,7 @@ def _ticket(**overrides: object) -> AdmissionTicket:
         "run_id": "run-1",
         "request_id": "request-1",
         "owner_id": "owner-1",
+        "tenant_id": "tenant-1",
         "limiter_id": "interactive",
         "state": "admitted",
         "units": 1,
@@ -405,6 +408,124 @@ def test_submission_is_idempotent_without_double_charging_capacity() -> None:
     assert queued.ticket.state == "queued"
     with pytest.raises(AdmissionIdempotencyConflictError):
         queue.submit("run-other", "request-1", "user-1", now_ms=100)
+
+
+def test_submission_idempotency_is_scoped_by_tenant() -> None:
+    queue = AdmissionTicketQueue(
+        "multi-tenant",
+        max_concurrent=2,
+        rate_limit=10,
+        window_ms=1_000,
+        max_pending=10,
+        ticket_ttl_ms=60_000,
+    )
+
+    tenant_a = queue.submit(
+        "run-a",
+        "shared-request",
+        "shared-principal",
+        tenant_id="tenant-a",
+        now_ms=0,
+    )
+    tenant_b = queue.submit(
+        "run-b",
+        "shared-request",
+        "shared-principal",
+        tenant_id="tenant-b",
+        now_ms=0,
+    )
+    tenant_a_replay = queue.submit(
+        "run-a",
+        "shared-request",
+        "shared-principal",
+        tenant_id="tenant-a",
+        now_ms=1,
+    )
+    tenant_b_replay = queue.submit(
+        "run-b",
+        "shared-request",
+        "shared-principal",
+        tenant_id="tenant-b",
+        now_ms=1,
+    )
+
+    assert tenant_a.ticket.tenant_id == "tenant-a"
+    assert tenant_b.ticket.tenant_id == "tenant-b"
+    assert tenant_a.ticket.ticket_id != tenant_b.ticket.ticket_id
+    assert tenant_a_replay == AdmissionSubmission(tenant_a.ticket, duplicate=True)
+    assert tenant_b_replay == AdmissionSubmission(tenant_b.ticket, duplicate=True)
+    with pytest.raises(AdmissionIdempotencyConflictError) as conflict:
+        queue.submit(
+            "run-other",
+            "shared-request",
+            "shared-principal",
+            tenant_id="tenant-a",
+            now_ms=1,
+        )
+    assert conflict.value.tenant_id == "tenant-a"
+
+
+def test_tenant_scope_survives_transitions_and_terminal_eviction() -> None:
+    queue = AdmissionTicketQueue(
+        "multi-tenant-eviction",
+        max_concurrent=2,
+        rate_limit=10,
+        window_ms=1_000,
+        max_pending=10,
+        ticket_ttl_ms=60_000,
+        max_terminal_tickets=1,
+    )
+    tenant_a = queue.submit(
+        "run-a",
+        "request-a",
+        "shared-principal",
+        tenant_id="tenant-a",
+        now_ms=0,
+    ).ticket
+    tenant_b = queue.submit(
+        "run-b",
+        "request-b",
+        "shared-principal",
+        tenant_id="tenant-b",
+        now_ms=0,
+    ).ticket
+
+    completed_a, _ = queue.complete(
+        tenant_a.ticket_id,
+        tenant_a.fencing_token or 0,
+        "completed",
+        now_ms=1,
+    )
+    completed_b, _ = queue.complete(
+        tenant_b.ticket_id,
+        tenant_b.fencing_token or 0,
+        "completed",
+        now_ms=2,
+    )
+
+    assert completed_a.tenant_id == "tenant-a"
+    assert completed_b.tenant_id == "tenant-b"
+    with pytest.raises(AdmissionTicketNotFoundError):
+        queue.get(completed_a.ticket_id)
+
+    replacement_a = queue.submit(
+        "run-a",
+        "request-a",
+        "shared-principal",
+        tenant_id="tenant-a",
+        now_ms=3,
+    )
+    replay_b = queue.submit(
+        "run-b",
+        "request-b",
+        "shared-principal",
+        tenant_id="tenant-b",
+        now_ms=3,
+    )
+
+    assert replacement_a.duplicate is False
+    assert replacement_a.ticket.tenant_id == "tenant-a"
+    assert replay_b == AdmissionSubmission(completed_b, duplicate=True)
 
 
 def test_failed_request_can_be_resubmitted_with_a_fresh_ticket() -> None:

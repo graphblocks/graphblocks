@@ -6517,7 +6517,28 @@ class GraphBlocksServerApp:
                         run_id,
                     ),
                 )
+                admission_owner_id = (
+                    auth_decision.principal.principal_id
+                    if auth_decision.principal is not None
+                    else "anonymous"
+                )
+                run_tenant_id = (
+                    auth_decision.principal.tenant_id
+                    if auth_decision.principal is not None
+                    else None
+                )
                 if run_id in self._events_by_run_id:
+                    if not self._principal_can_access_run(
+                        run_id,
+                        auth_decision.principal,
+                    ):
+                        return ServerResponse.json(
+                            404,
+                            {
+                                "ok": False,
+                                "error": f"run {run_id!r} was not found",
+                            },
+                        )
                     existing_ticket_id = self._admission_ticket_ids_by_run_id.get(
                         run_id
                     )
@@ -6529,14 +6550,10 @@ class GraphBlocksServerApp:
                         existing_ticket = self.admission_ticket_queue.get(
                             existing_ticket_id
                         )
-                        owner_id = (
-                            auth_decision.principal.principal_id
-                            if auth_decision.principal is not None
-                            else "anonymous"
-                        )
                         if (
                             existing_ticket.request_id == request_id
-                            and existing_ticket.owner_id == owner_id
+                            and existing_ticket.owner_id == admission_owner_id
+                            and existing_ticket.tenant_id == run_tenant_id
                         ):
                             route_run_id = quote(run_id, safe="")
                             return ServerResponse.json(
@@ -6633,11 +6650,6 @@ class GraphBlocksServerApp:
                     or admission_units < 1
                 ):
                     raise ValueError("run request admissionUnits must be a positive integer")
-                run_tenant_id = (
-                    auth_decision.principal.tenant_id
-                    if auth_decision.principal is not None
-                    else None
-                )
                 terminal_collection_now = _validate_iso_datetime(
                     "server terminal run collection clock",
                     "now",
@@ -6854,11 +6866,6 @@ class GraphBlocksServerApp:
                     assert self.admission_ticket_queue is not None
                     admission_now_ms = self.admission_clock()
                     self.promote_admission_tickets(now_ms=admission_now_ms)
-                    owner_id = (
-                        auth_decision.principal.principal_id
-                        if auth_decision.principal is not None
-                        else "anonymous"
-                    )
                     with self._accepted_run_condition:
                         if (
                             run_id in self._events_by_run_id
@@ -6934,7 +6941,8 @@ class GraphBlocksServerApp:
                             submission = self.admission_ticket_queue.submit(
                                 run_id,
                                 request_id,
-                                owner_id,
+                                admission_owner_id,
+                                tenant_id=run_tenant_id,
                                 now_ms=admission_now_ms,
                                 units=admission_units,
                             )

@@ -35,11 +35,22 @@ class AdmissionQueueFullError(AdmissionError):
 
 
 class AdmissionIdempotencyConflictError(AdmissionError):
-    def __init__(self, owner_id: str, request_id: str) -> None:
+    def __init__(
+        self,
+        owner_id: str,
+        request_id: str,
+        *,
+        tenant_id: str | None = None,
+    ) -> None:
+        self.tenant_id = tenant_id
         self.owner_id = owner_id
         self.request_id = request_id
+        tenant_scope = (
+            f"tenant {tenant_id!r} and " if tenant_id is not None else ""
+        )
         super().__init__(
-            f"admission request {request_id!r} for owner {owner_id!r} conflicts with its existing ticket"
+            f"admission request {request_id!r} for {tenant_scope}owner "
+            f"{owner_id!r} conflicts with its existing ticket"
         )
 
 
@@ -124,6 +135,7 @@ class AdmissionTicket:
     fencing_token: int | None = None
     started_at_ms: int | None = None
     completed_at_ms: int | None = None
+    tenant_id: str | None = None
 
     def __post_init__(self) -> None:
         for field_name in (
@@ -137,6 +149,16 @@ class AdmissionTicket:
                 self,
                 field_name,
                 _non_empty_string("admission ticket", field_name, getattr(self, field_name)),
+            )
+        if self.tenant_id is not None:
+            object.__setattr__(
+                self,
+                "tenant_id",
+                _non_empty_string(
+                    "admission ticket",
+                    "tenant_id",
+                    self.tenant_id,
+                ),
             )
         if self.state not in {
             "queued",
@@ -283,7 +305,11 @@ class AdmissionTicketQueue:
     ticket_ttl_ms: int
     max_terminal_tickets: int = 1_024
     _tickets: dict[str, AdmissionTicket] = field(default_factory=dict, init=False, repr=False)
-    _request_tickets: dict[tuple[str, str], str] = field(default_factory=dict, init=False, repr=False)
+    _request_tickets: dict[tuple[str | None, str, str], str] = field(
+        default_factory=dict,
+        init=False,
+        repr=False,
+    )
     _pending: deque[str] = field(default_factory=deque, init=False, repr=False)
     _active: set[str] = field(default_factory=set, init=False, repr=False)
     _window_start_ms: int | None = field(default=None, init=False, repr=False)
@@ -317,12 +343,19 @@ class AdmissionTicketQueue:
         request_id: str,
         owner_id: str,
         *,
+        tenant_id: str | None = None,
         now_ms: int,
         units: int = 1,
     ) -> AdmissionSubmission:
         run_id = _non_empty_string("admission request", "run_id", run_id)
         request_id = _non_empty_string("admission request", "request_id", request_id)
         owner_id = _non_empty_string("admission request", "owner_id", owner_id)
+        if tenant_id is not None:
+            tenant_id = _non_empty_string(
+                "admission request",
+                "tenant_id",
+                tenant_id,
+            )
         now_ms = _non_negative_integer("admission request", "now_ms", now_ms)
         units = _positive_integer("admission request", "units", units)
         if units > self.rate_limit:
@@ -333,12 +366,16 @@ class AdmissionTicketQueue:
             )
 
         with self._lock:
-            request_key = (owner_id, request_id)
+            request_key = (tenant_id, owner_id, request_id)
             existing_id = self._request_tickets.get(request_key)
             if existing_id is not None:
                 existing = self._tickets[existing_id]
                 if existing.run_id != run_id or existing.units != units:
-                    raise AdmissionIdempotencyConflictError(owner_id, request_id)
+                    raise AdmissionIdempotencyConflictError(
+                        owner_id,
+                        request_id,
+                        tenant_id=tenant_id,
+                    )
                 self._validate_mutation_time_locked(existing, now_ms, "resubmit")
             self._expire_locked(now_ms)
             self._promote_locked(now_ms)
@@ -375,7 +412,7 @@ class AdmissionTicketQueue:
             fencing_token = None
             state: AdmissionTicketState = "queued"
             retry_after_ms = None
-            queue_position = len(self._pending) + 1
+            queue_position: int | None = len(self._pending) + 1
             if can_admit:
                 state = "admitted"
                 queue_position = None
@@ -401,6 +438,7 @@ class AdmissionTicketQueue:
                 run_id=run_id,
                 request_id=request_id,
                 owner_id=owner_id,
+                tenant_id=tenant_id,
                 limiter_id=self.limiter_id,
                 state=state,
                 units=units,
@@ -413,7 +451,7 @@ class AdmissionTicketQueue:
                 fencing_token=fencing_token,
             )
             self._tickets[ticket_id] = ticket
-            self._request_tickets[(owner_id, request_id)] = ticket_id
+            self._request_tickets[(tenant_id, owner_id, request_id)] = ticket_id
             if state == "queued":
                 self._pending.append(ticket_id)
                 self._reindex_locked(now_ms)
@@ -710,7 +748,11 @@ class AdmissionTicketQueue:
         if ticket is None or ticket.state not in TERMINAL_ADMISSION_TICKET_STATES:
             return
         self._tickets.pop(ticket_id, None)
-        request_key = (ticket.owner_id, ticket.request_id)
+        request_key = (
+            ticket.tenant_id,
+            ticket.owner_id,
+            ticket.request_id,
+        )
         if self._request_tickets.get(request_key) == ticket_id:
             self._request_tickets.pop(request_key, None)
 

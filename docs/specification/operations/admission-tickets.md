@@ -18,10 +18,17 @@ An admission queue combines:
 - a bounded FIFO pending queue; and
 - a queued-ticket time to live.
 
-An invocation supplies a run identity, an owner-scoped idempotency key, and a
-positive number of admission units. Reusing the same owner and idempotency key
-with the same run and units MUST return the original ticket without consuming
-capacity again. Reusing it with different values MUST fail as a conflict.
+An invocation supplies a run identity, a tenant-and-owner-scoped idempotency
+key, and a positive number of admission units. The authoritative idempotency
+subject is `(tenant_id, owner_principal_id, request_id)`. The server MUST derive
+the tenant and owner from the authenticated principal rather than accepting
+either value from the invocation payload. Reusing the same subject with the
+same run and units MUST return the original ticket without consuming capacity
+again. Reusing it with different values MUST fail as a conflict. An explicitly
+unpartitioned deployment MAY use a null tenant identifier, which represents
+one shared tenant namespace; a multi-tenant server MUST bind the concrete
+tenant identifier. State transitions MUST retain this subject identity, and
+terminal eviction MUST remove the idempotency index using the complete subject.
 
 When capacity and rate budget are available, the ticket begins as `admitted`.
 Otherwise it begins as `queued` and the server returns HTTP 202 immediately.

@@ -4,11 +4,18 @@ from concurrent.futures import ThreadPoolExecutor
 import json
 from threading import Event, Lock
 
+import graphblocks.server as graphblocks_server
 import pytest
 
 from graphblocks.admission import AdmissionTicketQueue
+from graphblocks.compiler import compile_graph_reference
+from graphblocks.policy import PrincipalRef
 from graphblocks.runtime import RuntimeRegistry
-from graphblocks.server import GraphBlocksServerApp, ServerRequest
+from graphblocks.server import (
+    GraphBlocksServerApp,
+    ServerRequest,
+    StaticBearerAuthHook,
+)
 
 
 def _graph(block: str = "prompt.render@1") -> dict[str, object]:
@@ -140,6 +147,95 @@ def test_ticketed_server_returns_cursor_zero_and_promotes_fifo() -> None:
         event["kind"] for event in app._events_by_run_id["run-ticket-2"]
     ] == ["RunStarted", "RunSucceeded"]
     assert queue.get("interactive-ticket-000002").state == "completed"
+
+
+def test_ticketed_server_scopes_replay_subject_by_tenant(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(graphblocks_server, "compile_graph", compile_graph_reference)
+    queue = AdmissionTicketQueue(
+        "multi-tenant",
+        max_concurrent=2,
+        rate_limit=10,
+        window_ms=1_000,
+        max_pending=10,
+        ticket_ttl_ms=60_000,
+    )
+    app = GraphBlocksServerApp(
+        auth_hook=StaticBearerAuthHook(
+            {
+                "tenant-a-token": PrincipalRef(
+                    "shared-principal",
+                    tenant_id="tenant-a",
+                ),
+                "tenant-b-token": PrincipalRef(
+                    "shared-principal",
+                    tenant_id="tenant-b",
+                ),
+            }
+        ),
+        admission_ticket_queue=queue,
+        admission_clock=lambda: 0,
+    )
+
+    def submit(token: str, run_id: str) -> graphblocks_server.ServerResponse:
+        return app.handle(
+            ServerRequest(
+                method="POST",
+                path="/runs",
+                headers={"Authorization": f"Bearer {token}"},
+                query={},
+                cookies={},
+                body=json.dumps(
+                    {
+                        "graph": _graph(),
+                        "inputs": {"message": {"text": run_id}},
+                        "runId": run_id,
+                        "requestId": "shared-request",
+                        "responseMode": "accepted",
+                        "occurredAt": "2026-07-30T00:00:00Z",
+                    }
+                ).encode(),
+            )
+        )
+
+    tenant_a = submit("tenant-a-token", "shared-run")
+    foreign_collision = submit("tenant-b-token", "shared-run")
+    foreign_status = app.handle(
+        ServerRequest(
+            method="GET",
+            path="/runs/shared-run",
+            headers={"Authorization": "Bearer tenant-b-token"},
+            query={},
+            cookies={},
+            body=b"",
+        )
+    )
+    foreign_cancel = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs/shared-run/cancel",
+            headers={"Authorization": "Bearer tenant-b-token"},
+            query={},
+            cookies={},
+            body=b"{}",
+        )
+    )
+    tenant_b = submit("tenant-b-token", "tenant-b-run")
+    tenant_a_payload = json.loads(tenant_a.body)
+    tenant_b_payload = json.loads(tenant_b.body)
+    tenant_a_ticket_id = tenant_a_payload["admissionTicket"]["ticketId"]
+    tenant_b_ticket_id = tenant_b_payload["admissionTicket"]["ticketId"]
+
+    assert tenant_a.status_code == 202
+    assert foreign_collision.status_code == 404
+    assert b"admissionTicket" not in foreign_collision.body
+    assert foreign_status.status_code == 404
+    assert foreign_cancel.status_code == 404
+    assert tenant_b.status_code == 202
+    assert tenant_a_ticket_id != tenant_b_ticket_id
+    assert queue.get(tenant_a_ticket_id).tenant_id == "tenant-a"
+    assert queue.get(tenant_b_ticket_id).tenant_id == "tenant-b"
 
 
 def test_executor_never_runs_more_blocks_than_ticket_capacity() -> None:
