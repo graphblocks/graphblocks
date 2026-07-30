@@ -1,15 +1,32 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, field
-from time import time
+from dataclasses import dataclass, field, replace
 from typing import Protocol
 from urllib.parse import quote
 
 from .canonical import canonical_dumps, canonical_hash, canonical_loads
-from .compiler import Plan, compile_graph
+from .compiler import Plan, compile_graph, compile_graph_reference
+from .durable_worker import (
+    DEFAULT_DURABLE_WORKER_TARGET,
+    DurableWorkerOutcome,
+    build_durable_worker_request,
+    decode_durable_worker_result,
+)
+from .isolated_worker import (
+    ProcessWorkerExecutor,
+    ProcessWorkerPolicy,
+    ProcessWorkerRequestTooLarge,
+    ProcessWorkerResponseTooLarge,
+    ProcessWorkerTarget,
+)
+from .isolated_worker_server import AcceptedRunWorkerAuthorityValidator
 from .plugins import BlockCatalog
-from .runtime import InProcessRuntime, RuntimeCheckpoint, RuntimeRegistry, stdlib_registry
+from .runtime import (
+    RuntimeRegistry,
+    is_full_stdlib_registry,
+    stdlib_registry,
+)
 from .server import (
     ServerAuthDecision,
     ServerAuthHook,
@@ -35,6 +52,7 @@ from .server_storage import (
     AcceptedRunEventPage,
     AcceptedRunExpireCommand,
     AcceptedRunIdConflictError,
+    AcceptedRunLeaseExpiredError,
     AcceptedRunNotFoundError,
     AcceptedRunQueueClaimRequest,
     AcceptedRunRepository,
@@ -46,18 +64,23 @@ from .server_storage import (
     AcceptedRunWorkItem,
     AdmissionIdentity,
     AdmissionResult,
+    accepted_run_system_clock,
     CallbackAcceptance,
     CallbackIssuanceIdentity,
     CallbackSubmissionIdentity,
-    decode_runtime_checkpoint,
     encode_runtime_checkpoint,
+    assert_current_claim,
 )
+from .worker import WorkerInvokeRequest, WorkerInvokeResult
 
 
 DURABLE_GRAPH_FORMAT_VERSION = "graphblocks.ai/Graph@v1"
 DURABLE_RUNTIME_FORMAT_VERSION = "graphblocks.runtime@v1"
 _MAX_SQLITE_UNIX_MS = (1 << 63) - 1
 DEFAULT_DURABLE_SERVER_MAX_REQUEST_BODY_BYTES = 1_048_576
+DEFAULT_DURABLE_WORKER_MAX_REQUEST_BYTES = 4_194_304
+DEFAULT_DURABLE_WORKER_PUBLICATION_MARGIN_SECONDS = 0.1
+DEFAULT_DURABLE_WORKER_TIMEOUT_SECONDS = 25.0
 
 
 class DurableAcceptedRunIntegrityError(AcceptedRunStorageError):
@@ -73,8 +96,7 @@ class DurableGraphCompiler(Protocol):
         block_catalog: BlockCatalog | None = None,
         *,
         allow_unknown_blocks: bool = False,
-    ) -> Plan:
-        ...
+    ) -> Plan: ...
 
 
 @dataclass(slots=True)
@@ -90,7 +112,29 @@ class DurableAcceptedRunService:
         repr=False,
     )
     clock: Callable[[], int] = field(
-        default=lambda: int(time() * 1_000),
+        default=accepted_run_system_clock,
+        repr=False,
+    )
+    worker_target: ProcessWorkerTarget = DEFAULT_DURABLE_WORKER_TARGET
+    worker_policy: ProcessWorkerPolicy | None = None
+    _default_worker_registry: RuntimeRegistry | None = field(
+        default=None,
+        init=False,
+        repr=False,
+    )
+    _default_worker_handlers: tuple[tuple[str, object], ...] = field(
+        default=(),
+        init=False,
+        repr=False,
+    )
+    _default_worker_block_catalog: BlockCatalog | None = field(
+        default=None,
+        init=False,
+        repr=False,
+    )
+    _default_worker_allow_untyped: bool | None = field(
+        default=None,
+        init=False,
         repr=False,
     )
 
@@ -138,20 +182,129 @@ class DurableAcceptedRunService:
                 "durable accepted-run service lease_duration_ms must be a "
                 "positive SQLite integer"
             )
+        worker_policy = self.worker_policy
+        if worker_policy is None:
+            lease_seconds = self.lease_duration_ms / 1_000
+            available_seconds = (
+                lease_seconds - DEFAULT_DURABLE_WORKER_PUBLICATION_MARGIN_SECONDS
+            )
+            if available_seconds <= 0:
+                raise ValueError(
+                    "durable accepted-run lease must leave time for worker "
+                    "termination and fenced publication"
+                )
+            worker_policy = ProcessWorkerPolicy(
+                timeout_seconds=min(
+                    DEFAULT_DURABLE_WORKER_TIMEOUT_SECONDS,
+                    available_seconds * 0.85,
+                ),
+                termination_grace_seconds=min(
+                    1.0,
+                    available_seconds * 0.1,
+                ),
+                max_request_bytes=DEFAULT_DURABLE_WORKER_MAX_REQUEST_BYTES,
+            )
+            self.worker_policy = worker_policy
+        self._validated_worker_policy()
+
+    def _validate_clock_authority(self) -> None:
+        if not callable(self.clock):
+            raise ValueError("durable accepted-run service clock must be callable")
+        repository_clock = getattr(
+            self.repository,
+            "transaction_clock",
+            None,
+        )
+        if repository_clock is None:
+            return
+        if not callable(repository_clock):
+            raise ValueError(
+                "durable accepted-run repository transaction_clock must be callable"
+            )
+        if repository_clock is not self.clock:
+            raise ValueError(
+                "durable accepted-run service and repository must share "
+                "the exact clock authority"
+            )
+
+    def _validated_worker_policy(self) -> ProcessWorkerPolicy:
+        self._validate_clock_authority()
+        if not isinstance(self.worker_target, ProcessWorkerTarget):
+            raise ValueError(
+                "durable accepted-run service worker_target must be a "
+                "ProcessWorkerTarget"
+            )
+        worker_policy = self.worker_policy
+        if not isinstance(worker_policy, ProcessWorkerPolicy):
+            raise ValueError(
+                "durable accepted-run service worker_policy must be a "
+                "ProcessWorkerPolicy"
+            )
+        if (
+            worker_policy.timeout_seconds
+            + worker_policy.termination_grace_seconds
+            + DEFAULT_DURABLE_WORKER_PUBLICATION_MARGIN_SECONDS
+            >= self.lease_duration_ms / 1_000
+        ):
+            raise ValueError(
+                "durable accepted-run worker deadline, termination grace, "
+                "and publication margin must fit inside the run lease"
+            )
         if not isinstance(self.registry, RuntimeRegistry):
             raise ValueError(
                 "durable accepted-run service registry must be a RuntimeRegistry"
             )
         if not callable(self.compiler):
-            raise ValueError(
-                "durable accepted-run service compiler must be callable"
-            )
-        if not callable(self.clock):
-            raise ValueError(
-                "durable accepted-run service clock must be callable"
-            )
+            raise ValueError("durable accepted-run service compiler must be callable")
+        if self.worker_target == DEFAULT_DURABLE_WORKER_TARGET:
+            if (
+                self.compiler is not compile_graph
+                and self.compiler is not compile_graph_reference
+            ):
+                raise ValueError(
+                    "durable accepted-run service custom compiler requires "
+                    "a matching custom process worker target"
+                )
+            if not is_full_stdlib_registry(self.registry):
+                raise ValueError(
+                    "durable accepted-run service custom registry requires "
+                    "a matching custom process worker target"
+                )
+            current_handlers = tuple(sorted(self.registry.blocks.items()))
+            if self._default_worker_registry is None:
+                self._default_worker_registry = self.registry
+                self._default_worker_handlers = current_handlers
+                self._default_worker_block_catalog = self.registry.block_catalog
+                self._default_worker_allow_untyped = self.registry.allow_untyped
+            elif (
+                self.registry is not self._default_worker_registry
+                or self.registry.block_catalog is not self._default_worker_block_catalog
+                or self.registry.allow_untyped != self._default_worker_allow_untyped
+                or len(current_handlers) != len(self._default_worker_handlers)
+                or any(
+                    current_block_id != expected_block_id
+                    or current_handler is not expected_handler
+                    for (
+                        current_block_id,
+                        current_handler,
+                    ), (
+                        expected_block_id,
+                        expected_handler,
+                    ) in zip(
+                        current_handlers,
+                        self._default_worker_handlers,
+                        strict=True,
+                    )
+                )
+            ):
+                raise ValueError(
+                    "durable accepted-run service default worker registry "
+                    "changed after configuration"
+                )
+        return worker_policy
 
     def _now_unix_ms(self) -> int:
+        self._validate_clock_authority()
         now_unix_ms = self.clock()
         if (
             isinstance(now_unix_ms, bool)
@@ -177,6 +330,7 @@ class DurableAcceptedRunService:
         invocation: Mapping[str, object],
         created_at_unix_ms: int | None = None,
     ) -> AdmissionResult:
+        self._validated_worker_policy()
         for field_name, value in (
             ("graph", graph),
             ("inputs", inputs),
@@ -184,8 +338,7 @@ class DurableAcceptedRunService:
         ):
             if not isinstance(value, Mapping):
                 raise ValueError(
-                    f"durable accepted-run admission {field_name} must be "
-                    "a mapping"
+                    f"durable accepted-run admission {field_name} must be a mapping"
                 )
         graph_json = canonical_dumps(dict(graph))
         inputs_json = canonical_dumps(dict(inputs))
@@ -215,8 +368,7 @@ class DurableAcceptedRunService:
         if plan_errors:
             raise ValueError(
                 "; ".join(
-                    f"{diagnostic.code} {diagnostic.path}: "
-                    f"{diagnostic.message}"
+                    f"{diagnostic.code} {diagnostic.path}: {diagnostic.message}"
                     for diagnostic in plan_errors
                 )
             )
@@ -227,9 +379,7 @@ class DurableAcceptedRunService:
                 "normalized graph"
             )
         created_at = (
-            self._now_unix_ms()
-            if created_at_unix_ms is None
-            else created_at_unix_ms
+            self._now_unix_ms() if created_at_unix_ms is None else created_at_unix_ms
         )
         request_value = {
             "graph": decoded_graph,
@@ -328,13 +478,9 @@ class DurableAcceptedRunService:
         received_at_unix_ms: int | None = None,
     ) -> CallbackAcceptance:
         if not isinstance(payload, Mapping):
-            raise ValueError(
-                "durable accepted-run callback payload must be a mapping"
-            )
+            raise ValueError("durable accepted-run callback payload must be a mapping")
         if not isinstance(receipt, Mapping):
-            raise ValueError(
-                "durable accepted-run callback receipt must be a mapping"
-            )
+            raise ValueError("durable accepted-run callback receipt must be a mapping")
         payload_json = canonical_dumps(dict(payload))
         receipt_json = canonical_dumps(dict(receipt))
         decoded_payload = canonical_loads(payload_json)
@@ -348,9 +494,7 @@ class DurableAcceptedRunService:
                 "durable accepted-run callback receipt must encode a JSON object"
             )
         received_at = (
-            self._now_unix_ms()
-            if received_at_unix_ms is None
-            else received_at_unix_ms
+            self._now_unix_ms() if received_at_unix_ms is None else received_at_unix_ms
         )
         issuance = CallbackIssuanceIdentity(
             run_id=run_id,
@@ -448,8 +592,7 @@ class DurableAcceptedRunService:
             AcceptedRunControlAction.EXPIRE,
         }:
             raise ValueError(
-                "durable accepted-run terminal control action must be cancel "
-                "or expire"
+                "durable accepted-run terminal control action must be cancel or expire"
             )
         control_name = {
             AcceptedRunControlAction.CANCEL: "cancellation",
@@ -505,13 +648,11 @@ class DurableAcceptedRunService:
         )
         completion_effect = AcceptedRunEffectIntent(
             effect_id=(
-                "effect-completion:"
-                f"{completion_digest.removeprefix('sha256:')}"
+                f"effect-completion:{completion_digest.removeprefix('sha256:')}"
             ),
             kind=AcceptedRunEffectKind.COMPLETION,
             idempotency_key=(
-                "completion:"
-                f"{completion_identity_digest.removeprefix('sha256:')}"
+                f"completion:{completion_identity_digest.removeprefix('sha256:')}"
             ),
             payload_json=canonical_dumps(completion_value),
             payload_digest=completion_digest,
@@ -619,8 +760,7 @@ class DurableAcceptedRunService:
             AcceptedRunControlAction.RESUME,
         }:
             raise ValueError(
-                "durable accepted-run state control action must be pause or "
-                "resume"
+                "durable accepted-run state control action must be pause or resume"
             )
         if type(reason) is not str or not reason or reason != reason.strip():
             raise ValueError(
@@ -675,6 +815,7 @@ class DurableAcceptedRunService:
         tenant_id: str,
         run_id: str,
     ) -> AcceptedRunSnapshot:
+        worker_policy = self._validated_worker_policy()
         claimed_at_unix_ms = self._now_unix_ms()
         work = self.repository.claim_work(
             AcceptedRunClaimRequest(
@@ -693,13 +834,14 @@ class DurableAcceptedRunService:
             if snapshot is None:
                 raise AcceptedRunNotFoundError(tenant_id, run_id)
             return snapshot
-        return self._advance_work(work)
+        return self._advance_work(work, worker_policy)
 
     def advance_next_run(
         self,
         *,
         tenant_id: str | None = None,
     ) -> AcceptedRunSnapshot | None:
+        worker_policy = self._validated_worker_policy()
         claimed_at_unix_ms = self._now_unix_ms()
         work = self.repository.claim_next_work(
             AcceptedRunQueueClaimRequest(
@@ -711,11 +853,12 @@ class DurableAcceptedRunService:
         )
         if work is None:
             return None
-        return self._advance_work(work)
+        return self._advance_work(work, worker_policy)
 
     def _advance_work(
         self,
         work: AcceptedRunWorkItem,
+        worker_policy: ProcessWorkerPolicy,
     ) -> AcceptedRunSnapshot:
         graph = canonical_loads(work.envelope.graph_json)
         inputs = canonical_loads(work.envelope.inputs_json)
@@ -744,65 +887,106 @@ class DurableAcceptedRunService:
                 "durable accepted-run graph does not match its admitted plan"
             )
 
-        checkpoint = None
         callback_receipt = None
         if work.is_resume:
-            assert work.checkpoint is not None
-            assert work.callback is not None
-            stored_resume_checkpoint = work.checkpoint
-            checkpoint = decode_runtime_checkpoint(stored_resume_checkpoint)
-            callback_receipt = canonical_loads(
-                work.callback.acceptance.receipt_json
-            )
+            if work.callback is None:
+                raise DurableAcceptedRunIntegrityError(
+                    "durable accepted-run resume work has no callback"
+                )
+            callback_receipt = canonical_loads(work.callback.acceptance.receipt_json)
             if not isinstance(callback_receipt, dict):
                 raise DurableAcceptedRunIntegrityError(
                     "durable accepted-run callback receipt must be a JSON object"
                 )
-            restored_checkpoint = checkpoint
-            restored_receipt_digest = canonical_hash(callback_receipt)
-
-            def verify_checkpoint_authority(
-                checkpoint: RuntimeCheckpoint,
-                *,
-                expected_graph_hash: str,
-            ) -> bool:
-                return (
-                    checkpoint == restored_checkpoint
-                    and checkpoint.state_digest
-                    == stored_resume_checkpoint.checkpoint_digest
-                    and expected_graph_hash == work.envelope.graph_hash
-                )
-
-            def verify_callback_receipt(
-                receipt: Mapping[str, object],
-                *,
-                checkpoint: RuntimeCheckpoint,
-                expected_checkpoint_digest: str,
-                expected_release_digest: str,
-            ) -> bool:
-                return (
-                    checkpoint == restored_checkpoint
-                    and expected_checkpoint_digest
-                    == restored_checkpoint.state_digest
-                    and expected_release_digest == work.envelope.graph_hash
-                    and canonical_hash(receipt) == restored_receipt_digest
-                )
-
-            runtime = InProcessRuntime(
-                self.registry,
-                checkpoint_authority_verifier=verify_checkpoint_authority,
-                callback_receipt_verifier=verify_callback_receipt,
-            )
-        else:
-            runtime = InProcessRuntime(self.registry)
-
-        result = runtime.run(
-            graph,
-            inputs,
-            run_id=work.claim.run_id,
-            checkpoint=checkpoint,
+        worker_request = build_durable_worker_request(
+            work,
+            graph=graph,
+            inputs=inputs,
             callback_receipt=callback_receipt,
         )
+        current_snapshot = self.repository.get_run(
+            tenant_id=work.claim.tenant_id,
+            run_id=work.claim.run_id,
+        )
+        if current_snapshot is not None and (
+            current_snapshot.owner_principal_id
+            != work.envelope.identity.owner_principal_id
+            or current_snapshot.state_version != work.state_version
+        ):
+            raise DurableAcceptedRunIntegrityError(
+                "durable accepted-run worker authority changed before execution"
+            )
+        assert_current_claim(
+            current=(None if current_snapshot is None else current_snapshot.claim),
+            provided=work.claim,
+        )
+        worker_started_at_unix_ms = self._now_unix_ms()
+        remaining_lease_seconds = (
+            work.claim.lease_expires_at_unix_ms - worker_started_at_unix_ms
+        ) / 1_000
+        max_execution_seconds = (
+            remaining_lease_seconds
+            - worker_policy.termination_grace_seconds
+            - DEFAULT_DURABLE_WORKER_PUBLICATION_MARGIN_SECONDS
+        )
+        if max_execution_seconds <= 0:
+            raise AcceptedRunLeaseExpiredError(
+                work.claim,
+                "isolated worker deadline allocation",
+            )
+        execution_policy = replace(
+            worker_policy,
+            timeout_seconds=min(
+                worker_policy.timeout_seconds,
+                max_execution_seconds,
+            ),
+        )
+        live_authority_validator = AcceptedRunWorkerAuthorityValidator(
+            repository=self.repository,
+            claim=work.claim,
+            clock=self._now_unix_ms,
+        )
+
+        def validate_worker_authority(
+            request: WorkerInvokeRequest,
+            worker_result: WorkerInvokeResult,
+        ) -> None:
+            decode_durable_worker_result(request, worker_result)
+            live_authority_validator(request, worker_result)
+
+        try:
+            worker_result = ProcessWorkerExecutor(
+                target=self.worker_target,
+                policy=execution_policy,
+                authority_validator=validate_worker_authority,
+            ).invoke(worker_request)
+        except ProcessWorkerRequestTooLarge as error:
+            result = DurableWorkerOutcome(
+                run_id=work.claim.run_id,
+                status="failed",
+                outputs={
+                    "error": {
+                        "actualBytes": error.actual_bytes,
+                        "code": "worker_request_too_large",
+                        "maxBytes": error.max_bytes,
+                    }
+                },
+                checkpoint=None,
+            )
+        except ProcessWorkerResponseTooLarge as error:
+            result = DurableWorkerOutcome(
+                run_id=work.claim.run_id,
+                status="failed",
+                outputs={
+                    "error": {
+                        "code": "worker_response_too_large",
+                        "maxBytes": error.max_bytes,
+                    }
+                },
+                checkpoint=None,
+            )
+        else:
+            result = decode_durable_worker_result(worker_request, worker_result)
         committed_at_unix_ms = self._now_unix_ms()
         if result.status == "waiting_callback":
             if result.checkpoint is None:
@@ -810,9 +994,7 @@ class DurableAcceptedRunService:
                     "waiting durable accepted run has no runtime checkpoint"
                 )
             stored_checkpoint = encode_runtime_checkpoint(result.checkpoint)
-            operation = canonical_loads(
-                canonical_dumps(result.checkpoint.operation)
-            )
+            operation = canonical_loads(canonical_dumps(result.checkpoint.operation))
             if not isinstance(operation, dict):
                 raise DurableAcceptedRunIntegrityError(
                     "durable accepted-run checkpoint operation must be an object"
@@ -843,23 +1025,18 @@ class DurableAcceptedRunService:
                 operation_id=operation_id,
                 operation_attempt_id=operation_attempt_id,
                 callback_idempotency_key=(
-                    "callback:"
-                    f"{callback_identity_digest.removeprefix('sha256:')}"
+                    f"callback:{callback_identity_digest.removeprefix('sha256:')}"
                 ),
                 lease_generation=work.claim.lease_generation,
                 fencing_token=work.claim.fencing_token,
             )
             issuance_value = {
-                "callbackIdempotencyKey": (
-                    callback_issuance.callback_idempotency_key
-                ),
+                "callbackIdempotencyKey": (callback_issuance.callback_idempotency_key),
                 "checkpointDigest": callback_issuance.checkpoint_digest,
                 "expectedStateVersion": work.state_version + 1,
                 "fencingToken": callback_issuance.fencing_token,
                 "leaseGeneration": callback_issuance.lease_generation,
-                "operationAttemptId": (
-                    callback_issuance.operation_attempt_id
-                ),
+                "operationAttemptId": (callback_issuance.operation_attempt_id),
                 "operationId": callback_issuance.operation_id,
                 "runId": callback_issuance.run_id,
             }
@@ -905,9 +1082,7 @@ class DurableAcceptedRunService:
             )
 
         terminal_value = {
-            "outputs": canonical_loads(
-                canonical_dumps(dict(result.outputs))
-            ),
+            "outputs": canonical_loads(canonical_dumps(dict(result.outputs))),
             "status": result.status,
         }
         result_digest = canonical_hash(terminal_value)
@@ -949,8 +1124,7 @@ class DurableAcceptedRunService:
                 ),
                 completion_effect=AcceptedRunEffectIntent(
                     effect_id=(
-                        "effect-completion:"
-                        f"{completion_digest.removeprefix('sha256:')}"
+                        f"effect-completion:{completion_digest.removeprefix('sha256:')}"
                     ),
                     kind=AcceptedRunEffectKind.COMPLETION,
                     idempotency_key=(
@@ -1045,20 +1219,15 @@ class DurableAcceptedRunServerApp:
     route_manifest: ServerRouteManifest = field(
         default_factory=durable_server_route_manifest
     )
-    max_request_body_bytes: int = (
-        DEFAULT_DURABLE_SERVER_MAX_REQUEST_BODY_BYTES
-    )
+    max_request_body_bytes: int = DEFAULT_DURABLE_SERVER_MAX_REQUEST_BODY_BYTES
 
     def __post_init__(self) -> None:
         if not isinstance(self.service, DurableAcceptedRunService):
             raise ValueError(
-                "durable accepted-run server requires a "
-                "DurableAcceptedRunService"
+                "durable accepted-run server requires a DurableAcceptedRunService"
             )
         if not callable(getattr(self.auth_hook, "authorize", None)):
-            raise ValueError(
-                "durable accepted-run server requires an auth_hook"
-            )
+            raise ValueError("durable accepted-run server requires an auth_hook")
         if not isinstance(self.route_manifest, ServerRouteManifest):
             raise ValueError(
                 "durable accepted-run server route_manifest must be a "
@@ -1172,9 +1341,7 @@ class DurableAcceptedRunServerApp:
             if route.endpoint.operation == "admit_run":
                 payload = canonical_loads(request.body)
                 if not isinstance(payload, dict):
-                    raise ValueError(
-                        "durable run request body must be a JSON object"
-                    )
+                    raise ValueError("durable run request body must be a JSON object")
                 allowed_fields = {
                     "graph",
                     "inputs",
@@ -1193,13 +1360,9 @@ class DurableAcceptedRunServerApp:
                 inputs = payload.get("inputs", {})
                 invocation = payload.get("invocation", {})
                 if not isinstance(graph, dict):
-                    raise ValueError(
-                        "durable run request graph must be a JSON object"
-                    )
+                    raise ValueError("durable run request graph must be a JSON object")
                 if not isinstance(inputs, dict):
-                    raise ValueError(
-                        "durable run request inputs must be a JSON object"
-                    )
+                    raise ValueError("durable run request inputs must be a JSON object")
                 if not isinstance(invocation, dict):
                     raise ValueError(
                         "durable run request invocation must be a JSON object"
@@ -1212,11 +1375,7 @@ class DurableAcceptedRunServerApp:
                     ("requestId", request_id),
                     ("responseMode", response_mode),
                 ):
-                    if (
-                        type(value) is not str
-                        or not value
-                        or value != value.strip()
-                    ):
+                    if type(value) is not str or not value or value != value.strip():
                         raise ValueError(
                             f"durable run request {field_name} must be an "
                             "exact non-empty string"
@@ -1244,8 +1403,7 @@ class DurableAcceptedRunServerApp:
                 )
                 if (
                     snapshot is None
-                    or snapshot.owner_principal_id
-                    != principal.principal_id
+                    or snapshot.owner_principal_id != principal.principal_id
                 ):
                     raise DurableAcceptedRunIntegrityError(
                         "durable admission did not resolve to its owner"
@@ -1290,17 +1448,11 @@ class DurableAcceptedRunServerApp:
                     "stateVersion": snapshot.state_version,
                 }
                 if snapshot.checkpoint_digest is not None:
-                    response_payload["checkpointDigest"] = (
-                        snapshot.checkpoint_digest
-                    )
+                    response_payload["checkpointDigest"] = snapshot.checkpoint_digest
                 if snapshot.paused_from_phase is not None:
-                    response_payload["resumeState"] = (
-                        snapshot.paused_from_phase.value
-                    )
+                    response_payload["resumeState"] = snapshot.paused_from_phase.value
                 if snapshot.terminal_status is not None:
-                    response_payload["terminalStatus"] = (
-                        snapshot.terminal_status
-                    )
+                    response_payload["terminalStatus"] = snapshot.terminal_status
                 if snapshot.terminal_result_json is not None:
                     response_payload["result"] = canonical_loads(
                         snapshot.terminal_result_json
@@ -1345,9 +1497,7 @@ class DurableAcceptedRunServerApp:
                     expected_state_version=payload["expectedStateVersion"],
                     checkpoint_digest=payload["checkpointDigest"],
                     operation_attempt_id=payload["operationAttemptId"],
-                    callback_idempotency_key=payload[
-                        "callbackIdempotencyKey"
-                    ],
+                    callback_idempotency_key=payload["callbackIdempotencyKey"],
                     lease_generation=payload["leaseGeneration"],
                     fencing_token=payload["fencingToken"],
                     payload=callback_payload,
@@ -1375,8 +1525,7 @@ class DurableAcceptedRunServerApp:
                 payload = canonical_loads(request.body)
                 if not isinstance(payload, dict):
                     raise ValueError(
-                        f"durable {control_name} request body must be a JSON "
-                        "object"
+                        f"durable {control_name} request body must be a JSON object"
                     )
                 expected_fields = {
                     "expectedStateVersion",
@@ -1385,8 +1534,7 @@ class DurableAcceptedRunServerApp:
                 }
                 if set(payload) != expected_fields:
                     raise ValueError(
-                        f"durable {control_name} request fields must match "
-                        "version 1"
+                        f"durable {control_name} request fields must match version 1"
                     )
                 request_id = payload["requestId"]
                 reason = payload["reason"]
@@ -1394,11 +1542,7 @@ class DurableAcceptedRunServerApp:
                     ("requestId", request_id),
                     ("reason", reason),
                 ):
-                    if (
-                        type(value) is not str
-                        or not value
-                        or value != value.strip()
-                    ):
+                    if type(value) is not str or not value or value != value.strip():
                         raise ValueError(
                             f"durable {control_name} request {field_name} "
                             "must be an exact non-empty string"
@@ -1415,9 +1559,7 @@ class DurableAcceptedRunServerApp:
                         tenant_id=principal.tenant_id,
                         owner_principal_id=principal.principal_id,
                         run_id=run_id,
-                        expected_state_version=payload[
-                            "expectedStateVersion"
-                        ],
+                        expected_state_version=payload["expectedStateVersion"],
                         idempotency_key=request_id,
                         reason=reason,
                     )
@@ -1426,9 +1568,7 @@ class DurableAcceptedRunServerApp:
                         tenant_id=principal.tenant_id,
                         owner_principal_id=principal.principal_id,
                         run_id=run_id,
-                        expected_state_version=payload[
-                            "expectedStateVersion"
-                        ],
+                        expected_state_version=payload["expectedStateVersion"],
                         idempotency_key=request_id,
                         reason=reason,
                     )
@@ -1468,11 +1608,7 @@ class DurableAcceptedRunServerApp:
                     ("requestId", request_id),
                     ("reason", reason),
                 ):
-                    if (
-                        type(value) is not str
-                        or not value
-                        or value != value.strip()
-                    ):
+                    if type(value) is not str or not value or value != value.strip():
                         raise ValueError(
                             f"durable state control request {field_name} must "
                             "be an exact non-empty string"
@@ -1484,9 +1620,7 @@ class DurableAcceptedRunServerApp:
                         tenant_id=principal.tenant_id,
                         owner_principal_id=principal.principal_id,
                         run_id=run_id,
-                        expected_state_version=payload[
-                            "expectedStateVersion"
-                        ],
+                        expected_state_version=payload["expectedStateVersion"],
                         idempotency_key=request_id,
                         reason=reason,
                     )
@@ -1495,9 +1629,7 @@ class DurableAcceptedRunServerApp:
                         tenant_id=principal.tenant_id,
                         owner_principal_id=principal.principal_id,
                         run_id=run_id,
-                        expected_state_version=payload[
-                            "expectedStateVersion"
-                        ],
+                        expected_state_version=payload["expectedStateVersion"],
                         idempotency_key=request_id,
                         reason=reason,
                     )
@@ -1542,9 +1674,7 @@ class DurableAcceptedRunServerApp:
                         "events": [
                             {
                                 "kind": event.kind,
-                                "payload": canonical_loads(
-                                    event.payload_json
-                                ),
+                                "payload": canonical_loads(event.payload_json),
                                 "sequence": event.sequence,
                             }
                             for event in page.events
@@ -1563,8 +1693,7 @@ class DurableAcceptedRunServerApp:
             )
             if (
                 existing is not None
-                and existing.owner_principal_id
-                != principal.principal_id
+                and existing.owner_principal_id != principal.principal_id
             ):
                 return ServerResponse.json(
                     404,

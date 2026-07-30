@@ -249,13 +249,39 @@ development/reference mode and MUST NOT be described as restart durable.
 
 ### Process-isolated worker deadline (preview)
 
-The Python reference package exposes `graphblocks.isolated_worker` as an
-opt-in, preview force-termination boundary. `ProcessWorkerExecutor` starts a
-fresh worker process with the portable `spawn` model, sends a bounded canonical
+The Python reference package exposes `graphblocks.isolated_worker` as a
+preview force-termination boundary. `ProcessWorkerExecutor` starts a fresh
+worker process with the portable `spawn` model, sends a bounded canonical
 `WorkerInvokeRequest`, and accepts a bounded `WorkerInvokeResult` only after
 the worker exits within the configured deadline. On timeout it terminates and,
 if necessary, kills and reaps the worker before reporting
-`ProcessWorkerDeadlineExceeded`.
+`ProcessWorkerDeadlineExceeded`. The deadline begins before canonical request
+serialization and process setup; if that preparation consumes the budget, no
+child process is started.
+
+`DurableAcceptedRunService` uses this boundary for every claimed graph
+execution. Its default importable worker target reconstructs the preview
+standard-library registry in the child process. A service that replaces that
+registry or selects a compiler other than the native or deterministic reference
+compiler MUST provide a matching importable worker target; it MUST NOT silently
+run the replacement in the scheduler process or execute the default handler
+under different semantics. The worker deadline, termination grace, and
+publication margin MUST fit inside the run lease. The scheduler recomputes the
+available deadline from the actual remaining lease immediately before process
+start. A timeout does not fabricate a terminal result: the run remains `running`
+under the original claim until that lease expires, after which a new claim with
+a higher lease generation and fencing token may retry it.
+By contrast, a deterministic worker request or response byte-limit violation
+commits a bounded `failed` result under the same repository fence so oversized
+poison work is not reclaimed forever.
+
+The durable request binds tenant, immutable owner, run, state version, event
+high watermark, graph hash, lease owner, lease generation, fencing token,
+lease expiry, checkpoint digest, and callback-receipt digest into one canonical
+authority digest. Invocation ID and node-attempt ID derive from that digest,
+and the worker protocol's lease epoch is the accepted-run fencing token.
+Checkpoint and callback values cross the process boundary only through their
+bounded canonical wire forms.
 
 The parent first validates invocation ID, node-attempt ID, and lease epoch
 against the request. It then calls the executor's mandatory
@@ -280,13 +306,15 @@ tenant-scoped run, compares the complete current claim, and rejects authority
 at or after lease expiry.
 
 After the isolated executor returns, a durable server MUST construct its
-`AcceptedRunTerminalCommit` with that same claim and call
-`AcceptedRunRepository.commit_terminal`. The SQLite reference repository
-performs the state-version, owner, lease-generation, fencing-token, and expiry
-checks in the transaction that records the result, terminal event, and
-completion outbox intent. The validator and terminal commit are both required:
-the first rejects authority lost while the worker ran, and the second closes
-the validation-to-publication race.
+waiting or terminal commit with that same claim and expected state version.
+The service and SQLite repository MUST share the exact clock authority. After
+acquiring the SQLite write transaction, the repository reads that clock again
+and checks the current claim, state version, lease generation, fencing token,
+and lease expiry before it records the checkpoint or result, event, and
+corresponding outbox intent. The validator and repository commit are both
+required: the first rejects authority lost while the worker ran, and the second
+closes both the validation-to-publication race and lease expiry while waiting
+for the database write lock.
 
 This boundary controls the worker process only. A handler that delegates work
 to an untracked child, background service, or provider MUST NOT claim

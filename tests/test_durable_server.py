@@ -1,11 +1,23 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from multiprocessing import active_children
+import os
 from pathlib import Path
+from textwrap import dedent
+
+import pytest
 
 from graphblocks.canonical import canonical_dumps, canonical_hash, canonical_loads
 from graphblocks.compiler import compile_graph_reference
 from graphblocks.durable_server import DurableAcceptedRunService
+from graphblocks.isolated_worker import (
+    ProcessWorkerDeadlineExceeded,
+    ProcessWorkerPolicy,
+    ProcessWorkerProtocolError,
+    ProcessWorkerTarget,
+)
+from graphblocks.runtime import stdlib_registry
 from graphblocks.server_storage import (
     AcceptedRunCallbackCommit,
     AcceptedRunEffectDeliveryClaimRequest,
@@ -22,6 +34,13 @@ from graphblocks.sqlite_server_storage import SQLiteAcceptedRunRepository
 _RESUME_TOKEN_HASH = "sha256:" + ("a" * 64)
 
 
+def _fixed_clock(value: int) -> Callable[[], int]:
+    def clock() -> int:
+        return value
+
+    return clock
+
+
 def _service(
     path: Path,
     *,
@@ -29,11 +48,93 @@ def _service(
     clock: Callable[[], int],
 ) -> DurableAcceptedRunService:
     return DurableAcceptedRunService(
-        repository=SQLiteAcceptedRunRepository(path),
+        repository=SQLiteAcceptedRunRepository(path, clock=clock),
         lease_owner_id=worker_id,
-        lease_duration_ms=10_000,
+        lease_duration_ms=30_000,
         compiler=compile_graph_reference,
         clock=clock,
+    )
+
+
+def _write_durable_worker_fixture(path: Path) -> str:
+    module_name = "durable_worker_fixture"
+    (path / f"{module_name}.py").write_text(
+        dedent(
+            """
+            import os
+
+            from graphblocks.worker import WorkerInvokeResult
+
+
+            def succeed(request):
+                return WorkerInvokeResult(
+                    invocation_id=request.invocation_id,
+                    node_attempt_id=request.node_attempt_id,
+                    lease_epoch=request.lease_epoch,
+                    outputs={
+                        "authorityDigest": request.config["authorityDigest"],
+                        "runtimeResult": {
+                            "checkpoint": None,
+                            "outputs": {"workerPid": os.getpid()},
+                            "runId": request.run_id,
+                            "status": "succeeded",
+                        },
+                    },
+                )
+
+
+            def tamper_authority(request):
+                return WorkerInvokeResult(
+                    invocation_id=request.invocation_id,
+                    node_attempt_id=request.node_attempt_id,
+                    lease_epoch=request.lease_epoch,
+                    outputs={
+                        "authorityDigest": "sha256:" + ("0" * 64),
+                        "runtimeResult": {
+                            "checkpoint": None,
+                            "outputs": {},
+                            "runId": request.run_id,
+                            "status": "succeeded",
+                        },
+                    },
+                )
+
+
+            def spin_forever(request):
+                del request
+                while True:
+                    pass
+            """
+        ),
+        encoding="utf-8",
+    )
+    return module_name
+
+
+def _admit_empty_run(
+    service: DurableAcceptedRunService,
+    *,
+    run_id: str,
+) -> None:
+    service.admit_run(
+        tenant_id="tenant-1",
+        owner_principal_id="principal-1",
+        run_id=run_id,
+        idempotency_key=f"request-{run_id}",
+        graph={
+            "apiVersion": "graphblocks.ai/v1alpha3",
+            "kind": "Graph",
+            "metadata": {"name": f"isolated-{run_id}"},
+            "spec": {"nodes": {}},
+        },
+        inputs={},
+        invocation={
+            "policySnapshotId": "policy-1",
+            "releaseId": "release-1",
+            "responseId": "response-1",
+            "turnId": None,
+        },
+        created_at_unix_ms=1_000,
     )
 
 
@@ -275,12 +376,8 @@ def test_durable_service_resumes_accepted_callback_after_process_restart(
         run_id=str(issuance_payload["runId"]),
         checkpoint_digest=str(issuance_payload["checkpointDigest"]),
         operation_id=str(issuance_payload["operationId"]),
-        operation_attempt_id=str(
-            issuance_payload["operationAttemptId"]
-        ),
-        callback_idempotency_key=str(
-            issuance_payload["callbackIdempotencyKey"]
-        ),
+        operation_attempt_id=str(issuance_payload["operationAttemptId"]),
+        callback_idempotency_key=str(issuance_payload["callbackIdempotencyKey"]),
         lease_generation=int(issuance_payload["leaseGeneration"]),
         fencing_token=int(issuance_payload["fencingToken"]),
     )
@@ -366,3 +463,472 @@ def test_durable_service_resumes_accepted_callback_after_process_restart(
         "run_resume_claimed",
         "run_succeeded",
     ]
+
+
+def test_durable_service_executes_claim_in_a_fresh_process(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module_name = _write_durable_worker_fixture(tmp_path)
+    monkeypatch.syspath_prepend(str(tmp_path))
+    clock = _fixed_clock(2_000)
+    service = DurableAcceptedRunService(
+        repository=SQLiteAcceptedRunRepository(
+            tmp_path / "isolated-process.sqlite3",
+            clock=clock,
+        ),
+        lease_owner_id="isolated-worker",
+        lease_duration_ms=30_000,
+        compiler=compile_graph_reference,
+        clock=clock,
+        worker_target=ProcessWorkerTarget(module_name, "succeed"),
+        worker_policy=ProcessWorkerPolicy(timeout_seconds=15),
+    )
+    _admit_empty_run(service, run_id="run-isolated")
+
+    completed = service.advance_run(
+        tenant_id="tenant-1",
+        run_id="run-isolated",
+    )
+
+    result = canonical_loads(completed.terminal_result_json)
+    assert isinstance(result, dict)
+    outputs = result["outputs"]
+    assert isinstance(outputs, dict)
+    assert outputs["workerPid"] != os.getpid()
+
+
+def test_durable_service_rejects_tampered_worker_authority(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module_name = _write_durable_worker_fixture(tmp_path)
+    monkeypatch.syspath_prepend(str(tmp_path))
+    clock = _fixed_clock(2_000)
+    service = DurableAcceptedRunService(
+        repository=SQLiteAcceptedRunRepository(
+            tmp_path / "tampered-authority.sqlite3",
+            clock=clock,
+        ),
+        lease_owner_id="isolated-worker",
+        lease_duration_ms=30_000,
+        compiler=compile_graph_reference,
+        clock=clock,
+        worker_target=ProcessWorkerTarget(
+            module_name,
+            "tamper_authority",
+        ),
+        worker_policy=ProcessWorkerPolicy(timeout_seconds=15),
+    )
+    _admit_empty_run(service, run_id="run-tampered")
+
+    with pytest.raises(
+        ProcessWorkerProtocolError,
+        match="authority digest",
+    ):
+        service.advance_run(
+            tenant_id="tenant-1",
+            run_id="run-tampered",
+        )
+
+    snapshot = service.get_run(
+        tenant_id="tenant-1",
+        run_id="run-tampered",
+    )
+    assert snapshot is not None
+    assert snapshot.phase is AcceptedRunPhase.RUNNING
+    assert snapshot.terminal_result_json is None
+
+
+def test_durable_service_reaps_timed_out_worker_and_reclaims_after_lease(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module_name = _write_durable_worker_fixture(tmp_path)
+    monkeypatch.syspath_prepend(str(tmp_path))
+    database_path = tmp_path / "worker-timeout.sqlite3"
+    timeout_clock = _fixed_clock(2_000)
+    timed_out_service = DurableAcceptedRunService(
+        repository=SQLiteAcceptedRunRepository(
+            database_path,
+            clock=timeout_clock,
+        ),
+        lease_owner_id="timed-out-worker",
+        lease_duration_ms=30_000,
+        compiler=compile_graph_reference,
+        clock=timeout_clock,
+        worker_target=ProcessWorkerTarget(module_name, "spin_forever"),
+        worker_policy=ProcessWorkerPolicy(
+            timeout_seconds=0.3,
+            termination_grace_seconds=0.2,
+        ),
+    )
+    _admit_empty_run(timed_out_service, run_id="run-timeout")
+
+    with pytest.raises(ProcessWorkerDeadlineExceeded) as error:
+        timed_out_service.advance_run(
+            tenant_id="tenant-1",
+            run_id="run-timeout",
+        )
+
+    assert all(child.pid != error.value.worker_pid for child in active_children())
+    timed_out = timed_out_service.get_run(
+        tenant_id="tenant-1",
+        run_id="run-timeout",
+    )
+    assert timed_out is not None
+    assert timed_out.phase is AcceptedRunPhase.RUNNING
+    assert timed_out.claim is not None
+    assert timed_out.claim.lease_generation == 1
+    assert timed_out.terminal_result_json is None
+    events = timed_out_service.read_events(
+        tenant_id="tenant-1",
+        run_id="run-timeout",
+        after_sequence=0,
+        limit=10,
+    )
+    assert [event.kind for event in events.events] == [
+        "run_accepted",
+        "run_claimed",
+    ]
+
+    recovery_clock = _fixed_clock(40_000)
+    recovered_service = DurableAcceptedRunService(
+        repository=SQLiteAcceptedRunRepository(
+            database_path,
+            clock=recovery_clock,
+        ),
+        lease_owner_id="recovery-worker",
+        lease_duration_ms=30_000,
+        compiler=compile_graph_reference,
+        clock=recovery_clock,
+    )
+    recovered = recovered_service.advance_run(
+        tenant_id="tenant-1",
+        run_id="run-timeout",
+    )
+
+    assert recovered.phase is AcceptedRunPhase.TERMINAL
+    assert recovered.terminal_status == "succeeded"
+    recovered_events = recovered_service.read_events(
+        tenant_id="tenant-1",
+        run_id="run-timeout",
+        after_sequence=0,
+        limit=10,
+    )
+    assert [event.kind for event in recovered_events.events] == [
+        "run_accepted",
+        "run_claimed",
+        "run_reclaimed",
+        "run_succeeded",
+    ]
+
+
+def test_durable_service_preserves_existing_positional_constructor_order(
+    tmp_path: Path,
+) -> None:
+    def clock() -> int:
+        return 1_000
+
+    registry = stdlib_registry()
+
+    service = DurableAcceptedRunService(
+        SQLiteAcceptedRunRepository(
+            tmp_path / "positional.sqlite3",
+            clock=clock,
+        ),
+        "worker-1",
+        30_000,
+        registry,
+        compile_graph_reference,
+        clock,
+    )
+
+    assert service.registry is registry
+    assert service.compiler is compile_graph_reference
+    assert service.clock is clock
+
+
+def test_default_durable_worker_rejects_a_replaced_registry(
+    tmp_path: Path,
+) -> None:
+    registry = stdlib_registry()
+    registry.replace(
+        "prompt.render@1",
+        lambda _inputs, _config, _context: {"text": "replacement"},
+    )
+
+    with pytest.raises(ValueError, match="custom registry"):
+        DurableAcceptedRunService(
+            repository=SQLiteAcceptedRunRepository(
+                tmp_path / "custom-registry.sqlite3"
+            ),
+            lease_owner_id="worker-1",
+            registry=registry,
+            compiler=compile_graph_reference,
+        )
+
+    live_registry = stdlib_registry()
+    service = DurableAcceptedRunService(
+        repository=SQLiteAcceptedRunRepository(tmp_path / "mutated-registry.sqlite3"),
+        lease_owner_id="worker-1",
+        registry=live_registry,
+        compiler=compile_graph_reference,
+    )
+    live_registry.replace(
+        "prompt.render@1",
+        lambda _inputs, _config, _context: {"text": "late replacement"},
+    )
+
+    with pytest.raises(ValueError, match="custom registry"):
+        service.advance_next_run()
+
+
+def test_default_durable_worker_rejects_direct_registry_mutation(
+    tmp_path: Path,
+) -> None:
+    def replacement(_inputs, _config, _context):
+        return {"text": "direct replacement"}
+
+    registry = stdlib_registry()
+    registry.blocks["prompt.render@1"] = replacement
+
+    with pytest.raises(ValueError, match="custom registry"):
+        DurableAcceptedRunService(
+            repository=SQLiteAcceptedRunRepository(
+                tmp_path / "direct-registry-mutation.sqlite3"
+            ),
+            lease_owner_id="worker-1",
+            registry=registry,
+            compiler=compile_graph_reference,
+        )
+
+
+def test_default_durable_worker_revalidates_registry_before_admission(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "admission-registry-mutation.sqlite3"
+    registry = stdlib_registry()
+    service = DurableAcceptedRunService(
+        repository=SQLiteAcceptedRunRepository(path),
+        lease_owner_id="worker-1",
+        registry=registry,
+        compiler=compile_graph_reference,
+    )
+    registry.blocks["prompt.render@1"] = lambda _inputs, _config, _context: {
+        "text": "late replacement"
+    }
+
+    with pytest.raises(ValueError, match="custom registry"):
+        _admit_empty_run(service, run_id="poisoned-admission")
+
+    assert (
+        service.get_run(
+            tenant_id="tenant-1",
+            run_id="poisoned-admission",
+        )
+        is None
+    )
+
+
+def test_durable_service_rejects_mismatched_repository_clock(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(ValueError, match="share the exact clock authority"):
+        DurableAcceptedRunService(
+            repository=SQLiteAcceptedRunRepository(tmp_path / "clock-mismatch.sqlite3"),
+            lease_owner_id="worker-1",
+            clock=_fixed_clock(1_000),
+        )
+
+
+def test_durable_service_rechecks_clock_authority_before_admission(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "mutated-clock.sqlite3"
+    clock = _fixed_clock(1_000)
+    service = DurableAcceptedRunService(
+        repository=SQLiteAcceptedRunRepository(path, clock=clock),
+        lease_owner_id="worker-1",
+        clock=clock,
+    )
+    service.clock = _fixed_clock(2_000)
+
+    with pytest.raises(ValueError, match="share the exact clock authority"):
+        _admit_empty_run(service, run_id="clock-split")
+
+    assert (
+        service.get_run(
+            tenant_id="tenant-1",
+            run_id="clock-split",
+        )
+        is None
+    )
+
+
+def test_default_durable_worker_rejects_a_custom_compiler(
+    tmp_path: Path,
+) -> None:
+    def custom_compiler(document, block_catalog=None, **options):
+        return compile_graph_reference(
+            document,
+            block_catalog=block_catalog,
+            **options,
+        )
+
+    with pytest.raises(ValueError, match="custom compiler"):
+        DurableAcceptedRunService(
+            repository=SQLiteAcceptedRunRepository(
+                tmp_path / "custom-compiler.sqlite3"
+            ),
+            lease_owner_id="worker-1",
+            compiler=custom_compiler,
+        )
+
+
+def test_durable_worker_deadline_must_fit_inside_the_run_lease(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(ValueError, match="must fit inside the run lease"):
+        DurableAcceptedRunService(
+            repository=SQLiteAcceptedRunRepository(
+                tmp_path / "worker-deadline.sqlite3"
+            ),
+            lease_owner_id="worker-1",
+            lease_duration_ms=1_000,
+            compiler=compile_graph_reference,
+            worker_policy=ProcessWorkerPolicy(timeout_seconds=1),
+        )
+
+
+def test_durable_worker_deadline_shrinks_to_the_remaining_lease(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module_name = _write_durable_worker_fixture(tmp_path)
+    monkeypatch.syspath_prepend(str(tmp_path))
+    clock_values = iter((1_000, 30_600))
+
+    def clock() -> int:
+        return next(clock_values)
+
+    service = DurableAcceptedRunService(
+        repository=SQLiteAcceptedRunRepository(
+            tmp_path / "remaining-lease.sqlite3",
+            clock=clock,
+        ),
+        lease_owner_id="worker-1",
+        lease_duration_ms=30_000,
+        compiler=compile_graph_reference,
+        clock=clock,
+        worker_target=ProcessWorkerTarget(module_name, "spin_forever"),
+        worker_policy=ProcessWorkerPolicy(
+            timeout_seconds=15,
+            termination_grace_seconds=0.2,
+        ),
+    )
+    _admit_empty_run(service, run_id="run-remaining-lease")
+
+    with pytest.raises(ProcessWorkerDeadlineExceeded) as error:
+        service.advance_run(
+            tenant_id="tenant-1",
+            run_id="run-remaining-lease",
+        )
+
+    assert 0 < error.value.timeout_seconds < 0.11
+    assert all(child.pid != error.value.worker_pid for child in active_children())
+
+
+def test_oversized_durable_worker_request_fails_terminally(
+    tmp_path: Path,
+) -> None:
+    clock = _fixed_clock(2_000)
+    service = DurableAcceptedRunService(
+        repository=SQLiteAcceptedRunRepository(
+            tmp_path / "oversized-worker-request.sqlite3",
+            clock=clock,
+        ),
+        lease_owner_id="worker-1",
+        lease_duration_ms=30_000,
+        compiler=compile_graph_reference,
+        clock=clock,
+        worker_policy=ProcessWorkerPolicy(
+            timeout_seconds=15,
+            max_request_bytes=256,
+        ),
+    )
+    _admit_empty_run(service, run_id="run-oversized-request")
+
+    failed = service.advance_run(
+        tenant_id="tenant-1",
+        run_id="run-oversized-request",
+    )
+    replay = service.advance_run(
+        tenant_id="tenant-1",
+        run_id="run-oversized-request",
+    )
+
+    assert failed.phase is AcceptedRunPhase.TERMINAL
+    assert failed.terminal_status == "failed"
+    assert replay == failed
+    result = canonical_loads(failed.terminal_result_json)
+    assert isinstance(result, dict)
+    outputs = result["outputs"]
+    assert isinstance(outputs, dict)
+    error = outputs["error"]
+    assert isinstance(error, dict)
+    assert error["code"] == "worker_request_too_large"
+    events = service.read_events(
+        tenant_id="tenant-1",
+        run_id="run-oversized-request",
+        after_sequence=0,
+        limit=10,
+    )
+    assert [event.kind for event in events.events] == [
+        "run_accepted",
+        "run_claimed",
+        "run_failed",
+    ]
+
+
+def test_oversized_durable_worker_response_fails_terminally(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module_name = _write_durable_worker_fixture(tmp_path)
+    monkeypatch.syspath_prepend(str(tmp_path))
+    clock = _fixed_clock(2_000)
+    service = DurableAcceptedRunService(
+        repository=SQLiteAcceptedRunRepository(
+            tmp_path / "oversized-worker-response.sqlite3",
+            clock=clock,
+        ),
+        lease_owner_id="worker-1",
+        lease_duration_ms=30_000,
+        compiler=compile_graph_reference,
+        clock=clock,
+        worker_target=ProcessWorkerTarget(module_name, "succeed"),
+        worker_policy=ProcessWorkerPolicy(
+            timeout_seconds=15,
+            max_result_bytes=256,
+        ),
+    )
+    _admit_empty_run(service, run_id="run-oversized-response")
+
+    failed = service.advance_run(
+        tenant_id="tenant-1",
+        run_id="run-oversized-response",
+    )
+
+    assert failed.phase is AcceptedRunPhase.TERMINAL
+    assert failed.terminal_status == "failed"
+    result = canonical_loads(failed.terminal_result_json)
+    assert isinstance(result, dict)
+    outputs = result["outputs"]
+    assert isinstance(outputs, dict)
+    error = outputs["error"]
+    assert isinstance(error, dict)
+    assert error == {
+        "code": "worker_response_too_large",
+        "maxBytes": 256,
+    }

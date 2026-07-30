@@ -87,10 +87,10 @@ _JOURNAL_KINDS = _LOCAL_JOURNAL_KINDS | frozenset(
         "node_completed",
     }
 )
-_TERMINAL_JOURNAL_KINDS = frozenset(
-    {"run_succeeded", "run_failed", "run_cancelled"}
-)
-BlockCallable = Callable[[dict[str, Any], dict[str, Any], dict[str, Any]], dict[str, Any]]
+_TERMINAL_JOURNAL_KINDS = frozenset({"run_succeeded", "run_failed", "run_cancelled"})
+BlockCallable = Callable[
+    [dict[str, Any], dict[str, Any], dict[str, Any]], dict[str, Any]
+]
 MAX_U64 = (1 << 64) - 1
 _SQLITE_JOURNAL_BUSY_TIMEOUT_MS = 5_000
 _JournalP = ParamSpec("_JournalP")
@@ -113,18 +113,16 @@ def _with_sqlite_execution_journal_lock(
 
 class JournalLike(Protocol):
     @property
-    def records(self) -> Sequence[JournalRecord]:
-        ...
+    def records(self) -> Sequence[JournalRecord]: ...
 
     @property
-    def terminal_kind(self) -> JournalKind | None:
-        ...
+    def terminal_kind(self) -> JournalKind | None: ...
 
-    def append(self, kind: JournalKind, payload: dict[str, Any]) -> JournalRecord:
-        ...
+    def append(self, kind: JournalKind, payload: dict[str, Any]) -> JournalRecord: ...
 
-    def append_terminal(self, kind: JournalKind, payload: dict[str, Any]) -> JournalRecord:
-        ...
+    def append_terminal(
+        self, kind: JournalKind, payload: dict[str, Any]
+    ) -> JournalRecord: ...
 
 
 JournalFactory = Callable[[str], JournalLike]
@@ -151,10 +149,7 @@ def _configured_retry_attempts(value: Any) -> int:
 def _freeze_json_like(value: Any) -> Any:
     if isinstance(value, Mapping):
         return FrozenDict(
-            {
-                key: _freeze_json_like(nested)
-                for key, nested in value.items()
-            }
+            {key: _freeze_json_like(nested) for key, nested in value.items()}
         )
     if isinstance(value, list):
         return FrozenList(_freeze_json_like(nested) for nested in value)
@@ -203,11 +198,7 @@ def _canonical_json_object(owner: str, value: object) -> FrozenDict:
 
 
 def _require_exact_nonempty_string(owner: str, value: object) -> None:
-    if (
-        not isinstance(value, str)
-        or not value.strip()
-        or value != value.strip()
-    ):
+    if not isinstance(value, str) or not value.strip() or value != value.strip():
         raise ValueError(f"{owner} must be an exact nonempty string")
 
 
@@ -307,9 +298,7 @@ class ExecutionJournal:
             self.run_id,
         )
         if isinstance(self.records, (str, bytes, bytearray, Mapping)):
-            raise ValueError(
-                "execution journal records must be JournalRecord values"
-            )
+            raise ValueError("execution journal records must be JournalRecord values")
         try:
             records = tuple(self.records)
         except TypeError as error:
@@ -331,12 +320,8 @@ class ExecutionJournal:
                 "execution journal must not contain multiple terminal records"
             )
         if terminal_records and terminal_records[0] is not records[-1]:
-            raise JournalStateError(
-                "execution journal terminal record must be last"
-            )
-        inferred_terminal = (
-            terminal_records[0].kind if terminal_records else None
-        )
+            raise JournalStateError("execution journal terminal record must be last")
+        inferred_terminal = terminal_records[0].kind if terminal_records else None
         if self.terminal_kind is not None:
             if (
                 not isinstance(self.terminal_kind, str)
@@ -360,17 +345,23 @@ class ExecutionJournal:
                 f"terminal journal kind {kind!r} must be recorded with append_terminal"
             )
         if self.terminal_kind is not None:
-            raise JournalStateError(f"cannot append {kind} after terminal {self.terminal_kind}")
+            raise JournalStateError(
+                f"cannot append {kind} after terminal {self.terminal_kind}"
+            )
         records = _mutable_journal_records(self)
         record = JournalRecord(len(records) + 1, kind, payload)
         records.append(record)
         return record
 
-    def append_terminal(self, kind: JournalKind, payload: dict[str, Any]) -> JournalRecord:
+    def append_terminal(
+        self, kind: JournalKind, payload: dict[str, Any]
+    ) -> JournalRecord:
         if kind not in _TERMINAL_JOURNAL_KINDS:
             raise ValueError(f"journal terminal kind is invalid: {kind!r}")
         if self.terminal_kind is not None:
-            raise JournalStateError(f"terminal already recorded as {self.terminal_kind}")
+            raise JournalStateError(
+                f"terminal already recorded as {self.terminal_kind}"
+            )
         records = _mutable_journal_records(self)
         record = JournalRecord(len(records) + 1, kind, payload)
         records.append(record)
@@ -511,7 +502,9 @@ class SQLiteExecutionJournal:
     def _columns(self) -> set[str]:
         return {
             str(row["name"])
-            for row in self.connection.execute("PRAGMA table_info(journal_records)").fetchall()
+            for row in self.connection.execute(
+                "PRAGMA table_info(journal_records)"
+            ).fetchall()
         }
 
     def _sequence_column(self) -> str:
@@ -553,7 +546,9 @@ class SQLiteExecutionJournal:
             JournalRecord(
                 int(row["sequence"]),
                 row["kind"],
-                _loads_strict_json("execution journal payload_json", str(row["payload_json"]))
+                _loads_strict_json(
+                    "execution journal payload_json", str(row["payload_json"])
+                )
                 if row["payload_json"] is not None
                 else {},
             )
@@ -639,7 +634,9 @@ class SQLiteExecutionJournal:
         return record
 
     @_with_sqlite_execution_journal_lock
-    def append_terminal(self, kind: JournalKind, payload: dict[str, Any]) -> JournalRecord:
+    def append_terminal(
+        self, kind: JournalKind, payload: dict[str, Any]
+    ) -> JournalRecord:
         try:
             self.connection.execute("BEGIN IMMEDIATE")
             record = self._append_in_transaction(kind, payload, terminal=True)
@@ -701,9 +698,7 @@ class RuntimeCheckpoint:
                 "runtime checkpoint remaining_nodes must contain exact non-empty strings"
             ) from error
         if any(
-            not isinstance(node, str)
-            or not node.strip()
-            or node != node.strip()
+            not isinstance(node, str) or not node.strip() or node != node.strip()
             for node in remaining_nodes
         ):
             raise ValueError(
@@ -888,8 +883,7 @@ class CallbackReceiptVerifier(Protocol):
         checkpoint: RuntimeCheckpoint,
         expected_checkpoint_digest: str,
         expected_release_digest: str,
-    ) -> bool:
-        ...
+    ) -> bool: ...
 
 
 class CheckpointAuthorityVerifier(Protocol):
@@ -900,8 +894,7 @@ class CheckpointAuthorityVerifier(Protocol):
         checkpoint: RuntimeCheckpoint,
         *,
         expected_graph_hash: str,
-    ) -> bool:
-        ...
+    ) -> bool: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -945,13 +938,9 @@ class RunResult:
         ):
             raise TypeError("runtime result checkpoint must be a RuntimeCheckpoint")
         if self.status == "waiting_callback" and self.checkpoint is None:
-            raise ValueError(
-                "waiting_callback runtime result requires a checkpoint"
-            )
+            raise ValueError("waiting_callback runtime result requires a checkpoint")
         if self.status != "waiting_callback" and self.checkpoint is not None:
-            raise ValueError(
-                "terminal runtime result must not retain a checkpoint"
-            )
+            raise ValueError("terminal runtime result must not retain a checkpoint")
         if self.checkpoint is not None and self.checkpoint.run_id != self.run_id:
             raise ValueError("runtime result and checkpoint run ids must match")
         journal_run_id = getattr(self.journal, "run_id", None)
@@ -1009,11 +998,38 @@ class LocalRunResult:
         )
 
 
+_FULL_STDLIB_REGISTRY_MARKER = object()
+
+
 @dataclass(slots=True)
 class RuntimeRegistry:
     blocks: dict[str, BlockCallable] = field(default_factory=dict)
     block_catalog: BlockCatalog = field(default_factory=lambda: BlockCatalog({}))
     allow_untyped: bool = False
+    _profile_marker: object | None = field(
+        default=None,
+        init=False,
+        repr=False,
+        compare=False,
+    )
+    _profile_blocks: tuple[tuple[str, BlockCallable], ...] = field(
+        default=(),
+        init=False,
+        repr=False,
+        compare=False,
+    )
+    _profile_block_catalog: BlockCatalog | None = field(
+        default=None,
+        init=False,
+        repr=False,
+        compare=False,
+    )
+    _profile_allow_untyped: bool | None = field(
+        default=None,
+        init=False,
+        repr=False,
+        compare=False,
+    )
 
     def __post_init__(self) -> None:
         if not isinstance(self.allow_untyped, bool):
@@ -1028,6 +1044,7 @@ class RuntimeRegistry:
             )
 
     def register(self, block_id: str, block: BlockCallable) -> None:
+        self._profile_marker = None
         if block_id in self.blocks:
             raise ValueError(f"runtime block {block_id!r} is already registered")
         if not self.allow_untyped and self.block_catalog.get(block_id) is None:
@@ -1037,6 +1054,7 @@ class RuntimeRegistry:
         self.blocks[block_id] = block
 
     def replace(self, block_id: str, block: BlockCallable) -> None:
+        self._profile_marker = None
         if block_id not in self.blocks:
             raise ValueError(f"runtime block {block_id!r} is not registered")
         if not self.allow_untyped and self.block_catalog.get(block_id) is None:
@@ -1123,9 +1141,13 @@ class InProcessRuntime:
             block_catalog=self.registry.compilation_catalog(),
             allow_unknown_blocks=self.registry.allow_untyped,
         )
-        errors = [item for item in plan.diagnostics.diagnostics if item.severity == "error"]
+        errors = [
+            item for item in plan.diagnostics.diagnostics if item.severity == "error"
+        ]
         if errors:
-            message = "; ".join(f"{item.code} {item.path}: {item.message}" for item in errors)
+            message = "; ".join(
+                f"{item.code} {item.path}: {item.message}" for item in errors
+            )
             raise ValueError(message)
 
         normalized = plan.normalized
@@ -1136,9 +1158,13 @@ class InProcessRuntime:
         expected_checkpoint_digest: str | None = None
         if checkpoint is not None:
             if checkpoint.run_id != run_id:
-                raise ValueError("runtime checkpoint run_id must match requested run_id")
+                raise ValueError(
+                    "runtime checkpoint run_id must match requested run_id"
+                )
             if checkpoint.graph_hash != plan.graph_hash:
-                raise ValueError("runtime checkpoint graph_hash must match compiled graph")
+                raise ValueError(
+                    "runtime checkpoint graph_hash must match compiled graph"
+                )
             if not isinstance(callback_receipt, Mapping):
                 raise ValueError("runtime checkpoint resume requires callback_receipt")
             with self._checkpoint_lock:
@@ -1214,11 +1240,17 @@ class InProcessRuntime:
                 raise ValueError(
                     "runtime checkpoint completed node outputs must match remaining nodes"
                 )
-        journal = self.journal_factory(run_id) if self.journal_factory is not None else ExecutionJournal(run_id)
+        journal = (
+            self.journal_factory(run_id)
+            if self.journal_factory is not None
+            else ExecutionJournal(run_id)
+        )
         if checkpoint is None:
             run_started_payload: dict[str, Any] = {"graphHash": plan.graph_hash}
             if deployment_provenance is not None:
-                run_started_payload["deploymentProvenance"] = deployment_provenance.canonical_value()
+                run_started_payload["deploymentProvenance"] = (
+                    deployment_provenance.canonical_value()
+                )
             journal.append("run_started", run_started_payload)
 
         node_inputs: dict[str, dict[str, Any]] = {name: {} for name in nodes}
@@ -1322,9 +1354,7 @@ class InProcessRuntime:
                     raise ValueError(
                         f"runtime callback_receipt {receipt_field} must match checkpoint operation"
                     )
-            callback_idempotency_key = receipt.get(
-                "callback_idempotency_key"
-            )
+            callback_idempotency_key = receipt.get("callback_idempotency_key")
             if (
                 not isinstance(callback_idempotency_key, str)
                 or not callback_idempotency_key.strip()
@@ -1389,9 +1419,7 @@ class InProcessRuntime:
                 == "graphblocks.trusted-callback-resume-admission.v1"
             ):
                 ownership = resume_admission.get("ownership")
-                schema_verification = resume_admission.get(
-                    "schema_verification"
-                )
+                schema_verification = resume_admission.get("schema_verification")
                 required_admission_strings = (
                     "authentication_decision_id",
                     "policy_decision_id",
@@ -1422,17 +1450,13 @@ class InProcessRuntime:
                     == resume_admission[field_name].strip()
                     for field_name in required_admission_strings
                 )
-                ownership_strings_valid = isinstance(
-                    ownership, Mapping
-                ) and all(
+                ownership_strings_valid = isinstance(ownership, Mapping) and all(
                     isinstance(ownership.get(field_name), str)
                     and bool(ownership[field_name])
                     and ownership[field_name] == ownership[field_name].strip()
                     for field_name in required_ownership_strings
                 )
-                schema_strings_valid = isinstance(
-                    schema_verification, Mapping
-                ) and all(
+                schema_strings_valid = isinstance(schema_verification, Mapping) and all(
                     isinstance(schema_verification.get(field_name), str)
                     and bool(schema_verification[field_name])
                     and schema_verification[field_name]
@@ -1457,17 +1481,13 @@ class InProcessRuntime:
                     or resume_admission.get("run_id") != run_id
                     or resume_admission.get("operation_id")
                     != operation.get("operation_id")
-                    or resume_admission.get("node_id")
-                    != operation.get("node_id")
-                    or resume_admission.get("attempt_id")
-                    != operation.get("attempt_id")
-                    or resume_admission.get("checkpoint_id")
-                    != checkpoint.checkpoint_id
+                    or resume_admission.get("node_id") != operation.get("node_id")
+                    or resume_admission.get("attempt_id") != operation.get("attempt_id")
+                    or resume_admission.get("checkpoint_id") != checkpoint.checkpoint_id
                     or resume_admission.get("checkpoint_state_digest")
                     != expected_checkpoint_digest
                     or not isinstance(schema_verification, Mapping)
-                    or schema_verification.get("schema_id")
-                    != receipt.get("schema_id")
+                    or schema_verification.get("schema_id") != receipt.get("schema_id")
                     or schema_verification.get("payload_digest")
                     != receipt.get("payload_digest")
                     or schema_verification.get("verified_by") != verified_by
@@ -1497,9 +1517,7 @@ class InProcessRuntime:
             assert isinstance(output_values, dict)
             remaining = set(checkpoint.remaining_nodes)
             if checkpoint.wait_node not in remaining:
-                raise ValueError(
-                    "runtime checkpoint wait_node must remain pending"
-                )
+                raise ValueError("runtime checkpoint wait_node must remain pending")
             operation["state"] = "resuming"
             wait_result = {
                 "wait": {
@@ -1520,16 +1538,10 @@ class InProcessRuntime:
                     "runtime checkpoint state does not match the issuing runtime"
                 )
             try:
-                descriptor = self.registry.block_catalog.get(
-                    "async.await_callback@1"
-                )
+                descriptor = self.registry.block_catalog.get("async.await_callback@1")
                 if descriptor is not None:
-                    declared_outputs = {
-                        port.name for port in descriptor.outputs
-                    }
-                    unexpected_outputs = sorted(
-                        set(wait_result) - declared_outputs
-                    )
+                    declared_outputs = {port.name for port in descriptor.outputs}
+                    unexpected_outputs = sorted(set(wait_result) - declared_outputs)
                     if unexpected_outputs:
                         raise TypeError(
                             "async.await_callback@1 returned undeclared output(s): "
@@ -1555,8 +1567,7 @@ class InProcessRuntime:
                         isinstance(edge, dict)
                         and isinstance(edge.get("from"), str)
                         and isinstance(edge.get("to"), str)
-                        and edge["from"].split(".", 1)[0]
-                        == checkpoint.wait_node
+                        and edge["from"].split(".", 1)[0] == checkpoint.wait_node
                         and edge["to"].startswith("$output.")
                     ):
                         continue
@@ -1571,9 +1582,7 @@ class InProcessRuntime:
                     for part in parts[:-1]:
                         nested = current.setdefault(part, {})
                         if not isinstance(nested, dict):
-                            raise RuntimeError(
-                                f"output path conflict at {edge['to']}"
-                            )
+                            raise RuntimeError(f"output path conflict at {edge['to']}")
                         current = nested
                     current[parts[-1]] = value
             except Exception as exc:
@@ -1662,9 +1671,16 @@ class InProcessRuntime:
                     if not guard_ready:
                         continue
                     if not isinstance(guard_value, bool):
-                        error = f"node {node_name!r} when guard must resolve to a boolean"
-                        journal.append("node_failed", {"node": node_name, "error": error, "attempt": 0})
-                        journal.append_terminal("run_failed", {"node": node_name, "error": error})
+                        error = (
+                            f"node {node_name!r} when guard must resolve to a boolean"
+                        )
+                        journal.append(
+                            "node_failed",
+                            {"node": node_name, "error": error, "attempt": 0},
+                        )
+                        journal.append_terminal(
+                            "run_failed", {"node": node_name, "error": error}
+                        )
                         if self.run_store is not None:
                             self.run_store.set_status(run_id, "failed")
                         if self.lease_pool is not None:
@@ -1775,14 +1791,20 @@ class InProcessRuntime:
                 block_id = str(node["block"])
                 flow = node.get("flow", {})
                 retry = flow.get("retry", {}) if isinstance(flow, dict) else {}
-                timeout_seconds = parse_duration_seconds(flow.get("timeout")) if isinstance(flow, dict) else None
+                timeout_seconds = (
+                    parse_duration_seconds(flow.get("timeout"))
+                    if isinstance(flow, dict)
+                    else None
+                )
                 max_attempts = 1
                 idempotency_key = None
                 if isinstance(retry, dict):
                     max_attempts = _configured_retry_attempts(
                         retry.get("maxAttempts", retry.get("max_attempts", 1))
                     )
-                    idempotency_key = retry.get("idempotencyKey") or retry.get("idempotency_key")
+                    idempotency_key = retry.get("idempotencyKey") or retry.get(
+                        "idempotency_key"
+                    )
                 else:
                     max_attempts = _configured_retry_attempts(retry)
                 if not (
@@ -1800,7 +1822,11 @@ class InProcessRuntime:
                         max_attempts = 1
                 result: dict[str, Any] | None = None
                 for attempt in range(1, max_attempts + 1):
-                    started_payload: dict[str, Any] = {"node": node_name, "block": block_id, "attempt": attempt}
+                    started_payload: dict[str, Any] = {
+                        "node": node_name,
+                        "block": block_id,
+                        "attempt": attempt,
+                    }
                     if idempotency_key is not None:
                         started_payload["idempotencyKey"] = str(idempotency_key)
                     journal.append("node_started", started_payload)
@@ -1815,8 +1841,14 @@ class InProcessRuntime:
                         if not isinstance(merged_inputs, dict):
                             raise TypeError("block received non-mapping input")
                         started_at = time.perf_counter()
-                        deadline = None if timeout_seconds is None else started_at + timeout_seconds
-                        timeout_reason = f"node {node_name!r} exceeded timeout {flow.get('timeout')}"
+                        deadline = (
+                            None
+                            if timeout_seconds is None
+                            else started_at + timeout_seconds
+                        )
+                        timeout_reason = (
+                            f"node {node_name!r} exceeded timeout {flow.get('timeout')}"
+                        )
                         run_token = context["cancellation_token"]
                         attempt_token = (
                             run_token
@@ -1888,13 +1920,19 @@ class InProcessRuntime:
                         if isinstance(token, CancellationToken) and token.cancelled:
                             journal.append_terminal(
                                 "run_cancelled",
-                                {"reason": token.reason, "node": node_name, "attempt": attempt},
+                                {
+                                    "reason": token.reason,
+                                    "node": node_name,
+                                    "attempt": attempt,
+                                },
                             )
                             if self.run_store is not None:
                                 self.run_store.set_status(run_id, "cancelled")
                             if self.lease_pool is not None:
                                 self.lease_pool.release_all(run_id)
-                            return RunResult(run_id, "cancelled", output_values, journal)
+                            return RunResult(
+                                run_id, "cancelled", output_values, journal
+                            )
                         if attempt < max_attempts:
                             retry_payload: dict[str, Any] = {
                                 "node": node_name,
@@ -1909,8 +1947,13 @@ class InProcessRuntime:
                                 retry_payload,
                             )
                             continue
-                        journal.append("node_failed", {"node": node_name, "error": str(exc), "attempt": attempt})
-                        journal.append_terminal("run_failed", {"node": node_name, "error": str(exc)})
+                        journal.append(
+                            "node_failed",
+                            {"node": node_name, "error": str(exc), "attempt": attempt},
+                        )
+                        journal.append_terminal(
+                            "run_failed", {"node": node_name, "error": str(exc)}
+                        )
                         if self.run_store is not None:
                             self.run_store.set_status(run_id, "failed")
                         if self.lease_pool is not None:
@@ -1934,9 +1977,7 @@ class InProcessRuntime:
                         with self._checkpoint_lock:
                             checkpoint_sequence = self._next_checkpoint_sequence
                             self._next_checkpoint_sequence += 1
-                        checkpoint_id = (
-                            f"{run_id}:{node_name}:{checkpoint_sequence}"
-                        )
+                        checkpoint_id = f"{run_id}:{node_name}:{checkpoint_sequence}"
                         checkpoint_inputs = canonical_loads(canonical_dumps(inputs))
                         checkpoint_remaining_nodes = tuple(sorted(remaining))
                         checkpoint_node_outputs = canonical_loads(
@@ -1954,9 +1995,7 @@ class InProcessRuntime:
                                 "run_id": run_id,
                                 "graph_hash": plan.graph_hash,
                                 "wait_node": node_name,
-                                "remaining_nodes": list(
-                                    checkpoint_remaining_nodes
-                                ),
+                                "remaining_nodes": list(checkpoint_remaining_nodes),
                                 "inputs": checkpoint_inputs,
                                 "node_outputs": checkpoint_node_outputs,
                                 "output_values": checkpoint_output_values,
@@ -1976,9 +2015,9 @@ class InProcessRuntime:
                             state_digest=checkpoint_state_digest,
                         )
                         with self._checkpoint_lock:
-                            self._checkpoint_state_digests[
-                                checkpoint_id
-                            ] = checkpoint_state_digest
+                            self._checkpoint_state_digests[checkpoint_id] = (
+                                checkpoint_state_digest
+                            )
                         if self.run_store is not None:
                             self.run_store.set_status(run_id, "waiting_callback")
                         journal.append(
@@ -2036,7 +2075,9 @@ class InProcessRuntime:
                         for part in parts[:-1]:
                             nested = current.setdefault(part, {})
                             if not isinstance(nested, dict):
-                                raise RuntimeError(f"output path conflict at {edge['to']}")
+                                raise RuntimeError(
+                                    f"output path conflict at {edge['to']}"
+                                )
                             current = nested
                         current[parts[-1]] = value
                     journal.append(
@@ -2063,7 +2104,9 @@ class InProcessRuntime:
 
             if not progressed:
                 unresolved = ", ".join(sorted(remaining))
-                journal.append_terminal("run_failed", {"error": f"unresolved dependencies: {unresolved}"})
+                journal.append_terminal(
+                    "run_failed", {"error": f"unresolved dependencies: {unresolved}"}
+                )
                 if self.run_store is not None:
                     self.run_store.set_status(run_id, "failed")
                 if self.lease_pool is not None:
@@ -2139,8 +2182,8 @@ def _stdlib_registry(
     allow_untyped: bool,
     included_block_ids: frozenset[str] | None,
 ) -> RuntimeRegistry:
-    from .stdlib_governance import GOVERNANCE_BLOCKS
-    from .stdlib_rag import RAG_BLOCKS
+    from .stdlib_governance import _GOVERNANCE_BLOCK_ITEMS
+    from .stdlib_rag import _RAG_BLOCK_ITEMS
 
     catalog = builtin_block_catalog(
         profile="stable" if included_block_ids is not None else "preview"
@@ -2156,7 +2199,9 @@ def _stdlib_registry(
         allow_untyped=allow_untyped,
     )
 
-    def begin_turn(inputs: dict[str, Any], config: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
+    def begin_turn(
+        inputs: dict[str, Any], config: dict[str, Any], context: dict[str, Any]
+    ) -> dict[str, Any]:
         conversation = inputs.get("conversation")
         if isinstance(conversation, Mapping):
             snapshot = dict(conversation)
@@ -2179,7 +2224,9 @@ def _stdlib_registry(
         snapshot["conversationId"] = conversation_id
         messages = snapshot.get("messages", [])
         if not isinstance(messages, list):
-            raise TypeError("conversation.begin_turn@1 input 'conversation.messages' must be a list")
+            raise TypeError(
+                "conversation.begin_turn@1 input 'conversation.messages' must be a list"
+            )
         messages = list(messages)
         if "message" in inputs:
             messages.append(inputs["message"])
@@ -2197,7 +2244,9 @@ def _stdlib_registry(
             "turn": transaction,
         }
 
-    def prompt_render(inputs: dict[str, Any], config: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
+    def prompt_render(
+        inputs: dict[str, Any], config: dict[str, Any], context: dict[str, Any]
+    ) -> dict[str, Any]:
         template = str(config.get("template", "{message.text}"))
 
         def replace(match: re.Match[str]) -> str:
@@ -2211,7 +2260,9 @@ def _stdlib_registry(
 
         return {"prompt": re.sub(r"\{([A-Za-z0-9_.]+)\}", replace, template)}
 
-    def scripted_generate(inputs: dict[str, Any], config: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
+    def scripted_generate(
+        inputs: dict[str, Any], config: dict[str, Any], context: dict[str, Any]
+    ) -> dict[str, Any]:
         prompt = str(inputs.get("prompt", ""))
         script = config.get("script", {})
         if isinstance(script, dict) and prompt in script:
@@ -2220,17 +2271,23 @@ def _stdlib_registry(
             text = str(config.get("response", prompt))
         return {"response": text}
 
-    def resolve_tools(inputs: dict[str, Any], config: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
+    def resolve_tools(
+        inputs: dict[str, Any], config: dict[str, Any], context: dict[str, Any]
+    ) -> dict[str, Any]:
         definitions = []
         definition_configs = config.get("definitions", [])
         if not isinstance(definition_configs, list | tuple):
             raise TypeError("tools.resolve@1 config.definitions must be a sequence")
         for index, item in enumerate(definition_configs):
             if not isinstance(item, dict):
-                raise TypeError("tools.resolve@1 config.definitions entries must be mappings")
+                raise TypeError(
+                    "tools.resolve@1 config.definitions entries must be mappings"
+                )
             definitions.append(
                 ToolDefinition(
-                    name=_required_string(item, "name", "name", f"config.definitions[{index}].name"),
+                    name=_required_string(
+                        item, "name", "name", f"config.definitions[{index}].name"
+                    ),
                     description=_string_with_default(
                         item,
                         "description",
@@ -2250,8 +2307,15 @@ def _stdlib_registry(
                         "output_schema",
                         f"config.definitions[{index}].outputSchema",
                     ),
-                    tags=_string_collection(item.get("tags", ()), f"config.definitions[{index}].tags"),
-                    version=_optional_string(item, "version", "version", f"config.definitions[{index}].version"),
+                    tags=_string_collection(
+                        item.get("tags", ()), f"config.definitions[{index}].tags"
+                    ),
+                    version=_optional_string(
+                        item,
+                        "version",
+                        "version",
+                        f"config.definitions[{index}].version",
+                    ),
                 )
             )
 
@@ -2261,10 +2325,14 @@ def _stdlib_registry(
             raise TypeError("tools.resolve@1 config.bindings must be a sequence")
         for index, item in enumerate(binding_configs):
             if not isinstance(item, dict):
-                raise TypeError("tools.resolve@1 config.bindings entries must be mappings")
+                raise TypeError(
+                    "tools.resolve@1 config.bindings entries must be mappings"
+                )
             implementation_config = item.get("implementation")
             if not isinstance(implementation_config, dict):
-                raise TypeError("tools.resolve@1 binding implementation must be a mapping")
+                raise TypeError(
+                    "tools.resolve@1 binding implementation must be a mapping"
+                )
             kind = _required_string(
                 implementation_config,
                 "kind",
@@ -2359,10 +2427,14 @@ def _stdlib_registry(
                     ),
                 )
             else:
-                raise TypeError(f"tools.resolve@1 unsupported implementation kind {kind!r}")
+                raise TypeError(
+                    f"tools.resolve@1 unsupported implementation kind {kind!r}"
+                )
             timeout_ms = item.get("timeoutMs", item.get("timeout_ms"))
             if timeout_ms is not None and (
-                not isinstance(timeout_ms, int) or isinstance(timeout_ms, bool) or timeout_ms < 0
+                not isinstance(timeout_ms, int)
+                or isinstance(timeout_ms, bool)
+                or timeout_ms < 0
             ):
                 raise TypeError(
                     f"tools.resolve@1 config.bindings[{index}].timeoutMs must be a non-negative integer"
@@ -2382,7 +2454,9 @@ def _stdlib_registry(
                         f"config.bindings[{index}].toolName",
                     ),
                     implementation=implementation,
-                    effects=_string_collection(item.get("effects", ()), f"config.bindings[{index}].effects"),
+                    effects=_string_collection(
+                        item.get("effects", ()), f"config.bindings[{index}].effects"
+                    ),
                     approval=_string_with_default(
                         item,
                         "approval",
@@ -2437,10 +2511,16 @@ def _stdlib_registry(
         if not isinstance(scope_config, dict):
             raise TypeError("tools.resolve@1 config.scope must be a mapping")
         scope = ToolResolutionScope(
-            application_tools=_string_set(scope_config, "applicationTools", "application_tools"),
+            application_tools=_string_set(
+                scope_config, "applicationTools", "application_tools"
+            ),
             graph_tools=_string_set(scope_config, "graphTools", "graph_tools"),
-            principal_tools=_string_set(scope_config, "principalTools", "principal_tools"),
-            tenant_policy_tools=_string_set(scope_config, "tenantPolicyTools", "tenant_policy_tools"),
+            principal_tools=_string_set(
+                scope_config, "principalTools", "principal_tools"
+            ),
+            tenant_policy_tools=_string_set(
+                scope_config, "tenantPolicyTools", "tenant_policy_tools"
+            ),
             conversation_policy_tools=_string_set(
                 scope_config,
                 "conversationPolicyTools",
@@ -2451,11 +2531,15 @@ def _stdlib_registry(
                 "dataClassificationTools",
                 "data_classification_tools",
             ),
-            deployment_tools=_string_set(scope_config, "deploymentTools", "deployment_tools"),
+            deployment_tools=_string_set(
+                scope_config, "deploymentTools", "deployment_tools"
+            ),
             budget_tools=_string_set(scope_config, "budgetTools", "budget_tools"),
         )
         policy_snapshot = inputs.get("policySnapshot")
-        effective_policy_snapshot_id = str(config.get("effectivePolicySnapshotId") or "policy-snapshot-local")
+        effective_policy_snapshot_id = str(
+            config.get("effectivePolicySnapshotId") or "policy-snapshot-local"
+        )
         if isinstance(policy_snapshot, dict):
             effective_policy_snapshot_id = str(
                 policy_snapshot.get("snapshot_id")
@@ -2482,7 +2566,9 @@ def _stdlib_registry(
             ]
         }
 
-    def scripted_agent_run(inputs: dict[str, Any], config: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
+    def scripted_agent_run(
+        inputs: dict[str, Any], config: dict[str, Any], context: dict[str, Any]
+    ) -> dict[str, Any]:
         tools = inputs.get("tools", [])
         if not isinstance(tools, list):
             raise TypeError("agent.run@1 input 'tools' must be a list")
@@ -2493,27 +2579,47 @@ def _stdlib_registry(
                 raise TypeError(f"agent.run@1 input 'tools[{index}]' must be a mapping")
             definition = tool.get("definition")
             if not isinstance(definition, dict):
-                raise TypeError(f"agent.run@1 input 'tools[{index}].definition' must be a mapping")
+                raise TypeError(
+                    f"agent.run@1 input 'tools[{index}].definition' must be a mapping"
+                )
             tool_name = definition.get("name")
             if not isinstance(tool_name, str):
-                raise TypeError(f"agent.run@1 input 'tools[{index}].definition.name' must be a string")
+                raise TypeError(
+                    f"agent.run@1 input 'tools[{index}].definition.name' must be a string"
+                )
             if not tool_name.strip():
-                raise TypeError(f"agent.run@1 input 'tools[{index}].definition.name' must not be empty")
+                raise TypeError(
+                    f"agent.run@1 input 'tools[{index}].definition.name' must not be empty"
+                )
             resolved_tool_id = tool.get("resolved_tool_id", tool.get("resolvedToolId"))
             if not isinstance(resolved_tool_id, str):
-                raise TypeError(f"agent.run@1 input 'tools[{index}].resolved_tool_id' must be a string")
+                raise TypeError(
+                    f"agent.run@1 input 'tools[{index}].resolved_tool_id' must be a string"
+                )
             if not resolved_tool_id.strip():
-                raise TypeError(f"agent.run@1 input 'tools[{index}].resolved_tool_id' must not be empty")
-            definition_digest = tool.get("definition_digest", tool.get("definitionDigest"))
+                raise TypeError(
+                    f"agent.run@1 input 'tools[{index}].resolved_tool_id' must not be empty"
+                )
+            definition_digest = tool.get(
+                "definition_digest", tool.get("definitionDigest")
+            )
             if not isinstance(definition_digest, str):
-                raise TypeError(f"agent.run@1 input 'tools[{index}].definition_digest' must be a string")
+                raise TypeError(
+                    f"agent.run@1 input 'tools[{index}].definition_digest' must be a string"
+                )
             if not definition_digest.strip():
-                raise TypeError(f"agent.run@1 input 'tools[{index}].definition_digest' must not be empty")
+                raise TypeError(
+                    f"agent.run@1 input 'tools[{index}].definition_digest' must not be empty"
+                )
             binding_digest = tool.get("binding_digest", tool.get("bindingDigest"))
             if not isinstance(binding_digest, str):
-                raise TypeError(f"agent.run@1 input 'tools[{index}].binding_digest' must be a string")
+                raise TypeError(
+                    f"agent.run@1 input 'tools[{index}].binding_digest' must be a string"
+                )
             if not binding_digest.strip():
-                raise TypeError(f"agent.run@1 input 'tools[{index}].binding_digest' must not be empty")
+                raise TypeError(
+                    f"agent.run@1 input 'tools[{index}].binding_digest' must not be empty"
+                )
             effective_policy_snapshot_id = tool.get(
                 "effective_policy_snapshot_id",
                 tool.get("effectivePolicySnapshotId"),
@@ -2526,11 +2632,17 @@ def _stdlib_registry(
                 raise TypeError(
                     f"agent.run@1 input 'tools[{index}].effective_policy_snapshot_id' must not be empty"
                 )
-            allowed_for_principal = tool.get("allowed_for_principal", tool.get("allowedForPrincipal"))
+            allowed_for_principal = tool.get(
+                "allowed_for_principal", tool.get("allowedForPrincipal")
+            )
             if not isinstance(allowed_for_principal, bool):
-                raise TypeError(f"agent.run@1 input 'tools[{index}].allowed_for_principal' must be a boolean")
+                raise TypeError(
+                    f"agent.run@1 input 'tools[{index}].allowed_for_principal' must be a boolean"
+                )
             if not allowed_for_principal:
-                raise PermissionError(f"agent.run@1 input 'tools[{index}]' is not allowed for principal")
+                raise PermissionError(
+                    f"agent.run@1 input 'tools[{index}]' is not allowed for principal"
+                )
             valid_until = tool.get("valid_until", tool.get("validUntil"))
             model_visible_tools.append(
                 {
@@ -2562,7 +2674,9 @@ def _stdlib_registry(
         )
         run_store = context.get("run_store")
         if run_store is not None:
-            run_store.record_model_visible_tools(str(context["run_id"]), provenance_tools)
+            run_store.record_model_visible_tools(
+                str(context["run_id"]), provenance_tools
+            )
         messages = inputs.get("messages")
         if messages is None:
             conversation = inputs.get("conversation")
@@ -2587,8 +2701,13 @@ def _stdlib_registry(
             finish_reason = "empty"
         output_policy = config.get("outputPolicy", config.get("output_policy"))
         output_policy = output_policy if isinstance(output_policy, dict) else {}
-        output_policy_profile_ref = output_policy.get("profileRef", output_policy.get("profile_ref"))
-        if not isinstance(output_policy_profile_ref, str) or not output_policy_profile_ref.strip():
+        output_policy_profile_ref = output_policy.get(
+            "profileRef", output_policy.get("profile_ref")
+        )
+        if (
+            not isinstance(output_policy_profile_ref, str)
+            or not output_policy_profile_ref.strip()
+        ):
             output_policy_profile_ref = None
         candidate = {
             "text": text,
@@ -2604,14 +2723,18 @@ def _stdlib_registry(
             "message": candidate,
         }
 
-    def commit_turn(inputs: dict[str, Any], config: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
+    def commit_turn(
+        inputs: dict[str, Any], config: dict[str, Any], context: dict[str, Any]
+    ) -> dict[str, Any]:
         transaction = inputs.get("transaction", inputs.get("turn"))
         if not isinstance(transaction, Mapping):
             raise TypeError(
                 "conversation.commit_turn@1 requires transaction or turn mapping"
             )
         if transaction.get("status") == "policy_stopped":
-            raise RuntimeError("conversation.commit_turn@1 cannot commit policy-stopped turn")
+            raise RuntimeError(
+                "conversation.commit_turn@1 cannot commit policy-stopped turn"
+            )
         if "candidate" in inputs:
             candidate = inputs["candidate"]
         elif "response" in inputs:
@@ -2620,7 +2743,11 @@ def _stdlib_registry(
             raise TypeError(
                 "conversation.commit_turn@1 requires candidate or response input"
             )
-        text = candidate["text"] if isinstance(candidate, Mapping) and "text" in candidate else str(candidate)
+        text = (
+            candidate["text"]
+            if isinstance(candidate, Mapping) and "text" in candidate
+            else str(candidate)
+        )
         answer = {
             "conversationId": transaction["conversationId"],
             "text": text,
@@ -2631,10 +2758,14 @@ def _stdlib_registry(
             "result": candidate,
         }
 
-    def policy_stop_turn(inputs: dict[str, Any], config: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
+    def policy_stop_turn(
+        inputs: dict[str, Any], config: dict[str, Any], context: dict[str, Any]
+    ) -> dict[str, Any]:
         transaction = inputs["transaction"]
         if not isinstance(transaction, dict):
-            raise TypeError("conversation.policy_stop_turn@1 requires transaction mapping")
+            raise TypeError(
+                "conversation.policy_stop_turn@1 requires transaction mapping"
+            )
         stopped = {
             "conversationId": transaction["conversationId"],
             "turnId": transaction["turnId"],
@@ -2644,7 +2775,9 @@ def _stdlib_registry(
         }
         return {"transaction": stopped, "turn": stopped}
 
-    def control_map(inputs: dict[str, Any], config: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
+    def control_map(
+        inputs: dict[str, Any], config: dict[str, Any], context: dict[str, Any]
+    ) -> dict[str, Any]:
         items = inputs.get("items", [])
         if not isinstance(items, list):
             raise TypeError("control.map@2 input 'items' must be a list")
@@ -2661,7 +2794,9 @@ def _stdlib_registry(
         values: list[Any] = []
         for index, item in enumerate(items):
             try:
-                result = block({input_name: item}, block_config, {**context, "map_index": index})
+                result = block(
+                    {input_name: item}, block_config, {**context, "map_index": index}
+                )
                 if not isinstance(result, dict):
                     raise TypeError("mapped block returned non-mapping output")
                 value = result if output_name is None else result[str(output_name)]
@@ -2675,7 +2810,9 @@ def _stdlib_registry(
             return {"outcomes": outcomes, "values": values}
         return {"values": values}
 
-    def control_select(inputs: dict[str, Any], config: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
+    def control_select(
+        inputs: dict[str, Any], config: dict[str, Any], context: dict[str, Any]
+    ) -> dict[str, Any]:
         cases = inputs.get("cases", {})
         if not isinstance(cases, dict):
             raise TypeError("control.select@1 input 'cases' must be a mapping")
@@ -2691,11 +2828,17 @@ def _stdlib_registry(
             return {"value": config["default"], "selected": "default"}
         raise KeyError("control.select@1 found no present case")
 
-    def async_start_operation(inputs: dict[str, Any], config: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
-        operation_id = _required_async_string(config, "operationId", "operation_id", "operationId")
+    def async_start_operation(
+        inputs: dict[str, Any], config: dict[str, Any], context: dict[str, Any]
+    ) -> dict[str, Any]:
+        operation_id = _required_async_string(
+            config, "operationId", "operation_id", "operationId"
+        )
         run_id = _required_async_string(config, "runId", "run_id", "runId")
         node_id = _required_async_string(config, "nodeId", "node_id", "nodeId")
-        attempt_id = _required_async_string(config, "attemptId", "attempt_id", "attemptId")
+        attempt_id = _required_async_string(
+            config, "attemptId", "attempt_id", "attemptId"
+        )
         kind = _required_async_string(config, "kind", "kind", "kind")
         resume_token_hash = _required_async_string(
             config,
@@ -2714,8 +2857,12 @@ def _stdlib_registry(
             "idempotency_key",
             "idempotencyKey",
         )
-        expected_schema = _required_async_string(config, "expectedSchema", "expected_schema", "expectedSchema")
-        created_at_unix_ms = _required_async_u64(config, "createdAtUnixMs", "created_at_unix_ms", "createdAtUnixMs")
+        expected_schema = _required_async_string(
+            config, "expectedSchema", "expected_schema", "expectedSchema"
+        )
+        created_at_unix_ms = _required_async_u64(
+            config, "createdAtUnixMs", "created_at_unix_ms", "createdAtUnixMs"
+        )
         operation: dict[str, Any] = {
             "operation_id": operation_id,
             "run_id": run_id,
@@ -2748,16 +2895,26 @@ def _stdlib_registry(
                 "submittedAtUnixMs",
             )
             if submitted_at_unix_ms < created_at_unix_ms:
-                raise ValueError("async.start_operation@1 invalid operation: submitted_at precedes created_at")
+                raise ValueError(
+                    "async.start_operation@1 invalid operation: submitted_at precedes created_at"
+                )
             operation["submitted_at_unix_ms"] = submitted_at_unix_ms
             operation["state"] = "submitted"
-        expires_at_unix_ms = _optional_async_u64(config, "expiresAtUnixMs", "expires_at_unix_ms", "expiresAtUnixMs")
-        timeout_ms = _optional_duration_ms(config, ("timeoutMs", "timeout_ms", "timeout"), "timeout")
+        expires_at_unix_ms = _optional_async_u64(
+            config, "expiresAtUnixMs", "expires_at_unix_ms", "expiresAtUnixMs"
+        )
+        timeout_ms = _optional_duration_ms(
+            config, ("timeoutMs", "timeout_ms", "timeout"), "timeout"
+        )
         if expires_at_unix_ms is not None and timeout_ms is not None:
-            raise ValueError("async.start_operation@1 must not define both expiresAtUnixMs and timeout")
+            raise ValueError(
+                "async.start_operation@1 must not define both expiresAtUnixMs and timeout"
+            )
         if expires_at_unix_ms is None and timeout_ms is not None:
             if created_at_unix_ms > MAX_U64 - timeout_ms:
-                raise ValueError("async.start_operation@1 timeout exceeds timestamp range")
+                raise ValueError(
+                    "async.start_operation@1 timeout exceeds timestamp range"
+                )
             expires_at_unix_ms = created_at_unix_ms + timeout_ms
         infinite_wait_policy = _optional_async_string(
             config,
@@ -2766,23 +2923,33 @@ def _stdlib_registry(
             "infiniteWaitPolicy",
         )
         if expires_at_unix_ms is not None and infinite_wait_policy is not None:
-            raise ValueError("async.start_operation@1 must not define both timeout and infiniteWaitPolicy")
+            raise ValueError(
+                "async.start_operation@1 must not define both timeout and infiniteWaitPolicy"
+            )
         if infinite_wait_policy is not None:
             operation["infinite_wait_policy"] = infinite_wait_policy
         if expires_at_unix_ms is not None:
             submitted_at_unix_ms = operation.get("submitted_at_unix_ms")
-            if not isinstance(submitted_at_unix_ms, int) or isinstance(submitted_at_unix_ms, bool):
-                raise ValueError("async.start_operation@1 invalid operation: non-created operations require submitted_at")
-            if (
-                expires_at_unix_ms <= submitted_at_unix_ms
+            if not isinstance(submitted_at_unix_ms, int) or isinstance(
+                submitted_at_unix_ms, bool
             ):
-                raise ValueError("async.start_operation@1 invalid operation: expires_at must be after submitted_at")
+                raise ValueError(
+                    "async.start_operation@1 invalid operation: non-created operations require submitted_at"
+                )
+            if expires_at_unix_ms <= submitted_at_unix_ms:
+                raise ValueError(
+                    "async.start_operation@1 invalid operation: expires_at must be after submitted_at"
+                )
             operation["expires_at_unix_ms"] = expires_at_unix_ms
             operation["state"] = "waiting_callback"
         elif infinite_wait_policy is not None:
             submitted_at_unix_ms = operation.get("submitted_at_unix_ms")
-            if not isinstance(submitted_at_unix_ms, int) or isinstance(submitted_at_unix_ms, bool):
-                raise ValueError("async.start_operation@1 invalid operation: non-created operations require submitted_at")
+            if not isinstance(submitted_at_unix_ms, int) or isinstance(
+                submitted_at_unix_ms, bool
+            ):
+                raise ValueError(
+                    "async.start_operation@1 invalid operation: non-created operations require submitted_at"
+                )
             operation["state"] = "waiting_callback"
         if "subject" in inputs:
             operation["subject"] = inputs["subject"]
@@ -2790,7 +2957,9 @@ def _stdlib_registry(
             operation["changeset"] = inputs["changeset"]
         return {"operation": operation}
 
-    def async_await_callback(inputs: dict[str, Any], config: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
+    def async_await_callback(
+        inputs: dict[str, Any], config: dict[str, Any], context: dict[str, Any]
+    ) -> dict[str, Any]:
         operation = _required_async_operation_input(inputs, "async.await_callback@1")
         if operation.get("state") != "waiting_callback":
             raise RuntimeError(
@@ -2798,7 +2967,9 @@ def _stdlib_registry(
             )
         on_timeout = str(config.get("onTimeout", config.get("on_timeout", "fail")))
         if on_timeout not in {"fail", "cancel", "expire"}:
-            raise ValueError("async.await_callback@1 onTimeout must be one of fail, cancel, or expire")
+            raise ValueError(
+                "async.await_callback@1 onTimeout must be one of fail, cancel, or expire"
+            )
         checkpoint = config.get("checkpoint", True)
         if not isinstance(checkpoint, bool):
             raise ValueError("async.await_callback@1 checkpoint must be a boolean")
@@ -2808,7 +2979,9 @@ def _stdlib_registry(
             "checkpoint": checkpoint,
             "onTimeout": on_timeout,
         }
-        timeout_ms = _optional_duration_ms(config, ("timeoutMs", "timeout_ms", "timeout"), "timeout")
+        timeout_ms = _optional_duration_ms(
+            config, ("timeoutMs", "timeout_ms", "timeout"), "timeout"
+        )
         if timeout_ms is not None:
             wait["timeoutMs"] = timeout_ms
         infinite_wait_policy = _optional_async_string(
@@ -2818,13 +2991,19 @@ def _stdlib_registry(
             "infiniteWaitPolicy",
         )
         if timeout_ms is not None and infinite_wait_policy is not None:
-            raise ValueError("async.await_callback@1 must not define both timeout and infiniteWaitPolicy")
+            raise ValueError(
+                "async.await_callback@1 must not define both timeout and infiniteWaitPolicy"
+            )
         if infinite_wait_policy is not None:
             wait["infiniteWaitPolicy"] = infinite_wait_policy
         return {"wait": wait}
 
-    def async_poll_operation(inputs: dict[str, Any], config: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
-        operation = dict(_required_async_operation_input(inputs, "async.poll_operation@1"))
+    def async_poll_operation(
+        inputs: dict[str, Any], config: dict[str, Any], context: dict[str, Any]
+    ) -> dict[str, Any]:
+        operation = dict(
+            _required_async_operation_input(inputs, "async.poll_operation@1")
+        )
         interval_ms = _optional_duration_ms(
             config,
             ("intervalMs", "interval_ms", "interval"),
@@ -2840,8 +3019,12 @@ def _stdlib_registry(
         if max_interval_ms is None:
             max_interval_ms = interval_ms
         if max_interval_ms < interval_ms:
-            raise ValueError("async.poll_operation@1 maxInterval must not be less than interval")
-        timeout_ms = _optional_duration_ms(config, ("timeoutMs", "timeout_ms", "timeout"), "timeout")
+            raise ValueError(
+                "async.poll_operation@1 maxInterval must not be less than interval"
+            )
+        timeout_ms = _optional_duration_ms(
+            config, ("timeoutMs", "timeout_ms", "timeout"), "timeout"
+        )
         infinite_wait_policy = _optional_async_string(
             config,
             "infiniteWaitPolicy",
@@ -2851,7 +3034,9 @@ def _stdlib_registry(
         if timeout_ms is None and infinite_wait_policy is None:
             raise ValueError("async.poll_operation@1 requires timeoutMs")
         if timeout_ms is not None and infinite_wait_policy is not None:
-            raise ValueError("async.poll_operation@1 must not define both timeout and infiniteWaitPolicy")
+            raise ValueError(
+                "async.poll_operation@1 must not define both timeout and infiniteWaitPolicy"
+            )
         operation["state"] = "polling"
         poll = {
             "state": "polling",
@@ -2865,28 +3050,40 @@ def _stdlib_registry(
             poll["infiniteWaitPolicy"] = infinite_wait_policy
         return {"poll": poll}
 
-    def async_complete_operation(inputs: dict[str, Any], config: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
+    def async_complete_operation(
+        inputs: dict[str, Any], config: dict[str, Any], context: dict[str, Any]
+    ) -> dict[str, Any]:
         config = _required_async_config_mapping(config, "async.complete_operation@1")
-        operation = _required_async_operation_input(inputs, "async.complete_operation@1")
+        operation = _required_async_operation_input(
+            inputs, "async.complete_operation@1"
+        )
         completed_at_unix_ms = _optional_async_u64(
             config,
             "completedAtUnixMs",
             "completed_at_unix_ms",
             "completedAtUnixMs",
         )
-        _validate_async_terminal_timestamp(operation, completed_at_unix_ms, "async.complete_operation@1")
+        _validate_async_terminal_timestamp(
+            operation, completed_at_unix_ms, "async.complete_operation@1"
+        )
         return {
             "result": _async_operation_result(
                 str(operation["operation_id"]),
                 "completed",
                 output=inputs.get("output"),
-                result_projections=_async_result_projections(config, "async.complete_operation@1"),
-                external_effects=_async_external_effects(config, "async.complete_operation@1"),
+                result_projections=_async_result_projections(
+                    config, "async.complete_operation@1"
+                ),
+                external_effects=_async_external_effects(
+                    config, "async.complete_operation@1"
+                ),
                 completed_at_unix_ms=completed_at_unix_ms,
             )
         }
 
-    def async_cancel_operation(inputs: dict[str, Any], config: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
+    def async_cancel_operation(
+        inputs: dict[str, Any], config: dict[str, Any], context: dict[str, Any]
+    ) -> dict[str, Any]:
         config = _required_async_config_mapping(config, "async.cancel_operation@1")
         operation = _required_async_operation_input(inputs, "async.cancel_operation@1")
         completed_at_unix_ms = _optional_async_u64(
@@ -2895,18 +3092,26 @@ def _stdlib_registry(
             "cancelled_at_unix_ms",
             "cancelledAtUnixMs",
         )
-        _validate_async_terminal_timestamp(operation, completed_at_unix_ms, "async.cancel_operation@1")
+        _validate_async_terminal_timestamp(
+            operation, completed_at_unix_ms, "async.cancel_operation@1"
+        )
         return {
             "result": _async_operation_result(
                 str(operation["operation_id"]),
                 "cancelled",
-                result_projections=_async_result_projections(config, "async.cancel_operation@1"),
-                external_effects=_async_external_effects(config, "async.cancel_operation@1"),
+                result_projections=_async_result_projections(
+                    config, "async.cancel_operation@1"
+                ),
+                external_effects=_async_external_effects(
+                    config, "async.cancel_operation@1"
+                ),
                 completed_at_unix_ms=completed_at_unix_ms,
             )
         }
 
-    def async_expire_operation(inputs: dict[str, Any], config: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
+    def async_expire_operation(
+        inputs: dict[str, Any], config: dict[str, Any], context: dict[str, Any]
+    ) -> dict[str, Any]:
         config = _required_async_config_mapping(config, "async.expire_operation@1")
         operation = _required_async_operation_input(inputs, "async.expire_operation@1")
         completed_at_unix_ms = _optional_async_u64(
@@ -2915,25 +3120,35 @@ def _stdlib_registry(
             "expired_at_unix_ms",
             "expiredAtUnixMs",
         )
-        _validate_async_terminal_timestamp(operation, completed_at_unix_ms, "async.expire_operation@1")
+        _validate_async_terminal_timestamp(
+            operation, completed_at_unix_ms, "async.expire_operation@1"
+        )
         return {
             "result": _async_operation_result(
                 str(operation["operation_id"]),
                 "expired",
-                result_projections=_async_result_projections(config, "async.expire_operation@1"),
-                external_effects=_async_external_effects(config, "async.expire_operation@1"),
+                result_projections=_async_result_projections(
+                    config, "async.expire_operation@1"
+                ),
+                external_effects=_async_external_effects(
+                    config, "async.expire_operation@1"
+                ),
                 completed_at_unix_ms=completed_at_unix_ms,
             )
         }
 
-    def _config_value(config: Mapping[str, Any], camel_key: str, snake_key: str) -> tuple[bool, Any]:
+    def _config_value(
+        config: Mapping[str, Any], camel_key: str, snake_key: str
+    ) -> tuple[bool, Any]:
         if camel_key in config:
             return True, config[camel_key]
         if snake_key in config:
             return True, config[snake_key]
         return False, None
 
-    def _required_async_config_mapping(config: Any, block_label: str) -> Mapping[str, Any]:
+    def _required_async_config_mapping(
+        config: Any, block_label: str
+    ) -> Mapping[str, Any]:
         if not isinstance(config, Mapping):
             raise TypeError(f"{block_label} config must be a mapping")
         return config
@@ -2945,13 +3160,17 @@ def _stdlib_registry(
             raise TypeError(f"tools.resolve@1 {label} must not be empty")
         return value
 
-    def _required_string(config: Mapping[str, Any], camel_key: str, snake_key: str, label: str) -> str:
+    def _required_string(
+        config: Mapping[str, Any], camel_key: str, snake_key: str, label: str
+    ) -> str:
         found, value = _config_value(config, camel_key, snake_key)
         if not found:
             raise TypeError(f"tools.resolve@1 {label} is required")
         return _validate_config_string(value, label)
 
-    def _optional_string(config: Mapping[str, Any], camel_key: str, snake_key: str, label: str) -> str | None:
+    def _optional_string(
+        config: Mapping[str, Any], camel_key: str, snake_key: str, label: str
+    ) -> str | None:
         found, value = _config_value(config, camel_key, snake_key)
         if not found or value is None:
             return None
@@ -2990,57 +3209,94 @@ def _stdlib_registry(
         if not isinstance(value, Mapping):
             raise TypeError(f"tools.resolve@1 {label} must be a mapping")
         mapping = dict(value)
-        if any(not isinstance(key, str) or not isinstance(item, str) for key, item in mapping.items()):
+        if any(
+            not isinstance(key, str) or not isinstance(item, str)
+            for key, item in mapping.items()
+        ):
             raise TypeError(f"tools.resolve@1 {label} entries must be strings")
         return mapping
 
-    def _string_set(config: dict[str, Any], camel_key: str, snake_key: str) -> frozenset[str] | None:
+    def _string_set(
+        config: dict[str, Any], camel_key: str, snake_key: str
+    ) -> frozenset[str] | None:
         value = config.get(camel_key, config.get(snake_key))
         if value is None:
             return None
         return _string_collection(value, f"scope {camel_key}")
 
-    def _required_async_string(config: Mapping[str, Any], camel_key: str, snake_key: str, label: str) -> str:
+    def _required_async_string(
+        config: Mapping[str, Any], camel_key: str, snake_key: str, label: str
+    ) -> str:
         found, value = _config_value(config, camel_key, snake_key)
         if not found:
             raise TypeError(f"async.start_operation@1 config.{label} is required")
         if not isinstance(value, str) or not value.strip():
-            raise TypeError(f"async.start_operation@1 config.{label} must be a non-empty string")
+            raise TypeError(
+                f"async.start_operation@1 config.{label} must be a non-empty string"
+            )
         return value
 
-    def _validate_async_resume_token_hash(owner: str, field_name: str, value: str) -> str:
+    def _validate_async_resume_token_hash(
+        owner: str, field_name: str, value: str
+    ) -> str:
         if not value.startswith("sha256:"):
             raise ValueError(f"{owner} {field_name} must be a canonical sha256 digest")
         digest = value.removeprefix("sha256:")
-        if len(digest) != 64 or any(character not in "0123456789abcdef" for character in digest):
+        if len(digest) != 64 or any(
+            character not in "0123456789abcdef" for character in digest
+        ):
             raise ValueError(f"{owner} {field_name} must be a canonical sha256 digest")
         return value
 
-    def _optional_async_string(config: Mapping[str, Any], camel_key: str, snake_key: str, label: str) -> str | None:
+    def _optional_async_string(
+        config: Mapping[str, Any], camel_key: str, snake_key: str, label: str
+    ) -> str | None:
         found, value = _config_value(config, camel_key, snake_key)
         if not found or value is None:
             return None
         if not isinstance(value, str) or not value.strip():
-            raise TypeError(f"async operation config.{label} must be a non-empty string")
+            raise TypeError(
+                f"async operation config.{label} must be a non-empty string"
+            )
         return value
 
-    def _required_async_u64(config: Mapping[str, Any], camel_key: str, snake_key: str, label: str) -> int:
+    def _required_async_u64(
+        config: Mapping[str, Any], camel_key: str, snake_key: str, label: str
+    ) -> int:
         found, value = _config_value(config, camel_key, snake_key)
         if not found:
             raise TypeError(f"async.start_operation@1 config.{label} is required")
-        if isinstance(value, bool) or not isinstance(value, int) or value < 0 or value > MAX_U64:
-            raise TypeError(f"async operation config.{label} must be an unsigned 64-bit integer")
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, int)
+            or value < 0
+            or value > MAX_U64
+        ):
+            raise TypeError(
+                f"async operation config.{label} must be an unsigned 64-bit integer"
+            )
         return value
 
-    def _optional_async_u64(config: Mapping[str, Any], camel_key: str, snake_key: str, label: str) -> int | None:
+    def _optional_async_u64(
+        config: Mapping[str, Any], camel_key: str, snake_key: str, label: str
+    ) -> int | None:
         found, value = _config_value(config, camel_key, snake_key)
         if not found or value is None:
             return None
-        if isinstance(value, bool) or not isinstance(value, int) or value < 0 or value > MAX_U64:
-            raise TypeError(f"async operation config.{label} must be an unsigned 64-bit integer")
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, int)
+            or value < 0
+            or value > MAX_U64
+        ):
+            raise TypeError(
+                f"async operation config.{label} must be an unsigned 64-bit integer"
+            )
         return value
 
-    def _optional_duration_ms(config: Mapping[str, Any], keys: tuple[str, ...], label: str) -> int | None:
+    def _optional_duration_ms(
+        config: Mapping[str, Any], keys: tuple[str, ...], label: str
+    ) -> int | None:
         value = None
         for key in keys:
             if key in config:
@@ -3049,12 +3305,18 @@ def _stdlib_registry(
         if value is None:
             return None
         if isinstance(value, bool):
-            raise ValueError(f"async operation config.{label} must be a positive duration")
+            raise ValueError(
+                f"async operation config.{label} must be a positive duration"
+            )
         if isinstance(value, int):
             if value <= 0:
-                raise ValueError(f"async operation config.{label} must be a positive duration")
+                raise ValueError(
+                    f"async operation config.{label} must be a positive duration"
+                )
             if value > MAX_U64:
-                raise ValueError(f"async operation config.{label} must be an unsigned 64-bit duration")
+                raise ValueError(
+                    f"async operation config.{label} must be an unsigned 64-bit duration"
+                )
             return value
         duration_ms = parse_duration_milliseconds(value)
         if duration_ms is None:
@@ -3063,10 +3325,14 @@ def _stdlib_registry(
                 raise ValueError(
                     f"async operation config.{label} must be an unsigned 64-bit duration"
                 )
-            raise ValueError(f"async operation config.{label} must be a positive duration")
+            raise ValueError(
+                f"async operation config.{label} must be a positive duration"
+            )
         return duration_ms
 
-    def _required_async_operation_input(inputs: Mapping[str, Any], block_label: str) -> dict[str, Any]:
+    def _required_async_operation_input(
+        inputs: Mapping[str, Any], block_label: str
+    ) -> dict[str, Any]:
         operation = inputs.get("operation")
         if not isinstance(operation, dict):
             raise TypeError(f"{block_label} requires operation input")
@@ -3084,7 +3350,9 @@ def _stdlib_registry(
         ):
             value = normalized.get(snake_key, normalized.get(camel_key))
             if not isinstance(value, str) or not value.strip():
-                raise TypeError(f"{block_label} input operation.{snake_key} must be a non-empty string")
+                raise TypeError(
+                    f"{block_label} input operation.{snake_key} must be a non-empty string"
+                )
             if snake_key == "resume_token_hash":
                 value = _validate_async_resume_token_hash(
                     f"{block_label} input operation",
@@ -3100,7 +3368,9 @@ def _stdlib_registry(
             if value is None:
                 continue
             if not isinstance(value, str) or not value.strip():
-                raise TypeError(f"{block_label} input operation.{snake_key} must be a non-empty string")
+                raise TypeError(
+                    f"{block_label} input operation.{snake_key} must be a non-empty string"
+                )
             normalized[snake_key] = value
         for snake_key, camel_key in (
             ("created_at_unix_ms", "createdAtUnixMs"),
@@ -3111,8 +3381,15 @@ def _stdlib_registry(
             value = normalized.get(snake_key, normalized.get(camel_key))
             if value is None:
                 continue
-            if isinstance(value, bool) or not isinstance(value, int) or value < 0 or value > MAX_U64:
-                raise TypeError(f"{block_label} input operation.{snake_key} must be an unsigned 64-bit integer")
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, int)
+                or value < 0
+                or value > MAX_U64
+            ):
+                raise TypeError(
+                    f"{block_label} input operation.{snake_key} must be an unsigned 64-bit integer"
+                )
             normalized[snake_key] = value
         return normalized
 
@@ -3126,13 +3403,21 @@ def _stdlib_registry(
         if completed_at_unix_ms == 0:
             raise ValueError(f"{block_label} terminal timestamp must be positive")
         submitted_at_unix_ms = operation.get("submitted_at_unix_ms")
-        if isinstance(submitted_at_unix_ms, int) and not isinstance(submitted_at_unix_ms, bool):
+        if isinstance(submitted_at_unix_ms, int) and not isinstance(
+            submitted_at_unix_ms, bool
+        ):
             if completed_at_unix_ms < submitted_at_unix_ms:
-                raise ValueError(f"{block_label} terminal timestamp must not be earlier than submitted_at_unix_ms")
+                raise ValueError(
+                    f"{block_label} terminal timestamp must not be earlier than submitted_at_unix_ms"
+                )
         expires_at_unix_ms = operation.get("expires_at_unix_ms")
-        if isinstance(expires_at_unix_ms, int) and not isinstance(expires_at_unix_ms, bool):
+        if isinstance(expires_at_unix_ms, int) and not isinstance(
+            expires_at_unix_ms, bool
+        ):
             if completed_at_unix_ms >= expires_at_unix_ms:
-                raise ValueError(f"{block_label} terminal timestamp must be earlier than expires_at_unix_ms")
+                raise ValueError(
+                    f"{block_label} terminal timestamp must be earlier than expires_at_unix_ms"
+                )
 
     def _async_operation_result(
         operation_id: str,
@@ -3157,7 +3442,9 @@ def _stdlib_registry(
             "completed_at_unix_ms": completed_at_unix_ms,
         }
 
-    def _async_result_projections(config: Mapping[str, Any], block_label: str) -> dict[str, list[dict[str, Any]]]:
+    def _async_result_projections(
+        config: Mapping[str, Any], block_label: str
+    ) -> dict[str, list[dict[str, Any]]]:
         return {
             "artifacts": _async_result_projection(config, "artifacts", block_label),
             "diagnostics": _async_result_projection(config, "diagnostics", block_label),
@@ -3166,39 +3453,64 @@ def _stdlib_registry(
             "usage": _async_result_projection(config, "usage", block_label),
         }
 
-    def _async_result_projection(config: Mapping[str, Any], field: str, block_label: str) -> list[dict[str, Any]]:
+    def _async_result_projection(
+        config: Mapping[str, Any], field: str, block_label: str
+    ) -> list[dict[str, Any]]:
         raw_items = config.get(field, [])
         if raw_items is None:
             return []
-        if isinstance(raw_items, Mapping) or isinstance(raw_items, (str, bytes, bytearray, memoryview)):
+        if isinstance(raw_items, Mapping) or isinstance(
+            raw_items, (str, bytes, bytearray, memoryview)
+        ):
             raise TypeError(f"{block_label} config.{field} must be a sequence")
         if not isinstance(raw_items, list | tuple):
             raise TypeError(f"{block_label} config.{field} must be a sequence")
         items = []
         for index, raw_item in enumerate(raw_items):
             if not isinstance(raw_item, Mapping):
-                raise TypeError(f"{block_label} config.{field}[{index}] must be a mapping")
+                raise TypeError(
+                    f"{block_label} config.{field}[{index}] must be a mapping"
+                )
             items.append(dict(raw_item))
         return items
 
-    def _async_external_effects(config: Mapping[str, Any], block_label: str) -> list[dict[str, Any]]:
+    def _async_external_effects(
+        config: Mapping[str, Any], block_label: str
+    ) -> list[dict[str, Any]]:
         raw_effects = config.get("externalEffects", config.get("external_effects", []))
         if not isinstance(raw_effects, list | tuple):
             raise TypeError(f"{block_label} config.externalEffects must be a sequence")
         effects = []
         for index, raw_effect in enumerate(raw_effects):
             if not isinstance(raw_effect, Mapping):
-                raise TypeError(f"{block_label} config.externalEffects[{index}] must be a mapping")
+                raise TypeError(
+                    f"{block_label} config.externalEffects[{index}] must be a mapping"
+                )
             effect = {
-                "effect_id": _required_effect_string(raw_effect, "effectId", "effect_id", "effectId", block_label),
-                "target": _required_effect_string(raw_effect, "target", "target", "target", block_label),
-                "operation": _required_effect_string(raw_effect, "operation", "operation", "operation", block_label),
-                "outcome": _required_effect_string(raw_effect, "outcome", "outcome", "outcome", block_label),
+                "effect_id": _required_effect_string(
+                    raw_effect, "effectId", "effect_id", "effectId", block_label
+                ),
+                "target": _required_effect_string(
+                    raw_effect, "target", "target", "target", block_label
+                ),
+                "operation": _required_effect_string(
+                    raw_effect, "operation", "operation", "operation", block_label
+                ),
+                "outcome": _required_effect_string(
+                    raw_effect, "outcome", "outcome", "outcome", block_label
+                ),
                 "idempotency_key": None,
                 "provider_effect_id": None,
             }
-            if effect["outcome"] not in {"no_external_effect", "committed", "not_committed", "unknown"}:
-                raise ValueError(f"{block_label} config.externalEffects[{index}].outcome is unsupported")
+            if effect["outcome"] not in {
+                "no_external_effect",
+                "committed",
+                "not_committed",
+                "unknown",
+            }:
+                raise ValueError(
+                    f"{block_label} config.externalEffects[{index}].outcome is unsupported"
+                )
             idempotency_key = _optional_effect_string(
                 raw_effect,
                 "idempotencyKey",
@@ -3217,7 +3529,9 @@ def _stdlib_registry(
             )
             if provider_effect_id is not None:
                 if effect["outcome"] != "committed":
-                    raise ValueError(f"{block_label} provider identity but no committed external effect")
+                    raise ValueError(
+                        f"{block_label} provider identity but no committed external effect"
+                    )
                 effect["provider_effect_id"] = provider_effect_id
             effects.append(effect)
         return effects
@@ -3233,7 +3547,9 @@ def _stdlib_registry(
         if not found:
             raise TypeError(f"{block_label} config.externalEffects.{label} is required")
         if not isinstance(value, str) or not value.strip():
-            raise TypeError(f"{block_label} config.externalEffects.{label} must be a non-empty string")
+            raise TypeError(
+                f"{block_label} config.externalEffects.{label} must be a non-empty string"
+            )
         return value
 
     def _optional_effect_string(
@@ -3247,7 +3563,9 @@ def _stdlib_registry(
         if not found or value is None:
             return None
         if not isinstance(value, str) or not value.strip():
-            raise TypeError(f"{block_label} config.externalEffects.{label} must be a non-empty string")
+            raise TypeError(
+                f"{block_label} config.externalEffects.{label} must be a non-empty string"
+            )
         return value
 
     handlers = [
@@ -3266,13 +3584,18 @@ def _stdlib_registry(
         ("async.complete_operation@1", async_complete_operation),
         ("async.cancel_operation@1", async_cancel_operation),
         ("async.expire_operation@1", async_expire_operation),
-        *RAG_BLOCKS.items(),
-        *GOVERNANCE_BLOCKS.items(),
+        *_RAG_BLOCK_ITEMS,
+        *_GOVERNANCE_BLOCK_ITEMS,
     ]
     for block_id, block in handlers:
         if included_block_ids is not None and block_id not in included_block_ids:
             continue
         registry.register(block_id, block)
+    if included_block_ids is None and not allow_untyped:
+        registry._profile_marker = _FULL_STDLIB_REGISTRY_MARKER
+        registry._profile_blocks = tuple(registry.blocks.items())
+        registry._profile_block_catalog = registry.block_catalog
+        registry._profile_allow_untyped = registry.allow_untyped
     return registry
 
 
@@ -3282,6 +3605,24 @@ def stdlib_registry(*, allow_untyped: bool = False) -> RuntimeRegistry:
     return _stdlib_registry(
         allow_untyped=allow_untyped,
         included_block_ids=None,
+    )
+
+
+def is_full_stdlib_registry(registry: object) -> bool:
+    """Return whether a registry is an unmodified full stdlib factory result."""
+
+    if (
+        not isinstance(registry, RuntimeRegistry)
+        or registry._profile_marker is not _FULL_STDLIB_REGISTRY_MARKER
+        or type(registry.blocks) is not dict
+        or registry.block_catalog is not registry._profile_block_catalog
+        or registry.allow_untyped is not registry._profile_allow_untyped
+        or len(registry.blocks) != len(registry._profile_blocks)
+    ):
+        return False
+    return all(
+        registry.blocks.get(block_id) is handler
+        for block_id, handler in registry._profile_blocks
     )
 
 

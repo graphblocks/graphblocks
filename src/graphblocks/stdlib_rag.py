@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
+from types import MappingProxyType
 from typing import Any
 
 from .canonical import canonical_hash
@@ -654,13 +655,14 @@ def answer_validate_grounding(
     }
 
 
-RAG_BLOCKS: dict[str, RagBlockCallable] = {
-    "retrieve.execute_plan@1": retrieve_execute_plan,
-    "retrieve.fuse@1": retrieve_fuse,
-    "rank.documents@1": rank_documents,
-    "context.build@1": context_build,
-    "answer.validate_grounding@1": answer_validate_grounding,
-}
+_RAG_BLOCK_ITEMS: tuple[tuple[str, RagBlockCallable], ...] = (
+    ("retrieve.execute_plan@1", retrieve_execute_plan),
+    ("retrieve.fuse@1", retrieve_fuse),
+    ("rank.documents@1", rank_documents),
+    ("context.build@1", context_build),
+    ("answer.validate_grounding@1", answer_validate_grounding),
+)
+RAG_BLOCKS: Mapping[str, RagBlockCallable] = MappingProxyType(dict(_RAG_BLOCK_ITEMS))
 
 
 __all__ = [

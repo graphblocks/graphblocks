@@ -45,9 +45,7 @@ _CALLBACK_GRAPH = {
                     "kind": "ci_job",
                     "providerOperationId": "provider-operation-1",
                     "resumeTokenHash": _CALLBACK_RESUME_TOKEN_HASH,
-                    "idempotencyKey": (
-                        _CALLBACK_OPERATION_IDEMPOTENCY_KEY
-                    ),
+                    "idempotencyKey": (_CALLBACK_OPERATION_IDEMPOTENCY_KEY),
                     "expectedSchema": "schemas/CICallback@1",
                     "createdAtUnixMs": 1_000,
                     "submittedAtUnixMs": 1_050,
@@ -68,9 +66,7 @@ _CALLBACK_GRAPH = {
                     "checkpoint": True,
                     "onTimeout": "fail",
                     "timeoutMs": 60_000,
-                    "idempotencyKey": (
-                        _CALLBACK_OPERATION_IDEMPOTENCY_KEY
-                    ),
+                    "idempotencyKey": (_CALLBACK_OPERATION_IDEMPOTENCY_KEY),
                     "callback": {"schema": "schemas/CICallback@1"},
                     "resume": {
                         "requirePolicyReevaluation": True,
@@ -98,16 +94,20 @@ def _app(
     clock_value: int,
     failpoint: Callable[[str], None] | None = None,
 ) -> DurableAcceptedRunServerApp:
+    def clock() -> int:
+        return clock_value
+
     return DurableAcceptedRunServerApp(
         service=DurableAcceptedRunService(
             repository=SQLiteAcceptedRunRepository(
                 path,
                 failpoint=failpoint,
+                clock=clock,
             ),
             lease_owner_id=f"worker-{clock_value}",
-            lease_duration_ms=10_000,
+            lease_duration_ms=30_000,
             compiler=compile_graph_reference,
-            clock=lambda: clock_value,
+            clock=clock,
         ),
         auth_hook=StaticBearerAuthHook(
             {
@@ -136,22 +136,14 @@ def _request(
     body: dict[str, object] | None = None,
     query: dict[str, str] | None = None,
 ) -> ServerRequest:
-    headers = (
-        {}
-        if token is None
-        else {"authorization": f"Bearer {token}"}
-    )
+    headers = {} if token is None else {"authorization": f"Bearer {token}"}
     return ServerRequest(
         method=method,
         path=path,
         headers=headers,
         query={} if query is None else query,
         cookies={},
-        body=(
-            b""
-            if body is None
-            else json.dumps(body).encode("utf-8")
-        ),
+        body=(b"" if body is None else json.dumps(body).encode("utf-8")),
     )
 
 
@@ -199,12 +191,8 @@ def _prepare_waiting_callback(
         run_id=str(issuance_payload["runId"]),
         checkpoint_digest=str(issuance_payload["checkpointDigest"]),
         operation_id=str(issuance_payload["operationId"]),
-        operation_attempt_id=str(
-            issuance_payload["operationAttemptId"]
-        ),
-        callback_idempotency_key=str(
-            issuance_payload["callbackIdempotencyKey"]
-        ),
+        operation_attempt_id=str(issuance_payload["operationAttemptId"]),
+        callback_idempotency_key=str(issuance_payload["callbackIdempotencyKey"]),
         lease_generation=int(issuance_payload["leaseGeneration"]),
         fencing_token=int(issuance_payload["fencingToken"]),
     )
@@ -230,12 +218,8 @@ def _callback_body(
             "node_id": "wait",
             "attempt_id": "attempt-1",
             "provider_operation_id": "provider-operation-1",
-            "operation_idempotency_key": (
-                _CALLBACK_OPERATION_IDEMPOTENCY_KEY
-            ),
-            "callback_idempotency_key": (
-                issuance.callback_idempotency_key
-            ),
+            "operation_idempotency_key": (_CALLBACK_OPERATION_IDEMPOTENCY_KEY),
+            "callback_idempotency_key": (issuance.callback_idempotency_key),
             "resume_token_hash": _CALLBACK_RESUME_TOKEN_HASH,
             "schema_id": "schemas/CICallback@1",
             "schema_validated": True,
@@ -371,10 +355,7 @@ def test_durable_http_adapter_reads_run_and_events_after_restart(
         "terminalStatus": "succeeded",
     }
     assert events.status_code == 200
-    assert [
-        event["kind"]
-        for event in json.loads(events.body)["events"]
-    ] == [
+    assert [event["kind"] for event in json.loads(events.body)["events"]] == [
         "run_accepted",
         "run_claimed",
         "run_succeeded",
@@ -389,9 +370,7 @@ def test_durable_http_callback_resumes_after_process_restart(
     path = tmp_path / "durable-http-callback.sqlite3"
     waiting, issuance = _prepare_waiting_callback(path)
     callback_body = _callback_body(waiting, issuance)
-    callback_path = (
-        f"/runs/{_CALLBACK_RUN_ID}/callbacks/{_CALLBACK_OPERATION_ID}"
-    )
+    callback_path = f"/runs/{_CALLBACK_RUN_ID}/callbacks/{_CALLBACK_OPERATION_ID}"
 
     accepted = _app(path, clock_value=3_000).handle(
         _request(
@@ -458,10 +437,7 @@ def test_durable_http_callback_resumes_after_process_restart(
 
     assert status.status_code == 200
     assert json.loads(status.body)["state"] == "terminal"
-    assert [
-        event["kind"]
-        for event in json.loads(events.body)["events"]
-    ] == [
+    assert [event["kind"] for event in json.loads(events.body)["events"]] == [
         "run_accepted",
         "run_claimed",
         "run_waiting_callback",
@@ -477,9 +453,7 @@ def test_durable_http_callback_hides_foreign_runs_and_rejects_stale_fence(
     path = tmp_path / "durable-http-callback-authz.sqlite3"
     waiting, issuance = _prepare_waiting_callback(path)
     callback_body = _callback_body(waiting, issuance)
-    callback_path = (
-        f"/runs/{_CALLBACK_RUN_ID}/callbacks/{_CALLBACK_OPERATION_ID}"
-    )
+    callback_path = f"/runs/{_CALLBACK_RUN_ID}/callbacks/{_CALLBACK_OPERATION_ID}"
 
     cross_tenant = _app(path, clock_value=3_000).handle(
         _request(
@@ -668,10 +642,10 @@ def test_durable_http_cancel_is_restart_safe_and_idempotent(
         "stateVersion": 2,
         "terminalStatus": "cancelled",
     }
-    assert [
-        event["kind"]
-        for event in json.loads(events.body)["events"]
-    ] == ["run_accepted", "run_cancelled"]
+    assert [event["kind"] for event in json.loads(events.body)["events"]] == [
+        "run_accepted",
+        "run_cancelled",
+    ]
 
 
 def test_durable_http_cancel_rejects_invalid_requests_and_late_callback(
@@ -754,9 +728,7 @@ def test_durable_http_cancel_fences_ready_resume_before_worker_claim(
 ) -> None:
     path = tmp_path / "durable-http-cancel-resume.sqlite3"
     waiting, issuance = _prepare_waiting_callback(path)
-    callback_path = (
-        f"/runs/{_CALLBACK_RUN_ID}/callbacks/{_CALLBACK_OPERATION_ID}"
-    )
+    callback_path = f"/runs/{_CALLBACK_RUN_ID}/callbacks/{_CALLBACK_OPERATION_ID}"
     callback = _app(path, clock_value=3_000).handle(
         _request(
             "POST",
@@ -792,10 +764,7 @@ def test_durable_http_cancel_fences_ready_resume_before_worker_claim(
             query={"after": "0", "limit": "10"},
         )
     )
-    assert [
-        event["kind"]
-        for event in json.loads(events.body)["events"]
-    ] == [
+    assert [event["kind"] for event in json.loads(events.body)["events"]] == [
         "run_accepted",
         "run_claimed",
         "run_waiting_callback",
@@ -900,9 +869,7 @@ def test_durable_http_expire_is_restart_safe_idempotent_and_owner_scoped(
     assert oversized.status_code == 413
 
     restarted = _app(path, clock_value=4_000)
-    status = restarted.handle(
-        _request("GET", f"/runs/{run_id}", token="alice-token")
-    )
+    status = restarted.handle(_request("GET", f"/runs/{run_id}", token="alice-token"))
     events = restarted.handle(
         _request(
             "GET",
@@ -926,10 +893,10 @@ def test_durable_http_expire_is_restart_safe_idempotent_and_owner_scoped(
         "stateVersion": 2,
         "terminalStatus": "expired",
     }
-    assert [
-        event["kind"]
-        for event in json.loads(events.body)["events"]
-    ] == ["run_accepted", "run_expired"]
+    assert [event["kind"] for event in json.loads(events.body)["events"]] == [
+        "run_accepted",
+        "run_expired",
+    ]
 
 
 def test_durable_http_expire_suppresses_callback_and_fences_resume(
@@ -952,10 +919,7 @@ def test_durable_http_expire_suppresses_callback_and_fences_resume(
     callback_after_expire = _app(path, clock_value=4_000).handle(
         _request(
             "POST",
-            (
-                f"/runs/{_CALLBACK_RUN_ID}/callbacks/"
-                f"{_CALLBACK_OPERATION_ID}"
-            ),
+            (f"/runs/{_CALLBACK_RUN_ID}/callbacks/{_CALLBACK_OPERATION_ID}"),
             token="alice-token",
             body=_callback_body(waiting, issuance),
         )
@@ -1123,9 +1087,7 @@ def test_durable_http_pause_and_resume_are_restart_safe_and_owner_scoped(
     assert same_tenant_other_owner.status_code == 404
 
     restarted = _app(path, clock_value=4_000)
-    status = restarted.handle(
-        _request("GET", f"/runs/{run_id}", token="alice-token")
-    )
+    status = restarted.handle(_request("GET", f"/runs/{run_id}", token="alice-token"))
     assert status.status_code == 200
     assert json.loads(status.body) == {
         "eventHighWatermark": 2,
@@ -1169,10 +1131,11 @@ def test_durable_http_pause_and_resume_are_restart_safe_and_owner_scoped(
             query={"after": "0", "limit": "10"},
         )
     )
-    assert [
-        event["kind"]
-        for event in json.loads(events.body)["events"]
-    ] == ["run_accepted", "run_paused", "run_resumed"]
+    assert [event["kind"] for event in json.loads(events.body)["events"]] == [
+        "run_accepted",
+        "run_paused",
+        "run_resumed",
+    ]
 
 
 def test_durable_http_pause_validates_body_state_and_request_budget(
@@ -1284,10 +1247,7 @@ def test_durable_http_callback_can_arrive_paused_but_resume_gates_worker(
     callback = _app(path, clock_value=3_000).handle(
         _request(
             "POST",
-            (
-                f"/runs/{_CALLBACK_RUN_ID}/callbacks/"
-                f"{_CALLBACK_OPERATION_ID}"
-            ),
+            (f"/runs/{_CALLBACK_RUN_ID}/callbacks/{_CALLBACK_OPERATION_ID}"),
             token="alice-token",
             body=callback_body,
         )
@@ -1370,10 +1330,7 @@ def test_durable_http_callback_then_pause_preserves_ready_resume_target(
     callback = _app(path, clock_value=3_000).handle(
         _request(
             "POST",
-            (
-                f"/runs/{_CALLBACK_RUN_ID}/callbacks/"
-                f"{_CALLBACK_OPERATION_ID}"
-            ),
+            (f"/runs/{_CALLBACK_RUN_ID}/callbacks/{_CALLBACK_OPERATION_ID}"),
             token="alice-token",
             body=_callback_body(waiting, issuance),
         )
@@ -1448,10 +1405,7 @@ def test_durable_http_issued_callback_survives_pause_resume_cycle(
     callback = _app(path, clock_value=3_000).handle(
         _request(
             "POST",
-            (
-                f"/runs/{_CALLBACK_RUN_ID}/callbacks/"
-                f"{_CALLBACK_OPERATION_ID}"
-            ),
+            (f"/runs/{_CALLBACK_RUN_ID}/callbacks/{_CALLBACK_OPERATION_ID}"),
             token="alice-token",
             body=_callback_body(waiting, issuance),
         )
@@ -1477,9 +1431,7 @@ def test_durable_http_adapter_is_fail_closed_and_keeps_health_public(
     ):
         DurableAcceptedRunServerApp(
             service=DurableAcceptedRunService(
-                repository=SQLiteAcceptedRunRepository(
-                    tmp_path / "invalid.sqlite3"
-                ),
+                repository=SQLiteAcceptedRunRepository(tmp_path / "invalid.sqlite3"),
                 lease_owner_id="worker-1",
                 compiler=compile_graph_reference,
             ),

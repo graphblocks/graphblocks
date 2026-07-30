@@ -74,9 +74,7 @@ def _admission() -> AcceptedRunAdmission:
         graph_hash=canonical_hash(graph),
         inputs_json=canonical_dumps(inputs),
         invocation_json=canonical_dumps(invocation),
-        ticket_json=canonical_dumps(
-            {"runId": "run-1", "state": "accepted"}
-        ),
+        ticket_json=canonical_dumps({"runId": "run-1", "state": "accepted"}),
         graph_format_version="graphblocks.ai/Graph@v1",
         runtime_format_version="graphblocks.runtime@v1",
         checkpoint_format_version="graphblocks.runtime-checkpoint.v1",
@@ -162,7 +160,7 @@ def _waiting_command(claim: AcceptedRunClaim) -> AcceptedRunWaitingCommit:
 
 
 def _waiting_run(path):
-    repository = SQLiteAcceptedRunRepository(path)
+    repository = SQLiteAcceptedRunRepository(path, clock=lambda: 2_200)
     repository.accept_run(_admission())
     claim = repository.claim_run(
         AcceptedRunClaimRequest(
@@ -251,9 +249,7 @@ def test_sqlite_repository_accepts_callback_and_queues_resume_atomically(
         connection.execute("SELECT COUNT(*) FROM callback_inbox").fetchone()[0]
     )
     delivery_state = str(
-        connection.execute(
-            "SELECT delivery_state FROM effect_outbox"
-        ).fetchone()[0]
+        connection.execute("SELECT delivery_state FROM effect_outbox").fetchone()[0]
     )
     connection.close()
     assert inbox_count == 1
@@ -279,9 +275,7 @@ def test_sqlite_repository_replays_exact_callback_after_restart(
         ),
     )
 
-    replay = SQLiteAcceptedRunRepository(
-        path
-    ).accept_callback_and_queue_resume(retry)
+    replay = SQLiteAcceptedRunRepository(path).accept_callback_and_queue_resume(retry)
 
     assert replay == first
     assert replay.receipt_json == command.receipt_json
@@ -390,9 +384,7 @@ def test_sqlite_repository_serializes_concurrent_conflicting_callbacks(
     with ThreadPoolExecutor(max_workers=2) as executor:
         futures = tuple(
             executor.submit(
-                SQLiteAcceptedRunRepository(
-                    path
-                ).accept_callback_and_queue_resume,
+                SQLiteAcceptedRunRepository(path).accept_callback_and_queue_resume,
                 command,
             )
             for command in commands
@@ -450,8 +442,7 @@ def test_sqlite_repository_callback_satisfies_claimed_dispatch(
         )
     )
     assert (
-        satisfied.delivery_state
-        is AcceptedRunEffectDeliveryState.SATISFIED_BY_CALLBACK
+        satisfied.delivery_state is AcceptedRunEffectDeliveryState.SATISFIED_BY_CALLBACK
     )
     assert satisfied.claim is None
     assert satisfied.delivered_at_unix_ms == 3_000
@@ -495,9 +486,7 @@ def test_sqlite_repository_rolls_back_precommit_callback_failure(
         connection.execute("SELECT COUNT(*) FROM callback_inbox").fetchone()[0]
     )
     delivery_state = str(
-        connection.execute(
-            "SELECT delivery_state FROM effect_outbox"
-        ).fetchone()[0]
+        connection.execute("SELECT delivery_state FROM effect_outbox").fetchone()[0]
     )
     connection.close()
     assert inbox_count == 0
@@ -521,9 +510,7 @@ def test_sqlite_repository_recovers_callback_after_response_loss(
             failpoint=inject,
         ).accept_callback_and_queue_resume(command)
 
-    replay = SQLiteAcceptedRunRepository(
-        path
-    ).accept_callback_and_queue_resume(command)
+    replay = SQLiteAcceptedRunRepository(path).accept_callback_and_queue_resume(command)
     assert replay.receipt_json == command.receipt_json
     assert replay.state_version == 4
 
@@ -552,9 +539,7 @@ def test_sqlite_repository_resumes_callback_after_process_restart(
     assert work.claim.lease_generation == 2
     assert work.claim.fencing_token == 2
     assert work.checkpoint == waiting.checkpoint
-    assert decode_runtime_checkpoint(work.checkpoint) == _checkpoint(
-        waiting.claim
-    )
+    assert decode_runtime_checkpoint(work.checkpoint) == _checkpoint(waiting.claim)
     assert work.callback is not None
     assert work.callback.acceptance == acceptance
     assert work.callback.payload_json == command.payload_json
@@ -568,9 +553,7 @@ def test_sqlite_repository_resumes_callback_after_process_restart(
 
 
 def test_sqlite_repository_rejects_expired_callback(tmp_path) -> None:
-    repository, waiting = _waiting_run(
-        tmp_path / "accepted-runs.sqlite3"
-    )
+    repository, waiting = _waiting_run(tmp_path / "accepted-runs.sqlite3")
 
     with pytest.raises(
         AcceptedRunCallbackExpiredError,
@@ -596,9 +579,7 @@ def test_sqlite_repository_hides_callback_target_from_wrong_owner(
     tenant_id: str,
     owner_principal_id: str,
 ) -> None:
-    repository, waiting = _waiting_run(
-        tmp_path / "accepted-runs.sqlite3"
-    )
+    repository, waiting = _waiting_run(tmp_path / "accepted-runs.sqlite3")
     command = replace(
         _callback_command(waiting),
         tenant_id=tenant_id,

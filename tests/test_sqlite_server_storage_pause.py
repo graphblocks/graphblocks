@@ -48,15 +48,19 @@ def _service(
     clock_value: int,
     failpoint: Callable[[str], None] | None = None,
 ) -> DurableAcceptedRunService:
+    def clock() -> int:
+        return clock_value
+
     return DurableAcceptedRunService(
         repository=SQLiteAcceptedRunRepository(
             path,
             failpoint=failpoint,
+            clock=clock,
         ),
         lease_owner_id=f"worker-{clock_value}",
         lease_duration_ms=10_000,
         compiler=compile_graph_reference,
-        clock=lambda: clock_value,
+        clock=clock,
     )
 
 
@@ -335,7 +339,7 @@ def test_sqlite_repository_accepts_callback_while_paused_without_claiming_resume
 ) -> None:
     path = tmp_path / "accepted-runs.sqlite3"
     _admit(_service(path, clock_value=1_000))
-    repository = SQLiteAcceptedRunRepository(path)
+    repository = SQLiteAcceptedRunRepository(path, clock=lambda: 2_200)
     work = repository.claim_work(
         AcceptedRunClaimRequest(
             tenant_id=_TENANT_ID,

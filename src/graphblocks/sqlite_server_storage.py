@@ -49,6 +49,7 @@ from .server_storage import (
     CheckpointIntegrityError,
     StaleAcceptedRunClaimError,
     StoredRuntimeCheckpoint,
+    accepted_run_system_clock,
     assert_current_claim,
     assert_accepted_run_transition,
     decode_runtime_checkpoint,
@@ -79,13 +80,10 @@ _T = TypeVar("_T")
 def _sqlite_lease_expiration(
     request: AcceptedRunClaimRequest | AcceptedRunQueueClaimRequest,
 ) -> int:
-    lease_expires_at_unix_ms = (
-        request.now_unix_ms + request.lease_duration_ms
-    )
+    lease_expires_at_unix_ms = request.now_unix_ms + request.lease_duration_ms
     if lease_expires_at_unix_ms > _MAX_SQLITE_INTEGER:
         raise ValueError(
-            "accepted-run SQLite claim lease expiration exceeds SQLite "
-            "integer range"
+            "accepted-run SQLite claim lease expiration exceeds SQLite integer range"
         )
     return lease_expires_at_unix_ms
 
@@ -545,22 +543,19 @@ _REQUIRED_COLUMNS_V1 = {
 _REQUIRED_COLUMNS_V2 = {
     **_REQUIRED_COLUMNS_V1,
     "effect_outbox": (
-        _REQUIRED_COLUMNS_V1["effect_outbox"]
-        | frozenset({"available_at_unix_ms"})
+        _REQUIRED_COLUMNS_V1["effect_outbox"] | frozenset({"available_at_unix_ms"})
     ),
 }
 _REQUIRED_COLUMNS_V3 = {
     **_REQUIRED_COLUMNS_V2,
     "accepted_runs": (
-        _REQUIRED_COLUMNS_V2["accepted_runs"]
-        | frozenset({"invocation_json"})
+        _REQUIRED_COLUMNS_V2["accepted_runs"] | frozenset({"invocation_json"})
     ),
 }
 _REQUIRED_COLUMNS_V4 = {
     **_REQUIRED_COLUMNS_V3,
     "effect_outbox": (
-        _REQUIRED_COLUMNS_V3["effect_outbox"]
-        | frozenset({"cancelled_at_unix_ms"})
+        _REQUIRED_COLUMNS_V3["effect_outbox"] | frozenset({"cancelled_at_unix_ms"})
     ),
     "run_controls": frozenset(
         {
@@ -587,8 +582,7 @@ _REQUIRED_COLUMNS = {
         | frozenset({"callback_expected_state_version"})
     ),
     "run_controls": (
-        _REQUIRED_COLUMNS_V4["run_controls"]
-        | frozenset({"resulting_phase"})
+        _REQUIRED_COLUMNS_V4["run_controls"] | frozenset({"resulting_phase"})
     ),
 }
 
@@ -597,9 +591,7 @@ def _validate_lookup_text(owner: str, field_name: str, value: object) -> str:
     if type(value) is not str:
         raise ValueError(f"{owner} {field_name} must be a string")
     if not value or value != value.strip():
-        raise ValueError(
-            f"{owner} {field_name} must be an exact non-empty string"
-        )
+        raise ValueError(f"{owner} {field_name} must be an exact non-empty string")
     try:
         value.encode("utf-8")
     except UnicodeEncodeError as error:
@@ -617,13 +609,7 @@ def _uuid7(unix_ms: int) -> str:
     random_bits = secrets.randbits(74)
     random_a = random_bits >> 62
     random_b = random_bits & ((1 << 62) - 1)
-    value = (
-        (unix_ms << 80)
-        | (0x7 << 76)
-        | (random_a << 64)
-        | (0b10 << 62)
-        | random_b
-    )
+    value = (unix_ms << 80) | (0x7 << 76) | (random_a << 64) | (0b10 << 62) | random_b
     return str(uuid.UUID(int=value))
 
 
@@ -647,9 +633,7 @@ class SQLiteAcceptedRunSchemaMismatchError(SQLiteAcceptedRunStorageError):
     pass
 
 
-class SQLiteAcceptedRunSchemaVersionError(
-    SQLiteAcceptedRunSchemaMismatchError
-):
+class SQLiteAcceptedRunSchemaVersionError(SQLiteAcceptedRunSchemaMismatchError):
     pass
 
 
@@ -694,9 +678,7 @@ def _translate_sqlite_error(
 ) -> SQLiteAcceptedRunStorageError:
     code = _sqlite_primary_error_code(error)
     if code in {sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED}:
-        return SQLiteAcceptedRunBusyError(
-            "accepted-run SQLite database is busy"
-        )
+        return SQLiteAcceptedRunBusyError("accepted-run SQLite database is busy")
     if code in {
         sqlite3.SQLITE_CORRUPT,
         sqlite3.SQLITE_NOTADB,
@@ -758,9 +740,7 @@ class SQLiteAcceptedRunDatabase:
             )
             connection.row_factory = sqlite3.Row
             connection.execute("PRAGMA foreign_keys = ON")
-            connection.execute(
-                f"PRAGMA busy_timeout = {self.busy_timeout_ms}"
-            )
+            connection.execute(f"PRAGMA busy_timeout = {self.busy_timeout_ms}")
             connection.execute("PRAGMA synchronous = FULL")
             connection.execute("PRAGMA trusted_schema = OFF")
             if validate_identity:
@@ -850,16 +830,12 @@ class SQLiteAcceptedRunDatabase:
             while True:
                 try:
                     current_mode = str(
-                        connection.execute(
-                            "PRAGMA journal_mode"
-                        ).fetchone()[0]
+                        connection.execute("PRAGMA journal_mode").fetchone()[0]
                     ).lower()
                     if current_mode == "wal":
                         return
                     journal_mode = str(
-                        connection.execute(
-                            "PRAGMA journal_mode = WAL"
-                        ).fetchone()[0]
+                        connection.execute("PRAGMA journal_mode = WAL").fetchone()[0]
                     ).lower()
                     if journal_mode == "wal":
                         return
@@ -873,13 +849,9 @@ class SQLiteAcceptedRunDatabase:
                         or time.monotonic() >= deadline
                     ):
                         raise
-                    time.sleep(
-                        0.005 + (secrets.randbelow(6) / 1_000)
-                    )
+                    time.sleep(0.005 + (secrets.randbelow(6) / 1_000))
         finally:
-            connection.execute(
-                f"PRAGMA busy_timeout = {self.busy_timeout_ms}"
-            )
+            connection.execute(f"PRAGMA busy_timeout = {self.busy_timeout_ms}")
 
     def _initialize_empty_database(
         self,
@@ -919,12 +891,10 @@ class SQLiteAcceptedRunDatabase:
                     ),
                 )
                 connection.execute(
-                    "PRAGMA application_id = "
-                    f"{SQLITE_ACCEPTED_RUN_APPLICATION_ID}"
+                    f"PRAGMA application_id = {SQLITE_ACCEPTED_RUN_APPLICATION_ID}"
                 )
                 connection.execute(
-                    "PRAGMA user_version = "
-                    f"{SQLITE_ACCEPTED_RUN_SCHEMA_VERSION}"
+                    f"PRAGMA user_version = {SQLITE_ACCEPTED_RUN_SCHEMA_VERSION}"
                 )
                 connection.commit()
         except BaseException:
@@ -960,9 +930,7 @@ class SQLiteAcceptedRunDatabase:
             if user_version == _SQLITE_ACCEPTED_RUN_INITIAL_SCHEMA_VERSION:
                 self._validate_schema_version(
                     connection,
-                    schema_version=(
-                        _SQLITE_ACCEPTED_RUN_INITIAL_SCHEMA_VERSION
-                    ),
+                    schema_version=(_SQLITE_ACCEPTED_RUN_INITIAL_SCHEMA_VERSION),
                     required_columns=_REQUIRED_COLUMNS_V1,
                 )
                 for statement in _SCHEMA_V2_MIGRATION_STATEMENTS:
@@ -1001,9 +969,7 @@ class SQLiteAcceptedRunDatabase:
                         "accepted-run SQLite schema metadata version changed "
                         "during v3 migration"
                     )
-                connection.execute(
-                    "PRAGMA user_version = 3"
-                )
+                connection.execute("PRAGMA user_version = 3")
                 user_version = 3
             if user_version == 3:
                 self._validate_schema_version(
@@ -1025,9 +991,7 @@ class SQLiteAcceptedRunDatabase:
                         "accepted-run SQLite schema metadata version changed "
                         "during v4 migration"
                     )
-                connection.execute(
-                    "PRAGMA user_version = 4"
-                )
+                connection.execute("PRAGMA user_version = 4")
                 user_version = 4
             if user_version == 4:
                 self._validate_schema_version(
@@ -1063,8 +1027,7 @@ class SQLiteAcceptedRunDatabase:
                         "during v5 migration"
                     )
                 connection.execute(
-                    "PRAGMA user_version = "
-                    f"{SQLITE_ACCEPTED_RUN_SCHEMA_VERSION}"
+                    f"PRAGMA user_version = {SQLITE_ACCEPTED_RUN_SCHEMA_VERSION}"
                 )
             self._validate_schema(connection)
             connection.commit()
@@ -1120,9 +1083,7 @@ class SQLiteAcceptedRunDatabase:
             raise SQLiteAcceptedRunSchemaMismatchError(
                 "accepted-run SQLite schema metadata version does not match"
             )
-        foreign_key_failures = connection.execute(
-            "PRAGMA foreign_key_check"
-        ).fetchall()
+        foreign_key_failures = connection.execute("PRAGMA foreign_key_check").fetchall()
         if foreign_key_failures:
             raise SQLiteAcceptedRunCorruptionError(
                 "accepted-run SQLite schema has foreign-key violations"
@@ -1195,9 +1156,7 @@ class SQLiteAcceptedRunDatabase:
                 foreign_keys_enabled=bool(
                     connection.execute("PRAGMA foreign_keys").fetchone()[0]
                 ),
-                synchronous=int(
-                    connection.execute("PRAGMA synchronous").fetchone()[0]
-                ),
+                synchronous=int(connection.execute("PRAGMA synchronous").fetchone()[0]),
                 busy_timeout_ms=int(
                     connection.execute("PRAGMA busy_timeout").fetchone()[0]
                 ),
@@ -1216,20 +1175,42 @@ class SQLiteAcceptedRunRepository:
         *,
         busy_timeout_ms: int = 5_000,
         failpoint: Callable[[str], None] | None = None,
+        clock: Callable[[], int] = accepted_run_system_clock,
     ) -> None:
         if failpoint is not None and not callable(failpoint):
             raise ValueError(
                 "accepted-run SQLite repository failpoint must be callable"
             )
+        if not callable(clock):
+            raise ValueError("accepted-run SQLite repository clock must be callable")
         self._database = SQLiteAcceptedRunDatabase(
             path,
             busy_timeout_ms=busy_timeout_ms,
         )
         self._failpoint = failpoint
+        self._clock = clock
+
+    @property
+    def transaction_clock(self) -> Callable[[], int]:
+        return self._clock
 
     def _hit_failpoint(self, name: str) -> None:
         if self._failpoint is not None:
             self._failpoint(name)
+
+    def _transaction_now_unix_ms(self) -> int:
+        now_unix_ms = self._clock()
+        if (
+            isinstance(now_unix_ms, bool)
+            or not isinstance(now_unix_ms, int)
+            or now_unix_ms < 0
+            or now_unix_ms > _MAX_SQLITE_INTEGER
+        ):
+            raise ValueError(
+                "accepted-run SQLite repository clock must return a "
+                "non-negative SQLite integer"
+            )
+        return now_unix_ms
 
     @staticmethod
     def _stored_admission_identity(row: sqlite3.Row) -> AdmissionIdentity:
@@ -1360,9 +1341,7 @@ class SQLiteAcceptedRunRepository:
                 "external_run_id",
                 row["external_run_id"],
             )
-            stored_phase = AcceptedRunPhase(
-                _decode_sqlite_text("phase", row["phase"])
-            )
+            stored_phase = AcceptedRunPhase(_decode_sqlite_text("phase", row["phase"]))
             paused_from_value = row["paused_from_phase"]
             paused_at_value = row["paused_at_unix_ms"]
             if paused_from_value is None and paused_at_value is None:
@@ -1422,8 +1401,7 @@ class SQLiteAcceptedRunRepository:
                         row["fencing_token"],
                     ),
                     lease_expires_at_unix_ms=_decode_sqlite_integer(
-                        "lease_expires_at_unix_ms",
-                        row["lease_expires_at_unix_ms"]
+                        "lease_expires_at_unix_ms", row["lease_expires_at_unix_ms"]
                     ),
                 )
             checkpoint_digest = row["current_checkpoint_digest"]
@@ -1707,8 +1685,7 @@ class SQLiteAcceptedRunRepository:
     ) -> Callable[[sqlite3.Connection], AcceptedRunWorkItem | None]:
         if not isinstance(request, AcceptedRunClaimRequest):
             raise TypeError(
-                "accepted-run SQLite claim must be an "
-                "AcceptedRunClaimRequest"
+                "accepted-run SQLite claim must be an AcceptedRunClaimRequest"
             )
         lease_expires_at_unix_ms = _sqlite_lease_expiration(request)
 
@@ -1737,9 +1714,7 @@ class SQLiteAcceptedRunRepository:
                     )
                 return None
             try:
-                phase = AcceptedRunPhase(
-                    _decode_sqlite_text("phase", row["phase"])
-                )
+                phase = AcceptedRunPhase(_decode_sqlite_text("phase", row["phase"]))
             except ValueError as error:
                 raise SQLiteAcceptedRunCorruptionError(
                     "accepted-run SQLite phase is invalid"
@@ -1793,9 +1768,7 @@ class SQLiteAcceptedRunRepository:
                 or lease_generation >= _MAX_SQLITE_INTEGER
                 or fencing_token >= _MAX_SQLITE_INTEGER
             ):
-                raise OverflowError(
-                    "accepted-run SQLite claim counters are exhausted"
-                )
+                raise OverflowError("accepted-run SQLite claim counters are exhausted")
             next_state_version = state_version + 1
             next_event_sequence = event_sequence + 1
             next_lease_generation = lease_generation + 1
@@ -1950,9 +1923,7 @@ class SQLiteAcceptedRunRepository:
                         raise SQLiteAcceptedRunCorruptionError(
                             "accepted-run SQLite claimed callback is missing"
                         )
-                    stored_checkpoint = self._stored_checkpoint_from_row(
-                        checkpoint_row
-                    )
+                    stored_checkpoint = self._stored_checkpoint_from_row(checkpoint_row)
                     callback_input = AcceptedRunCallbackInput(
                         acceptance=self._callback_acceptance_from_rows(
                             request.run_id,
@@ -2086,8 +2057,7 @@ class SQLiteAcceptedRunRepository:
         effect = command.dispatch_effect
         if event.created_at_unix_ms > _MAX_SQLITE_INTEGER:
             raise ValueError(
-                "accepted-run SQLite waiting timestamp exceeds SQLite "
-                "integer range"
+                "accepted-run SQLite waiting timestamp exceeds SQLite integer range"
             )
 
         def transition(connection: sqlite3.Connection) -> AcceptedRunSnapshot:
@@ -2121,7 +2091,10 @@ class SQLiteAcceptedRunRepository:
                     command.expected_state_version,
                     snapshot.state_version,
                 )
-            if event.created_at_unix_ms >= claim.lease_expires_at_unix_ms:
+            if (
+                event.created_at_unix_ms >= claim.lease_expires_at_unix_ms
+                or self._transaction_now_unix_ms() >= claim.lease_expires_at_unix_ms
+            ):
                 raise AcceptedRunLeaseExpiredError(
                     claim,
                     "waiting commit",
@@ -2288,6 +2261,11 @@ class SQLiteAcceptedRunRepository:
             if updated.rowcount != 1:
                 raise StaleAcceptedRunClaimError(snapshot.claim, claim)
             self._hit_failpoint("commit_waiting.after_state_update")
+            if self._transaction_now_unix_ms() >= claim.lease_expires_at_unix_ms:
+                raise AcceptedRunLeaseExpiredError(
+                    claim,
+                    "waiting commit",
+                )
             updated_row = connection.execute(
                 "SELECT * FROM accepted_runs WHERE internal_id = ?",
                 (internal_id,),
@@ -2474,18 +2452,13 @@ class SQLiteAcceptedRunRepository:
                 "accepted-run SQLite callback event kind must be "
                 "external_callback_received"
             )
-        if (
-            command.accepted_event.created_at_unix_ms
-            != command.received_at_unix_ms
-        ):
+        if command.accepted_event.created_at_unix_ms != command.received_at_unix_ms:
             raise ValueError(
-                "accepted-run SQLite callback event time must match "
-                "received_at_unix_ms"
+                "accepted-run SQLite callback event time must match received_at_unix_ms"
             )
         if command.received_at_unix_ms > _MAX_SQLITE_INTEGER:
             raise ValueError(
-                "accepted-run SQLite callback timestamp exceeds SQLite "
-                "integer range"
+                "accepted-run SQLite callback timestamp exceeds SQLite integer range"
             )
 
         def transition(connection: sqlite3.Connection) -> CallbackAcceptance:
@@ -2618,8 +2591,7 @@ class SQLiteAcceptedRunRepository:
             snapshot = self._snapshot_from_row(run)
             paused_waiting = (
                 snapshot.phase is AcceptedRunPhase.PAUSED
-                and snapshot.paused_from_phase
-                is AcceptedRunPhase.WAITING_CALLBACK
+                and snapshot.paused_from_phase is AcceptedRunPhase.WAITING_CALLBACK
             )
             if (
                 snapshot.phase is not AcceptedRunPhase.WAITING_CALLBACK
@@ -2645,18 +2617,12 @@ class SQLiteAcceptedRunRepository:
                 and callback_expected_state_version > snapshot.state_version
             ):
                 raise SQLiteAcceptedRunCorruptionError(
-                    "accepted-run SQLite callback version exceeds the "
-                    "current run state"
+                    "accepted-run SQLite callback version exceeds the current run state"
                 )
             accepted_expected_state_versions = {snapshot.state_version}
             if callback_expected_state_version is not None:
-                accepted_expected_state_versions.add(
-                    callback_expected_state_version
-                )
-            if (
-                command.expected_state_version
-                not in accepted_expected_state_versions
-            ):
+                accepted_expected_state_versions.add(callback_expected_state_version)
+            if command.expected_state_version not in accepted_expected_state_versions:
                 raise AcceptedRunStateConflictError(
                     requested_issuance.run_id,
                     command.expected_state_version,
@@ -2671,9 +2637,7 @@ class SQLiteAcceptedRunRepository:
                     "the current run state"
                 )
             try:
-                stored_checkpoint = self._stored_checkpoint_from_row(
-                    checkpoint_row
-                )
+                stored_checkpoint = self._stored_checkpoint_from_row(checkpoint_row)
                 checkpoint = decode_runtime_checkpoint(stored_checkpoint)
             except (CheckpointIntegrityError, ValueError) as error:
                 raise SQLiteAcceptedRunCorruptionError(
@@ -2811,9 +2775,7 @@ class SQLiteAcceptedRunRepository:
             current_paused_from = run["paused_from_phase"]
             current_paused_at = run["paused_at_unix_ms"]
             next_paused_from = (
-                AcceptedRunPhase.READY_RESUME.value
-                if paused_waiting
-                else None
+                AcceptedRunPhase.READY_RESUME.value if paused_waiting else None
             )
             next_paused_at = current_paused_at if paused_waiting else None
             updated = connection.execute(
@@ -2984,8 +2946,7 @@ class SQLiteAcceptedRunRepository:
                     ).fetchone()
                     if checkpoint_version_row is None:
                         raise SQLiteAcceptedRunCorruptionError(
-                            "accepted-run SQLite paused callback checkpoint "
-                            "is missing"
+                            "accepted-run SQLite paused callback checkpoint is missing"
                         )
                     callback_expected_state_version = checkpoint_version_row[
                         "callback_expected_state_version"
@@ -3010,10 +2971,13 @@ class SQLiteAcceptedRunRepository:
                                 "accepted-run SQLite callback version "
                                 "backfill lost its checkpoint"
                             )
-                    elif _decode_sqlite_integer(
-                        "callback_expected_state_version",
-                        callback_expected_state_version,
-                    ) > snapshot.state_version:
+                    elif (
+                        _decode_sqlite_integer(
+                            "callback_expected_state_version",
+                            callback_expected_state_version,
+                        )
+                        > snapshot.state_version
+                    ):
                         raise SQLiteAcceptedRunCorruptionError(
                             "accepted-run SQLite callback version exceeds "
                             "the current run state"
@@ -3348,8 +3312,7 @@ class SQLiteAcceptedRunRepository:
             AcceptedRunControlAction.EXPIRE,
         }:
             raise ValueError(
-                "accepted-run SQLite terminal control action must be cancel "
-                "or expire"
+                "accepted-run SQLite terminal control action must be cancel or expire"
             )
         expected_status = {
             AcceptedRunControlAction.CANCEL: "cancelled",
@@ -3447,8 +3410,7 @@ class SQLiteAcceptedRunRepository:
                 or fencing_token >= _MAX_SQLITE_INTEGER
             ):
                 raise OverflowError(
-                    "accepted-run SQLite terminal control counters are "
-                    "exhausted"
+                    "accepted-run SQLite terminal control counters are exhausted"
                 )
             next_state_version = snapshot.state_version + 1
             next_event_sequence = snapshot.event_high_watermark + 1
@@ -3541,16 +3503,13 @@ class SQLiteAcceptedRunRepository:
                             "accepted-run SQLite terminal control lost its "
                             "dispatch effect"
                         )
-                    self._hit_failpoint(
-                        f"{operation}.after_dispatch_cancellation"
-                    )
+                    self._hit_failpoint(f"{operation}.after_dispatch_cancellation")
                 elif delivery_state not in {
                     "delivered",
                     "satisfied_by_callback",
                 }:
                     raise SQLiteAcceptedRunCorruptionError(
-                        "accepted-run SQLite terminal control dispatch state "
-                        "is invalid"
+                        "accepted-run SQLite terminal control dispatch state is invalid"
                     )
 
             effect = command.completion_effect
@@ -3786,8 +3745,7 @@ class SQLiteAcceptedRunRepository:
             or snapshot.terminal_result_json != command.result_json
             or stored_result_digest != command.result_digest
             or snapshot.state_version != existing.state_version
-            or snapshot.event_high_watermark
-            < existing.accepted_event_sequence
+            or snapshot.event_high_watermark < existing.accepted_event_sequence
         ):
             raise SQLiteAcceptedRunCorruptionError(
                 "accepted-run SQLite terminal control replay does not match "
@@ -3812,22 +3770,16 @@ class SQLiteAcceptedRunRepository:
                 "accepted-run SQLite terminal command must be an "
                 "AcceptedRunTerminalCommit"
             )
-        expected_event_kind = _TERMINAL_EVENT_KINDS.get(
-            command.terminal_status
-        )
+        expected_event_kind = _TERMINAL_EVENT_KINDS.get(command.terminal_status)
         if expected_event_kind is None:
-            raise ValueError(
-                "accepted-run SQLite terminal_status is unsupported"
-            )
+            raise ValueError("accepted-run SQLite terminal_status is unsupported")
         if command.terminal_event.kind != expected_event_kind:
             raise ValueError(
-                "accepted-run SQLite terminal event kind must match "
-                "terminal_status"
+                "accepted-run SQLite terminal event kind must match terminal_status"
             )
         if command.terminal_event.created_at_unix_ms > _MAX_SQLITE_INTEGER:
             raise ValueError(
-                "accepted-run SQLite terminal timestamp exceeds SQLite "
-                "integer range"
+                "accepted-run SQLite terminal timestamp exceeds SQLite integer range"
             )
 
         def transition(connection: sqlite3.Connection) -> AcceptedRunSnapshot:
@@ -3863,7 +3815,10 @@ class SQLiteAcceptedRunRepository:
                     snapshot.state_version,
                 )
             event = command.terminal_event
-            if event.created_at_unix_ms >= claim.lease_expires_at_unix_ms:
+            if (
+                event.created_at_unix_ms >= claim.lease_expires_at_unix_ms
+                or self._transaction_now_unix_ms() >= claim.lease_expires_at_unix_ms
+            ):
                 raise AcceptedRunLeaseExpiredError(
                     claim,
                     "terminal commit",
@@ -3979,6 +3934,11 @@ class SQLiteAcceptedRunRepository:
             if updated.rowcount != 1:
                 raise StaleAcceptedRunClaimError(snapshot.claim, claim)
             self._hit_failpoint("commit_terminal.after_state_update")
+            if self._transaction_now_unix_ms() >= claim.lease_expires_at_unix_ms:
+                raise AcceptedRunLeaseExpiredError(
+                    claim,
+                    "terminal commit",
+                )
             updated_row = connection.execute(
                 "SELECT * FROM accepted_runs WHERE internal_id = ?",
                 (internal_id,),
@@ -4243,13 +4203,8 @@ class SQLiteAcceptedRunRepository:
             ).fetchall()
             has_more = len(rows) > limit
             page_rows = rows[:limit]
-            events = tuple(
-                self._event_from_row(run_id, row)
-                for row in page_rows
-            )
-            next_after_sequence = (
-                events[-1].sequence if has_more and events else None
-            )
+            events = tuple(self._event_from_row(run_id, row) for row in page_rows)
+            next_after_sequence = events[-1].sequence if has_more and events else None
             try:
                 return AcceptedRunEventPage(
                     events=events,

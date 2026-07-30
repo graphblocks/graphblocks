@@ -46,6 +46,11 @@ def test_governance_block_catalog_contains_every_executable_identity() -> None:
     assert all(callable(block) for block in GOVERNANCE_BLOCKS.values())
 
 
+def test_governance_block_registry_is_immutable() -> None:
+    with pytest.raises(TypeError):
+        GOVERNANCE_BLOCKS["gate.evaluate@1"] = result_bundle_block  # type: ignore[index]
+
+
 def test_stock_registry_resolves_every_documented_domain_block() -> None:
     expected = {
         "model.structured_generate@1",

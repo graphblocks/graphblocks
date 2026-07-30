@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import fields, is_dataclass
 from decimal import Decimal
+from types import MappingProxyType
 from typing import Any
 
 from .canonical import (
@@ -809,13 +810,16 @@ def result_bundle_block(
     return {"result": contract, "bundle": contract, "contentDigest": bundle.content_digest()}
 
 
-GOVERNANCE_BLOCKS: dict[str, Any] = {
-    "model.structured_generate@1": structured_generate_block,
-    "check.run_suite@1": check_run_suite_block,
-    "gate.evaluate@1": gate_evaluate_block,
-    "review.request@1": review_request_block,
-    "result.bundle@1": result_bundle_block,
-}
+_GOVERNANCE_BLOCK_ITEMS: tuple[tuple[str, Any], ...] = (
+    ("model.structured_generate@1", structured_generate_block),
+    ("check.run_suite@1", check_run_suite_block),
+    ("gate.evaluate@1", gate_evaluate_block),
+    ("review.request@1", review_request_block),
+    ("result.bundle@1", result_bundle_block),
+)
+GOVERNANCE_BLOCKS: Mapping[str, Any] = MappingProxyType(
+    dict(_GOVERNANCE_BLOCK_ITEMS)
+)
 
 
 __all__ = [

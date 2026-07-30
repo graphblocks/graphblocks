@@ -38,15 +38,19 @@ def _service(
     clock_value: int,
     failpoint: Callable[[str], None] | None = None,
 ) -> DurableAcceptedRunService:
+    def clock() -> int:
+        return clock_value
+
     return DurableAcceptedRunService(
         repository=SQLiteAcceptedRunRepository(
             path,
             failpoint=failpoint,
+            clock=clock,
         ),
         lease_owner_id=f"worker-{clock_value}",
         lease_duration_ms=10_000,
         compiler=compile_graph_reference,
-        clock=lambda: clock_value,
+        clock=clock,
     )
 
 

@@ -39,16 +39,23 @@ class ProcessWorkerDeadlineExceeded(ProcessWorkerError):
     def __init__(
         self,
         timeout_seconds: float,
-        worker_pid: int,
+        worker_pid: int | None,
         exitcode: int | None,
     ) -> None:
         self.timeout_seconds = timeout_seconds
         self.worker_pid = worker_pid
         self.exitcode = exitcode
-        super().__init__(
-            "isolated worker exceeded "
-            f"{timeout_seconds:g} second deadline and was reaped"
-        )
+        if worker_pid is None:
+            message = (
+                "isolated worker exceeded "
+                f"{timeout_seconds:g} second deadline before process start"
+            )
+        else:
+            message = (
+                "isolated worker exceeded "
+                f"{timeout_seconds:g} second deadline and was reaped"
+            )
+        super().__init__(message)
 
 
 class ProcessWorkerFailed(ProcessWorkerError):
@@ -352,6 +359,7 @@ class ProcessWorkerExecutor:
     def invoke(self, request: WorkerInvokeRequest) -> WorkerInvokeResult:
         if not isinstance(request, WorkerInvokeRequest):
             raise TypeError("process worker request must be WorkerInvokeRequest")
+        deadline = time.monotonic() + self.policy.timeout_seconds
         request_json = canonical_dumps(request.to_wire())
         request_bytes = len(request_json.encode("utf-8"))
         if request_bytes > self.policy.max_request_bytes:
@@ -372,9 +380,14 @@ class ProcessWorkerExecutor:
             ),
             daemon=True,
         )
-        deadline = time.monotonic() + self.policy.timeout_seconds
         started = False
         try:
+            if time.monotonic() >= deadline:
+                raise ProcessWorkerDeadlineExceeded(
+                    self.policy.timeout_seconds,
+                    None,
+                    None,
+                )
             process.start()
             started = True
             worker_pid = process.pid

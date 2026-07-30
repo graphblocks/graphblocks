@@ -75,9 +75,7 @@ def _admission() -> AcceptedRunAdmission:
         graph_hash=canonical_hash(graph),
         inputs_json=canonical_dumps(inputs),
         invocation_json=canonical_dumps(invocation),
-        ticket_json=canonical_dumps(
-            {"runId": "run-1", "state": "accepted"}
-        ),
+        ticket_json=canonical_dumps({"runId": "run-1", "state": "accepted"}),
         graph_format_version="graphblocks.ai/Graph@v1",
         runtime_format_version="graphblocks.runtime@v1",
         checkpoint_format_version="graphblocks.runtime-checkpoint.v1",
@@ -144,8 +142,7 @@ def _cancel_command(
         ),
         completion_effect=AcceptedRunEffectIntent(
             effect_id=(
-                "effect-completion:"
-                f"{completion_digest.removeprefix('sha256:')}"
+                f"effect-completion:{completion_digest.removeprefix('sha256:')}"
             ),
             kind=AcceptedRunEffectKind.COMPLETION,
             idempotency_key="completion-run-1",
@@ -348,9 +345,7 @@ def test_sqlite_repository_cancel_is_owner_scoped_and_idempotent(
             )
         )
     with pytest.raises(AcceptedRunStateConflictError):
-        repository.cancel_run(
-            _cancel_command(expected_state_version=2)
-        )
+        repository.cancel_run(_cancel_command(expected_state_version=2))
 
     repository.cancel_run(_cancel_command(expected_state_version=1))
 
@@ -485,7 +480,7 @@ def test_sqlite_repository_cancel_suppresses_claimed_callback_dispatch(
     tmp_path: Path,
 ) -> None:
     path = tmp_path / "accepted-runs.sqlite3"
-    repository = SQLiteAcceptedRunRepository(path)
+    repository = SQLiteAcceptedRunRepository(path, clock=lambda: 2_200)
     repository.accept_run(_admission())
     claim = repository.claim_run(
         AcceptedRunClaimRequest(
@@ -521,10 +516,7 @@ def test_sqlite_repository_cancel_suppresses_claimed_callback_dispatch(
         effect_id=dispatch.effect_id,
     )
     assert cancelled_dispatch is not None
-    assert (
-        cancelled_dispatch.delivery_state
-        is AcceptedRunEffectDeliveryState.CANCELLED
-    )
+    assert cancelled_dispatch.delivery_state is AcceptedRunEffectDeliveryState.CANCELLED
     assert cancelled_dispatch.claim is None
     assert cancelled_dispatch.cancelled_at_unix_ms == 2_500
     with pytest.raises(AcceptedRunEffectDeliveryStateConflictError):
@@ -550,7 +542,7 @@ def test_sqlite_repository_rolls_back_dispatch_cancellation_failure(
     tmp_path: Path,
 ) -> None:
     path = tmp_path / "accepted-runs.sqlite3"
-    repository = SQLiteAcceptedRunRepository(path)
+    repository = SQLiteAcceptedRunRepository(path, clock=lambda: 2_200)
     repository.accept_run(_admission())
     claim = repository.claim_run(
         AcceptedRunClaimRequest(
@@ -601,7 +593,7 @@ def test_sqlite_repository_rolls_back_dispatch_cancellation_failure(
     visible_dispatch = dispatcher.get_effect(effect_id=dispatch.effect_id)
     assert visible_dispatch == dispatch
     connection = sqlite3.connect(path)
-    assert int(
-        connection.execute("SELECT COUNT(*) FROM run_controls").fetchone()[0]
-    ) == 0
+    assert (
+        int(connection.execute("SELECT COUNT(*) FROM run_controls").fetchone()[0]) == 0
+    )
     connection.close()

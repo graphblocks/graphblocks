@@ -64,9 +64,7 @@ def _admission() -> AcceptedRunAdmission:
         graph_hash=canonical_hash(graph),
         inputs_json=canonical_dumps(inputs),
         invocation_json=canonical_dumps(invocation),
-        ticket_json=canonical_dumps(
-            {"runId": "run-1", "state": "accepted"}
-        ),
+        ticket_json=canonical_dumps({"runId": "run-1", "state": "accepted"}),
         graph_format_version="graphblocks.ai/Graph@v1",
         runtime_format_version="graphblocks.runtime@v1",
         checkpoint_format_version="graphblocks.runtime-checkpoint.v1",
@@ -80,8 +78,15 @@ def _admission() -> AcceptedRunAdmission:
     )
 
 
-def _running_run(path) -> tuple[SQLiteAcceptedRunRepository, AcceptedRunClaim]:
-    repository = SQLiteAcceptedRunRepository(path)
+def _running_run(
+    path,
+    *,
+    transaction_now_unix_ms: int = 2_500,
+) -> tuple[SQLiteAcceptedRunRepository, AcceptedRunClaim]:
+    repository = SQLiteAcceptedRunRepository(
+        path,
+        clock=lambda: transaction_now_unix_ms,
+    )
     repository.accept_run(_admission())
     claim = repository.claim_run(
         AcceptedRunClaimRequest(
@@ -196,7 +201,11 @@ def test_sqlite_repository_does_not_expose_uncommitted_completion(
             outbox_inserted.set()
             assert allow_commit.wait(timeout=5)
 
-    paused = SQLiteAcceptedRunRepository(path, failpoint=pause)
+    paused = SQLiteAcceptedRunRepository(
+        path,
+        failpoint=pause,
+        clock=lambda: 2_500,
+    )
     with ThreadPoolExecutor(max_workers=1) as executor:
         future = executor.submit(paused.commit_terminal, command)
         assert outbox_inserted.wait(timeout=5)
@@ -242,6 +251,7 @@ def test_sqlite_repository_rolls_back_precommit_terminal_failure(
         SQLiteAcceptedRunRepository(
             path,
             failpoint=inject,
+            clock=lambda: 2_500,
         ).commit_terminal(command)
 
     snapshot = repository.get_run(tenant_id="tenant-1", run_id="run-1")
@@ -279,6 +289,7 @@ def test_sqlite_repository_replays_terminal_commit_after_response_loss(
         SQLiteAcceptedRunRepository(
             path,
             failpoint=inject,
+            clock=lambda: 2_500,
         ).commit_terminal(command)
 
     repository = SQLiteAcceptedRunRepository(path)
@@ -303,9 +314,7 @@ def test_sqlite_repository_replays_terminal_commit_after_response_loss(
 def test_sqlite_repository_rejects_conflicting_terminal_retry(
     tmp_path,
 ) -> None:
-    repository, claim = _running_run(
-        tmp_path / "accepted-runs.sqlite3"
-    )
+    repository, claim = _running_run(tmp_path / "accepted-runs.sqlite3")
     command = _terminal_command(claim)
     repository.commit_terminal(command)
 
@@ -338,9 +347,7 @@ def test_sqlite_repository_rejects_terminal_commit_from_stale_claim(
     assert current is not None
 
     with pytest.raises(StaleAcceptedRunClaimError):
-        repository.commit_terminal(
-            _terminal_command(stale, event_time=2_900)
-        )
+        repository.commit_terminal(_terminal_command(stale, event_time=2_900))
 
     snapshot = repository.get_run(tenant_id="tenant-1", run_id="run-1")
     assert snapshot is not None
@@ -363,9 +370,7 @@ def test_sqlite_repository_rejects_terminal_commit_from_stale_claim(
 def test_sqlite_repository_rejects_terminal_commit_at_lease_expiry(
     tmp_path,
 ) -> None:
-    repository, claim = _running_run(
-        tmp_path / "accepted-runs.sqlite3"
-    )
+    repository, claim = _running_run(tmp_path / "accepted-runs.sqlite3")
 
     with pytest.raises(
         AcceptedRunLeaseExpiredError,
@@ -379,12 +384,25 @@ def test_sqlite_repository_rejects_terminal_commit_at_lease_expiry(
         )
 
 
-def test_sqlite_repository_terminal_run_cannot_be_claimed_again(
+def test_sqlite_repository_rejects_terminal_commit_when_transaction_clock_expires(
     tmp_path,
 ) -> None:
     repository, claim = _running_run(
-        tmp_path / "accepted-runs.sqlite3"
+        tmp_path / "accepted-runs.sqlite3",
+        transaction_now_unix_ms=3_000,
     )
+
+    with pytest.raises(
+        AcceptedRunLeaseExpiredError,
+        match="accepted run claim expired before terminal commit",
+    ):
+        repository.commit_terminal(_terminal_command(claim))
+
+
+def test_sqlite_repository_terminal_run_cannot_be_claimed_again(
+    tmp_path,
+) -> None:
+    repository, claim = _running_run(tmp_path / "accepted-runs.sqlite3")
     repository.commit_terminal(_terminal_command(claim))
 
     next_claim = repository.claim_run(
@@ -403,9 +421,7 @@ def test_sqlite_repository_terminal_run_cannot_be_claimed_again(
 def test_sqlite_repository_rejects_terminal_event_status_mismatch(
     tmp_path,
 ) -> None:
-    repository, claim = _running_run(
-        tmp_path / "accepted-runs.sqlite3"
-    )
+    repository, claim = _running_run(tmp_path / "accepted-runs.sqlite3")
     command = _terminal_command(claim)
 
     with pytest.raises(

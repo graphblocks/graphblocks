@@ -6,11 +6,17 @@ import pytest
 
 from graphblocks.runtime import InProcessRuntime, stdlib_registry
 from graphblocks.stdlib_rag import (
+    RAG_BLOCKS,
     answer_validate_grounding,
     rank_documents,
     retrieve_execute_plan,
     retrieve_fuse,
 )
+
+
+def test_rag_block_registry_is_immutable() -> None:
+    with pytest.raises(TypeError):
+        RAG_BLOCKS["retrieve.execute_plan@1"] = rank_documents  # type: ignore[index]
 
 
 def _hit(hit_id: str, item_id: str, rank: int, retriever: str, preview: str) -> dict[str, object]:

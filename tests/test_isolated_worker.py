@@ -9,6 +9,7 @@ import time
 
 import pytest
 
+import graphblocks.isolated_worker as isolated_worker_module
 from graphblocks.isolated_worker import (
     ProcessWorkerDeadlineExceeded,
     ProcessWorkerExecutor,
@@ -175,6 +176,36 @@ def test_process_worker_reaps_infinite_loop_at_hard_deadline(
     assert error.value.worker_pid > 0
     assert error.value.exitcode is not None
     assert all(child.pid != error.value.worker_pid for child in active_children())
+
+
+def test_process_worker_deadline_includes_request_serialization(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original_dumps = isolated_worker_module.canonical_dumps
+
+    def delayed_dumps(value) -> str:
+        time.sleep(0.02)
+        return original_dumps(value)
+
+    monkeypatch.setattr(
+        isolated_worker_module,
+        "canonical_dumps",
+        delayed_dumps,
+    )
+    executor = ProcessWorkerExecutor(
+        ProcessWorkerTarget("worker_will_not_start", "handler"),
+        ProcessWorkerPolicy(timeout_seconds=0.005),
+        authority_validator=_allow_test_authority,
+    )
+
+    with pytest.raises(
+        ProcessWorkerDeadlineExceeded,
+        match="before process start",
+    ) as error:
+        executor.invoke(_request())
+
+    assert error.value.worker_pid is None
+    assert error.value.exitcode is None
 
 
 def test_process_worker_cannot_publish_after_deadline(

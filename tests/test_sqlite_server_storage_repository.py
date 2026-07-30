@@ -93,9 +93,7 @@ def _admission(
         graph_hash=canonical_hash(graph),
         inputs_json=canonical_dumps(inputs),
         invocation_json=canonical_dumps(invocation),
-        ticket_json=canonical_dumps(
-            {"runId": run_id, "state": ticket_state}
-        ),
+        ticket_json=canonical_dumps({"runId": run_id, "state": ticket_state}),
         graph_format_version="graphblocks.ai/Graph@v1",
         runtime_format_version="graphblocks.runtime@v1",
         checkpoint_format_version="graphblocks.runtime-checkpoint.v1",
@@ -240,10 +238,7 @@ def test_sqlite_repository_accepts_run_and_initial_event_atomically(
         (1, "run_accepted")
     ]
     assert events.events[0].payload_json == admission.accepted_event.payload_json
-    assert (
-        events.events[0].payload_digest
-        == admission.accepted_event.payload_digest
-    )
+    assert events.events[0].payload_digest == admission.accepted_event.payload_digest
 
     connection = sqlite3.connect(path)
     stored = connection.execute(
@@ -291,9 +286,7 @@ def test_sqlite_repository_replays_same_admission_ticket_after_restart(
 def test_sqlite_repository_rejects_same_admission_key_with_new_digest(
     tmp_path,
 ) -> None:
-    repository = SQLiteAcceptedRunRepository(
-        tmp_path / "accepted-runs.sqlite3"
-    )
+    repository = SQLiteAcceptedRunRepository(tmp_path / "accepted-runs.sqlite3")
     admission = _admission()
     repository.accept_run(admission)
 
@@ -312,9 +305,7 @@ def test_sqlite_repository_rejects_same_admission_key_with_new_digest(
 def test_sqlite_repository_rejects_same_key_digest_with_new_run_id(
     tmp_path,
 ) -> None:
-    repository = SQLiteAcceptedRunRepository(
-        tmp_path / "accepted-runs.sqlite3"
-    )
+    repository = SQLiteAcceptedRunRepository(tmp_path / "accepted-runs.sqlite3")
     admission = _admission()
     repository.accept_run(admission)
 
@@ -328,9 +319,7 @@ def test_sqlite_repository_rejects_same_key_digest_with_new_run_id(
 def test_sqlite_repository_serializes_concurrent_same_key_admission(
     tmp_path,
 ) -> None:
-    repository = SQLiteAcceptedRunRepository(
-        tmp_path / "accepted-runs.sqlite3"
-    )
+    repository = SQLiteAcceptedRunRepository(tmp_path / "accepted-runs.sqlite3")
     admission = _admission()
 
     with ThreadPoolExecutor(max_workers=2) as executor:
@@ -351,9 +340,7 @@ def test_sqlite_repository_serializes_concurrent_same_key_admission(
 def test_sqlite_repository_scopes_external_run_ids_by_tenant(
     tmp_path,
 ) -> None:
-    repository = SQLiteAcceptedRunRepository(
-        tmp_path / "accepted-runs.sqlite3"
-    )
+    repository = SQLiteAcceptedRunRepository(tmp_path / "accepted-runs.sqlite3")
 
     repository.accept_run(_admission(tenant_id="tenant-1"))
     repository.accept_run(
@@ -380,9 +367,7 @@ def test_sqlite_repository_scopes_external_run_ids_by_tenant(
 def test_sqlite_repository_rejects_duplicate_run_id_within_tenant(
     tmp_path,
 ) -> None:
-    repository = SQLiteAcceptedRunRepository(
-        tmp_path / "accepted-runs.sqlite3"
-    )
+    repository = SQLiteAcceptedRunRepository(tmp_path / "accepted-runs.sqlite3")
     repository.accept_run(_admission())
 
     with pytest.raises(
@@ -439,9 +424,7 @@ def test_sqlite_repository_recovers_committed_admission_after_response_loss(
             raise RuntimeError("injected response loss")
 
     with pytest.raises(RuntimeError, match="injected response loss"):
-        SQLiteAcceptedRunRepository(path, failpoint=inject).accept_run(
-            _admission()
-        )
+        SQLiteAcceptedRunRepository(path, failpoint=inject).accept_run(_admission())
 
     replay = SQLiteAcceptedRunRepository(path).accept_run(_admission())
     assert replay.replayed
@@ -449,14 +432,10 @@ def test_sqlite_repository_recovers_committed_admission_after_response_loss(
 
 
 def test_sqlite_repository_hides_cross_tenant_run_existence(tmp_path) -> None:
-    repository = SQLiteAcceptedRunRepository(
-        tmp_path / "accepted-runs.sqlite3"
-    )
+    repository = SQLiteAcceptedRunRepository(tmp_path / "accepted-runs.sqlite3")
     repository.accept_run(_admission())
 
-    assert (
-        repository.get_run(tenant_id="tenant-2", run_id="run-1") is None
-    )
+    assert repository.get_run(tenant_id="tenant-2", run_id="run-1") is None
     with pytest.raises(AcceptedRunNotFoundError):
         repository.read_events(
             tenant_id="tenant-2",
@@ -469,9 +448,7 @@ def test_sqlite_repository_hides_cross_tenant_run_existence(tmp_path) -> None:
 def test_sqlite_repository_claims_ready_run_with_fenced_authority(
     tmp_path,
 ) -> None:
-    repository = SQLiteAcceptedRunRepository(
-        tmp_path / "accepted-runs.sqlite3"
-    )
+    repository = SQLiteAcceptedRunRepository(tmp_path / "accepted-runs.sqlite3")
     repository.accept_run(_admission())
 
     claim = repository.claim_run(
@@ -509,9 +486,7 @@ def test_sqlite_repository_claims_ready_run_with_fenced_authority(
 def test_sqlite_repository_claim_work_returns_complete_initial_envelope(
     tmp_path,
 ) -> None:
-    repository = SQLiteAcceptedRunRepository(
-        tmp_path / "accepted-runs.sqlite3"
-    )
+    repository = SQLiteAcceptedRunRepository(tmp_path / "accepted-runs.sqlite3")
     admission = _admission()
     repository.accept_run(admission)
 
@@ -630,9 +605,7 @@ def test_sqlite_repository_discovers_oldest_claimable_work_after_restart(
 def test_sqlite_repository_claim_next_work_honors_tenant_scope(
     tmp_path,
 ) -> None:
-    repository = SQLiteAcceptedRunRepository(
-        tmp_path / "accepted-runs.sqlite3"
-    )
+    repository = SQLiteAcceptedRunRepository(tmp_path / "accepted-runs.sqlite3")
     repository.accept_run(_admission(run_id="tenant-1-run"))
     repository.accept_run(
         _admission(
@@ -682,9 +655,7 @@ def test_sqlite_repository_claim_next_work_is_atomic_across_workers(
     with ThreadPoolExecutor(max_workers=2) as executor:
         work_items = tuple(
             executor.map(
-                lambda worker: SQLiteAcceptedRunRepository(
-                    path
-                ).claim_next_work(
+                lambda worker: SQLiteAcceptedRunRepository(path).claim_next_work(
                     replace(request, lease_owner_id=worker)
                 ),
                 ("worker-1", "worker-2"),
@@ -741,9 +712,7 @@ def test_sqlite_repository_claim_next_work_reclaims_only_expired_lease(
 def test_sqlite_repository_pages_committed_events_across_claim(
     tmp_path,
 ) -> None:
-    repository = SQLiteAcceptedRunRepository(
-        tmp_path / "accepted-runs.sqlite3"
-    )
+    repository = SQLiteAcceptedRunRepository(tmp_path / "accepted-runs.sqlite3")
     repository.accept_run(_admission())
     repository.claim_run(
         AcceptedRunClaimRequest(
@@ -804,18 +773,13 @@ def test_sqlite_repository_allows_only_one_concurrent_claim(tmp_path) -> None:
     assert len(granted) == 1
     assert granted[0].lease_generation == 1
     assert granted[0].fencing_token == 1
-    assert (
-        repository.get_run(tenant_id="tenant-1", run_id="run-1").claim
-        == granted[0]
-    )
+    assert repository.get_run(tenant_id="tenant-1", run_id="run-1").claim == granted[0]
 
 
 def test_sqlite_repository_does_not_reclaim_unexpired_lease(
     tmp_path,
 ) -> None:
-    repository = SQLiteAcceptedRunRepository(
-        tmp_path / "accepted-runs.sqlite3"
-    )
+    repository = SQLiteAcceptedRunRepository(tmp_path / "accepted-runs.sqlite3")
     repository.accept_run(_admission())
     first = repository.claim_run(
         AcceptedRunClaimRequest(
@@ -849,9 +813,7 @@ def test_sqlite_repository_does_not_reclaim_unexpired_lease(
 def test_sqlite_repository_reclaims_expired_lease_with_new_fence(
     tmp_path,
 ) -> None:
-    repository = SQLiteAcceptedRunRepository(
-        tmp_path / "accepted-runs.sqlite3"
-    )
+    repository = SQLiteAcceptedRunRepository(tmp_path / "accepted-runs.sqlite3")
     repository.accept_run(_admission())
     first = repository.claim_run(
         AcceptedRunClaimRequest(
@@ -898,9 +860,7 @@ def test_sqlite_repository_reclaims_expired_lease_with_new_fence(
 
 
 def test_sqlite_repository_claim_is_tenant_scoped(tmp_path) -> None:
-    repository = SQLiteAcceptedRunRepository(
-        tmp_path / "accepted-runs.sqlite3"
-    )
+    repository = SQLiteAcceptedRunRepository(tmp_path / "accepted-runs.sqlite3")
     repository.accept_run(_admission())
 
     with pytest.raises(AcceptedRunNotFoundError):
@@ -998,9 +958,7 @@ def test_sqlite_repository_recovers_claim_after_response_loss(
 def test_sqlite_repository_rejects_claim_time_outside_sqlite_range(
     tmp_path,
 ) -> None:
-    repository = SQLiteAcceptedRunRepository(
-        tmp_path / "accepted-runs.sqlite3"
-    )
+    repository = SQLiteAcceptedRunRepository(tmp_path / "accepted-runs.sqlite3")
     repository.accept_run(_admission())
 
     with pytest.raises(ValueError, match="lease expiration exceeds SQLite"):
@@ -1019,7 +977,7 @@ def test_sqlite_repository_commits_waiting_checkpoint_and_dispatch_atomically(
     tmp_path,
 ) -> None:
     path = tmp_path / "accepted-runs.sqlite3"
-    repository = SQLiteAcceptedRunRepository(path)
+    repository = SQLiteAcceptedRunRepository(path, clock=lambda: 2_200)
     repository.accept_run(_admission())
     claim = _claim_ready_run(repository)
     command = _waiting_commit(claim)
@@ -1075,7 +1033,7 @@ def test_sqlite_repository_does_not_expose_uncommitted_dispatch_effect(
     tmp_path,
 ) -> None:
     path = tmp_path / "accepted-runs.sqlite3"
-    repository = SQLiteAcceptedRunRepository(path)
+    repository = SQLiteAcceptedRunRepository(path, clock=lambda: 2_200)
     repository.accept_run(_admission())
     command = _waiting_commit(_claim_ready_run(repository))
     outbox_inserted = Event()
@@ -1086,15 +1044,17 @@ def test_sqlite_repository_does_not_expose_uncommitted_dispatch_effect(
             outbox_inserted.set()
             assert allow_commit.wait(timeout=5)
 
-    paused = SQLiteAcceptedRunRepository(path, failpoint=pause)
+    paused = SQLiteAcceptedRunRepository(
+        path,
+        failpoint=pause,
+        clock=lambda: 2_200,
+    )
     with ThreadPoolExecutor(max_workers=1) as executor:
         future = executor.submit(paused.commit_waiting, command)
         assert outbox_inserted.wait(timeout=5)
         connection = sqlite3.connect(path)
         visible_count = int(
-            connection.execute(
-                "SELECT COUNT(*) FROM effect_outbox"
-            ).fetchone()[0]
+            connection.execute("SELECT COUNT(*) FROM effect_outbox").fetchone()[0]
         )
         connection.close()
         assert visible_count == 0
@@ -1124,7 +1084,7 @@ def test_sqlite_repository_rolls_back_precommit_waiting_failure(
     failpoint: str,
 ) -> None:
     path = tmp_path / f"{failpoint}.sqlite3"
-    repository = SQLiteAcceptedRunRepository(path)
+    repository = SQLiteAcceptedRunRepository(path, clock=lambda: 2_200)
     repository.accept_run(_admission())
     claim = _claim_ready_run(repository)
     command = _waiting_commit(claim)
@@ -1137,6 +1097,7 @@ def test_sqlite_repository_rolls_back_precommit_waiting_failure(
         SQLiteAcceptedRunRepository(
             path,
             failpoint=inject,
+            clock=lambda: 2_200,
         ).commit_waiting(command)
 
     reopened = SQLiteAcceptedRunRepository(path)
@@ -1148,16 +1109,8 @@ def test_sqlite_repository_rolls_back_precommit_waiting_failure(
     assert snapshot.event_high_watermark == 2
     connection = sqlite3.connect(path)
     counts = (
-        int(
-            connection.execute(
-                "SELECT COUNT(*) FROM run_checkpoints"
-            ).fetchone()[0]
-        ),
-        int(
-            connection.execute(
-                "SELECT COUNT(*) FROM effect_outbox"
-            ).fetchone()[0]
-        ),
+        int(connection.execute("SELECT COUNT(*) FROM run_checkpoints").fetchone()[0]),
+        int(connection.execute("SELECT COUNT(*) FROM effect_outbox").fetchone()[0]),
     )
     connection.close()
     assert counts == (0, 0)
@@ -1167,7 +1120,7 @@ def test_sqlite_repository_replays_identical_waiting_commit_after_response_loss(
     tmp_path,
 ) -> None:
     path = tmp_path / "accepted-runs.sqlite3"
-    repository = SQLiteAcceptedRunRepository(path)
+    repository = SQLiteAcceptedRunRepository(path, clock=lambda: 2_200)
     repository.accept_run(_admission())
     command = _waiting_commit(_claim_ready_run(repository))
 
@@ -1179,6 +1132,7 @@ def test_sqlite_repository_replays_identical_waiting_commit_after_response_loss(
         SQLiteAcceptedRunRepository(
             path,
             failpoint=inject,
+            clock=lambda: 2_200,
         ).commit_waiting(command)
 
     reopened = SQLiteAcceptedRunRepository(path)
@@ -1188,16 +1142,8 @@ def test_sqlite_repository_replays_identical_waiting_commit_after_response_loss(
     assert replay.event_high_watermark == 3
     connection = sqlite3.connect(path)
     counts = (
-        int(
-            connection.execute(
-                "SELECT COUNT(*) FROM run_checkpoints"
-            ).fetchone()[0]
-        ),
-        int(
-            connection.execute(
-                "SELECT COUNT(*) FROM effect_outbox"
-            ).fetchone()[0]
-        ),
+        int(connection.execute("SELECT COUNT(*) FROM run_checkpoints").fetchone()[0]),
+        int(connection.execute("SELECT COUNT(*) FROM effect_outbox").fetchone()[0]),
     )
     connection.close()
     assert counts == (1, 1)
@@ -1207,7 +1153,8 @@ def test_sqlite_repository_rejects_conflicting_waiting_commit_retry(
     tmp_path,
 ) -> None:
     repository = SQLiteAcceptedRunRepository(
-        tmp_path / "accepted-runs.sqlite3"
+        tmp_path / "accepted-runs.sqlite3",
+        clock=lambda: 2_200,
     )
     repository.accept_run(_admission())
     command = _waiting_commit(_claim_ready_run(repository))
@@ -1258,9 +1205,7 @@ def test_sqlite_repository_rejects_waiting_commit_from_stale_claim(
     assert current is not None
 
     with pytest.raises(StaleAcceptedRunClaimError):
-        repository.commit_waiting(
-            _waiting_commit(stale, event_time=2_400)
-        )
+        repository.commit_waiting(_waiting_commit(stale, event_time=2_400))
 
     snapshot = repository.get_run(tenant_id="tenant-1", run_id="run-1")
     assert snapshot is not None
@@ -1269,16 +1214,8 @@ def test_sqlite_repository_rejects_waiting_commit_from_stale_claim(
     assert snapshot.event_high_watermark == 3
     connection = sqlite3.connect(path)
     counts = (
-        int(
-            connection.execute(
-                "SELECT COUNT(*) FROM run_checkpoints"
-            ).fetchone()[0]
-        ),
-        int(
-            connection.execute(
-                "SELECT COUNT(*) FROM effect_outbox"
-            ).fetchone()[0]
-        ),
+        int(connection.execute("SELECT COUNT(*) FROM run_checkpoints").fetchone()[0]),
+        int(connection.execute("SELECT COUNT(*) FROM effect_outbox").fetchone()[0]),
     )
     connection.close()
     assert counts == (0, 0)
@@ -1288,7 +1225,8 @@ def test_sqlite_repository_rejects_waiting_commit_at_lease_expiry(
     tmp_path,
 ) -> None:
     repository = SQLiteAcceptedRunRepository(
-        tmp_path / "accepted-runs.sqlite3"
+        tmp_path / "accepted-runs.sqlite3",
+        clock=lambda: 2_200,
     )
     repository.accept_run(_admission())
     claim = _claim_ready_run(repository)
@@ -1310,12 +1248,109 @@ def test_sqlite_repository_rejects_waiting_commit_at_lease_expiry(
     assert snapshot.claim == claim
 
 
+def test_sqlite_repository_rechecks_waiting_lease_after_write_lock(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    path = tmp_path / "accepted-runs.sqlite3"
+    transaction_now_unix_ms = [2_200]
+    repository = SQLiteAcceptedRunRepository(
+        path,
+        busy_timeout_ms=2_000,
+        clock=lambda: transaction_now_unix_ms[0],
+    )
+    repository.accept_run(_admission())
+    claim = _claim_ready_run(repository)
+    command = _waiting_commit(claim)
+    blocker = sqlite3.connect(path, isolation_level=None)
+    blocker.execute("BEGIN IMMEDIATE")
+    begin_attempted = Event()
+    original_open_connection = repository._database._open_connection
+
+    def open_signaled_connection(
+        *,
+        validate_identity: bool = True,
+    ) -> sqlite3.Connection:
+        connection = original_open_connection(validate_identity=validate_identity)
+
+        def signal_begin(statement: str) -> None:
+            if statement == "BEGIN IMMEDIATE":
+                begin_attempted.set()
+
+        connection.set_trace_callback(signal_begin)
+        return connection
+
+    monkeypatch.setattr(
+        repository._database,
+        "_open_connection",
+        open_signaled_connection,
+    )
+    try:
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(repository.commit_waiting, command)
+            assert begin_attempted.wait(timeout=2)
+            transaction_now_unix_ms[0] = claim.lease_expires_at_unix_ms
+            blocker.commit()
+            with pytest.raises(AcceptedRunLeaseExpiredError):
+                future.result(timeout=2)
+    finally:
+        if blocker.in_transaction:
+            blocker.rollback()
+        blocker.close()
+
+    snapshot = repository.get_run(
+        tenant_id=claim.tenant_id,
+        run_id=claim.run_id,
+    )
+    assert snapshot is not None
+    assert snapshot.phase is AcceptedRunPhase.RUNNING
+    assert snapshot.claim == claim
+
+
+def test_sqlite_repository_rolls_back_waiting_commit_expired_before_commit(
+    tmp_path,
+) -> None:
+    path = tmp_path / "accepted-runs.sqlite3"
+    transaction_now_unix_ms = [2_200]
+
+    def expire_after_state_update(point: str) -> None:
+        if point == "commit_waiting.after_state_update":
+            transaction_now_unix_ms[0] = 2_500
+
+    repository = SQLiteAcceptedRunRepository(
+        path,
+        failpoint=expire_after_state_update,
+        clock=lambda: transaction_now_unix_ms[0],
+    )
+    repository.accept_run(_admission())
+    claim = _claim_ready_run(repository)
+
+    with pytest.raises(AcceptedRunLeaseExpiredError):
+        repository.commit_waiting(_waiting_commit(claim))
+
+    snapshot = repository.get_run(
+        tenant_id=claim.tenant_id,
+        run_id=claim.run_id,
+    )
+    assert snapshot is not None
+    assert snapshot.phase is AcceptedRunPhase.RUNNING
+    assert snapshot.claim == claim
+    connection = sqlite3.connect(path)
+    checkpoint_count = int(
+        connection.execute("SELECT COUNT(*) FROM run_checkpoints").fetchone()[0]
+    )
+    outbox_count = int(
+        connection.execute("SELECT COUNT(*) FROM effect_outbox").fetchone()[0]
+    )
+    connection.close()
+    assert checkpoint_count == 0
+    assert outbox_count == 0
+
+
 def test_sqlite_repository_rejects_waiting_commit_state_version_conflict(
     tmp_path,
 ) -> None:
-    repository = SQLiteAcceptedRunRepository(
-        tmp_path / "accepted-runs.sqlite3"
-    )
+    repository = SQLiteAcceptedRunRepository(tmp_path / "accepted-runs.sqlite3")
     repository.accept_run(_admission())
     claim = _claim_ready_run(repository)
 
@@ -1340,7 +1375,8 @@ def test_sqlite_repository_rejects_checkpoint_for_different_graph(
     tmp_path,
 ) -> None:
     repository = SQLiteAcceptedRunRepository(
-        tmp_path / "accepted-runs.sqlite3"
+        tmp_path / "accepted-runs.sqlite3",
+        clock=lambda: 2_200,
     )
     repository.accept_run(_admission())
     claim = _claim_ready_run(repository)
@@ -1359,7 +1395,8 @@ def test_sqlite_repository_rejects_checkpoint_for_different_graph(
 
 def test_sqlite_repository_hides_cross_tenant_checkpoint(tmp_path) -> None:
     repository = SQLiteAcceptedRunRepository(
-        tmp_path / "accepted-runs.sqlite3"
+        tmp_path / "accepted-runs.sqlite3",
+        clock=lambda: 2_200,
     )
     repository.accept_run(_admission())
     command = _waiting_commit(_claim_ready_run(repository))
@@ -1389,9 +1426,7 @@ def test_sqlite_repository_bounds_event_page_requests(
     limit: int,
     message: str,
 ) -> None:
-    repository = SQLiteAcceptedRunRepository(
-        tmp_path / "accepted-runs.sqlite3"
-    )
+    repository = SQLiteAcceptedRunRepository(tmp_path / "accepted-runs.sqlite3")
     repository.accept_run(_admission())
 
     with pytest.raises(ValueError, match=message):

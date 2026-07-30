@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from enum import StrEnum
 import re
+import time
 from typing import Protocol
 
 from .canonical import (
@@ -31,6 +32,12 @@ _RUNTIME_CHECKPOINT_FIELDS = frozenset(
         "state_digest",
     }
 )
+
+
+def accepted_run_system_clock() -> int:
+    """Return the shared wall-clock authority for accepted-run leases."""
+
+    return time.time_ns() // 1_000_000
 
 
 class AcceptedRunStorageError(RuntimeError):
@@ -69,9 +76,7 @@ class CallbackIssuanceConflictError(AcceptedRunConflictError):
         expected: CallbackIssuanceIdentity,
         provided: CallbackIssuanceIdentity,
     ) -> None:
-        super().__init__(
-            "callback does not match the current checkpoint issuance"
-        )
+        super().__init__("callback does not match the current checkpoint issuance")
         self.expected = expected
         self.provided = provided
 
@@ -101,9 +106,7 @@ class StaleAcceptedRunClaimError(AcceptedRunConflictError):
         current: AcceptedRunClaim | None,
         provided: AcceptedRunClaim,
     ) -> None:
-        super().__init__(
-            "accepted run claim is stale or no longer authoritative"
-        )
+        super().__init__("accepted run claim is stale or no longer authoritative")
         self.current = current
         self.provided = provided
 
@@ -162,8 +165,7 @@ class StaleAcceptedRunEffectDeliveryClaimError(AcceptedRunConflictError):
         provided: AcceptedRunEffectDeliveryClaim,
     ) -> None:
         super().__init__(
-            "accepted run effect delivery claim is stale or no longer "
-            "authoritative"
+            "accepted run effect delivery claim is stale or no longer authoritative"
         )
         self.current = current
         self.provided = provided
@@ -240,9 +242,7 @@ def _validate_exact_string(owner: str, field_name: str, value: object) -> str:
 def _validate_digest(owner: str, field_name: str, value: object) -> str:
     digest = _validate_exact_string(owner, field_name, value)
     if _CANONICAL_SHA256.fullmatch(digest) is None:
-        raise ValueError(
-            f"{owner} {field_name} must be a canonical sha256 digest"
-        )
+        raise ValueError(f"{owner} {field_name} must be a canonical sha256 digest")
     return digest
 
 
@@ -279,9 +279,7 @@ def _validate_canonical_json(
         decoded = canonical_loads(encoded)
         canonical = canonical_dumps(decoded)
     except (TypeError, ValueError) as error:
-        raise ValueError(
-            f"{owner} {field_name} must be canonical JSON"
-        ) from error
+        raise ValueError(f"{owner} {field_name} must be canonical JSON") from error
     if require_object and not isinstance(decoded, dict):
         raise ValueError(f"{owner} {field_name} must encode a JSON object")
     if canonical != encoded:
@@ -298,9 +296,7 @@ def _validate_json_digest(
     digest: str,
 ) -> None:
     if canonical_hash(canonical_loads(encoded)) != digest:
-        raise ValueError(
-            f"{owner} {digest_field_name} must match {json_field_name}"
-        )
+        raise ValueError(f"{owner} {digest_field_name} must match {json_field_name}")
 
 
 class AcceptedRunPhase(StrEnum):
@@ -409,9 +405,7 @@ class AdmissionResult:
             _validate_canonical_json(owner, "ticket_json", self.ticket_json),
         )
         if type(self.replayed) is not bool:
-            raise ValueError(
-                "accepted run admission result replayed must be a boolean"
-            )
+            raise ValueError("accepted run admission result replayed must be a boolean")
 
 
 def resolve_admission_replay(
@@ -532,9 +526,7 @@ class CallbackSubmissionIdentity:
     def __post_init__(self) -> None:
         owner = "accepted run callback submission"
         if not isinstance(self.issuance, CallbackIssuanceIdentity):
-            raise ValueError(
-                f"{owner} issuance must be a CallbackIssuanceIdentity"
-            )
+            raise ValueError(f"{owner} issuance must be a CallbackIssuanceIdentity")
         object.__setattr__(
             self,
             "payload_digest",
@@ -552,9 +544,7 @@ class CallbackAcceptance:
     def __post_init__(self) -> None:
         owner = "accepted run callback acceptance"
         if not isinstance(self.submission, CallbackSubmissionIdentity):
-            raise ValueError(
-                f"{owner} submission must be a CallbackSubmissionIdentity"
-            )
+            raise ValueError(f"{owner} submission must be a CallbackSubmissionIdentity")
         object.__setattr__(
             self,
             "receipt_json",
@@ -590,13 +580,9 @@ class AcceptedRunControlAcceptance:
     def __post_init__(self) -> None:
         owner = "accepted run control acceptance"
         if not isinstance(self.action, AcceptedRunControlAction):
-            raise ValueError(
-                f"{owner} action must be an AcceptedRunControlAction"
-            )
+            raise ValueError(f"{owner} action must be an AcceptedRunControlAction")
         if not isinstance(self.resulting_phase, AcceptedRunPhase):
-            raise ValueError(
-                f"{owner} resulting_phase must be an AcceptedRunPhase"
-            )
+            raise ValueError(f"{owner} resulting_phase must be an AcceptedRunPhase")
         object.__setattr__(
             self,
             "idempotency_key",
@@ -787,9 +773,7 @@ class AcceptedRunEffectIntent:
             _validate_exact_string(owner, "effect_id", self.effect_id),
         )
         if not isinstance(self.kind, AcceptedRunEffectKind):
-            raise ValueError(
-                f"{owner} kind must be an AcceptedRunEffectKind"
-            )
+            raise ValueError(f"{owner} kind must be an AcceptedRunEffectKind")
         object.__setattr__(
             self,
             "idempotency_key",
@@ -877,8 +861,7 @@ def assert_current_effect_delivery_claim(
 ) -> None:
     if not isinstance(provided, AcceptedRunEffectDeliveryClaim):
         raise TypeError(
-            "provided effect delivery claim must be an "
-            "AcceptedRunEffectDeliveryClaim"
+            "provided effect delivery claim must be an AcceptedRunEffectDeliveryClaim"
         )
     if current is not None and not isinstance(
         current,
@@ -932,9 +915,7 @@ class AcceptedRunEffectDeliveryRecord:
                 ),
             )
         if not isinstance(self.kind, AcceptedRunEffectKind):
-            raise ValueError(
-                f"{owner} kind must be an AcceptedRunEffectKind"
-            )
+            raise ValueError(f"{owner} kind must be an AcceptedRunEffectKind")
         checkpoint_digest = self.checkpoint_digest
         if checkpoint_digest is not None:
             checkpoint_digest = _validate_digest(
@@ -954,9 +935,7 @@ class AcceptedRunEffectDeliveryRecord:
             self.kind is AcceptedRunEffectKind.COMPLETION
             and checkpoint_digest is not None
         ):
-            raise ValueError(
-                f"{owner} checkpoint_digest must match the effect kind"
-            )
+            raise ValueError(f"{owner} checkpoint_digest must match the effect kind")
         object.__setattr__(
             self,
             "payload_json",
@@ -979,8 +958,7 @@ class AcceptedRunEffectDeliveryRecord:
             AcceptedRunEffectDeliveryState,
         ):
             raise ValueError(
-                f"{owner} delivery_state must be an "
-                "AcceptedRunEffectDeliveryState"
+                f"{owner} delivery_state must be an AcceptedRunEffectDeliveryState"
             )
         for field_name in (
             "attempt_count",
@@ -998,8 +976,7 @@ class AcceptedRunEffectDeliveryRecord:
             )
         if self.available_at_unix_ms < self.created_at_unix_ms:
             raise ValueError(
-                f"{owner} available_at_unix_ms must not precede "
-                "created_at_unix_ms"
+                f"{owner} available_at_unix_ms must not precede created_at_unix_ms"
             )
         claim = self.claim
         if claim is not None and not isinstance(
@@ -1007,21 +984,15 @@ class AcceptedRunEffectDeliveryRecord:
             AcceptedRunEffectDeliveryClaim,
         ):
             raise ValueError(
-                f"{owner} claim must be an AcceptedRunEffectDeliveryClaim "
-                "or None"
+                f"{owner} claim must be an AcceptedRunEffectDeliveryClaim or None"
             )
-        claimed = (
-            self.delivery_state is AcceptedRunEffectDeliveryState.CLAIMED
-        )
+        claimed = self.delivery_state is AcceptedRunEffectDeliveryState.CLAIMED
         if claimed != (claim is not None):
             raise ValueError(
-                f"{owner} claim must be present only while delivery_state "
-                "is claimed"
+                f"{owner} claim must be present only while delivery_state is claimed"
             )
         if claim is not None and claim.effect_id != self.effect_id:
-            raise ValueError(
-                f"{owner} claim effect_id must match the record effect_id"
-            )
+            raise ValueError(f"{owner} claim effect_id must match the record effect_id")
         if claimed and self.attempt_count == 0:
             raise ValueError(
                 f"{owner} claimed delivery must have a positive attempt_count"
@@ -1040,8 +1011,7 @@ class AcceptedRunEffectDeliveryRecord:
             )
             if delivered_at < self.created_at_unix_ms:
                 raise ValueError(
-                    f"{owner} delivered_at_unix_ms must not precede "
-                    "created_at_unix_ms"
+                    f"{owner} delivered_at_unix_ms must not precede created_at_unix_ms"
                 )
         settled = self.delivery_state in {
             AcceptedRunEffectDeliveryState.DELIVERED,
@@ -1053,9 +1023,7 @@ class AcceptedRunEffectDeliveryRecord:
                 "delivered or callback-satisfied effects"
             )
         cancelled_at = self.cancelled_at_unix_ms
-        cancelled = (
-            self.delivery_state is AcceptedRunEffectDeliveryState.CANCELLED
-        )
+        cancelled = self.delivery_state is AcceptedRunEffectDeliveryState.CANCELLED
         if cancelled_at is not None:
             cancelled_at = _validate_u64(
                 owner,
@@ -1069,8 +1037,7 @@ class AcceptedRunEffectDeliveryRecord:
             )
             if cancelled_at < self.created_at_unix_ms:
                 raise ValueError(
-                    f"{owner} cancelled_at_unix_ms must not precede "
-                    "created_at_unix_ms"
+                    f"{owner} cancelled_at_unix_ms must not precede created_at_unix_ms"
                 )
         if cancelled != (cancelled_at is not None):
             raise ValueError(
@@ -1112,9 +1079,7 @@ class AcceptedRunEffectDeliveryClaimRequest:
             ),
         )
         if self.now_unix_ms > _MAX_U64 - self.lease_duration_ms:
-            raise ValueError(
-                f"{owner} lease expiry exceeds unsigned 64-bit range"
-            )
+            raise ValueError(f"{owner} lease expiry exceeds unsigned 64-bit range")
 
     @property
     def lease_expires_at_unix_ms(self) -> int:
@@ -1129,9 +1094,7 @@ class AcceptedRunEffectDeliveryAck:
     def __post_init__(self) -> None:
         owner = "accepted run effect delivery ack"
         if not isinstance(self.claim, AcceptedRunEffectDeliveryClaim):
-            raise ValueError(
-                f"{owner} claim must be an AcceptedRunEffectDeliveryClaim"
-            )
+            raise ValueError(f"{owner} claim must be an AcceptedRunEffectDeliveryClaim")
         object.__setattr__(
             self,
             "delivered_at_unix_ms",
@@ -1152,9 +1115,7 @@ class AcceptedRunEffectDeliveryRetry:
     def __post_init__(self) -> None:
         owner = "accepted run effect delivery retry"
         if not isinstance(self.claim, AcceptedRunEffectDeliveryClaim):
-            raise ValueError(
-                f"{owner} claim must be an AcceptedRunEffectDeliveryClaim"
-            )
+            raise ValueError(f"{owner} claim must be an AcceptedRunEffectDeliveryClaim")
         for field_name in ("released_at_unix_ms", "available_at_unix_ms"):
             object.__setattr__(
                 self,
@@ -1167,8 +1128,7 @@ class AcceptedRunEffectDeliveryRetry:
             )
         if self.available_at_unix_ms < self.released_at_unix_ms:
             raise ValueError(
-                f"{owner} available_at_unix_ms must not precede "
-                "released_at_unix_ms"
+                f"{owner} available_at_unix_ms must not precede released_at_unix_ms"
             )
 
 
@@ -1268,9 +1228,7 @@ class AcceptedRunSnapshot:
                 _validate_exact_string(owner, field_name, getattr(self, field_name)),
             )
         if not isinstance(self.phase, AcceptedRunPhase):
-            raise ValueError(
-                "accepted run snapshot phase must be an AcceptedRunPhase"
-            )
+            raise ValueError("accepted run snapshot phase must be an AcceptedRunPhase")
         for field_name in (
             "state_version",
             "event_low_watermark",
@@ -1316,8 +1274,7 @@ class AcceptedRunSnapshot:
                 )
         elif self.paused_from_phase is not None:
             raise ValueError(
-                "non-paused accepted run snapshot must not include "
-                "paused_from_phase"
+                "non-paused accepted run snapshot must not include paused_from_phase"
             )
         if self.claim is not None:
             if not isinstance(self.claim, AcceptedRunClaim):
@@ -1507,9 +1464,7 @@ class AcceptedRunExecutionEnvelope:
             _validate_exact_string(owner, "run_id", self.run_id),
         )
         if not isinstance(self.identity, AdmissionIdentity):
-            raise ValueError(
-                f"{owner} identity must be an AdmissionIdentity"
-            )
+            raise ValueError(f"{owner} identity must be an AdmissionIdentity")
         for field_name in (
             "graph_json",
             "inputs_json",
@@ -1566,9 +1521,7 @@ class AcceptedRunCallbackInput:
     def __post_init__(self) -> None:
         owner = "accepted run callback input"
         if not isinstance(self.acceptance, CallbackAcceptance):
-            raise ValueError(
-                f"{owner} acceptance must be a CallbackAcceptance"
-            )
+            raise ValueError(f"{owner} acceptance must be a CallbackAcceptance")
         object.__setattr__(
             self,
             "payload_json",
@@ -1659,23 +1612,19 @@ class AcceptedRunWorkItem:
         acceptance = self.callback.acceptance
         issuance = acceptance.submission.issuance
         if (
-            self.checkpoint.format_version
-            != self.envelope.checkpoint_format_version
+            self.checkpoint.format_version != self.envelope.checkpoint_format_version
             or checkpoint.run_id != self.claim.run_id
             or checkpoint.graph_hash != self.envelope.graph_hash
-            or canonical_dumps(checkpoint.inputs)
-            != self.envelope.inputs_json
+            or canonical_dumps(checkpoint.inputs) != self.envelope.inputs_json
             or issuance.run_id != self.claim.run_id
-            or issuance.checkpoint_digest
-            != self.checkpoint.checkpoint_digest
+            or issuance.checkpoint_digest != self.checkpoint.checkpoint_digest
         ):
             raise ValueError(
                 f"{owner} resume identities must match its durable envelope"
             )
         if (
             acceptance.state_version >= self.state_version
-            or acceptance.accepted_event_sequence
-            >= self.event_high_watermark
+            or acceptance.accepted_event_sequence >= self.event_high_watermark
             or issuance.lease_generation >= self.claim.lease_generation
             or issuance.fencing_token >= self.claim.fencing_token
         ):
@@ -1820,10 +1769,7 @@ class AcceptedRunWaitingCommit:
                 "accepted run waiting commit dispatch_effect must be an "
                 "AcceptedRunEffectIntent"
             )
-        if (
-            self.dispatch_effect.kind
-            is not AcceptedRunEffectKind.OPERATION_DISPATCH
-        ):
+        if self.dispatch_effect.kind is not AcceptedRunEffectKind.OPERATION_DISPATCH:
             raise ValueError(
                 "accepted run waiting commit requires an operation dispatch effect"
             )
@@ -1836,8 +1782,7 @@ class AcceptedRunWaitingCommit:
             or issuance.lease_generation != self.claim.lease_generation
             or issuance.fencing_token != self.claim.fencing_token
             or issuance.operation_id != checkpoint.operation["operation_id"]
-            or issuance.operation_attempt_id
-            != checkpoint.operation["attempt_id"]
+            or issuance.operation_attempt_id != checkpoint.operation["attempt_id"]
         ):
             raise ValueError(
                 "accepted run waiting commit identities must match its claim "
@@ -1987,24 +1932,15 @@ class AcceptedRunCancelCommand:
                 f"{owner} cancelled_event must be an AcceptedRunEventIntent"
             )
         if self.cancelled_event.kind != "run_cancelled":
-            raise ValueError(
-                f"{owner} cancelled_event kind must be run_cancelled"
-            )
-        if (
-            self.cancelled_event.created_at_unix_ms
-            != self.requested_at_unix_ms
-        ):
-            raise ValueError(
-                f"{owner} event timestamp must match requested_at_unix_ms"
-            )
+            raise ValueError(f"{owner} cancelled_event kind must be run_cancelled")
+        if self.cancelled_event.created_at_unix_ms != self.requested_at_unix_ms:
+            raise ValueError(f"{owner} event timestamp must match requested_at_unix_ms")
         if not isinstance(self.completion_effect, AcceptedRunEffectIntent):
             raise ValueError(
                 f"{owner} completion_effect must be an AcceptedRunEffectIntent"
             )
         if self.completion_effect.kind is not AcceptedRunEffectKind.COMPLETION:
-            raise ValueError(
-                f"{owner} requires a completion effect"
-            )
+            raise ValueError(f"{owner} requires a completion effect")
 
 
 @dataclass(frozen=True, slots=True)
@@ -2079,25 +2015,17 @@ class AcceptedRunExpireCommand:
             digest=self.result_digest,
         )
         if not isinstance(self.expired_event, AcceptedRunEventIntent):
-            raise ValueError(
-                f"{owner} expired_event must be an AcceptedRunEventIntent"
-            )
+            raise ValueError(f"{owner} expired_event must be an AcceptedRunEventIntent")
         if self.expired_event.kind != "run_expired":
-            raise ValueError(
-                f"{owner} expired_event kind must be run_expired"
-            )
+            raise ValueError(f"{owner} expired_event kind must be run_expired")
         if self.expired_event.created_at_unix_ms != self.requested_at_unix_ms:
-            raise ValueError(
-                f"{owner} event timestamp must match requested_at_unix_ms"
-            )
+            raise ValueError(f"{owner} event timestamp must match requested_at_unix_ms")
         if not isinstance(self.completion_effect, AcceptedRunEffectIntent):
             raise ValueError(
                 f"{owner} completion_effect must be an AcceptedRunEffectIntent"
             )
         if self.completion_effect.kind is not AcceptedRunEffectKind.COMPLETION:
-            raise ValueError(
-                f"{owner} requires a completion effect"
-            )
+            raise ValueError(f"{owner} requires a completion effect")
 
 
 @dataclass(frozen=True, slots=True)
@@ -2133,9 +2061,7 @@ class AcceptedRunStateControlCommand:
             AcceptedRunControlAction.PAUSE,
             AcceptedRunControlAction.RESUME,
         }:
-            raise ValueError(
-                f"{owner} action must be pause or resume"
-            )
+            raise ValueError(f"{owner} action must be pause or resume")
         object.__setattr__(
             self,
             "expected_state_version",
@@ -2160,24 +2086,15 @@ class AcceptedRunStateControlCommand:
             ),
         )
         if not isinstance(self.control_event, AcceptedRunEventIntent):
-            raise ValueError(
-                f"{owner} control_event must be an AcceptedRunEventIntent"
-            )
+            raise ValueError(f"{owner} control_event must be an AcceptedRunEventIntent")
         expected_event_kind = {
             AcceptedRunControlAction.PAUSE: "run_paused",
             AcceptedRunControlAction.RESUME: "run_resumed",
         }[self.action]
         if self.control_event.kind != expected_event_kind:
-            raise ValueError(
-                f"{owner} control_event kind must match action"
-            )
-        if (
-            self.control_event.created_at_unix_ms
-            != self.requested_at_unix_ms
-        ):
-            raise ValueError(
-                f"{owner} event timestamp must match requested_at_unix_ms"
-            )
+            raise ValueError(f"{owner} control_event kind must match action")
+        if self.control_event.created_at_unix_ms != self.requested_at_unix_ms:
+            raise ValueError(f"{owner} event timestamp must match requested_at_unix_ms")
 
 
 @dataclass(frozen=True, slots=True)
@@ -2250,16 +2167,14 @@ class AcceptedRunTerminalCommit:
 class AcceptedRunRepository(Protocol):
     """Atomic use-case boundary for one durable accepted-run authority."""
 
-    def accept_run(self, admission: AcceptedRunAdmission) -> AdmissionResult:
-        ...
+    def accept_run(self, admission: AcceptedRunAdmission) -> AdmissionResult: ...
 
     def get_run(
         self,
         *,
         tenant_id: str,
         run_id: str,
-    ) -> AcceptedRunSnapshot | None:
-        ...
+    ) -> AcceptedRunSnapshot | None: ...
 
     def read_events(
         self,
@@ -2268,8 +2183,7 @@ class AcceptedRunRepository(Protocol):
         run_id: str,
         after_sequence: int,
         limit: int,
-    ) -> AcceptedRunEventPage:
-        ...
+    ) -> AcceptedRunEventPage: ...
 
     def get_checkpoint(
         self,
@@ -2277,68 +2191,57 @@ class AcceptedRunRepository(Protocol):
         tenant_id: str,
         run_id: str,
         checkpoint_digest: str,
-    ) -> StoredRuntimeCheckpoint | None:
-        ...
+    ) -> StoredRuntimeCheckpoint | None: ...
 
     def claim_run(
         self,
         request: AcceptedRunClaimRequest,
-    ) -> AcceptedRunClaim | None:
-        ...
+    ) -> AcceptedRunClaim | None: ...
 
     def claim_work(
         self,
         request: AcceptedRunClaimRequest,
-    ) -> AcceptedRunWorkItem | None:
-        ...
+    ) -> AcceptedRunWorkItem | None: ...
 
     def claim_next_work(
         self,
         request: AcceptedRunQueueClaimRequest,
-    ) -> AcceptedRunWorkItem | None:
-        ...
+    ) -> AcceptedRunWorkItem | None: ...
 
     def commit_waiting(
         self,
         command: AcceptedRunWaitingCommit,
-    ) -> AcceptedRunSnapshot:
-        ...
+    ) -> AcceptedRunSnapshot: ...
 
     def accept_callback_and_queue_resume(
         self,
         command: AcceptedRunCallbackCommit,
-    ) -> CallbackAcceptance:
-        ...
+    ) -> CallbackAcceptance: ...
 
     def cancel_run(
         self,
         command: AcceptedRunCancelCommand,
-    ) -> AcceptedRunControlAcceptance:
-        ...
+    ) -> AcceptedRunControlAcceptance: ...
 
     def expire_run(
         self,
         command: AcceptedRunExpireCommand,
-    ) -> AcceptedRunControlAcceptance:
-        ...
+    ) -> AcceptedRunControlAcceptance: ...
 
     def pause_run(
         self,
         command: AcceptedRunStateControlCommand,
-    ) -> AcceptedRunControlAcceptance:
-        ...
+    ) -> AcceptedRunControlAcceptance: ...
 
     def resume_run(
         self,
         command: AcceptedRunStateControlCommand,
-    ) -> AcceptedRunControlAcceptance:
-        ...
+    ) -> AcceptedRunControlAcceptance: ...
 
     def commit_terminal(
         self,
         command: AcceptedRunTerminalCommit,
-    ) -> AcceptedRunSnapshot:
-        ...
+    ) -> AcceptedRunSnapshot: ...
 
 
 class OutboxDispatcherRepository(Protocol):
@@ -2348,23 +2251,19 @@ class OutboxDispatcherRepository(Protocol):
         self,
         *,
         effect_id: str,
-    ) -> AcceptedRunEffectDeliveryRecord | None:
-        ...
+    ) -> AcceptedRunEffectDeliveryRecord | None: ...
 
     def claim_next_effect(
         self,
         request: AcceptedRunEffectDeliveryClaimRequest,
-    ) -> AcceptedRunEffectDeliveryRecord | None:
-        ...
+    ) -> AcceptedRunEffectDeliveryRecord | None: ...
 
     def mark_effect_delivered(
         self,
         command: AcceptedRunEffectDeliveryAck,
-    ) -> AcceptedRunEffectDeliveryRecord:
-        ...
+    ) -> AcceptedRunEffectDeliveryRecord: ...
 
     def release_effect_for_retry(
         self,
         command: AcceptedRunEffectDeliveryRetry,
-    ) -> AcceptedRunEffectDeliveryRecord:
-        ...
+    ) -> AcceptedRunEffectDeliveryRecord: ...
