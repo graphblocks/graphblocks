@@ -474,7 +474,13 @@ def test_sqlite_repository_accepts_callback_while_paused_without_claiming_resume
                 payload_digest=canonical_hash(callback_payload),
             ),
             payload_json=canonical_dumps(callback_payload),
-            receipt_json=canonical_dumps({"received": True}),
+            receipt_json=canonical_dumps(
+                {
+                    "payload": callback_payload,
+                    "payload_digest": canonical_hash(callback_payload),
+                    "received": True,
+                }
+            ),
             received_at_unix_ms=3_000,
             accepted_event=AcceptedRunEventIntent(
                 kind="external_callback_received",

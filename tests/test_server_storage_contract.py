@@ -1,10 +1,16 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import replace
 
 import pytest
 
 from graphblocks.canonical import canonical_dumps, canonical_hash, canonical_loads
+from graphblocks.durable_worker import (
+    build_durable_worker_request,
+    execute_durable_worker_request,
+)
+from graphblocks.isolated_worker import ProcessWorkerProtocolError
 from graphblocks.runtime import RuntimeCheckpoint
 from graphblocks.server_storage import (
     CHECKPOINT_FORMAT_VERSION,
@@ -288,13 +294,21 @@ def test_different_admission_namespace_is_not_a_replay() -> None:
 
 def test_exact_callback_replays_stored_acceptance() -> None:
     issuance = _callback_issuance()
+    payload = {"status": "completed"}
     submission = CallbackSubmissionIdentity(
         issuance=issuance,
-        payload_digest=_DIGEST_C,
+        payload_digest=canonical_hash(payload),
     )
     existing = CallbackAcceptance(
         submission=submission,
-        receipt_json=canonical_dumps({"callbackId": "callback-1", "accepted": True}),
+        receipt_json=canonical_dumps(
+            {
+                "accepted": True,
+                "callbackId": "callback-1",
+                "payload": payload,
+                "payload_digest": canonical_hash(payload),
+            }
+        ),
         accepted_event_sequence=3,
         state_version=4,
     )
@@ -311,12 +325,19 @@ def test_exact_callback_replays_stored_acceptance() -> None:
 
 def test_callback_payload_conflict_is_not_acknowledged_as_replay() -> None:
     issuance = _callback_issuance()
+    existing_payload = {"status": "completed"}
     existing = CallbackAcceptance(
         submission=CallbackSubmissionIdentity(
             issuance=issuance,
-            payload_digest=_DIGEST_B,
+            payload_digest=canonical_hash(existing_payload),
         ),
-        receipt_json=canonical_dumps({"accepted": True}),
+        receipt_json=canonical_dumps(
+            {
+                "accepted": True,
+                "payload": existing_payload,
+                "payload_digest": canonical_hash(existing_payload),
+            }
+        ),
         accepted_event_sequence=3,
         state_version=4,
     )
@@ -575,7 +596,12 @@ def test_resume_claimed_work_binds_checkpoint_and_callback_payload() -> None:
                 payload_digest=canonical_hash(callback_payload),
             ),
             receipt_json=canonical_dumps(
-                {"accepted": True, "callbackId": "callback-1"}
+                {
+                    "accepted": True,
+                    "callbackId": "callback-1",
+                    "payload": callback_payload,
+                    "payload_digest": canonical_hash(callback_payload),
+                }
             ),
             accepted_event_sequence=4,
             state_version=4,
@@ -596,6 +622,35 @@ def test_resume_claimed_work_binds_checkpoint_and_callback_payload() -> None:
     assert work.is_resume
     assert work.checkpoint == checkpoint
     assert work.callback == callback
+
+    graph = canonical_loads(work.envelope.graph_json)
+    inputs = canonical_loads(work.envelope.inputs_json)
+    receipt = canonical_loads(callback.acceptance.receipt_json)
+    assert isinstance(graph, dict)
+    assert isinstance(inputs, dict)
+    assert isinstance(receipt, dict)
+    request = build_durable_worker_request(
+        work,
+        graph=graph,
+        inputs=inputs,
+    )
+    authority = request.config["authority"]
+    assert isinstance(authority, Mapping)
+    assert authority["callbackPayloadDigest"] == canonical_hash(callback_payload)
+    assert request.inputs["callbackReceipt"] == receipt
+
+    forged_payload = {"conclusion": "failure", "status": "completed"}
+    forged_receipt = dict(receipt)
+    forged_receipt["payload"] = forged_payload
+    forged_receipt["payload_digest"] = canonical_hash(forged_payload)
+    forged_inputs = dict(request.inputs)
+    forged_inputs["callbackReceipt"] = forged_receipt
+    forged_request = replace(request, inputs=forged_inputs)
+    with pytest.raises(
+        ProcessWorkerProtocolError,
+        match="resume state does not match its authority",
+    ):
+        execute_durable_worker_request(forged_request)
 
 
 def test_claimed_work_rejects_partial_resume_base() -> None:

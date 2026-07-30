@@ -32,6 +32,7 @@ DEFAULT_DURABLE_WORKER_TARGET = ProcessWorkerTarget(
 
 _AUTHORITY_FIELDS = frozenset(
     {
+        "callbackPayloadDigest",
         "callbackReceiptDigest",
         "checkpointDigest",
         "eventHighWatermark",
@@ -209,8 +210,12 @@ def _validate_durable_worker_request(
             )
 
     checkpoint_digest = authority["checkpointDigest"]
+    callback_payload_digest = authority["callbackPayloadDigest"]
     callback_receipt_digest = authority["callbackReceiptDigest"]
-    if (checkpoint_digest is None) != (callback_receipt_digest is None):
+    if (
+        (checkpoint_digest is None) != (callback_payload_digest is None)
+        or (checkpoint_digest is None) != (callback_receipt_digest is None)
+    ):
         raise ProcessWorkerProtocolError(
             "durable worker resume authority digests must be paired"
         )
@@ -218,6 +223,10 @@ def _validate_durable_worker_request(
         _require_digest(
             checkpoint_digest,
             "durable worker authority checkpointDigest",
+        )
+        _require_digest(
+            callback_payload_digest,
+            "durable worker authority callbackPayloadDigest",
         )
         _require_digest(
             callback_receipt_digest,
@@ -309,11 +318,17 @@ def _validate_durable_worker_request(
             callback_receipt,
             "durable worker callback receipt",
         )
+        if "payload" not in receipt or "payload_digest" not in receipt:
+            raise ProcessWorkerProtocolError(
+                "durable worker callback receipt must bind its payload"
+            )
         if (
             stored_checkpoint.checkpoint_digest != checkpoint_digest
             or checkpoint.run_id != request.run_id
             or checkpoint.graph_hash != graph_hash
             or canonical_dumps(checkpoint.inputs) != canonical_dumps(run_inputs)
+            or receipt.get("payload_digest") != callback_payload_digest
+            or canonical_hash(receipt.get("payload")) != callback_payload_digest
             or canonical_hash(receipt) != callback_receipt_digest
         ):
             raise ProcessWorkerProtocolError(
@@ -330,14 +345,20 @@ def build_durable_worker_request(
     *,
     graph: Mapping[str, object],
     inputs: Mapping[str, object],
-    callback_receipt: Mapping[str, object] | None,
 ) -> WorkerInvokeRequest:
     if not isinstance(work, AcceptedRunWorkItem):
         raise TypeError("durable worker work item must be an AcceptedRunWorkItem")
     if not isinstance(graph, Mapping) or not isinstance(inputs, Mapping):
         raise TypeError("durable worker graph and inputs must be mappings")
-    if work.is_resume != (callback_receipt is not None):
-        raise ValueError("durable worker callback receipt must match resume work")
+
+    callback_receipt: dict[str, object] | None = None
+    if work.callback is not None:
+        accepted_receipt = canonical_loads(work.callback.acceptance.receipt_json)
+        if not isinstance(accepted_receipt, dict):
+            raise ValueError(
+                "durable worker accepted callback receipt must encode an object"
+            )
+        callback_receipt = accepted_receipt
 
     checkpoint_digest = (
         None if work.checkpoint is None else work.checkpoint.checkpoint_digest
@@ -345,7 +366,13 @@ def build_durable_worker_request(
     callback_receipt_digest = (
         None if callback_receipt is None else canonical_hash(dict(callback_receipt))
     )
+    callback_payload_digest = (
+        None
+        if work.callback is None
+        else work.callback.acceptance.submission.payload_digest
+    )
     authority: dict[str, object] = {
+        "callbackPayloadDigest": callback_payload_digest,
         "callbackReceiptDigest": callback_receipt_digest,
         "checkpointDigest": checkpoint_digest,
         "eventHighWatermark": work.event_high_watermark,

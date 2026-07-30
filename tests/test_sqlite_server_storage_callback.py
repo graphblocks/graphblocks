@@ -6,7 +6,7 @@ import sqlite3
 
 import pytest
 
-from graphblocks.canonical import canonical_dumps, canonical_hash
+from graphblocks.canonical import canonical_dumps, canonical_hash, canonical_loads
 from graphblocks.runtime import RuntimeCheckpoint
 from graphblocks.server_storage import (
     AcceptedRunAdmission,
@@ -22,6 +22,7 @@ from graphblocks.server_storage import (
     AcceptedRunEventIntent,
     AcceptedRunNotFoundError,
     AcceptedRunPhase,
+    AcceptedRunQueueClaimRequest,
     AcceptedRunWaitingCommit,
     AdmissionIdentity,
     CallbackIssuanceConflictError,
@@ -32,7 +33,10 @@ from graphblocks.server_storage import (
     encode_runtime_checkpoint,
 )
 from graphblocks.sqlite_outbox import SQLiteOutboxDispatcherRepository
-from graphblocks.sqlite_server_storage import SQLiteAcceptedRunRepository
+from graphblocks.sqlite_server_storage import (
+    SQLiteAcceptedRunCorruptionError,
+    SQLiteAcceptedRunRepository,
+)
 
 
 def _admission() -> AcceptedRunAdmission:
@@ -190,6 +194,8 @@ def _callback_command(
     receipt = {
         "accepted": True,
         "callbackId": "callback-1",
+        "payload": actual_payload,
+        "payload_digest": canonical_hash(actual_payload),
         "runId": waiting.claim.run_id,
     }
     event_payload = {
@@ -256,6 +262,72 @@ def test_sqlite_repository_accepts_callback_and_queues_resume_atomically(
     assert delivery_state == "satisfied_by_callback"
 
 
+def test_callback_commit_rejects_receipt_payload_divergence(tmp_path) -> None:
+    path = tmp_path / "accepted-runs.sqlite3"
+    repository, waiting = _waiting_run(path)
+    command = _callback_command(waiting)
+    receipt = canonical_loads(command.receipt_json)
+    assert isinstance(receipt, dict)
+    forged_payload = {"conclusion": "failure", "status": "completed"}
+    receipt["payload"] = forged_payload
+    receipt["payload_digest"] = canonical_hash(forged_payload)
+
+    with pytest.raises(
+        ValueError,
+        match="receipt payload must match payload_json",
+    ):
+        replace(
+            command,
+            receipt_json=canonical_dumps(receipt),
+        )
+
+    snapshot = repository.get_run(tenant_id="tenant-1", run_id="run-1")
+    assert snapshot is not None
+    assert snapshot.phase is AcceptedRunPhase.WAITING_CALLBACK
+    assert snapshot.state_version == 3
+    assert snapshot.event_high_watermark == 3
+
+
+def test_sqlite_repository_rejects_corrupt_callback_receipt_before_resume(
+    tmp_path,
+) -> None:
+    path = tmp_path / "accepted-runs.sqlite3"
+    repository, waiting = _waiting_run(path)
+    command = _callback_command(waiting)
+    repository.accept_callback_and_queue_resume(command)
+    forged_payload = {"conclusion": "failure", "status": "completed"}
+    forged_receipt = {
+        "payload": forged_payload,
+        "payload_digest": canonical_hash(forged_payload),
+    }
+    connection = sqlite3.connect(path)
+    connection.execute(
+        "UPDATE callback_inbox SET receipt_json = ?",
+        (canonical_dumps(forged_receipt),),
+    )
+    connection.commit()
+    connection.close()
+
+    with pytest.raises(
+        SQLiteAcceptedRunCorruptionError,
+        match="claimed work is invalid",
+    ):
+        repository.claim_next_work(
+            AcceptedRunQueueClaimRequest(
+                tenant_id="tenant-1",
+                lease_owner_id="worker-resume",
+                now_unix_ms=4_000,
+                lease_duration_ms=1_000,
+            )
+        )
+
+    snapshot = repository.get_run(tenant_id="tenant-1", run_id="run-1")
+    assert snapshot is not None
+    assert snapshot.phase is AcceptedRunPhase.READY_RESUME
+    assert snapshot.state_version == 4
+    assert snapshot.event_high_watermark == 4
+
+
 def test_sqlite_repository_replays_exact_callback_after_restart(
     tmp_path,
 ) -> None:
@@ -263,11 +335,12 @@ def test_sqlite_repository_replays_exact_callback_after_restart(
     repository, waiting = _waiting_run(path)
     command = _callback_command(waiting)
     first = repository.accept_callback_and_queue_resume(command)
+    retry_receipt = canonical_loads(command.receipt_json)
+    assert isinstance(retry_receipt, dict)
+    retry_receipt["candidate"] = "must-not-replace-stored"
     retry = replace(
         command,
-        receipt_json=canonical_dumps(
-            {"accepted": True, "candidate": "must-not-replace-stored"}
-        ),
+        receipt_json=canonical_dumps(retry_receipt),
         received_at_unix_ms=3_100,
         accepted_event=replace(
             command.accepted_event,

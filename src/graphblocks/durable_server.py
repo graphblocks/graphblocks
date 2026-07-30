@@ -887,22 +887,10 @@ class DurableAcceptedRunService:
                 "durable accepted-run graph does not match its admitted plan"
             )
 
-        callback_receipt = None
-        if work.is_resume:
-            if work.callback is None:
-                raise DurableAcceptedRunIntegrityError(
-                    "durable accepted-run resume work has no callback"
-                )
-            callback_receipt = canonical_loads(work.callback.acceptance.receipt_json)
-            if not isinstance(callback_receipt, dict):
-                raise DurableAcceptedRunIntegrityError(
-                    "durable accepted-run callback receipt must be a JSON object"
-                )
         worker_request = build_durable_worker_request(
             work,
             graph=graph,
             inputs=inputs,
-            callback_receipt=callback_receipt,
         )
         current_snapshot = self.repository.get_run(
             tenant_id=work.claim.tenant_id,

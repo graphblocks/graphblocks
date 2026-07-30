@@ -299,6 +299,34 @@ def _validate_json_digest(
         raise ValueError(f"{owner} {digest_field_name} must match {json_field_name}")
 
 
+def _validate_callback_receipt_authority(
+    owner: str,
+    *,
+    receipt_json: str,
+    payload_digest: str,
+    payload_json: str | None = None,
+) -> None:
+    receipt = canonical_loads(receipt_json)
+    if not isinstance(receipt, dict) or "payload" not in receipt:
+        raise ValueError(f"{owner} receipt_json must contain payload")
+    receipt_payload_json = canonical_dumps(receipt["payload"])
+    if payload_json is not None and receipt_payload_json != payload_json:
+        raise ValueError(f"{owner} receipt payload must match payload_json")
+    receipt_payload_digest = _validate_digest(
+        owner,
+        "receipt.payload_digest",
+        receipt.get("payload_digest"),
+    )
+    if canonical_hash(receipt["payload"]) != receipt_payload_digest:
+        raise ValueError(
+            f"{owner} receipt.payload_digest must match receipt payload"
+        )
+    if receipt_payload_digest != payload_digest:
+        raise ValueError(
+            f"{owner} receipt.payload_digest must match submission.payload_digest"
+        )
+
+
 class AcceptedRunPhase(StrEnum):
     READY_INITIAL = "ready_initial"
     RUNNING = "running"
@@ -549,6 +577,11 @@ class CallbackAcceptance:
             self,
             "receipt_json",
             _validate_canonical_json(owner, "receipt_json", self.receipt_json),
+        )
+        _validate_callback_receipt_authority(
+            owner,
+            receipt_json=self.receipt_json,
+            payload_digest=self.submission.payload_digest,
         )
         object.__setattr__(
             self,
@@ -1538,6 +1571,12 @@ class AcceptedRunCallbackInput:
             digest_field_name="acceptance.submission.payload_digest",
             digest=self.acceptance.submission.payload_digest,
         )
+        _validate_callback_receipt_authority(
+            owner,
+            receipt_json=self.acceptance.receipt_json,
+            payload_digest=self.acceptance.submission.payload_digest,
+            payload_json=self.payload_json,
+        )
         object.__setattr__(
             self,
             "received_at_unix_ms",
@@ -1839,6 +1878,12 @@ class AcceptedRunCallbackCommit:
             self,
             "receipt_json",
             _validate_canonical_json(owner, "receipt_json", self.receipt_json),
+        )
+        _validate_callback_receipt_authority(
+            owner,
+            receipt_json=self.receipt_json,
+            payload_digest=self.submission.payload_digest,
+            payload_json=self.payload_json,
         )
         object.__setattr__(
             self,

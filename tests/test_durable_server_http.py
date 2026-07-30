@@ -389,7 +389,12 @@ def test_durable_http_callback_resumes_after_process_restart(
         )
     )
     conflicting_body = dict(callback_body)
-    conflicting_body["payload"] = {"status": "failed"}
+    conflicting_payload = {"status": "failed"}
+    conflicting_body["payload"] = conflicting_payload
+    conflicting_receipt = dict(callback_body["receipt"])
+    conflicting_receipt["payload"] = conflicting_payload
+    conflicting_receipt["payload_digest"] = canonical_hash(conflicting_payload)
+    conflicting_body["receipt"] = conflicting_receipt
     conflicting = _app(path, clock_value=3_500).handle(
         _request(
             "POST",
@@ -444,6 +449,53 @@ def test_durable_http_callback_resumes_after_process_restart(
         "external_callback_received",
         "run_resume_claimed",
         "run_succeeded",
+    ]
+
+
+def test_durable_http_rejects_divergent_callback_receipt_payload(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "durable-http-callback-divergence.sqlite3"
+    waiting, issuance = _prepare_waiting_callback(path)
+    callback_body = _callback_body(waiting, issuance)
+    receipt = callback_body["receipt"]
+    assert isinstance(receipt, dict)
+    forged_payload = {"status": "failed"}
+    receipt["payload"] = forged_payload
+    receipt["payload_digest"] = canonical_hash(forged_payload)
+    app = _app(path, clock_value=3_000)
+
+    rejected = app.handle(
+        _request(
+            "POST",
+            f"/runs/{_CALLBACK_RUN_ID}/callbacks/{_CALLBACK_OPERATION_ID}",
+            token="alice-token",
+            body=callback_body,
+        )
+    )
+    status = app.handle(
+        _request(
+            "GET",
+            f"/runs/{_CALLBACK_RUN_ID}",
+            token="alice-token",
+        )
+    )
+    events = app.handle(
+        _request(
+            "GET",
+            f"/runs/{_CALLBACK_RUN_ID}/events",
+            token="alice-token",
+            query={"after": "0", "limit": "10"},
+        )
+    )
+
+    assert rejected.status_code == 400
+    assert status.status_code == 200
+    assert json.loads(status.body)["state"] == "waiting_callback"
+    assert [event["kind"] for event in json.loads(events.body)["events"]] == [
+        "run_accepted",
+        "run_claimed",
+        "run_waiting_callback",
     ]
 
 

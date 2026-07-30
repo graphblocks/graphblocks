@@ -278,10 +278,15 @@ poison work is not reclaimed forever.
 The durable request binds tenant, immutable owner, run, state version, event
 high watermark, graph hash, lease owner, lease generation, fencing token,
 lease expiry, checkpoint digest, and callback-receipt digest into one canonical
-authority digest. Invocation ID and node-attempt ID derive from that digest,
-and the worker protocol's lease epoch is the accepted-run fencing token.
-Checkpoint and callback values cross the process boundary only through their
-bounded canonical wire forms.
+authority digest. For resume work, the authoritative accepted callback payload
+digest is bound separately from the whole receipt digest. Callback acceptance
+MUST reject a receipt whose embedded payload or payload digest differs from the
+top-level payload used for inbox idempotency and audit identity. Invocation ID
+and node-attempt ID derive from the authority digest. A worker request MUST
+derive its receipt from the stored callback acceptance and MUST NOT accept an
+alternate caller-supplied receipt. The worker protocol's lease epoch is the
+accepted-run fencing token. Checkpoint and callback values cross the process
+boundary only through their bounded canonical wire forms.
 
 The parent first validates invocation ID, node-attempt ID, and lease epoch
 against the request. It then calls the executor's mandatory
