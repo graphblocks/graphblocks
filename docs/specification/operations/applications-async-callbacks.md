@@ -228,10 +228,14 @@ missing-checkpoint, stale-fence, and expired-claim failures as structured
 machine-readable errors.
 
 If no executor is available, a valid receipt remains recorded and the run may
-project a paused callback-delivery state for explicit retry. The Python
-reference server retains checkpoints and executors in process; this continuation
-does not survive process restart. A restart-durable or remote-worker claim
-requires a durable runtime implementation.
+project a paused callback-delivery state for explicit retry. The process-local
+`GraphBlocksServerApp` retains checkpoints and executors in process; this
+continuation does not survive process restart. The preview
+`DurableAcceptedRunServerApp` instead delegates accepted runs, events,
+checkpoints, callback inbox/outbox state, and idempotent cancellation controls
+to `AcceptedRunRepository`; its SQLite implementation preserves these
+transitions across restart. A remote-worker production claim still requires a
+durable runtime implementation and deployment-level lease/fence evidence.
 
 The native stdlib runtime provides a preview, local-filesystem SQLite
 continuation through `checkpointStorePath`. Cooperating processes that resume

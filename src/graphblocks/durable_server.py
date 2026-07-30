@@ -23,9 +23,11 @@ from .server import (
 from .server_storage import (
     CHECKPOINT_FORMAT_VERSION,
     AcceptedRunAdmission,
+    AcceptedRunCancelCommand,
     AcceptedRunCallbackCommit,
     AcceptedRunClaimRequest,
     AcceptedRunConflictError,
+    AcceptedRunControlAcceptance,
     AcceptedRunEffectIntent,
     AcceptedRunEffectKind,
     AcceptedRunEventIntent,
@@ -100,6 +102,7 @@ class DurableAcceptedRunService:
             "claim_next_work",
             "commit_waiting",
             "accept_callback_and_queue_resume",
+            "cancel_run",
             "commit_terminal",
         )
         if any(
@@ -374,6 +377,94 @@ class DurableAcceptedRunService:
                     payload_json=canonical_dumps(event_value),
                     payload_digest=canonical_hash(event_value),
                     created_at_unix_ms=received_at,
+                ),
+            )
+        )
+
+    def cancel_run(
+        self,
+        *,
+        tenant_id: str,
+        owner_principal_id: str,
+        run_id: str,
+        expected_state_version: int,
+        idempotency_key: str,
+        reason: str,
+        requested_at_unix_ms: int | None = None,
+    ) -> AcceptedRunControlAcceptance:
+        if type(reason) is not str or not reason or reason != reason.strip():
+            raise ValueError(
+                "durable accepted-run cancellation reason must be an exact "
+                "non-empty string"
+            )
+        requested_at = (
+            self._now_unix_ms()
+            if requested_at_unix_ms is None
+            else requested_at_unix_ms
+        )
+        request_value = {
+            "action": "cancel",
+            "expectedStateVersion": expected_state_version,
+            "ownerPrincipalId": owner_principal_id,
+            "reason": reason,
+            "runId": run_id,
+            "tenantId": tenant_id,
+        }
+        request_digest = canonical_hash(request_value)
+        result_value = {
+            "reason": reason,
+            "requestId": idempotency_key,
+            "status": "cancelled",
+        }
+        result_digest = canonical_hash(result_value)
+        event_value = {
+            "reason": reason,
+            "requestId": idempotency_key,
+            "runId": run_id,
+            "state": "cancelled",
+        }
+        completion_value = {
+            "result": result_value,
+            "resultDigest": result_digest,
+            "runId": run_id,
+            "tenantId": tenant_id,
+        }
+        completion_digest = canonical_hash(completion_value)
+        completion_identity_digest = canonical_hash(
+            {
+                "runId": run_id,
+                "tenantId": tenant_id,
+            }
+        )
+        return self.repository.cancel_run(
+            AcceptedRunCancelCommand(
+                tenant_id=tenant_id,
+                owner_principal_id=owner_principal_id,
+                run_id=run_id,
+                expected_state_version=expected_state_version,
+                idempotency_key=idempotency_key,
+                request_digest=request_digest,
+                requested_at_unix_ms=requested_at,
+                result_json=canonical_dumps(result_value),
+                result_digest=result_digest,
+                cancelled_event=AcceptedRunEventIntent(
+                    kind="run_cancelled",
+                    payload_json=canonical_dumps(event_value),
+                    payload_digest=canonical_hash(event_value),
+                    created_at_unix_ms=requested_at,
+                ),
+                completion_effect=AcceptedRunEffectIntent(
+                    effect_id=(
+                        "effect-completion:"
+                        f"{completion_digest.removeprefix('sha256:')}"
+                    ),
+                    kind=AcceptedRunEffectKind.COMPLETION,
+                    idempotency_key=(
+                        "completion:"
+                        f"{completion_identity_digest.removeprefix('sha256:')}"
+                    ),
+                    payload_json=canonical_dumps(completion_value),
+                    payload_digest=completion_digest,
                 ),
             )
         )
@@ -712,6 +803,13 @@ def durable_server_route_manifest() -> ServerRouteManifest:
                 "submit_run_callback",
                 auth_required=True,
             ),
+            ServerEndpoint(
+                "POST",
+                "/runs/{run_id}/cancel",
+                "http",
+                "cancel_run",
+                auth_required=True,
+            ),
         )
     )
 
@@ -831,7 +929,7 @@ class DurableAcceptedRunServerApp:
         try:
             if (
                 route.endpoint.operation
-                in {"admit_run", "submit_run_callback"}
+                in {"admit_run", "cancel_run", "submit_run_callback"}
                 and len(request.body) > self.max_request_body_bytes
             ):
                 return ServerResponse.json(
@@ -1006,7 +1104,7 @@ class DurableAcceptedRunServerApp:
                     raise ValueError(
                         "durable callback request receipt must be a JSON object"
                     )
-                acceptance = self.service.submit_callback(
+                callback_acceptance = self.service.submit_callback(
                     tenant_id=principal.tenant_id,
                     owner_principal_id=principal.principal_id,
                     run_id=run_id,
@@ -1026,12 +1124,69 @@ class DurableAcceptedRunServerApp:
                     202,
                     {
                         "acceptedEventSequence": (
-                            acceptance.accepted_event_sequence
+                            callback_acceptance.accepted_event_sequence
                         ),
                         "ok": True,
                         "runId": run_id,
-                        "stateVersion": acceptance.state_version,
+                        "stateVersion": callback_acceptance.state_version,
                         "status": "accepted",
+                    },
+                )
+
+            if route.endpoint.operation == "cancel_run":
+                payload = canonical_loads(request.body)
+                if not isinstance(payload, dict):
+                    raise ValueError(
+                        "durable cancellation request body must be a JSON object"
+                    )
+                expected_fields = {
+                    "expectedStateVersion",
+                    "reason",
+                    "requestId",
+                }
+                if set(payload) != expected_fields:
+                    raise ValueError(
+                        "durable cancellation request fields must match version 1"
+                    )
+                request_id = payload["requestId"]
+                reason = payload["reason"]
+                for field_name, value in (
+                    ("requestId", request_id),
+                    ("reason", reason),
+                ):
+                    if (
+                        type(value) is not str
+                        or not value
+                        or value != value.strip()
+                    ):
+                        raise ValueError(
+                            f"durable cancellation request {field_name} must "
+                            "be an exact non-empty string"
+                        )
+                assert isinstance(request_id, str)
+                assert isinstance(reason, str)
+                control_acceptance = self.service.cancel_run(
+                    tenant_id=principal.tenant_id,
+                    owner_principal_id=principal.principal_id,
+                    run_id=run_id,
+                    expected_state_version=payload[
+                        "expectedStateVersion"
+                    ],
+                    idempotency_key=request_id,
+                    reason=reason,
+                )
+                return ServerResponse.json(
+                    202,
+                    {
+                        "acceptedEventSequence": (
+                            control_acceptance.accepted_event_sequence
+                        ),
+                        "duplicate": control_acceptance.replayed,
+                        "ok": True,
+                        "runId": run_id,
+                        "state": "terminal",
+                        "stateVersion": control_acceptance.state_version,
+                        "terminalStatus": "cancelled",
                     },
                 )
 

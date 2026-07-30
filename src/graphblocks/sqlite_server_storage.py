@@ -13,11 +13,15 @@ from .canonical import canonical_dumps, canonical_hash, canonical_loads
 from .server_storage import (
     CHECKPOINT_FORMAT_VERSION,
     AcceptedRunAdmission,
+    AcceptedRunCancelCommand,
     AcceptedRunCallbackCommit,
     AcceptedRunCallbackInput,
     AcceptedRunCallbackExpiredError,
     AcceptedRunClaim,
     AcceptedRunClaimRequest,
+    AcceptedRunControlAcceptance,
+    AcceptedRunControlAction,
+    AcceptedRunControlConflictError,
     AcceptedRunEvent,
     AcceptedRunEventPage,
     AcceptedRunExecutionEnvelope,
@@ -51,7 +55,7 @@ from .server_storage import (
 
 
 SQLITE_ACCEPTED_RUN_APPLICATION_ID = 0x47424152
-SQLITE_ACCEPTED_RUN_SCHEMA_VERSION = 3
+SQLITE_ACCEPTED_RUN_SCHEMA_VERSION = 4
 _SQLITE_ACCEPTED_RUN_SCHEMA_NAME = "graphblocks.accepted-runs.sqlite"
 _SQLITE_ACCEPTED_RUN_INITIAL_SCHEMA_VERSION = 1
 _MAX_BUSY_TIMEOUT_MS = 60_000
@@ -356,6 +360,48 @@ _SCHEMA_V3_MIGRATION_STATEMENTS = (
     """,
 )
 
+_SCHEMA_V4_MIGRATION_STATEMENTS = (
+    """
+    ALTER TABLE effect_outbox
+    ADD COLUMN cancelled_at_unix_ms INTEGER
+      CHECK (
+        cancelled_at_unix_ms IS NULL OR cancelled_at_unix_ms >= 0
+      )
+    """,
+    """
+    CREATE TABLE run_controls (
+      run_internal_id TEXT NOT NULL,
+      idempotency_key TEXT NOT NULL,
+      action TEXT NOT NULL CHECK (
+        action IN ('cancel', 'pause', 'resume', 'expire')
+      ),
+      request_digest TEXT NOT NULL,
+      requested_by_principal_id TEXT NOT NULL,
+      expected_state_version INTEGER NOT NULL CHECK (
+        expected_state_version >= 0
+      ),
+      accepted_state_version INTEGER NOT NULL CHECK (
+        accepted_state_version > expected_state_version
+      ),
+      accepted_event_sequence INTEGER NOT NULL CHECK (
+        accepted_event_sequence > 0
+      ),
+      requested_at_unix_ms INTEGER NOT NULL CHECK (
+        requested_at_unix_ms >= 0
+      ),
+      PRIMARY KEY (run_internal_id, idempotency_key),
+      UNIQUE (run_internal_id, accepted_event_sequence),
+      FOREIGN KEY (run_internal_id)
+        REFERENCES accepted_runs (internal_id)
+        ON DELETE RESTRICT,
+      FOREIGN KEY (run_internal_id, accepted_event_sequence)
+        REFERENCES run_events (run_internal_id, sequence)
+        ON DELETE RESTRICT
+        DEFERRABLE INITIALLY DEFERRED
+    )
+    """,
+)
+
 _REQUIRED_COLUMNS_V1 = {
     "accepted_run_storage_metadata": frozenset({"key", "value"}),
     "accepted_runs": frozenset(
@@ -456,14 +502,33 @@ _REQUIRED_COLUMNS_V2 = {
         | frozenset({"available_at_unix_ms"})
     ),
 }
-_REQUIRED_COLUMNS = {
+_REQUIRED_COLUMNS_V3 = {
     **_REQUIRED_COLUMNS_V2,
     "accepted_runs": (
         _REQUIRED_COLUMNS_V2["accepted_runs"]
         | frozenset({"invocation_json"})
     ),
 }
-_REQUIRED_TABLES = frozenset(_REQUIRED_COLUMNS)
+_REQUIRED_COLUMNS = {
+    **_REQUIRED_COLUMNS_V3,
+    "effect_outbox": (
+        _REQUIRED_COLUMNS_V3["effect_outbox"]
+        | frozenset({"cancelled_at_unix_ms"})
+    ),
+    "run_controls": frozenset(
+        {
+            "run_internal_id",
+            "idempotency_key",
+            "action",
+            "request_digest",
+            "requested_by_principal_id",
+            "expected_state_version",
+            "accepted_state_version",
+            "accepted_event_sequence",
+            "requested_at_unix_ms",
+        }
+    ),
+}
 
 
 def _validate_lookup_text(owner: str, field_name: str, value: object) -> str:
@@ -703,6 +768,7 @@ class SQLiteAcceptedRunDatabase:
                 if user_version in {
                     _SQLITE_ACCEPTED_RUN_INITIAL_SCHEMA_VERSION,
                     2,
+                    3,
                 }:
                     self._migrate_to_current(connection)
                 else:
@@ -772,6 +838,8 @@ class SQLiteAcceptedRunDatabase:
                     connection.execute(statement)
                 for statement in _SCHEMA_V3_MIGRATION_STATEMENTS:
                     connection.execute(statement)
+                for statement in _SCHEMA_V4_MIGRATION_STATEMENTS:
+                    connection.execute(statement)
                 connection.executemany(
                     """
                     INSERT INTO accepted_run_storage_metadata (key, value)
@@ -816,6 +884,7 @@ class SQLiteAcceptedRunDatabase:
             if user_version not in {
                 _SQLITE_ACCEPTED_RUN_INITIAL_SCHEMA_VERSION,
                 2,
+                3,
             }:
                 raise SQLiteAcceptedRunSchemaVersionError(
                     "unsupported accepted-run SQLite schema version "
@@ -867,6 +936,30 @@ class SQLiteAcceptedRunDatabase:
                         "during v3 migration"
                     )
                 connection.execute(
+                    "PRAGMA user_version = 3"
+                )
+                user_version = 3
+            if user_version == 3:
+                self._validate_schema_version(
+                    connection,
+                    schema_version=3,
+                    required_columns=_REQUIRED_COLUMNS_V3,
+                )
+                for statement in _SCHEMA_V4_MIGRATION_STATEMENTS:
+                    connection.execute(statement)
+                updated = connection.execute(
+                    """
+                    UPDATE accepted_run_storage_metadata
+                    SET value = '4'
+                    WHERE key = 'schema_version' AND value = '3'
+                    """
+                )
+                if updated.rowcount != 1:
+                    raise SQLiteAcceptedRunSchemaMismatchError(
+                        "accepted-run SQLite schema metadata version changed "
+                        "during v4 migration"
+                    )
+                connection.execute(
                     "PRAGMA user_version = "
                     f"{SQLITE_ACCEPTED_RUN_SCHEMA_VERSION}"
                 )
@@ -892,7 +985,7 @@ class SQLiteAcceptedRunDatabase:
         required_columns: dict[str, frozenset[str]],
     ) -> None:
         tables = self._table_names(connection)
-        if tables != _REQUIRED_TABLES:
+        if tables != frozenset(required_columns):
             raise SQLiteAcceptedRunSchemaMismatchError(
                 "accepted-run SQLite schema tables do not match "
                 f"version {schema_version}"
@@ -2554,6 +2647,431 @@ class SQLiteAcceptedRunRepository:
         acceptance = self._database._run_immediate(transition)
         self._hit_failpoint("accept_callback.after_commit")
         return acceptance
+
+    def cancel_run(
+        self,
+        command: AcceptedRunCancelCommand,
+    ) -> AcceptedRunControlAcceptance:
+        if not isinstance(command, AcceptedRunCancelCommand):
+            raise TypeError(
+                "accepted-run SQLite cancellation command must be an "
+                "AcceptedRunCancelCommand"
+            )
+        if command.requested_at_unix_ms > _MAX_SQLITE_INTEGER:
+            raise ValueError(
+                "accepted-run SQLite cancellation timestamp exceeds SQLite "
+                "integer range"
+            )
+
+        def transition(
+            connection: sqlite3.Connection,
+        ) -> AcceptedRunControlAcceptance:
+            row = connection.execute(
+                """
+                SELECT *
+                FROM accepted_runs
+                WHERE tenant_id = ? AND external_run_id = ?
+                """,
+                (command.tenant_id, command.run_id),
+            ).fetchone()
+            if (
+                row is None
+                or _decode_sqlite_text(
+                    "owner_principal_id",
+                    row["owner_principal_id"],
+                )
+                != command.owner_principal_id
+            ):
+                raise AcceptedRunNotFoundError(
+                    command.tenant_id,
+                    command.run_id,
+                )
+            snapshot = self._snapshot_from_row(row)
+            internal_id = _decode_sqlite_text(
+                "internal_id",
+                row["internal_id"],
+            )
+            existing_control = connection.execute(
+                """
+                SELECT *
+                FROM run_controls
+                WHERE run_internal_id = ? AND idempotency_key = ?
+                """,
+                (internal_id, command.idempotency_key),
+            ).fetchone()
+            if existing_control is not None:
+                return self._replay_cancel(
+                    row,
+                    snapshot,
+                    existing_control,
+                    command,
+                )
+            if snapshot.state_version != command.expected_state_version:
+                raise AcceptedRunStateConflictError(
+                    command.run_id,
+                    command.expected_state_version,
+                    snapshot.state_version,
+                )
+            assert_accepted_run_transition(
+                snapshot.phase,
+                AcceptedRunPhase.TERMINAL,
+            )
+            updated_at = _decode_sqlite_integer(
+                "updated_at_unix_ms",
+                row["updated_at_unix_ms"],
+            )
+            if command.requested_at_unix_ms < updated_at:
+                raise ValueError(
+                    "accepted-run SQLite cancellation timestamp must not "
+                    "precede the current run state"
+                )
+            lease_generation = _decode_sqlite_integer(
+                "lease_generation",
+                row["lease_generation"],
+            )
+            fencing_token = _decode_sqlite_integer(
+                "fencing_token",
+                row["fencing_token"],
+            )
+            if (
+                snapshot.state_version >= _MAX_SQLITE_INTEGER
+                or snapshot.event_high_watermark >= _MAX_SQLITE_INTEGER
+                or lease_generation >= _MAX_SQLITE_INTEGER
+                or fencing_token >= _MAX_SQLITE_INTEGER
+            ):
+                raise OverflowError(
+                    "accepted-run SQLite cancellation counters are exhausted"
+                )
+            next_state_version = snapshot.state_version + 1
+            next_event_sequence = snapshot.event_high_watermark + 1
+            next_lease_generation = lease_generation + 1
+            next_fencing_token = fencing_token + 1
+
+            checkpoint_digest = row["current_checkpoint_digest"]
+            if checkpoint_digest is not None:
+                dispatch = connection.execute(
+                    """
+                    SELECT effect_outbox.*
+                    FROM run_checkpoints
+                    JOIN effect_outbox
+                      ON effect_outbox.effect_id =
+                         run_checkpoints.dispatch_effect_id
+                    WHERE run_checkpoints.run_internal_id = ?
+                      AND run_checkpoints.checkpoint_digest = ?
+                    """,
+                    (
+                        internal_id,
+                        _decode_sqlite_text(
+                            "current_checkpoint_digest",
+                            checkpoint_digest,
+                        ),
+                    ),
+                ).fetchone()
+                if dispatch is None:
+                    raise SQLiteAcceptedRunCorruptionError(
+                        "accepted-run SQLite cancellation checkpoint has no "
+                        "dispatch effect"
+                    )
+                if dispatch["cancelled_at_unix_ms"] is not None:
+                    raise SQLiteAcceptedRunCorruptionError(
+                        "accepted-run SQLite dispatch was cancelled without "
+                        "a control record"
+                    )
+                delivery_state = _decode_sqlite_text(
+                    "delivery_state",
+                    dispatch["delivery_state"],
+                )
+                if delivery_state in {"pending", "claimed", "dead_letter"}:
+                    claim_generation = _decode_sqlite_integer(
+                        "claim_generation",
+                        dispatch["claim_generation"],
+                    )
+                    claim_fencing_token = _decode_sqlite_integer(
+                        "claim_fencing_token",
+                        dispatch["claim_fencing_token"],
+                    )
+                    if (
+                        claim_generation >= _MAX_SQLITE_INTEGER
+                        or claim_fencing_token >= _MAX_SQLITE_INTEGER
+                    ):
+                        raise OverflowError(
+                            "accepted-run SQLite dispatch cancellation "
+                            "counters are exhausted"
+                        )
+                    suppressed = connection.execute(
+                        """
+                        UPDATE effect_outbox
+                        SET delivery_state = 'pending',
+                            claim_owner_id = NULL,
+                            claim_generation = ?,
+                            claim_fencing_token = ?,
+                            claim_expires_at_unix_ms = NULL,
+                            delivered_at_unix_ms = NULL,
+                            cancelled_at_unix_ms = ?
+                        WHERE effect_id = ?
+                          AND delivery_state = ?
+                          AND claim_generation = ?
+                          AND claim_fencing_token = ?
+                          AND cancelled_at_unix_ms IS NULL
+                        """,
+                        (
+                            claim_generation + 1,
+                            claim_fencing_token + 1,
+                            command.requested_at_unix_ms,
+                            _decode_sqlite_text(
+                                "dispatch effect_id",
+                                dispatch["effect_id"],
+                            ),
+                            delivery_state,
+                            claim_generation,
+                            claim_fencing_token,
+                        ),
+                    )
+                    if suppressed.rowcount != 1:
+                        raise SQLiteAcceptedRunCorruptionError(
+                            "accepted-run SQLite cancellation lost its "
+                            "dispatch effect"
+                        )
+                    self._hit_failpoint(
+                        "cancel_run.after_dispatch_cancellation"
+                    )
+                elif delivery_state not in {
+                    "delivered",
+                    "satisfied_by_callback",
+                }:
+                    raise SQLiteAcceptedRunCorruptionError(
+                        "accepted-run SQLite cancellation dispatch state is "
+                        "invalid"
+                    )
+
+            effect = command.completion_effect
+            connection.execute(
+                """
+                INSERT INTO effect_outbox (
+                  effect_id,
+                  run_internal_id,
+                  checkpoint_digest,
+                  effect_kind,
+                  idempotency_key,
+                  payload_json,
+                  payload_digest,
+                  available_at_unix_ms,
+                  delivery_state,
+                  attempt_count,
+                  claim_owner_id,
+                  claim_generation,
+                  claim_fencing_token,
+                  claim_expires_at_unix_ms,
+                  created_at_unix_ms,
+                  delivered_at_unix_ms,
+                  cancelled_at_unix_ms
+                )
+                VALUES (
+                  ?, ?, NULL, ?, ?, ?, ?, ?, 'pending', 0, NULL, 0, 0, NULL,
+                  ?, NULL, NULL
+                )
+                """,
+                (
+                    effect.effect_id,
+                    internal_id,
+                    effect.kind.value,
+                    effect.idempotency_key,
+                    effect.payload_json,
+                    effect.payload_digest,
+                    command.requested_at_unix_ms,
+                    command.requested_at_unix_ms,
+                ),
+            )
+            self._hit_failpoint("cancel_run.after_outbox_insert")
+            event = command.cancelled_event
+            connection.execute(
+                """
+                INSERT INTO run_events (
+                  run_internal_id,
+                  sequence,
+                  kind,
+                  payload_json,
+                  payload_digest,
+                  created_at_unix_ms
+                )
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    internal_id,
+                    next_event_sequence,
+                    event.kind,
+                    event.payload_json,
+                    event.payload_digest,
+                    event.created_at_unix_ms,
+                ),
+            )
+            self._hit_failpoint("cancel_run.after_event_insert")
+            connection.execute(
+                """
+                INSERT INTO run_controls (
+                  run_internal_id,
+                  idempotency_key,
+                  action,
+                  request_digest,
+                  requested_by_principal_id,
+                  expected_state_version,
+                  accepted_state_version,
+                  accepted_event_sequence,
+                  requested_at_unix_ms
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    internal_id,
+                    command.idempotency_key,
+                    AcceptedRunControlAction.CANCEL.value,
+                    command.request_digest,
+                    command.owner_principal_id,
+                    command.expected_state_version,
+                    next_state_version,
+                    next_event_sequence,
+                    command.requested_at_unix_ms,
+                ),
+            )
+            self._hit_failpoint("cancel_run.after_control_insert")
+            updated = connection.execute(
+                """
+                UPDATE accepted_runs
+                SET phase = 'terminal',
+                    state_version = ?,
+                    event_high_watermark = ?,
+                    updated_at_unix_ms = ?,
+                    terminal_status = 'cancelled',
+                    terminal_result_json = ?,
+                    terminal_result_digest = ?,
+                    lease_owner_id = NULL,
+                    lease_generation = ?,
+                    fencing_token = ?,
+                    lease_expires_at_unix_ms = NULL
+                WHERE internal_id = ?
+                  AND tenant_id = ?
+                  AND owner_principal_id = ?
+                  AND phase = ?
+                  AND state_version = ?
+                  AND lease_generation = ?
+                  AND fencing_token = ?
+                """,
+                (
+                    next_state_version,
+                    next_event_sequence,
+                    command.requested_at_unix_ms,
+                    command.result_json,
+                    command.result_digest,
+                    next_lease_generation,
+                    next_fencing_token,
+                    internal_id,
+                    command.tenant_id,
+                    command.owner_principal_id,
+                    snapshot.phase.value,
+                    command.expected_state_version,
+                    lease_generation,
+                    fencing_token,
+                ),
+            )
+            if updated.rowcount != 1:
+                raise AcceptedRunStateConflictError(
+                    command.run_id,
+                    command.expected_state_version,
+                    snapshot.state_version,
+                )
+            self._hit_failpoint("cancel_run.after_state_update")
+            return AcceptedRunControlAcceptance(
+                action=AcceptedRunControlAction.CANCEL,
+                idempotency_key=command.idempotency_key,
+                request_digest=command.request_digest,
+                accepted_event_sequence=next_event_sequence,
+                state_version=next_state_version,
+            )
+
+        acceptance = self._database._run_immediate(transition)
+        self._hit_failpoint("cancel_run.after_commit")
+        return acceptance
+
+    @staticmethod
+    def _replay_cancel(
+        run_row: sqlite3.Row,
+        snapshot: AcceptedRunSnapshot,
+        control_row: sqlite3.Row,
+        command: AcceptedRunCancelCommand,
+    ) -> AcceptedRunControlAcceptance:
+        try:
+            existing = AcceptedRunControlAcceptance(
+                action=AcceptedRunControlAction(
+                    _decode_sqlite_text(
+                        "control action",
+                        control_row["action"],
+                    )
+                ),
+                idempotency_key=_decode_sqlite_text(
+                    "control idempotency_key",
+                    control_row["idempotency_key"],
+                ),
+                request_digest=_decode_sqlite_text(
+                    "control request_digest",
+                    control_row["request_digest"],
+                ),
+                accepted_event_sequence=_decode_sqlite_integer(
+                    "control accepted_event_sequence",
+                    control_row["accepted_event_sequence"],
+                ),
+                state_version=_decode_sqlite_integer(
+                    "control accepted_state_version",
+                    control_row["accepted_state_version"],
+                ),
+            )
+        except (TypeError, ValueError) as error:
+            raise SQLiteAcceptedRunCorruptionError(
+                "accepted-run SQLite cancellation control is invalid"
+            ) from error
+        requested_by = _decode_sqlite_text(
+            "control requested_by_principal_id",
+            control_row["requested_by_principal_id"],
+        )
+        expected_state_version = _decode_sqlite_integer(
+            "control expected_state_version",
+            control_row["expected_state_version"],
+        )
+        if (
+            existing.action is not AcceptedRunControlAction.CANCEL
+            or existing.idempotency_key != command.idempotency_key
+            or existing.request_digest != command.request_digest
+            or requested_by != command.owner_principal_id
+            or expected_state_version != command.expected_state_version
+        ):
+            raise AcceptedRunControlConflictError(
+                command.run_id,
+                command.idempotency_key,
+            )
+        stored_result_digest = _decode_sqlite_text(
+            "terminal_result_digest",
+            run_row["terminal_result_digest"],
+        )
+        if (
+            snapshot.phase is not AcceptedRunPhase.TERMINAL
+            or snapshot.terminal_status != "cancelled"
+            or snapshot.terminal_result_json != command.result_json
+            or stored_result_digest != command.result_digest
+            or snapshot.state_version != existing.state_version
+            or snapshot.event_high_watermark
+            < existing.accepted_event_sequence
+        ):
+            raise SQLiteAcceptedRunCorruptionError(
+                "accepted-run SQLite cancellation replay does not match its "
+                "terminal state"
+            )
+        return AcceptedRunControlAcceptance(
+            action=existing.action,
+            idempotency_key=command.idempotency_key,
+            request_digest=existing.request_digest,
+            accepted_event_sequence=existing.accepted_event_sequence,
+            state_version=existing.state_version,
+            replayed=True,
+        )
 
     def commit_terminal(
         self,

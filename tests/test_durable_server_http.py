@@ -317,20 +317,11 @@ def test_durable_http_adapter_reads_run_and_events_after_restart(
             body=request_body,
         )
     )
-    unsupported_memory_route = restarted.handle(
-        _request(
-            "POST",
-            "/runs/run-1/cancel",
-            token="alice-token",
-        )
-    )
-
     assert before_execution.status_code == 200
     assert json.loads(before_execution.body)["state"] == "ready_initial"
     assert cross_tenant.status_code == 404
     assert same_tenant_other_owner.status_code == 404
     assert same_tenant_run_id_collision.status_code == 404
-    assert unsupported_memory_route.status_code == 404
 
     restarted.service.advance_run(
         tenant_id="tenant-a",
@@ -553,6 +544,257 @@ def test_durable_http_callback_hides_foreign_runs_and_rejects_stale_fence(
     )
     assert json.loads(unchanged.body)["state"] == "waiting_callback"
     assert json.loads(unchanged.body)["stateVersion"] == waiting.state_version
+
+
+def test_durable_http_cancel_is_restart_safe_and_idempotent(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "durable-http-cancel.sqlite3"
+    run_body = {
+        "graph": {
+            "apiVersion": "graphblocks.ai/v1alpha3",
+            "kind": "Graph",
+            "metadata": {"name": "durable-http-cancel"},
+            "spec": {"nodes": {}},
+        },
+        "inputs": {},
+        "invocation": _CALLBACK_INVOCATION,
+        "requestId": "request-cancel-http",
+        "responseMode": "accepted",
+        "runId": "run-cancel-http",
+    }
+    admitted = _app(path, clock_value=1_000).handle(
+        _request(
+            "POST",
+            "/runs",
+            token="alice-token",
+            body=run_body,
+        )
+    )
+    assert admitted.status_code == 202
+    cancel_body = {
+        "expectedStateVersion": 1,
+        "reason": "user_requested",
+        "requestId": "cancel-request-1",
+    }
+
+    cancelled = _app(path, clock_value=2_000).handle(
+        _request(
+            "POST",
+            "/runs/run-cancel-http/cancel",
+            token="alice-token",
+            body=cancel_body,
+        )
+    )
+    replayed = _app(path, clock_value=3_000).handle(
+        _request(
+            "POST",
+            "/runs/run-cancel-http/cancel",
+            token="alice-token",
+            body=cancel_body,
+        )
+    )
+    cross_tenant = _app(path, clock_value=3_000).handle(
+        _request(
+            "POST",
+            "/runs/run-cancel-http/cancel",
+            token="bob-token",
+            body=cancel_body,
+        )
+    )
+    same_tenant_other_owner = _app(path, clock_value=3_000).handle(
+        _request(
+            "POST",
+            "/runs/run-cancel-http/cancel",
+            token="charlie-token",
+            body=cancel_body,
+        )
+    )
+
+    expected = {
+        "acceptedEventSequence": 2,
+        "duplicate": False,
+        "ok": True,
+        "runId": "run-cancel-http",
+        "state": "terminal",
+        "stateVersion": 2,
+        "terminalStatus": "cancelled",
+    }
+    assert cancelled.status_code == 202
+    assert json.loads(cancelled.body) == expected
+    assert replayed.status_code == 202
+    assert json.loads(replayed.body) == {
+        **expected,
+        "duplicate": True,
+    }
+    assert cross_tenant.status_code == 404
+    assert same_tenant_other_owner.status_code == 404
+
+    restarted = _app(path, clock_value=4_000)
+    status = restarted.handle(
+        _request(
+            "GET",
+            "/runs/run-cancel-http",
+            token="alice-token",
+        )
+    )
+    events = restarted.handle(
+        _request(
+            "GET",
+            "/runs/run-cancel-http/events",
+            token="alice-token",
+            query={"after": "0", "limit": "10"},
+        )
+    )
+    assert status.status_code == 200
+    assert json.loads(status.body) == {
+        "eventHighWatermark": 2,
+        "eventLowWatermark": 1,
+        "ok": True,
+        "result": {
+            "reason": "user_requested",
+            "requestId": "cancel-request-1",
+            "status": "cancelled",
+        },
+        "runId": "run-cancel-http",
+        "state": "terminal",
+        "stateVersion": 2,
+        "terminalStatus": "cancelled",
+    }
+    assert [
+        event["kind"]
+        for event in json.loads(events.body)["events"]
+    ] == ["run_accepted", "run_cancelled"]
+
+
+def test_durable_http_cancel_rejects_invalid_requests_and_late_callback(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "durable-http-cancel-callback.sqlite3"
+    waiting, issuance = _prepare_waiting_callback(path)
+    cancel_path = f"/runs/{_CALLBACK_RUN_ID}/cancel"
+    cancel_body = {
+        "expectedStateVersion": waiting.state_version,
+        "reason": "no_longer_needed",
+        "requestId": "cancel-callback-run",
+    }
+    malformed = dict(cancel_body)
+    malformed["unknown"] = True
+    stale = dict(cancel_body)
+    stale["expectedStateVersion"] = waiting.state_version - 1
+
+    stale_response = _app(path, clock_value=2_500).handle(
+        _request(
+            "POST",
+            cancel_path,
+            token="alice-token",
+            body=stale,
+        )
+    )
+    malformed_response = _app(path, clock_value=2_500).handle(
+        _request(
+            "POST",
+            cancel_path,
+            token="alice-token",
+            body=malformed,
+        )
+    )
+    cancelled = _app(path, clock_value=3_000).handle(
+        _request(
+            "POST",
+            cancel_path,
+            token="alice-token",
+            body=cancel_body,
+        )
+    )
+    callback_after_cancel = _app(path, clock_value=4_000).handle(
+        _request(
+            "POST",
+            f"/runs/{_CALLBACK_RUN_ID}/callbacks/{_CALLBACK_OPERATION_ID}",
+            token="alice-token",
+            body=_callback_body(waiting, issuance),
+        )
+    )
+    limited = _app(path, clock_value=4_000)
+    limited.max_request_body_bytes = 16
+    oversized = limited.handle(
+        _request(
+            "POST",
+            cancel_path,
+            token="alice-token",
+            body=cancel_body,
+        )
+    )
+
+    assert stale_response.status_code == 409
+    assert malformed_response.status_code == 400
+    assert cancelled.status_code == 202
+    assert callback_after_cancel.status_code == 409
+    assert oversized.status_code == 413
+    after_restart = _app(path, clock_value=5_000).handle(
+        _request(
+            "GET",
+            f"/runs/{_CALLBACK_RUN_ID}",
+            token="alice-token",
+        )
+    )
+    assert after_restart.status_code == 200
+    assert json.loads(after_restart.body)["terminalStatus"] == "cancelled"
+
+
+def test_durable_http_cancel_fences_ready_resume_before_worker_claim(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "durable-http-cancel-resume.sqlite3"
+    waiting, issuance = _prepare_waiting_callback(path)
+    callback_path = (
+        f"/runs/{_CALLBACK_RUN_ID}/callbacks/{_CALLBACK_OPERATION_ID}"
+    )
+    callback = _app(path, clock_value=3_000).handle(
+        _request(
+            "POST",
+            callback_path,
+            token="alice-token",
+            body=_callback_body(waiting, issuance),
+        )
+    )
+    assert callback.status_code == 202
+    callback_response = json.loads(callback.body)
+
+    cancelled = _app(path, clock_value=3_500).handle(
+        _request(
+            "POST",
+            f"/runs/{_CALLBACK_RUN_ID}/cancel",
+            token="alice-token",
+            body={
+                "expectedStateVersion": callback_response["stateVersion"],
+                "reason": "resume_not_needed",
+                "requestId": "cancel-ready-resume",
+            },
+        )
+    )
+
+    assert cancelled.status_code == 202
+    restarted = _app(path, clock_value=4_000)
+    assert restarted.service.advance_next_run(tenant_id="tenant-a") is None
+    events = restarted.handle(
+        _request(
+            "GET",
+            f"/runs/{_CALLBACK_RUN_ID}/events",
+            token="alice-token",
+            query={"after": "0", "limit": "10"},
+        )
+    )
+    assert [
+        event["kind"]
+        for event in json.loads(events.body)["events"]
+    ] == [
+        "run_accepted",
+        "run_claimed",
+        "run_waiting_callback",
+        "external_callback_received",
+        "run_cancelled",
+    ]
 
 
 def test_durable_http_adapter_is_fail_closed_and_keeps_health_public(

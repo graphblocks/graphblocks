@@ -139,6 +139,16 @@ class AcceptedRunTerminalConflictError(AcceptedRunConflictError):
         self.run_id = run_id
 
 
+class AcceptedRunControlConflictError(AcceptedRunConflictError):
+    def __init__(self, run_id: str, idempotency_key: str) -> None:
+        super().__init__(
+            f"accepted run {run_id!r} control idempotency key "
+            "conflicts with a different request"
+        )
+        self.run_id = run_id
+        self.idempotency_key = idempotency_key
+
+
 class AcceptedRunEffectNotFoundError(AcceptedRunStorageError):
     def __init__(self, effect_id: str) -> None:
         super().__init__(f"accepted run effect {effect_id!r} was not found")
@@ -301,13 +311,23 @@ class AcceptedRunPhase(StrEnum):
     TERMINAL = "terminal"
 
 
+class AcceptedRunControlAction(StrEnum):
+    CANCEL = "cancel"
+    PAUSE = "pause"
+    RESUME = "resume"
+    EXPIRE = "expire"
+
+
 _ALLOWED_ACCEPTED_RUN_TRANSITIONS = frozenset(
     {
         (AcceptedRunPhase.READY_INITIAL, AcceptedRunPhase.RUNNING),
+        (AcceptedRunPhase.READY_INITIAL, AcceptedRunPhase.TERMINAL),
         (AcceptedRunPhase.RUNNING, AcceptedRunPhase.WAITING_CALLBACK),
         (AcceptedRunPhase.RUNNING, AcceptedRunPhase.TERMINAL),
         (AcceptedRunPhase.WAITING_CALLBACK, AcceptedRunPhase.READY_RESUME),
+        (AcceptedRunPhase.WAITING_CALLBACK, AcceptedRunPhase.TERMINAL),
         (AcceptedRunPhase.READY_RESUME, AcceptedRunPhase.RUNNING),
+        (AcceptedRunPhase.READY_RESUME, AcceptedRunPhase.TERMINAL),
     }
 )
 
@@ -548,6 +568,54 @@ class CallbackAcceptance:
         )
 
 
+@dataclass(frozen=True, slots=True)
+class AcceptedRunControlAcceptance:
+    action: AcceptedRunControlAction
+    idempotency_key: str
+    request_digest: str
+    accepted_event_sequence: int
+    state_version: int
+    replayed: bool = False
+
+    def __post_init__(self) -> None:
+        owner = "accepted run control acceptance"
+        if not isinstance(self.action, AcceptedRunControlAction):
+            raise ValueError(
+                f"{owner} action must be an AcceptedRunControlAction"
+            )
+        object.__setattr__(
+            self,
+            "idempotency_key",
+            _validate_exact_string(
+                owner,
+                "idempotency_key",
+                self.idempotency_key,
+            ),
+        )
+        object.__setattr__(
+            self,
+            "request_digest",
+            _validate_digest(owner, "request_digest", self.request_digest),
+        )
+        object.__setattr__(
+            self,
+            "accepted_event_sequence",
+            _validate_u64(
+                owner,
+                "accepted_event_sequence",
+                self.accepted_event_sequence,
+                positive=True,
+            ),
+        )
+        object.__setattr__(
+            self,
+            "state_version",
+            _validate_u64(owner, "state_version", self.state_version),
+        )
+        if type(self.replayed) is not bool:
+            raise ValueError(f"{owner} replayed must be a boolean")
+
+
 def resolve_callback_replay(
     *,
     expected_issuance: CallbackIssuanceIdentity,
@@ -741,6 +809,7 @@ class AcceptedRunEffectDeliveryState(StrEnum):
     CLAIMED = "claimed"
     DELIVERED = "delivered"
     SATISFIED_BY_CALLBACK = "satisfied_by_callback"
+    CANCELLED = "cancelled"
     DEAD_LETTER = "dead_letter"
 
 
@@ -828,6 +897,7 @@ class AcceptedRunEffectDeliveryRecord:
     claim: AcceptedRunEffectDeliveryClaim | None
     created_at_unix_ms: int
     delivered_at_unix_ms: int | None
+    cancelled_at_unix_ms: int | None = None
 
     def __post_init__(self) -> None:
         owner = "accepted run effect delivery record"
@@ -967,6 +1037,31 @@ class AcceptedRunEffectDeliveryRecord:
             raise ValueError(
                 f"{owner} delivered_at_unix_ms must be present only for "
                 "delivered or callback-satisfied effects"
+            )
+        cancelled_at = self.cancelled_at_unix_ms
+        cancelled = (
+            self.delivery_state is AcceptedRunEffectDeliveryState.CANCELLED
+        )
+        if cancelled_at is not None:
+            cancelled_at = _validate_u64(
+                owner,
+                "cancelled_at_unix_ms",
+                cancelled_at,
+            )
+            object.__setattr__(
+                self,
+                "cancelled_at_unix_ms",
+                cancelled_at,
+            )
+            if cancelled_at < self.created_at_unix_ms:
+                raise ValueError(
+                    f"{owner} cancelled_at_unix_ms must not precede "
+                    "created_at_unix_ms"
+                )
+        if cancelled != (cancelled_at is not None):
+            raise ValueError(
+                f"{owner} cancelled_at_unix_ms must be present only for "
+                "cancelled effects"
             )
 
 
@@ -1779,6 +1874,102 @@ class AcceptedRunCallbackCommit:
 
 
 @dataclass(frozen=True, slots=True)
+class AcceptedRunCancelCommand:
+    tenant_id: str
+    owner_principal_id: str
+    run_id: str
+    expected_state_version: int
+    idempotency_key: str
+    request_digest: str
+    requested_at_unix_ms: int
+    result_json: str
+    result_digest: str
+    cancelled_event: AcceptedRunEventIntent
+    completion_effect: AcceptedRunEffectIntent
+
+    def __post_init__(self) -> None:
+        owner = "accepted run cancel command"
+        for field_name in (
+            "tenant_id",
+            "owner_principal_id",
+            "run_id",
+            "idempotency_key",
+        ):
+            object.__setattr__(
+                self,
+                field_name,
+                _validate_exact_string(
+                    owner,
+                    field_name,
+                    getattr(self, field_name),
+                ),
+            )
+        object.__setattr__(
+            self,
+            "expected_state_version",
+            _validate_u64(
+                owner,
+                "expected_state_version",
+                self.expected_state_version,
+            ),
+        )
+        object.__setattr__(
+            self,
+            "request_digest",
+            _validate_digest(owner, "request_digest", self.request_digest),
+        )
+        object.__setattr__(
+            self,
+            "requested_at_unix_ms",
+            _validate_u64(
+                owner,
+                "requested_at_unix_ms",
+                self.requested_at_unix_ms,
+            ),
+        )
+        object.__setattr__(
+            self,
+            "result_json",
+            _validate_canonical_json(owner, "result_json", self.result_json),
+        )
+        object.__setattr__(
+            self,
+            "result_digest",
+            _validate_digest(owner, "result_digest", self.result_digest),
+        )
+        _validate_json_digest(
+            owner,
+            json_field_name="result_json",
+            encoded=self.result_json,
+            digest_field_name="result_digest",
+            digest=self.result_digest,
+        )
+        if not isinstance(self.cancelled_event, AcceptedRunEventIntent):
+            raise ValueError(
+                f"{owner} cancelled_event must be an AcceptedRunEventIntent"
+            )
+        if self.cancelled_event.kind != "run_cancelled":
+            raise ValueError(
+                f"{owner} cancelled_event kind must be run_cancelled"
+            )
+        if (
+            self.cancelled_event.created_at_unix_ms
+            != self.requested_at_unix_ms
+        ):
+            raise ValueError(
+                f"{owner} event timestamp must match requested_at_unix_ms"
+            )
+        if not isinstance(self.completion_effect, AcceptedRunEffectIntent):
+            raise ValueError(
+                f"{owner} completion_effect must be an AcceptedRunEffectIntent"
+            )
+        if self.completion_effect.kind is not AcceptedRunEffectKind.COMPLETION:
+            raise ValueError(
+                f"{owner} requires a completion effect"
+            )
+
+
+@dataclass(frozen=True, slots=True)
 class AcceptedRunTerminalCommit:
     claim: AcceptedRunClaim
     expected_state_version: int
@@ -1906,6 +2097,12 @@ class AcceptedRunRepository(Protocol):
         self,
         command: AcceptedRunCallbackCommit,
     ) -> CallbackAcceptance:
+        ...
+
+    def cancel_run(
+        self,
+        command: AcceptedRunCancelCommand,
+    ) -> AcceptedRunControlAcceptance:
         ...
 
     def commit_terminal(

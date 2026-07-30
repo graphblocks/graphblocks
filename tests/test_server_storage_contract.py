@@ -201,10 +201,13 @@ def _execution_envelope() -> AcceptedRunExecutionEnvelope:
 def test_accepted_run_phase_transition_matrix_is_closed() -> None:
     allowed = {
         (AcceptedRunPhase.READY_INITIAL, AcceptedRunPhase.RUNNING),
+        (AcceptedRunPhase.READY_INITIAL, AcceptedRunPhase.TERMINAL),
         (AcceptedRunPhase.RUNNING, AcceptedRunPhase.WAITING_CALLBACK),
         (AcceptedRunPhase.RUNNING, AcceptedRunPhase.TERMINAL),
         (AcceptedRunPhase.WAITING_CALLBACK, AcceptedRunPhase.READY_RESUME),
+        (AcceptedRunPhase.WAITING_CALLBACK, AcceptedRunPhase.TERMINAL),
         (AcceptedRunPhase.READY_RESUME, AcceptedRunPhase.RUNNING),
+        (AcceptedRunPhase.READY_RESUME, AcceptedRunPhase.TERMINAL),
     }
 
     for current in AcceptedRunPhase:

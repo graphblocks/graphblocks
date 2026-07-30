@@ -92,12 +92,30 @@ class SQLiteOutboxDispatcherRepository:
                 "effect_id",
                 row["effect_id"],
             )
-            delivery_state = AcceptedRunEffectDeliveryState(
+            stored_delivery_state = AcceptedRunEffectDeliveryState(
                 _decode_sqlite_text(
                     "delivery_state",
                     row["delivery_state"],
                 )
             )
+            cancelled_at = row["cancelled_at_unix_ms"]
+            if cancelled_at is None:
+                delivery_state = stored_delivery_state
+                cancelled_at_unix_ms = None
+            else:
+                if (
+                    stored_delivery_state
+                    is not AcceptedRunEffectDeliveryState.PENDING
+                ):
+                    raise SQLiteAcceptedRunCorruptionError(
+                        "accepted-run SQLite cancelled outbox effect has an "
+                        "invalid physical state"
+                    )
+                delivery_state = AcceptedRunEffectDeliveryState.CANCELLED
+                cancelled_at_unix_ms = _decode_sqlite_integer(
+                    "cancelled_at_unix_ms",
+                    cancelled_at,
+                )
             claim = None
             if delivery_state is AcceptedRunEffectDeliveryState.CLAIMED:
                 claim = AcceptedRunEffectDeliveryClaim(
@@ -183,6 +201,7 @@ class SQLiteOutboxDispatcherRepository:
                         delivered_at,
                     )
                 ),
+                cancelled_at_unix_ms=cancelled_at_unix_ms,
             )
         except (TypeError, ValueError) as error:
             raise SQLiteAcceptedRunCorruptionError(
@@ -258,13 +277,18 @@ class SQLiteOutboxDispatcherRepository:
                 JOIN accepted_runs
                   ON accepted_runs.internal_id =
                      effect_outbox.run_internal_id
-                WHERE (
-                    effect_outbox.delivery_state = 'pending'
-                    AND effect_outbox.available_at_unix_ms <= ?
-                ) OR (
-                    effect_outbox.delivery_state = 'claimed'
-                    AND effect_outbox.claim_expires_at_unix_ms <= ?
-                )
+                WHERE effect_outbox.cancelled_at_unix_ms IS NULL
+                  AND (
+                    (
+                      effect_outbox.delivery_state = 'pending'
+                      AND effect_outbox.available_at_unix_ms <= ?
+                    )
+                    OR
+                    (
+                      effect_outbox.delivery_state = 'claimed'
+                      AND effect_outbox.claim_expires_at_unix_ms <= ?
+                    )
+                  )
                 ORDER BY
                   CASE effect_outbox.delivery_state
                     WHEN 'pending'

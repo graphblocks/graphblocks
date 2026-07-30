@@ -195,6 +195,16 @@ transaction. Replaying the same issuance and payload returns the original
 acceptance; a stale issuance, conflicting payload, or conflicting version
 returns `409`.
 
+Durable cancellation uses `POST /runs/{run_id}/cancel` with the closed
+`expectedStateVersion`, `requestId`, and `reason` fields. The repository MUST
+recheck tenant and immutable owner in the write transaction. It atomically
+records the idempotent control, cancellation event, terminal result, and
+completion outbox intent; invalidates the current run lease and fencing token;
+and suppresses any undelivered callback-dispatch effect. An identical request
+replays the stored acceptance after restart. A conflicting request, late
+callback, or worker commit using the invalidated fence MUST be rejected without
+publishing another result.
+
 Callback acceptance only makes the run ready for resume. A worker must claim
 the reconstructable work with fresh lease and fencing authority before
 execution. Process restart between admission, waiting, callback acceptance,
