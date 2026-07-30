@@ -364,6 +364,164 @@ def test_durable_http_adapter_reads_run_and_events_after_restart(
     assert json.loads(replayed.body)["duplicate"] is True
 
 
+def test_durable_http_scopes_external_run_identity_by_tenant(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "durable-http-tenant-run-identity.sqlite3"
+    request_body = {
+        "graph": {
+            "apiVersion": "graphblocks.ai/v1alpha3",
+            "kind": "Graph",
+            "metadata": {"name": "durable-http-tenant-run-identity"},
+            "spec": {"nodes": {}},
+        },
+        "inputs": {},
+        "invocation": {
+            "policySnapshotId": "policy-1",
+            "releaseId": "release-1",
+            "responseId": "response-shared",
+            "turnId": None,
+        },
+        "requestId": "request-shared",
+        "responseMode": "accepted",
+        "runId": "shared-run",
+    }
+    app = _app(path, clock_value=1_000)
+
+    tenant_a = app.handle(
+        _request(
+            "POST",
+            "/runs",
+            token="alice-token",
+            body=request_body,
+        )
+    )
+    tenant_b = app.handle(
+        _request(
+            "POST",
+            "/runs",
+            token="bob-token",
+            body=request_body,
+        )
+    )
+    tenant_a_replay = app.handle(
+        _request(
+            "POST",
+            "/runs",
+            token="alice-token",
+            body=request_body,
+        )
+    )
+    conflicting_body = dict(request_body)
+    conflicting_body["requestId"] = "request-conflict"
+    tenant_a_conflict = app.handle(
+        _request(
+            "POST",
+            "/runs",
+            token="alice-token",
+            body=conflicting_body,
+        )
+    )
+
+    assert tenant_a.status_code == 202
+    assert tenant_b.status_code == 202
+    assert json.loads(tenant_a.body)["duplicate"] is False
+    assert json.loads(tenant_b.body)["duplicate"] is False
+    assert tenant_a_replay.status_code == 202
+    assert json.loads(tenant_a_replay.body)["duplicate"] is True
+    assert tenant_a_conflict.status_code == 409
+
+    connection = sqlite3.connect(path)
+    identities = connection.execute(
+        """
+        SELECT tenant_id, external_run_id, internal_id
+        FROM accepted_runs
+        ORDER BY tenant_id
+        """
+    ).fetchall()
+    connection.close()
+    assert [(row[0], row[1]) for row in identities] == [
+        ("tenant-a", "shared-run"),
+        ("tenant-b", "shared-run"),
+    ]
+    assert identities[0][2] != identities[1][2]
+
+    restarted = _app(path, clock_value=2_000)
+    tenant_a_before = restarted.handle(
+        _request(
+            "GET",
+            "/runs/shared-run",
+            token="alice-token",
+        )
+    )
+    tenant_b_before = restarted.handle(
+        _request(
+            "GET",
+            "/runs/shared-run",
+            token="bob-token",
+        )
+    )
+    tenant_b_cancelled = restarted.handle(
+        _request(
+            "POST",
+            "/runs/shared-run/cancel",
+            token="bob-token",
+            body={
+                "expectedStateVersion": 1,
+                "reason": "tenant-b-only",
+                "requestId": "cancel-tenant-b",
+            },
+        )
+    )
+
+    assert tenant_a_before.status_code == 200
+    assert json.loads(tenant_a_before.body)["state"] == "ready_initial"
+    assert tenant_b_before.status_code == 200
+    assert json.loads(tenant_b_before.body)["state"] == "ready_initial"
+    assert tenant_b_cancelled.status_code == 202
+
+    after_control_restart = _app(path, clock_value=3_000)
+    tenant_a_after = after_control_restart.handle(
+        _request(
+            "GET",
+            "/runs/shared-run",
+            token="alice-token",
+        )
+    )
+    tenant_b_after = after_control_restart.handle(
+        _request(
+            "GET",
+            "/runs/shared-run",
+            token="bob-token",
+        )
+    )
+    tenant_a_events = after_control_restart.handle(
+        _request(
+            "GET",
+            "/runs/shared-run/events",
+            token="alice-token",
+            query={"after": "0", "limit": "10"},
+        )
+    )
+    tenant_b_events = after_control_restart.handle(
+        _request(
+            "GET",
+            "/runs/shared-run/events",
+            token="bob-token",
+            query={"after": "0", "limit": "10"},
+        )
+    )
+
+    assert json.loads(tenant_a_after.body)["state"] == "ready_initial"
+    assert json.loads(tenant_b_after.body)["terminalStatus"] == "cancelled"
+    assert [
+        event["kind"] for event in json.loads(tenant_a_events.body)["events"]
+    ] == ["run_accepted"]
+    assert [
+        event["kind"] for event in json.loads(tenant_b_events.body)["events"]
+    ] == ["run_accepted", "run_cancelled"]
+
+
 def test_durable_http_callback_resumes_after_process_restart(
     tmp_path: Path,
 ) -> None:
