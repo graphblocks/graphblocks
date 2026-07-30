@@ -173,6 +173,35 @@ adapter past its deadline and prove that a late return cannot publish a result,
 record success, commit an effect under stale authority, or overwrite the
 terminal timeout/cancellation outcome.
 
+### Durable accepted-run HTTP boundary (preview)
+
+`DurableAcceptedRunServerApp` is the repository-authoritative HTTP boundary for
+the accepted-run preview. It exposes admission, tenant-and-owner-scoped status,
+cursor-bounded event replay, and callback submission. Returning `202` from
+`POST /runs` means the admission, immutable owner identity, accepted event, and
+reconstructable invocation were committed in `AcceptedRunRepository`; it does
+not mean execution has completed.
+
+Callback continuation uses
+`POST /runs/{run_id}/callbacks/{operation_id}`. The request is a closed object
+containing the persisted checkpoint digest, operation attempt, callback
+idempotency key, issuing lease generation and fencing token, expected run state
+version, payload, and callback receipt. The server derives tenant and owner
+from the authenticated principal, resolves the run before decoding callback
+authority, and returns non-disclosing `404` for a foreign run. Issuance,
+state-version, lease, fence, payload digest, callback inbox, resume transition,
+event append, and dispatch-effect settlement are checked in one repository
+transaction. Replaying the same issuance and payload returns the original
+acceptance; a stale issuance, conflicting payload, or conflicting version
+returns `409`.
+
+Callback acceptance only makes the run ready for resume. A worker must claim
+the reconstructable work with fresh lease and fencing authority before
+execution. Process restart between admission, waiting, callback acceptance,
+resume, and terminal publication MUST preserve each observable transition.
+The process-local accepted-run mode in `GraphBlocksServerApp` is a bounded
+development/reference mode and MUST NOT be described as restart durable.
+
 ### Process-isolated worker deadline (preview)
 
 The Python reference package exposes `graphblocks.isolated_worker` as an

@@ -43,6 +43,7 @@ from .server_storage import (
     AdmissionResult,
     CallbackAcceptance,
     CallbackIssuanceIdentity,
+    CallbackSubmissionIdentity,
     decode_runtime_checkpoint,
     encode_runtime_checkpoint,
 )
@@ -299,6 +300,83 @@ class DurableAcceptedRunService:
         command: AcceptedRunCallbackCommit,
     ) -> CallbackAcceptance:
         return self.repository.accept_callback_and_queue_resume(command)
+
+    def submit_callback(
+        self,
+        *,
+        tenant_id: str,
+        owner_principal_id: str,
+        run_id: str,
+        operation_id: str,
+        expected_state_version: int,
+        checkpoint_digest: str,
+        operation_attempt_id: str,
+        callback_idempotency_key: str,
+        lease_generation: int,
+        fencing_token: int,
+        payload: Mapping[str, object],
+        receipt: Mapping[str, object],
+        received_at_unix_ms: int | None = None,
+    ) -> CallbackAcceptance:
+        if not isinstance(payload, Mapping):
+            raise ValueError(
+                "durable accepted-run callback payload must be a mapping"
+            )
+        if not isinstance(receipt, Mapping):
+            raise ValueError(
+                "durable accepted-run callback receipt must be a mapping"
+            )
+        payload_json = canonical_dumps(dict(payload))
+        receipt_json = canonical_dumps(dict(receipt))
+        decoded_payload = canonical_loads(payload_json)
+        decoded_receipt = canonical_loads(receipt_json)
+        if not isinstance(decoded_payload, dict):
+            raise ValueError(
+                "durable accepted-run callback payload must encode a JSON object"
+            )
+        if not isinstance(decoded_receipt, dict):
+            raise ValueError(
+                "durable accepted-run callback receipt must encode a JSON object"
+            )
+        received_at = (
+            self._now_unix_ms()
+            if received_at_unix_ms is None
+            else received_at_unix_ms
+        )
+        issuance = CallbackIssuanceIdentity(
+            run_id=run_id,
+            checkpoint_digest=checkpoint_digest,
+            operation_id=operation_id,
+            operation_attempt_id=operation_attempt_id,
+            callback_idempotency_key=callback_idempotency_key,
+            lease_generation=lease_generation,
+            fencing_token=fencing_token,
+        )
+        event_value = {
+            "checkpointDigest": checkpoint_digest,
+            "runId": run_id,
+            "state": "ready_resume",
+        }
+        return self.accept_callback(
+            AcceptedRunCallbackCommit(
+                tenant_id=tenant_id,
+                owner_principal_id=owner_principal_id,
+                expected_state_version=expected_state_version,
+                submission=CallbackSubmissionIdentity(
+                    issuance=issuance,
+                    payload_digest=canonical_hash(decoded_payload),
+                ),
+                payload_json=payload_json,
+                receipt_json=receipt_json,
+                received_at_unix_ms=received_at,
+                accepted_event=AcceptedRunEventIntent(
+                    kind="external_callback_received",
+                    payload_json=canonical_dumps(event_value),
+                    payload_digest=canonical_hash(event_value),
+                    created_at_unix_ms=received_at,
+                ),
+            )
+        )
 
     def advance_run(
         self,
@@ -627,6 +705,13 @@ def durable_server_route_manifest() -> ServerRouteManifest:
                 "read_run_events",
                 auth_required=True,
             ),
+            ServerEndpoint(
+                "POST",
+                "/runs/{run_id}/callbacks/{operation_id}",
+                "http",
+                "submit_run_callback",
+                auth_required=True,
+            ),
         )
     )
 
@@ -744,16 +829,20 @@ class DurableAcceptedRunServerApp:
             )
 
         try:
+            if (
+                route.endpoint.operation
+                in {"admit_run", "submit_run_callback"}
+                and len(request.body) > self.max_request_body_bytes
+            ):
+                return ServerResponse.json(
+                    413,
+                    {
+                        "ok": False,
+                        "error": "RequestBodyTooLarge",
+                        "maxBytes": self.max_request_body_bytes,
+                    },
+                )
             if route.endpoint.operation == "admit_run":
-                if len(request.body) > self.max_request_body_bytes:
-                    return ServerResponse.json(
-                        413,
-                        {
-                            "ok": False,
-                            "error": "RequestBodyTooLarge",
-                            "maxBytes": self.max_request_body_bytes,
-                        },
-                    )
                 payload = canonical_loads(request.body)
                 if not isinstance(payload, dict):
                     raise ValueError(
@@ -887,6 +976,65 @@ class DurableAcceptedRunServerApp:
                     )
                 return ServerResponse.json(200, response_payload)
 
+            if route.endpoint.operation == "submit_run_callback":
+                payload = canonical_loads(request.body)
+                if not isinstance(payload, dict):
+                    raise ValueError(
+                        "durable callback request body must be a JSON object"
+                    )
+                expected_fields = {
+                    "callbackIdempotencyKey",
+                    "checkpointDigest",
+                    "expectedStateVersion",
+                    "fencingToken",
+                    "leaseGeneration",
+                    "operationAttemptId",
+                    "payload",
+                    "receipt",
+                }
+                if set(payload) != expected_fields:
+                    raise ValueError(
+                        "durable callback request fields must match version 1"
+                    )
+                callback_payload = payload["payload"]
+                receipt = payload["receipt"]
+                if not isinstance(callback_payload, dict):
+                    raise ValueError(
+                        "durable callback request payload must be a JSON object"
+                    )
+                if not isinstance(receipt, dict):
+                    raise ValueError(
+                        "durable callback request receipt must be a JSON object"
+                    )
+                acceptance = self.service.submit_callback(
+                    tenant_id=principal.tenant_id,
+                    owner_principal_id=principal.principal_id,
+                    run_id=run_id,
+                    operation_id=route.path_params["operation_id"],
+                    expected_state_version=payload["expectedStateVersion"],
+                    checkpoint_digest=payload["checkpointDigest"],
+                    operation_attempt_id=payload["operationAttemptId"],
+                    callback_idempotency_key=payload[
+                        "callbackIdempotencyKey"
+                    ],
+                    lease_generation=payload["leaseGeneration"],
+                    fencing_token=payload["fencingToken"],
+                    payload=callback_payload,
+                    receipt=receipt,
+                )
+                return ServerResponse.json(
+                    202,
+                    {
+                        "acceptedEventSequence": (
+                            acceptance.accepted_event_sequence
+                        ),
+                        "ok": True,
+                        "runId": run_id,
+                        "stateVersion": acceptance.state_version,
+                        "status": "accepted",
+                    },
+                )
+
             if route.endpoint.operation == "read_run_events":
                 raw_after = request.query.get("after", "0")
                 raw_limit = request.query.get("limit", "100")
@@ -949,6 +1097,14 @@ class DurableAcceptedRunServerApp:
                 {
                     "ok": False,
                     "error": str(error),
+                },
+            )
+        except AcceptedRunNotFoundError:
+            return ServerResponse.json(
+                404,
+                {
+                    "ok": False,
+                    "error": "NotFound",
                 },
             )
         except AcceptedRunConflictError as error:
