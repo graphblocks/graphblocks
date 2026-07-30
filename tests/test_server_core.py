@@ -13,6 +13,7 @@ import graphblocks
 import graphblocks.server as graphblocks_server
 import pytest
 
+from graphblocks.compiler import compile_graph_reference
 from graphblocks.policy import PrincipalRef
 from graphblocks.runtime import RuntimeRegistry
 from graphblocks.server import (
@@ -1837,6 +1838,45 @@ def test_server_app_handles_health_auth_and_run_requests() -> None:
     assert payload["events"][0]["metadata"]["responseId"] == "response-server-1"
     assert graphblocks.GraphBlocksServerApp is GraphBlocksServerApp
     assert "ServerResponse" not in graphblocks.__all__
+
+
+def test_server_app_generates_unique_run_and_response_ids_when_omitted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(graphblocks_server, "compile_graph", compile_graph_reference)
+    app = GraphBlocksServerApp(allow_unauthenticated_dev=True)
+    body = json.dumps(
+        {
+            "graph": _server_capacity_graph(),
+            "inputs": {"message": {"text": "generated identity"}},
+        }
+    ).encode("utf-8")
+
+    responses = tuple(
+        app.handle(
+            ServerRequest(
+                method="POST",
+                path="/runs",
+                headers={},
+                query={},
+                cookies={},
+                body=body,
+            )
+        )
+        for _ in range(2)
+    )
+    payloads = tuple(json.loads(response.body) for response in responses)
+    run_ids = tuple(str(payload["runId"]) for payload in payloads)
+    response_ids = tuple(
+        str(payload["events"][0]["metadata"]["responseId"])
+        for payload in payloads
+    )
+
+    assert tuple(response.status_code for response in responses) == (200, 200)
+    assert len(set(run_ids)) == 2
+    assert len(set(response_ids)) == 2
+    assert all(run_id.startswith("run-") for run_id in run_ids)
+    assert all(response_id.startswith("response-") for response_id in response_ids)
 
 
 def test_server_app_hides_run_scoped_resources_from_other_principals_and_tenants() -> None:

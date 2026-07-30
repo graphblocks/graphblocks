@@ -13,6 +13,7 @@ from time import monotonic, time
 from types import MappingProxyType
 from typing import Literal, Protocol
 from urllib.parse import quote, unquote
+from uuid import uuid4
 
 from .admission import (
     AdmissionError,
@@ -6492,16 +6493,18 @@ class GraphBlocksServerApp:
                 )
                 if response_mode not in {"sync", "accepted", "background"}:
                     raise ValueError("run request responseMode must be one of sync, accepted, or background")
+                run_id_value = _server_alias_value(
+                    payload,
+                    "run request",
+                    "run_id",
+                    "runId",
+                )
+                if "run_id" not in payload and "runId" not in payload:
+                    run_id_value = f"run-{uuid4().hex}"
                 run_id = _validate_exact_non_empty_string(
                     "run request",
                     "runId",
-                    _server_alias_value(
-                        payload,
-                        "run request",
-                        "run_id",
-                        "runId",
-                        "run-000001",
-                    ),
+                    run_id_value,
                 )
                 request_id = _validate_exact_non_empty_string(
                     "run request",
@@ -6558,16 +6561,18 @@ class GraphBlocksServerApp:
                             "error": f"run {run_id!r} already exists",
                         },
                     )
+                response_id_value = _server_alias_value(
+                    payload,
+                    "run request",
+                    "response_id",
+                    "responseId",
+                )
+                if "response_id" not in payload and "responseId" not in payload:
+                    response_id_value = f"response-{uuid4().hex}"
                 response_id = _validate_exact_non_empty_string(
                     "run request",
                     "responseId",
-                    _server_alias_value(
-                        payload,
-                        "run request",
-                        "response_id",
-                        "responseId",
-                        "response-000001",
-                    ),
+                    response_id_value,
                 )
                 release_id = _validate_exact_non_empty_string(
                     "run request",
