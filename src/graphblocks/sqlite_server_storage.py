@@ -2348,9 +2348,41 @@ class SQLiteAcceptedRunRepository:
             raise SQLiteAcceptedRunCorruptionError(
                 "accepted-run SQLite waiting transition is incomplete"
             )
+        raw_callback_expected_state_version = checkpoint_row[
+            "callback_expected_state_version"
+        ]
+        if raw_callback_expected_state_version is None:
+            backfilled = connection.execute(
+                """
+                UPDATE run_checkpoints
+                SET callback_expected_state_version = ?
+                WHERE run_internal_id = ?
+                  AND checkpoint_digest = ?
+                  AND callback_expected_state_version IS NULL
+                """,
+                (
+                    expected_committed_version,
+                    internal_id,
+                    command.checkpoint.checkpoint_digest,
+                ),
+            )
+            if backfilled.rowcount != 1:
+                raise SQLiteAcceptedRunCorruptionError(
+                    "accepted-run SQLite waiting replay lost its callback version"
+                )
+            callback_version_matches = True
+        else:
+            callback_version_matches = (
+                _decode_sqlite_integer(
+                    "callback_expected_state_version",
+                    raw_callback_expected_state_version,
+                )
+                == expected_committed_version
+            )
         issuance = command.callback_issuance
         checkpoint_matches = (
-            _decode_sqlite_text(
+            callback_version_matches
+            and _decode_sqlite_text(
                 "checkpoint_format_version",
                 checkpoint_row["checkpoint_format_version"],
             )

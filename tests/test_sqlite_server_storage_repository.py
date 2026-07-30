@@ -1149,6 +1149,69 @@ def test_sqlite_repository_replays_identical_waiting_commit_after_response_loss(
     assert counts == (1, 1)
 
 
+def test_sqlite_repository_backfills_legacy_callback_version_on_waiting_replay(
+    tmp_path,
+) -> None:
+    path = tmp_path / "accepted-runs.sqlite3"
+    repository = SQLiteAcceptedRunRepository(path, clock=lambda: 2_200)
+    repository.accept_run(_admission())
+    command = _waiting_commit(_claim_ready_run(repository))
+    committed = repository.commit_waiting(command)
+    connection = sqlite3.connect(path)
+    connection.execute(
+        """
+        UPDATE run_checkpoints
+        SET callback_expected_state_version = NULL
+        """
+    )
+    connection.commit()
+    connection.close()
+
+    replay = SQLiteAcceptedRunRepository(path).commit_waiting(command)
+
+    assert replay == committed
+    connection = sqlite3.connect(path)
+    callback_expected_state_version = int(
+        connection.execute(
+            """
+            SELECT callback_expected_state_version
+            FROM run_checkpoints
+            """
+        ).fetchone()[0]
+    )
+    connection.close()
+    assert callback_expected_state_version == committed.state_version
+
+
+def test_sqlite_repository_rejects_divergent_callback_version_on_waiting_replay(
+    tmp_path,
+) -> None:
+    path = tmp_path / "accepted-runs.sqlite3"
+    repository = SQLiteAcceptedRunRepository(path, clock=lambda: 2_200)
+    repository.accept_run(_admission())
+    command = _waiting_commit(_claim_ready_run(repository))
+    committed = repository.commit_waiting(command)
+    connection = sqlite3.connect(path)
+    connection.execute(
+        """
+        UPDATE run_checkpoints
+        SET callback_expected_state_version = ?
+        """,
+        (committed.state_version - 1,),
+    )
+    connection.commit()
+    connection.close()
+
+    with pytest.raises(
+        CheckpointIntegrityError,
+        match="stored waiting transition conflicts with retry",
+    ):
+        SQLiteAcceptedRunRepository(path).commit_waiting(command)
+
+    snapshot = repository.get_run(tenant_id="tenant-1", run_id="run-1")
+    assert snapshot == committed
+
+
 def test_sqlite_repository_rejects_conflicting_waiting_commit_retry(
     tmp_path,
 ) -> None:
