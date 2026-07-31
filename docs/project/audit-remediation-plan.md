@@ -227,6 +227,19 @@ orchestrator at 30 lines, validation passes at 500 lines, and topology passes at
 350 lines. Golden phase, pass-order, diagnostic-order, shared TCK, and
 Python/Rust differential tests preserve plan identity and diagnostic ownership.
 
+`GB-ARCH-008` now has executable closure evidence: the existing closed
+`builtin-plugin.yaml` is the block/implementation authority for Python stdlib
+wiring, while stable membership and the `control.map` descriptor overlay remain
+single-sourced in `builtin_block_catalog(profile="stable")`. The former
+1,420-line registry builder is a bounded manifest dispatcher with no embedded
+block IDs or handler definitions; implementation functions live behind
+implementation-ID maps, and `control.map` receives a registry-local late-bound
+resolver. Exact manifest↔catalog↔handler completeness tests fail closed on
+missing or duplicate bindings. One generator emits both the linked Markdown
+inventory and resolved stable/preview contracts in `tck/stdlib/inventory.json`;
+a clean-generation gate and profile-parity test prevent descriptor, docs, and
+TCK drift.
+
 ### Python API
 
 Reduce the root export surface to the reviewed stable API, move preview

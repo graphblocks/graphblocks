@@ -1,0 +1,1514 @@
+{
+  "inventoryVersion": 1,
+  "manifestSha256": "26161f178b731f8d9349eb8a40ec5dcc931e50ad5426f6a6b6d0b49d879ae423",
+  "profiles": {
+    "preview": {
+      "blocks": [
+        {
+          "blockId": "agent.run@1",
+          "descriptor": {
+            "capabilities": [],
+            "configSchema": {
+              "type": "object"
+            },
+            "inputs": [
+              {
+                "name": "messages",
+                "required": false,
+                "type": "graphblocks.ai/Messages@1"
+              },
+              {
+                "name": "tools",
+                "required": false,
+                "type": "graphblocks.ai/ResolvedTools@1"
+              },
+              {
+                "name": "context",
+                "required": false,
+                "type": "Any"
+              },
+              {
+                "name": "objective",
+                "required": false,
+                "type": "Any"
+              },
+              {
+                "name": "diagnostics",
+                "required": false,
+                "type": "Any"
+              },
+              {
+                "name": "conversation",
+                "required": false,
+                "type": "graphblocks.ai/ConversationSnapshot@1"
+              }
+            ],
+            "outputs": [
+              {
+                "name": "candidate",
+                "required": true,
+                "type": "graphblocks.ai/TurnCandidate@1"
+              },
+              {
+                "name": "result",
+                "required": false,
+                "type": "Any"
+              },
+              {
+                "name": "message",
+                "required": false,
+                "type": "graphblocks.ai/TurnCandidate@1"
+              }
+            ],
+            "resourceSlots": [
+              {
+                "name": "model",
+                "optional": true,
+                "type": "resources/Model@1"
+              }
+            ],
+            "typeId": "agent.run",
+            "version": 1
+          },
+          "implementation": "graphblocks.stdlib.agent.run",
+          "role": "agent"
+        },
+        {
+          "blockId": "answer.validate_grounding@1",
+          "descriptor": {
+            "capabilities": [],
+            "configSchema": {
+              "type": "object"
+            },
+            "inputs": [
+              {
+                "name": "response",
+                "required": false,
+                "type": "Any"
+              },
+              {
+                "name": "answer",
+                "required": false,
+                "type": "graphblocks.ai/Answer@1"
+              },
+              {
+                "name": "context",
+                "required": true,
+                "type": "graphblocks.ai/ContextPack@1"
+              }
+            ],
+            "outputs": [
+              {
+                "name": "candidate",
+                "required": true,
+                "type": "graphblocks.ai/Answer@1"
+              },
+              {
+                "name": "response",
+                "required": true,
+                "type": "graphblocks.ai/Answer@1"
+              },
+              {
+                "name": "result",
+                "required": true,
+                "type": "graphblocks.ai/GroundingValidation@1"
+              },
+              {
+                "name": "validation",
+                "required": true,
+                "type": "graphblocks.ai/GroundingValidation@1"
+              }
+            ],
+            "resourceSlots": [],
+            "typeId": "answer.validate_grounding",
+            "version": 1
+          },
+          "implementation": "graphblocks.stdlib.answer.validate_grounding",
+          "role": "transform"
+        },
+        {
+          "blockId": "async.await_callback@1",
+          "descriptor": {
+            "capabilities": [],
+            "configSchema": {
+              "type": "object"
+            },
+            "inputs": [
+              {
+                "name": "operation",
+                "required": true,
+                "type": "graphblocks.ai/AsyncOperation@1"
+              }
+            ],
+            "outputs": [
+              {
+                "name": "wait",
+                "required": true,
+                "type": "graphblocks.ai/AsyncWait@1"
+              },
+              {
+                "name": "callback",
+                "required": false,
+                "requiredWhen": {
+                  "phase": "resumed"
+                },
+                "type": "Any"
+              },
+              {
+                "name": "operation",
+                "required": false,
+                "requiredWhen": {
+                  "phase": "resumed"
+                },
+                "type": "graphblocks.ai/AsyncOperation@1"
+              }
+            ],
+            "resourceSlots": [],
+            "typeId": "async.await_callback",
+            "version": 1
+          },
+          "implementation": "graphblocks.stdlib.async.await_callback",
+          "role": "control"
+        },
+        {
+          "blockId": "async.cancel_operation@1",
+          "descriptor": {
+            "capabilities": [],
+            "configSchema": {
+              "type": "object"
+            },
+            "inputs": [
+              {
+                "name": "operation",
+                "required": true,
+                "type": "graphblocks.ai/AsyncOperation@1"
+              }
+            ],
+            "outputs": [
+              {
+                "name": "result",
+                "required": true,
+                "type": "graphblocks.ai/AsyncOperationResult@1"
+              }
+            ],
+            "resourceSlots": [],
+            "typeId": "async.cancel_operation",
+            "version": 1
+          },
+          "implementation": "graphblocks.stdlib.async.cancel_operation",
+          "role": "effect"
+        },
+        {
+          "blockId": "async.complete_operation@1",
+          "descriptor": {
+            "capabilities": [],
+            "configSchema": {
+              "type": "object"
+            },
+            "inputs": [
+              {
+                "name": "operation",
+                "required": true,
+                "type": "graphblocks.ai/AsyncOperation@1"
+              },
+              {
+                "name": "output",
+                "required": false,
+                "type": "Any"
+              }
+            ],
+            "outputs": [
+              {
+                "name": "result",
+                "required": true,
+                "type": "graphblocks.ai/AsyncOperationResult@1"
+              }
+            ],
+            "resourceSlots": [],
+            "typeId": "async.complete_operation",
+            "version": 1
+          },
+          "implementation": "graphblocks.stdlib.async.complete_operation",
+          "role": "effect"
+        },
+        {
+          "blockId": "async.expire_operation@1",
+          "descriptor": {
+            "capabilities": [],
+            "configSchema": {
+              "type": "object"
+            },
+            "inputs": [
+              {
+                "name": "operation",
+                "required": true,
+                "type": "graphblocks.ai/AsyncOperation@1"
+              }
+            ],
+            "outputs": [
+              {
+                "name": "result",
+                "required": true,
+                "type": "graphblocks.ai/AsyncOperationResult@1"
+              }
+            ],
+            "resourceSlots": [],
+            "typeId": "async.expire_operation",
+            "version": 1
+          },
+          "implementation": "graphblocks.stdlib.async.expire_operation",
+          "role": "effect"
+        },
+        {
+          "blockId": "async.poll_operation@1",
+          "descriptor": {
+            "capabilities": [],
+            "configSchema": {
+              "type": "object"
+            },
+            "inputs": [
+              {
+                "name": "operation",
+                "required": true,
+                "type": "graphblocks.ai/AsyncOperation@1"
+              }
+            ],
+            "outputs": [
+              {
+                "name": "poll",
+                "required": true,
+                "type": "graphblocks.ai/AsyncPoll@1"
+              }
+            ],
+            "resourceSlots": [],
+            "typeId": "async.poll_operation",
+            "version": 1
+          },
+          "implementation": "graphblocks.stdlib.async.poll_operation",
+          "role": "control"
+        },
+        {
+          "blockId": "async.start_operation@1",
+          "descriptor": {
+            "capabilities": [],
+            "configSchema": {
+              "type": "object"
+            },
+            "inputs": [
+              {
+                "name": "subject",
+                "required": false,
+                "type": "Any"
+              },
+              {
+                "name": "changeset",
+                "required": false,
+                "type": "Any"
+              }
+            ],
+            "outputs": [
+              {
+                "name": "operation",
+                "required": true,
+                "type": "graphblocks.ai/AsyncOperation@1"
+              }
+            ],
+            "resourceSlots": [],
+            "typeId": "async.start_operation",
+            "version": 1
+          },
+          "implementation": "graphblocks.stdlib.async.start_operation",
+          "role": "effect"
+        },
+        {
+          "blockId": "check.run_suite@1",
+          "descriptor": {
+            "capabilities": [],
+            "configSchema": {
+              "type": "object"
+            },
+            "inputs": [
+              {
+                "name": "subject",
+                "required": false,
+                "type": "Any"
+              },
+              {
+                "name": "evidence",
+                "required": false,
+                "type": "Any"
+              },
+              {
+                "name": "results",
+                "required": false,
+                "type": "Any"
+              },
+              {
+                "name": "lease",
+                "required": false,
+                "type": "Any"
+              }
+            ],
+            "outputs": [
+              {
+                "name": "results",
+                "required": true,
+                "type": "Any"
+              },
+              {
+                "name": "checks",
+                "required": true,
+                "type": "Any"
+              },
+              {
+                "name": "diagnostics",
+                "required": true,
+                "type": "Any"
+              },
+              {
+                "name": "passed",
+                "required": true,
+                "type": "graphblocks.ai/Boolean@1"
+              },
+              {
+                "name": "hardGatePassed",
+                "required": true,
+                "type": "graphblocks.ai/Boolean@1"
+              }
+            ],
+            "resourceSlots": [
+              {
+                "name": "checks",
+                "optional": true,
+                "type": "resources/CheckProviderSet@1"
+              }
+            ],
+            "typeId": "check.run_suite",
+            "version": 1
+          },
+          "implementation": "graphblocks.stdlib.check.run_suite",
+          "role": "effect"
+        },
+        {
+          "blockId": "context.build@1",
+          "descriptor": {
+            "capabilities": [],
+            "configSchema": {
+              "type": "object"
+            },
+            "inputs": [
+              {
+                "name": "history",
+                "required": false,
+                "type": "graphblocks.ai/Messages@1"
+              },
+              {
+                "name": "evidence",
+                "required": false,
+                "type": "graphblocks.ai/SearchHits@1"
+              },
+              {
+                "name": "hits",
+                "required": false,
+                "type": "graphblocks.ai/SearchHits@1"
+              },
+              {
+                "name": "currentMessage",
+                "required": false,
+                "type": "graphblocks.ai/Message@1"
+              }
+            ],
+            "outputs": [
+              {
+                "name": "pack",
+                "required": true,
+                "type": "graphblocks.ai/ContextPack@1"
+              }
+            ],
+            "resourceSlots": [],
+            "typeId": "context.build",
+            "version": 1
+          },
+          "implementation": "graphblocks.stdlib.context.build",
+          "role": "builder"
+        },
+        {
+          "blockId": "control.map@2",
+          "descriptor": {
+            "capabilities": [],
+            "configSchema": {
+              "additionalProperties": false,
+              "anyOf": [
+                {
+                  "required": [
+                    "block"
+                  ]
+                },
+                {
+                  "required": [
+                    "graph"
+                  ]
+                }
+              ],
+              "properties": {
+                "batch": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "maxBytes": {
+                      "minimum": 1,
+                      "type": "integer"
+                    },
+                    "maxItems": {
+                      "minimum": 1,
+                      "type": "integer"
+                    },
+                    "maxWait": {
+                      "minLength": 1,
+                      "type": "string"
+                    }
+                  },
+                  "type": "object"
+                },
+                "block": {
+                  "pattern": "^\\S+@[1-9][0-9]*$",
+                  "type": "string"
+                },
+                "checkpoint": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "concurrency": {
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                "config": {
+                  "type": "object"
+                },
+                "graph": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "inputName": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "itemKey": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "onError": {
+                  "enum": [
+                    "fail_fast",
+                    "collect"
+                  ]
+                },
+                "outputName": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "stateIsolation": {
+                  "enum": [
+                    "item",
+                    "shared"
+                  ]
+                }
+              },
+              "type": "object"
+            },
+            "inputs": [
+              {
+                "name": "items",
+                "required": true,
+                "type": "graphblocks.ai/Items@1"
+              }
+            ],
+            "outputs": [
+              {
+                "name": "values",
+                "required": true,
+                "type": "graphblocks.ai/Values@1"
+              },
+              {
+                "name": "outcomes",
+                "required": false,
+                "requiredWhen": {
+                  "configEquals": {
+                    "pointer": "/onError",
+                    "value": "collect"
+                  }
+                },
+                "type": "graphblocks.ai/Outcomes@1"
+              }
+            ],
+            "resourceSlots": [],
+            "typeId": "control.map",
+            "version": 2
+          },
+          "implementation": "graphblocks.stdlib.control.map",
+          "role": "control"
+        },
+        {
+          "blockId": "control.select@1",
+          "descriptor": {
+            "capabilities": [],
+            "configSchema": {
+              "additionalProperties": false,
+              "properties": {
+                "default": {},
+                "order": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array",
+                  "uniqueItems": true
+                }
+              },
+              "type": "object"
+            },
+            "inputs": [
+              {
+                "name": "cases",
+                "required": true,
+                "type": "graphblocks.ai/Cases@1"
+              }
+            ],
+            "outputs": [
+              {
+                "name": "value",
+                "required": true,
+                "type": "graphblocks.ai/SelectedValue@1"
+              },
+              {
+                "name": "selected",
+                "required": true,
+                "type": "graphblocks.ai/SelectedKey@1"
+              }
+            ],
+            "resourceSlots": [],
+            "typeId": "control.select",
+            "version": 1
+          },
+          "implementation": "graphblocks.stdlib.control.select",
+          "role": "control"
+        },
+        {
+          "blockId": "conversation.begin_turn@1",
+          "descriptor": {
+            "capabilities": [],
+            "configSchema": {
+              "type": "object"
+            },
+            "inputs": [
+              {
+                "name": "conversationId",
+                "required": false,
+                "type": "graphblocks.ai/ConversationId@1"
+              },
+              {
+                "name": "conversation",
+                "required": false,
+                "type": "graphblocks.conversation/ConversationRef@1"
+              },
+              {
+                "name": "message",
+                "required": false,
+                "type": "graphblocks.conversation/Message@1"
+              }
+            ],
+            "outputs": [
+              {
+                "name": "transaction",
+                "required": true,
+                "type": "graphblocks.ai/ConversationTransaction@1"
+              },
+              {
+                "name": "snapshot",
+                "required": false,
+                "type": "graphblocks.ai/ConversationSnapshot@1"
+              },
+              {
+                "name": "conversation",
+                "required": false,
+                "type": "graphblocks.ai/ConversationSnapshot@1"
+              },
+              {
+                "name": "turn",
+                "required": false,
+                "type": "graphblocks.ai/ConversationTransaction@1"
+              }
+            ],
+            "resourceSlots": [],
+            "typeId": "conversation.begin_turn",
+            "version": 1
+          },
+          "implementation": "graphblocks.stdlib.conversation.begin_turn",
+          "role": "transform"
+        },
+        {
+          "blockId": "conversation.commit_turn@1",
+          "descriptor": {
+            "capabilities": [],
+            "configSchema": {
+              "type": "object"
+            },
+            "inputs": [
+              {
+                "name": "transaction",
+                "required": false,
+                "type": "graphblocks.ai/ConversationTransaction@1"
+              },
+              {
+                "name": "candidate",
+                "required": false,
+                "type": "Any"
+              },
+              {
+                "name": "turn",
+                "required": false,
+                "type": "graphblocks.ai/ConversationTransaction@1"
+              },
+              {
+                "name": "response",
+                "required": false,
+                "type": "graphblocks.ai/TurnCandidate@1"
+              }
+            ],
+            "outputs": [
+              {
+                "name": "answer",
+                "required": true,
+                "type": "graphblocks.ai/Answer@1"
+              },
+              {
+                "name": "result",
+                "required": true,
+                "type": "graphblocks.ai/TurnCandidate@1"
+              }
+            ],
+            "resourceSlots": [],
+            "typeId": "conversation.commit_turn",
+            "version": 1
+          },
+          "implementation": "graphblocks.stdlib.conversation.commit_turn",
+          "role": "effect"
+        },
+        {
+          "blockId": "conversation.policy_stop_turn@1",
+          "descriptor": {
+            "capabilities": [],
+            "configSchema": {
+              "type": "object"
+            },
+            "inputs": [
+              {
+                "name": "transaction",
+                "required": true,
+                "type": "graphblocks.ai/ConversationTransaction@1"
+              }
+            ],
+            "outputs": [
+              {
+                "name": "transaction",
+                "required": true,
+                "type": "graphblocks.ai/ConversationTransaction@1"
+              },
+              {
+                "name": "turn",
+                "required": true,
+                "type": "graphblocks.ai/ConversationTransaction@1"
+              }
+            ],
+            "resourceSlots": [],
+            "typeId": "conversation.policy_stop_turn",
+            "version": 1
+          },
+          "implementation": "graphblocks.stdlib.conversation.policy_stop_turn",
+          "role": "effect"
+        },
+        {
+          "blockId": "gate.evaluate@1",
+          "descriptor": {
+            "capabilities": [],
+            "configSchema": {
+              "type": "object"
+            },
+            "inputs": [
+              {
+                "name": "checks",
+                "required": true,
+                "type": "Any"
+              },
+              {
+                "name": "metrics",
+                "required": false,
+                "type": "Any"
+              },
+              {
+                "name": "subject",
+                "required": false,
+                "type": "Any"
+              }
+            ],
+            "outputs": [
+              {
+                "name": "result",
+                "required": true,
+                "type": "Any"
+              },
+              {
+                "name": "decision",
+                "required": true,
+                "type": "graphblocks.ai/String@1"
+              },
+              {
+                "name": "passed",
+                "required": true,
+                "type": "graphblocks.ai/Boolean@1"
+              },
+              {
+                "name": "violations",
+                "required": true,
+                "type": "Any"
+              }
+            ],
+            "resourceSlots": [],
+            "typeId": "gate.evaluate",
+            "version": 1
+          },
+          "implementation": "graphblocks.stdlib.gate.evaluate",
+          "role": "transform"
+        },
+        {
+          "blockId": "model.generate@1",
+          "descriptor": {
+            "capabilities": [],
+            "configSchema": {
+              "additionalProperties": false,
+              "properties": {
+                "response": {},
+                "script": {
+                  "type": "object"
+                }
+              },
+              "type": "object"
+            },
+            "inputs": [
+              {
+                "name": "prompt",
+                "required": false,
+                "type": "graphblocks.ai/Prompt@1"
+              },
+              {
+                "name": "context",
+                "required": false,
+                "type": "graphblocks.ai/ContextPack@1"
+              }
+            ],
+            "outputs": [
+              {
+                "name": "response",
+                "required": true,
+                "type": "graphblocks.ai/ModelResponse@1"
+              }
+            ],
+            "resourceSlots": [
+              {
+                "name": "model",
+                "optional": true,
+                "type": "resources/Model@1"
+              }
+            ],
+            "typeId": "model.generate",
+            "version": 1
+          },
+          "implementation": "graphblocks.stdlib.scripted_model.generate",
+          "role": "model"
+        },
+        {
+          "blockId": "model.structured_generate@1",
+          "descriptor": {
+            "capabilities": [],
+            "configSchema": {
+              "type": "object"
+            },
+            "inputs": [
+              {
+                "name": "response",
+                "required": false,
+                "type": "Any"
+              },
+              {
+                "name": "diagnosis",
+                "required": false,
+                "type": "Any"
+              },
+              {
+                "name": "prompt",
+                "required": false,
+                "type": "Any"
+              },
+              {
+                "name": "context",
+                "required": false,
+                "type": "graphblocks.ai/ContextPack@1"
+              },
+              {
+                "name": "candidates",
+                "required": false,
+                "type": "Any"
+              },
+              {
+                "name": "questions",
+                "required": false,
+                "type": "Any"
+              },
+              {
+                "name": "reference",
+                "required": false,
+                "type": "Any"
+              }
+            ],
+            "outputs": [
+              {
+                "name": "value",
+                "required": true,
+                "type": "Any"
+              },
+              {
+                "name": "response",
+                "required": true,
+                "type": "Any"
+              },
+              {
+                "name": "items",
+                "required": true,
+                "type": "graphblocks.ai/StructuredItems@1"
+              },
+              {
+                "name": "schemaId",
+                "required": true,
+                "type": "graphblocks.ai/String@1"
+              },
+              {
+                "name": "schemaRef",
+                "required": true,
+                "type": "graphblocks.ai/String@1"
+              },
+              {
+                "name": "contentDigest",
+                "required": true,
+                "type": "graphblocks.ai/String@1"
+              },
+              {
+                "name": "questions",
+                "required": false,
+                "type": "Any"
+              },
+              {
+                "name": "scores",
+                "required": false,
+                "type": "Any"
+              }
+            ],
+            "resourceSlots": [
+              {
+                "name": "model",
+                "optional": true,
+                "type": "resources/Model@1"
+              }
+            ],
+            "typeId": "model.structured_generate",
+            "version": 1
+          },
+          "implementation": "graphblocks.stdlib.model.structured_generate",
+          "role": "model"
+        },
+        {
+          "blockId": "prompt.render@1",
+          "descriptor": {
+            "capabilities": [],
+            "configSchema": {
+              "additionalProperties": false,
+              "properties": {
+                "template": {
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            },
+            "inputs": [
+              {
+                "name": "message",
+                "required": true,
+                "type": "graphblocks.ai/Message@1"
+              }
+            ],
+            "outputs": [
+              {
+                "name": "prompt",
+                "required": true,
+                "type": "graphblocks.ai/Prompt@1"
+              }
+            ],
+            "resourceSlots": [],
+            "typeId": "prompt.render",
+            "version": 1
+          },
+          "implementation": "graphblocks.stdlib.prompt.render",
+          "role": "transform"
+        },
+        {
+          "blockId": "rank.documents@1",
+          "descriptor": {
+            "capabilities": [],
+            "configSchema": {
+              "type": "object"
+            },
+            "inputs": [
+              {
+                "name": "query",
+                "required": true,
+                "type": "graphblocks.ai/SearchRequest@1"
+              },
+              {
+                "name": "hits",
+                "required": true,
+                "type": "graphblocks.ai/SearchHits@1"
+              }
+            ],
+            "outputs": [
+              {
+                "name": "hits",
+                "required": true,
+                "type": "graphblocks.ai/SearchHits@1"
+              },
+              {
+                "name": "result",
+                "required": false,
+                "type": "Any"
+              }
+            ],
+            "resourceSlots": [
+              {
+                "name": "reranker",
+                "optional": true,
+                "type": "resources/Reranker@1"
+              }
+            ],
+            "typeId": "rank.documents",
+            "version": 1
+          },
+          "implementation": "graphblocks.stdlib.rank.documents",
+          "role": "model"
+        },
+        {
+          "blockId": "result.bundle@1",
+          "descriptor": {
+            "capabilities": [],
+            "configSchema": {
+              "type": "object"
+            },
+            "inputs": [
+              {
+                "name": "inputs",
+                "required": false,
+                "type": "Any"
+              },
+              {
+                "name": "outputs",
+                "required": true,
+                "type": "Any"
+              },
+              {
+                "name": "evidence",
+                "required": false,
+                "type": "Any"
+              },
+              {
+                "name": "checks",
+                "required": false,
+                "type": "Any"
+              },
+              {
+                "name": "metrics",
+                "required": false,
+                "type": "Any"
+              },
+              {
+                "name": "diagnostics",
+                "required": false,
+                "type": "Any"
+              },
+              {
+                "name": "reviews",
+                "required": false,
+                "type": "Any"
+              },
+              {
+                "name": "gate",
+                "required": false,
+                "type": "Any"
+              },
+              {
+                "name": "artifacts",
+                "required": false,
+                "type": "graphblocks.core/ArtifactRefList@1"
+              },
+              {
+                "name": "usage",
+                "required": false,
+                "type": "Any"
+              },
+              {
+                "name": "usageRecords",
+                "required": false,
+                "type": "Any"
+              },
+              {
+                "name": "policyDecisionRefs",
+                "required": false,
+                "type": "Any"
+              }
+            ],
+            "outputs": [
+              {
+                "name": "result",
+                "required": true,
+                "type": "Any"
+              },
+              {
+                "name": "bundle",
+                "required": true,
+                "type": "Any"
+              },
+              {
+                "name": "contentDigest",
+                "required": true,
+                "type": "graphblocks.ai/String@1"
+              }
+            ],
+            "resourceSlots": [],
+            "typeId": "result.bundle",
+            "version": 1
+          },
+          "implementation": "graphblocks.stdlib.result.bundle",
+          "role": "builder"
+        },
+        {
+          "blockId": "retrieve.execute_plan@1",
+          "descriptor": {
+            "capabilities": [],
+            "configSchema": {
+              "type": "object"
+            },
+            "inputs": [
+              {
+                "name": "query",
+                "required": false,
+                "type": "graphblocks.ai/SearchRequest@1"
+              },
+              {
+                "name": "request",
+                "required": false,
+                "type": "graphblocks.ai/SearchRequest@1"
+              },
+              {
+                "name": "auth",
+                "required": false,
+                "type": "Any"
+              },
+              {
+                "name": "sources",
+                "required": false,
+                "type": "graphblocks.ai/FederatedSources@1"
+              }
+            ],
+            "outputs": [
+              {
+                "name": "result",
+                "required": true,
+                "type": "graphblocks.ai/RetrievalResult@1"
+              },
+              {
+                "name": "sources",
+                "required": true,
+                "type": "graphblocks.ai/RetrievalSources@1"
+              }
+            ],
+            "resourceSlots": [
+              {
+                "name": "retrievers",
+                "optional": true,
+                "type": "resources/RetrieverSet@1"
+              },
+              {
+                "name": "embedding",
+                "optional": true,
+                "type": "resources/EmbeddingModel@1"
+              }
+            ],
+            "typeId": "retrieve.execute_plan",
+            "version": 1
+          },
+          "implementation": "graphblocks.stdlib.retrieve.execute_plan",
+          "role": "effect"
+        },
+        {
+          "blockId": "retrieve.fuse@1",
+          "descriptor": {
+            "capabilities": [],
+            "configSchema": {
+              "type": "object"
+            },
+            "inputs": [
+              {
+                "name": "sources",
+                "required": true,
+                "type": "graphblocks.ai/RetrievalSources@1"
+              }
+            ],
+            "outputs": [
+              {
+                "name": "hits",
+                "required": true,
+                "type": "graphblocks.ai/SearchHits@1"
+              },
+              {
+                "name": "metadata",
+                "required": false,
+                "type": "Any"
+              }
+            ],
+            "resourceSlots": [],
+            "typeId": "retrieve.fuse",
+            "version": 1
+          },
+          "implementation": "graphblocks.stdlib.retrieve.fuse",
+          "role": "builder"
+        },
+        {
+          "blockId": "review.request@1",
+          "descriptor": {
+            "capabilities": [],
+            "configSchema": {
+              "type": "object"
+            },
+            "inputs": [
+              {
+                "name": "subject",
+                "required": true,
+                "type": "Any"
+              },
+              {
+                "name": "gate",
+                "required": false,
+                "type": "Any"
+              },
+              {
+                "name": "review",
+                "required": false,
+                "type": "Any"
+              },
+              {
+                "name": "requestedBy",
+                "required": false,
+                "type": "graphblocks.ai/Principal@1"
+              },
+              {
+                "name": "requested_by",
+                "required": false,
+                "type": "graphblocks.ai/Principal@1"
+              }
+            ],
+            "outputs": [
+              {
+                "name": "request",
+                "required": true,
+                "type": "Any"
+              },
+              {
+                "name": "requestDigest",
+                "required": false,
+                "type": "graphblocks.ai/String@1"
+              },
+              {
+                "name": "record",
+                "required": false,
+                "type": "Any"
+              },
+              {
+                "name": "pending",
+                "required": true,
+                "type": "graphblocks.ai/Boolean@1"
+              },
+              {
+                "name": "accepted",
+                "required": true,
+                "type": "graphblocks.ai/Boolean@1"
+              },
+              {
+                "name": "approved",
+                "required": true,
+                "type": "graphblocks.ai/Boolean@1"
+              },
+              {
+                "name": "status",
+                "required": true,
+                "type": "graphblocks.ai/String@1"
+              },
+              {
+                "name": "waitMode",
+                "required": false,
+                "type": "graphblocks.ai/String@1"
+              }
+            ],
+            "resourceSlots": [
+              {
+                "name": "reviewer",
+                "optional": true,
+                "type": "resources/Reviewer@1"
+              }
+            ],
+            "typeId": "review.request",
+            "version": 1
+          },
+          "implementation": "graphblocks.stdlib.review.request",
+          "role": "effect"
+        },
+        {
+          "blockId": "tools.resolve@1",
+          "descriptor": {
+            "capabilities": [],
+            "configSchema": {
+              "type": "object"
+            },
+            "inputs": [
+              {
+                "name": "principal",
+                "required": false,
+                "type": "graphblocks.ai/Principal@1"
+              },
+              {
+                "name": "conversation",
+                "required": false,
+                "type": "graphblocks.ai/ConversationSnapshot@1"
+              },
+              {
+                "name": "policySnapshot",
+                "required": false,
+                "type": "graphblocks.ai/PolicySnapshot@1"
+              }
+            ],
+            "outputs": [
+              {
+                "name": "tools",
+                "required": true,
+                "type": "graphblocks.ai/ResolvedTools@1"
+              }
+            ],
+            "resourceSlots": [],
+            "typeId": "tools.resolve",
+            "version": 1
+          },
+          "implementation": "graphblocks.stdlib.tools.resolve",
+          "role": "builder"
+        }
+      ]
+    },
+    "stable": {
+      "blocks": [
+        {
+          "blockId": "control.map@2",
+          "descriptor": {
+            "capabilities": [],
+            "configSchema": {
+              "additionalProperties": false,
+              "properties": {
+                "block": {
+                  "pattern": "^\\S+@[1-9][0-9]*$",
+                  "type": "string"
+                },
+                "config": {
+                  "type": "object"
+                },
+                "inputName": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "onError": {
+                  "enum": [
+                    "fail_fast",
+                    "collect"
+                  ]
+                },
+                "outputName": {
+                  "minLength": 1,
+                  "type": "string"
+                }
+              },
+              "required": [
+                "block"
+              ],
+              "type": "object"
+            },
+            "inputs": [
+              {
+                "name": "items",
+                "required": true,
+                "type": "graphblocks.ai/Items@1"
+              }
+            ],
+            "outputs": [
+              {
+                "name": "values",
+                "required": true,
+                "type": "graphblocks.ai/Values@1"
+              },
+              {
+                "name": "outcomes",
+                "required": false,
+                "requiredWhen": {
+                  "configEquals": {
+                    "pointer": "/onError",
+                    "value": "collect"
+                  }
+                },
+                "type": "graphblocks.ai/Outcomes@1"
+              }
+            ],
+            "resourceSlots": [],
+            "typeId": "control.map",
+            "version": 2
+          },
+          "implementation": "graphblocks.stdlib.control.map",
+          "role": "control"
+        },
+        {
+          "blockId": "control.select@1",
+          "descriptor": {
+            "capabilities": [],
+            "configSchema": {
+              "additionalProperties": false,
+              "properties": {
+                "default": {},
+                "order": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array",
+                  "uniqueItems": true
+                }
+              },
+              "type": "object"
+            },
+            "inputs": [
+              {
+                "name": "cases",
+                "required": true,
+                "type": "graphblocks.ai/Cases@1"
+              }
+            ],
+            "outputs": [
+              {
+                "name": "value",
+                "required": true,
+                "type": "graphblocks.ai/SelectedValue@1"
+              },
+              {
+                "name": "selected",
+                "required": true,
+                "type": "graphblocks.ai/SelectedKey@1"
+              }
+            ],
+            "resourceSlots": [],
+            "typeId": "control.select",
+            "version": 1
+          },
+          "implementation": "graphblocks.stdlib.control.select",
+          "role": "control"
+        },
+        {
+          "blockId": "model.generate@1",
+          "descriptor": {
+            "capabilities": [],
+            "configSchema": {
+              "additionalProperties": false,
+              "properties": {
+                "response": {},
+                "script": {
+                  "type": "object"
+                }
+              },
+              "type": "object"
+            },
+            "inputs": [
+              {
+                "name": "prompt",
+                "required": false,
+                "type": "graphblocks.ai/Prompt@1"
+              },
+              {
+                "name": "context",
+                "required": false,
+                "type": "graphblocks.ai/ContextPack@1"
+              }
+            ],
+            "outputs": [
+              {
+                "name": "response",
+                "required": true,
+                "type": "graphblocks.ai/ModelResponse@1"
+              }
+            ],
+            "resourceSlots": [
+              {
+                "name": "model",
+                "optional": true,
+                "type": "resources/Model@1"
+              }
+            ],
+            "typeId": "model.generate",
+            "version": 1
+          },
+          "implementation": "graphblocks.stdlib.scripted_model.generate",
+          "role": "model"
+        },
+        {
+          "blockId": "prompt.render@1",
+          "descriptor": {
+            "capabilities": [],
+            "configSchema": {
+              "additionalProperties": false,
+              "properties": {
+                "template": {
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            },
+            "inputs": [
+              {
+                "name": "message",
+                "required": true,
+                "type": "graphblocks.ai/Message@1"
+              }
+            ],
+            "outputs": [
+              {
+                "name": "prompt",
+                "required": true,
+                "type": "graphblocks.ai/Prompt@1"
+              }
+            ],
+            "resourceSlots": [],
+            "typeId": "prompt.render",
+            "version": 1
+          },
+          "implementation": "graphblocks.stdlib.prompt.render",
+          "role": "transform"
+        }
+      ]
+    }
+  },
+  "source": "src/graphblocks/data/builtin-plugin.yaml"
+}

@@ -820,10 +820,20 @@ _GOVERNANCE_BLOCK_ITEMS: tuple[tuple[str, Any], ...] = (
 GOVERNANCE_BLOCKS: Mapping[str, Any] = MappingProxyType(
     dict(_GOVERNANCE_BLOCK_ITEMS)
 )
+GOVERNANCE_IMPLEMENTATIONS: Mapping[str, Any] = MappingProxyType(
+    {
+        "graphblocks.stdlib.model.structured_generate": structured_generate_block,
+        "graphblocks.stdlib.check.run_suite": check_run_suite_block,
+        "graphblocks.stdlib.gate.evaluate": gate_evaluate_block,
+        "graphblocks.stdlib.review.request": review_request_block,
+        "graphblocks.stdlib.result.bundle": result_bundle_block,
+    }
+)
 
 
 __all__ = [
     "GOVERNANCE_BLOCKS",
+    "GOVERNANCE_IMPLEMENTATIONS",
     "check_run_suite_block",
     "gate_evaluate_block",
     "result_bundle_block",

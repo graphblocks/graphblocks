@@ -50,5 +50,6 @@ claim.
 - [Language support](conformance/language-support.md)
 - [Versioning and diagnostics](reference/versioning-and-diagnostics.md)
 - [Compatibility and deprecation policy](reference/compatibility-policy.md)
+- [Standard-library inventory](reference/stdlib-inventory.md)
 - [Diagnostic-code registry](reference/diagnostic-codes.yaml)
 - [Architecture decisions](decisions/README.md)

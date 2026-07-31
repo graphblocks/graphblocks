@@ -663,10 +663,20 @@ _RAG_BLOCK_ITEMS: tuple[tuple[str, RagBlockCallable], ...] = (
     ("answer.validate_grounding@1", answer_validate_grounding),
 )
 RAG_BLOCKS: Mapping[str, RagBlockCallable] = MappingProxyType(dict(_RAG_BLOCK_ITEMS))
+RAG_IMPLEMENTATIONS: Mapping[str, RagBlockCallable] = MappingProxyType(
+    {
+        "graphblocks.stdlib.retrieve.execute_plan": retrieve_execute_plan,
+        "graphblocks.stdlib.retrieve.fuse": retrieve_fuse,
+        "graphblocks.stdlib.rank.documents": rank_documents,
+        "graphblocks.stdlib.context.build": context_build,
+        "graphblocks.stdlib.answer.validate_grounding": answer_validate_grounding,
+    }
+)
 
 
 __all__ = [
     "RAG_BLOCKS",
+    "RAG_IMPLEMENTATIONS",
     "RagBlockCallable",
     "answer_validate_grounding",
     "context_build",

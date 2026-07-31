@@ -327,6 +327,35 @@ def _parse_block_version(value: Any) -> int:
     raise ValueError("block descriptor version must be a positive integer")
 
 
+def _manifest_block_identity(
+    block: Mapping[str, Any],
+    block_index: int,
+) -> tuple[str, int]:
+    identity_keys = tuple(
+        key for key in ("typeId", "type_id", "block") if key in block
+    )
+    if len(identity_keys) != 1:
+        raise ValueError(
+            f"block catalog entry {block_index} must declare exactly one of "
+            "typeId, type_id, or block"
+        )
+    block_type = block[identity_keys[0]]
+    version = block.get("version")
+    if isinstance(block_type, str) and "@" in block_type and version is None:
+        block_type, version = block_type.rsplit("@", 1)
+    if not isinstance(block_type, str) or not block_type or version is None:
+        raise ValueError(
+            f"block catalog entry {block_index} requires typeId and version"
+        )
+    try:
+        parsed_version = _parse_block_version(version)
+    except ValueError as error:
+        raise ValueError(
+            f"block catalog entry {block_index} version is invalid: {error}"
+        ) from error
+    return block_type, parsed_version
+
+
 def _validate_json_pointer(pointer: object) -> str:
     if not isinstance(pointer, str):
         raise ValueError("configEquals.pointer must be a string")
@@ -855,24 +884,10 @@ class BlockCatalog:
         for block_index, block in enumerate(blocks):
             if not isinstance(block, Mapping):
                 raise ValueError(f"block catalog entry {block_index} must be a mapping")
-            identity_keys = tuple(
-                key for key in ("typeId", "type_id", "block") if key in block
+            block_type, parsed_version = _manifest_block_identity(
+                block,
+                block_index,
             )
-            if len(identity_keys) != 1:
-                raise ValueError(
-                    f"block catalog entry {block_index} must declare exactly one of "
-                    "typeId, type_id, or block"
-                )
-            block_type = block[identity_keys[0]]
-            version = block.get("version")
-            if isinstance(block_type, str) and "@" in block_type and version is None:
-                block_type, version = block_type.rsplit("@", 1)
-            if not isinstance(block_type, str) or not block_type or version is None:
-                raise ValueError(f"block catalog entry {block_index} requires typeId and version")
-            try:
-                parsed_version = _parse_block_version(version)
-            except ValueError as error:
-                raise ValueError(f"block catalog entry {block_index} version is invalid: {error}") from error
             try:
                 capabilities = _block_capabilities(block.get("capabilities", []))
             except ValueError as error:
@@ -1745,6 +1760,59 @@ def discover_plugins(paths: list[str | Path] | None = None, include_installed: b
     return PluginRegistry(tuple(unique), DiagnosticSet(tuple(diagnostics)))
 
 
+@lru_cache(maxsize=1)
+def _builtin_plugin_registry() -> PluginRegistry:
+    registry = discover_plugins(include_installed=False)
+    if not registry.ok:
+        messages = "; ".join(
+            f"{item.code} {item.path}: {item.message}"
+            for item in registry.diagnostics.diagnostics
+        )
+        raise RuntimeError(f"built-in plugin catalog is invalid: {messages}")
+    return registry
+
+
+@lru_cache(maxsize=1)
+def builtin_block_implementations() -> Mapping[str, str]:
+    """Return block-to-implementation bindings from the built-in manifest."""
+
+    registry = _builtin_plugin_registry()
+    manifest = next(
+        (
+            item
+            for item in registry.manifests
+            if item.plugin_id == "io.graphblocks.stdlib"
+        ),
+        None,
+    )
+    if manifest is None:
+        raise RuntimeError("built-in stdlib plugin manifest is missing")
+
+    implementations: dict[str, str] = {}
+    for block_index, block in enumerate(manifest.blocks):
+        block_type, version = _manifest_block_identity(block, block_index)
+        block_id = f"{block_type}@{version}"
+        implementation = block.get(
+            "implementation",
+            block.get("implementationId"),
+        )
+        if (
+            not isinstance(implementation, str)
+            or not implementation
+            or implementation != implementation.strip()
+        ):
+            raise RuntimeError(
+                f"built-in stdlib block {block_id} requires an exact "
+                "implementation identifier"
+            )
+        if block_id in implementations:
+            raise RuntimeError(
+                f"built-in stdlib manifest duplicates block {block_id}"
+            )
+        implementations[block_id] = implementation
+    return MappingProxyType(implementations)
+
+
 @lru_cache(maxsize=2)
 def builtin_block_catalog(
     *,
@@ -1755,13 +1823,7 @@ def builtin_block_catalog(
     if profile not in {"preview", "stable"}:
         raise ValueError("profile must be 'preview' or 'stable'")
 
-    registry = discover_plugins(include_installed=False)
-    if not registry.ok:
-        messages = "; ".join(
-            f"{item.code} {item.path}: {item.message}"
-            for item in registry.diagnostics.diagnostics
-        )
-        raise RuntimeError(f"built-in plugin catalog is invalid: {messages}")
+    registry = _builtin_plugin_registry()
     catalog = BlockCatalog.from_manifests(registry.manifests)
     if profile == "preview":
         return catalog

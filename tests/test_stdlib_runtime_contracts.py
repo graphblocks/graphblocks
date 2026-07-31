@@ -1,15 +1,24 @@
 from __future__ import annotations
 
+import ast
 from dataclasses import FrozenInstanceError
+import inspect
+import json
 import re
 from pathlib import Path
+import subprocess
+import sys
 from typing import Any
 
 import pytest
 import yaml
 
 from graphblocks import BlockCatalog
-from graphblocks.plugins import builtin_block_catalog
+from graphblocks import runtime as runtime_module
+from graphblocks.plugins import (
+    builtin_block_catalog,
+    builtin_block_implementations,
+)
 from graphblocks.runtime import (
     ExecutionJournal,
     InProcessRuntime,
@@ -23,90 +32,16 @@ from graphblocks.runtime import (
     core_stdlib_registry,
     stdlib_registry,
 )
+from graphblocks.stdlib_governance import (
+    GOVERNANCE_BLOCKS,
+    GOVERNANCE_IMPLEMENTATIONS,
+)
+from graphblocks.stdlib_rag import RAG_BLOCKS, RAG_IMPLEMENTATIONS
+from graphblocks.stdlib_runtime_handlers import core_stdlib_implementations
 
 
 ROOT = Path(__file__).parents[1]
 
-
-EXPECTED_STDLIB_PORTS = {
-    "prompt.render@1": (("message",), ("prompt",)),
-    "model.generate@1": (("prompt", "context"), ("response",)),
-    "model.structured_generate@1": (
-        ("response", "diagnosis", "prompt", "context", "candidates", "questions", "reference"),
-        ("value", "response", "items", "schemaId", "schemaRef", "contentDigest", "questions", "scores"),
-    ),
-    "tools.resolve@1": (("principal", "conversation", "policySnapshot"), ("tools",)),
-    "agent.run@1": (
-        ("messages", "tools", "context", "objective", "diagnostics", "conversation"),
-        ("candidate", "result", "message"),
-    ),
-    "conversation.begin_turn@1": (
-        ("conversationId", "conversation", "message"),
-        ("transaction", "snapshot", "conversation", "turn"),
-    ),
-    "conversation.commit_turn@1": (
-        ("transaction", "candidate", "turn", "response"),
-        ("answer", "result"),
-    ),
-    "conversation.policy_stop_turn@1": (("transaction",), ("transaction", "turn")),
-    "async.start_operation@1": (("subject", "changeset"), ("operation",)),
-    "async.await_callback@1": (("operation",), ("wait", "callback", "operation")),
-    "async.poll_operation@1": (("operation",), ("poll",)),
-    "async.complete_operation@1": (("operation", "output"), ("result",)),
-    "async.cancel_operation@1": (("operation",), ("result",)),
-    "async.expire_operation@1": (("operation",), ("result",)),
-    "control.map@2": (("items",), ("values", "outcomes")),
-    "control.select@1": (("cases",), ("value", "selected")),
-    "retrieve.fuse@1": (("sources",), ("hits", "metadata")),
-    "retrieve.execute_plan@1": (
-        ("query", "request", "auth", "sources"),
-        ("result", "sources"),
-    ),
-    "rank.documents@1": (("query", "hits"), ("hits", "result")),
-    "context.build@1": (("history", "evidence", "hits", "currentMessage"), ("pack",)),
-    "answer.validate_grounding@1": (
-        ("response", "answer", "context"),
-        ("candidate", "response", "result", "validation"),
-    ),
-    "check.run_suite@1": (
-        ("subject", "evidence", "results", "lease"),
-        ("results", "checks", "diagnostics", "passed", "hardGatePassed"),
-    ),
-    "gate.evaluate@1": (
-        ("checks", "metrics", "subject"),
-        ("result", "decision", "passed", "violations"),
-    ),
-    "review.request@1": (
-        ("subject", "gate", "review", "requestedBy", "requested_by"),
-        (
-            "request",
-            "requestDigest",
-            "record",
-            "pending",
-            "accepted",
-            "approved",
-            "status",
-            "waitMode",
-        ),
-    ),
-    "result.bundle@1": (
-        (
-            "inputs",
-            "outputs",
-            "evidence",
-            "checks",
-            "metrics",
-            "diagnostics",
-            "reviews",
-            "gate",
-            "artifacts",
-            "usage",
-            "usageRecords",
-            "policyDecisionRefs",
-        ),
-        ("result", "bundle", "contentDigest"),
-    ),
-}
 
 EXPECTED_CORE_STDLIB_BLOCKS = {
     "control.map@2",
@@ -155,15 +90,170 @@ def _terminal_local_journal(
 
 
 def test_builtin_catalog_and_python_stdlib_have_exact_port_contract_parity() -> None:
+    manifest = yaml.safe_load(
+        (
+            ROOT
+            / "src"
+            / "graphblocks"
+            / "data"
+            / "builtin-plugin.yaml"
+        ).read_text(encoding="utf-8")
+    )
+    blocks = manifest["spec"]["blocks"]
+    expected_ports = {
+        f"{block['typeId']}@{block['version']}": (
+            tuple(port["name"] for port in block.get("inputs", [])),
+            tuple(port["name"] for port in block.get("outputs", [])),
+        )
+        for block in blocks
+    }
     catalog = builtin_block_catalog()
     registry = stdlib_registry()
 
-    assert set(catalog.descriptors) == set(registry.blocks) == set(EXPECTED_STDLIB_PORTS)
-    for block_id, (expected_inputs, expected_outputs) in EXPECTED_STDLIB_PORTS.items():
+    assert set(catalog.descriptors) == set(registry.blocks) == set(expected_ports)
+    for block_id, (expected_inputs, expected_outputs) in expected_ports.items():
         descriptor = catalog.get(block_id)
         assert descriptor is not None
         assert tuple(port.name for port in descriptor.inputs) == expected_inputs
         assert tuple(port.name for port in descriptor.outputs) == expected_outputs
+
+
+def test_builtin_manifest_and_python_handlers_are_exactly_complete() -> None:
+    manifest_bindings = builtin_block_implementations()
+    registry = RuntimeRegistry(block_catalog=builtin_block_catalog())
+    implementation_handlers = {
+        **core_stdlib_implementations(registry.resolve),
+        **RAG_IMPLEMENTATIONS,
+        **GOVERNANCE_IMPLEMENTATIONS,
+    }
+
+    assert set(manifest_bindings) == set(registry.block_catalog.descriptors)
+    assert set(manifest_bindings.values()) == set(implementation_handlers)
+    for block_id, handler in {
+        **RAG_BLOCKS,
+        **GOVERNANCE_BLOCKS,
+    }.items():
+        assert implementation_handlers[manifest_bindings[block_id]] is handler
+
+
+def test_stdlib_registry_fails_closed_when_a_manifest_handler_is_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import graphblocks.stdlib_runtime_handlers as handler_module
+
+    original = handler_module.core_stdlib_implementations
+
+    def missing_prompt_handler(
+        resolve: Any,
+    ) -> dict[str, Any]:
+        handlers = dict(original(resolve))
+        handlers.pop("graphblocks.stdlib.prompt.render")
+        return handlers
+
+    monkeypatch.setattr(
+        handler_module,
+        "core_stdlib_implementations",
+        missing_prompt_handler,
+    )
+
+    with pytest.raises(
+        RuntimeError,
+        match="graphblocks.stdlib.prompt.render",
+    ):
+        stdlib_registry()
+
+
+def test_stdlib_registry_is_a_bounded_manifest_dispatcher() -> None:
+    source = inspect.getsource(runtime_module._stdlib_registry)
+    function = next(
+        node for node in ast.parse(source).body if isinstance(node, ast.FunctionDef)
+    )
+    nested_functions = [
+        node
+        for node in ast.walk(function)
+        if isinstance(node, ast.FunctionDef) and node is not function
+    ]
+    block_id_literals = [
+        node.value
+        for node in ast.walk(function)
+        if isinstance(node, ast.Constant)
+        and isinstance(node.value, str)
+        and re.fullmatch(r"[^\s@]+@[1-9][0-9]*", node.value)
+    ]
+
+    assert function.end_lineno is not None
+    assert function.end_lineno - function.lineno + 1 <= 100
+    assert nested_functions == []
+    assert block_id_literals == []
+
+
+def test_stdlib_handler_functions_have_bounded_ownership() -> None:
+    source = (
+        ROOT / "src" / "graphblocks" / "stdlib_runtime_handlers.py"
+    ).read_text(encoding="utf-8")
+    module = ast.parse(source)
+    function_lengths = {
+        node.name: node.end_lineno - node.lineno + 1
+        for node in module.body
+        if isinstance(node, ast.FunctionDef) and node.end_lineno is not None
+    }
+
+    assert function_lengths
+    assert max(function_lengths.values()) <= 350
+
+
+def test_stdlib_inventories_are_cleanly_generated() -> None:
+    result = subprocess.run(
+        [
+            sys.executable,
+            "tools/generate_stdlib_inventory.py",
+            "--check",
+        ],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_generated_stdlib_tck_inventory_matches_resolved_profiles() -> None:
+    inventory = json.loads(
+        (ROOT / "tck" / "stdlib" / "inventory.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    manifest_bindings = builtin_block_implementations()
+
+    assert inventory["inventoryVersion"] == 1
+    assert set(inventory["profiles"]) == {"preview", "stable"}
+    for profile in ("preview", "stable"):
+        catalog = builtin_block_catalog(profile=profile)
+        blocks = inventory["profiles"][profile]["blocks"]
+        assert [block["descriptor"] for block in blocks] == catalog.to_blocks()
+        assert {
+            block["blockId"]: block["implementation"]
+            for block in blocks
+        } == {
+            block_id: manifest_bindings[block_id]
+            for block_id in catalog.descriptors
+        }
+
+    preview_blocks = {
+        block["blockId"]: block
+        for block in inventory["profiles"]["preview"]["blocks"]
+    }
+    stable_blocks = {
+        block["blockId"]: block
+        for block in inventory["profiles"]["stable"]["blocks"]
+    }
+    assert "graph" in preview_blocks["control.map@2"]["descriptor"][
+        "configSchema"
+    ]["properties"]
+    assert "graph" not in stable_blocks["control.map@2"]["descriptor"][
+        "configSchema"
+    ]["properties"]
 
 
 def test_stable_core_stdlib_excludes_preview_profile_blocks() -> None:
@@ -194,6 +284,31 @@ def test_stable_core_stdlib_excludes_preview_profile_blocks() -> None:
             {"block": "conversation.begin_turn@1"},
             {},
         )
+
+
+def test_control_map_resolves_replaced_handler_at_execution_time() -> None:
+    registry = core_stdlib_registry()
+
+    def replacement(
+        inputs: dict[str, Any],
+        config: dict[str, Any],
+        context: dict[str, Any],
+    ) -> dict[str, Any]:
+        return {"prompt": f"replacement:{inputs['message']['text']}"}
+
+    registry.replace("prompt.render@1", replacement)
+
+    result = registry.resolve("control.map@2")(
+        {"items": [{"text": "one"}, {"text": "two"}]},
+        {
+            "block": "prompt.render@1",
+            "inputName": "message",
+            "outputName": "prompt",
+        },
+        {},
+    )
+
+    assert result == {"values": ["replacement:one", "replacement:two"]}
 
 
 def test_stable_local_runtime_returns_only_terminal_c1_result() -> None:
