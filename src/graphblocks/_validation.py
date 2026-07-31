@@ -2,7 +2,22 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+
 from .canonical import _has_unicode_surrogate
+
+
+def snapshot_collection(
+    owner: str,
+    field_name: str,
+    value: object,
+) -> tuple[object, ...]:
+    if isinstance(value, (str, bytes, bytearray, Mapping)):
+        raise ValueError(f"{owner} {field_name} must be a collection")
+    try:
+        return tuple(value)  # type: ignore[arg-type]
+    except (TypeError, RuntimeError) as error:
+        raise ValueError(f"{owner} {field_name} must be a collection") from error
 
 
 def validate_non_empty_string(
@@ -36,6 +51,7 @@ def validate_optional_non_empty_string(
 
 
 __all__ = [
+    "snapshot_collection",
     "validate_non_empty_string",
     "validate_optional_non_empty_string",
 ]

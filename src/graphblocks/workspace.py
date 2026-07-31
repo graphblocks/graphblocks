@@ -8,6 +8,7 @@ from threading import RLock
 from typing import ParamSpec, TypeVar, cast
 
 from ._validation import (
+    snapshot_collection as _snapshot_collection,
     validate_non_empty_string as _validate_non_empty_string,
     validate_optional_non_empty_string as _validate_optional_non_empty_string,
 )
@@ -42,19 +43,6 @@ def _validate_string_tuple(owner: str, field_name: str, value: object) -> tuple[
     for item in items:
         _validate_non_empty_string(owner, f"{field_name} item", item)
     return tuple(sorted(set(items)))
-
-
-def _snapshot_collection(
-    owner: str,
-    field_name: str,
-    value: object,
-) -> tuple[object, ...]:
-    if isinstance(value, (str, bytes, bytearray, Mapping)):
-        raise ValueError(f"{owner} {field_name} must be a collection")
-    try:
-        return tuple(value)  # type: ignore[arg-type]
-    except (TypeError, RuntimeError) as error:
-        raise ValueError(f"{owner} {field_name} must be a collection") from error
 
 
 def _copy_resource_snapshot_ref(resource: ResourceSnapshotRef) -> ResourceSnapshotRef:
