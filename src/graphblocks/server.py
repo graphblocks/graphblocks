@@ -4807,6 +4807,27 @@ class GraphBlocksServerApp:
                     route_match,
                     auth_decision,
                 )
+            if operation_spec.handler_key == "execution":
+                return self._handle_execution_operation(
+                    request,
+                    route_match,
+                    auth_decision,
+                )
+        return ServerResponse.json(
+            501,
+            {
+                "ok": False,
+                "error": f"server operation {route.operation!r} is not implemented",
+            },
+        )
+
+    def _handle_execution_operation(
+        self,
+        request: ServerRequest,
+        route_match: ServerRouteMatch,
+        auth_decision: ServerAuthDecision,
+    ) -> ServerResponse:
+        route = route_match.endpoint
         if route.operation == "invoke_graph":
             accepted_run_reservation: (
                 _AcceptedRunAdmissionReservation | None
@@ -5512,7 +5533,9 @@ class GraphBlocksServerApp:
             501,
             {
                 "ok": False,
-                "error": f"server operation {route.operation!r} is not implemented",
+                "error": (
+                    f"server operation {route.operation!r} is not implemented"
+                ),
             },
         )
 
