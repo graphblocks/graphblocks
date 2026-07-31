@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 from collections.abc import Callable
 from concurrent.futures import (
     Executor,
@@ -10,12 +11,14 @@ from concurrent.futures import (
 )
 from dataclasses import replace
 import hashlib
+import inspect
 from io import BytesIO
 from itertools import permutations
 import json
 import math
 from threading import Barrier, Event, Lock, Thread
 from time import monotonic, sleep
+import textwrap
 from types import SimpleNamespace
 
 import graphblocks
@@ -1469,6 +1472,14 @@ def test_default_protected_resource_routes_have_authorization_policy() -> None:
     operations = {endpoint.operation for endpoint in endpoints}
 
     assert set(graphblocks_server._SERVER_OPERATION_REGISTRY) == operations
+    registered_handler_keys = {
+        spec.handler_key
+        for spec in graphblocks_server._SERVER_OPERATION_REGISTRY.values()
+    }
+    assert (
+        set(graphblocks_server._SERVER_OPERATION_HANDLERS)
+        == registered_handler_keys
+    )
 
     for endpoint in endpoints:
         operation_spec = graphblocks_server._SERVER_OPERATION_REGISTRY[
@@ -1493,6 +1504,20 @@ def test_default_protected_resource_routes_have_authorization_policy() -> None:
         assert resource_parameter in path_parameters
         assert resource_parameter == operation_spec.resource_parameter
         assert resource_kind == operation_spec.resource_kind
+
+
+def test_server_handle_is_a_bounded_request_pipeline() -> None:
+    source = textwrap.dedent(inspect.getsource(GraphBlocksServerApp.handle))
+    function = ast.parse(source).body[0]
+
+    assert isinstance(function, ast.FunctionDef)
+    assert function.end_lineno is not None
+    assert function.end_lineno <= 70
+    assert sum(isinstance(node, ast.If) for node in ast.walk(function)) <= 4
+    assert not any(
+        isinstance(node, ast.Attribute) and node.attr == "operation"
+        for node in ast.walk(function)
+    )
 
 
 def test_default_protected_routes_reach_authorizer_with_registered_action() -> None:

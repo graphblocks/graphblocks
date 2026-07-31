@@ -4311,7 +4311,6 @@ class GraphBlocksServerApp:
                     "error": str(error),
                 },
             )
-        operation_spec = _SERVER_OPERATION_REGISTRY.get(route.operation)
 
         max_body_bytes = self._request_body_limit(route)
         if body_size_bytes > max_body_bytes:
@@ -4337,62 +4336,39 @@ class GraphBlocksServerApp:
         if authorization_failure is not None:
             return authorization_failure
 
-        if operation_spec is not None:
-            if operation_spec.handler_key == "system":
-                return self._handle_system_operation()
-            if operation_spec.handler_key == "run_lifecycle":
-                return self._handle_run_lifecycle_operation(
-                    request,
-                    route_match,
-                    auth_decision,
-                )
-            if operation_spec.handler_key == "subscriptions":
-                return self._handle_subscription_operation(
-                    request,
-                    route_match,
-                    auth_decision,
-                )
-            if operation_spec.handler_key == "callback_registration":
-                return self._handle_callback_registration_operation(
-                    request,
-                    route_match,
-                    auth_decision,
-                )
-            if operation_spec.handler_key == "callback_delivery_control":
-                return self._handle_callback_delivery_control_operation(
-                    request,
-                    route_match,
-                    auth_decision,
-                )
-            if operation_spec.handler_key == "async_callback_ingress":
-                return self._handle_async_callback_ingress_operation(
-                    request,
-                    route_match,
-                    auth_decision,
-                )
-            if operation_spec.handler_key == "application_events":
-                return self._handle_application_events_operation(
-                    request,
-                    route_match,
-                    auth_decision,
-                )
-            if operation_spec.handler_key == "application_stream":
-                return self._handle_application_stream_operation(
-                    request,
-                    route_match,
-                    auth_decision,
-                )
-            if operation_spec.handler_key == "execution":
-                return self._handle_execution_operation(
-                    request,
-                    route_match,
-                    auth_decision,
-                )
+        return self._dispatch_operation(
+            request,
+            route_match,
+            auth_decision,
+        )
+
+    def _dispatch_operation(
+        self,
+        request: ServerRequest,
+        route_match: ServerRouteMatch,
+        auth_decision: ServerAuthDecision,
+    ) -> ServerResponse:
+        route = route_match.endpoint
+        operation_spec = _SERVER_OPERATION_REGISTRY.get(route.operation)
+        handler = (
+            _SERVER_OPERATION_HANDLERS.get(operation_spec.handler_key)
+            if operation_spec is not None
+            else None
+        )
+        if handler is not None:
+            return handler(
+                self,
+                request,
+                route_match,
+                auth_decision,
+            )
         return ServerResponse.json(
             501,
             {
                 "ok": False,
-                "error": f"server operation {route.operation!r} is not implemented",
+                "error": (
+                    f"server operation {route.operation!r} is not implemented"
+                ),
             },
         )
 
@@ -7834,7 +7810,13 @@ class GraphBlocksServerApp:
             },
         )
 
-    def _handle_system_operation(self) -> ServerResponse:
+    def _handle_system_operation(
+        self,
+        request: ServerRequest,
+        route_match: ServerRouteMatch,
+        auth_decision: ServerAuthDecision,
+    ) -> ServerResponse:
+        del request, route_match, auth_decision
         return ServerResponse.json(200, self.health.to_payload())
 
     def _handle_run_lifecycle_operation(
@@ -10958,6 +10940,47 @@ class GraphBlocksServerApp:
         if isinstance(replay, ServerResponse):
             return replay
         return (replay, f"{registration.scope_id}:{self._last_event_sequence(events)}")
+
+
+_ServerOperationHandler = Callable[
+    [
+        GraphBlocksServerApp,
+        ServerRequest,
+        ServerRouteMatch,
+        ServerAuthDecision,
+    ],
+    ServerResponse,
+]
+_SERVER_OPERATION_HANDLERS: Mapping[
+    _ServerOperationHandlerKey,
+    _ServerOperationHandler,
+] = MappingProxyType(
+    {
+        "system": GraphBlocksServerApp._handle_system_operation,
+        "run_lifecycle": (
+            GraphBlocksServerApp._handle_run_lifecycle_operation
+        ),
+        "subscriptions": (
+            GraphBlocksServerApp._handle_subscription_operation
+        ),
+        "callback_registration": (
+            GraphBlocksServerApp._handle_callback_registration_operation
+        ),
+        "callback_delivery_control": (
+            GraphBlocksServerApp._handle_callback_delivery_control_operation
+        ),
+        "async_callback_ingress": (
+            GraphBlocksServerApp._handle_async_callback_ingress_operation
+        ),
+        "application_events": (
+            GraphBlocksServerApp._handle_application_events_operation
+        ),
+        "application_stream": (
+            GraphBlocksServerApp._handle_application_stream_operation
+        ),
+        "execution": GraphBlocksServerApp._handle_execution_operation,
+    }
+)
 
 
 class ServerProtocolVersionMismatchError(ValueError):

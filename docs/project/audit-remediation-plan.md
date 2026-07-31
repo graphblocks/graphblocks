@@ -181,6 +181,15 @@ contract covers body/header bytes and counts, connection and request
 concurrency, per-tenant rate, and idle/total deadlines; adapter conformance
 tests prove the limit is enforced before application parsing.
 
+`GB-ARCH-005` now has executable closure evidence: `handle` is a bounded
+49-line request pipeline that performs request limits, authentication,
+tenant-scoped resource authorization, and registry dispatch in that order.
+Default route operations, minimum authentication requirements, resource path
+policies, and typed handler keys are checked as complete sets. An AST gate caps
+the entry point at 70 lines and four conditionals and rejects operation-specific
+branching there. Further route/service module extraction may continue without
+reopening this request-pipeline boundary.
+
 ### CLI and external codecs
 
 Give each command a `register` and `run` boundary with injected dependencies.
