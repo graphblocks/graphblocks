@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import asdict
 import math
 import pickle
 from threading import Barrier, Event
@@ -14,6 +15,7 @@ from graphblocks.runtime import (
     JournalStateError,
     LocalExecutionJournal,
     LocalJournalRecord,
+    LocalJournalSnapshot,
     SQLiteExecutionJournal,
 )
 
@@ -71,7 +73,7 @@ def test_execution_journal_records_snapshot_payloads_and_freeze_nested_values() 
     ("journal_type", "storage_name"),
     (
         (ExecutionJournal, "_records"),
-        (LocalExecutionJournal, "records"),
+        (LocalExecutionJournal, "_records"),
     ),
 )
 def test_in_memory_journal_append_keeps_constant_time_internal_storage(
@@ -100,11 +102,36 @@ def test_execution_journal_is_unhashable_and_uses_identity_equality() -> None:
     assert journal != same_state
     with pytest.raises(TypeError):
         hash(journal)
+    with pytest.raises(AttributeError):
+        journal.run_id = "different-run"  # type: ignore[misc]
 
     journal.append("run_started", {})
 
     with pytest.raises(TypeError):
         hash(journal)
+
+
+def test_local_execution_journal_preserves_structural_equality_but_not_hashing() -> None:
+    journal = LocalExecutionJournal("run-000001")
+    same_state = LocalExecutionJournal("run-000001")
+
+    assert journal is not same_state
+    assert journal == same_state
+    with pytest.raises(TypeError):
+        hash(journal)
+
+    journal.append("run_started", {})
+
+    assert journal != same_state
+    same_state.append("run_started", {})
+    assert journal == same_state
+    assert asdict(journal) == {"run_id": "run-000001"}
+    with pytest.raises(TypeError):
+        hash(journal)
+    with pytest.raises(AttributeError):
+        journal.run_id = "different-run"  # type: ignore[misc]
+    with pytest.raises(AttributeError):
+        del journal.run_id
 
 
 def test_execution_journal_snapshot_is_detached_and_immutable() -> None:
@@ -141,8 +168,43 @@ def test_execution_journal_snapshot_is_detached_and_immutable() -> None:
         journal.run_id = "different-run"  # type: ignore[misc]
 
 
-def test_execution_journal_serializes_concurrent_appends_and_terminal_commit() -> None:
-    journal = ExecutionJournal("run-000001")
+def test_local_execution_journal_snapshot_is_detached_and_immutable() -> None:
+    journal = LocalExecutionJournal("run-000001")
+    journal.append("run_started", {"input": {"value": 1}})
+    running_snapshot = journal.snapshot()
+
+    journal.append("node_started", {"node": "first"})
+    journal.append_terminal("run_succeeded", {"outputs": {"answer": "ok"}})
+    terminal_snapshot = journal.snapshot()
+
+    assert isinstance(running_snapshot, LocalJournalSnapshot)
+    assert running_snapshot == LocalJournalSnapshot(
+        "run-000001",
+        running_snapshot.records,
+    )
+    assert [record.kind for record in running_snapshot.records] == ["run_started"]
+    assert running_snapshot.terminal_kind is None
+    assert [record.kind for record in terminal_snapshot.records] == [
+        "run_started",
+        "node_started",
+        "run_succeeded",
+    ]
+    assert terminal_snapshot.terminal_kind == "run_succeeded"
+    with pytest.raises(AttributeError):
+        running_snapshot.terminal_kind = "run_succeeded"  # type: ignore[misc]
+    with pytest.raises(AttributeError):
+        running_snapshot.records += terminal_snapshot.records  # type: ignore[misc]
+    with pytest.raises(TypeError):
+        running_snapshot.records[0].payload["input"]["value"] = 2
+    with pytest.raises(TypeError):
+        hash(running_snapshot)
+
+
+@pytest.mark.parametrize("journal_type", (ExecutionJournal, LocalExecutionJournal))
+def test_in_memory_journal_serializes_concurrent_appends_and_terminal_commit(
+    journal_type: type[ExecutionJournal] | type[LocalExecutionJournal],
+) -> None:
+    journal = journal_type("run-000001")
     append_barrier = Barrier(9)
 
     def append_record(index: int) -> int:
@@ -180,8 +242,11 @@ def test_execution_journal_serializes_concurrent_appends_and_terminal_commit() -
     assert snapshot.records[-1].kind == snapshot.terminal_kind
 
 
-def test_execution_journal_canonicalizes_payload_without_holding_state_lock() -> None:
-    journal = ExecutionJournal("run-000001")
+@pytest.mark.parametrize("journal_type", (ExecutionJournal, LocalExecutionJournal))
+def test_in_memory_journal_canonicalizes_payload_without_holding_state_lock(
+    journal_type: type[ExecutionJournal] | type[LocalExecutionJournal],
+) -> None:
+    journal = journal_type("run-000001")
     canonicalization_started = Event()
     release_canonicalization = Event()
 
@@ -232,8 +297,11 @@ def test_in_memory_journal_restores_mutable_storage_after_pickle_round_trip(
     ]
 
 
-def test_execution_journal_pickle_preserves_terminal_seal() -> None:
-    journal = ExecutionJournal("run-000001")
+@pytest.mark.parametrize("journal_type", (ExecutionJournal, LocalExecutionJournal))
+def test_in_memory_journal_pickle_preserves_terminal_seal(
+    journal_type: type[ExecutionJournal] | type[LocalExecutionJournal],
+) -> None:
+    journal = journal_type("run-000001")
     journal.append("run_started", {})
     journal.append_terminal("run_succeeded", {"outputs": {}})
 
@@ -263,6 +331,30 @@ def test_execution_journal_restores_legacy_slot_pickle_state() -> None:
     assert isinstance(restored, ExecutionJournal)
     assert restored.run_id == "run-legacy"
     assert restored.records == records
+    assert restored.terminal_kind == "run_succeeded"
+    with pytest.raises(JournalStateError, match="after terminal"):
+        restored.append("node_started", {"node": "late"})
+
+
+def test_local_execution_journal_restores_legacy_slot_pickle_state() -> None:
+    records = [
+        LocalJournalRecord(1, "run_started", {}),
+        LocalJournalRecord(2, "run_succeeded", {"outputs": {}}),
+    ]
+
+    class LegacyLocalExecutionJournal:
+        def __reduce__(self):
+            return (
+                object.__new__,
+                (LocalExecutionJournal,),
+                ["run-legacy", records, "run_succeeded"],
+            )
+
+    restored = pickle.loads(pickle.dumps(LegacyLocalExecutionJournal()))
+
+    assert isinstance(restored, LocalExecutionJournal)
+    assert restored.run_id == "run-legacy"
+    assert restored.records == tuple(records)
     assert restored.terminal_kind == "run_succeeded"
     with pytest.raises(JournalStateError, match="after terminal"):
         restored.append("node_started", {"node": "late"})

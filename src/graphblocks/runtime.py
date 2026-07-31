@@ -436,7 +436,8 @@ class ExecutionJournal:
         ):
             raise TypeError("invalid legacy execution journal pickle state")
         run_id, records, terminal_kind = state
-        self.__init__(
+        ExecutionJournal.__init__(
+            self,
             cast(str, run_id),
             cast(Sequence[JournalRecord], records),
             cast(JournalKind | None, terminal_kind),
@@ -534,6 +535,29 @@ class LocalJournalRecord:
             _canonical_json_object("local journal payload", self.payload),
         )
 
+    @classmethod
+    def _from_canonical_payload(
+        cls,
+        sequence: int,
+        kind: LocalJournalKind,
+        payload: FrozenDict,
+    ) -> LocalJournalRecord:
+        if (
+            not isinstance(sequence, int)
+            or isinstance(sequence, bool)
+            or sequence < 1
+        ):
+            raise ValueError("local journal sequence must be a positive integer")
+        if kind not in _LOCAL_JOURNAL_KINDS:
+            raise ValueError(f"unsupported local journal kind {kind!r}")
+        if not isinstance(payload, FrozenDict):
+            raise TypeError("local journal canonical payload must be a FrozenDict")
+        record = object.__new__(cls)
+        object.__setattr__(record, "sequence", sequence)
+        object.__setattr__(record, "kind", kind)
+        object.__setattr__(record, "payload", payload)
+        return record
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "sequence": self.sequence,
@@ -542,35 +566,189 @@ class LocalJournalRecord:
         }
 
 
-def _mutable_local_journal_records(journal: object) -> list[Any]:
-    records = object.__getattribute__(journal, "records")
-    if isinstance(records, list):
-        return records
-    mutable_records = list(records)
-    object.__setattr__(journal, "records", mutable_records)
-    return mutable_records
+def _validated_local_execution_journal_state(
+    records_value: object,
+    terminal_kind_value: object,
+) -> tuple[tuple[LocalJournalRecord, ...], LocalTerminalJournalKind | None]:
+    if isinstance(records_value, (str, bytes, bytearray, Mapping)):
+        raise ValueError("local journal records must be LocalJournalRecord values")
+    try:
+        raw_records: tuple[object, ...] = tuple(
+            records_value  # type: ignore[arg-type]
+        )
+    except TypeError as error:
+        raise ValueError(
+            "local journal records must be LocalJournalRecord values"
+        ) from error
+    if any(not isinstance(record, LocalJournalRecord) for record in raw_records):
+        raise ValueError("local journal records must be LocalJournalRecord values")
+    records = cast(tuple[LocalJournalRecord, ...], raw_records)
+    for expected_sequence, record in enumerate(records, start=1):
+        if record.sequence != expected_sequence:
+            raise JournalStateError(
+                "local journal record sequences must be contiguous"
+            )
+    terminal_records = [
+        record
+        for record in records
+        if record.kind in _LOCAL_TERMINAL_JOURNAL_KINDS
+    ]
+    if len(terminal_records) > 1:
+        raise JournalStateError(
+            "local journal must not contain multiple terminal records"
+        )
+    if terminal_records and terminal_records[0] is not records[-1]:
+        raise JournalStateError("local journal terminal record must be last")
+    inferred_terminal = terminal_records[0].kind if terminal_records else None
+    if terminal_kind_value is not None:
+        if (
+            not isinstance(terminal_kind_value, str)
+            or terminal_kind_value not in _LOCAL_TERMINAL_JOURNAL_KINDS
+        ):
+            raise ValueError(
+                f"local journal terminal kind is invalid: {terminal_kind_value!r}"
+            )
+        if terminal_kind_value != inferred_terminal:
+            raise JournalStateError(
+                "local journal terminal_kind must match its terminal record"
+            )
+    return records, cast(LocalTerminalJournalKind | None, inferred_terminal)
 
 
 @dataclass(frozen=True, slots=True)
-class LocalExecutionJournal:
-    """In-memory journal restricted to stable C1 lifecycle events."""
+class LocalJournalSnapshot:
+    """Immutable point-in-time state captured from a stable local journal."""
 
     run_id: str
-    records: tuple[LocalJournalRecord, ...] = field(default_factory=tuple, init=False)
-    terminal_kind: LocalTerminalJournalKind | None = field(default=None, init=False)
+    records: tuple[LocalJournalRecord, ...] = field(default_factory=tuple)
+    terminal_kind: LocalTerminalJournalKind | None = None
+    __hash__ = None  # type: ignore[assignment]
 
-    def __getattribute__(self, name: str) -> Any:
-        value = object.__getattribute__(self, name)
-        if name == "records" and isinstance(value, list):
-            return tuple(value)
-        return value
+    def __post_init__(self) -> None:
+        _require_exact_nonempty_string(
+            "local journal snapshot run id",
+            self.run_id,
+        )
+        records, terminal_kind = _validated_local_execution_journal_state(
+            self.records,
+            self.terminal_kind,
+        )
+        object.__setattr__(self, "records", records)
+        object.__setattr__(self, "terminal_kind", terminal_kind)
+
+
+@dataclass
+class LocalExecutionJournal:
+    """Mutable stable C1 lifecycle journal with atomic immutable snapshots."""
+
+    __slots__ = ("run_id", "_records", "_terminal_kind", "_lock")
+
+    run_id: str
+    __hash__ = None  # type: ignore[assignment]
 
     def __post_init__(self) -> None:
         _require_exact_nonempty_string(
             "local journal run id",
             self.run_id,
         )
-        object.__setattr__(self, "records", [])
+        self._records: list[LocalJournalRecord] = []
+        self._terminal_kind: LocalTerminalJournalKind | None = None
+        self._lock = RLock()
+
+    def __setattr__(self, name: str, value: object) -> None:
+        if name == "run_id":
+            try:
+                object.__getattribute__(self, "run_id")
+            except AttributeError:
+                pass
+            else:
+                raise AttributeError("local execution journal run_id is read-only")
+        object.__setattr__(self, name, value)
+
+    def __delattr__(self, name: str) -> None:
+        if name == "run_id":
+            raise AttributeError("local execution journal run_id is read-only")
+        object.__delattr__(self, name)
+
+    def __eq__(self, other: object) -> bool:
+        if other.__class__ is not self.__class__:
+            return NotImplemented
+        return self.snapshot() == other.snapshot()
+
+    @property
+    def records(self) -> tuple[LocalJournalRecord, ...]:
+        with self._lock:
+            return tuple(self._records)
+
+    @property
+    def terminal_kind(self) -> LocalTerminalJournalKind | None:
+        with self._lock:
+            return self._terminal_kind
+
+    def __repr__(self) -> str:
+        snapshot = self.snapshot()
+        return (
+            f"{type(self).__name__}(run_id={snapshot.run_id!r}, "
+            f"records={snapshot.records!r}, "
+            f"terminal_kind={snapshot.terminal_kind!r})"
+        )
+
+    def __reduce__(
+        self,
+    ) -> tuple[
+        type[LocalExecutionJournal],
+        tuple[str],
+        tuple[
+            tuple[LocalJournalRecord, ...],
+            LocalTerminalJournalKind | None,
+        ],
+    ]:
+        snapshot = self.snapshot()
+        return type(self), (snapshot.run_id,), (
+            snapshot.records,
+            snapshot.terminal_kind,
+        )
+
+    def __setstate__(self, state: object) -> None:
+        if not isinstance(state, (list, tuple)):
+            raise TypeError("invalid local execution journal pickle state")
+        if len(state) == 2:
+            run_id = self.run_id
+            records, terminal_kind = state
+        elif len(state) == 3:
+            run_id, records, terminal_kind = state
+            _require_exact_nonempty_string(
+                "local journal run id",
+                run_id,
+            )
+            try:
+                current_run_id = object.__getattribute__(self, "run_id")
+            except AttributeError:
+                object.__setattr__(self, "run_id", run_id)
+            else:
+                if current_run_id != run_id:
+                    raise JournalStateError(
+                        "local journal pickle run id does not match its constructor"
+                    )
+        else:
+            raise TypeError("invalid local execution journal pickle state")
+        normalized_records, normalized_terminal_kind = (
+            _validated_local_execution_journal_state(records, terminal_kind)
+        )
+        object.__setattr__(self, "_records", list(normalized_records))
+        object.__setattr__(self, "_terminal_kind", normalized_terminal_kind)
+        object.__setattr__(self, "_lock", RLock())
+
+    def snapshot(self) -> LocalJournalSnapshot:
+        with self._lock:
+            run_id = self.run_id
+            records = tuple(self._records)
+            terminal_kind = self._terminal_kind
+        return LocalJournalSnapshot(
+            run_id=run_id,
+            records=records,
+            terminal_kind=terminal_kind,
+        )
 
     def append(
         self,
@@ -583,14 +761,27 @@ class LocalExecutionJournal:
             raise JournalStateError(
                 f"terminal local journal kind {kind!r} must be recorded with append_terminal"
             )
-        if self.terminal_kind is not None:
-            raise JournalStateError(
-                f"cannot append {kind} after terminal {self.terminal_kind}"
+        with self._lock:
+            if self._terminal_kind is not None:
+                raise JournalStateError(
+                    f"cannot append {kind} after terminal {self._terminal_kind}"
+                )
+        canonical_payload = _canonical_json_object(
+            "local journal payload",
+            payload,
+        )
+        with self._lock:
+            if self._terminal_kind is not None:
+                raise JournalStateError(
+                    f"cannot append {kind} after terminal {self._terminal_kind}"
+                )
+            record = LocalJournalRecord._from_canonical_payload(
+                len(self._records) + 1,
+                kind,
+                canonical_payload,
             )
-        records = _mutable_local_journal_records(self)
-        record = LocalJournalRecord(len(records) + 1, kind, payload)
-        records.append(record)
-        return record
+            self._records.append(record)
+            return record
 
     def append_terminal(
         self,
@@ -599,15 +790,28 @@ class LocalExecutionJournal:
     ) -> LocalJournalRecord:
         if kind not in _LOCAL_TERMINAL_JOURNAL_KINDS:
             raise ValueError(f"local terminal journal kind is invalid: {kind!r}")
-        if self.terminal_kind is not None:
-            raise JournalStateError(
-                f"terminal already recorded as {self.terminal_kind}"
+        with self._lock:
+            if self._terminal_kind is not None:
+                raise JournalStateError(
+                    f"terminal already recorded as {self._terminal_kind}"
+                )
+        canonical_payload = _canonical_json_object(
+            "local journal payload",
+            payload,
+        )
+        with self._lock:
+            if self._terminal_kind is not None:
+                raise JournalStateError(
+                    f"terminal already recorded as {self._terminal_kind}"
+                )
+            record = LocalJournalRecord._from_canonical_payload(
+                len(self._records) + 1,
+                kind,
+                canonical_payload,
             )
-        records = _mutable_local_journal_records(self)
-        record = LocalJournalRecord(len(records) + 1, kind, payload)
-        records.append(record)
-        object.__setattr__(self, "terminal_kind", kind)
-        return record
+            self._records.append(record)
+            self._terminal_kind = kind
+            return record
 
 
 @dataclass(slots=True)

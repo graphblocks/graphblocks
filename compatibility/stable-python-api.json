@@ -1200,35 +1200,9 @@
             "keywordOnly": false,
             "name": "run_id",
             "repr": true
-          },
-          {
-            "annotation": "tuple[LocalJournalRecord, ...]",
-            "compare": true,
-            "default": {
-              "kind": "factory",
-              "value": "builtins.tuple"
-            },
-            "hash": null,
-            "init": false,
-            "keywordOnly": false,
-            "name": "records",
-            "repr": true
-          },
-          {
-            "annotation": "LocalTerminalJournalKind | None",
-            "compare": true,
-            "default": {
-              "kind": "value",
-              "value": null
-            },
-            "hash": null,
-            "init": false,
-            "keywordOnly": false,
-            "name": "terminal_kind",
-            "repr": true
           }
         ],
-        "frozen": true,
+        "frozen": false,
         "init": true,
         "matchArgs": [
           "run_id"
@@ -1243,10 +1217,7 @@
       "path": "graphblocks.LocalExecutionJournal",
       "profile": "GB-C1-LOCAL-RUNTIME",
       "signature": "(run_id: 'str') -> None",
-      "typeReferences": [
-        "LocalJournalRecord",
-        "LocalTerminalJournalKind"
-      ]
+      "typeReferences": []
     },
     {
       "kind": "function",

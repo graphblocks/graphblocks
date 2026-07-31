@@ -19,6 +19,9 @@ preparing the first 1.0 release candidate.
 
 ### Changed
 
+- Replaced the stable local journal's frozen-but-mutating dataclass contract
+  with an explicitly mutable, thread-safe writer and immutable point-in-time
+  snapshots while preserving its `(run_id)` constructor and C1 event surface.
 - Made block catalogs closed by default; validated recursive descriptor type
   expressions and exact booleans; enforced nominal graph-interface and block
   port types and optional-to-required boundaries; enforced Python runtime output

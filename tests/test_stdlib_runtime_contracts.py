@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import ast
-from dataclasses import FrozenInstanceError
 import inspect
 import json
 import re
@@ -373,7 +372,7 @@ def test_stable_local_result_and_journal_preserve_terminal_invariants() -> None:
 
     assert isinstance(journal.records, tuple)
     assert result.outputs == {"items": (1,)}
-    with pytest.raises(FrozenInstanceError):
+    with pytest.raises(AttributeError):
         journal.terminal_kind = "run_failed"  # type: ignore[misc]
     with pytest.raises(TypeError):
         result.outputs["items"] = []  # type: ignore[index]
