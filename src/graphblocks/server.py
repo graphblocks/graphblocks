@@ -4328,8 +4328,258 @@ class GraphBlocksServerApp:
         if isinstance(authentication, ServerResponse):
             return authentication
         auth_decision = authentication.decision
-        auth_audit_request_id = authentication.audit_request_id
 
+        authorization_failure = self._authorize_request(
+            request,
+            route_match,
+            authentication,
+        )
+        if authorization_failure is not None:
+            return authorization_failure
+
+        if operation_spec is not None:
+            if operation_spec.handler_key == "system":
+                return self._handle_system_operation()
+            if operation_spec.handler_key == "run_lifecycle":
+                return self._handle_run_lifecycle_operation(
+                    request,
+                    route_match,
+                    auth_decision,
+                )
+            if operation_spec.handler_key == "subscriptions":
+                return self._handle_subscription_operation(
+                    request,
+                    route_match,
+                    auth_decision,
+                )
+            if operation_spec.handler_key == "callback_registration":
+                return self._handle_callback_registration_operation(
+                    request,
+                    route_match,
+                    auth_decision,
+                )
+            if operation_spec.handler_key == "callback_delivery_control":
+                return self._handle_callback_delivery_control_operation(
+                    request,
+                    route_match,
+                    auth_decision,
+                )
+            if operation_spec.handler_key == "async_callback_ingress":
+                return self._handle_async_callback_ingress_operation(
+                    request,
+                    route_match,
+                    auth_decision,
+                )
+            if operation_spec.handler_key == "application_events":
+                return self._handle_application_events_operation(
+                    request,
+                    route_match,
+                    auth_decision,
+                )
+            if operation_spec.handler_key == "application_stream":
+                return self._handle_application_stream_operation(
+                    request,
+                    route_match,
+                    auth_decision,
+                )
+            if operation_spec.handler_key == "execution":
+                return self._handle_execution_operation(
+                    request,
+                    route_match,
+                    auth_decision,
+                )
+        return ServerResponse.json(
+            501,
+            {
+                "ok": False,
+                "error": f"server operation {route.operation!r} is not implemented",
+            },
+        )
+
+    def _authenticate_request(
+        self,
+        request: ServerRequest,
+        route_match: ServerRouteMatch,
+    ) -> _ServerAuthenticationContext | ServerResponse:
+        route = route_match.endpoint
+        auth_audit_request_id: str | None = None
+        auth_decision = ServerAuthDecision(True)
+        if route.auth_required and self.auth_hook is not None:
+            auth_audit_request_id = request.headers.get("x-request-id")
+            if (
+                auth_audit_request_id is not None
+                and (
+                    not auth_audit_request_id
+                    or auth_audit_request_id
+                    != auth_audit_request_id.strip()
+                    or len(auth_audit_request_id.encode("utf-8"))
+                    > MAX_SERVER_AUTH_AUDIT_REQUEST_ID_BYTES
+                )
+            ):
+                auth_audit_request_id = None
+            try:
+                hook_decision = self.auth_hook.authorize(
+                    ServerAuthRequest(
+                        route=route,
+                        headers=request.headers,
+                        query=request.query,
+                        cookies=request.cookies,
+                        requested_at=request.requested_at,
+                    )
+                )
+            except Exception as error:
+                error_type = type(error)
+                error_type_name = (
+                    f"{error_type.__module__}."
+                    f"{error_type.__qualname__}"
+                )
+                if (
+                    len(error_type_name.encode("utf-8"))
+                    > MAX_SERVER_AUTH_AUDIT_FAILURE_TYPE_BYTES
+                ):
+                    error_type_name = canonical_hash(error_type_name)
+                audit_event = ServerAuthAuditEvent(
+                    event_kind="auth.hook_error",
+                    method=request.method,
+                    route=route.path,
+                    operation=route.operation,
+                    request_id=auth_audit_request_id,
+                    failure_type=error_type_name,
+                    credential_present=bool(
+                        request.headers.get("authorization")
+                    ),
+                    observed_at=_utc_now_iso(),
+                )
+                self._auth_audit_events.append(audit_event)
+                if self.auth_audit_hook is not None:
+                    try:
+                        self.auth_audit_hook(audit_event)
+                    except Exception:
+                        pass
+                return ServerResponse.json(
+                    401,
+                    {
+                        "ok": False,
+                        "reasonCodes": ["auth.hook_error"],
+                    },
+                    headers={
+                        "www-authenticate": _SERVER_BEARER_CHALLENGE,
+                    },
+                )
+            if not isinstance(hook_decision, ServerAuthDecision):
+                decision_type = type(hook_decision)
+                decision_type_name = (
+                    f"{decision_type.__module__}."
+                    f"{decision_type.__qualname__}"
+                )
+                if (
+                    len(decision_type_name.encode("utf-8"))
+                    > MAX_SERVER_AUTH_AUDIT_FAILURE_TYPE_BYTES
+                ):
+                    decision_type_name = canonical_hash(
+                        decision_type_name
+                    )
+                audit_event = ServerAuthAuditEvent(
+                    event_kind="auth.invalid_decision",
+                    method=request.method,
+                    route=route.path,
+                    operation=route.operation,
+                    request_id=auth_audit_request_id,
+                    failure_type=decision_type_name,
+                    credential_present=bool(
+                        request.headers.get("authorization")
+                    ),
+                    observed_at=_utc_now_iso(),
+                )
+                self._auth_audit_events.append(audit_event)
+                if self.auth_audit_hook is not None:
+                    try:
+                        self.auth_audit_hook(audit_event)
+                    except Exception:
+                        pass
+                return ServerResponse.json(
+                    401,
+                    {
+                        "ok": False,
+                        "reasonCodes": ["auth.invalid_decision"],
+                    },
+                    headers={
+                        "www-authenticate": _SERVER_BEARER_CHALLENGE,
+                    },
+                )
+            auth_decision = hook_decision
+            if not auth_decision.allowed:
+                if route.operation == "submit_async_callback":
+                    try:
+                        submission = ServerAsyncCallbackSubmission.from_request(
+                            operation_id=route_match.path_params.get("operation_id", ""),
+                            request=request,
+                        )
+                        rejection = ServerAsyncCallbackRejection.authentication_failed(submission)
+                        self._async_callback_rejections_by_operation_id.append(
+                            rejection
+                        )
+                    except (TypeError, ValueError, json.JSONDecodeError):
+                        pass
+                authentication_failed = auth_decision.principal is None
+                return ServerResponse.json(
+                    401 if authentication_failed else 403,
+                    {
+                        "ok": False,
+                        "reasonCodes": list(auth_decision.reason_codes),
+                    },
+                    headers=(
+                        {
+                            "www-authenticate": _SERVER_BEARER_CHALLENGE,
+                        }
+                        if authentication_failed
+                        else None
+                    ),
+                )
+        if (
+            route.operation == "submit_async_callback"
+            and self.require_async_callback_authentication
+            and auth_decision.principal is None
+        ):
+            return ServerResponse.json(
+                401,
+                {
+                    "ok": False,
+                    "reasonCodes": ["auth.callback_authentication_required"],
+                },
+                headers={
+                    "www-authenticate": _SERVER_BEARER_CHALLENGE,
+                },
+            )
+
+        if route.auth_required and not self._unsafe_multi_tenant_dev_enabled:
+            principal_tenant_id = (
+                auth_decision.principal.tenant_id
+                if auth_decision.principal is not None
+                else None
+            )
+            if principal_tenant_id != self._effective_reference_tenant_id:
+                return ServerResponse.json(
+                    403,
+                    {
+                        "ok": False,
+                        "reasonCodes": ["auth.tenant_scope_mismatch"],
+                    },
+                )
+        return _ServerAuthenticationContext(
+            decision=auth_decision,
+            audit_request_id=auth_audit_request_id,
+        )
+
+    def _authorize_request(
+        self,
+        request: ServerRequest,
+        route_match: ServerRouteMatch,
+        authentication: _ServerAuthenticationContext,
+    ) -> ServerResponse | None:
+        route = route_match.endpoint
+        auth_decision = authentication.decision
+        auth_audit_request_id = authentication.audit_request_id
         if route.auth_required and self.authorization_hook is not None:
             if auth_decision.principal is None:
                 return ServerResponse.json(
@@ -4612,240 +4862,7 @@ class GraphBlocksServerApp:
                         ),
                     },
                 )
-
-        if operation_spec is not None:
-            if operation_spec.handler_key == "system":
-                return self._handle_system_operation()
-            if operation_spec.handler_key == "run_lifecycle":
-                return self._handle_run_lifecycle_operation(
-                    request,
-                    route_match,
-                    auth_decision,
-                )
-            if operation_spec.handler_key == "subscriptions":
-                return self._handle_subscription_operation(
-                    request,
-                    route_match,
-                    auth_decision,
-                )
-            if operation_spec.handler_key == "callback_registration":
-                return self._handle_callback_registration_operation(
-                    request,
-                    route_match,
-                    auth_decision,
-                )
-            if operation_spec.handler_key == "callback_delivery_control":
-                return self._handle_callback_delivery_control_operation(
-                    request,
-                    route_match,
-                    auth_decision,
-                )
-            if operation_spec.handler_key == "async_callback_ingress":
-                return self._handle_async_callback_ingress_operation(
-                    request,
-                    route_match,
-                    auth_decision,
-                )
-            if operation_spec.handler_key == "application_events":
-                return self._handle_application_events_operation(
-                    request,
-                    route_match,
-                    auth_decision,
-                )
-            if operation_spec.handler_key == "application_stream":
-                return self._handle_application_stream_operation(
-                    request,
-                    route_match,
-                    auth_decision,
-                )
-            if operation_spec.handler_key == "execution":
-                return self._handle_execution_operation(
-                    request,
-                    route_match,
-                    auth_decision,
-                )
-        return ServerResponse.json(
-            501,
-            {
-                "ok": False,
-                "error": f"server operation {route.operation!r} is not implemented",
-            },
-        )
-
-    def _authenticate_request(
-        self,
-        request: ServerRequest,
-        route_match: ServerRouteMatch,
-    ) -> _ServerAuthenticationContext | ServerResponse:
-        route = route_match.endpoint
-        auth_audit_request_id: str | None = None
-        auth_decision = ServerAuthDecision(True)
-        if route.auth_required and self.auth_hook is not None:
-            auth_audit_request_id = request.headers.get("x-request-id")
-            if (
-                auth_audit_request_id is not None
-                and (
-                    not auth_audit_request_id
-                    or auth_audit_request_id
-                    != auth_audit_request_id.strip()
-                    or len(auth_audit_request_id.encode("utf-8"))
-                    > MAX_SERVER_AUTH_AUDIT_REQUEST_ID_BYTES
-                )
-            ):
-                auth_audit_request_id = None
-            try:
-                hook_decision = self.auth_hook.authorize(
-                    ServerAuthRequest(
-                        route=route,
-                        headers=request.headers,
-                        query=request.query,
-                        cookies=request.cookies,
-                        requested_at=request.requested_at,
-                    )
-                )
-            except Exception as error:
-                error_type = type(error)
-                error_type_name = (
-                    f"{error_type.__module__}."
-                    f"{error_type.__qualname__}"
-                )
-                if (
-                    len(error_type_name.encode("utf-8"))
-                    > MAX_SERVER_AUTH_AUDIT_FAILURE_TYPE_BYTES
-                ):
-                    error_type_name = canonical_hash(error_type_name)
-                audit_event = ServerAuthAuditEvent(
-                    event_kind="auth.hook_error",
-                    method=request.method,
-                    route=route.path,
-                    operation=route.operation,
-                    request_id=auth_audit_request_id,
-                    failure_type=error_type_name,
-                    credential_present=bool(
-                        request.headers.get("authorization")
-                    ),
-                    observed_at=_utc_now_iso(),
-                )
-                self._auth_audit_events.append(audit_event)
-                if self.auth_audit_hook is not None:
-                    try:
-                        self.auth_audit_hook(audit_event)
-                    except Exception:
-                        pass
-                return ServerResponse.json(
-                    401,
-                    {
-                        "ok": False,
-                        "reasonCodes": ["auth.hook_error"],
-                    },
-                    headers={
-                        "www-authenticate": _SERVER_BEARER_CHALLENGE,
-                    },
-                )
-            if not isinstance(hook_decision, ServerAuthDecision):
-                decision_type = type(hook_decision)
-                decision_type_name = (
-                    f"{decision_type.__module__}."
-                    f"{decision_type.__qualname__}"
-                )
-                if (
-                    len(decision_type_name.encode("utf-8"))
-                    > MAX_SERVER_AUTH_AUDIT_FAILURE_TYPE_BYTES
-                ):
-                    decision_type_name = canonical_hash(
-                        decision_type_name
-                    )
-                audit_event = ServerAuthAuditEvent(
-                    event_kind="auth.invalid_decision",
-                    method=request.method,
-                    route=route.path,
-                    operation=route.operation,
-                    request_id=auth_audit_request_id,
-                    failure_type=decision_type_name,
-                    credential_present=bool(
-                        request.headers.get("authorization")
-                    ),
-                    observed_at=_utc_now_iso(),
-                )
-                self._auth_audit_events.append(audit_event)
-                if self.auth_audit_hook is not None:
-                    try:
-                        self.auth_audit_hook(audit_event)
-                    except Exception:
-                        pass
-                return ServerResponse.json(
-                    401,
-                    {
-                        "ok": False,
-                        "reasonCodes": ["auth.invalid_decision"],
-                    },
-                    headers={
-                        "www-authenticate": _SERVER_BEARER_CHALLENGE,
-                    },
-                )
-            auth_decision = hook_decision
-            if not auth_decision.allowed:
-                if route.operation == "submit_async_callback":
-                    try:
-                        submission = ServerAsyncCallbackSubmission.from_request(
-                            operation_id=route_match.path_params.get("operation_id", ""),
-                            request=request,
-                        )
-                        rejection = ServerAsyncCallbackRejection.authentication_failed(submission)
-                        self._async_callback_rejections_by_operation_id.append(
-                            rejection
-                        )
-                    except (TypeError, ValueError, json.JSONDecodeError):
-                        pass
-                authentication_failed = auth_decision.principal is None
-                return ServerResponse.json(
-                    401 if authentication_failed else 403,
-                    {
-                        "ok": False,
-                        "reasonCodes": list(auth_decision.reason_codes),
-                    },
-                    headers=(
-                        {
-                            "www-authenticate": _SERVER_BEARER_CHALLENGE,
-                        }
-                        if authentication_failed
-                        else None
-                    ),
-                )
-        if (
-            route.operation == "submit_async_callback"
-            and self.require_async_callback_authentication
-            and auth_decision.principal is None
-        ):
-            return ServerResponse.json(
-                401,
-                {
-                    "ok": False,
-                    "reasonCodes": ["auth.callback_authentication_required"],
-                },
-                headers={
-                    "www-authenticate": _SERVER_BEARER_CHALLENGE,
-                },
-            )
-
-        if route.auth_required and not self._unsafe_multi_tenant_dev_enabled:
-            principal_tenant_id = (
-                auth_decision.principal.tenant_id
-                if auth_decision.principal is not None
-                else None
-            )
-            if principal_tenant_id != self._effective_reference_tenant_id:
-                return ServerResponse.json(
-                    403,
-                    {
-                        "ok": False,
-                        "reasonCodes": ["auth.tenant_scope_mismatch"],
-                    },
-                )
-        return _ServerAuthenticationContext(
-            decision=auth_decision,
-            audit_request_id=auth_audit_request_id,
-        )
+        return None
 
     def _handle_execution_operation(
         self,
