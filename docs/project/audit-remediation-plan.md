@@ -240,6 +240,20 @@ inventory and resolved stable/preview contracts in `tck/stdlib/inventory.json`;
 a clean-generation gate and profile-parity test prevent descriptor, docs, and
 TCK drift.
 
+`GB-ARCH-009` now has executable closure evidence: the former 20,246-line
+`graphblocks_testing.__init__` is a 250-line export-only compatibility facade
+with no function or class definitions and the same ordered 87-name public
+surface. Cases, reports, fixture loading, conformance profiles, acceptance
+contracts/execution, release gates, runners, and CLI composition have explicit
+owner modules with no child import of the root facade. Stable class and pickle
+identity remains `graphblocks_testing`, including the private frozen-evidence
+aliases needed to read earlier report pickles. Facade dependency forwarding
+preserves the existing compiler and installed-wheel override seams. Exact
+export, owner identity, pickle round-trip, stable API/CLI snapshot, fixture
+digest, packaged-fixture, and acceptance regressions enforce the split.
+`TckRunner` remains the intentionally isolated large owner; its durable
+mega-dispatch is the separate `GB-ARCH-010` work item.
+
 ### Python API
 
 Reduce the root export surface to the reviewed stable API, move preview

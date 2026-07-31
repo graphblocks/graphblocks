@@ -265,6 +265,10 @@ profiles:
             - src/graphblocks/__init__.py
             - src/graphblocks/runtime.py
             - packages/graphblocks-testing/src/graphblocks_testing/__init__.py
+            - packages/graphblocks-testing/src/graphblocks_testing/fixture_loading.py
+            - packages/graphblocks-testing/src/graphblocks_testing/models.py
+            - packages/graphblocks-testing/src/graphblocks_testing/reports.py
+            - packages/graphblocks-testing/src/graphblocks_testing/runners.py
           targetNormative:
             - packages/graphblocks-runtime/src/graphblocks_runtime/__init__.py
             - crates/graphblocks-python/src/lib.rs
@@ -275,3 +279,4 @@ profiles:
           - compatibility/stable-testing-surface.yaml
           - tests/test_compatibility_snapshots.py
           - tests/test_testing_package.py
+          - tests/test_testing_package_architecture.py
