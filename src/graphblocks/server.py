@@ -15,6 +15,7 @@ from typing import Literal, Protocol
 from urllib.parse import quote, unquote
 from uuid import uuid4
 
+from ._json import reject_duplicate_json_keys as _reject_duplicate_json_keys
 from .admission import (
     AdmissionError,
     AdmissionIdempotencyConflictError,
@@ -427,20 +428,10 @@ def _server_request_json_body(request: ServerRequest, owner: str) -> object:
             elif character in "]}":
                 depth -= 1
 
-        def reject_duplicate_keys(
-            pairs: list[tuple[str, object]],
-        ) -> dict[str, object]:
-            result: dict[str, object] = {}
-            for key, value in pairs:
-                if key in result:
-                    raise ValueError(f"duplicate JSON object key {key!r}")
-                result[key] = value
-            return result
-
         decoded = json.loads(
             encoded,
             parse_constant=lambda constant: (_ for _ in ()).throw(ValueError(constant)),
-            object_pairs_hook=reject_duplicate_keys,
+            object_pairs_hook=_reject_duplicate_json_keys,
         )
         pending: list[tuple[object, int]] = [(decoded, 0)]
         while pending:

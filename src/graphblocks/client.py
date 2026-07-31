@@ -13,6 +13,9 @@ from urllib.error import HTTPError
 from urllib.parse import quote, urlencode, urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
+from graphblocks._json import (
+    reject_duplicate_json_keys as _reject_duplicate_json_keys,
+)
 from graphblocks.canonical import canonical_dumps, canonical_hash, canonical_loads
 from graphblocks.conversation import ContentPart
 from graphblocks.documents import ArtifactRef
@@ -68,19 +71,11 @@ def _utc_now_iso() -> str:
 
 
 def _strict_json_loads(value: str | bytes) -> object:
-    def reject_duplicate_keys(pairs: list[tuple[str, object]]) -> dict[str, object]:
-        decoded: dict[str, object] = {}
-        for key, item in pairs:
-            if key in decoded:
-                raise ValueError(f"duplicate JSON object key {key!r}")
-            decoded[key] = item
-        return decoded
-
     try:
         decoded = json.loads(
             value,
             parse_constant=lambda constant: (_ for _ in ()).throw(ValueError(constant)),
-            object_pairs_hook=reject_duplicate_keys,
+            object_pairs_hook=_reject_duplicate_json_keys,
         )
         canonical_dumps(decoded)
     except RecursionError as error:

@@ -10,6 +10,7 @@ from types import MappingProxyType
 from typing import Any
 from weakref import WeakValueDictionary
 
+from ._json import reject_duplicate_json_keys as _reject_duplicate_json_keys
 from .documents import ArtifactRef
 
 
@@ -51,15 +52,6 @@ def _validate_list_limit(value: object) -> int:
     if value > _MAX_U64:
         raise ValueError(f"limit must be at most {_MAX_U64}")
     return value
-
-
-def _reject_duplicate_json_keys(pairs: list[tuple[str, object]]) -> dict[str, object]:
-    result: dict[str, object] = {}
-    for key, value in pairs:
-        if key in result:
-            raise ValueError(f"duplicate JSON object key {key!r}")
-        result[key] = value
-    return result
 
 
 def _loads_strict_json(value: str) -> object:
