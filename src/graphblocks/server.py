@@ -173,7 +173,9 @@ _ServerOperationHandlerKey = Literal[
     "system",
     "run_lifecycle",
     "subscriptions",
-    "callbacks",
+    "callback_registration",
+    "callback_delivery_control",
+    "async_callback_ingress",
     "application_streams",
     "execution",
 ]
@@ -261,24 +263,26 @@ _SERVER_OPERATION_REGISTRY = MappingProxyType(
             "run_id",
             "run",
         ),
-        "register_callback": _ServerOperationSpec("callbacks"),
+        "register_callback": _ServerOperationSpec(
+            "callback_registration"
+        ),
         "revoke_callback": _ServerOperationSpec(
-            "callbacks",
+            "callback_registration",
             "subscription_id",
             "callback_subscription",
         ),
         "redrive_callback_delivery": _ServerOperationSpec(
-            "callbacks",
+            "callback_delivery_control",
             "delivery_id",
             "callback_delivery",
         ),
         "move_callback_to_dead_letter": _ServerOperationSpec(
-            "callbacks",
+            "callback_delivery_control",
             "delivery_id",
             "callback_delivery",
         ),
         "submit_async_callback": _ServerOperationSpec(
-            "callbacks",
+            "async_callback_ingress",
             "operation_id",
             "callback_operation",
         ),
@@ -4772,372 +4776,17 @@ class GraphBlocksServerApp:
                     route_match,
                     auth_decision,
                 )
-        if route.operation == "register_callback":
-            reserved_callback_registration_bytes = 0
-            reserved_callback_registration_id: str | None = None
-            callback_registration_capacity_committed = False
-            try:
-                with self._callback_registration_condition:
-                    registration = ServerCallbackRegistration.from_request(
-                        request=request,
-                        ordinal=len(
-                            set(self._callback_registrations).union(
-                                self._pending_callback_registration_ids
-                            )
-                        )
-                        + 1,
-                        owner=auth_decision.principal,
-                    )
-                    registration = replace(
-                        registration,
-                        event_filter=_constrain_event_filter_visibility(
-                            registration.event_filter,
-                            auth_decision.principal,
-                        ),
-                    )
-                    if (
-                        auth_decision.principal is not None
-                        and auth_decision.principal.tenant_id is not None
-                        and registration.scope == "tenant"
-                        and registration.scope_id != auth_decision.principal.tenant_id
-                    ):
-                        return ServerResponse.json(
-                            403,
-                            {
-                                "ok": False,
-                                "error": (
-                                    f"callback registration tenant scope {registration.scope_id!r} "
-                                    "is not allowed for principal tenant "
-                                    f"{auth_decision.principal.tenant_id!r}"
-                                ),
-                            },
-                        )
-                    if (
-                        registration.scope == "run"
-                        and not self._principal_can_access_run(
-                            registration.scope_id,
-                            auth_decision.principal,
-                        )
-                    ):
-                        return ServerResponse.json(
-                            404,
-                            {
-                                "ok": False,
-                                "error": (
-                                    "run event stream not found for callback "
-                                    "registration scope "
-                                    f"{registration.scope_id!r}"
-                                ),
-                            },
-                        )
-                    if registration.subscription_id in self._pending_callback_registration_ids:
-                        return ServerResponse.json(
-                            409,
-                            {
-                                "ok": False,
-                                "subscriptionId": registration.subscription_id,
-                                "state": "pending",
-                                "error": f"callback registration {registration.subscription_id!r} already exists",
-                            },
-                        )
-                    existing = self._callback_registrations.get(registration.subscription_id)
-                    resuming_incomplete_registration = False
-                    if existing is not None:
-                        retry_registration = replace(registration, created_at=existing.created_at)
-                        if (
-                            registration.subscription_id
-                            not in self._incomplete_callback_registration_ids
-                            or retry_registration != existing
-                        ):
-                            return ServerResponse.json(
-                                409,
-                                {
-                                    "ok": False,
-                                    "subscriptionId": registration.subscription_id,
-                                    "state": existing.status,
-                                    "error": (
-                                        f"callback registration {registration.subscription_id!r} already exists"
-                                    ),
-                                },
-                            )
-                        registration = existing
-                        resuming_incomplete_registration = True
-                    if not resuming_incomplete_registration:
-                        retained_registration_bytes = (
-                            registration._retained_size_bytes()
-                        )
-                        pending_new_registration_count = sum(
-                            pending_subscription_id
-                            not in self._callback_registrations
-                            for pending_subscription_id in (
-                                self._pending_callback_registration_ids
-                            )
-                        )
-                        if (
-                            len(self._callback_registrations)
-                            + pending_new_registration_count
-                            >= self.max_callback_registrations
-                            or (
-                                self._callback_registration_history_bytes
-                                + retained_registration_bytes
-                                > self.max_callback_registration_history_bytes
-                            )
-                        ):
-                            return ServerResponse.json(
-                                429,
-                                {
-                                    "ok": False,
-                                    "subscriptionId": registration.subscription_id,
-                                    "reasonCode": (
-                                        "server.callback_registration_"
-                                        "capacity_exhausted"
-                                    ),
-                                    "maxCallbackRegistrations": (
-                                        self.max_callback_registrations
-                                    ),
-                                    "maxCallbackRegistrationHistoryBytes": (
-                                        self.max_callback_registration_history_bytes
-                                    ),
-                                    "error": (
-                                        "server callback registration history "
-                                        "capacity is exhausted"
-                                    ),
-                                },
-                            )
-                        self._callback_registration_history_bytes += (
-                            retained_registration_bytes
-                        )
-                        reserved_callback_registration_bytes = (
-                            retained_registration_bytes
-                        )
-                        reserved_callback_registration_id = (
-                            registration.subscription_id
-                        )
-                    self._pending_callback_registration_ids.add(registration.subscription_id)
-
-                replay_ready = False
-                try:
-                    replay = self._callback_registration_replay(registration)
-                    if isinstance(replay, ServerResponse):
-                        return replay
-                    replayed_events, last_cursor = replay
-                    replay_ready = True
-                finally:
-                    if not replay_ready:
-                        with self._callback_registration_condition:
-                            self._pending_callback_registration_ids.discard(registration.subscription_id)
-
-                with self._callback_registration_condition:
-                    if (
-                        registration.scope == "run"
-                        and (
-                            registration.scope_id
-                            not in self._events_by_run_id
-                            or not self._principal_can_access_run(
-                                registration.scope_id,
-                                auth_decision.principal,
-                            )
-                        )
-                    ):
-                        self._pending_callback_registration_ids.discard(
-                            registration.subscription_id
-                        )
-                        self._incomplete_callback_registration_ids.discard(
-                            registration.subscription_id
-                        )
-                        return ServerResponse.json(
-                            404,
-                            {
-                                "ok": False,
-                                "error": (
-                                    "run event stream not found for callback "
-                                    "registration scope "
-                                    f"{registration.scope_id!r}"
-                                ),
-                            },
-                        )
-                    if not resuming_incomplete_registration:
-                        self._callback_registrations[registration.subscription_id] = registration
-                        callback_registration_capacity_committed = True
-                    if (
-                        self.callback_delivery_hook is not None
-                        and registration.delivery.get("kind") == "webhook"
-                    ):
-                        self._incomplete_callback_registration_ids.add(
-                            registration.subscription_id
-                        )
-                        self._active_callback_delivery_registration_ids.add(
-                            registration.subscription_id
-                        )
-
-                delivery_results: tuple[ServerCallbackDeliveryResult, ...] = ()
-                if self.callback_delivery_hook is not None and registration.delivery.get("kind") == "webhook":
-                    with self._callback_registration_condition:
-                        delivered = list(
-                            self._callback_delivery_results_by_subscription_id.get(
-                                registration.subscription_id,
-                                (),
-                            )
-                        )
-                    completed_event_ids = {result.event_id for result in delivered}
-                    try:
-                        for event in replayed_events:
-                            metadata = event.get("metadata")
-                            event_id = metadata.get("eventId") if isinstance(metadata, Mapping) else None
-                            if isinstance(event_id, str) and event_id in completed_event_ids:
-                                continue
-                            try:
-                                delivery_result = self.callback_delivery_hook.deliver(registration, event)
-                            except Exception:
-                                return ServerResponse.json(
-                                    502,
-                                    {
-                                        "ok": False,
-                                        "subscriptionId": registration.subscription_id,
-                                        "error": "callback delivery hook failed closed",
-                                    },
-                                )
-                            if not isinstance(delivery_result, ServerCallbackDeliveryResult):
-                                return ServerResponse.json(
-                                    502,
-                                    {
-                                        "ok": False,
-                                        "subscriptionId": registration.subscription_id,
-                                        "error": "callback delivery hook returned an invalid result",
-                                    },
-                                )
-                            if delivery_result.subscription_id != registration.subscription_id:
-                                return ServerResponse.json(
-                                    502,
-                                    {
-                                        "ok": False,
-                                        "subscriptionId": registration.subscription_id,
-                                        "error": "callback delivery hook returned a mismatched subscription",
-                                    },
-                                )
-                            if isinstance(event_id, str) and delivery_result.event_id != event_id:
-                                return ServerResponse.json(
-                                    502,
-                                    {
-                                        "ok": False,
-                                        "subscriptionId": registration.subscription_id,
-                                        "error": "callback delivery hook returned a mismatched event",
-                                    },
-                                )
-                            delivered.append(delivery_result)
-                            completed_event_ids.add(delivery_result.event_id)
-                            with self._callback_registration_condition:
-                                self._callback_delivery_results_by_subscription_id[
-                                    registration.subscription_id
-                                ] = tuple(delivered)
-                        delivery_results = tuple(delivered)
-                        with self._callback_registration_condition:
-                            self._incomplete_callback_registration_ids.discard(registration.subscription_id)
-                    finally:
-                        with self._callback_registration_condition:
-                            self._pending_callback_registration_ids.discard(registration.subscription_id)
-                            self._active_callback_delivery_registration_ids.discard(
-                                registration.subscription_id
-                            )
-                else:
-                    with self._callback_registration_condition:
-                        self._pending_callback_registration_ids.discard(registration.subscription_id)
-                return ServerResponse.json(
-                    200 if resuming_incomplete_registration else 201,
-                    registration.response_payload(replayed_events, last_cursor, delivery_results),
+            if operation_spec.handler_key == "callback_registration":
+                return self._handle_callback_registration_operation(
+                    request,
+                    route_match,
+                    auth_decision,
                 )
-            except (TypeError, ValueError, json.JSONDecodeError) as error:
-                return ServerResponse.json(
-                    400,
-                    {
-                        "ok": False,
-                        "error": str(error),
-                    },
-                )
-            finally:
-                if (
-                    reserved_callback_registration_bytes
-                    and not callback_registration_capacity_committed
-                ):
-                    with self._callback_registration_condition:
-                        self._callback_registration_history_bytes -= (
-                            reserved_callback_registration_bytes
-                        )
-                        if reserved_callback_registration_id is not None:
-                            self._pending_callback_registration_ids.discard(
-                                reserved_callback_registration_id
-                            )
-        if route.operation == "revoke_callback":
-            subscription_id = route_match.path_params.get("subscription_id", "")
-            with self._callback_registration_condition:
-                registration = self._callback_registrations.get(subscription_id)
-                if registration is None:
-                    return ServerResponse.json(
-                        404,
-                        {
-                            "ok": False,
-                            "error": f"callback registration {subscription_id!r} not found",
-                        },
-                    )
-                if registration.owner is not None and not _principal_matches_owner(
-                    auth_decision.principal,
-                    registration.owner,
-                ):
-                    return ServerResponse.json(
-                        403,
-                        {
-                            "ok": False,
-                            "error": f"callback registration {subscription_id!r} belongs to a different principal",
-                        },
-                    )
-                if registration.status == "revoked":
-                    return ServerResponse.json(
-                        200,
-                        {
-                            "ok": True,
-                            "subscriptionId": subscription_id,
-                            "status": "revoked",
-                            "duplicate": True,
-                        },
-                    )
-                revoked = replace(registration, status="revoked")
-                self._callback_registrations[subscription_id] = revoked
-                return ServerResponse.json(
-                    202,
-                    {
-                        "ok": True,
-                        "subscriptionId": subscription_id,
-                        "status": "revoked",
-                    },
-                )
-        if route.operation in {"redrive_callback_delivery", "move_callback_to_dead_letter"}:
-            try:
-                delivery_id = route_match.path_params.get("delivery_id", "")
-                payload = _server_request_json_body(request, "callback delivery control request")
-                if not isinstance(payload, Mapping):
-                    raise ValueError("callback delivery control request body must be a JSON object")
-                return self._callback_delivery_control_response(
-                    delivery_id,
-                    route.operation,
-                    payload,
-                    request.requested_at or _utc_now_iso(),
-                    auth_decision.principal,
-                )
-            except PermissionError as error:
-                return ServerResponse.json(
-                    403,
-                    {
-                        "ok": False,
-                        "error": str(error),
-                    },
-                )
-            except (TypeError, ValueError, json.JSONDecodeError) as error:
-                return ServerResponse.json(
-                    400,
-                    {
-                        "ok": False,
-                        "error": str(error),
-                    },
+            if operation_spec.handler_key == "callback_delivery_control":
+                return self._handle_callback_delivery_control_operation(
+                    request,
+                    route_match,
+                    auth_decision,
                 )
         if route.operation == "submit_async_callback":
             callback_state_locked = False
@@ -7333,6 +6982,407 @@ class GraphBlocksServerApp:
             {
                 "ok": False,
                 "error": f"server operation {route.operation!r} is not implemented",
+            },
+        )
+
+    def _handle_callback_registration_operation(
+        self,
+        request: ServerRequest,
+        route_match: ServerRouteMatch,
+        auth_decision: ServerAuthDecision,
+    ) -> ServerResponse:
+        route = route_match.endpoint
+        if route.operation == "register_callback":
+            reserved_callback_registration_bytes = 0
+            reserved_callback_registration_id: str | None = None
+            callback_registration_capacity_committed = False
+            try:
+                with self._callback_registration_condition:
+                    registration = ServerCallbackRegistration.from_request(
+                        request=request,
+                        ordinal=len(
+                            set(self._callback_registrations).union(
+                                self._pending_callback_registration_ids
+                            )
+                        )
+                        + 1,
+                        owner=auth_decision.principal,
+                    )
+                    registration = replace(
+                        registration,
+                        event_filter=_constrain_event_filter_visibility(
+                            registration.event_filter,
+                            auth_decision.principal,
+                        ),
+                    )
+                    if (
+                        auth_decision.principal is not None
+                        and auth_decision.principal.tenant_id is not None
+                        and registration.scope == "tenant"
+                        and registration.scope_id != auth_decision.principal.tenant_id
+                    ):
+                        return ServerResponse.json(
+                            403,
+                            {
+                                "ok": False,
+                                "error": (
+                                    f"callback registration tenant scope {registration.scope_id!r} "
+                                    "is not allowed for principal tenant "
+                                    f"{auth_decision.principal.tenant_id!r}"
+                                ),
+                            },
+                        )
+                    if (
+                        registration.scope == "run"
+                        and not self._principal_can_access_run(
+                            registration.scope_id,
+                            auth_decision.principal,
+                        )
+                    ):
+                        return ServerResponse.json(
+                            404,
+                            {
+                                "ok": False,
+                                "error": (
+                                    "run event stream not found for callback "
+                                    "registration scope "
+                                    f"{registration.scope_id!r}"
+                                ),
+                            },
+                        )
+                    if registration.subscription_id in self._pending_callback_registration_ids:
+                        return ServerResponse.json(
+                            409,
+                            {
+                                "ok": False,
+                                "subscriptionId": registration.subscription_id,
+                                "state": "pending",
+                                "error": f"callback registration {registration.subscription_id!r} already exists",
+                            },
+                        )
+                    existing = self._callback_registrations.get(registration.subscription_id)
+                    resuming_incomplete_registration = False
+                    if existing is not None:
+                        retry_registration = replace(registration, created_at=existing.created_at)
+                        if (
+                            registration.subscription_id
+                            not in self._incomplete_callback_registration_ids
+                            or retry_registration != existing
+                        ):
+                            return ServerResponse.json(
+                                409,
+                                {
+                                    "ok": False,
+                                    "subscriptionId": registration.subscription_id,
+                                    "state": existing.status,
+                                    "error": (
+                                        f"callback registration {registration.subscription_id!r} already exists"
+                                    ),
+                                },
+                            )
+                        registration = existing
+                        resuming_incomplete_registration = True
+                    if not resuming_incomplete_registration:
+                        retained_registration_bytes = (
+                            registration._retained_size_bytes()
+                        )
+                        pending_new_registration_count = sum(
+                            pending_subscription_id
+                            not in self._callback_registrations
+                            for pending_subscription_id in (
+                                self._pending_callback_registration_ids
+                            )
+                        )
+                        if (
+                            len(self._callback_registrations)
+                            + pending_new_registration_count
+                            >= self.max_callback_registrations
+                            or (
+                                self._callback_registration_history_bytes
+                                + retained_registration_bytes
+                                > self.max_callback_registration_history_bytes
+                            )
+                        ):
+                            return ServerResponse.json(
+                                429,
+                                {
+                                    "ok": False,
+                                    "subscriptionId": registration.subscription_id,
+                                    "reasonCode": (
+                                        "server.callback_registration_"
+                                        "capacity_exhausted"
+                                    ),
+                                    "maxCallbackRegistrations": (
+                                        self.max_callback_registrations
+                                    ),
+                                    "maxCallbackRegistrationHistoryBytes": (
+                                        self.max_callback_registration_history_bytes
+                                    ),
+                                    "error": (
+                                        "server callback registration history "
+                                        "capacity is exhausted"
+                                    ),
+                                },
+                            )
+                        self._callback_registration_history_bytes += (
+                            retained_registration_bytes
+                        )
+                        reserved_callback_registration_bytes = (
+                            retained_registration_bytes
+                        )
+                        reserved_callback_registration_id = (
+                            registration.subscription_id
+                        )
+                    self._pending_callback_registration_ids.add(registration.subscription_id)
+
+                replay_ready = False
+                try:
+                    replay = self._callback_registration_replay(registration)
+                    if isinstance(replay, ServerResponse):
+                        return replay
+                    replayed_events, last_cursor = replay
+                    replay_ready = True
+                finally:
+                    if not replay_ready:
+                        with self._callback_registration_condition:
+                            self._pending_callback_registration_ids.discard(registration.subscription_id)
+
+                with self._callback_registration_condition:
+                    if (
+                        registration.scope == "run"
+                        and (
+                            registration.scope_id
+                            not in self._events_by_run_id
+                            or not self._principal_can_access_run(
+                                registration.scope_id,
+                                auth_decision.principal,
+                            )
+                        )
+                    ):
+                        self._pending_callback_registration_ids.discard(
+                            registration.subscription_id
+                        )
+                        self._incomplete_callback_registration_ids.discard(
+                            registration.subscription_id
+                        )
+                        return ServerResponse.json(
+                            404,
+                            {
+                                "ok": False,
+                                "error": (
+                                    "run event stream not found for callback "
+                                    "registration scope "
+                                    f"{registration.scope_id!r}"
+                                ),
+                            },
+                        )
+                    if not resuming_incomplete_registration:
+                        self._callback_registrations[registration.subscription_id] = registration
+                        callback_registration_capacity_committed = True
+                    if (
+                        self.callback_delivery_hook is not None
+                        and registration.delivery.get("kind") == "webhook"
+                    ):
+                        self._incomplete_callback_registration_ids.add(
+                            registration.subscription_id
+                        )
+                        self._active_callback_delivery_registration_ids.add(
+                            registration.subscription_id
+                        )
+
+                delivery_results: tuple[ServerCallbackDeliveryResult, ...] = ()
+                if self.callback_delivery_hook is not None and registration.delivery.get("kind") == "webhook":
+                    with self._callback_registration_condition:
+                        delivered = list(
+                            self._callback_delivery_results_by_subscription_id.get(
+                                registration.subscription_id,
+                                (),
+                            )
+                        )
+                    completed_event_ids = {result.event_id for result in delivered}
+                    try:
+                        for event in replayed_events:
+                            metadata = event.get("metadata")
+                            event_id = metadata.get("eventId") if isinstance(metadata, Mapping) else None
+                            if isinstance(event_id, str) and event_id in completed_event_ids:
+                                continue
+                            try:
+                                delivery_result = self.callback_delivery_hook.deliver(registration, event)
+                            except Exception:
+                                return ServerResponse.json(
+                                    502,
+                                    {
+                                        "ok": False,
+                                        "subscriptionId": registration.subscription_id,
+                                        "error": "callback delivery hook failed closed",
+                                    },
+                                )
+                            if not isinstance(delivery_result, ServerCallbackDeliveryResult):
+                                return ServerResponse.json(
+                                    502,
+                                    {
+                                        "ok": False,
+                                        "subscriptionId": registration.subscription_id,
+                                        "error": "callback delivery hook returned an invalid result",
+                                    },
+                                )
+                            if delivery_result.subscription_id != registration.subscription_id:
+                                return ServerResponse.json(
+                                    502,
+                                    {
+                                        "ok": False,
+                                        "subscriptionId": registration.subscription_id,
+                                        "error": "callback delivery hook returned a mismatched subscription",
+                                    },
+                                )
+                            if isinstance(event_id, str) and delivery_result.event_id != event_id:
+                                return ServerResponse.json(
+                                    502,
+                                    {
+                                        "ok": False,
+                                        "subscriptionId": registration.subscription_id,
+                                        "error": "callback delivery hook returned a mismatched event",
+                                    },
+                                )
+                            delivered.append(delivery_result)
+                            completed_event_ids.add(delivery_result.event_id)
+                            with self._callback_registration_condition:
+                                self._callback_delivery_results_by_subscription_id[
+                                    registration.subscription_id
+                                ] = tuple(delivered)
+                        delivery_results = tuple(delivered)
+                        with self._callback_registration_condition:
+                            self._incomplete_callback_registration_ids.discard(registration.subscription_id)
+                    finally:
+                        with self._callback_registration_condition:
+                            self._pending_callback_registration_ids.discard(registration.subscription_id)
+                            self._active_callback_delivery_registration_ids.discard(
+                                registration.subscription_id
+                            )
+                else:
+                    with self._callback_registration_condition:
+                        self._pending_callback_registration_ids.discard(registration.subscription_id)
+                return ServerResponse.json(
+                    200 if resuming_incomplete_registration else 201,
+                    registration.response_payload(replayed_events, last_cursor, delivery_results),
+                )
+            except (TypeError, ValueError, json.JSONDecodeError) as error:
+                return ServerResponse.json(
+                    400,
+                    {
+                        "ok": False,
+                        "error": str(error),
+                    },
+                )
+            finally:
+                if (
+                    reserved_callback_registration_bytes
+                    and not callback_registration_capacity_committed
+                ):
+                    with self._callback_registration_condition:
+                        self._callback_registration_history_bytes -= (
+                            reserved_callback_registration_bytes
+                        )
+                        if reserved_callback_registration_id is not None:
+                            self._pending_callback_registration_ids.discard(
+                                reserved_callback_registration_id
+                            )
+        if route.operation == "revoke_callback":
+            subscription_id = route_match.path_params.get("subscription_id", "")
+            with self._callback_registration_condition:
+                registration = self._callback_registrations.get(subscription_id)
+                if registration is None:
+                    return ServerResponse.json(
+                        404,
+                        {
+                            "ok": False,
+                            "error": f"callback registration {subscription_id!r} not found",
+                        },
+                    )
+                if registration.owner is not None and not _principal_matches_owner(
+                    auth_decision.principal,
+                    registration.owner,
+                ):
+                    return ServerResponse.json(
+                        403,
+                        {
+                            "ok": False,
+                            "error": f"callback registration {subscription_id!r} belongs to a different principal",
+                        },
+                    )
+                if registration.status == "revoked":
+                    return ServerResponse.json(
+                        200,
+                        {
+                            "ok": True,
+                            "subscriptionId": subscription_id,
+                            "status": "revoked",
+                            "duplicate": True,
+                        },
+                    )
+                revoked = replace(registration, status="revoked")
+                self._callback_registrations[subscription_id] = revoked
+                return ServerResponse.json(
+                    202,
+                    {
+                        "ok": True,
+                        "subscriptionId": subscription_id,
+                        "status": "revoked",
+                    },
+                )
+        return ServerResponse.json(
+            501,
+            {
+                "ok": False,
+                "error": (
+                    f"server operation {route.operation!r} is not implemented"
+                ),
+            },
+        )
+
+    def _handle_callback_delivery_control_operation(
+        self,
+        request: ServerRequest,
+        route_match: ServerRouteMatch,
+        auth_decision: ServerAuthDecision,
+    ) -> ServerResponse:
+        route = route_match.endpoint
+        if route.operation in {"redrive_callback_delivery", "move_callback_to_dead_letter"}:
+            try:
+                delivery_id = route_match.path_params.get("delivery_id", "")
+                payload = _server_request_json_body(request, "callback delivery control request")
+                if not isinstance(payload, Mapping):
+                    raise ValueError("callback delivery control request body must be a JSON object")
+                return self._callback_delivery_control_response(
+                    delivery_id,
+                    route.operation,
+                    payload,
+                    request.requested_at or _utc_now_iso(),
+                    auth_decision.principal,
+                )
+            except PermissionError as error:
+                return ServerResponse.json(
+                    403,
+                    {
+                        "ok": False,
+                        "error": str(error),
+                    },
+                )
+            except (TypeError, ValueError, json.JSONDecodeError) as error:
+                return ServerResponse.json(
+                    400,
+                    {
+                        "ok": False,
+                        "error": str(error),
+                    },
+                )
+        return ServerResponse.json(
+            501,
+            {
+                "ok": False,
+                "error": (
+                    f"server operation {route.operation!r} is not implemented"
+                ),
             },
         )
 
