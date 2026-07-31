@@ -16,6 +16,7 @@ import json
 import math
 from threading import Barrier, Event, Lock, Thread
 from time import monotonic, sleep
+from types import SimpleNamespace
 
 import graphblocks
 import graphblocks.server as graphblocks_server
@@ -216,6 +217,7 @@ def _invoke_capacity_run(
     response_id: str,
     token: str | None = None,
     response_mode: str = "accepted",
+    message: str | None = None,
 ) -> ServerResponse:
     return app.handle(
         ServerRequest(
@@ -231,7 +233,11 @@ def _invoke_capacity_run(
             body=json.dumps(
                 {
                     "graph": _server_capacity_graph(),
-                    "inputs": {"message": {"text": run_id}},
+                    "inputs": {
+                        "message": {
+                            "text": run_id if message is None else message,
+                        }
+                    },
                     "runId": run_id,
                     "responseId": response_id,
                     "responseMode": response_mode,
@@ -239,6 +245,52 @@ def _invoke_capacity_run(
                 }
             ).encode("utf-8"),
         )
+    )
+
+
+class _StaticWaitingRuntime:
+    def __init__(
+        self,
+        checkpoint: object,
+        *,
+        outputs: dict[str, object] | None = None,
+    ) -> None:
+        self.checkpoint = checkpoint
+        self.outputs = {} if outputs is None else outputs
+
+    def run(self, *args: object, **kwargs: object) -> object:
+        del args, kwargs
+        return SimpleNamespace(
+            status="waiting_callback",
+            outputs=self.outputs,
+            journal=SimpleNamespace(records=()),
+            checkpoint=self.checkpoint,
+        )
+
+
+def _install_waiting_runtime(
+    app: GraphBlocksServerApp,
+    run_id: str,
+    checkpoint: object,
+    *,
+    outputs: dict[str, object] | None = None,
+) -> None:
+    execution = app._accepted_run_executions_by_run_id[run_id]
+    execution.runtime = _StaticWaitingRuntime(  # type: ignore[assignment]
+        checkpoint,
+        outputs=outputs,
+    )
+
+
+def _retained_run_state_json(
+    app: GraphBlocksServerApp,
+    run_id: str,
+) -> str:
+    return graphblocks.canonical_dumps(
+        {
+            "events": app._events_by_run_id[run_id],
+            "completion": app._accepted_run_results_by_run_id[run_id],
+        }
     )
 
 
@@ -638,6 +690,7 @@ def test_server_app_validates_reference_tenant_boundary() -> None:
         "max_async_callback_request_body_bytes",
         "max_event_page_events",
         "max_event_page_bytes",
+        "max_accepted_run_runtime_state_bytes",
         "max_in_memory_runs",
         "max_in_memory_runs_per_tenant",
         "max_retired_run_tombstones",
@@ -3474,6 +3527,234 @@ def test_server_app_deferred_accepted_run_outlives_detach_and_replays_completion
     }
     assert status_after_payload["state"] == "succeeded"
     assert status_after_payload["lastCursor"] == "run-deferred-accepted-1:2"
+
+
+def test_server_app_fails_closed_without_retaining_oversized_run_results() -> None:
+    oversized_output = "oversized-result-secret-" * 128
+    app = GraphBlocksServerApp(
+        allow_unauthenticated_dev=True,
+        defer_accepted_runs=True,
+        max_accepted_run_runtime_state_bytes=1,
+    )
+
+    accepted = _invoke_capacity_run(
+        app,
+        run_id="run-oversized-result-1",
+        response_id="response-oversized-result-1",
+        message=oversized_output,
+    )
+    completion = app.advance_accepted_run(
+        "run-oversized-result-1",
+        completed_at="2026-07-29T00:00:01Z",
+    )
+
+    assert accepted.status_code == 202
+    assert completion["status"] == "failed"
+    assert completion["outputs"] == {}
+    terminal_event = app._events_by_run_id["run-oversized-result-1"][-1]
+    assert terminal_event["kind"] == "RunFailed"
+    assert terminal_event["payload"]["reasonCode"] == (
+        "server.accepted_run_runtime_state_capacity_exhausted"
+    )
+    retained_state = _retained_run_state_json(
+        app,
+        "run-oversized-result-1",
+    )
+    assert oversized_output not in retained_state
+
+
+def test_server_app_accepts_run_result_at_retained_byte_limit() -> None:
+    result_outputs = {"prompt": "Capacity exact"}
+    result_limit = len(
+        graphblocks.canonical_dumps(
+            {
+                "terminalPayload": {
+                    "status": "succeeded",
+                    "outputs": result_outputs,
+                },
+                "completionOutputs": result_outputs,
+            }
+        ).encode("utf-8")
+    )
+    app = GraphBlocksServerApp(
+        allow_unauthenticated_dev=True,
+        defer_accepted_runs=True,
+        max_accepted_run_runtime_state_bytes=result_limit,
+    )
+
+    accepted = _invoke_capacity_run(
+        app,
+        run_id="run-exact-result-limit-1",
+        response_id="response-exact-result-limit-1",
+        message="exact",
+    )
+    completion = app.advance_accepted_run(
+        "run-exact-result-limit-1",
+        completed_at="2026-07-29T00:00:01Z",
+    )
+
+    assert accepted.status_code == 202
+    assert completion["status"] == "succeeded"
+    assert completion["outputs"] == result_outputs
+    assert app._events_by_run_id["run-exact-result-limit-1"][-1][
+        "kind"
+    ] == "RunSucceeded"
+
+
+def test_server_app_fails_closed_without_retaining_oversized_checkpoints() -> None:
+    oversized_checkpoint = "oversized-checkpoint-secret-" * 128
+
+    class OversizedCheckpoint:
+        def to_json(self) -> dict[str, object]:
+            return {"state": oversized_checkpoint}
+
+    app = GraphBlocksServerApp(
+        allow_unauthenticated_dev=True,
+        defer_accepted_runs=True,
+        max_accepted_run_runtime_state_bytes=1,
+    )
+    accepted = _invoke_capacity_run(
+        app,
+        run_id="run-oversized-checkpoint-1",
+        response_id="response-oversized-checkpoint-1",
+    )
+    _install_waiting_runtime(
+        app,
+        "run-oversized-checkpoint-1",
+        OversizedCheckpoint(),
+    )
+
+    completion = app.advance_accepted_run(
+        "run-oversized-checkpoint-1",
+        completed_at="2026-07-29T00:00:01Z",
+    )
+
+    assert accepted.status_code == 202
+    assert completion["status"] == "failed"
+    assert completion["outputs"] == {}
+    assert "run-oversized-checkpoint-1" not in (
+        app._accepted_run_executions_by_run_id
+    )
+    terminal_event = app._events_by_run_id[
+        "run-oversized-checkpoint-1"
+    ][-1]
+    assert terminal_event["kind"] == "RunFailed"
+    assert terminal_event["payload"]["reasonCode"] == (
+        "server.accepted_run_runtime_state_capacity_exhausted"
+    )
+    retained_state = _retained_run_state_json(
+        app,
+        "run-oversized-checkpoint-1",
+    )
+    assert oversized_checkpoint not in retained_state
+
+
+def test_server_app_counts_waiting_checkpoint_state_once() -> None:
+    expected_output_values = {"value": "checkpoint-output-" * 32}
+    checkpoint_json = {"output_values": expected_output_values}
+    checkpoint_limit = len(
+        graphblocks.canonical_dumps(
+            {
+                "checkpoint": checkpoint_json,
+                "journal": [],
+            }
+        ).encode("utf-8")
+    )
+
+    class ExactLimitCheckpoint:
+        checkpoint_id = "checkpoint-exact-limit-1"
+        wait_node = "wait"
+        output_values = expected_output_values
+        operation = {
+            "operation_id": "operation-exact-limit-1",
+            "node_id": "wait",
+            "attempt_id": "attempt-exact-limit-1",
+            "provider_operation_id": "provider-exact-limit-1",
+            "expected_schema": "schemas/ExactLimit@1",
+        }
+
+        def to_json(self) -> dict[str, object]:
+            return checkpoint_json
+
+    app = GraphBlocksServerApp(
+        allow_unauthenticated_dev=True,
+        defer_accepted_runs=True,
+        max_accepted_run_runtime_state_bytes=checkpoint_limit,
+    )
+    accepted = _invoke_capacity_run(
+        app,
+        run_id="run-exact-checkpoint-limit-1",
+        response_id="response-exact-checkpoint-limit-1",
+    )
+    _install_waiting_runtime(
+        app,
+        "run-exact-checkpoint-limit-1",
+        ExactLimitCheckpoint(),
+        outputs=expected_output_values,
+    )
+
+    waiting = app.advance_accepted_run(
+        "run-exact-checkpoint-limit-1",
+        completed_at="2026-07-29T00:00:01Z",
+    )
+
+    assert accepted.status_code == 202
+    assert waiting["status"] == "waiting_callback"
+    assert waiting["outputs"] == expected_output_values
+    assert app._accepted_run_executions_by_run_id[
+        "run-exact-checkpoint-limit-1"
+    ].checkpoint is not None
+    assert app._events_by_run_id["run-exact-checkpoint-limit-1"][-1][
+        "kind"
+    ] == "AsyncOperationWaitingCallback"
+
+
+def test_server_app_does_not_retain_oversized_waiting_journal() -> None:
+    oversized_retry_error = "oversized-retry-error-secret-" * 128
+
+    class SmallCheckpoint:
+        def to_json(self) -> dict[str, object]:
+            return {"checkpoint_id": "checkpoint-small-1"}
+
+    app = GraphBlocksServerApp(
+        allow_unauthenticated_dev=True,
+        defer_accepted_runs=True,
+        max_accepted_run_runtime_state_bytes=512,
+    )
+    accepted = _invoke_capacity_run(
+        app,
+        run_id="run-oversized-journal-1",
+        response_id="response-oversized-journal-1",
+    )
+    execution = app._accepted_run_executions_by_run_id[
+        "run-oversized-journal-1"
+    ]
+    execution.journal.append(
+        "node_retry",
+        {"error": oversized_retry_error},
+    )
+    _install_waiting_runtime(
+        app,
+        "run-oversized-journal-1",
+        SmallCheckpoint(),
+    )
+
+    completion = app.advance_accepted_run(
+        "run-oversized-journal-1",
+        completed_at="2026-07-29T00:00:01Z",
+    )
+
+    assert accepted.status_code == 202
+    assert completion["status"] == "failed"
+    assert completion["outputs"] == {}
+    assert "run-oversized-journal-1" not in (
+        app._accepted_run_executions_by_run_id
+    )
+    retained_state = _retained_run_state_json(
+        app,
+        "run-oversized-journal-1",
+    )
+    assert oversized_retry_error not in retained_state
 
 
 def test_server_app_executor_advances_accepted_run_after_client_detach() -> None:

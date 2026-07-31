@@ -137,6 +137,7 @@ DEFAULT_MAX_ASYNC_CALLBACK_REQUEST_BODY_BYTES = 512 * 1024
 _SERVER_REQUEST_BODY_READ_CHUNK_BYTES = 64 * 1024
 DEFAULT_MAX_SERVER_EVENT_PAGE_EVENTS = 100
 DEFAULT_MAX_SERVER_EVENT_PAGE_BYTES = 1024 * 1024
+DEFAULT_MAX_ACCEPTED_RUN_RUNTIME_STATE_BYTES = 4 * 1024 * 1024
 DEFAULT_MAX_IN_MEMORY_RUNS = 10_000
 DEFAULT_MAX_IN_MEMORY_RUNS_PER_TENANT = 1_000
 DEFAULT_MAX_RETIRED_RUN_TOMBSTONES = 10_000
@@ -3107,6 +3108,12 @@ class GraphBlocksServerApp:
     )
     reference_tenant_id: str | None = None
     allow_unsafe_multi_tenant_dev: bool = False
+    # Request metadata remains governed by max_request_body_bytes; this bound
+    # covers state newly produced by an executing runtime. Keep new public
+    # fields at the end so legacy positional construction remains compatible.
+    max_accepted_run_runtime_state_bytes: int = (
+        DEFAULT_MAX_ACCEPTED_RUN_RUNTIME_STATE_BYTES
+    )
     _effective_reference_tenant_id: str | None = field(
         default=None,
         init=False,
@@ -3360,6 +3367,7 @@ class GraphBlocksServerApp:
             "max_async_callback_request_body_bytes",
             "max_event_page_events",
             "max_event_page_bytes",
+            "max_accepted_run_runtime_state_bytes",
             "max_in_memory_runs",
             "max_in_memory_runs_per_tenant",
             "max_retired_run_tombstones",
@@ -8169,6 +8177,71 @@ class GraphBlocksServerApp:
                     "status": "failed",
                     "outputs": {},
                     "error": str(error),
+                }
+
+            retained_state_kind = "result"
+            retained_state_limit = (
+                self.max_accepted_run_runtime_state_bytes
+            )
+            try:
+                if result_status == "waiting_callback":
+                    if result.checkpoint is None:
+                        raise ValueError(
+                            "waiting callback runtime result requires a checkpoint"
+                        )
+                    retained_state_kind = "checkpoint"
+                    retained_state_limit = (
+                        self.max_accepted_run_runtime_state_bytes
+                    )
+                    retained_state_size = _canonical_json_size_bytes(
+                        {
+                            "checkpoint": result.checkpoint.to_json(),
+                            "journal": [
+                                record.to_dict()
+                                for record in execution.journal.records
+                            ],
+                        }
+                    )
+                else:
+                    retained_state_size = _canonical_json_size_bytes(
+                        {
+                            "terminalPayload": terminal_payload,
+                            "completionOutputs": result_outputs,
+                        }
+                    )
+            except Exception as error:
+                result_status = "failed"
+                result_outputs = {}
+                terminal_payload = {
+                    "status": "failed",
+                    "outputs": {},
+                    "error": str(error),
+                }
+                retained_state_kind = "result"
+                retained_state_limit = (
+                    self.max_accepted_run_runtime_state_bytes
+                )
+                retained_state_size = _canonical_json_size_bytes(
+                    {
+                        "terminalPayload": terminal_payload,
+                        "completionOutputs": result_outputs,
+                    }
+                )
+            if retained_state_size > retained_state_limit:
+                result_status = "failed"
+                result_outputs = {}
+                terminal_payload = {
+                    "status": "failed",
+                    "outputs": {},
+                    "reasonCode": (
+                        "server.accepted_run_runtime_state_capacity_exhausted"
+                    ),
+                    "error": (
+                        f"accepted run {retained_state_kind} requires "
+                        f"{retained_state_size} retained runtime canonical "
+                        "JSON bytes; "
+                        f"limit is {retained_state_limit}"
+                    ),
                 }
 
             if result_status == "waiting_callback":
