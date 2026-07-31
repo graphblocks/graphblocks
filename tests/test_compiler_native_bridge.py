@@ -209,6 +209,41 @@ def test_reference_typecheck_passes_follow_declared_order(
     assert tuple(observed) == compiler_module._TYPECHECK_PASS_ORDER
 
 
+def test_reference_phase_boundaries_preserve_diagnostic_order_and_ownership() -> None:
+    graph = {
+        "apiVersion": "graphblocks.ai/v1",
+        "kind": "Graph",
+        "metadata": {},
+        "spec": {"edges": [], "nodes": []},
+    }
+
+    plan = compile_graph_reference(
+        graph,
+        block_catalog=BlockCatalog({}, allow_unknown_blocks=True),
+    )
+
+    assert plan.diagnostics.to_list() == [
+        {
+            "code": "GB0014",
+            "message": "'name' is a required property",
+            "path": "$.metadata",
+            "severity": "error",
+        },
+        {
+            "code": "GB0003",
+            "message": "metadata.name is required",
+            "path": "$.metadata.name",
+            "severity": "error",
+        },
+        {
+            "code": "GB0005",
+            "message": "spec.nodes must be a mapping",
+            "path": "$.spec.nodes",
+            "severity": "error",
+        },
+    ]
+
+
 def test_reference_compiler_entrypoint_is_only_a_phase_orchestrator() -> None:
     source = inspect.getsource(compile_graph_reference)
     function = next(

@@ -217,6 +217,16 @@ authoritative durable fixture or enforce a digest-bound generated mirror.
 Consolidate repeated wire, validation, immutability, and SQLite primitives
 behind a shared corpus.
 
+`GB-ARCH-007` now has executable closure evidence: the Python reference
+compiler entry point is a 22-line orchestrator over eight ordered phases with
+frozen phase-result envelopes and tuple-owned diagnostics. Validation is split
+into envelope, graph-contract, output-policy, and tool-binding passes; normalized
+analysis is split into edge, catalog, and dependency passes with frozen edge
+sets and dependency snapshots between passes. AST budgets cap the public
+orchestrator at 30 lines, validation passes at 500 lines, and topology passes at
+350 lines. Golden phase, pass-order, diagnostic-order, shared TCK, and
+Python/Rust differential tests preserve plan identity and diagnostic ownership.
+
 ### Python API
 
 Reduce the root export surface to the reviewed stable API, move preview
