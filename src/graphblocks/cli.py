@@ -1167,6 +1167,396 @@ def _run_observe_command(
     command_parsers["observe"].print_help()
     return 0
 
+def _run_policy_command(
+    args: argparse.Namespace,
+    command_parsers: Mapping[str, argparse.ArgumentParser],
+) -> int:
+    if args.policy_command == "test":
+        try:
+            bundles: list[PolicyBundle] = []
+            for document in _documents_from_path(args.policy):
+                if document.get("kind") != "PolicyBundle":
+                    continue
+                metadata = document.get("metadata", {})
+                spec = document.get("spec", {})
+                if not isinstance(metadata, Mapping) or not isinstance(spec, Mapping):
+                    raise ValueError("PolicyBundle documents require metadata and spec mappings")
+                rules: list[PolicyRule] = []
+                for rule_index, rule_data in enumerate(
+                    _exact_list_field(
+                        spec,
+                        "rules",
+                        path="PolicyBundle.spec.rules",
+                    )
+                ):
+                    rule_path = f"PolicyBundle.spec.rules[{rule_index}]"
+                    if not isinstance(rule_data, Mapping):
+                        raise ValueError(f"{rule_path} expected object")
+                    obligations: list[PolicyObligation] = []
+                    for obligation_index, obligation_data in enumerate(
+                        _exact_list_field(
+                            rule_data,
+                            "obligations",
+                            path=f"{rule_path}.obligations",
+                        )
+                    ):
+                        obligation_path = (
+                            f"{rule_path}.obligations[{obligation_index}]"
+                        )
+                        if not isinstance(obligation_data, Mapping):
+                            raise ValueError(f"{obligation_path} expected object")
+                        obligations.append(
+                            PolicyObligation(
+                                obligation_id=_exact_string_field(
+                                    obligation_data,
+                                    "obligationId",
+                                    "obligation_id",
+                                    "id",
+                                    path=f"{obligation_path}.obligationId",
+                                ),
+                                obligation_type=_exact_string_field(
+                                    obligation_data,
+                                    "obligationType",
+                                    "obligation_type",
+                                    "type",
+                                    path=f"{obligation_path}.obligationType",
+                                ),
+                                parameters=_exact_mapping_field(
+                                    obligation_data,
+                                    "parameters",
+                                    path=f"{obligation_path}.parameters",
+                                ),
+                            )
+                        )
+                    priority = _field(rule_data, "priority", default=0)
+                    if type(priority) is not int:
+                        raise ValueError(f"{rule_path}.priority expected integer")
+                    rules.append(
+                        PolicyRule(
+                            rule_id=_exact_string_field(
+                                rule_data,
+                                "ruleId",
+                                "rule_id",
+                                "id",
+                                path=f"{rule_path}.ruleId",
+                            ),
+                            effect=_exact_string_field(
+                                rule_data,
+                                "effect",
+                                path=f"{rule_path}.effect",
+                            ),
+                            actions=_exact_string_list_field(
+                                rule_data,
+                                "actions",
+                                path=f"{rule_path}.actions",
+                            ),
+                            resource_selectors=_exact_string_list_field(
+                                rule_data,
+                                "resourceSelectors",
+                                "resource_selectors",
+                                path=f"{rule_path}.resourceSelectors",
+                            ),
+                            principal_selectors=_exact_string_list_field(
+                                rule_data,
+                                "principalSelectors",
+                                "principal_selectors",
+                                path=f"{rule_path}.principalSelectors",
+                            ),
+                            obligations=tuple(obligations),
+                            priority=priority,
+                        )
+                    )
+                bundles.append(
+                    PolicyBundle(
+                        bundle_id=_exact_string_field(
+                            spec,
+                            "bundleId",
+                            "bundle_id",
+                            path="PolicyBundle.spec.bundleId",
+                            default=metadata.get("name"),
+                        ),
+                        version=_exact_string_field(
+                            spec,
+                            "version",
+                            path="PolicyBundle.spec.version",
+                            default=metadata.get("version", "0.0.0"),
+                        ),
+                        rule_language=_exact_string_field(
+                            spec,
+                            "ruleLanguage",
+                            "rule_language",
+                            path="PolicyBundle.spec.ruleLanguage",
+                            default="static",
+                        ),
+                        rules=tuple(rules),
+                        obligation_schema_versions=_exact_string_list_field(
+                            spec,
+                            "obligationSchemaVersions",
+                            "obligation_schema_versions",
+                            path="PolicyBundle.spec.obligationSchemaVersions",
+                        ),
+                        default_fail_modes=_exact_mapping_field(
+                            spec,
+                            "defaultFailModes",
+                            "default_fail_modes",
+                            path="PolicyBundle.spec.defaultFailModes",
+                        ),
+                        signature_ref=_exact_optional_string_field(
+                            spec,
+                            "signatureRef",
+                            "signature_ref",
+                            path="PolicyBundle.spec.signatureRef",
+                        ),
+                    )
+                )
+            cases: list[PolicyTestCase] = []
+            for document in _documents_from_path(args.cases):
+                if document.get("kind") != "PolicyTestCase":
+                    continue
+                metadata = document.get("metadata", {})
+                spec = document.get("spec", {})
+                if not isinstance(metadata, Mapping) or not isinstance(spec, Mapping):
+                    raise ValueError("PolicyTestCase documents require metadata and spec mappings")
+                request_data = _field(spec, "request")
+                expectation_data = _field(spec, "expect", "expectation", default={})
+                if not isinstance(request_data, Mapping) or not isinstance(expectation_data, Mapping):
+                    raise ValueError("PolicyTestCase spec requires request and expect mappings")
+                resource_data = _field(request_data, "resource")
+                if not isinstance(resource_data, Mapping):
+                    raise ValueError("PolicyTestCase request.resource must be a mapping")
+                principal_data = _field(request_data, "principal")
+                principal = None
+                if principal_data is not None:
+                    if not isinstance(principal_data, Mapping):
+                        raise ValueError("PolicyTestCase request.principal must be a mapping")
+                    principal = PrincipalRef(
+                        principal_id=_exact_string_field(
+                            principal_data,
+                            "principalId",
+                            "principal_id",
+                            "id",
+                            path="PolicyTestCase.spec.request.principal.principalId",
+                        ),
+                        tenant_id=_exact_optional_string_field(
+                            principal_data,
+                            "tenantId",
+                            "tenant_id",
+                            path="PolicyTestCase.spec.request.principal.tenantId",
+                        ),
+                        groups=_exact_string_list_field(
+                            principal_data,
+                            "groups",
+                            path="PolicyTestCase.spec.request.principal.groups",
+                        ),
+                        roles=_exact_string_list_field(
+                            principal_data,
+                            "roles",
+                            path="PolicyTestCase.spec.request.principal.roles",
+                        ),
+                        attributes=_exact_mapping_field(
+                            principal_data,
+                            "attributes",
+                            path="PolicyTestCase.spec.request.principal.attributes",
+                        ),
+                    )
+                tenant_data = _field(request_data, "tenant")
+                if tenant_data is not None and not isinstance(tenant_data, Mapping):
+                    raise ValueError("PolicyTestCase.spec.request.tenant expected object or null")
+                atomic_unit_data = _field(request_data, "atomicUnit", "atomic_unit")
+                if atomic_unit_data is not None and not isinstance(
+                    atomic_unit_data,
+                    Mapping,
+                ):
+                    raise ValueError(
+                        "PolicyTestCase.spec.request.atomicUnit expected object or null"
+                    )
+                request = PolicyRequest(
+                    request_id=_exact_string_field(
+                        request_data,
+                        "requestId",
+                        "request_id",
+                        "id",
+                        path="PolicyTestCase.spec.request.requestId",
+                    ),
+                    enforcement_point=_exact_string_field(
+                        request_data,
+                        "enforcementPoint",
+                        "enforcement_point",
+                        path="PolicyTestCase.spec.request.enforcementPoint",
+                    ),
+                    action=_exact_string_field(
+                        request_data,
+                        "action",
+                        path="PolicyTestCase.spec.request.action",
+                    ),
+                    resource=_resource_ref_from_mapping(
+                        resource_data,
+                        path="PolicyTestCase.spec.request.resource",
+                    ),
+                    occurred_at=_exact_string_field(
+                        request_data,
+                        "occurredAt",
+                        "occurred_at",
+                        path="PolicyTestCase.spec.request.occurredAt",
+                    ),
+                    principal=principal,
+                    tenant=_resource_ref_from_mapping(
+                        tenant_data,
+                        path="PolicyTestCase.spec.request.tenant",
+                    )
+                    if isinstance(tenant_data, Mapping)
+                    else None,
+                    release_id=_exact_optional_string_field(
+                        request_data,
+                        "releaseId",
+                        "release_id",
+                        path="PolicyTestCase.spec.request.releaseId",
+                    ),
+                    deployment_revision_id=_exact_optional_string_field(
+                        request_data,
+                        "deploymentRevisionId",
+                        "deployment_revision_id",
+                        path="PolicyTestCase.spec.request.deploymentRevisionId",
+                    ),
+                    run_id=_exact_optional_string_field(
+                        request_data,
+                        "runId",
+                        "run_id",
+                        path="PolicyTestCase.spec.request.runId",
+                    ),
+                    atomic_unit=_resource_ref_from_mapping(
+                        atomic_unit_data,
+                        path="PolicyTestCase.spec.request.atomicUnit",
+                    )
+                    if isinstance(atomic_unit_data, Mapping)
+                    else None,
+                    data_labels=_exact_string_list_field(
+                        request_data,
+                        "dataLabels",
+                        "data_labels",
+                        path="PolicyTestCase.spec.request.dataLabels",
+                    ),
+                    requested_usage=_exact_list_field(
+                        request_data,
+                        "requestedUsage",
+                        "requested_usage",
+                        path="PolicyTestCase.spec.request.requestedUsage",
+                    ),
+                    attributes=_exact_mapping_field(
+                        request_data,
+                        "attributes",
+                        path="PolicyTestCase.spec.request.attributes",
+                    ),
+                    policy_snapshot_id=_exact_optional_string_field(
+                        request_data,
+                        "policySnapshotId",
+                        "policy_snapshot_id",
+                        path="PolicyTestCase.spec.request.policySnapshotId",
+                    ),
+                )
+                expectation = PolicyTestExpectation(
+                    effect=_exact_optional_string_field(
+                        expectation_data,
+                        "effect",
+                        path="PolicyTestCase.spec.expect.effect",
+                    ),
+                    reason_codes=_exact_string_list_field(
+                        expectation_data,
+                        "reasonCodes",
+                        "reason_codes",
+                        path="PolicyTestCase.spec.expect.reasonCodes",
+                    ),
+                    policy_refs=_exact_string_list_field(
+                        expectation_data,
+                        "policyRefs",
+                        "policy_refs",
+                        path="PolicyTestCase.spec.expect.policyRefs",
+                    ),
+                    obligation_ids=_exact_string_list_field(
+                        expectation_data,
+                        "obligationIds",
+                        "obligation_ids",
+                        path="PolicyTestCase.spec.expect.obligationIds",
+                    ),
+                    enforcement_status=_exact_optional_string_field(
+                        expectation_data,
+                        "enforcementStatus",
+                        "enforcement_status",
+                        path="PolicyTestCase.spec.expect.enforcementStatus",
+                    ),
+                )
+                enforced_obligation_ids = None
+                raw_enforced_obligation_ids = _field(
+                    spec,
+                    "enforcedObligationIds",
+                    "enforced_obligation_ids",
+                )
+                if raw_enforced_obligation_ids is not None:
+                    enforced_obligation_ids = _exact_string_list_field(
+                        spec,
+                        "enforcedObligationIds",
+                        "enforced_obligation_ids",
+                        path="PolicyTestCase.spec.enforcedObligationIds",
+                    )
+                cases.append(
+                    PolicyTestCase(
+                        _exact_string_field(
+                            spec,
+                            "caseId",
+                            "case_id",
+                            path="PolicyTestCase.spec.caseId",
+                            default=metadata.get("name"),
+                        ),
+                        request,
+                        expectation,
+                        evaluated_at=_exact_string_field(
+                            spec,
+                            "evaluatedAt",
+                            "evaluated_at",
+                            path="PolicyTestCase.spec.evaluatedAt",
+                        ),
+                        enforced_obligation_ids=enforced_obligation_ids,
+                    )
+                )
+            if not bundles:
+                print(f"{args.policy}: no PolicyBundle document found")
+                return 1
+            if not cases:
+                print(f"{args.cases}: no PolicyTestCase document found")
+                return 1
+            report = run_policy_tests(StaticPolicyEvaluator.from_bundles(bundles), cases)
+            if args.json:
+                print(
+                    json.dumps(
+                        {
+                            "ok": report.passed,
+                            "cases": [
+                                {
+                                    "caseId": result.case_id,
+                                    "passed": result.passed,
+                                    "failures": list(result.failures),
+                                }
+                                for result in report.results
+                            ],
+                        },
+                        indent=2,
+                        sort_keys=True,
+                    )
+                )
+            else:
+                for result in report.results:
+                    status = "OK" if result.passed else "FAIL"
+                    print(f"{status} {result.case_id}")
+                    for failure in result.failures:
+                        print(f"  {failure}")
+            return 0 if report.passed else 1
+        except (KeyError, TypeError, ValueError) as error:
+            print(f"policy test error: {error}")
+            return 1
+    command_parsers["policy"].print_help()
+    return 0
+
+
 _CliCommandHandler = Callable[
     [argparse.Namespace, Mapping[str, argparse.ArgumentParser]],
     int,
@@ -1183,6 +1573,7 @@ _CLI_COMMAND_HANDLERS: Mapping[str, _CliCommandHandler] = MappingProxyType(
         "packages": _run_packages_command,
         "schemas": _run_schemas_command,
         "observe": _run_observe_command,
+        "policy": _run_policy_command,
     }
 )
 
@@ -2293,391 +2684,6 @@ def _main(argv: list[str] | None = None) -> int:
                     print(f"deploy plan error: {error}")
                 return 1
         command_parsers["deploy"].print_help()
-        return 0
-    if args.command == "policy":
-        if args.policy_command == "test":
-            try:
-                bundles: list[PolicyBundle] = []
-                for document in _documents_from_path(args.policy):
-                    if document.get("kind") != "PolicyBundle":
-                        continue
-                    metadata = document.get("metadata", {})
-                    spec = document.get("spec", {})
-                    if not isinstance(metadata, Mapping) or not isinstance(spec, Mapping):
-                        raise ValueError("PolicyBundle documents require metadata and spec mappings")
-                    rules: list[PolicyRule] = []
-                    for rule_index, rule_data in enumerate(
-                        _exact_list_field(
-                            spec,
-                            "rules",
-                            path="PolicyBundle.spec.rules",
-                        )
-                    ):
-                        rule_path = f"PolicyBundle.spec.rules[{rule_index}]"
-                        if not isinstance(rule_data, Mapping):
-                            raise ValueError(f"{rule_path} expected object")
-                        obligations: list[PolicyObligation] = []
-                        for obligation_index, obligation_data in enumerate(
-                            _exact_list_field(
-                                rule_data,
-                                "obligations",
-                                path=f"{rule_path}.obligations",
-                            )
-                        ):
-                            obligation_path = (
-                                f"{rule_path}.obligations[{obligation_index}]"
-                            )
-                            if not isinstance(obligation_data, Mapping):
-                                raise ValueError(f"{obligation_path} expected object")
-                            obligations.append(
-                                PolicyObligation(
-                                    obligation_id=_exact_string_field(
-                                        obligation_data,
-                                        "obligationId",
-                                        "obligation_id",
-                                        "id",
-                                        path=f"{obligation_path}.obligationId",
-                                    ),
-                                    obligation_type=_exact_string_field(
-                                        obligation_data,
-                                        "obligationType",
-                                        "obligation_type",
-                                        "type",
-                                        path=f"{obligation_path}.obligationType",
-                                    ),
-                                    parameters=_exact_mapping_field(
-                                        obligation_data,
-                                        "parameters",
-                                        path=f"{obligation_path}.parameters",
-                                    ),
-                                )
-                            )
-                        priority = _field(rule_data, "priority", default=0)
-                        if type(priority) is not int:
-                            raise ValueError(f"{rule_path}.priority expected integer")
-                        rules.append(
-                            PolicyRule(
-                                rule_id=_exact_string_field(
-                                    rule_data,
-                                    "ruleId",
-                                    "rule_id",
-                                    "id",
-                                    path=f"{rule_path}.ruleId",
-                                ),
-                                effect=_exact_string_field(
-                                    rule_data,
-                                    "effect",
-                                    path=f"{rule_path}.effect",
-                                ),
-                                actions=_exact_string_list_field(
-                                    rule_data,
-                                    "actions",
-                                    path=f"{rule_path}.actions",
-                                ),
-                                resource_selectors=_exact_string_list_field(
-                                    rule_data,
-                                    "resourceSelectors",
-                                    "resource_selectors",
-                                    path=f"{rule_path}.resourceSelectors",
-                                ),
-                                principal_selectors=_exact_string_list_field(
-                                    rule_data,
-                                    "principalSelectors",
-                                    "principal_selectors",
-                                    path=f"{rule_path}.principalSelectors",
-                                ),
-                                obligations=tuple(obligations),
-                                priority=priority,
-                            )
-                        )
-                    bundles.append(
-                        PolicyBundle(
-                            bundle_id=_exact_string_field(
-                                spec,
-                                "bundleId",
-                                "bundle_id",
-                                path="PolicyBundle.spec.bundleId",
-                                default=metadata.get("name"),
-                            ),
-                            version=_exact_string_field(
-                                spec,
-                                "version",
-                                path="PolicyBundle.spec.version",
-                                default=metadata.get("version", "0.0.0"),
-                            ),
-                            rule_language=_exact_string_field(
-                                spec,
-                                "ruleLanguage",
-                                "rule_language",
-                                path="PolicyBundle.spec.ruleLanguage",
-                                default="static",
-                            ),
-                            rules=tuple(rules),
-                            obligation_schema_versions=_exact_string_list_field(
-                                spec,
-                                "obligationSchemaVersions",
-                                "obligation_schema_versions",
-                                path="PolicyBundle.spec.obligationSchemaVersions",
-                            ),
-                            default_fail_modes=_exact_mapping_field(
-                                spec,
-                                "defaultFailModes",
-                                "default_fail_modes",
-                                path="PolicyBundle.spec.defaultFailModes",
-                            ),
-                            signature_ref=_exact_optional_string_field(
-                                spec,
-                                "signatureRef",
-                                "signature_ref",
-                                path="PolicyBundle.spec.signatureRef",
-                            ),
-                        )
-                    )
-                cases: list[PolicyTestCase] = []
-                for document in _documents_from_path(args.cases):
-                    if document.get("kind") != "PolicyTestCase":
-                        continue
-                    metadata = document.get("metadata", {})
-                    spec = document.get("spec", {})
-                    if not isinstance(metadata, Mapping) or not isinstance(spec, Mapping):
-                        raise ValueError("PolicyTestCase documents require metadata and spec mappings")
-                    request_data = _field(spec, "request")
-                    expectation_data = _field(spec, "expect", "expectation", default={})
-                    if not isinstance(request_data, Mapping) or not isinstance(expectation_data, Mapping):
-                        raise ValueError("PolicyTestCase spec requires request and expect mappings")
-                    resource_data = _field(request_data, "resource")
-                    if not isinstance(resource_data, Mapping):
-                        raise ValueError("PolicyTestCase request.resource must be a mapping")
-                    principal_data = _field(request_data, "principal")
-                    principal = None
-                    if principal_data is not None:
-                        if not isinstance(principal_data, Mapping):
-                            raise ValueError("PolicyTestCase request.principal must be a mapping")
-                        principal = PrincipalRef(
-                            principal_id=_exact_string_field(
-                                principal_data,
-                                "principalId",
-                                "principal_id",
-                                "id",
-                                path="PolicyTestCase.spec.request.principal.principalId",
-                            ),
-                            tenant_id=_exact_optional_string_field(
-                                principal_data,
-                                "tenantId",
-                                "tenant_id",
-                                path="PolicyTestCase.spec.request.principal.tenantId",
-                            ),
-                            groups=_exact_string_list_field(
-                                principal_data,
-                                "groups",
-                                path="PolicyTestCase.spec.request.principal.groups",
-                            ),
-                            roles=_exact_string_list_field(
-                                principal_data,
-                                "roles",
-                                path="PolicyTestCase.spec.request.principal.roles",
-                            ),
-                            attributes=_exact_mapping_field(
-                                principal_data,
-                                "attributes",
-                                path="PolicyTestCase.spec.request.principal.attributes",
-                            ),
-                        )
-                    tenant_data = _field(request_data, "tenant")
-                    if tenant_data is not None and not isinstance(tenant_data, Mapping):
-                        raise ValueError("PolicyTestCase.spec.request.tenant expected object or null")
-                    atomic_unit_data = _field(request_data, "atomicUnit", "atomic_unit")
-                    if atomic_unit_data is not None and not isinstance(
-                        atomic_unit_data,
-                        Mapping,
-                    ):
-                        raise ValueError(
-                            "PolicyTestCase.spec.request.atomicUnit expected object or null"
-                        )
-                    request = PolicyRequest(
-                        request_id=_exact_string_field(
-                            request_data,
-                            "requestId",
-                            "request_id",
-                            "id",
-                            path="PolicyTestCase.spec.request.requestId",
-                        ),
-                        enforcement_point=_exact_string_field(
-                            request_data,
-                            "enforcementPoint",
-                            "enforcement_point",
-                            path="PolicyTestCase.spec.request.enforcementPoint",
-                        ),
-                        action=_exact_string_field(
-                            request_data,
-                            "action",
-                            path="PolicyTestCase.spec.request.action",
-                        ),
-                        resource=_resource_ref_from_mapping(
-                            resource_data,
-                            path="PolicyTestCase.spec.request.resource",
-                        ),
-                        occurred_at=_exact_string_field(
-                            request_data,
-                            "occurredAt",
-                            "occurred_at",
-                            path="PolicyTestCase.spec.request.occurredAt",
-                        ),
-                        principal=principal,
-                        tenant=_resource_ref_from_mapping(
-                            tenant_data,
-                            path="PolicyTestCase.spec.request.tenant",
-                        )
-                        if isinstance(tenant_data, Mapping)
-                        else None,
-                        release_id=_exact_optional_string_field(
-                            request_data,
-                            "releaseId",
-                            "release_id",
-                            path="PolicyTestCase.spec.request.releaseId",
-                        ),
-                        deployment_revision_id=_exact_optional_string_field(
-                            request_data,
-                            "deploymentRevisionId",
-                            "deployment_revision_id",
-                            path="PolicyTestCase.spec.request.deploymentRevisionId",
-                        ),
-                        run_id=_exact_optional_string_field(
-                            request_data,
-                            "runId",
-                            "run_id",
-                            path="PolicyTestCase.spec.request.runId",
-                        ),
-                        atomic_unit=_resource_ref_from_mapping(
-                            atomic_unit_data,
-                            path="PolicyTestCase.spec.request.atomicUnit",
-                        )
-                        if isinstance(atomic_unit_data, Mapping)
-                        else None,
-                        data_labels=_exact_string_list_field(
-                            request_data,
-                            "dataLabels",
-                            "data_labels",
-                            path="PolicyTestCase.spec.request.dataLabels",
-                        ),
-                        requested_usage=_exact_list_field(
-                            request_data,
-                            "requestedUsage",
-                            "requested_usage",
-                            path="PolicyTestCase.spec.request.requestedUsage",
-                        ),
-                        attributes=_exact_mapping_field(
-                            request_data,
-                            "attributes",
-                            path="PolicyTestCase.spec.request.attributes",
-                        ),
-                        policy_snapshot_id=_exact_optional_string_field(
-                            request_data,
-                            "policySnapshotId",
-                            "policy_snapshot_id",
-                            path="PolicyTestCase.spec.request.policySnapshotId",
-                        ),
-                    )
-                    expectation = PolicyTestExpectation(
-                        effect=_exact_optional_string_field(
-                            expectation_data,
-                            "effect",
-                            path="PolicyTestCase.spec.expect.effect",
-                        ),
-                        reason_codes=_exact_string_list_field(
-                            expectation_data,
-                            "reasonCodes",
-                            "reason_codes",
-                            path="PolicyTestCase.spec.expect.reasonCodes",
-                        ),
-                        policy_refs=_exact_string_list_field(
-                            expectation_data,
-                            "policyRefs",
-                            "policy_refs",
-                            path="PolicyTestCase.spec.expect.policyRefs",
-                        ),
-                        obligation_ids=_exact_string_list_field(
-                            expectation_data,
-                            "obligationIds",
-                            "obligation_ids",
-                            path="PolicyTestCase.spec.expect.obligationIds",
-                        ),
-                        enforcement_status=_exact_optional_string_field(
-                            expectation_data,
-                            "enforcementStatus",
-                            "enforcement_status",
-                            path="PolicyTestCase.spec.expect.enforcementStatus",
-                        ),
-                    )
-                    enforced_obligation_ids = None
-                    raw_enforced_obligation_ids = _field(
-                        spec,
-                        "enforcedObligationIds",
-                        "enforced_obligation_ids",
-                    )
-                    if raw_enforced_obligation_ids is not None:
-                        enforced_obligation_ids = _exact_string_list_field(
-                            spec,
-                            "enforcedObligationIds",
-                            "enforced_obligation_ids",
-                            path="PolicyTestCase.spec.enforcedObligationIds",
-                        )
-                    cases.append(
-                        PolicyTestCase(
-                            _exact_string_field(
-                                spec,
-                                "caseId",
-                                "case_id",
-                                path="PolicyTestCase.spec.caseId",
-                                default=metadata.get("name"),
-                            ),
-                            request,
-                            expectation,
-                            evaluated_at=_exact_string_field(
-                                spec,
-                                "evaluatedAt",
-                                "evaluated_at",
-                                path="PolicyTestCase.spec.evaluatedAt",
-                            ),
-                            enforced_obligation_ids=enforced_obligation_ids,
-                        )
-                    )
-                if not bundles:
-                    print(f"{args.policy}: no PolicyBundle document found")
-                    return 1
-                if not cases:
-                    print(f"{args.cases}: no PolicyTestCase document found")
-                    return 1
-                report = run_policy_tests(StaticPolicyEvaluator.from_bundles(bundles), cases)
-                if args.json:
-                    print(
-                        json.dumps(
-                            {
-                                "ok": report.passed,
-                                "cases": [
-                                    {
-                                        "caseId": result.case_id,
-                                        "passed": result.passed,
-                                        "failures": list(result.failures),
-                                    }
-                                    for result in report.results
-                                ],
-                            },
-                            indent=2,
-                            sort_keys=True,
-                        )
-                    )
-                else:
-                    for result in report.results:
-                        status = "OK" if result.passed else "FAIL"
-                        print(f"{status} {result.case_id}")
-                        for failure in result.failures:
-                            print(f"  {failure}")
-                return 0 if report.passed else 1
-            except (KeyError, TypeError, ValueError) as error:
-                print(f"policy test error: {error}")
-                return 1
-        command_parsers["policy"].print_help()
         return 0
     parser.print_help()
     return 0

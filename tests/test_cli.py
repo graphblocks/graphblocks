@@ -40,7 +40,7 @@ def test_cli_parser_registry_covers_all_commands_and_subcommands() -> None:
 
     assert set(top_level_action.choices) == set(command_parsers)
     assert set(cli_module._CLI_COMMAND_HANDLERS) == (
-        set(command_parsers) - {"release", "deploy", "policy"}
+        set(command_parsers) - {"release", "deploy"}
     )
 
     nested_commands: dict[str, set[str]] = {}
