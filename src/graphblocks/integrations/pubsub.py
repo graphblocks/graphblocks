@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 
+from graphblocks._validation import validate_optional_bounded_non_negative_int
 from graphblocks.durable import SinkCommitRequest, SourceCursor, SourceEvent
 from graphblocks.integrations._wire import (
     FrozenWireJsonObject,
@@ -83,22 +84,6 @@ def _positive_int(
     return value
 
 
-def _non_negative_int(
-    field_name: str,
-    value: object,
-    *,
-    maximum: int,
-    range_name: str,
-) -> int:
-    if isinstance(value, bool) or not isinstance(value, int):
-        raise PubsubAdapterError(f"{field_name} must be an integer")
-    if value < 0:
-        raise PubsubAdapterError(f"{field_name} must be non-negative")
-    if value > maximum:
-        raise PubsubAdapterError(f"{field_name} must not exceed {range_name} range")
-    return value
-
-
 def _optional_positive_int(field_name: str, value: object | None) -> int | None:
     if value is None:
         return None
@@ -111,13 +96,12 @@ def _optional_positive_int(field_name: str, value: object | None) -> int | None:
 
 
 def _optional_non_negative_int(field_name: str, value: object | None) -> int | None:
-    if value is None:
-        return None
-    return _non_negative_int(
+    return validate_optional_bounded_non_negative_int(
         field_name,
         value,
         maximum=_MAX_TIMESTAMP_UNIX_MS,
         range_name="signed 64-bit",
+        error_type=PubsubAdapterError,
     )
 
 

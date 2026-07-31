@@ -20,6 +20,25 @@ def snapshot_collection(
         raise ValueError(f"{owner} {field_name} must be a collection") from error
 
 
+def validate_optional_bounded_non_negative_int(
+    field_name: str,
+    value: object | None,
+    *,
+    maximum: int,
+    range_name: str,
+    error_type: type[ValueError] = ValueError,
+) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise error_type(f"{field_name} must be an integer")
+    if value < 0:
+        raise error_type(f"{field_name} must be non-negative")
+    if value > maximum:
+        raise error_type(f"{field_name} must not exceed {range_name} range")
+    return value
+
+
 def validate_non_empty_string(
     owner: str,
     field_name: str,
@@ -53,5 +72,6 @@ def validate_optional_non_empty_string(
 __all__ = [
     "snapshot_collection",
     "validate_non_empty_string",
+    "validate_optional_bounded_non_negative_int",
     "validate_optional_non_empty_string",
 ]
