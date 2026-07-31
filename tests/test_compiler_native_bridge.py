@@ -70,7 +70,13 @@ def test_reference_compiler_phase_golden_fixture() -> None:
     validated = compiler_module._validate_graph_phase(migrated)
     assert not isinstance(validated, Plan)
     normalized = compiler_module._normalize_graph_phase(validated)
-    typechecked = compiler_module._typecheck_graph_phase(normalized)
+    analysis_context = compiler_module._prepare_graph_analysis(normalized)
+    edge_analysis = compiler_module._analyze_graph_edges(analysis_context)
+    assert isinstance(edge_analysis.produced_nodes, frozenset)
+    assert isinstance(edge_analysis.consumed_nodes, frozenset)
+    assert isinstance(edge_analysis.dependency_graph, tuple)
+    catalog_analysis = compiler_module._validate_catalog_nodes(edge_analysis)
+    typechecked = compiler_module._analyze_graph_dependencies(catalog_analysis)
     lowered = compiler_module._lower_graph_phase(typechecked)
     plan = compiler_module._evidence_graph_phase(lowered)
 
@@ -156,6 +162,51 @@ def test_reference_validation_passes_follow_declared_order(
 
     assert plan.ok
     assert tuple(observed) == compiler_module._GRAPH_VALIDATION_PASS_ORDER
+
+
+def test_reference_typecheck_passes_follow_declared_order(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    observed: list[str] = []
+    attributes = {
+        "edges": "_analyze_graph_edges",
+        "catalog": "_validate_catalog_nodes",
+        "dependencies": "_analyze_graph_dependencies",
+    }
+    originals = {
+        attribute: getattr(compiler_module, attribute)
+        for attribute in attributes.values()
+    }
+    for original in originals.values():
+        source = inspect.getsource(original)
+        function = next(
+            node for node in ast.parse(source).body if isinstance(node, ast.FunctionDef)
+        )
+        assert function.end_lineno is not None
+        assert function.end_lineno - function.lineno + 1 <= 350
+
+    for pass_name in compiler_module._TYPECHECK_PASS_ORDER:
+        attribute = attributes[pass_name]
+        original = originals[attribute]
+
+        def observe(
+            *args: object,
+            _name: str = pass_name,
+            _original: Callable[..., object] = original,
+            **kwargs: object,
+        ) -> object:
+            observed.append(_name)
+            return _original(*args, **kwargs)
+
+        monkeypatch.setattr(compiler_module, attribute, observe)
+
+    plan = compile_graph_reference(
+        NORMALIZED_GRAPH,
+        block_catalog=BlockCatalog({}, allow_unknown_blocks=True),
+    )
+
+    assert plan.ok
+    assert tuple(observed) == compiler_module._TYPECHECK_PASS_ORDER
 
 
 def test_reference_compiler_entrypoint_is_only_a_phase_orchestrator() -> None:

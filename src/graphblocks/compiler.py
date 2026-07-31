@@ -2468,7 +2468,41 @@ def _normalize_graph_phase(validated: _ValidatedGraph) -> _NormalizedGraph:
     )
 
 
-def _typecheck_graph_phase(normalized_graph: _NormalizedGraph) -> _TypecheckedGraph:
+@dataclass(frozen=True, slots=True)
+class _GraphAnalysisContext:
+    normalized: dict[str, Any]
+    block_catalog: BlockCatalog
+    schema_violations: tuple[ResourceSchemaViolation, ...]
+    diagnostics: tuple[Diagnostic, ...]
+    normalized_spec: object
+    normalized_nodes: Any
+    edges: object
+    interface_inputs: dict[str, Any] | None
+    interface_outputs: dict[str, Any] | None
+    allows_duplex_voice_feedback: bool
+
+
+@dataclass(frozen=True, slots=True)
+class _EdgeAnalysis:
+    context: _GraphAnalysisContext
+    diagnostics: tuple[Diagnostic, ...]
+    produced_nodes: frozenset[str]
+    consumed_nodes: frozenset[str]
+    invalid_input_port_nodes: frozenset[str]
+    dependency_graph: tuple[tuple[str, frozenset[str]], ...]
+    edge_dependency_endpoints: frozenset[tuple[str, str]]
+
+
+_TYPECHECK_PASS_ORDER = (
+    "edges",
+    "catalog",
+    "dependencies",
+)
+
+
+def _prepare_graph_analysis(
+    normalized_graph: _NormalizedGraph,
+) -> _GraphAnalysisContext:
     normalized = normalized_graph.normalized
     block_catalog = normalized_graph.block_catalog
     diagnostics = list(normalized_graph.diagnostics)
@@ -2522,16 +2556,34 @@ def _typecheck_graph_phase(normalized_graph: _NormalizedGraph) -> _TypecheckedGr
         interface_inputs = None
     if not isinstance(interface_outputs, dict):
         interface_outputs = None
+    return _GraphAnalysisContext(
+        normalized=normalized,
+        block_catalog=block_catalog,
+        schema_violations=normalized_graph.schema_violations,
+        diagnostics=tuple(diagnostics),
+        normalized_spec=normalized_spec,
+        normalized_nodes=normalized_nodes,
+        edges=edges,
+        interface_inputs=interface_inputs,
+        interface_outputs=interface_outputs,
+        allows_duplex_voice_feedback=allows_duplex_voice_feedback,
+    )
+
+
+def _analyze_graph_edges(context: _GraphAnalysisContext) -> _EdgeAnalysis:
+    block_catalog = context.block_catalog
+    diagnostics = list(context.diagnostics)
+    normalized_nodes = context.normalized_nodes
+    edges = context.edges
+    interface_inputs = context.interface_inputs
+    interface_outputs = context.interface_outputs
     produced_nodes: set[str] = set()
     consumed_nodes: set[str] = set()
     invalid_input_port_nodes: set[str] = set()
-    invalid_resource_binding_nodes: set[str] = set()
     dependency_graph: dict[str, set[str]] = {
         node_name: set() for node_name in normalized_nodes
     }
     edge_dependency_endpoints: set[tuple[str, str]] = set()
-    guard_dependencies: set[tuple[str, str]] = set()
-
     if isinstance(edges, list):
         seen_edge_identities: set[tuple[str, str]] = set()
         source_by_target: dict[str, str] = {}
@@ -2839,7 +2891,28 @@ def _typecheck_graph_phase(normalized_graph: _NormalizedGraph) -> _TypecheckedGr
                             f"$.spec.edges[{index}]",
                         )
                     )
+    return _EdgeAnalysis(
+        context=context,
+        diagnostics=tuple(diagnostics),
+        produced_nodes=frozenset(produced_nodes),
+        consumed_nodes=frozenset(consumed_nodes),
+        invalid_input_port_nodes=frozenset(invalid_input_port_nodes),
+        dependency_graph=tuple(
+            (node_name, frozenset(targets))
+            for node_name, targets in dependency_graph.items()
+        ),
+        edge_dependency_endpoints=frozenset(edge_dependency_endpoints),
+    )
 
+
+def _validate_catalog_nodes(analysis: _EdgeAnalysis) -> _EdgeAnalysis:
+    context = analysis.context
+    block_catalog = context.block_catalog
+    diagnostics = list(analysis.diagnostics)
+    normalized_nodes = context.normalized_nodes
+    edges = context.edges
+    invalid_input_port_nodes = set(analysis.invalid_input_port_nodes)
+    invalid_resource_binding_nodes: set[str] = set()
     if block_catalog is not None:
         inbound_by_node: dict[str, set[str]] = {
             name: set() for name in normalized_nodes
@@ -3013,7 +3086,26 @@ def _typecheck_graph_phase(normalized_graph: _NormalizedGraph) -> _TypecheckedGr
                             f"$.spec.nodes.{node_name}",
                         )
                     )
+    return replace(analysis, diagnostics=tuple(diagnostics))
 
+
+def _analyze_graph_dependencies(analysis: _EdgeAnalysis) -> _TypecheckedGraph:
+    context = analysis.context
+    normalized = context.normalized
+    normalized_spec = context.normalized_spec
+    normalized_nodes = context.normalized_nodes
+    edges = context.edges
+    block_catalog = context.block_catalog
+    interface_inputs = context.interface_inputs
+    allows_duplex_voice_feedback = context.allows_duplex_voice_feedback
+    diagnostics = list(analysis.diagnostics)
+    produced_nodes = set(analysis.produced_nodes)
+    consumed_nodes = set(analysis.consumed_nodes)
+    dependency_graph = {
+        node_name: set(targets) for node_name, targets in analysis.dependency_graph
+    }
+    edge_dependency_endpoints = set(analysis.edge_dependency_endpoints)
+    guard_dependencies: set[tuple[str, str]] = set()
     for node_name, node in normalized_nodes.items():
         if isinstance(node, dict) and "when" in node:
             when = node["when"]
@@ -3273,9 +3365,16 @@ def _typecheck_graph_phase(normalized_graph: _NormalizedGraph) -> _TypecheckedGr
                 )
     return _TypecheckedGraph(
         normalized=normalized,
-        schema_violations=normalized_graph.schema_violations,
+        schema_violations=context.schema_violations,
         diagnostics=tuple(diagnostics),
     )
+
+
+def _typecheck_graph_phase(normalized_graph: _NormalizedGraph) -> _TypecheckedGraph:
+    context = _prepare_graph_analysis(normalized_graph)
+    edge_analysis = _analyze_graph_edges(context)
+    catalog_analysis = _validate_catalog_nodes(edge_analysis)
+    return _analyze_graph_dependencies(catalog_analysis)
 
 
 def _lower_graph_phase(typechecked: _TypecheckedGraph) -> _LoweredGraph:
