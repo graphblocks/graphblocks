@@ -1,0 +1,114 @@
+name: Security fuzz
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/security-fuzz.yml"
+      - "Cargo.lock"
+      - "crates/graphblocks-schema/**"
+      - "fuzz/**"
+      - "pyproject.toml"
+      - "tests/test_canonical_properties.py"
+      - "tests/test_security_fuzz_workflow.py"
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/security-fuzz.yml"
+      - "Cargo.lock"
+      - "crates/graphblocks-schema/**"
+      - "fuzz/**"
+      - "pyproject.toml"
+      - "tests/test_canonical_properties.py"
+      - "tests/test_security_fuzz_workflow.py"
+  schedule:
+    - cron: "17 3 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: >-
+    ${{ github.event_name == 'pull_request' ||
+    github.event_name == 'push' }}
+
+jobs:
+  canonical-security-fuzz:
+    name: Canonical and schema security fuzz
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      FUZZ_TOOLCHAIN: nightly-2026-04-22
+      CARGO_FUZZ_VERSION: 0.13.2
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - name: Install pinned fuzz toolchain
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p dist/fuzz
+          rustup toolchain install "$FUZZ_TOOLCHAIN" --profile minimal
+          cargo +"$FUZZ_TOOLCHAIN" install cargo-fuzz \
+            --version "$CARGO_FUZZ_VERSION" \
+            --locked
+          {
+            rustup run "$FUZZ_TOOLCHAIN" rustc --version
+            cargo +"$FUZZ_TOOLCHAIN" fuzz --version
+          } 2>&1 | tee dist/fuzz/toolchain.log
+      - name: Prepare bounded fuzz outputs
+        run: mkdir -p dist/fuzz/corpus dist/fuzz/artifacts
+      - name: Validate locked fuzz dependency graph
+        shell: bash
+        run: |
+          cargo +"$FUZZ_TOOLCHAIN" metadata \
+            --manifest-path fuzz/Cargo.toml \
+            --locked \
+            --format-version 1 \
+            > dist/fuzz/cargo-metadata.json
+      - name: Run bounded seed-corpus mutation smoke
+        if: >-
+          github.event_name != 'schedule' &&
+          github.event_name != 'workflow_dispatch'
+        shell: bash
+        run: |
+          cargo +"$FUZZ_TOOLCHAIN" fuzz run canonical_json \
+            dist/fuzz/corpus \
+            fuzz/corpus/canonical_json \
+            -- \
+            -runs=10000 \
+            -max_len=16384 \
+            -timeout=10 \
+            -rss_limit_mb=2048 \
+            -artifact_prefix=dist/fuzz/artifacts/
+      - name: Run scheduled bounded fuzz campaign
+        if: >-
+          github.event_name == 'schedule' ||
+          github.event_name == 'workflow_dispatch'
+        shell: bash
+        run: |
+          cargo +"$FUZZ_TOOLCHAIN" fuzz run canonical_json \
+            dist/fuzz/corpus \
+            fuzz/corpus/canonical_json \
+            -- \
+            -max_total_time=1800 \
+            -max_len=16384 \
+            -timeout=10 \
+            -rss_limit_mb=2048 \
+            -artifact_prefix=dist/fuzz/artifacts/
+      - name: Verify fuzz lockfile stayed unchanged
+        if: always()
+        run: git diff --exit-code -- fuzz/Cargo.lock
+      - name: Retain fuzz corpus and crash artifacts
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: graphblocks-security-fuzz-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            dist/fuzz/toolchain.log
+            dist/fuzz/cargo-metadata.json
+            dist/fuzz/corpus
+            dist/fuzz/artifacts
+          if-no-files-found: warn
+          retention-days: 30

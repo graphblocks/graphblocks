@@ -1,0 +1,23 @@
+[package]
+name = "graphblocks-security-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+rust-version = "1.94"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+graphblocks-schema = { path = "../crates/graphblocks-schema" }
+libfuzzer-sys = "=0.4.13"
+
+[[bin]]
+name = "canonical_json"
+path = "fuzz_targets/canonical_json.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]
+members = ["."]

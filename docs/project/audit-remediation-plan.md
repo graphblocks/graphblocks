@@ -400,6 +400,15 @@ Each gate needs a documented budget, deterministic failure output, and a named
 release-matrix requirement. Merely adding a tool without an enforced threshold
 does not close a finding.
 
+The `GB-QA-008` implementation is specified in
+[security-fuzzing.md](security-fuzzing.md). Normal pull-request CI runs the
+Hypothesis and proptest properties, while the dedicated security-fuzz workflow
+runs a bounded cargo-fuzz seed-corpus mutation smoke on relevant changes and a
+30-minute weekly or manually dispatched campaign. This is implemented gate
+evidence, not proof that the exact future release candidate completed its
+scheduled campaign; `REL-AUDIT-REMEDIATION` remains blocked until
+candidate-bound execution evidence and the other exit criteria are complete.
+
 ## 1.0 exit criteria
 
 The stable tag remains blocked until all existing release gates and all of the

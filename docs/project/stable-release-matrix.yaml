@@ -391,6 +391,18 @@ releaseGates:
     readiness: blocked
     plan: docs/project/audit-remediation-plan.md
     companionGates: [REL-MACOS-NATIVE-SMOKE]
+    implementedEvidence:
+      - hypothesis-cargo-fuzz-and-proptest-pr-smoke-and-scheduled
+    evidence:
+      - pyproject.toml
+      - tests/test_canonical_properties.py
+      - crates/graphblocks-schema/tests/canonical_properties.rs
+      - fuzz/Cargo.toml
+      - fuzz/fuzz_targets/canonical_json.rs
+      - fuzz/corpus/canonical_json
+      - .github/workflows/security-fuzz.yml
+      - tests/test_security_fuzz_workflow.py
+      - docs/project/security-fuzzing.md
     exitCriteria:
       maxOpenBySeverity: {P0: 0, P1: 0}
       requiredEvidence:
