@@ -12,7 +12,7 @@ import tarfile
 
 import yaml
 
-from . import __version__
+from ._version import __version__
 from .canonical import canonical_dumps, canonical_hash, canonical_loads, normalize_graph
 from .compiler import NativeCompilerUnavailableError, compile_graph
 from .composition import CompositionError, compose_documents

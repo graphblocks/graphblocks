@@ -9,17 +9,12 @@ from types import MappingProxyType
 from jsonschema import Draft202012Validator
 from jsonschema.exceptions import SchemaError
 
-from graphblocks import (
-    ContentPart,
-    GenerationChunk,
-    Message,
-    ToolCallDraft,
-    ToolDefinition,
-    UsageAmount,
-    UsageRecord,
-    canonical_dumps,
-    canonical_loads,
-)
+from graphblocks.budget import UsageAmount
+from graphblocks.canonical import canonical_dumps, canonical_loads
+from graphblocks.conversation import ContentPart, Message
+from graphblocks.output_policy import GenerationChunk
+from graphblocks.tools import ToolCallDraft, ToolDefinition
+from graphblocks.usage import UsageRecord
 
 from ._wire import find_non_local_schema_reference
 

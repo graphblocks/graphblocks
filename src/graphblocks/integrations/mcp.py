@@ -10,10 +10,11 @@ from jsonschema import Draft202012Validator
 from jsonschema.exceptions import SchemaError, ValidationError
 
 from graphblocks._schema_execution import find_regular_expression_keyword
-from graphblocks import (
+from graphblocks.canonical import canonical_dumps, canonical_hash, canonical_loads
+from graphblocks.conversation import ContentPart
+from graphblocks.documents import ArtifactRef
+from graphblocks.tools import (
     AdmittedToolCall,
-    ArtifactRef,
-    ContentPart,
     McpToolImplementation,
     ResolvedTool,
     ToolBinding,
@@ -23,9 +24,6 @@ from graphblocks import (
     ToolResultValidationError,
     ToolSchemaRegistry,
     ToolSchemaValidationError,
-    canonical_dumps,
-    canonical_hash,
-    canonical_loads,
     validate_tool_result_for_model,
 )
 

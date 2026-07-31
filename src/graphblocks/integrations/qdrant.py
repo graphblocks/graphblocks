@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 import math
 from uuid import UUID
 
-from graphblocks import SourceRef
+from graphblocks.documents import SourceRef
 from graphblocks.integrations._wire import (
     FrozenWireJsonObject,
     snapshot_wire_json,

@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from types import MappingProxyType
 from urllib.parse import parse_qsl, urlencode, urlsplit
 
-from graphblocks import canonical_dumps, canonical_loads
+from graphblocks.canonical import canonical_dumps, canonical_loads
 from graphblocks.voice import VoiceTransport
 
 

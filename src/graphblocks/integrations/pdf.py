@@ -7,7 +7,7 @@ from io import BytesIO
 import math
 from numbers import Real
 
-from graphblocks import canonical_dumps, canonical_loads
+from graphblocks.canonical import canonical_dumps, canonical_loads
 from graphblocks.document_parsers import DocumentParserError, ParserDescriptor
 from graphblocks.documents import (
     AssetRevision,

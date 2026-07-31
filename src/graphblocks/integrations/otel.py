@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
-from graphblocks import canonical_dumps, canonical_loads
+from graphblocks.canonical import canonical_dumps, canonical_loads
 from graphblocks.telemetry import (
     DEFAULT_CONTENT_TELEMETRY_ATTRIBUTE_KEYS,
     DEFAULT_SENSITIVE_TELEMETRY_ATTRIBUTE_KEYS,

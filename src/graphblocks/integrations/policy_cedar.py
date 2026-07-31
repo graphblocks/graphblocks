@@ -4,20 +4,16 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Literal
 
-from graphblocks import (
-    ContentPart,
-    OutputPolicyDecision,
-    PolicyDecision,
-    PolicyRequest,
-    canonical_dumps,
-    canonical_loads,
-)
+from graphblocks.canonical import canonical_dumps, canonical_loads
+from graphblocks.conversation import ContentPart
 from graphblocks.output_policy import (
+    OutputPolicyDecision,
     VALID_DRAFT_DISPOSITIONS,
     VALID_OUTPUT_DISPOSITIONS,
     VALID_PENDING_TOOL_CALLS_DISPOSITIONS as VALID_PENDING_TOOL_CALLS,
     VALID_PROVIDER_CANCELLATIONS,
 )
+from graphblocks.policy import PolicyDecision, PolicyRequest
 
 
 class CedarPolicyAdapterError(RuntimeError):

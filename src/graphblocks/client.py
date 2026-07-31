@@ -13,10 +13,11 @@ from urllib.error import HTTPError
 from urllib.parse import quote, urlencode, urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
-from graphblocks import (
+from graphblocks.canonical import canonical_dumps, canonical_hash, canonical_loads
+from graphblocks.conversation import ContentPart
+from graphblocks.documents import ArtifactRef
+from graphblocks.tools import (
     AdmittedToolCall,
-    ArtifactRef,
-    ContentPart,
     RemoteToolImplementation,
     ResolvedTool,
     ToolBinding,
@@ -28,9 +29,6 @@ from graphblocks import (
     ToolResultValidationError,
     ToolSchemaRegistry,
     ToolSchemaValidationError,
-    canonical_dumps,
-    canonical_hash,
-    canonical_loads,
     validate_tool_result_for_model,
 )
 from graphblocks.application_event import (

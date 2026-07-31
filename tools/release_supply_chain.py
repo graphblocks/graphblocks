@@ -72,7 +72,7 @@ PROMOTION_PYPROJECT_PATHS = {
     "packages/graphblocks-testing/pyproject.toml",
 }
 PROMOTION_VERSION_ONLY_PATHS = {
-    "src/graphblocks/__init__.py",
+    "src/graphblocks/_version.py",
     "compatibility/stable-testing-api.json",
 }
 PROMOTION_TESTING_CLI_SNAPSHOT_PATH = "compatibility/stable-testing-cli-contracts.json"

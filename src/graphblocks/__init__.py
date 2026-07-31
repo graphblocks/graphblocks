@@ -10,6 +10,7 @@ direct-import compatibility and belong to their feature modules.
 
 from __future__ import annotations
 
+from ._version import __version__
 from .admission import (
     TERMINAL_ADMISSION_TICKET_STATES,
     AdmissionError,
@@ -658,8 +659,6 @@ from .workspace import (
     WorkspaceSnapshot,
     WorkspaceSnapshotConflictError,
 )
-
-__version__ = "1.0.0rc1"
 
 _LEGACY_ROOT_ATTRIBUTES = [
     "TERMINAL_ADMISSION_TICKET_STATES",

@@ -5,7 +5,8 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import Literal
 
-from graphblocks import ContentPart, Message, canonical_dumps, canonical_loads
+from graphblocks.canonical import canonical_dumps, canonical_loads
+from graphblocks.conversation import ContentPart, Message
 from graphblocks.documents import FrozenDict, _freeze_value
 
 

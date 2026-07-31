@@ -35,7 +35,7 @@ PROMOTION_SOURCE_DIFF = {
     "digest": "sha256:" + "5" * 64,
     "changes": [
         {"path": "pyproject.toml", "status": "M"},
-        {"path": "src/graphblocks/__init__.py", "status": "M"},
+        {"path": "src/graphblocks/_version.py", "status": "M"},
     ],
 }
 
@@ -668,7 +668,7 @@ def test_promotion_source_diff_allows_only_release_metadata(
         'classifiers = ["Development Status :: 4 - Beta"]\n',
         encoding="utf-8",
     )
-    (repository / "src" / "graphblocks" / "__init__.py").write_text(
+    (repository / "src" / "graphblocks" / "_version.py").write_text(
         '__version__ = "1.0.0rc1"\n', encoding="utf-8"
     )
     (repository / "docs" / "project" / "status.md").write_text(
@@ -716,7 +716,7 @@ def test_promotion_source_diff_allows_only_release_metadata(
         'classifiers = ["Development Status :: 5 - Production/Stable"]\n',
         encoding="utf-8",
     )
-    (repository / "src" / "graphblocks" / "__init__.py").write_text(
+    (repository / "src" / "graphblocks" / "_version.py").write_text(
         '__version__ = "1.0.0"\n', encoding="utf-8"
     )
     (repository / "docs" / "project" / "status.md").write_text(
@@ -768,7 +768,7 @@ def test_promotion_source_diff_allows_only_release_metadata(
         {"path": "docs/project/releases/v1.0.0.json", "status": "A"},
         {"path": "docs/project/status.md", "status": "M"},
         {"path": "pyproject.toml", "status": "M"},
-        {"path": "src/graphblocks/__init__.py", "status": "M"},
+        {"path": "src/graphblocks/_version.py", "status": "M"},
     ]
 
     (repository / "src" / "graphblocks" / "runtime.py").write_text(

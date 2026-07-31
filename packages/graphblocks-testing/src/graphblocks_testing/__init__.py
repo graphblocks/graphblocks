@@ -50,7 +50,7 @@ from graphblocks.canonical import (
     canonical_loads,
     normalize_graph,
 )
-from graphblocks import __version__ as GRAPHBLOCKS_VERSION
+from graphblocks._version import __version__ as GRAPHBLOCKS_VERSION
 from graphblocks.cli import main as graphblocks_cli_main
 from graphblocks.compiler import (
     Plan,
