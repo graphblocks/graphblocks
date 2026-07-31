@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import io
 import json
 from pathlib import Path
@@ -27,6 +28,38 @@ from graphblocks.run_store import SQLiteRunStore
 
 RELEASE_DIGEST = "sha256:" + ("1" * 64)
 SIGNATURE_DIGEST = "sha256:" + ("3" * 64)
+
+
+def test_cli_parser_registry_covers_all_commands_and_subcommands() -> None:
+    parser, command_parsers = cli_module._build_parser()
+    top_level_action = next(
+        action
+        for action in parser._actions
+        if isinstance(action, argparse._SubParsersAction)
+    )
+
+    assert set(top_level_action.choices) == set(command_parsers)
+
+    nested_commands: dict[str, set[str]] = {}
+    for command, command_parser in command_parsers.items():
+        nested_actions = [
+            action
+            for action in command_parser._actions
+            if isinstance(action, argparse._SubParsersAction)
+        ]
+        assert len(nested_actions) <= 1
+        if nested_actions:
+            nested_commands[command] = set(nested_actions[0].choices)
+
+    assert nested_commands == {
+        "plugins": {"list", "inspect", "validate"},
+        "packages": {"list", "doctor", "audit", "wheel-matrix"},
+        "schemas": {"manifest"},
+        "policy": {"test"},
+        "observe": {"run", "journal"},
+        "release": {"build", "verify"},
+        "deploy": {"targets-verify", "plan", "render"},
+    }
 
 
 def test_cli_strict_json_preserves_arbitrary_precision_numbers() -> None:

@@ -9,6 +9,7 @@ import json
 from pathlib import Path
 import sys
 import tarfile
+from types import MappingProxyType
 
 import yaml
 
@@ -223,7 +224,10 @@ def _resource_ref_from_mapping(
     )
 
 
-def _main(argv: list[str] | None = None) -> int:
+def _build_parser() -> tuple[
+    argparse.ArgumentParser,
+    Mapping[str, argparse.ArgumentParser],
+]:
     parser = argparse.ArgumentParser(prog="graphblocks")
     parser.add_argument("--version", action="store_true", help="show package version")
     subparsers = parser.add_subparsers(dest="command")
@@ -437,6 +441,27 @@ def _main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="do not include the default component and artifact selection",
     )
+    return parser, MappingProxyType(
+        {
+            "validate": validate_parser,
+            "plan": plan_parser,
+            "run": run_parser,
+            "compose": compose_parser,
+            "migrate": migrate_parser,
+            "plugins": plugins_parser,
+            "packages": packages_parser,
+            "schemas": schemas_parser,
+            "policy": policy_parser,
+            "observe": observe_parser,
+            "release": release_parser,
+            "deploy": deploy_parser,
+            "lock": lock_parser,
+        }
+    )
+
+
+def _main(argv: list[str] | None = None) -> int:
+    parser, command_parsers = _build_parser()
 
     args = parser.parse_args(argv)
     if args.version:
@@ -980,7 +1005,7 @@ def _main(argv: list[str] | None = None) -> int:
                 else:
                     print("OK")
             return 0 if diagnostics.ok else 1
-        plugins_parser.print_help()
+        command_parsers["plugins"].print_help()
         return 0
     if args.command == "packages":
         if args.packages_command == "list":
@@ -1037,7 +1062,7 @@ def _main(argv: list[str] | None = None) -> int:
             else:
                 print(f"OK {len(matrix.targets)} wheel targets")
             return 0 if matrix.ok else 1
-        packages_parser.print_help()
+        command_parsers["packages"].print_help()
         return 0
     if args.command == "schemas":
         if args.schemas_command == "manifest":
@@ -1056,7 +1081,7 @@ def _main(argv: list[str] | None = None) -> int:
                 return 1
             print(json.dumps(manifest.manifest_payload(), indent=2, sort_keys=True))
             return 0
-        schemas_parser.print_help()
+        command_parsers["schemas"].print_help()
         return 0
     if args.command == "observe":
         if args.observe_command == "run":
@@ -1101,7 +1126,7 @@ def _main(argv: list[str] | None = None) -> int:
                 for record in records:
                     print(f"{record['sequence']} {record['kind']}")
             return 0
-        observe_parser.print_help()
+        command_parsers["observe"].print_help()
         return 0
     release_documents: list[dict[str, object]] = []
     release: GraphRelease | None = None
@@ -1555,7 +1580,7 @@ def _main(argv: list[str] | None = None) -> int:
             else:
                 print(f"OK {release.name} {release.version} {release.content_digest()}")
             return 0 if payload["ok"] else 1
-        release_parser.print_help()
+        command_parsers["release"].print_help()
         return 0
     if args.command == "deploy":
         if args.deploy_command == "targets-verify":
@@ -2198,7 +2223,7 @@ def _main(argv: list[str] | None = None) -> int:
                 else:
                     print(f"deploy plan error: {error}")
                 return 1
-        deploy_parser.print_help()
+        command_parsers["deploy"].print_help()
         return 0
     if args.command == "policy":
         if args.policy_command == "test":
@@ -2583,7 +2608,7 @@ def _main(argv: list[str] | None = None) -> int:
             except (KeyError, TypeError, ValueError) as error:
                 print(f"policy test error: {error}")
                 return 1
-        policy_parser.print_help()
+        command_parsers["policy"].print_help()
         return 0
     parser.print_help()
     return 0
