@@ -197,6 +197,14 @@ Centralize typed input codecs, closed-schema validation, filesystem budgets,
 error-to-exit-code mapping, and JSON/text formatting. Command modules must not
 define their own permissive coercion rules.
 
+`GB-ARCH-006` now has executable closure evidence: parser construction is
+separate from execution, all 29 parser paths are enumerated, exactly 22 leaf
+paths resolve through a tuple-keyed callable registry, and the seven group-only
+paths remain explicit help boundaries. `_main` is a 20-line registry dispatcher
+with a 30-line/four-conditional AST budget and no command-name branches.
+Command handlers retain their existing output and exception contracts while
+shared release loading returns a typed result instead of cross-command locals.
+
 ### Compiler and conformance kit
 
 Separate decode, migration, closed-schema validation, normalization, catalog

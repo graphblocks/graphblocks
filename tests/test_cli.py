@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import io
+import inspect
 import json
 from pathlib import Path
 import sqlite3
 import sys
 import tarfile
+import textwrap
 from types import SimpleNamespace
 import pytest
 import yaml
@@ -86,6 +89,23 @@ def test_cli_parser_registry_covers_all_commands_and_subcommands() -> None:
         ("deploy",),
     }
     assert set(cli_module._CLI_COMMAND_HANDLERS) == leaf_paths
+
+
+def test_cli_main_is_a_bounded_registry_dispatch() -> None:
+    source = textwrap.dedent(inspect.getsource(cli_module._main))
+    function = ast.parse(source).body[0]
+    _, command_parsers = cli_module._build_parser()
+
+    assert isinstance(function, ast.FunctionDef)
+    assert function.end_lineno is not None
+    assert function.end_lineno <= 30
+    assert sum(isinstance(node, ast.If) for node in ast.walk(function)) <= 4
+    string_constants = {
+        node.value
+        for node in ast.walk(function)
+        if isinstance(node, ast.Constant) and isinstance(node.value, str)
+    }
+    assert string_constants.isdisjoint(command_parsers)
 
 
 def test_cli_strict_json_preserves_arbitrary_precision_numbers() -> None:
