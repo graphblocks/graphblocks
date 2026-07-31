@@ -11,6 +11,7 @@ import sqlite3
 from threading import RLock
 from typing import Any, Literal, ParamSpec, TypeVar, cast
 
+from ._json import reject_duplicate_json_keys as _reject_duplicate_json_keys
 from ._validation import (
     validate_non_empty_string as _validate_non_empty_string,
     validate_optional_non_empty_string as _validate_optional_non_empty_string,
@@ -203,15 +204,6 @@ def _validate_json_value(
             depth=depth,
         )
     raise ValueError(f"{owner} {path} must contain only JSON values")
-
-
-def _reject_duplicate_json_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
-    result: dict[str, Any] = {}
-    for key, value in pairs:
-        if key in result:
-            raise ValueError(f"duplicate JSON object key {key!r}")
-        result[key] = value
-    return result
 
 
 def _loads_strict_json(owner: str, field_name: str, value: object) -> Any:
