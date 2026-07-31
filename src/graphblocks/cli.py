@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import argparse
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 import hashlib
 from importlib import resources
 import io
@@ -460,6 +460,733 @@ def _build_parser() -> tuple[
     )
 
 
+def _run_compose_command(
+    args: argparse.Namespace,
+    command_parsers: Mapping[str, argparse.ArgumentParser],
+) -> int:
+    del command_parsers
+    result = compose_documents(args.path, root=args.root)
+    rendered = yaml.safe_dump_all(
+        result.mutable_documents(),
+        sort_keys=False,
+        allow_unicode=True,
+    )
+    if args.output is None:
+        print(rendered, end="")
+    else:
+        try:
+            args.output.write_bytes(rendered.encode("utf-8"))
+        except OSError as error:
+            raise CompositionError(
+                "CompositionOutputError",
+                "materialized YAML output could not be written",
+            ) from error
+    if args.report is not None:
+        try:
+            args.report.write_bytes(
+                (
+                    json.dumps(result.report.canonical_value(), indent=2, sort_keys=True)
+                    + "\n"
+                ).encode("utf-8")
+            )
+        except OSError as error:
+            raise CompositionError(
+                "CompositionOutputError",
+                "composition report output could not be written",
+            ) from error
+    return 0
+
+def _run_validate_command(
+    args: argparse.Namespace,
+    command_parsers: Mapping[str, argparse.ArgumentParser],
+) -> int:
+    del command_parsers
+    documents = load_composed_documents(args.path, root=args.composition_root)
+    diagnostics: list[dict[str, str]] = []
+    ok = True
+    registry = discover_plugins(
+        args.plugin_path,
+        include_installed=args.discover_installed_plugins,
+    )
+    ok = ok and registry.ok
+    diagnostics.extend(item.to_dict() | {"document": "plugins"} for item in registry.diagnostics.diagnostics)
+    try:
+        block_catalog = BlockCatalog.from_manifests(
+            registry.manifests,
+            allow_unknown_blocks=args.allow_unknown_blocks,
+        )
+    except ValueError as error:
+        ok = False
+        block_catalog = BlockCatalog({})
+        diagnostics.append(
+            Diagnostic("GB2017", f"block catalog is invalid: {error}", "$.plugins").to_dict()
+            | {"document": "plugins"}
+        )
+    for index, document in enumerate(documents):
+        kind = document.get("kind")
+        api_version = document.get("apiVersion")
+        legacy_graph = kind == "Graph" and api_version in LEGACY_GRAPH_API_VERSIONS
+        if kind in SCHEMA_RESOURCE_KINDS and not legacy_graph:
+            violations = resource_schema_errors(document)
+            if violations:
+                ok = False
+                diagnostics.extend(
+                    {
+                        "code": violation.code,
+                        "message": violation.message,
+                        "path": violation.path,
+                        "severity": "error",
+                        "document": str(index),
+                    }
+                    for violation in violations
+                )
+                continue
+        if kind == "Graph":
+            plan = compile_graph(document, block_catalog=block_catalog)
+            ok = ok and plan.ok
+            diagnostics.extend(
+                {
+                    **item.to_dict(),
+                    "document": str(index),
+                }
+                for item in plan.diagnostics.diagnostics
+            )
+        elif kind in STRUCTURAL_KINDS:
+            for field in ("apiVersion", "kind", "metadata", "spec"):
+                if field not in document:
+                    ok = False
+                    diagnostics.append(
+                        Diagnostic("GB0004", f"missing required field {field!r}", f"$[{index}].{field}").to_dict()
+                        | {"document": str(index)}
+                    )
+        else:
+            ok = False
+            diagnostics.append(
+                Diagnostic("GB0001", f"unsupported document kind {kind!r}", f"$[{index}].kind").to_dict()
+                | {"document": str(index)}
+            )
+    if args.json:
+        print(json.dumps({"ok": ok, "diagnostics": diagnostics}, indent=2, sort_keys=True))
+    else:
+        if diagnostics:
+            for item in diagnostics:
+                print(f"{item['severity']} {item['code']} {item['path']}: {item['message']}")
+        else:
+            print("OK")
+    return 0 if ok else 1
+
+def _run_plan_command(
+    args: argparse.Namespace,
+    command_parsers: Mapping[str, argparse.ArgumentParser],
+) -> int:
+    del command_parsers
+    documents = load_composed_documents(args.path, root=args.composition_root)
+    graph_documents = [document for document in documents if document.get("kind") == "Graph"]
+    if not graph_documents:
+        print(f"{args.path}: no Graph document found")
+        return 1
+    registry = discover_plugins(
+        args.plugin_path,
+        include_installed=args.discover_installed_plugins,
+    )
+    plugin_diagnostics = registry.diagnostics.to_list()
+    try:
+        block_catalog = BlockCatalog.from_manifests(
+            registry.manifests,
+            allow_unknown_blocks=args.allow_unknown_blocks,
+        )
+    except ValueError as error:
+        block_catalog = BlockCatalog({})
+        plugin_diagnostics.append(
+            Diagnostic("GB2017", f"block catalog is invalid: {error}", "$.plugins").to_dict()
+        )
+    plan = compile_graph(graph_documents[0], block_catalog=block_catalog)
+    payload: dict[str, object] = {
+        "target": args.target,
+        "hash": plan.graph_hash,
+        "ok": (
+            registry.ok
+            and not any(
+                diagnostic.get("severity") == "error"
+                for diagnostic in plugin_diagnostics
+            )
+            and plan.ok
+        ),
+        "diagnostics": [*plugin_diagnostics, *plan.diagnostics.to_list()],
+    }
+    if args.expand:
+        payload["graph"] = plan.normalized
+    if args.show_bindings:
+        payload["bindings"] = [document for document in documents if document.get("kind") == "Binding"]
+    if args.show_packages:
+        nodes = plan.normalized.get("spec", {}).get("nodes", {})
+        payload["requirements"] = sorted(
+            {
+                str(node.get("block")).split("@", 1)[0]
+                for node in nodes.values()
+                if isinstance(node, dict) and isinstance(node.get("block"), str)
+            }
+        )
+    print(json.dumps(payload, indent=2, sort_keys=True))
+    return 0 if payload["ok"] else 1
+
+def _run_execute_command(
+    args: argparse.Namespace,
+    command_parsers: Mapping[str, argparse.ArgumentParser],
+) -> int:
+    del command_parsers
+    documents = load_composed_documents(args.path, root=args.composition_root)
+    graph_documents = [document for document in documents if document.get("kind") == "Graph"]
+    if not graph_documents:
+        print(f"{args.path}: no Graph document found")
+        return 1
+    try:
+        inputs = _loads_strict_json("--input-json", args.input_json)
+    except ValueError as error:
+        print(error)
+        return 1
+    if not isinstance(inputs, dict):
+        print("--input-json must decode to a JSON object")
+        return 1
+    deployment_provenance = None
+    if (args.deployment_plan is None) != (args.release_signature_digest is None):
+        print("--deployment-plan and --release-signature-digest must be provided together")
+        return 1
+    if args.deployment_plan is not None:
+        try:
+            deployment_plan_payload = _loads_strict_json(
+                "deploy plan payload",
+                args.deployment_plan.read_text(encoding="utf-8"),
+            )
+            if not isinstance(deployment_plan_payload, Mapping):
+                raise ValueError("deploy plan payload must be a JSON object")
+            if deployment_plan_payload.get("ok") is not True:
+                raise ValueError("deploy plan payload is not successful")
+            provenance_fields: dict[str, str] = {}
+            for field_name in (
+                "releaseDigest",
+                "deploymentRevisionId",
+                "planHash",
+            ):
+                value = deployment_plan_payload.get(field_name)
+                if not isinstance(value, str) or not value.strip():
+                    raise ValueError(
+                        f"deploy plan payload {field_name} must be a non-empty string"
+                    )
+                if value != value.strip():
+                    raise ValueError(
+                        f"deploy plan payload {field_name} must not contain surrounding whitespace"
+                    )
+                provenance_fields[field_name] = value
+            deployment_revision = deployment_plan_payload.get("deploymentRevision")
+            if not isinstance(deployment_revision, Mapping):
+                raise ValueError("deploy plan payload deploymentRevision must be an object")
+            for revision_field, top_level_field in (
+                ("revisionId", "deploymentRevisionId"),
+                ("releaseDigest", "releaseDigest"),
+                ("physicalPlanHash", "planHash"),
+            ):
+                if deployment_revision.get(revision_field) != provenance_fields[top_level_field]:
+                    raise ValueError(
+                        "deploy plan payload deploymentRevision does not match top-level provenance"
+                    )
+            deployment_provenance = RunDeploymentProvenance(
+                release_digest=provenance_fields["releaseDigest"],
+                deployment_revision_id=provenance_fields["deploymentRevisionId"],
+                physical_plan_hash=provenance_fields["planHash"],
+                release_signature_digest=args.release_signature_digest,
+            ).validate_for_production()
+            physical_plan = deployment_plan_payload.get("plan")
+            if not isinstance(physical_plan, Mapping):
+                raise ValueError("deploy plan payload plan must be an object")
+            graph_hash = physical_plan.get("graphHash")
+            if not isinstance(graph_hash, str) or not graph_hash.strip():
+                raise ValueError("deploy plan payload plan.graphHash must be a non-empty string")
+            compiled_graph_hash = compile_graph(graph_documents[0]).graph_hash
+            if graph_hash != compiled_graph_hash:
+                raise ValueError("deploy plan graphHash does not match the runtime graph")
+            targets = physical_plan.get("targets", {})
+            if not isinstance(targets, Mapping):
+                raise ValueError("deploy plan payload plan.targets must be an object")
+            canonical_targets: list[dict[str, object]] = []
+            for target_id, target in sorted(targets.items()):
+                if not isinstance(target, Mapping):
+                    raise ValueError("deploy plan payload plan target must be an object")
+                capabilities = target.get("capabilities", [])
+                effects = target.get("effects", [])
+                if not isinstance(capabilities, list) or not isinstance(effects, list):
+                    raise ValueError(
+                        "deploy plan payload plan target capabilities and effects must be arrays"
+                    )
+                canonical_targets.append(
+                    {
+                        "target_id": target_id,
+                        "kind": target.get("kind"),
+                        "execution_host": target.get("executionHost"),
+                        "capabilities": capabilities,
+                        "effects": effects,
+                        "package_lock": target.get("packageLock"),
+                        "image": target.get("image"),
+                    }
+                )
+            placements = physical_plan.get("placements", [])
+            if not isinstance(placements, list):
+                raise ValueError("deploy plan payload plan.placements must be an array")
+            canonical_placements: list[dict[str, object]] = []
+            for placement in placements:
+                if not isinstance(placement, Mapping):
+                    raise ValueError("deploy plan payload plan placement must be an object")
+                selector = placement.get("selector")
+                if not isinstance(selector, Mapping):
+                    raise ValueError("deploy plan payload plan placement selector must be an object")
+                selector_values = selector.get("values", [])
+                if not isinstance(selector_values, list):
+                    raise ValueError(
+                        "deploy plan payload plan placement selector values must be an array"
+                    )
+                canonical_placements.append(
+                    {
+                        "rule_id": placement.get("ruleId"),
+                        "selector": {
+                            "kind": selector.get("kind"),
+                            "values": selector_values,
+                        },
+                        "target_id": placement.get("target"),
+                    }
+                )
+            canonical_placements.sort(key=canonical_dumps)
+            computed_plan_hash = canonical_hash(
+                {
+                    "release_digest": provenance_fields["releaseDigest"],
+                    "deployment_revision_id": provenance_fields["deploymentRevisionId"],
+                    "graph_hash": graph_hash,
+                    "package_lock_hash": physical_plan.get("packageLockHash"),
+                    "targets": canonical_targets,
+                    "placements": canonical_placements,
+                    "default_target": physical_plan.get("defaultTarget"),
+                }
+            )
+            if computed_plan_hash != provenance_fields["planHash"]:
+                raise ValueError("deploy plan payload planHash does not match plan content")
+            revision_digest_fields: dict[str, str] = {}
+            for field_name in (
+                "deploymentSpecHash",
+                "resolvedBindingHash",
+                "targetCapabilityHash",
+                "contentDigest",
+            ):
+                value = deployment_revision.get(field_name)
+                if not isinstance(value, str):
+                    raise ValueError(
+                        f"deploy plan payload deploymentRevision.{field_name} must be a canonical sha256 digest"
+                    )
+                digest = value.removeprefix("sha256:")
+                if (
+                    not value.startswith("sha256:")
+                    or len(digest) != 64
+                    or any(character not in "0123456789abcdef" for character in digest)
+                ):
+                    raise ValueError(
+                        f"deploy plan payload deploymentRevision.{field_name} must be a canonical sha256 digest"
+                    )
+                revision_digest_fields[field_name] = value
+            top_level_deployment_spec_hash = deployment_plan_payload.get(
+                "deploymentSpecHash"
+            )
+            if top_level_deployment_spec_hash != revision_digest_fields["deploymentSpecHash"]:
+                raise ValueError(
+                    "deploy plan payload deploymentRevision deploymentSpecHash does not match top-level provenance"
+                )
+            computed_revision_digest = canonical_hash(
+                {
+                    "release_digest": provenance_fields["releaseDigest"],
+                    "deployment_spec_hash": revision_digest_fields["deploymentSpecHash"],
+                    "physical_plan_hash": provenance_fields["planHash"],
+                    "resolved_binding_hash": revision_digest_fields["resolvedBindingHash"],
+                    "target_capability_hash": revision_digest_fields["targetCapabilityHash"],
+                }
+            )
+            if computed_revision_digest != revision_digest_fields["contentDigest"]:
+                raise ValueError(
+                    "deploy plan payload deploymentRevision contentDigest does not match revision content"
+                )
+        except (OSError, ValueError) as error:
+            print(error)
+            return 1
+    if args.runtime == "native":
+        try:
+            import graphblocks_runtime
+        except ImportError as error:
+            print(f"graphblocks-runtime is required for --runtime native: {error}")
+            return 1
+        if not graphblocks_runtime.native_extension_available():
+            status = graphblocks_runtime.native_extension_status()
+            print(f"graphblocks-runtime native extension is not available: {status.get('error')}")
+            return 1
+        try:
+            graph_json = json.dumps(graph_documents[0], separators=(",", ":"), sort_keys=True)
+            inputs_json = canonical_dumps(inputs)
+            if (
+                args.run_id is not None
+                or args.run_store is not None
+                or args.journal_store is not None
+                or deployment_provenance is not None
+            ):
+                runtime_options: dict[str, object] = {}
+                if args.run_id is not None:
+                    runtime_options["runId"] = args.run_id
+                if args.run_store is not None:
+                    runtime_options["runStorePath"] = str(args.run_store)
+                if args.journal_store is not None:
+                    runtime_options["journalStorePath"] = str(args.journal_store)
+                if deployment_provenance is not None:
+                    runtime_options["deploymentProvenance"] = deployment_provenance.canonical_value()
+                result_json = graphblocks_runtime.run_stdlib_graph_with_options_json(
+                    graph_json,
+                    inputs_json,
+                    json.dumps(runtime_options, separators=(",", ":"), sort_keys=True),
+                )
+            else:
+                result_json = graphblocks_runtime.run_stdlib_graph_json(
+                    graph_json,
+                    inputs_json,
+                )
+            result_payload = _loads_strict_json("native runtime response", result_json)
+        except (RuntimeError, TypeError, ValueError, json.JSONDecodeError) as error:
+            print(f"native runtime execution failed: {error}")
+            return 1
+        if not isinstance(result_payload, dict):
+            print("native runtime response must decode to a JSON object")
+            return 1
+        print(canonical_dumps(result_payload))
+        return 0 if result_payload.get("status") == "succeeded" else 1
+
+    run_store = SQLiteRunStore(args.run_store) if args.run_store is not None else None
+    journals: list[SQLiteExecutionJournal] = []
+
+    def journal_factory(run_id: str) -> SQLiteExecutionJournal:
+        assert args.journal_store is not None
+        journal = SQLiteExecutionJournal(args.journal_store, run_id)
+        journals.append(journal)
+        return journal
+
+    try:
+        result = InProcessRuntime(
+            stdlib_registry(),
+            run_store=run_store,
+            journal_factory=(journal_factory if args.journal_store is not None else None),
+        ).run(
+            graph_documents[0],
+            inputs,
+            run_id=args.run_id or "run-000001",
+            deployment_provenance=deployment_provenance,
+        )
+        print(
+            json.dumps(
+                {
+                    "runId": result.run_id,
+                    "status": result.status,
+                    "outputs": canonical_loads(canonical_dumps(result.outputs)),
+                    "journal": [record.to_dict() for record in result.journal.records],
+                },
+                indent=2,
+                sort_keys=True,
+            )
+        )
+        return 0 if result.status == "succeeded" else 1
+    except (RuntimeError, TypeError, ValueError) as error:
+        print(f"runtime execution failed: {error}")
+        return 1
+    finally:
+        for journal in journals:
+            journal.close()
+        if run_store is not None:
+            run_store.close()
+
+def _run_migrate_command(
+    args: argparse.Namespace,
+    command_parsers: Mapping[str, argparse.ArgumentParser],
+) -> int:
+    del command_parsers
+    try:
+        documents = [migrate_document(document) for document in load_documents(args.path)]
+    except MigrationError as error:
+        print(str(error))
+        return 1
+    documents = [
+        normalize_graph(document) if document.get("kind") == "Graph" else document
+        for document in documents
+    ]
+    print(yaml.safe_dump_all(documents, sort_keys=False, allow_unicode=True).rstrip())
+    return 0
+
+def _run_lock_command(
+    args: argparse.Namespace,
+    command_parsers: Mapping[str, argparse.ArgumentParser],
+) -> int:
+    del command_parsers
+    documents = load_composed_documents(args.path, root=args.composition_root)
+    graph_documents = [document for document in documents if document.get("kind") == "Graph"]
+    if not graph_documents:
+        print(f"{args.path}: no Graph document found")
+        return 1
+    graph = graph_documents[0]
+    plan = compile_graph(graph)
+    package_lock = build_package_lock(
+        load_package_catalog(args.catalog),
+        requested=tuple(args.package),
+        include_default=not args.no_default,
+    )
+    metadata = graph.get("metadata", {})
+    graph_id = metadata.get("name") if isinstance(metadata, dict) else None
+    payload = {
+        "lockVersion": 1,
+        "graph": {
+            "id": graph_id,
+            "graphHash": plan.graph_hash,
+            "schemaVersion": graph.get("apiVersion"),
+        },
+        "packageCatalogVersion": package_lock.catalog_version,
+        "packageLockHash": package_lock.content_digest(),
+        "artifacts": list(package_lock.artifacts),
+        "runtime": {
+            "protocol": 1,
+            "distribution": "graphblocks-runtime",
+            "version": None,
+        },
+        "packages": [
+            {
+                "name": entry.distribution,
+                "versionConstraint": entry.version_constraint,
+                "import": entry.import_package,
+                "default": entry.default,
+                "layer": entry.layer,
+                "kind": entry.kind,
+                "stability": entry.stability,
+                "dependencies": list(entry.dependencies),
+                "forbiddenDependencies": list(entry.forbidden_dependencies),
+            }
+            for entry in package_lock.entries
+        ],
+        "excludedCategories": list(package_lock.excluded_categories),
+        "diagnostics": plan.diagnostics.to_list(),
+    }
+    text = json.dumps(payload, indent=2, sort_keys=True) + "\n"
+    if args.output is not None:
+        args.output.write_bytes(text.encode("utf-8"))
+    else:
+        print(text, end="")
+    return 0 if plan.ok else 1
+
+def _run_plugins_command(
+    args: argparse.Namespace,
+    command_parsers: Mapping[str, argparse.ArgumentParser],
+) -> int:
+    if args.plugins_command == "list":
+        registry = discover_plugins(args.path, include_installed=not args.no_installed)
+        payload = {"ok": registry.ok, "diagnostics": registry.diagnostics.to_list(), "plugins": registry.summaries()}
+        if args.json:
+            print(json.dumps(payload, indent=2, sort_keys=True))
+        else:
+            for plugin in payload["plugins"]:
+                print(
+                    f"{plugin['pluginId']} {plugin['version']} "
+                    f"{plugin['maturity']} blocks={plugin['blocks']} source={plugin['source']}"
+                )
+            for item in payload["diagnostics"]:
+                print(f"{item['severity']} {item['code']} {item['path']}: {item['message']}")
+        return 0 if registry.ok else 1
+    if args.plugins_command == "inspect":
+        registry = discover_plugins(args.path, include_installed=not args.no_installed)
+        for manifest in registry.manifests:
+            if manifest.plugin_id == args.plugin_id:
+                print(
+                    json.dumps(
+                        canonical_loads(canonical_dumps(manifest.raw)),
+                        indent=2,
+                        sort_keys=True,
+                    )
+                )
+                return 0 if registry.ok else 1
+        print(f"plugin not found: {args.plugin_id}")
+        return 1
+    if args.plugins_command == "validate":
+        try:
+            manifest = load_plugin_manifest(args.path)
+        except ValueError as error:
+            payload = {"ok": False, "diagnostics": [{"severity": "error", "code": "GB2012", "path": str(args.path), "message": str(error)}]}
+            if args.json:
+                print(json.dumps(payload, indent=2, sort_keys=True))
+            else:
+                print(str(error))
+            return 1
+        diagnostics = validate_plugin_manifest(manifest.raw)
+        payload = {"ok": diagnostics.ok, "diagnostics": diagnostics.to_list(), "plugin": manifest.summary()}
+        if args.json:
+            print(json.dumps(payload, indent=2, sort_keys=True))
+        else:
+            if diagnostics.diagnostics:
+                for item in diagnostics.diagnostics:
+                    print(f"{item.severity} {item.code} {item.path}: {item.message}")
+            else:
+                print("OK")
+        return 0 if diagnostics.ok else 1
+    command_parsers["plugins"].print_help()
+    return 0
+
+def _run_packages_command(
+    args: argparse.Namespace,
+    command_parsers: Mapping[str, argparse.ArgumentParser],
+) -> int:
+    if args.packages_command == "list":
+        rows = package_rows(load_package_catalog(args.catalog))
+        if args.json:
+            print(json.dumps({"packages": rows}, indent=2, sort_keys=True))
+        else:
+            for row in rows:
+                default = "default" if row["default"] else "optional"
+                print(
+                    f"{row['distribution']} {default} phase={row['implementationPhase']} "
+                    f"{row['kind']} {row['stability']}"
+                )
+        return 0
+    if args.packages_command == "doctor":
+        diagnostics = doctor_package_catalog(load_package_catalog(args.catalog), root=args.root)
+        if args.json:
+            print(json.dumps({"ok": diagnostics.ok, "diagnostics": diagnostics.to_list()}, indent=2, sort_keys=True))
+        elif diagnostics.diagnostics:
+            for item in diagnostics.diagnostics:
+                print(f"{item.severity} {item.code} {item.path}: {item.message}")
+        else:
+            print("OK")
+        return 0 if diagnostics.ok else 1
+    if args.packages_command == "audit":
+        diagnostics = audit_package_manifests(
+            args.root,
+            policy=PackageManifestAuditPolicy(
+                allowed_licenses=tuple(args.allowed_license),
+                blocked_dependencies=tuple(args.blocked_dependency),
+            ),
+        )
+        if args.json:
+            print(json.dumps({"ok": diagnostics.ok, "diagnostics": diagnostics.to_list()}, indent=2, sort_keys=True))
+        elif diagnostics.diagnostics:
+            for item in diagnostics.diagnostics:
+                print(f"{item.severity} {item.code} {item.path}: {item.message}")
+        else:
+            print("OK")
+        return 0 if diagnostics.ok else 1
+    if args.packages_command == "wheel-matrix":
+        matrix = build_wheel_matrix(
+            args.root,
+            python_versions=tuple(args.python_versions) or ("3.11", "3.12"),
+        )
+        payload = matrix.matrix_contract()
+        payload["contentDigest"] = matrix.content_digest()
+        payload["targetCount"] = payload.pop("target_count")
+        if args.json:
+            print(json.dumps(payload, indent=2, sort_keys=True))
+        elif matrix.diagnostics:
+            for item in matrix.diagnostics:
+                print(f"{item.severity} {item.code} {item.path}: {item.message}")
+        else:
+            print(f"OK {len(matrix.targets)} wheel targets")
+        return 0 if matrix.ok else 1
+    command_parsers["packages"].print_help()
+    return 0
+
+def _run_schemas_command(
+    args: argparse.Namespace,
+    command_parsers: Mapping[str, argparse.ArgumentParser],
+) -> int:
+    if args.schemas_command == "manifest":
+        try:
+            schema_root = args.path
+            if schema_root is None:
+                packaged_schema_root = resources.files("graphblocks").joinpath("schemas")
+                schema_root = (
+                    Path(str(packaged_schema_root))
+                    if packaged_schema_root.is_dir()
+                    else Path("schemas")
+                )
+            manifest = SchemaManifest.from_directory(schema_root)
+        except SchemaManifestError as error:
+            print(str(error))
+            return 1
+        print(json.dumps(manifest.manifest_payload(), indent=2, sort_keys=True))
+        return 0
+    command_parsers["schemas"].print_help()
+    return 0
+
+def _run_observe_command(
+    args: argparse.Namespace,
+    command_parsers: Mapping[str, argparse.ArgumentParser],
+) -> int:
+    if args.observe_command == "run":
+        store = SQLiteRunStore(args.store)
+        try:
+            record = store.get_run(args.run_id)
+        except KeyError:
+            store.close()
+            print(f"run not found: {args.run_id}")
+            return 1
+        store.close()
+        payload = {
+            "runId": record.run_id,
+            "graphHash": record.graph_hash,
+            "status": record.status,
+            "stateRevision": record.state_revision,
+            "inputs": record.inputs,
+            "state": record.state,
+        }
+        if args.json:
+            print(json.dumps(payload, indent=2, sort_keys=True))
+        else:
+            print(f"{record.run_id} {record.status} {record.graph_hash} stateRevision={record.state_revision}")
+        return 0
+    if args.observe_command == "journal":
+        journal = SQLiteExecutionJournal(args.store, args.run_id)
+        records = [record.to_dict() for record in journal.records]
+        terminal_kind = journal.terminal_kind
+        journal.close()
+        if not records:
+            print(f"journal not found: {args.run_id}")
+            return 1
+        payload = {
+            "runId": args.run_id,
+            "terminalKind": terminal_kind,
+            "records": records,
+        }
+        if args.json:
+            print(json.dumps(payload, indent=2, sort_keys=True))
+        else:
+            print(f"{args.run_id} terminal={terminal_kind or 'none'} records={len(records)}")
+            for record in records:
+                print(f"{record['sequence']} {record['kind']}")
+        return 0
+    command_parsers["observe"].print_help()
+    return 0
+
+_CliCommandHandler = Callable[
+    [argparse.Namespace, Mapping[str, argparse.ArgumentParser]],
+    int,
+]
+_CLI_COMMAND_HANDLERS: Mapping[str, _CliCommandHandler] = MappingProxyType(
+    {
+        "compose": _run_compose_command,
+        "validate": _run_validate_command,
+        "plan": _run_plan_command,
+        "run": _run_execute_command,
+        "migrate": _run_migrate_command,
+        "lock": _run_lock_command,
+        "plugins": _run_plugins_command,
+        "packages": _run_packages_command,
+        "schemas": _run_schemas_command,
+        "observe": _run_observe_command,
+    }
+)
+
+
 def _main(argv: list[str] | None = None) -> int:
     parser, command_parsers = _build_parser()
 
@@ -467,667 +1194,9 @@ def _main(argv: list[str] | None = None) -> int:
     if args.version:
         print(__version__)
         return 0
-    if args.command == "compose":
-        result = compose_documents(args.path, root=args.root)
-        rendered = yaml.safe_dump_all(
-            result.mutable_documents(),
-            sort_keys=False,
-            allow_unicode=True,
-        )
-        if args.output is None:
-            print(rendered, end="")
-        else:
-            try:
-                args.output.write_bytes(rendered.encode("utf-8"))
-            except OSError as error:
-                raise CompositionError(
-                    "CompositionOutputError",
-                    "materialized YAML output could not be written",
-                ) from error
-        if args.report is not None:
-            try:
-                args.report.write_bytes(
-                    (
-                        json.dumps(result.report.canonical_value(), indent=2, sort_keys=True)
-                        + "\n"
-                    ).encode("utf-8")
-                )
-            except OSError as error:
-                raise CompositionError(
-                    "CompositionOutputError",
-                    "composition report output could not be written",
-                ) from error
-        return 0
-    if args.command == "validate":
-        documents = load_composed_documents(args.path, root=args.composition_root)
-        diagnostics: list[dict[str, str]] = []
-        ok = True
-        registry = discover_plugins(
-            args.plugin_path,
-            include_installed=args.discover_installed_plugins,
-        )
-        ok = ok and registry.ok
-        diagnostics.extend(item.to_dict() | {"document": "plugins"} for item in registry.diagnostics.diagnostics)
-        try:
-            block_catalog = BlockCatalog.from_manifests(
-                registry.manifests,
-                allow_unknown_blocks=args.allow_unknown_blocks,
-            )
-        except ValueError as error:
-            ok = False
-            block_catalog = BlockCatalog({})
-            diagnostics.append(
-                Diagnostic("GB2017", f"block catalog is invalid: {error}", "$.plugins").to_dict()
-                | {"document": "plugins"}
-            )
-        for index, document in enumerate(documents):
-            kind = document.get("kind")
-            api_version = document.get("apiVersion")
-            legacy_graph = kind == "Graph" and api_version in LEGACY_GRAPH_API_VERSIONS
-            if kind in SCHEMA_RESOURCE_KINDS and not legacy_graph:
-                violations = resource_schema_errors(document)
-                if violations:
-                    ok = False
-                    diagnostics.extend(
-                        {
-                            "code": violation.code,
-                            "message": violation.message,
-                            "path": violation.path,
-                            "severity": "error",
-                            "document": str(index),
-                        }
-                        for violation in violations
-                    )
-                    continue
-            if kind == "Graph":
-                plan = compile_graph(document, block_catalog=block_catalog)
-                ok = ok and plan.ok
-                diagnostics.extend(
-                    {
-                        **item.to_dict(),
-                        "document": str(index),
-                    }
-                    for item in plan.diagnostics.diagnostics
-                )
-            elif kind in STRUCTURAL_KINDS:
-                for field in ("apiVersion", "kind", "metadata", "spec"):
-                    if field not in document:
-                        ok = False
-                        diagnostics.append(
-                            Diagnostic("GB0004", f"missing required field {field!r}", f"$[{index}].{field}").to_dict()
-                            | {"document": str(index)}
-                        )
-            else:
-                ok = False
-                diagnostics.append(
-                    Diagnostic("GB0001", f"unsupported document kind {kind!r}", f"$[{index}].kind").to_dict()
-                    | {"document": str(index)}
-                )
-        if args.json:
-            print(json.dumps({"ok": ok, "diagnostics": diagnostics}, indent=2, sort_keys=True))
-        else:
-            if diagnostics:
-                for item in diagnostics:
-                    print(f"{item['severity']} {item['code']} {item['path']}: {item['message']}")
-            else:
-                print("OK")
-        return 0 if ok else 1
-    if args.command == "plan":
-        documents = load_composed_documents(args.path, root=args.composition_root)
-        graph_documents = [document for document in documents if document.get("kind") == "Graph"]
-        if not graph_documents:
-            print(f"{args.path}: no Graph document found")
-            return 1
-        registry = discover_plugins(
-            args.plugin_path,
-            include_installed=args.discover_installed_plugins,
-        )
-        plugin_diagnostics = registry.diagnostics.to_list()
-        try:
-            block_catalog = BlockCatalog.from_manifests(
-                registry.manifests,
-                allow_unknown_blocks=args.allow_unknown_blocks,
-            )
-        except ValueError as error:
-            block_catalog = BlockCatalog({})
-            plugin_diagnostics.append(
-                Diagnostic("GB2017", f"block catalog is invalid: {error}", "$.plugins").to_dict()
-            )
-        plan = compile_graph(graph_documents[0], block_catalog=block_catalog)
-        payload: dict[str, object] = {
-            "target": args.target,
-            "hash": plan.graph_hash,
-            "ok": (
-                registry.ok
-                and not any(
-                    diagnostic.get("severity") == "error"
-                    for diagnostic in plugin_diagnostics
-                )
-                and plan.ok
-            ),
-            "diagnostics": [*plugin_diagnostics, *plan.diagnostics.to_list()],
-        }
-        if args.expand:
-            payload["graph"] = plan.normalized
-        if args.show_bindings:
-            payload["bindings"] = [document for document in documents if document.get("kind") == "Binding"]
-        if args.show_packages:
-            nodes = plan.normalized.get("spec", {}).get("nodes", {})
-            payload["requirements"] = sorted(
-                {
-                    str(node.get("block")).split("@", 1)[0]
-                    for node in nodes.values()
-                    if isinstance(node, dict) and isinstance(node.get("block"), str)
-                }
-            )
-        print(json.dumps(payload, indent=2, sort_keys=True))
-        return 0 if payload["ok"] else 1
-    if args.command == "run":
-        documents = load_composed_documents(args.path, root=args.composition_root)
-        graph_documents = [document for document in documents if document.get("kind") == "Graph"]
-        if not graph_documents:
-            print(f"{args.path}: no Graph document found")
-            return 1
-        try:
-            inputs = _loads_strict_json("--input-json", args.input_json)
-        except ValueError as error:
-            print(error)
-            return 1
-        if not isinstance(inputs, dict):
-            print("--input-json must decode to a JSON object")
-            return 1
-        deployment_provenance = None
-        if (args.deployment_plan is None) != (args.release_signature_digest is None):
-            print("--deployment-plan and --release-signature-digest must be provided together")
-            return 1
-        if args.deployment_plan is not None:
-            try:
-                deployment_plan_payload = _loads_strict_json(
-                    "deploy plan payload",
-                    args.deployment_plan.read_text(encoding="utf-8"),
-                )
-                if not isinstance(deployment_plan_payload, Mapping):
-                    raise ValueError("deploy plan payload must be a JSON object")
-                if deployment_plan_payload.get("ok") is not True:
-                    raise ValueError("deploy plan payload is not successful")
-                provenance_fields: dict[str, str] = {}
-                for field_name in (
-                    "releaseDigest",
-                    "deploymentRevisionId",
-                    "planHash",
-                ):
-                    value = deployment_plan_payload.get(field_name)
-                    if not isinstance(value, str) or not value.strip():
-                        raise ValueError(
-                            f"deploy plan payload {field_name} must be a non-empty string"
-                        )
-                    if value != value.strip():
-                        raise ValueError(
-                            f"deploy plan payload {field_name} must not contain surrounding whitespace"
-                        )
-                    provenance_fields[field_name] = value
-                deployment_revision = deployment_plan_payload.get("deploymentRevision")
-                if not isinstance(deployment_revision, Mapping):
-                    raise ValueError("deploy plan payload deploymentRevision must be an object")
-                for revision_field, top_level_field in (
-                    ("revisionId", "deploymentRevisionId"),
-                    ("releaseDigest", "releaseDigest"),
-                    ("physicalPlanHash", "planHash"),
-                ):
-                    if deployment_revision.get(revision_field) != provenance_fields[top_level_field]:
-                        raise ValueError(
-                            "deploy plan payload deploymentRevision does not match top-level provenance"
-                        )
-                deployment_provenance = RunDeploymentProvenance(
-                    release_digest=provenance_fields["releaseDigest"],
-                    deployment_revision_id=provenance_fields["deploymentRevisionId"],
-                    physical_plan_hash=provenance_fields["planHash"],
-                    release_signature_digest=args.release_signature_digest,
-                ).validate_for_production()
-                physical_plan = deployment_plan_payload.get("plan")
-                if not isinstance(physical_plan, Mapping):
-                    raise ValueError("deploy plan payload plan must be an object")
-                graph_hash = physical_plan.get("graphHash")
-                if not isinstance(graph_hash, str) or not graph_hash.strip():
-                    raise ValueError("deploy plan payload plan.graphHash must be a non-empty string")
-                compiled_graph_hash = compile_graph(graph_documents[0]).graph_hash
-                if graph_hash != compiled_graph_hash:
-                    raise ValueError("deploy plan graphHash does not match the runtime graph")
-                targets = physical_plan.get("targets", {})
-                if not isinstance(targets, Mapping):
-                    raise ValueError("deploy plan payload plan.targets must be an object")
-                canonical_targets: list[dict[str, object]] = []
-                for target_id, target in sorted(targets.items()):
-                    if not isinstance(target, Mapping):
-                        raise ValueError("deploy plan payload plan target must be an object")
-                    capabilities = target.get("capabilities", [])
-                    effects = target.get("effects", [])
-                    if not isinstance(capabilities, list) or not isinstance(effects, list):
-                        raise ValueError(
-                            "deploy plan payload plan target capabilities and effects must be arrays"
-                        )
-                    canonical_targets.append(
-                        {
-                            "target_id": target_id,
-                            "kind": target.get("kind"),
-                            "execution_host": target.get("executionHost"),
-                            "capabilities": capabilities,
-                            "effects": effects,
-                            "package_lock": target.get("packageLock"),
-                            "image": target.get("image"),
-                        }
-                    )
-                placements = physical_plan.get("placements", [])
-                if not isinstance(placements, list):
-                    raise ValueError("deploy plan payload plan.placements must be an array")
-                canonical_placements: list[dict[str, object]] = []
-                for placement in placements:
-                    if not isinstance(placement, Mapping):
-                        raise ValueError("deploy plan payload plan placement must be an object")
-                    selector = placement.get("selector")
-                    if not isinstance(selector, Mapping):
-                        raise ValueError("deploy plan payload plan placement selector must be an object")
-                    selector_values = selector.get("values", [])
-                    if not isinstance(selector_values, list):
-                        raise ValueError(
-                            "deploy plan payload plan placement selector values must be an array"
-                        )
-                    canonical_placements.append(
-                        {
-                            "rule_id": placement.get("ruleId"),
-                            "selector": {
-                                "kind": selector.get("kind"),
-                                "values": selector_values,
-                            },
-                            "target_id": placement.get("target"),
-                        }
-                    )
-                canonical_placements.sort(key=canonical_dumps)
-                computed_plan_hash = canonical_hash(
-                    {
-                        "release_digest": provenance_fields["releaseDigest"],
-                        "deployment_revision_id": provenance_fields["deploymentRevisionId"],
-                        "graph_hash": graph_hash,
-                        "package_lock_hash": physical_plan.get("packageLockHash"),
-                        "targets": canonical_targets,
-                        "placements": canonical_placements,
-                        "default_target": physical_plan.get("defaultTarget"),
-                    }
-                )
-                if computed_plan_hash != provenance_fields["planHash"]:
-                    raise ValueError("deploy plan payload planHash does not match plan content")
-                revision_digest_fields: dict[str, str] = {}
-                for field_name in (
-                    "deploymentSpecHash",
-                    "resolvedBindingHash",
-                    "targetCapabilityHash",
-                    "contentDigest",
-                ):
-                    value = deployment_revision.get(field_name)
-                    if not isinstance(value, str):
-                        raise ValueError(
-                            f"deploy plan payload deploymentRevision.{field_name} must be a canonical sha256 digest"
-                        )
-                    digest = value.removeprefix("sha256:")
-                    if (
-                        not value.startswith("sha256:")
-                        or len(digest) != 64
-                        or any(character not in "0123456789abcdef" for character in digest)
-                    ):
-                        raise ValueError(
-                            f"deploy plan payload deploymentRevision.{field_name} must be a canonical sha256 digest"
-                        )
-                    revision_digest_fields[field_name] = value
-                top_level_deployment_spec_hash = deployment_plan_payload.get(
-                    "deploymentSpecHash"
-                )
-                if top_level_deployment_spec_hash != revision_digest_fields["deploymentSpecHash"]:
-                    raise ValueError(
-                        "deploy plan payload deploymentRevision deploymentSpecHash does not match top-level provenance"
-                    )
-                computed_revision_digest = canonical_hash(
-                    {
-                        "release_digest": provenance_fields["releaseDigest"],
-                        "deployment_spec_hash": revision_digest_fields["deploymentSpecHash"],
-                        "physical_plan_hash": provenance_fields["planHash"],
-                        "resolved_binding_hash": revision_digest_fields["resolvedBindingHash"],
-                        "target_capability_hash": revision_digest_fields["targetCapabilityHash"],
-                    }
-                )
-                if computed_revision_digest != revision_digest_fields["contentDigest"]:
-                    raise ValueError(
-                        "deploy plan payload deploymentRevision contentDigest does not match revision content"
-                    )
-            except (OSError, ValueError) as error:
-                print(error)
-                return 1
-        if args.runtime == "native":
-            try:
-                import graphblocks_runtime
-            except ImportError as error:
-                print(f"graphblocks-runtime is required for --runtime native: {error}")
-                return 1
-            if not graphblocks_runtime.native_extension_available():
-                status = graphblocks_runtime.native_extension_status()
-                print(f"graphblocks-runtime native extension is not available: {status.get('error')}")
-                return 1
-            try:
-                graph_json = json.dumps(graph_documents[0], separators=(",", ":"), sort_keys=True)
-                inputs_json = canonical_dumps(inputs)
-                if (
-                    args.run_id is not None
-                    or args.run_store is not None
-                    or args.journal_store is not None
-                    or deployment_provenance is not None
-                ):
-                    runtime_options: dict[str, object] = {}
-                    if args.run_id is not None:
-                        runtime_options["runId"] = args.run_id
-                    if args.run_store is not None:
-                        runtime_options["runStorePath"] = str(args.run_store)
-                    if args.journal_store is not None:
-                        runtime_options["journalStorePath"] = str(args.journal_store)
-                    if deployment_provenance is not None:
-                        runtime_options["deploymentProvenance"] = deployment_provenance.canonical_value()
-                    result_json = graphblocks_runtime.run_stdlib_graph_with_options_json(
-                        graph_json,
-                        inputs_json,
-                        json.dumps(runtime_options, separators=(",", ":"), sort_keys=True),
-                    )
-                else:
-                    result_json = graphblocks_runtime.run_stdlib_graph_json(
-                        graph_json,
-                        inputs_json,
-                    )
-                result_payload = _loads_strict_json("native runtime response", result_json)
-            except (RuntimeError, TypeError, ValueError, json.JSONDecodeError) as error:
-                print(f"native runtime execution failed: {error}")
-                return 1
-            if not isinstance(result_payload, dict):
-                print("native runtime response must decode to a JSON object")
-                return 1
-            print(canonical_dumps(result_payload))
-            return 0 if result_payload.get("status") == "succeeded" else 1
-
-        run_store = SQLiteRunStore(args.run_store) if args.run_store is not None else None
-        journals: list[SQLiteExecutionJournal] = []
-
-        def journal_factory(run_id: str) -> SQLiteExecutionJournal:
-            assert args.journal_store is not None
-            journal = SQLiteExecutionJournal(args.journal_store, run_id)
-            journals.append(journal)
-            return journal
-
-        try:
-            result = InProcessRuntime(
-                stdlib_registry(),
-                run_store=run_store,
-                journal_factory=(journal_factory if args.journal_store is not None else None),
-            ).run(
-                graph_documents[0],
-                inputs,
-                run_id=args.run_id or "run-000001",
-                deployment_provenance=deployment_provenance,
-            )
-            print(
-                json.dumps(
-                    {
-                        "runId": result.run_id,
-                        "status": result.status,
-                        "outputs": canonical_loads(canonical_dumps(result.outputs)),
-                        "journal": [record.to_dict() for record in result.journal.records],
-                    },
-                    indent=2,
-                    sort_keys=True,
-                )
-            )
-            return 0 if result.status == "succeeded" else 1
-        except (RuntimeError, TypeError, ValueError) as error:
-            print(f"runtime execution failed: {error}")
-            return 1
-        finally:
-            for journal in journals:
-                journal.close()
-            if run_store is not None:
-                run_store.close()
-    if args.command == "migrate":
-        try:
-            documents = [migrate_document(document) for document in load_documents(args.path)]
-        except MigrationError as error:
-            print(str(error))
-            return 1
-        documents = [
-            normalize_graph(document) if document.get("kind") == "Graph" else document
-            for document in documents
-        ]
-        print(yaml.safe_dump_all(documents, sort_keys=False, allow_unicode=True).rstrip())
-        return 0
-    if args.command == "lock":
-        documents = load_composed_documents(args.path, root=args.composition_root)
-        graph_documents = [document for document in documents if document.get("kind") == "Graph"]
-        if not graph_documents:
-            print(f"{args.path}: no Graph document found")
-            return 1
-        graph = graph_documents[0]
-        plan = compile_graph(graph)
-        package_lock = build_package_lock(
-            load_package_catalog(args.catalog),
-            requested=tuple(args.package),
-            include_default=not args.no_default,
-        )
-        metadata = graph.get("metadata", {})
-        graph_id = metadata.get("name") if isinstance(metadata, dict) else None
-        payload = {
-            "lockVersion": 1,
-            "graph": {
-                "id": graph_id,
-                "graphHash": plan.graph_hash,
-                "schemaVersion": graph.get("apiVersion"),
-            },
-            "packageCatalogVersion": package_lock.catalog_version,
-            "packageLockHash": package_lock.content_digest(),
-            "artifacts": list(package_lock.artifacts),
-            "runtime": {
-                "protocol": 1,
-                "distribution": "graphblocks-runtime",
-                "version": None,
-            },
-            "packages": [
-                {
-                    "name": entry.distribution,
-                    "versionConstraint": entry.version_constraint,
-                    "import": entry.import_package,
-                    "default": entry.default,
-                    "layer": entry.layer,
-                    "kind": entry.kind,
-                    "stability": entry.stability,
-                    "dependencies": list(entry.dependencies),
-                    "forbiddenDependencies": list(entry.forbidden_dependencies),
-                }
-                for entry in package_lock.entries
-            ],
-            "excludedCategories": list(package_lock.excluded_categories),
-            "diagnostics": plan.diagnostics.to_list(),
-        }
-        text = json.dumps(payload, indent=2, sort_keys=True) + "\n"
-        if args.output is not None:
-            args.output.write_bytes(text.encode("utf-8"))
-        else:
-            print(text, end="")
-        return 0 if plan.ok else 1
-    if args.command == "plugins":
-        if args.plugins_command == "list":
-            registry = discover_plugins(args.path, include_installed=not args.no_installed)
-            payload = {"ok": registry.ok, "diagnostics": registry.diagnostics.to_list(), "plugins": registry.summaries()}
-            if args.json:
-                print(json.dumps(payload, indent=2, sort_keys=True))
-            else:
-                for plugin in payload["plugins"]:
-                    print(
-                        f"{plugin['pluginId']} {plugin['version']} "
-                        f"{plugin['maturity']} blocks={plugin['blocks']} source={plugin['source']}"
-                    )
-                for item in payload["diagnostics"]:
-                    print(f"{item['severity']} {item['code']} {item['path']}: {item['message']}")
-            return 0 if registry.ok else 1
-        if args.plugins_command == "inspect":
-            registry = discover_plugins(args.path, include_installed=not args.no_installed)
-            for manifest in registry.manifests:
-                if manifest.plugin_id == args.plugin_id:
-                    print(
-                        json.dumps(
-                            canonical_loads(canonical_dumps(manifest.raw)),
-                            indent=2,
-                            sort_keys=True,
-                        )
-                    )
-                    return 0 if registry.ok else 1
-            print(f"plugin not found: {args.plugin_id}")
-            return 1
-        if args.plugins_command == "validate":
-            try:
-                manifest = load_plugin_manifest(args.path)
-            except ValueError as error:
-                payload = {"ok": False, "diagnostics": [{"severity": "error", "code": "GB2012", "path": str(args.path), "message": str(error)}]}
-                if args.json:
-                    print(json.dumps(payload, indent=2, sort_keys=True))
-                else:
-                    print(str(error))
-                return 1
-            diagnostics = validate_plugin_manifest(manifest.raw)
-            payload = {"ok": diagnostics.ok, "diagnostics": diagnostics.to_list(), "plugin": manifest.summary()}
-            if args.json:
-                print(json.dumps(payload, indent=2, sort_keys=True))
-            else:
-                if diagnostics.diagnostics:
-                    for item in diagnostics.diagnostics:
-                        print(f"{item.severity} {item.code} {item.path}: {item.message}")
-                else:
-                    print("OK")
-            return 0 if diagnostics.ok else 1
-        command_parsers["plugins"].print_help()
-        return 0
-    if args.command == "packages":
-        if args.packages_command == "list":
-            rows = package_rows(load_package_catalog(args.catalog))
-            if args.json:
-                print(json.dumps({"packages": rows}, indent=2, sort_keys=True))
-            else:
-                for row in rows:
-                    default = "default" if row["default"] else "optional"
-                    print(
-                        f"{row['distribution']} {default} phase={row['implementationPhase']} "
-                        f"{row['kind']} {row['stability']}"
-                    )
-            return 0
-        if args.packages_command == "doctor":
-            diagnostics = doctor_package_catalog(load_package_catalog(args.catalog), root=args.root)
-            if args.json:
-                print(json.dumps({"ok": diagnostics.ok, "diagnostics": diagnostics.to_list()}, indent=2, sort_keys=True))
-            elif diagnostics.diagnostics:
-                for item in diagnostics.diagnostics:
-                    print(f"{item.severity} {item.code} {item.path}: {item.message}")
-            else:
-                print("OK")
-            return 0 if diagnostics.ok else 1
-        if args.packages_command == "audit":
-            diagnostics = audit_package_manifests(
-                args.root,
-                policy=PackageManifestAuditPolicy(
-                    allowed_licenses=tuple(args.allowed_license),
-                    blocked_dependencies=tuple(args.blocked_dependency),
-                ),
-            )
-            if args.json:
-                print(json.dumps({"ok": diagnostics.ok, "diagnostics": diagnostics.to_list()}, indent=2, sort_keys=True))
-            elif diagnostics.diagnostics:
-                for item in diagnostics.diagnostics:
-                    print(f"{item.severity} {item.code} {item.path}: {item.message}")
-            else:
-                print("OK")
-            return 0 if diagnostics.ok else 1
-        if args.packages_command == "wheel-matrix":
-            matrix = build_wheel_matrix(
-                args.root,
-                python_versions=tuple(args.python_versions) or ("3.11", "3.12"),
-            )
-            payload = matrix.matrix_contract()
-            payload["contentDigest"] = matrix.content_digest()
-            payload["targetCount"] = payload.pop("target_count")
-            if args.json:
-                print(json.dumps(payload, indent=2, sort_keys=True))
-            elif matrix.diagnostics:
-                for item in matrix.diagnostics:
-                    print(f"{item.severity} {item.code} {item.path}: {item.message}")
-            else:
-                print(f"OK {len(matrix.targets)} wheel targets")
-            return 0 if matrix.ok else 1
-        command_parsers["packages"].print_help()
-        return 0
-    if args.command == "schemas":
-        if args.schemas_command == "manifest":
-            try:
-                schema_root = args.path
-                if schema_root is None:
-                    packaged_schema_root = resources.files("graphblocks").joinpath("schemas")
-                    schema_root = (
-                        Path(str(packaged_schema_root))
-                        if packaged_schema_root.is_dir()
-                        else Path("schemas")
-                    )
-                manifest = SchemaManifest.from_directory(schema_root)
-            except SchemaManifestError as error:
-                print(str(error))
-                return 1
-            print(json.dumps(manifest.manifest_payload(), indent=2, sort_keys=True))
-            return 0
-        command_parsers["schemas"].print_help()
-        return 0
-    if args.command == "observe":
-        if args.observe_command == "run":
-            store = SQLiteRunStore(args.store)
-            try:
-                record = store.get_run(args.run_id)
-            except KeyError:
-                store.close()
-                print(f"run not found: {args.run_id}")
-                return 1
-            store.close()
-            payload = {
-                "runId": record.run_id,
-                "graphHash": record.graph_hash,
-                "status": record.status,
-                "stateRevision": record.state_revision,
-                "inputs": record.inputs,
-                "state": record.state,
-            }
-            if args.json:
-                print(json.dumps(payload, indent=2, sort_keys=True))
-            else:
-                print(f"{record.run_id} {record.status} {record.graph_hash} stateRevision={record.state_revision}")
-            return 0
-        if args.observe_command == "journal":
-            journal = SQLiteExecutionJournal(args.store, args.run_id)
-            records = [record.to_dict() for record in journal.records]
-            terminal_kind = journal.terminal_kind
-            journal.close()
-            if not records:
-                print(f"journal not found: {args.run_id}")
-                return 1
-            payload = {
-                "runId": args.run_id,
-                "terminalKind": terminal_kind,
-                "records": records,
-            }
-            if args.json:
-                print(json.dumps(payload, indent=2, sort_keys=True))
-            else:
-                print(f"{args.run_id} terminal={terminal_kind or 'none'} records={len(records)}")
-                for record in records:
-                    print(f"{record['sequence']} {record['kind']}")
-            return 0
-        command_parsers["observe"].print_help()
-        return 0
+    command_handler = _CLI_COMMAND_HANDLERS.get(args.command)
+    if command_handler is not None:
+        return command_handler(args, command_parsers)
     release_documents: list[dict[str, object]] = []
     release: GraphRelease | None = None
     archive_manifest: Mapping[str, object] | None = None
