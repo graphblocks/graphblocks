@@ -3,12 +3,13 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 import math
 import pickle
-from threading import Barrier
+from threading import Barrier, Event
 
 import pytest
 
 from graphblocks.runtime import (
     ExecutionJournal,
+    JournalSnapshot,
     JournalRecord,
     JournalStateError,
     LocalExecutionJournal,
@@ -66,22 +67,152 @@ def test_execution_journal_records_snapshot_payloads_and_freeze_nested_values() 
         record.payload["events"][0]["kind"] = "mutated"
 
 
-@pytest.mark.parametrize("journal_type", (ExecutionJournal, LocalExecutionJournal))
+@pytest.mark.parametrize(
+    ("journal_type", "storage_name"),
+    (
+        (ExecutionJournal, "_records"),
+        (LocalExecutionJournal, "records"),
+    ),
+)
 def test_in_memory_journal_append_keeps_constant_time_internal_storage(
     journal_type: type[ExecutionJournal] | type[LocalExecutionJournal],
+    storage_name: str,
 ) -> None:
     journal = journal_type("run-000001")
     initial_snapshot = journal.records
-    storage = object.__getattribute__(journal, "records")
+    storage = object.__getattribute__(journal, storage_name)
 
     for index in range(1_000):
         journal.append("node_started", {"node": f"node-{index}"})
 
     assert isinstance(storage, list)
-    assert object.__getattribute__(journal, "records") is storage
+    assert object.__getattribute__(journal, storage_name) is storage
     assert initial_snapshot == ()
     assert isinstance(journal.records, tuple)
     assert len(journal.records) == 1_000
+
+
+def test_execution_journal_is_unhashable_and_uses_identity_equality() -> None:
+    journal = ExecutionJournal("run-000001")
+    same_state = ExecutionJournal("run-000001")
+
+    assert journal is not same_state
+    assert journal != same_state
+    with pytest.raises(TypeError):
+        hash(journal)
+
+    journal.append("run_started", {})
+
+    with pytest.raises(TypeError):
+        hash(journal)
+
+
+def test_execution_journal_snapshot_is_detached_and_immutable() -> None:
+    journal = ExecutionJournal("run-000001")
+    journal.append("run_started", {"input": {"value": 1}})
+    running_snapshot = journal.snapshot()
+
+    journal.append("node_started", {"node": "first"})
+    journal.append_terminal("run_succeeded", {"outputs": {"answer": "ok"}})
+    terminal_snapshot = journal.snapshot()
+
+    assert isinstance(running_snapshot, JournalSnapshot)
+    assert running_snapshot == JournalSnapshot(
+        "run-000001",
+        running_snapshot.records,
+    )
+    assert [record.kind for record in running_snapshot.records] == ["run_started"]
+    assert running_snapshot.terminal_kind is None
+    assert [record.kind for record in terminal_snapshot.records] == [
+        "run_started",
+        "node_started",
+        "run_succeeded",
+    ]
+    assert terminal_snapshot.terminal_kind == "run_succeeded"
+    with pytest.raises(AttributeError):
+        running_snapshot.terminal_kind = "run_succeeded"  # type: ignore[misc]
+    with pytest.raises(AttributeError):
+        running_snapshot.records += terminal_snapshot.records  # type: ignore[misc]
+    with pytest.raises(TypeError):
+        running_snapshot.records[0].payload["input"]["value"] = 2
+    with pytest.raises(TypeError):
+        hash(running_snapshot)
+    with pytest.raises(AttributeError):
+        journal.run_id = "different-run"  # type: ignore[misc]
+
+
+def test_execution_journal_serializes_concurrent_appends_and_terminal_commit() -> None:
+    journal = ExecutionJournal("run-000001")
+    append_barrier = Barrier(9)
+
+    def append_record(index: int) -> int:
+        append_barrier.wait(timeout=5)
+        return journal.append("node_started", {"node": index}).sequence
+
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        futures = [executor.submit(append_record, index) for index in range(8)]
+        append_barrier.wait(timeout=5)
+        sequences = [future.result(timeout=5) for future in futures]
+
+    terminal_barrier = Barrier(3)
+
+    def append_terminal(kind: str) -> str:
+        terminal_barrier.wait(timeout=5)
+        try:
+            return journal.append_terminal(kind, {"kind": kind}).kind  # type: ignore[arg-type]
+        except JournalStateError:
+            return "rejected"
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        terminal_futures = [
+            executor.submit(append_terminal, "run_succeeded"),
+            executor.submit(append_terminal, "run_failed"),
+        ]
+        terminal_barrier.wait(timeout=5)
+        outcomes = [future.result(timeout=5) for future in terminal_futures]
+
+    snapshot = journal.snapshot()
+
+    assert sorted(sequences) == list(range(1, 9))
+    assert [record.sequence for record in snapshot.records] == list(range(1, 10))
+    assert outcomes.count("rejected") == 1
+    assert snapshot.terminal_kind in {"run_succeeded", "run_failed"}
+    assert snapshot.records[-1].kind == snapshot.terminal_kind
+
+
+def test_execution_journal_canonicalizes_payload_without_holding_state_lock() -> None:
+    journal = ExecutionJournal("run-000001")
+    canonicalization_started = Event()
+    release_canonicalization = Event()
+
+    class SnapshotDependentPayload(dict[str, object]):
+        def items(self):
+            canonicalization_started.set()
+            if not release_canonicalization.wait(timeout=5):
+                raise RuntimeError("snapshot did not complete")
+            return super().items()
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        terminal_future = executor.submit(
+            journal.append_terminal,
+            "run_succeeded",
+            SnapshotDependentPayload({"outputs": {}}),
+        )
+        assert canonicalization_started.wait(timeout=5)
+        snapshot_future = executor.submit(journal.snapshot)
+        try:
+            running_snapshot = snapshot_future.result(timeout=2)
+        finally:
+            release_canonicalization.set()
+        terminal_record = terminal_future.result(timeout=5)
+
+    terminal_snapshot = journal.snapshot()
+
+    assert running_snapshot.records == ()
+    assert running_snapshot.terminal_kind is None
+    assert terminal_record.sequence == 1
+    assert terminal_snapshot.records == (terminal_record,)
+    assert terminal_snapshot.terminal_kind == "run_succeeded"
 
 
 @pytest.mark.parametrize("journal_type", (ExecutionJournal, LocalExecutionJournal))
@@ -99,6 +230,42 @@ def test_in_memory_journal_restores_mutable_storage_after_pickle_round_trip(
         "first",
         "second",
     ]
+
+
+def test_execution_journal_pickle_preserves_terminal_seal() -> None:
+    journal = ExecutionJournal("run-000001")
+    journal.append("run_started", {})
+    journal.append_terminal("run_succeeded", {"outputs": {}})
+
+    restored = pickle.loads(pickle.dumps(journal))
+
+    assert restored.snapshot() == journal.snapshot()
+    with pytest.raises(JournalStateError, match="after terminal"):
+        restored.append("node_started", {"node": "late"})
+
+
+def test_execution_journal_restores_legacy_slot_pickle_state() -> None:
+    records = (
+        JournalRecord(1, "run_started", {}),
+        JournalRecord(2, "run_succeeded", {"outputs": {}}),
+    )
+
+    class LegacyExecutionJournal:
+        def __reduce__(self):
+            return (
+                object.__new__,
+                (ExecutionJournal,),
+                ["run-legacy", records, "run_succeeded"],
+            )
+
+    restored = pickle.loads(pickle.dumps(LegacyExecutionJournal()))
+
+    assert isinstance(restored, ExecutionJournal)
+    assert restored.run_id == "run-legacy"
+    assert restored.records == records
+    assert restored.terminal_kind == "run_succeeded"
+    with pytest.raises(JournalStateError, match="after terminal"):
+        restored.append("node_started", {"node": "late"})
 
 
 def test_journal_record_backends_share_canonical_nested_payload_snapshot(
