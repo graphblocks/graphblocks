@@ -4,11 +4,13 @@ from collections.abc import Iterable, Mapping
 from copy import deepcopy
 from dataclasses import dataclass, field
 import hashlib
-import json
 import re
 from typing import Literal
 
 from graphblocks.deployment import ExecutionTarget, RolloutPlan
+from graphblocks.integrations._serialization import (
+    canonical_json_dumps as _canonical_dumps,
+)
 
 
 KubernetesProtocol = Literal["TCP", "UDP", "SCTP"]
@@ -22,16 +24,6 @@ _ROLLOUT_SELECTOR_VERSION = "v2"
 
 class KubernetesAdapterError(ValueError):
     """Raised when a Kubernetes manifest contract cannot be rendered."""
-
-
-def _canonical_dumps(value: object) -> str:
-    return json.dumps(
-        value,
-        allow_nan=False,
-        ensure_ascii=False,
-        separators=(",", ":"),
-        sort_keys=True,
-    )
 
 
 def _content_digest(value: object) -> str:

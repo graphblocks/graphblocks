@@ -4,9 +4,11 @@ from collections.abc import Mapping
 from copy import deepcopy
 from dataclasses import dataclass, field
 import hashlib
-import json
 
 from graphblocks.deployment import ExecutionTarget
+from graphblocks.integrations._serialization import (
+    canonical_json_dumps as _canonical_dumps,
+)
 
 
 class TerraformBridgeError(ValueError):
@@ -17,16 +19,6 @@ class TerraformOutputMissingError(TerraformBridgeError):
     def __init__(self, output_name: str) -> None:
         self.output_name = output_name
         super().__init__(f"required Terraform output {output_name!r} is missing")
-
-
-def _canonical_dumps(value: object) -> str:
-    return json.dumps(
-        value,
-        allow_nan=False,
-        ensure_ascii=False,
-        separators=(",", ":"),
-        sort_keys=True,
-    )
 
 
 @dataclass(frozen=True, slots=True)

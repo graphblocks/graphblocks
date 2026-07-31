@@ -4,10 +4,12 @@ from collections.abc import Callable, Iterable, Mapping
 from copy import deepcopy
 from dataclasses import dataclass, field
 import hashlib
-import json
 import re
 
 from graphblocks.deployment import GraphRelease
+from graphblocks.integrations._serialization import (
+    canonical_json_dumps as _canonical_dumps,
+)
 
 
 GRAPHBLOCKS_RELEASE_ARTIFACT_TYPE = "application/vnd.graphblocks.release.v1"
@@ -19,16 +21,6 @@ CYCLONEDX_JSON_MEDIA_TYPE = "application/vnd.cyclonedx+json"
 
 class OciContractError(ValueError):
     """Raised when an OCI contract is invalid."""
-
-
-def _canonical_dumps(value: object) -> str:
-    return json.dumps(
-        value,
-        allow_nan=False,
-        ensure_ascii=False,
-        separators=(",", ":"),
-        sort_keys=True,
-    )
 
 
 def _validate_digest(digest: str) -> None:

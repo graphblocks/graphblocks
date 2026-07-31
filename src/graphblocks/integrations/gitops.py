@@ -4,9 +4,11 @@ from collections.abc import Iterable, Mapping
 from copy import deepcopy
 from dataclasses import dataclass, field
 import hashlib
-import json
 
 from graphblocks.deployment import DeploymentRevision, GraphRelease
+from graphblocks.integrations._serialization import (
+    canonical_json_dumps as _canonical_dumps,
+)
 
 
 GitOpsManifest = dict[str, object]
@@ -14,16 +16,6 @@ GitOpsManifest = dict[str, object]
 
 class GitOpsContractError(ValueError):
     """Raised when a GitOps manifest contract is invalid."""
-
-
-def _canonical_dumps(value: object) -> str:
-    return json.dumps(
-        value,
-        allow_nan=False,
-        ensure_ascii=False,
-        separators=(",", ":"),
-        sort_keys=True,
-    )
 
 
 def _sorted_str_mapping(values: Mapping[str, str]) -> dict[str, str]:
