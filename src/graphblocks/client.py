@@ -55,7 +55,7 @@ from graphblocks.application_event import (
 )
 from graphblocks.canonical import _canonical_dumps
 from graphblocks.runtime import InProcessRuntime, RuntimeRegistry, stdlib_registry
-from graphblocks.server import ApplicationProtocolCapabilities
+from graphblocks.server import ApplicationProtocolCapabilities, ServerResponse
 
 
 _MAX_RUN_CURSOR_SEQUENCE = (1 << 64) - 1
@@ -1168,6 +1168,13 @@ class LocalGraphBlocksClient:
 
 @dataclass(slots=True)
 class HttpGraphBlocksClient:
+    """HTTP client whose custom transports expose buffered or size-bounded responses.
+
+    A custom transport must return ``ServerResponse`` or an object whose
+    ``read(size)`` method honors the requested maximum and eventually returns
+    ``b""``. No-argument readers are rejected before invocation.
+    """
+
     base_url: str
     bearer_token: str | None = None
     timeout: float = 30.0
@@ -2408,12 +2415,12 @@ def _read_json_response(
         if not is_error and content_length is not None and content_length > max_body_bytes:
             raise ValueError(f"{label} body exceeds {max_body_bytes} bytes")
 
-        read_response = getattr(response, "read", None)
-        if not callable(read_response):
+        buffered_body = response.body if isinstance(response, ServerResponse) else None
+        read_response = None if buffered_body is not None else getattr(response, "read", None)
+        if buffered_body is None and not callable(read_response):
             raise ValueError(f"{label} body must be readable")
         body = bytearray()
         target_bytes = max_body_bytes + 1
-        legacy_unbounded_read = False
         while len(body) < target_bytes:
             remaining_timeout = deadline_monotonic - monotonic()
             if remaining_timeout <= 0:
@@ -2445,25 +2452,25 @@ def _read_json_response(
                 _HTTP_RESPONSE_READ_CHUNK_BYTES,
                 target_bytes - len(body),
             )
-            try:
-                chunk = read_response(read_size)
-            except TypeError:
-                if body:
+            if buffered_body is not None:
+                chunk = buffered_body[len(body) : len(body) + read_size]
+            else:
+                assert callable(read_response)
+                try:
+                    chunk = read_response(read_size)
+                except TypeError:
                     raise ValueError(
                         f"{label} body reader must accept a size limit"
                     ) from None
-                # Custom transports historically exposed a no-argument read
-                # method. They are trusted in-process code; retain compatibility
-                # while bounding retained data and every network-backed read.
-                chunk = read_response()
-                legacy_unbounded_read = True
             if not isinstance(chunk, bytes):
                 raise ValueError(f"{label} body must be bytes")
+            if len(chunk) > read_size:
+                raise ValueError(
+                    f"{label} body reader returned more than {read_size} bytes"
+                )
             if not chunk:
                 break
             body.extend(chunk[: target_bytes - len(body)])
-            if legacy_unbounded_read:
-                break
         raw_body_truncated = len(body) > max_body_bytes
         raw_body = bytes(body[:max_body_bytes])
 

@@ -34,6 +34,15 @@ from graphblocks import (
 ROOT = Path(__file__).parents[1]
 
 
+def _read_test_response_body(response: object, body: bytes, size: int) -> bytes:
+    stream = getattr(response, "_graphblocks_test_body_stream", None)
+    if stream is None:
+        stream = BytesIO(body)
+        setattr(response, "_graphblocks_test_body_stream", stream)
+    assert isinstance(stream, BytesIO)
+    return stream.read(size)
+
+
 def test_run_graph_command_json_snapshots_support_standard_serialization() -> None:
     graphblocks_client = importlib.import_module("graphblocks.client")
     command = graphblocks_client.RunGraphCommand(
@@ -1330,35 +1339,122 @@ def test_http_client_enforces_total_response_read_deadline(monkeypatch) -> None:
     assert response.closed
 
 
+def test_http_client_rejects_unbounded_custom_response_reader_without_calling_it() -> None:
+    graphblocks_client = importlib.import_module("graphblocks.client")
+
+    class UnboundedResponse:
+        status = 200
+        headers: dict[str, str] = {}
+
+        def __init__(self) -> None:
+            self.read_calls = 0
+            self.closed = False
+
+        def read(self) -> bytes:
+            self.read_calls += 1
+            return b"x" * 1_000_000
+
+        def close(self) -> None:
+            self.closed = True
+
+    response = UnboundedResponse()
+    client = graphblocks_client.HttpGraphBlocksClient(
+        "https://graphblocks.example/api",
+        max_response_bytes=32,
+        transport=lambda request, *, timeout: response,
+    )
+
+    with pytest.raises(ValueError, match="body reader must accept a size limit"):
+        client.health()
+
+    assert response.read_calls == 0
+    assert response.closed
+
+
+def test_http_client_rejects_reader_that_ignores_requested_size() -> None:
+    graphblocks_client = importlib.import_module("graphblocks.client")
+
+    class OversizedChunkResponse:
+        status = 200
+        headers: dict[str, str] = {}
+
+        def __init__(self) -> None:
+            self.read_sizes: list[int] = []
+            self.closed = False
+
+        def read(self, size: int) -> bytes:
+            self.read_sizes.append(size)
+            return b"x" * (size + 1)
+
+        def close(self) -> None:
+            self.closed = True
+
+    response = OversizedChunkResponse()
+    client = graphblocks_client.HttpGraphBlocksClient(
+        "https://graphblocks.example/api",
+        max_response_bytes=32,
+        transport=lambda request, *, timeout: response,
+    )
+
+    with pytest.raises(ValueError, match="reader returned more than 33 bytes"):
+        client.health()
+
+    assert response.read_sizes == [33]
+    assert response.closed
+
+
+def test_http_client_caps_buffered_server_response_body() -> None:
+    graphblocks_client = importlib.import_module("graphblocks.client")
+    from graphblocks.server import ServerResponse
+
+    response = ServerResponse(
+        status_code=200,
+        headers={},
+        body=b"x" * 33,
+    )
+    client = graphblocks_client.HttpGraphBlocksClient(
+        "https://graphblocks.example/api",
+        max_response_bytes=32,
+        transport=lambda request, *, timeout: response,
+    )
+
+    with pytest.raises(ValueError, match="body exceeds 32 bytes"):
+        client.health()
+
+
 def test_client_package_posts_run_graph_command_over_http(monkeypatch) -> None:
     graphblocks_client = importlib.import_module("graphblocks.client")
     requests: list[object] = []
 
     class FakeResponse:
-        def read(self) -> bytes:
-            return json.dumps(
-                {
-                    "runId": "run-http-1",
-                    "status": "succeeded",
-                    "outputs": {"answer": "ok"},
-                    "events": [
-                        {
-                            "kind": "RunStarted",
-                            "metadata": {
-                                "eventId": "event-1",
-                                "runId": "run-http-1",
-                                "responseId": "response-http-1",
-                                "turnId": None,
-                                "sequence": 1,
-                                "releaseId": "release-1",
-                                "policySnapshotId": "policy-1",
-                                "occurredAt": "2026-06-24T00:00:00Z",
-                            },
-                            "payload": {"status": "running"},
-                        }
-                    ],
-                }
-            ).encode("utf-8")
+        def read(self, size: int) -> bytes:
+            return _read_test_response_body(
+                self,
+                json.dumps(
+                    {
+                        "runId": "run-http-1",
+                        "status": "succeeded",
+                        "outputs": {"answer": "ok"},
+                        "events": [
+                            {
+                                "kind": "RunStarted",
+                                "metadata": {
+                                    "eventId": "event-1",
+                                    "runId": "run-http-1",
+                                    "responseId": "response-http-1",
+                                    "turnId": None,
+                                    "sequence": 1,
+                                    "releaseId": "release-1",
+                                    "policySnapshotId": "policy-1",
+                                    "occurredAt": "2026-06-24T00:00:00Z",
+                                },
+                                "payload": {"status": "running"},
+                            }
+                        ],
+                    }
+                ).encode("utf-8"),
+                size,
+            )
 
     def transport(request: object, *, timeout: float) -> FakeResponse:
         requests.append(request)
@@ -1407,18 +1503,22 @@ def test_client_package_posts_accepted_run_graph_command_over_http(monkeypatch) 
     requests: list[object] = []
 
     class FakeResponse:
-        def read(self) -> bytes:
-            return json.dumps(
-                {
-                    "ok": True,
-                    "runId": "run-http-accepted-1",
-                    "status": "accepted",
-                    "eventStream": "/runs/run-http-accepted-1/events",
-                    "websocket": "/runs/run-http-accepted-1/ws",
-                    "cancel": "/runs/run-http-accepted-1/cancel",
-                    "initialCursor": "run-http-accepted-1:0",
-                }
-            ).encode("utf-8")
+        def read(self, size: int) -> bytes:
+            return _read_test_response_body(
+                self,
+                json.dumps(
+                    {
+                        "ok": True,
+                        "runId": "run-http-accepted-1",
+                        "status": "accepted",
+                        "eventStream": "/runs/run-http-accepted-1/events",
+                        "websocket": "/runs/run-http-accepted-1/ws",
+                        "cancel": "/runs/run-http-accepted-1/cancel",
+                        "initialCursor": "run-http-accepted-1:0",
+                    }
+                ).encode("utf-8"),
+                size,
+            )
 
     def transport(request: object, *, timeout: float) -> FakeResponse:
         requests.append(request)
@@ -1455,18 +1555,22 @@ def test_client_package_rejects_malformed_run_handle_links(monkeypatch) -> None:
     graphblocks_client = importlib.import_module("graphblocks.client")
 
     class FakeResponse:
-        def read(self) -> bytes:
-            return json.dumps(
-                {
-                    "ok": True,
-                    "runId": "run-http-accepted-1",
-                    "status": "accepted",
-                    "eventStream": "",
-                    "websocket": "/runs/run-http-accepted-1/ws",
-                    "cancel": "/runs/run-http-accepted-1/cancel",
-                    "initialCursor": "run-http-accepted-1:0",
-                }
-            ).encode("utf-8")
+        def read(self, size: int) -> bytes:
+            return _read_test_response_body(
+                self,
+                json.dumps(
+                    {
+                        "ok": True,
+                        "runId": "run-http-accepted-1",
+                        "status": "accepted",
+                        "eventStream": "",
+                        "websocket": "/runs/run-http-accepted-1/ws",
+                        "cancel": "/runs/run-http-accepted-1/cancel",
+                        "initialCursor": "run-http-accepted-1:0",
+                    }
+                ).encode("utf-8"),
+                size,
+            )
 
     client = graphblocks_client.HttpGraphBlocksClient(
         "https://graphblocks.example/api",
@@ -1501,18 +1605,22 @@ def test_client_package_rejects_malformed_run_handle_initial_cursor(
     graphblocks_client = importlib.import_module("graphblocks.client")
 
     class FakeResponse:
-        def read(self) -> bytes:
-            return json.dumps(
-                {
-                    "ok": True,
-                    "runId": "run-http-accepted-1",
-                    "status": "accepted",
-                    "eventStream": "/runs/run-http-accepted-1/events",
-                    "websocket": "/runs/run-http-accepted-1/ws",
-                    "cancel": "/runs/run-http-accepted-1/cancel",
-                    "initialCursor": initial_cursor,
-                }
-            ).encode("utf-8")
+        def read(self, size: int) -> bytes:
+            return _read_test_response_body(
+                self,
+                json.dumps(
+                    {
+                        "ok": True,
+                        "runId": "run-http-accepted-1",
+                        "status": "accepted",
+                        "eventStream": "/runs/run-http-accepted-1/events",
+                        "websocket": "/runs/run-http-accepted-1/ws",
+                        "cancel": "/runs/run-http-accepted-1/cancel",
+                        "initialCursor": initial_cursor,
+                    }
+                ).encode("utf-8"),
+                size,
+            )
 
     client = graphblocks_client.HttpGraphBlocksClient(
         "https://graphblocks.example/api",
@@ -1533,14 +1641,18 @@ def test_client_package_rejects_mismatched_run_graph_response_id(monkeypatch) ->
     graphblocks_client = importlib.import_module("graphblocks.client")
 
     class FakeResponse:
-        def read(self) -> bytes:
-            return json.dumps(
-                {
-                    "runId": "other-run",
-                    "status": "succeeded",
-                    "outputs": {},
-                }
-            ).encode("utf-8")
+        def read(self, size: int) -> bytes:
+            return _read_test_response_body(
+                self,
+                json.dumps(
+                    {
+                        "runId": "other-run",
+                        "status": "succeeded",
+                        "outputs": {},
+                    }
+                ).encode("utf-8"),
+                size,
+            )
 
     client = graphblocks_client.HttpGraphBlocksClient(
         "https://graphblocks.example/api",
@@ -1564,17 +1676,21 @@ def test_client_package_rejects_incomplete_durable_run_handle(monkeypatch, statu
     graphblocks_client = importlib.import_module("graphblocks.client")
 
     class FakeResponse:
-        def read(self) -> bytes:
-            return json.dumps(
-                {
-                    "ok": True,
-                    "runId": "run-http-accepted-1",
-                    "status": status,
-                    "eventStream": "/runs/run-http-accepted-1/events",
-                    "cancel": "/runs/run-http-accepted-1/cancel",
-                    "initialCursor": "run-http-accepted-1:0",
-                }
-            ).encode("utf-8")
+        def read(self, size: int) -> bytes:
+            return _read_test_response_body(
+                self,
+                json.dumps(
+                    {
+                        "ok": True,
+                        "runId": "run-http-accepted-1",
+                        "status": status,
+                        "eventStream": "/runs/run-http-accepted-1/events",
+                        "cancel": "/runs/run-http-accepted-1/cancel",
+                        "initialCursor": "run-http-accepted-1:0",
+                    }
+                ).encode("utf-8"),
+                size,
+            )
 
     client = graphblocks_client.HttpGraphBlocksClient(
         "https://graphblocks.example/api",
@@ -1596,19 +1712,23 @@ def test_client_package_encodes_http_path_identifiers(monkeypatch) -> None:
     requests: list[object] = []
 
     class FakeResponse:
-        def read(self) -> bytes:
-            return json.dumps(
-                {
-                    "ok": True,
-                    "operationId": "id/with?query#fragment",
-                    "callbackId": "callback-1",
-                    "idempotencyKey": "idem-1",
-                    "payloadDigest": canonical_hash({"status": "completed"}),
-                    "runId": "id/with?query#fragment",
-                    "subscriptionId": "id/with?query#fragment",
-                    "deliveryId": "id/with?query#fragment",
-                }
-            ).encode("utf-8")
+        def read(self, size: int) -> bytes:
+            return _read_test_response_body(
+                self,
+                json.dumps(
+                    {
+                        "ok": True,
+                        "operationId": "id/with?query#fragment",
+                        "callbackId": "callback-1",
+                        "idempotencyKey": "idem-1",
+                        "payloadDigest": canonical_hash({"status": "completed"}),
+                        "runId": "id/with?query#fragment",
+                        "subscriptionId": "id/with?query#fragment",
+                        "deliveryId": "id/with?query#fragment",
+                    }
+                ).encode("utf-8"),
+                size,
+            )
 
     def transport(request: object, *, timeout: float) -> FakeResponse:
         requests.append(request)
@@ -1671,8 +1791,12 @@ def test_client_package_rejects_mismatched_run_snapshot_response_id(
     graphblocks_client = importlib.import_module("graphblocks.client")
 
     class FakeResponse:
-        def read(self) -> bytes:
-            return json.dumps(payload).encode("utf-8")
+        def read(self, size: int) -> bytes:
+            return _read_test_response_body(
+                self,
+                json.dumps(payload).encode("utf-8"),
+                size,
+            )
 
     client = graphblocks_client.HttpGraphBlocksClient(
         "https://graphblocks.example/api",
@@ -1747,8 +1871,12 @@ def test_client_package_rejects_replayed_events_for_wrong_run(
     }
 
     class FakeResponse:
-        def read(self) -> bytes:
-            return json.dumps({**payload, "events": [wrong_run_event]}).encode("utf-8")
+        def read(self, size: int) -> bytes:
+            return _read_test_response_body(
+                self,
+                json.dumps({**payload, "events": [wrong_run_event]}).encode("utf-8"),
+                size,
+            )
 
     client = graphblocks_client.HttpGraphBlocksClient(
         "https://graphblocks.example/api",
@@ -1822,8 +1950,12 @@ def test_client_package_rejects_mismatched_control_response_run_id(
     graphblocks_client = importlib.import_module("graphblocks.client")
 
     class FakeResponse:
-        def read(self) -> bytes:
-            return json.dumps(payload).encode("utf-8")
+        def read(self, size: int) -> bytes:
+            return _read_test_response_body(
+                self,
+                json.dumps(payload).encode("utf-8"),
+                size,
+            )
 
     client = graphblocks_client.HttpGraphBlocksClient(
         "https://graphblocks.example/api",
@@ -1872,8 +2004,12 @@ def test_client_package_rejects_mismatched_subscription_response_id(
     graphblocks_client = importlib.import_module("graphblocks.client")
 
     class FakeResponse:
-        def read(self) -> bytes:
-            return json.dumps(payload).encode("utf-8")
+        def read(self, size: int) -> bytes:
+            return _read_test_response_body(
+                self,
+                json.dumps(payload).encode("utf-8"),
+                size,
+            )
 
     client = graphblocks_client.HttpGraphBlocksClient(
         "https://graphblocks.example/api",
@@ -1903,7 +2039,7 @@ def test_client_package_rejects_malformed_http_event_metadata(
     graphblocks_client = importlib.import_module("graphblocks.client")
 
     class FakeResponse:
-        def read(self) -> bytes:
+        def read(self, size: int) -> bytes:
             metadata = {
                 "eventId": "event-1",
                 "runId": "run-http-1",
@@ -1915,14 +2051,24 @@ def test_client_package_rejects_malformed_http_event_metadata(
                 "occurredAt": "2026-06-24T00:00:00Z",
             }
             metadata.update(metadata_override)
-            return json.dumps(
-                {
-                    "runId": "run-http-1",
-                    "status": "succeeded",
-                    "outputs": {},
-                    "events": [{"kind": "RunStarted", "metadata": metadata, "payload": {"status": "running"}}],
-                }
-            ).encode("utf-8")
+            return _read_test_response_body(
+                self,
+                json.dumps(
+                    {
+                        "runId": "run-http-1",
+                        "status": "succeeded",
+                        "outputs": {},
+                        "events": [
+                            {
+                                "kind": "RunStarted",
+                                "metadata": metadata,
+                                "payload": {"status": "running"},
+                            }
+                        ],
+                    }
+                ).encode("utf-8"),
+                size,
+            )
 
     client = graphblocks_client.HttpGraphBlocksClient(
         "https://graphblocks.example/api",
@@ -1975,7 +2121,7 @@ def test_client_package_rejects_malformed_http_event_payloads(
     }
 
     class FakeResponse:
-        def read(self) -> bytes:
+        def read(self, size: int) -> bytes:
             payload: dict[str, object] = {
                 "runId": "run-http-1",
                 "status": "succeeded",
@@ -1993,7 +2139,11 @@ def test_client_package_rejects_malformed_http_event_payloads(
                 if isinstance(event_payload, dict):
                     if "metadata" not in event_payload or event_payload["metadata"] == {}:
                         event_payload["metadata"] = valid_metadata
-            return json.dumps(payload).encode("utf-8")
+            return _read_test_response_body(
+                self,
+                json.dumps(payload).encode("utf-8"),
+                size,
+            )
 
     client = graphblocks_client.HttpGraphBlocksClient(
         "https://graphblocks.example/api",
@@ -2025,7 +2175,7 @@ def test_client_package_rejects_malformed_http_run_response(
     graphblocks_client = importlib.import_module("graphblocks.client")
 
     class FakeResponse:
-        def read(self) -> bytes:
+        def read(self, size: int) -> bytes:
             payload: dict[str, object] = {
                 "runId": "run-http-1",
                 "status": "succeeded",
@@ -2033,7 +2183,11 @@ def test_client_package_rejects_malformed_http_run_response(
                 "events": [],
             }
             payload.update(payload_override)
-            return json.dumps(payload).encode("utf-8")
+            return _read_test_response_body(
+                self,
+                json.dumps(payload).encode("utf-8"),
+                size,
+            )
 
     client = graphblocks_client.HttpGraphBlocksClient(
         "https://graphblocks.example/api",
@@ -2053,16 +2207,20 @@ def test_client_rejects_conflicting_response_and_event_aliases(monkeypatch) -> N
     graphblocks_client = importlib.import_module("graphblocks.client")
 
     class ConflictingRunResponse:
-        def read(self) -> bytes:
-            return json.dumps(
-                {
-                    "runId": "run-http-1",
-                    "run_id": "run-replaced",
-                    "status": "succeeded",
-                    "outputs": {},
-                    "events": [],
-                }
-            ).encode("utf-8")
+        def read(self, size: int) -> bytes:
+            return _read_test_response_body(
+                self,
+                json.dumps(
+                    {
+                        "runId": "run-http-1",
+                        "run_id": "run-replaced",
+                        "status": "succeeded",
+                        "outputs": {},
+                        "events": [],
+                    }
+                ).encode("utf-8"),
+                size,
+            )
 
     client = graphblocks_client.HttpGraphBlocksClient(
         "https://graphblocks.example/api",
@@ -2120,14 +2278,18 @@ def test_client_package_rejects_malformed_http_stream_response(monkeypatch) -> N
     graphblocks_client = importlib.import_module("graphblocks.client")
 
     class FakeResponse:
-        def read(self) -> bytes:
-            return json.dumps(
-                {
-                    "runId": True,
-                    "stream": {"status": "accepted"},
-                    "events": [],
-                }
-            ).encode("utf-8")
+        def read(self, size: int) -> bytes:
+            return _read_test_response_body(
+                self,
+                json.dumps(
+                    {
+                        "runId": True,
+                        "stream": {"status": "accepted"},
+                        "events": [],
+                    }
+                ).encode("utf-8"),
+                size,
+            )
 
     client = graphblocks_client.HttpGraphBlocksClient(
         "https://graphblocks.example/api",
@@ -2142,8 +2304,8 @@ def test_client_package_rejects_non_standard_http_json_constants(monkeypatch) ->
     graphblocks_client = importlib.import_module("graphblocks.client")
 
     class FakeResponse:
-        def read(self) -> bytes:
-            return b'{"ok": NaN}'
+        def read(self, size: int) -> bytes:
+            return _read_test_response_body(self, b'{"ok": NaN}', size)
 
     client = graphblocks_client.HttpGraphBlocksClient(
         "https://graphblocks.example/api",
@@ -2172,8 +2334,8 @@ def test_client_package_rejects_ambiguous_or_overdeep_http_json() -> None:
         def __init__(self, body: bytes) -> None:
             self.body = body
 
-        def read(self) -> bytes:
-            return self.body
+        def read(self, size: int) -> bytes:
+            return _read_test_response_body(self, self.body, size)
 
     for body in bodies:
         client = graphblocks_client.HttpGraphBlocksClient(
@@ -2192,8 +2354,12 @@ def test_client_package_rejects_malformed_http_status_code(monkeypatch, status_c
     class FakeResponse:
         status = status_code
 
-        def read(self) -> bytes:
-            return json.dumps({"ok": True}).encode("utf-8")
+        def read(self, size: int) -> bytes:
+            return _read_test_response_body(
+                self,
+                json.dumps({"ok": True}).encode("utf-8"),
+                size,
+            )
 
     client = graphblocks_client.HttpGraphBlocksClient(
         "https://graphblocks.example/api",
@@ -2822,7 +2988,7 @@ def test_client_package_rejects_mismatched_async_callback_response_identity(
     graphblocks_client = importlib.import_module("graphblocks.client")
 
     class FakeResponse:
-        def read(self) -> bytes:
+        def read(self, size: int) -> bytes:
             payload = {
                 "ok": True,
                 "operationId": "op-ci-client-1",
@@ -2838,7 +3004,11 @@ def test_client_package_rejects_mismatched_async_callback_response_identity(
                 "providerOperationId": "provider-ci-1",
             }
             payload.update(response_update)
-            return json.dumps(payload).encode("utf-8")
+            return _read_test_response_body(
+                self,
+                json.dumps(payload).encode("utf-8"),
+                size,
+            )
 
     client = graphblocks_client.HttpGraphBlocksClient(
         "https://graphblocks.example/api",
@@ -2862,19 +3032,25 @@ def test_client_package_rejects_mismatched_async_callback_response_payload_diges
     graphblocks_client = importlib.import_module("graphblocks.client")
 
     class FakeResponse:
-        def read(self) -> bytes:
-            return json.dumps(
-                {
-                    "ok": True,
-                    "operationId": "op-ci-client-1",
-                    "callbackId": "cb-client-1",
-                    "idempotencyKey": "idem-client-callback-1",
-                    "payloadDigest": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
-                    "verifiedBy": "callback-relay",
-                    "policySnapshotId": "local",
-                    "status": "accepted",
-                }
-            ).encode("utf-8")
+        def read(self, size: int) -> bytes:
+            return _read_test_response_body(
+                self,
+                json.dumps(
+                    {
+                        "ok": True,
+                        "operationId": "op-ci-client-1",
+                        "callbackId": "cb-client-1",
+                        "idempotencyKey": "idem-client-callback-1",
+                        "payloadDigest": (
+                            "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+                        ),
+                        "verifiedBy": "callback-relay",
+                        "policySnapshotId": "local",
+                        "status": "accepted",
+                    }
+                ).encode("utf-8"),
+                size,
+            )
 
     client = graphblocks_client.HttpGraphBlocksClient(
         "https://graphblocks.example/api",
@@ -3105,8 +3281,12 @@ def test_client_package_reads_run_events_with_cursor_query(monkeypatch) -> None:
     requests: list[object] = []
 
     class FakeResponse:
-        def read(self) -> bytes:
-            return b'{"ok":true,"events":[]}'
+        def read(self, size: int) -> bytes:
+            return _read_test_response_body(
+                self,
+                b'{"ok":true,"events":[]}',
+                size,
+            )
 
     def transport(request: object, *, timeout: float) -> FakeResponse:
         requests.append(request)
@@ -3175,8 +3355,12 @@ def test_client_package_fails_closed_on_non_advancing_event_page_cursor() -> Non
         def __init__(self, payload: dict[str, object]) -> None:
             self.payload = payload
 
-        def read(self) -> bytes:
-            return json.dumps(self.payload).encode("utf-8")
+        def read(self, size: int) -> bytes:
+            return _read_test_response_body(
+                self,
+                json.dumps(self.payload).encode("utf-8"),
+                size,
+            )
 
     def transport(request: object, *, timeout: float) -> FakeResponse:
         del request, timeout
@@ -3201,18 +3385,22 @@ def test_client_package_caps_automatic_event_page_continuation() -> None:
         status = 200
         headers: dict[str, str] = {}
 
-        def read(self) -> bytes:
-            return json.dumps(
-                {
-                    "ok": True,
-                    "runId": "run-events-page-cap-1",
-                    "replayFromCursor": None,
-                    "lastCursor": "run-events-page-cap-1:2",
-                    "hasMore": True,
-                    "nextCursor": "run-events-page-cap-1:1",
-                    "events": [],
-                }
-            ).encode("utf-8")
+        def read(self, size: int) -> bytes:
+            return _read_test_response_body(
+                self,
+                json.dumps(
+                    {
+                        "ok": True,
+                        "runId": "run-events-page-cap-1",
+                        "replayFromCursor": None,
+                        "lastCursor": "run-events-page-cap-1:2",
+                        "hasMore": True,
+                        "nextCursor": "run-events-page-cap-1:1",
+                        "events": [],
+                    }
+                ).encode("utf-8"),
+                size,
+            )
 
     client = graphblocks_client.HttpGraphBlocksClient(
         "https://graphblocks.example/api",
@@ -3352,8 +3540,8 @@ def test_http_client_closes_responses_on_success_invalid_json_and_application_er
             self.status = status
             self.closed = False
 
-        def read(self) -> bytes:
-            return self.body
+        def read(self, size: int) -> bytes:
+            return _read_test_response_body(self, self.body, size)
 
         def close(self) -> None:
             self.closed = True
@@ -3389,8 +3577,12 @@ def test_http_client_preserves_status_and_raw_body_for_non_json_error_response()
         def __init__(self) -> None:
             self.closed = False
 
-        def read(self) -> bytes:
-            return b"<html>temporarily unavailable</html>"
+        def read(self, size: int) -> bytes:
+            return _read_test_response_body(
+                self,
+                b"<html>temporarily unavailable</html>",
+                size,
+            )
 
         def close(self) -> None:
             self.closed = True
@@ -3879,8 +4071,12 @@ def test_client_package_rejects_mismatched_callback_registration_response_scope(
     graphblocks_client = importlib.import_module("graphblocks.client")
 
     class FakeResponse:
-        def read(self) -> bytes:
-            return json.dumps(payload).encode("utf-8")
+        def read(self, size: int) -> bytes:
+            return _read_test_response_body(
+                self,
+                json.dumps(payload).encode("utf-8"),
+                size,
+            )
 
     client = graphblocks_client.HttpGraphBlocksClient(
         "https://graphblocks.example/api",
@@ -4066,14 +4262,18 @@ def test_client_package_rejects_mismatched_callback_revoke_response_subscription
     graphblocks_client = importlib.import_module("graphblocks.client")
 
     class FakeResponse:
-        def read(self) -> bytes:
-            return json.dumps(
-                {
-                    "ok": True,
-                    "subscriptionId": "other-sub",
-                    "status": "revoked",
-                }
-            ).encode("utf-8")
+        def read(self, size: int) -> bytes:
+            return _read_test_response_body(
+                self,
+                json.dumps(
+                    {
+                        "ok": True,
+                        "subscriptionId": "other-sub",
+                        "status": "revoked",
+                    }
+                ).encode("utf-8"),
+                size,
+            )
 
     client = graphblocks_client.HttpGraphBlocksClient(
         "https://graphblocks.example/api",
@@ -4359,16 +4559,20 @@ def test_client_package_rejects_mismatched_callback_delivery_control_response_id
     graphblocks_client = importlib.import_module("graphblocks.client")
 
     class FakeResponse:
-        def read(self) -> bytes:
-            return json.dumps(
-                {
-                    "ok": True,
-                    "deliveryId": "other-delivery",
-                    "operator": "operator-1",
-                    "reason": "retry",
-                    "status": "redrive_requested",
-                }
-            ).encode("utf-8")
+        def read(self, size: int) -> bytes:
+            return _read_test_response_body(
+                self,
+                json.dumps(
+                    {
+                        "ok": True,
+                        "deliveryId": "other-delivery",
+                        "operator": "operator-1",
+                        "reason": "retry",
+                        "status": "redrive_requested",
+                    }
+                ).encode("utf-8"),
+                size,
+            )
 
     client = graphblocks_client.HttpGraphBlocksClient(
         "https://graphblocks.example/api",
