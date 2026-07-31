@@ -39,10 +39,14 @@ def test_cli_parser_registry_covers_all_commands_and_subcommands() -> None:
     )
 
     assert set(top_level_action.choices) == set(command_parsers)
-    assert set(cli_module._CLI_COMMAND_HANDLERS) == set(command_parsers)
 
     nested_commands: dict[str, set[str]] = {}
+    parser_paths: set[tuple[str, ...]] = set()
+    leaf_paths: set[tuple[str, ...]] = set()
+    group_paths: set[tuple[str, ...]] = set()
     for command, command_parser in command_parsers.items():
+        command_path = (command,)
+        parser_paths.add(command_path)
         nested_actions = [
             action
             for action in command_parser._actions
@@ -50,7 +54,16 @@ def test_cli_parser_registry_covers_all_commands_and_subcommands() -> None:
         ]
         assert len(nested_actions) <= 1
         if nested_actions:
+            group_paths.add(command_path)
             nested_commands[command] = set(nested_actions[0].choices)
+            for nested_command, leaf_parser in nested_actions[0].choices.items():
+                leaf_path = (command, nested_command)
+                parser_paths.add(leaf_path)
+                leaf_paths.add(leaf_path)
+                assert leaf_parser.get_default("_command_path") == leaf_path
+        else:
+            leaf_paths.add(command_path)
+            assert command_parser.get_default("_command_path") == command_path
 
     assert nested_commands == {
         "plugins": {"list", "inspect", "validate"},
@@ -61,6 +74,18 @@ def test_cli_parser_registry_covers_all_commands_and_subcommands() -> None:
         "release": {"build", "verify"},
         "deploy": {"targets-verify", "plan", "render"},
     }
+    assert len(parser_paths) == 29
+    assert len(leaf_paths) == 22
+    assert group_paths == {
+        ("plugins",),
+        ("packages",),
+        ("schemas",),
+        ("policy",),
+        ("observe",),
+        ("release",),
+        ("deploy",),
+    }
+    assert set(cli_module._CLI_COMMAND_HANDLERS) == leaf_paths
 
 
 def test_cli_strict_json_preserves_arbitrary_precision_numbers() -> None:

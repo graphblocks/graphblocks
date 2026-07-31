@@ -442,23 +442,48 @@ def _build_parser() -> tuple[
         action="store_true",
         help="do not include the default component and artifact selection",
     )
-    return parser, MappingProxyType(
-        {
-            "validate": validate_parser,
-            "plan": plan_parser,
-            "run": run_parser,
-            "compose": compose_parser,
-            "migrate": migrate_parser,
-            "plugins": plugins_parser,
-            "packages": packages_parser,
-            "schemas": schemas_parser,
-            "policy": policy_parser,
-            "observe": observe_parser,
-            "release": release_parser,
-            "deploy": deploy_parser,
-            "lock": lock_parser,
-        }
-    )
+    command_parsers = {
+        "validate": validate_parser,
+        "plan": plan_parser,
+        "run": run_parser,
+        "compose": compose_parser,
+        "migrate": migrate_parser,
+        "plugins": plugins_parser,
+        "packages": packages_parser,
+        "schemas": schemas_parser,
+        "policy": policy_parser,
+        "observe": observe_parser,
+        "release": release_parser,
+        "deploy": deploy_parser,
+        "lock": lock_parser,
+    }
+    leaf_parsers = {
+        ("compose",): compose_parser,
+        ("validate",): validate_parser,
+        ("plan",): plan_parser,
+        ("run",): run_parser,
+        ("migrate",): migrate_parser,
+        ("lock",): lock_parser,
+        ("plugins", "list"): plugins_list_parser,
+        ("plugins", "inspect"): plugins_inspect_parser,
+        ("plugins", "validate"): plugins_validate_parser,
+        ("packages", "list"): packages_list_parser,
+        ("packages", "doctor"): packages_doctor_parser,
+        ("packages", "audit"): packages_audit_parser,
+        ("packages", "wheel-matrix"): packages_wheel_matrix_parser,
+        ("schemas", "manifest"): schemas_manifest_parser,
+        ("policy", "test"): policy_test_parser,
+        ("observe", "run"): observe_run_parser,
+        ("observe", "journal"): observe_journal_parser,
+        ("release", "build"): release_build_parser,
+        ("release", "verify"): release_verify_parser,
+        ("deploy", "targets-verify"): deploy_targets_parser,
+        ("deploy", "plan"): deploy_plan_parser,
+        ("deploy", "render"): deploy_render_parser,
+    }
+    for command_path, leaf_parser in leaf_parsers.items():
+        leaf_parser.set_defaults(_command_path=command_path)
+    return parser, MappingProxyType(command_parsers)
 
 
 @dataclass(frozen=True, slots=True)
@@ -2727,21 +2752,34 @@ _CliCommandHandler = Callable[
     [argparse.Namespace, Mapping[str, argparse.ArgumentParser]],
     int,
 ]
-_CLI_COMMAND_HANDLERS: Mapping[str, _CliCommandHandler] = MappingProxyType(
+_CliCommandPath = tuple[str, ...]
+_CLI_COMMAND_HANDLERS: Mapping[
+    _CliCommandPath,
+    _CliCommandHandler,
+] = MappingProxyType(
     {
-        "compose": _run_compose_command,
-        "validate": _run_validate_command,
-        "plan": _run_plan_command,
-        "run": _run_execute_command,
-        "migrate": _run_migrate_command,
-        "lock": _run_lock_command,
-        "plugins": _run_plugins_command,
-        "packages": _run_packages_command,
-        "schemas": _run_schemas_command,
-        "observe": _run_observe_command,
-        "policy": _run_policy_command,
-        "release": _run_release_command,
-        "deploy": _run_deploy_command,
+        ("compose",): _run_compose_command,
+        ("validate",): _run_validate_command,
+        ("plan",): _run_plan_command,
+        ("run",): _run_execute_command,
+        ("migrate",): _run_migrate_command,
+        ("lock",): _run_lock_command,
+        ("plugins", "list"): _run_plugins_command,
+        ("plugins", "inspect"): _run_plugins_command,
+        ("plugins", "validate"): _run_plugins_command,
+        ("packages", "list"): _run_packages_command,
+        ("packages", "doctor"): _run_packages_command,
+        ("packages", "audit"): _run_packages_command,
+        ("packages", "wheel-matrix"): _run_packages_command,
+        ("schemas", "manifest"): _run_schemas_command,
+        ("policy", "test"): _run_policy_command,
+        ("observe", "run"): _run_observe_command,
+        ("observe", "journal"): _run_observe_command,
+        ("release", "build"): _run_release_command,
+        ("release", "verify"): _run_release_command,
+        ("deploy", "targets-verify"): _run_deploy_command,
+        ("deploy", "plan"): _run_deploy_command,
+        ("deploy", "render"): _run_deploy_command,
     }
 )
 
@@ -2753,9 +2791,17 @@ def _main(argv: list[str] | None = None) -> int:
     if args.version:
         print(__version__)
         return 0
-    command_handler = _CLI_COMMAND_HANDLERS.get(args.command)
-    if command_handler is not None:
+    command_path = getattr(args, "_command_path", None)
+    if command_path is not None:
+        command_handler = _CLI_COMMAND_HANDLERS.get(command_path)
+        if command_handler is None:
+            raise RuntimeError(
+                f"CLI command path {command_path!r} has no handler"
+            )
         return command_handler(args, command_parsers)
+    if args.command is not None:
+        command_parsers[args.command].print_help()
+        return 0
     parser.print_help()
     return 0
 
