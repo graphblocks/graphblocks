@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from collections.abc import Iterator, Mapping
 from typing import Any, Literal, cast
 
@@ -1187,9 +1187,27 @@ def _migrate_graph_phase(
     )
 
 
-def _validate_graph_phase(
+@dataclass(frozen=True, slots=True)
+class _ValidationContext:
+    migrated: dict[str, Any]
+    api_version: object
+    spec: dict[str, Any]
+    nodes: dict[str, Any]
+    block_catalog: BlockCatalog
+    schema_violations: tuple[ResourceSchemaViolation, ...]
+    diagnostics: tuple[Diagnostic, ...]
+
+
+_GRAPH_VALIDATION_PASS_ORDER = (
+    "contracts",
+    "output_policy",
+    "tool_bindings",
+)
+
+
+def _validate_graph_envelope(
     migrated_graph: _MigratedGraph,
-) -> _ValidatedGraph | Plan:
+) -> _ValidationContext | Plan:
     migrated = migrated_graph.migrated
     api_version = migrated_graph.api_version
     diagnostics = list(migrated_graph.diagnostics)
@@ -1265,7 +1283,22 @@ def _validate_graph_phase(
             Diagnostic("GB0005", "spec.nodes must be a mapping", "$.spec.nodes")
         )
         nodes = {}
+    return _ValidationContext(
+        migrated=migrated,
+        api_version=api_version,
+        spec=spec,
+        nodes=nodes,
+        block_catalog=migrated_graph.block_catalog,
+        schema_violations=schema_violations,
+        diagnostics=tuple(diagnostics),
+    )
 
+
+def _validate_graph_contracts(context: _ValidationContext) -> _ValidationContext:
+    migrated = context.migrated
+    spec = context.spec
+    nodes = context.nodes
+    diagnostics = list(context.diagnostics)
     if "composition" in spec:
         diagnostics.append(
             Diagnostic(
@@ -1546,7 +1579,12 @@ def _validate_graph_phase(
                     f"$.spec.{callback_subscriptions_key}",
                 )
             )
+    return replace(context, diagnostics=tuple(diagnostics))
 
+
+def _validate_output_policy(context: _ValidationContext) -> _ValidationContext:
+    spec = context.spec
+    diagnostics = list(context.diagnostics)
     output_policy_key = "outputPolicy" if "outputPolicy" in spec else "output_policy"
     output_policy = spec.get(output_policy_key)
     if output_policy is not None and not isinstance(output_policy, dict):
@@ -1950,7 +1988,12 @@ def _validate_graph_phase(
                             "$.spec.outputPolicy.onViolation.durableResult.disposition",
                         )
                     )
+    return replace(context, diagnostics=tuple(diagnostics))
 
+
+def _validate_tool_bindings(context: _ValidationContext) -> _ValidationContext:
+    spec = context.spec
+    diagnostics = list(context.diagnostics)
     bindings = spec.get("bindings")
     bindings = bindings if isinstance(bindings, dict) else None
     tools = bindings.get("tools") if bindings is not None else None
@@ -2394,11 +2437,23 @@ def _validate_graph_phase(
                     "$.spec.toolExecution.effectSerialization",
                 )
             )
+    return replace(context, diagnostics=tuple(diagnostics))
+
+
+def _validate_graph_phase(
+    migrated_graph: _MigratedGraph,
+) -> _ValidatedGraph | Plan:
+    context = _validate_graph_envelope(migrated_graph)
+    if isinstance(context, Plan):
+        return context
+    context = _validate_graph_contracts(context)
+    context = _validate_output_policy(context)
+    context = _validate_tool_bindings(context)
     return _ValidatedGraph(
-        migrated=migrated,
-        block_catalog=migrated_graph.block_catalog,
-        schema_violations=schema_violations,
-        diagnostics=tuple(diagnostics),
+        migrated=context.migrated,
+        block_catalog=context.block_catalog,
+        schema_violations=context.schema_violations,
+        diagnostics=context.diagnostics,
     )
 
 

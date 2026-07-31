@@ -113,6 +113,51 @@ def test_reference_compiler_runs_declared_phases_in_order(
     assert tuple(observed) == compiler_module._REFERENCE_COMPILER_PHASE_ORDER
 
 
+def test_reference_validation_passes_follow_declared_order(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    observed: list[str] = []
+    attributes = {
+        "contracts": "_validate_graph_contracts",
+        "output_policy": "_validate_output_policy",
+        "tool_bindings": "_validate_tool_bindings",
+    }
+    originals = {
+        attribute: getattr(compiler_module, attribute)
+        for attribute in attributes.values()
+    }
+    for original in originals.values():
+        source = inspect.getsource(original)
+        function = next(
+            node for node in ast.parse(source).body if isinstance(node, ast.FunctionDef)
+        )
+        assert function.end_lineno is not None
+        assert function.end_lineno - function.lineno + 1 <= 500
+
+    for pass_name in compiler_module._GRAPH_VALIDATION_PASS_ORDER:
+        attribute = attributes[pass_name]
+        original = originals[attribute]
+
+        def observe(
+            *args: object,
+            _name: str = pass_name,
+            _original: Callable[..., object] = original,
+            **kwargs: object,
+        ) -> object:
+            observed.append(_name)
+            return _original(*args, **kwargs)
+
+        monkeypatch.setattr(compiler_module, attribute, observe)
+
+    plan = compile_graph_reference(
+        NORMALIZED_GRAPH,
+        block_catalog=BlockCatalog({}, allow_unknown_blocks=True),
+    )
+
+    assert plan.ok
+    assert tuple(observed) == compiler_module._GRAPH_VALIDATION_PASS_ORDER
+
+
 def test_reference_compiler_entrypoint_is_only_a_phase_orchestrator() -> None:
     source = inspect.getsource(compile_graph_reference)
     function = next(
