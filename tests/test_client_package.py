@@ -1403,6 +1403,39 @@ def test_http_client_rejects_reader_that_ignores_requested_size() -> None:
     assert response.closed
 
 
+def test_http_client_rejects_bytes_subclass_size_spoof() -> None:
+    graphblocks_client = importlib.import_module("graphblocks.client")
+
+    class SpoofedBytes(bytes):
+        def __len__(self) -> int:
+            return 1
+
+    class SpoofedChunkResponse:
+        status = 200
+        headers: dict[str, str] = {}
+
+        def __init__(self) -> None:
+            self.closed = False
+
+        def read(self, size: int) -> bytes:
+            return SpoofedBytes(b"x" * (size + 1))
+
+        def close(self) -> None:
+            self.closed = True
+
+    response = SpoofedChunkResponse()
+    client = graphblocks_client.HttpGraphBlocksClient(
+        "https://graphblocks.example/api",
+        max_response_bytes=32,
+        transport=lambda request, *, timeout: response,
+    )
+
+    with pytest.raises(ValueError, match="body reader must return exact bytes"):
+        client.health()
+
+    assert response.closed
+
+
 def test_http_client_caps_buffered_server_response_body() -> None:
     graphblocks_client = importlib.import_module("graphblocks.client")
     from graphblocks.server import ServerResponse

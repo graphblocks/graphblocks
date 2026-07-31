@@ -1171,8 +1171,9 @@ class HttpGraphBlocksClient:
     """HTTP client whose custom transports expose buffered or size-bounded responses.
 
     A custom transport must return ``ServerResponse`` or an object whose
-    ``read(size)`` method honors the requested maximum and eventually returns
-    ``b""``. No-argument readers are rejected before invocation.
+    ``read(size)`` method returns exact ``bytes``, honors the requested maximum,
+    and eventually returns ``b""``. No-argument readers are rejected before
+    invocation.
     """
 
     base_url: str
@@ -2462,8 +2463,8 @@ def _read_json_response(
                     raise ValueError(
                         f"{label} body reader must accept a size limit"
                     ) from None
-            if not isinstance(chunk, bytes):
-                raise ValueError(f"{label} body must be bytes")
+            if type(chunk) is not bytes:
+                raise ValueError(f"{label} body reader must return exact bytes")
             if len(chunk) > read_size:
                 raise ValueError(
                     f"{label} body reader returned more than {read_size} bytes"
