@@ -5,10 +5,30 @@ from decimal import Decimal
 import hashlib
 import json
 import math
+import sys as _sys
 from copy import deepcopy
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from .migration import migrate_document
+from ._lazy_exports import resolve_lazy_export as _resolve_lazy_export
+
+if TYPE_CHECKING:
+    from .migration import migrate_document as migrate_document
+
+_LAZY_EXPORT_MODULES = {"migrate_document": ".migration"}
+
+if not TYPE_CHECKING:
+
+    def __getattr__(name: str) -> object:
+        return _resolve_lazy_export(
+            module_name=__name__,
+            package_name=__package__,
+            namespace=globals(),
+            export_modules=_LAZY_EXPORT_MODULES,
+            name=name,
+        )
+
+    def __dir__() -> list[str]:
+        return sorted(set(globals()) | set(_LAZY_EXPORT_MODULES))
 
 PSEUDO_NODES = {"$input", "$output", "$state", "$context", "$execution"}
 MAX_CANONICAL_JSON_DEPTH = 64
@@ -347,6 +367,7 @@ def canonical_hash(value: Any) -> str:
 
 
 def normalize_graph(document: dict[str, Any]) -> dict[str, Any]:
+    migrate_document = getattr(_sys.modules[__name__], "migrate_document")
     return _normalize_graph_unchecked(migrate_document(document))
 
 
@@ -430,3 +451,12 @@ def _normalize_graph_unchecked(document: dict[str, Any]) -> dict[str, Any]:
     spec["nodes"] = {name: nodes[name] for name in sorted(nodes)}
     spec["edges"] = sorted(edges, key=lambda item: (item["from"], item["to"]))
     return normalized
+
+
+__all__ = [
+    name
+    for name in globals()
+    if not name.startswith("_")
+    and name not in {"TYPE_CHECKING", "migrate_document"}
+]
+__all__.append("migrate_document")

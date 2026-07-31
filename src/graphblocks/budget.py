@@ -8,11 +8,34 @@ from functools import wraps
 from pathlib import Path
 import sqlite3
 from threading import RLock
-from typing import Literal, ParamSpec, TypeVar, cast, get_args
+from typing import TYPE_CHECKING, Literal, ParamSpec, TypeVar, cast, get_args
 
+from ._lazy_exports import resolve_lazy_export as _resolve_lazy_export
 from .canonical import canonical_dumps, canonical_loads
 from .documents import FrozenDict
 from .policy import ResourceRef
+
+if TYPE_CHECKING:
+    from .exhaustion import (
+        AdmissionDecision,
+        AfterUnitPolicy,
+        ClientDelivery,
+        ContinuationEnvelope,
+        ContinuationWork,
+        DurableResult,
+        EffectPolicy,
+        ExhaustionController,
+        ExhaustionPolicy,
+        ExhaustionPolicyError,
+        ExhaustionPreset,
+        ExhaustionUnit,
+        ForbiddenWork,
+        InFlightPolicy,
+        MissingExhaustionBoundaryError,
+        PartialOutputPolicy,
+        WorkKind,
+        validate_exhaustion_policy,
+    )
 
 
 AmountKey = tuple[str, str, tuple[tuple[str, str], ...]]
@@ -3240,26 +3263,41 @@ def evaluate_native_budget_ledger(operations: object) -> dict[str, object]:
     return evaluate_budget_ledger(operations)
 
 
-from .exhaustion import (  # noqa: E402
-    AdmissionDecision,
-    AfterUnitPolicy,
-    ClientDelivery,
-    ContinuationEnvelope,
-    ContinuationWork,
-    DurableResult,
-    EffectPolicy,
-    ExhaustionController,
-    ExhaustionPolicy,
-    ExhaustionPolicyError,
-    ExhaustionPreset,
-    ExhaustionUnit,
-    ForbiddenWork,
-    InFlightPolicy,
-    MissingExhaustionBoundaryError,
-    PartialOutputPolicy,
-    WorkKind,
-    validate_exhaustion_policy,
-)
+_LAZY_EXPORT_MODULES = {
+    "AdmissionDecision": ".exhaustion",
+    "AfterUnitPolicy": ".exhaustion",
+    "ClientDelivery": ".exhaustion",
+    "ContinuationEnvelope": ".exhaustion",
+    "ContinuationWork": ".exhaustion",
+    "DurableResult": ".exhaustion",
+    "EffectPolicy": ".exhaustion",
+    "ExhaustionController": ".exhaustion",
+    "ExhaustionPolicy": ".exhaustion",
+    "ExhaustionPolicyError": ".exhaustion",
+    "ExhaustionPreset": ".exhaustion",
+    "ExhaustionUnit": ".exhaustion",
+    "ForbiddenWork": ".exhaustion",
+    "InFlightPolicy": ".exhaustion",
+    "MissingExhaustionBoundaryError": ".exhaustion",
+    "PartialOutputPolicy": ".exhaustion",
+    "WorkKind": ".exhaustion",
+    "validate_exhaustion_policy": ".exhaustion",
+}
+
+
+if not TYPE_CHECKING:
+
+    def __getattr__(name: str) -> object:
+        return _resolve_lazy_export(
+            module_name=__name__,
+            package_name=__package__,
+            namespace=globals(),
+            export_modules=_LAZY_EXPORT_MODULES,
+            name=name,
+        )
+
+    def __dir__() -> list[str]:
+        return sorted(set(globals()) | set(_LAZY_EXPORT_MODULES))
 
 
 __all__ = [

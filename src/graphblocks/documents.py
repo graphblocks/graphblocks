@@ -5,9 +5,41 @@ from dataclasses import dataclass, field
 from collections.abc import Iterator, Mapping
 from copy import deepcopy
 from types import MappingProxyType
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
+from ._lazy_exports import resolve_lazy_export as _resolve_lazy_export
 from .canonical import canonical_dumps
+
+if TYPE_CHECKING:
+    from .blob_store import (
+        BlobKey,
+        BlobListItem,
+        BlobMetadata,
+        BlobNotFoundError,
+        BlobStoreError,
+        ByteRange,
+        ListPage,
+        LocalBlobStore,
+        PutOptions,
+        S3CompatibleBlobStore,
+    )
+    from .document_parsers import (
+        DocumentParserError,
+        DocumentParserNotFoundError,
+        DocumentParserRegistry,
+        ParserDescriptor,
+        ParserSelectionLock,
+        plain_text_parser_descriptor,
+    )
+    from .ingestion import (
+        InMemoryIngestionManifestStore,
+        IndexRecordRef,
+        IngestionDeletePolicy,
+        IngestionError,
+        IngestionManifest,
+        IngestionStatus,
+        ProcessorRef,
+    )
 
 
 JsonObject = dict[str, Any]
@@ -765,35 +797,46 @@ def chunk_document_by_lines(
     return chunks
 
 
-from .blob_store import (  # noqa: E402
-    BlobKey,
-    BlobListItem,
-    BlobMetadata,
-    BlobNotFoundError,
-    BlobStoreError,
-    ByteRange,
-    ListPage,
-    LocalBlobStore,
-    PutOptions,
-    S3CompatibleBlobStore,
-)
-from .document_parsers import (  # noqa: E402
-    DocumentParserError,
-    DocumentParserNotFoundError,
-    DocumentParserRegistry,
-    ParserDescriptor,
-    ParserSelectionLock,
-    plain_text_parser_descriptor,
-)
-from .ingestion import (  # noqa: E402
-    InMemoryIngestionManifestStore,
-    IndexRecordRef,
-    IngestionDeletePolicy,
-    IngestionError,
-    IngestionManifest,
-    IngestionStatus,
-    ProcessorRef,
-)
+_LAZY_EXPORT_MODULES = {
+    "BlobKey": ".blob_store",
+    "BlobListItem": ".blob_store",
+    "BlobMetadata": ".blob_store",
+    "BlobNotFoundError": ".blob_store",
+    "BlobStoreError": ".blob_store",
+    "ByteRange": ".blob_store",
+    "ListPage": ".blob_store",
+    "LocalBlobStore": ".blob_store",
+    "PutOptions": ".blob_store",
+    "S3CompatibleBlobStore": ".blob_store",
+    "DocumentParserError": ".document_parsers",
+    "DocumentParserNotFoundError": ".document_parsers",
+    "DocumentParserRegistry": ".document_parsers",
+    "ParserDescriptor": ".document_parsers",
+    "ParserSelectionLock": ".document_parsers",
+    "plain_text_parser_descriptor": ".document_parsers",
+    "InMemoryIngestionManifestStore": ".ingestion",
+    "IndexRecordRef": ".ingestion",
+    "IngestionDeletePolicy": ".ingestion",
+    "IngestionError": ".ingestion",
+    "IngestionManifest": ".ingestion",
+    "IngestionStatus": ".ingestion",
+    "ProcessorRef": ".ingestion",
+}
+
+
+if not TYPE_CHECKING:
+
+    def __getattr__(name: str) -> object:
+        return _resolve_lazy_export(
+            module_name=__name__,
+            package_name=__package__,
+            namespace=globals(),
+            export_modules=_LAZY_EXPORT_MODULES,
+            name=name,
+        )
+
+    def __dir__() -> list[str]:
+        return sorted(set(globals()) | set(_LAZY_EXPORT_MODULES))
 
 
 __all__ = [
