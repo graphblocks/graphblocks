@@ -1900,6 +1900,829 @@ def _run_policy_command(
     return 0
 
 
+def _report_command_error(
+    args: argparse.Namespace,
+    error: Exception,
+) -> int:
+    if args.json:
+        print(
+            json.dumps(
+                {"ok": False, "error": str(error)},
+                indent=2,
+                sort_keys=True,
+            )
+        )
+    else:
+        print(f"{args.command} error: {error}")
+    return 1
+
+
+def _run_release_command(
+    args: argparse.Namespace,
+    command_parsers: Mapping[str, argparse.ArgumentParser],
+) -> int:
+    loaded_release: _LoadedRelease | None = None
+    if args.release_command in {"build", "verify"}:
+        try:
+            loaded_release = _load_release(args)
+        except (
+            OSError,
+            TypeError,
+            ValueError,
+            tarfile.TarError,
+            yaml.YAMLError,
+        ) as error:
+            return _report_command_error(args, error)
+    release = (
+        loaded_release.release
+        if loaded_release is not None
+        else None
+    )
+    matching_releases = (
+        [loaded_release.source_document]
+        if loaded_release is not None
+        else []
+    )
+    archive_digest = (
+        loaded_release.archive_digest
+        if loaded_release is not None
+        else None
+    )
+    if args.release_command == "build":
+        assert release is not None
+        try:
+            release.validate_production_pins()
+        except GraphReleaseMutableReferencesError as error:
+            payload = {
+                "ok": False,
+                "name": release.name,
+                "version": release.version,
+                "releaseDigest": release.content_digest(),
+                "mutableReferences": list(error.references),
+            }
+            if args.json:
+                print(json.dumps(payload, indent=2, sort_keys=True))
+            else:
+                print(
+                    f"FAIL {release.name} mutable references: "
+                    f"{', '.join(error.references)}"
+                )
+            return 1
+
+        release_bytes = json.dumps(
+            matching_releases[0],
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+        release_file_digest = (
+            "sha256:" + hashlib.sha256(release_bytes).hexdigest()
+        )
+        manifest = {
+            "formatVersion": 1,
+            "mediaType": "application/vnd.graphblocks.release.bundle.v1+tar",
+            "releaseName": release.name,
+            "releaseVersion": release.version,
+            "releaseDigest": release.content_digest(),
+            "files": {"release.json": release_file_digest},
+        }
+        manifest_bytes = json.dumps(
+            manifest,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+        bundle_buffer = io.BytesIO()
+        with tarfile.open(
+            fileobj=bundle_buffer,
+            mode="w:",
+            format=tarfile.USTAR_FORMAT,
+        ) as archive:
+            for filename, content in (
+                ("manifest.json", manifest_bytes),
+                ("release.json", release_bytes),
+            ):
+                member = tarfile.TarInfo(filename)
+                member.size = len(content)
+                member.mode = 0o644
+                member.mtime = 0
+                member.uid = 0
+                member.gid = 0
+                member.uname = ""
+                member.gname = ""
+                archive.addfile(member, io.BytesIO(content))
+        bundle_bytes = bundle_buffer.getvalue()
+        bundle_digest = (
+            "sha256:" + hashlib.sha256(bundle_bytes).hexdigest()
+        )
+        args.out.parent.mkdir(parents=True, exist_ok=True)
+        args.out.write_bytes(bundle_bytes)
+        payload = {
+            "ok": True,
+            "name": release.name,
+            "version": release.version,
+            "releaseDigest": release.content_digest(),
+            "bundleDigest": bundle_digest,
+            "output": str(args.out),
+        }
+        if args.json:
+            print(json.dumps(payload, indent=2, sort_keys=True))
+        else:
+            print(
+                f"{args.out} {bundle_digest} "
+                f"release={release.content_digest()}"
+            )
+        return 0
+    if args.release_command == "verify":
+        assert release is not None
+        mutable_references: list[str] = []
+        try:
+            release.validate_production_pins()
+        except GraphReleaseMutableReferencesError as error:
+            mutable_references.extend(error.references)
+        payload = {
+            "ok": not mutable_references,
+            "name": release.name,
+            "version": release.version,
+            "releaseDigest": release.content_digest(),
+            "mutableReferences": mutable_references,
+        }
+        if archive_digest is not None:
+            payload["bundleDigest"] = archive_digest
+        if args.json:
+            print(json.dumps(payload, indent=2, sort_keys=True))
+        elif mutable_references:
+            print(f"FAIL {release.name} mutable references: {', '.join(mutable_references)}")
+        else:
+            print(f"OK {release.name} {release.version} {release.content_digest()}")
+        return 0 if payload["ok"] else 1
+    command_parsers["release"].print_help()
+    return 0
+
+
+def _run_deploy_command(
+    args: argparse.Namespace,
+    command_parsers: Mapping[str, argparse.ArgumentParser],
+) -> int:
+    release_documents: list[dict[str, object]] = []
+    release: GraphRelease | None = None
+    if args.deploy_command == "plan":
+        try:
+            loaded_release = _load_release(args)
+        except (
+            OSError,
+            TypeError,
+            ValueError,
+            tarfile.TarError,
+            yaml.YAMLError,
+        ) as error:
+            return _report_command_error(args, error)
+        release_documents = list(loaded_release.documents)
+        release = loaded_release.release
+    if args.deploy_command == "targets-verify":
+        try:
+            documents = load_documents(args.path)
+            target_documents = [
+                document
+                for document in documents
+                if document.get("kind") == "DeploymentTargetProfileSet"
+            ]
+            if len(target_documents) != 1:
+                raise ValueError(
+                    f"expected one DeploymentTargetProfileSet document, found {len(target_documents)}"
+                )
+            target_set = DeploymentTargetProfileSet.from_document(target_documents[0])
+            required_roles = tuple(args.required_role or PHASE_FIVE_IMAGE_ROLES)
+            coverage = target_set.coverage_for_required_image_roles(required_roles)
+            payload = {
+                "ok": coverage.ok,
+                "targetCount": len(target_set.targets),
+                "targetIds": list(target_set.target_ids()),
+                "imageRoles": list(target_set.image_roles()),
+                "requiredImageRoles": list(required_roles),
+                "contentDigest": target_set.content_digest(),
+                "issues": coverage.issue_contracts(),
+            }
+            if args.json:
+                print(json.dumps(payload, indent=2, sort_keys=True))
+            elif coverage.ok:
+                print(f"OK {payload['targetCount']} targets {payload['contentDigest']}")
+            else:
+                print(f"FAIL deployment target coverage: {len(coverage.issues)} issue(s)")
+            return 0 if coverage.ok else 1
+        except (OSError, TypeError, ValueError, yaml.YAMLError) as error:
+            if args.json:
+                print(json.dumps({"ok": False, "error": str(error)}, indent=2, sort_keys=True))
+            else:
+                print(f"FAIL {error}")
+            return 1
+    if args.deploy_command == "render":
+        try:
+            from .integrations.kubernetes import (
+                KubernetesManifestSet,
+                KubernetesRenderOptions,
+                render_helm_chart,
+                render_target_manifests,
+            )
+
+            payload = _loads_strict_json(
+                "deploy plan payload",
+                args.path.read_text(encoding="utf-8"),
+            )
+            if not isinstance(payload, Mapping):
+                raise ValueError("deploy plan payload must be a JSON object")
+            if payload.get("ok") is not True:
+                raise ValueError("deploy plan payload is not successful")
+            provenance_fields: dict[str, str] = {}
+            for field_name in (
+                "releaseDigest",
+                "deploymentRevisionId",
+                "planHash",
+            ):
+                value = payload.get(field_name)
+                if not isinstance(value, str) or not value.strip():
+                    raise ValueError(
+                        f"deploy plan payload {field_name} must be a non-empty string"
+                    )
+                if value != value.strip():
+                    raise ValueError(
+                        f"deploy plan payload {field_name} must not contain surrounding whitespace"
+                    )
+                provenance_fields[field_name] = value
+            release_digest = provenance_fields["releaseDigest"]
+            release_digest_value = release_digest.removeprefix("sha256:")
+            if (
+                not release_digest.startswith("sha256:")
+                or len(release_digest_value) != 64
+                or any(
+                    character not in "0123456789abcdef"
+                    for character in release_digest_value
+                )
+            ):
+                raise ValueError(
+                    "deploy plan payload releaseDigest must be a canonical sha256 digest"
+                )
+            deployment_revision = payload.get("deploymentRevision")
+            if not isinstance(deployment_revision, Mapping):
+                raise ValueError("deploy plan payload deploymentRevision must be an object")
+            for revision_field, top_level_field in (
+                ("revisionId", "deploymentRevisionId"),
+                ("releaseDigest", "releaseDigest"),
+                ("physicalPlanHash", "planHash"),
+            ):
+                if deployment_revision.get(revision_field) != provenance_fields[top_level_field]:
+                    raise ValueError(
+                        "deploy plan payload deploymentRevision does not match top-level provenance"
+                    )
+            plan_payload = payload.get("plan")
+            if not isinstance(plan_payload, Mapping):
+                raise ValueError("deploy plan payload requires plan mapping")
+            graph_hash = plan_payload.get("graphHash")
+            if not isinstance(graph_hash, str) or not graph_hash.strip():
+                raise ValueError("deploy plan payload plan.graphHash must be a non-empty string")
+            targets_payload = plan_payload.get("targets")
+            if not isinstance(targets_payload, Mapping) or not targets_payload:
+                raise ValueError("deploy plan payload requires non-empty plan.targets")
+            canonical_targets: list[dict[str, object]] = []
+            for target_id, target in sorted(targets_payload.items()):
+                if not isinstance(target, Mapping):
+                    raise ValueError("deploy plan payload plan target must be an object")
+                capabilities = target.get("capabilities", [])
+                effects = target.get("effects", [])
+                if not isinstance(capabilities, list) or not isinstance(effects, list):
+                    raise ValueError(
+                        "deploy plan payload plan target capabilities and effects must be arrays"
+                    )
+                canonical_targets.append(
+                    {
+                        "target_id": target_id,
+                        "kind": target.get("kind"),
+                        "execution_host": target.get("executionHost"),
+                        "capabilities": capabilities,
+                        "effects": effects,
+                        "package_lock": target.get("packageLock"),
+                        "image": target.get("image"),
+                    }
+                )
+            placements = plan_payload.get("placements", [])
+            if not isinstance(placements, list):
+                raise ValueError("deploy plan payload plan.placements must be an array")
+            canonical_placements: list[dict[str, object]] = []
+            for placement in placements:
+                if not isinstance(placement, Mapping):
+                    raise ValueError("deploy plan payload plan placement must be an object")
+                selector = placement.get("selector")
+                if not isinstance(selector, Mapping):
+                    raise ValueError("deploy plan payload plan placement selector must be an object")
+                selector_values = selector.get("values", [])
+                if not isinstance(selector_values, list):
+                    raise ValueError(
+                        "deploy plan payload plan placement selector values must be an array"
+                    )
+                canonical_placements.append(
+                    {
+                        "rule_id": placement.get("ruleId"),
+                        "selector": {
+                            "kind": selector.get("kind"),
+                            "values": selector_values,
+                        },
+                        "target_id": placement.get("target"),
+                    }
+                )
+            canonical_placements.sort(key=canonical_dumps)
+            computed_plan_hash = canonical_hash(
+                {
+                    "release_digest": provenance_fields["releaseDigest"],
+                    "deployment_revision_id": provenance_fields["deploymentRevisionId"],
+                    "graph_hash": graph_hash,
+                    "package_lock_hash": plan_payload.get("packageLockHash"),
+                    "targets": canonical_targets,
+                    "placements": canonical_placements,
+                    "default_target": plan_payload.get("defaultTarget"),
+                }
+            )
+            if computed_plan_hash != provenance_fields["planHash"]:
+                raise ValueError("deploy plan payload planHash does not match plan content")
+            revision_digest_fields: dict[str, str] = {}
+            for field_name in (
+                "deploymentSpecHash",
+                "resolvedBindingHash",
+                "targetCapabilityHash",
+                "contentDigest",
+            ):
+                value = deployment_revision.get(field_name)
+                if not isinstance(value, str):
+                    raise ValueError(
+                        f"deploy plan payload deploymentRevision.{field_name} must be a canonical sha256 digest"
+                    )
+                digest = value.removeprefix("sha256:")
+                if (
+                    not value.startswith("sha256:")
+                    or len(digest) != 64
+                    or any(character not in "0123456789abcdef" for character in digest)
+                ):
+                    raise ValueError(
+                        f"deploy plan payload deploymentRevision.{field_name} must be a canonical sha256 digest"
+                    )
+                revision_digest_fields[field_name] = value
+            if payload.get("deploymentSpecHash") != revision_digest_fields["deploymentSpecHash"]:
+                raise ValueError(
+                    "deploy plan payload deploymentRevision deploymentSpecHash does not match top-level provenance"
+                )
+            computed_revision_digest = canonical_hash(
+                {
+                    "release_digest": provenance_fields["releaseDigest"],
+                    "deployment_spec_hash": revision_digest_fields["deploymentSpecHash"],
+                    "physical_plan_hash": provenance_fields["planHash"],
+                    "resolved_binding_hash": revision_digest_fields["resolvedBindingHash"],
+                    "target_capability_hash": revision_digest_fields["targetCapabilityHash"],
+                }
+            )
+            if computed_revision_digest != revision_digest_fields["contentDigest"]:
+                raise ValueError(
+                    "deploy plan payload deploymentRevision contentDigest does not match revision content"
+                )
+
+            options = KubernetesRenderOptions(namespace=args.namespace)
+            manifest_documents: list[dict[str, object]] = []
+            name_prefix = str(args.name or payload.get("deploymentId") or "graphblocks")
+            for target_id, target_payload in sorted(targets_payload.items()):
+                if not isinstance(target_payload, Mapping):
+                    raise ValueError(f"deploy plan target {target_id!r} must be a mapping")
+                target = ExecutionTarget(
+                    target_id=str(target_id),
+                    kind=str(target_payload.get("kind", "")),
+                    execution_host=str(target_payload.get("executionHost", "")),
+                    capabilities=tuple(str(item) for item in target_payload.get("capabilities", ()) or ()),
+                    effects=tuple(str(item) for item in target_payload.get("effects", ()) or ()),
+                    package_lock=(
+                        str(target_payload.get("packageLock"))
+                        if target_payload.get("packageLock") is not None
+                        else None
+                    ),
+                    image=(
+                        str(target_payload.get("image"))
+                        if target_payload.get("image") is not None
+                        else None
+                    ),
+                )
+                manifest_set = render_target_manifests(
+                    f"{name_prefix}-{target.target_id}",
+                    target,
+                    options=options,
+                    replicas=args.replicas,
+                )
+                manifest_documents.extend(manifest_set.documents)
+
+            manifest_set = KubernetesManifestSet(tuple(manifest_documents))
+            manifest_digest = manifest_set.content_digest()
+            if args.target == "helm":
+                chart_values = {
+                    key: value
+                    for key, value in {
+                        "deploymentId": payload.get("deploymentId"),
+                        "deploymentRevisionId": payload.get("deploymentRevisionId"),
+                        "releaseDigest": payload.get("releaseDigest"),
+                        "planHash": payload.get("planHash"),
+                        "manifestDigest": manifest_digest,
+                    }.items()
+                    if value is not None
+                }
+                chart = render_helm_chart(
+                    name_prefix,
+                    manifest_set,
+                    app_version=(
+                        str(payload.get("deploymentRevisionId"))
+                        if payload.get("deploymentRevisionId") is not None
+                        else None
+                    ),
+                    values=chart_values,
+                )
+                output = {
+                    "ok": True,
+                    "target": args.target,
+                    "deploymentId": payload.get("deploymentId"),
+                    "deploymentRevisionId": payload.get("deploymentRevisionId"),
+                    "planHash": payload.get("planHash"),
+                    "manifestDigest": manifest_digest,
+                    "chartName": chart.chart_name,
+                    "chartDigest": chart.content_digest(),
+                    "files": chart.file_map(),
+                }
+                if args.json:
+                    print(json.dumps(output, indent=2, sort_keys=True))
+                else:
+                    for file in chart.files:
+                        print(f"# Source: {file.path}")
+                        print(file.content, end="" if file.content.endswith("\n") else "\n")
+                return 0
+
+            output = {
+                "ok": True,
+                "target": args.target,
+                "deploymentId": payload.get("deploymentId"),
+                "deploymentRevisionId": payload.get("deploymentRevisionId"),
+                "planHash": payload.get("planHash"),
+                "manifestDigest": manifest_digest,
+                "manifests": manifest_set.documents,
+            }
+            if args.json:
+                print(json.dumps(output, indent=2, sort_keys=True))
+            else:
+                print(yaml.safe_dump_all(manifest_set.documents, sort_keys=True), end="")
+            return 0
+        except (ImportError, OSError, TypeError, ValueError, json.JSONDecodeError) as error:
+            if args.json:
+                print(json.dumps({"ok": False, "error": str(error)}, indent=2, sort_keys=True))
+            else:
+                print(f"FAIL {error}")
+            return 1
+    if args.deploy_command == "plan":
+        assert release is not None
+        try:
+            release.validate_production_pins()
+            deployment_documents = [
+                document
+                for document in release_documents
+                if document.get("kind") == "GraphDeployment"
+            ]
+            if len(deployment_documents) != 1:
+                raise ValueError(
+                    f"expected one GraphDeployment document, found {len(deployment_documents)}"
+                )
+            deployment_document = deployment_documents[0]
+            metadata = deployment_document.get("metadata", {})
+            spec = deployment_document.get("spec", {})
+            if not isinstance(metadata, Mapping) or not isinstance(spec, Mapping):
+                raise ValueError(
+                    "GraphDeployment documents require metadata and spec mappings"
+                )
+            deployment_id = str(_field(metadata, "name", default="")).strip()
+            if not deployment_id:
+                raise ValueError("GraphDeployment metadata.name is required")
+
+            release_ref = _field(spec, "releaseRef", "release_ref", default={})
+            if not isinstance(release_ref, Mapping):
+                raise ValueError("GraphDeployment spec.releaseRef must be a mapping")
+            release_name = _field(release_ref, "name")
+            if release_name is not None and str(release_name) != release.name:
+                raise ValueError(
+                    f"GraphDeployment releaseRef.name {release_name!r} "
+                    f"does not match {release.name!r}"
+                )
+            release_digest = _field(release_ref, "digest")
+            if (
+                release_digest is not None
+                and str(release_digest) != release.content_digest()
+            ):
+                raise ValueError(
+                    f"GraphDeployment releaseRef.digest {release_digest!r} "
+                    f"does not match {release.content_digest()!r}"
+                )
+
+            graph_name_value = args.graph or _field(
+                spec,
+                "graph",
+                "graphName",
+                "graph_name",
+            )
+            if graph_name_value is None:
+                if len(release.graphs) != 1:
+                    raise ValueError(
+                        "GraphDeployment requires --graph when the release does not contain exactly one graph"
+                    )
+                graph_name_value = next(iter(release.graphs))
+            graph_name = str(graph_name_value)
+            if graph_name not in release.graphs:
+                raise ValueError(
+                    f"GraphRelease {release.name!r} has no graph {graph_name!r}"
+                )
+
+            deployment = GraphDeployment(
+                deployment_id=deployment_id,
+                release=release,
+                graph_name=graph_name,
+                deployment_revision_id=args.revision,
+                environment=str(
+                    _field(spec, "environment", "profile", default="local")
+                ),
+            )
+            targets_data = _field(spec, "targets", default={})
+            if not isinstance(targets_data, Mapping):
+                raise ValueError("GraphDeployment spec.targets must be a mapping")
+            target_kind_names = {
+                "service": "service",
+                "workerPool": "worker_pool",
+                "worker_pool": "worker_pool",
+                "jobPool": "job_pool",
+                "job_pool": "job_pool",
+                "sandboxPool": "sandbox_pool",
+                "sandbox_pool": "sandbox_pool",
+                "statefulService": "stateful_service",
+                "stateful_service": "stateful_service",
+                "external": "external",
+            }
+            for target_id, target_data in targets_data.items():
+                if not isinstance(target_data, Mapping):
+                    raise ValueError(
+                        f"GraphDeployment target {target_id!r} must be a mapping"
+                    )
+                raw_kind = str(_field(target_data, "kind", default=""))
+                target_kind = target_kind_names.get(raw_kind)
+                if target_kind is None:
+                    raise ValueError(
+                        f"GraphDeployment target {target_id!r} has unknown kind {raw_kind!r}"
+                    )
+                execution_host = str(
+                    _field(
+                        target_data,
+                        "executionHost",
+                        "execution_host",
+                        default="",
+                    )
+                )
+                if not execution_host:
+                    raise ValueError(
+                        f"GraphDeployment target {target_id!r} requires executionHost"
+                    )
+                accepts = _field(target_data, "accepts", default={})
+                if not isinstance(accepts, Mapping):
+                    raise ValueError(
+                        f"GraphDeployment target {target_id!r} accepts must be a mapping"
+                    )
+                target = ExecutionTarget(
+                    target_id=str(target_id),
+                    kind=target_kind,
+                    execution_host=execution_host,
+                    capabilities=_tuple_field(
+                        accepts,
+                        "capabilities",
+                    )
+                    or _tuple_field(target_data, "capabilities"),
+                    effects=_tuple_field(accepts, "effects")
+                    or _tuple_field(target_data, "effects"),
+                    package_lock=(
+                        str(
+                            _field(
+                                target_data,
+                                "packageLock",
+                                "package_lock",
+                            )
+                        )
+                        if _field(
+                            target_data,
+                            "packageLock",
+                            "package_lock",
+                        )
+                        is not None
+                        else None
+                    ),
+                    image=(
+                        str(_field(target_data, "image"))
+                        if _field(target_data, "image") is not None
+                        else None
+                    ),
+                )
+                deployment = deployment.with_target(target)
+
+            coordinator = _field(spec, "coordinator", default={})
+            if coordinator is not None and not isinstance(coordinator, Mapping):
+                raise ValueError("GraphDeployment spec.coordinator must be a mapping")
+            default_target = (
+                str(_field(coordinator, "target"))
+                if isinstance(coordinator, Mapping)
+                and _field(coordinator, "target") is not None
+                else None
+            )
+            placements_data = _field(spec, "placements", default=())
+            if not isinstance(placements_data, list):
+                raise ValueError("GraphDeployment spec.placements must be a list")
+            selector_kinds = {
+                "nodes": "nodes",
+                "executionGroups": "execution_groups",
+                "execution_groups": "execution_groups",
+                "blocks": "blocks",
+                "blockNamespaces": "blocks",
+                "block_namespaces": "blocks",
+                "capabilities": "capabilities",
+                "effects": "effects",
+                "executionClasses": "execution_classes",
+                "execution_classes": "execution_classes",
+            }
+            for index, placement_data in enumerate(placements_data):
+                if not isinstance(placement_data, Mapping):
+                    raise ValueError(
+                        f"GraphDeployment placement {index} must be a mapping"
+                    )
+                selector_data = _field(placement_data, "select", "selector")
+                if not isinstance(selector_data, Mapping):
+                    raise ValueError(
+                        f"GraphDeployment placement {index} requires select mapping"
+                    )
+                target_id = str(_field(placement_data, "target", default=""))
+                if not target_id:
+                    raise ValueError(
+                        f"GraphDeployment placement {index} requires target"
+                    )
+                default_selector = _field(
+                    selector_data,
+                    "default",
+                    default=False,
+                )
+                if not isinstance(default_selector, bool):
+                    raise ValueError(
+                        f"GraphDeployment placement {index} default must be a boolean"
+                    )
+                if default_selector:
+                    if default_target is not None and default_target != target_id:
+                        raise ValueError(
+                            "GraphDeployment declares conflicting default targets "
+                            f"{default_target!r} and {target_id!r}"
+                        )
+                    default_target = target_id
+                    continue
+                selected = [
+                    (selector_kinds[key], _tuple_field(selector_data, key))
+                    for key in selector_kinds
+                    if key in selector_data
+                ]
+                if len(selected) != 1:
+                    raise ValueError(
+                        f"GraphDeployment placement {index} must declare exactly one selector"
+                    )
+                selector_kind, selector_values = selected[0]
+                if not selector_values:
+                    raise ValueError(
+                        f"GraphDeployment placement {index} selector cannot be empty"
+                    )
+                deployment = deployment.with_placement(
+                    PlacementRule(
+                        rule_id=str(
+                            _field(
+                                placement_data,
+                                "ruleId",
+                                "rule_id",
+                                "id",
+                                default=f"placement-{index + 1}",
+                            )
+                        ),
+                        selector=PlacementSelector(
+                            selector_kind,
+                            selector_values,
+                        ),
+                        target_id=target_id,
+                    )
+                )
+            if default_target is not None:
+                if default_target not in deployment.targets:
+                    raise ValueError(
+                        f"GraphDeployment default target {default_target!r} is not defined"
+                    )
+                deployment = deployment.with_default_target(default_target)
+
+            package_lock_hash = _field(
+                spec,
+                "packageLockHash",
+                "package_lock_hash",
+            )
+            plan = deployment.to_physical_plan(
+                package_lock_hash=(
+                    str(package_lock_hash)
+                    if package_lock_hash is not None
+                    else None
+                )
+            )
+            deployment_spec_hash = deployment.deployment_spec_hash()
+            plan_hash = plan.plan_hash()
+            resolved_binding_hash_value = _field(
+                spec,
+                "resolvedBindingHash",
+                "resolved_binding_hash",
+            )
+            if resolved_binding_hash_value is None:
+                binding_ref = _field(spec, "bindingRef", "binding_ref", default={})
+                resolved_binding_hash = canonical_hash(binding_ref)
+            else:
+                resolved_binding_hash = str(resolved_binding_hash_value)
+            revision = DeploymentRevision(
+                revision_id=deployment.deployment_revision_id,
+                release_digest=plan.release_digest,
+                deployment_spec_hash=deployment_spec_hash,
+                physical_plan_hash=plan_hash,
+                resolved_binding_hash=resolved_binding_hash,
+                target_capability_hash=plan.target_capability_hash(),
+                created_at=args.created_at,
+            )
+            payload = {
+                "ok": True,
+                "deploymentId": deployment.deployment_id,
+                "deploymentRevisionId": deployment.deployment_revision_id,
+                "graphName": deployment.graph_name,
+                "releaseDigest": plan.release_digest,
+                "deploymentSpecHash": deployment_spec_hash,
+                "planHash": plan_hash,
+                "deploymentRevision": {
+                    "revisionId": revision.revision_id,
+                    "releaseDigest": revision.release_digest,
+                    "deploymentSpecHash": revision.deployment_spec_hash,
+                    "physicalPlanHash": revision.physical_plan_hash,
+                    "resolvedBindingHash": revision.resolved_binding_hash,
+                    "targetCapabilityHash": revision.target_capability_hash,
+                    "createdAt": revision.created_at,
+                    "contentDigest": revision.content_digest(),
+                },
+                "plan": {
+                    "graphHash": plan.graph_hash,
+                    "packageLockHash": plan.package_lock_hash,
+                    "defaultTarget": plan.default_target,
+                    "targets": {
+                        target_id: {
+                            "kind": target.kind,
+                            "executionHost": target.execution_host,
+                            "capabilities": list(target.capabilities),
+                            "effects": list(target.effects),
+                            "packageLock": target.package_lock,
+                            "image": target.image,
+                        }
+                        for target_id, target in sorted(plan.targets.items())
+                    },
+                    "placements": [
+                        {
+                            "ruleId": placement.rule_id,
+                            "selector": {
+                                "kind": placement.selector.kind,
+                                "values": list(placement.selector.values),
+                            },
+                            "target": placement.target_id,
+                        }
+                        for placement in plan.placements
+                    ],
+                },
+            }
+            if args.json:
+                print(json.dumps(payload, indent=2, sort_keys=True))
+            else:
+                print(
+                    f"{deployment.deployment_id} {plan.plan_hash()} "
+                    f"release={plan.release_digest} revision={plan.deployment_revision_id}"
+                )
+            return 0
+        except (OSError, TypeError, ValueError, yaml.YAMLError) as error:
+            if args.json:
+                print(
+                    json.dumps(
+                        {"ok": False, "error": str(error)},
+                        indent=2,
+                        sort_keys=True,
+                    )
+                )
+            else:
+                print(f"deploy plan error: {error}")
+            return 1
+    command_parsers["deploy"].print_help()
+    return 0
+
+
 _CliCommandHandler = Callable[
     [argparse.Namespace, Mapping[str, argparse.ArgumentParser]],
     int,
@@ -1917,6 +2740,8 @@ _CLI_COMMAND_HANDLERS: Mapping[str, _CliCommandHandler] = MappingProxyType(
         "schemas": _run_schemas_command,
         "observe": _run_observe_command,
         "policy": _run_policy_command,
+        "release": _run_release_command,
+        "deploy": _run_deploy_command,
     }
 )
 
@@ -1931,794 +2756,6 @@ def _main(argv: list[str] | None = None) -> int:
     command_handler = _CLI_COMMAND_HANDLERS.get(args.command)
     if command_handler is not None:
         return command_handler(args, command_parsers)
-    release_documents: list[dict[str, object]] = []
-    matching_releases: list[dict[str, object]] = []
-    release: GraphRelease | None = None
-    archive_digest: str | None = None
-    if (
-        args.command == "release"
-        and args.release_command in {"build", "verify"}
-    ) or (
-        args.command == "deploy" and args.deploy_command == "plan"
-    ):
-        try:
-            loaded_release = _load_release(args)
-        except (
-            OSError,
-            TypeError,
-            ValueError,
-            tarfile.TarError,
-            yaml.YAMLError,
-        ) as error:
-            if args.json:
-                print(
-                    json.dumps(
-                        {"ok": False, "error": str(error)},
-                        indent=2,
-                        sort_keys=True,
-                    )
-                )
-            else:
-                print(f"{args.command} error: {error}")
-            return 1
-        release_documents = list(loaded_release.documents)
-        matching_releases = [loaded_release.source_document]
-        release = loaded_release.release
-        archive_digest = loaded_release.archive_digest
-    if args.command == "release":
-        if args.release_command == "build":
-            assert release is not None
-            try:
-                release.validate_production_pins()
-            except GraphReleaseMutableReferencesError as error:
-                payload = {
-                    "ok": False,
-                    "name": release.name,
-                    "version": release.version,
-                    "releaseDigest": release.content_digest(),
-                    "mutableReferences": list(error.references),
-                }
-                if args.json:
-                    print(json.dumps(payload, indent=2, sort_keys=True))
-                else:
-                    print(
-                        f"FAIL {release.name} mutable references: "
-                        f"{', '.join(error.references)}"
-                    )
-                return 1
-
-            release_bytes = json.dumps(
-                matching_releases[0],
-                ensure_ascii=False,
-                separators=(",", ":"),
-                sort_keys=True,
-            ).encode("utf-8")
-            release_file_digest = (
-                "sha256:" + hashlib.sha256(release_bytes).hexdigest()
-            )
-            manifest = {
-                "formatVersion": 1,
-                "mediaType": "application/vnd.graphblocks.release.bundle.v1+tar",
-                "releaseName": release.name,
-                "releaseVersion": release.version,
-                "releaseDigest": release.content_digest(),
-                "files": {"release.json": release_file_digest},
-            }
-            manifest_bytes = json.dumps(
-                manifest,
-                ensure_ascii=False,
-                separators=(",", ":"),
-                sort_keys=True,
-            ).encode("utf-8")
-            bundle_buffer = io.BytesIO()
-            with tarfile.open(
-                fileobj=bundle_buffer,
-                mode="w:",
-                format=tarfile.USTAR_FORMAT,
-            ) as archive:
-                for filename, content in (
-                    ("manifest.json", manifest_bytes),
-                    ("release.json", release_bytes),
-                ):
-                    member = tarfile.TarInfo(filename)
-                    member.size = len(content)
-                    member.mode = 0o644
-                    member.mtime = 0
-                    member.uid = 0
-                    member.gid = 0
-                    member.uname = ""
-                    member.gname = ""
-                    archive.addfile(member, io.BytesIO(content))
-            bundle_bytes = bundle_buffer.getvalue()
-            bundle_digest = (
-                "sha256:" + hashlib.sha256(bundle_bytes).hexdigest()
-            )
-            args.out.parent.mkdir(parents=True, exist_ok=True)
-            args.out.write_bytes(bundle_bytes)
-            payload = {
-                "ok": True,
-                "name": release.name,
-                "version": release.version,
-                "releaseDigest": release.content_digest(),
-                "bundleDigest": bundle_digest,
-                "output": str(args.out),
-            }
-            if args.json:
-                print(json.dumps(payload, indent=2, sort_keys=True))
-            else:
-                print(
-                    f"{args.out} {bundle_digest} "
-                    f"release={release.content_digest()}"
-                )
-            return 0
-        if args.release_command == "verify":
-            assert release is not None
-            mutable_references: list[str] = []
-            try:
-                release.validate_production_pins()
-            except GraphReleaseMutableReferencesError as error:
-                mutable_references.extend(error.references)
-            payload = {
-                "ok": not mutable_references,
-                "name": release.name,
-                "version": release.version,
-                "releaseDigest": release.content_digest(),
-                "mutableReferences": mutable_references,
-            }
-            if archive_digest is not None:
-                payload["bundleDigest"] = archive_digest
-            if args.json:
-                print(json.dumps(payload, indent=2, sort_keys=True))
-            elif mutable_references:
-                print(f"FAIL {release.name} mutable references: {', '.join(mutable_references)}")
-            else:
-                print(f"OK {release.name} {release.version} {release.content_digest()}")
-            return 0 if payload["ok"] else 1
-        command_parsers["release"].print_help()
-        return 0
-    if args.command == "deploy":
-        if args.deploy_command == "targets-verify":
-            try:
-                documents = load_documents(args.path)
-                target_documents = [
-                    document
-                    for document in documents
-                    if document.get("kind") == "DeploymentTargetProfileSet"
-                ]
-                if len(target_documents) != 1:
-                    raise ValueError(
-                        f"expected one DeploymentTargetProfileSet document, found {len(target_documents)}"
-                    )
-                target_set = DeploymentTargetProfileSet.from_document(target_documents[0])
-                required_roles = tuple(args.required_role or PHASE_FIVE_IMAGE_ROLES)
-                coverage = target_set.coverage_for_required_image_roles(required_roles)
-                payload = {
-                    "ok": coverage.ok,
-                    "targetCount": len(target_set.targets),
-                    "targetIds": list(target_set.target_ids()),
-                    "imageRoles": list(target_set.image_roles()),
-                    "requiredImageRoles": list(required_roles),
-                    "contentDigest": target_set.content_digest(),
-                    "issues": coverage.issue_contracts(),
-                }
-                if args.json:
-                    print(json.dumps(payload, indent=2, sort_keys=True))
-                elif coverage.ok:
-                    print(f"OK {payload['targetCount']} targets {payload['contentDigest']}")
-                else:
-                    print(f"FAIL deployment target coverage: {len(coverage.issues)} issue(s)")
-                return 0 if coverage.ok else 1
-            except (OSError, TypeError, ValueError, yaml.YAMLError) as error:
-                if args.json:
-                    print(json.dumps({"ok": False, "error": str(error)}, indent=2, sort_keys=True))
-                else:
-                    print(f"FAIL {error}")
-                return 1
-        if args.deploy_command == "render":
-            try:
-                from .integrations.kubernetes import (
-                    KubernetesManifestSet,
-                    KubernetesRenderOptions,
-                    render_helm_chart,
-                    render_target_manifests,
-                )
-
-                payload = _loads_strict_json(
-                    "deploy plan payload",
-                    args.path.read_text(encoding="utf-8"),
-                )
-                if not isinstance(payload, Mapping):
-                    raise ValueError("deploy plan payload must be a JSON object")
-                if payload.get("ok") is not True:
-                    raise ValueError("deploy plan payload is not successful")
-                provenance_fields: dict[str, str] = {}
-                for field_name in (
-                    "releaseDigest",
-                    "deploymentRevisionId",
-                    "planHash",
-                ):
-                    value = payload.get(field_name)
-                    if not isinstance(value, str) or not value.strip():
-                        raise ValueError(
-                            f"deploy plan payload {field_name} must be a non-empty string"
-                        )
-                    if value != value.strip():
-                        raise ValueError(
-                            f"deploy plan payload {field_name} must not contain surrounding whitespace"
-                        )
-                    provenance_fields[field_name] = value
-                release_digest = provenance_fields["releaseDigest"]
-                release_digest_value = release_digest.removeprefix("sha256:")
-                if (
-                    not release_digest.startswith("sha256:")
-                    or len(release_digest_value) != 64
-                    or any(
-                        character not in "0123456789abcdef"
-                        for character in release_digest_value
-                    )
-                ):
-                    raise ValueError(
-                        "deploy plan payload releaseDigest must be a canonical sha256 digest"
-                    )
-                deployment_revision = payload.get("deploymentRevision")
-                if not isinstance(deployment_revision, Mapping):
-                    raise ValueError("deploy plan payload deploymentRevision must be an object")
-                for revision_field, top_level_field in (
-                    ("revisionId", "deploymentRevisionId"),
-                    ("releaseDigest", "releaseDigest"),
-                    ("physicalPlanHash", "planHash"),
-                ):
-                    if deployment_revision.get(revision_field) != provenance_fields[top_level_field]:
-                        raise ValueError(
-                            "deploy plan payload deploymentRevision does not match top-level provenance"
-                        )
-                plan_payload = payload.get("plan")
-                if not isinstance(plan_payload, Mapping):
-                    raise ValueError("deploy plan payload requires plan mapping")
-                graph_hash = plan_payload.get("graphHash")
-                if not isinstance(graph_hash, str) or not graph_hash.strip():
-                    raise ValueError("deploy plan payload plan.graphHash must be a non-empty string")
-                targets_payload = plan_payload.get("targets")
-                if not isinstance(targets_payload, Mapping) or not targets_payload:
-                    raise ValueError("deploy plan payload requires non-empty plan.targets")
-                canonical_targets: list[dict[str, object]] = []
-                for target_id, target in sorted(targets_payload.items()):
-                    if not isinstance(target, Mapping):
-                        raise ValueError("deploy plan payload plan target must be an object")
-                    capabilities = target.get("capabilities", [])
-                    effects = target.get("effects", [])
-                    if not isinstance(capabilities, list) or not isinstance(effects, list):
-                        raise ValueError(
-                            "deploy plan payload plan target capabilities and effects must be arrays"
-                        )
-                    canonical_targets.append(
-                        {
-                            "target_id": target_id,
-                            "kind": target.get("kind"),
-                            "execution_host": target.get("executionHost"),
-                            "capabilities": capabilities,
-                            "effects": effects,
-                            "package_lock": target.get("packageLock"),
-                            "image": target.get("image"),
-                        }
-                    )
-                placements = plan_payload.get("placements", [])
-                if not isinstance(placements, list):
-                    raise ValueError("deploy plan payload plan.placements must be an array")
-                canonical_placements: list[dict[str, object]] = []
-                for placement in placements:
-                    if not isinstance(placement, Mapping):
-                        raise ValueError("deploy plan payload plan placement must be an object")
-                    selector = placement.get("selector")
-                    if not isinstance(selector, Mapping):
-                        raise ValueError("deploy plan payload plan placement selector must be an object")
-                    selector_values = selector.get("values", [])
-                    if not isinstance(selector_values, list):
-                        raise ValueError(
-                            "deploy plan payload plan placement selector values must be an array"
-                        )
-                    canonical_placements.append(
-                        {
-                            "rule_id": placement.get("ruleId"),
-                            "selector": {
-                                "kind": selector.get("kind"),
-                                "values": selector_values,
-                            },
-                            "target_id": placement.get("target"),
-                        }
-                    )
-                canonical_placements.sort(key=canonical_dumps)
-                computed_plan_hash = canonical_hash(
-                    {
-                        "release_digest": provenance_fields["releaseDigest"],
-                        "deployment_revision_id": provenance_fields["deploymentRevisionId"],
-                        "graph_hash": graph_hash,
-                        "package_lock_hash": plan_payload.get("packageLockHash"),
-                        "targets": canonical_targets,
-                        "placements": canonical_placements,
-                        "default_target": plan_payload.get("defaultTarget"),
-                    }
-                )
-                if computed_plan_hash != provenance_fields["planHash"]:
-                    raise ValueError("deploy plan payload planHash does not match plan content")
-                revision_digest_fields: dict[str, str] = {}
-                for field_name in (
-                    "deploymentSpecHash",
-                    "resolvedBindingHash",
-                    "targetCapabilityHash",
-                    "contentDigest",
-                ):
-                    value = deployment_revision.get(field_name)
-                    if not isinstance(value, str):
-                        raise ValueError(
-                            f"deploy plan payload deploymentRevision.{field_name} must be a canonical sha256 digest"
-                        )
-                    digest = value.removeprefix("sha256:")
-                    if (
-                        not value.startswith("sha256:")
-                        or len(digest) != 64
-                        or any(character not in "0123456789abcdef" for character in digest)
-                    ):
-                        raise ValueError(
-                            f"deploy plan payload deploymentRevision.{field_name} must be a canonical sha256 digest"
-                        )
-                    revision_digest_fields[field_name] = value
-                if payload.get("deploymentSpecHash") != revision_digest_fields["deploymentSpecHash"]:
-                    raise ValueError(
-                        "deploy plan payload deploymentRevision deploymentSpecHash does not match top-level provenance"
-                    )
-                computed_revision_digest = canonical_hash(
-                    {
-                        "release_digest": provenance_fields["releaseDigest"],
-                        "deployment_spec_hash": revision_digest_fields["deploymentSpecHash"],
-                        "physical_plan_hash": provenance_fields["planHash"],
-                        "resolved_binding_hash": revision_digest_fields["resolvedBindingHash"],
-                        "target_capability_hash": revision_digest_fields["targetCapabilityHash"],
-                    }
-                )
-                if computed_revision_digest != revision_digest_fields["contentDigest"]:
-                    raise ValueError(
-                        "deploy plan payload deploymentRevision contentDigest does not match revision content"
-                    )
-
-                options = KubernetesRenderOptions(namespace=args.namespace)
-                manifest_documents: list[dict[str, object]] = []
-                name_prefix = str(args.name or payload.get("deploymentId") or "graphblocks")
-                for target_id, target_payload in sorted(targets_payload.items()):
-                    if not isinstance(target_payload, Mapping):
-                        raise ValueError(f"deploy plan target {target_id!r} must be a mapping")
-                    target = ExecutionTarget(
-                        target_id=str(target_id),
-                        kind=str(target_payload.get("kind", "")),
-                        execution_host=str(target_payload.get("executionHost", "")),
-                        capabilities=tuple(str(item) for item in target_payload.get("capabilities", ()) or ()),
-                        effects=tuple(str(item) for item in target_payload.get("effects", ()) or ()),
-                        package_lock=(
-                            str(target_payload.get("packageLock"))
-                            if target_payload.get("packageLock") is not None
-                            else None
-                        ),
-                        image=(
-                            str(target_payload.get("image"))
-                            if target_payload.get("image") is not None
-                            else None
-                        ),
-                    )
-                    manifest_set = render_target_manifests(
-                        f"{name_prefix}-{target.target_id}",
-                        target,
-                        options=options,
-                        replicas=args.replicas,
-                    )
-                    manifest_documents.extend(manifest_set.documents)
-
-                manifest_set = KubernetesManifestSet(tuple(manifest_documents))
-                manifest_digest = manifest_set.content_digest()
-                if args.target == "helm":
-                    chart_values = {
-                        key: value
-                        for key, value in {
-                            "deploymentId": payload.get("deploymentId"),
-                            "deploymentRevisionId": payload.get("deploymentRevisionId"),
-                            "releaseDigest": payload.get("releaseDigest"),
-                            "planHash": payload.get("planHash"),
-                            "manifestDigest": manifest_digest,
-                        }.items()
-                        if value is not None
-                    }
-                    chart = render_helm_chart(
-                        name_prefix,
-                        manifest_set,
-                        app_version=(
-                            str(payload.get("deploymentRevisionId"))
-                            if payload.get("deploymentRevisionId") is not None
-                            else None
-                        ),
-                        values=chart_values,
-                    )
-                    output = {
-                        "ok": True,
-                        "target": args.target,
-                        "deploymentId": payload.get("deploymentId"),
-                        "deploymentRevisionId": payload.get("deploymentRevisionId"),
-                        "planHash": payload.get("planHash"),
-                        "manifestDigest": manifest_digest,
-                        "chartName": chart.chart_name,
-                        "chartDigest": chart.content_digest(),
-                        "files": chart.file_map(),
-                    }
-                    if args.json:
-                        print(json.dumps(output, indent=2, sort_keys=True))
-                    else:
-                        for file in chart.files:
-                            print(f"# Source: {file.path}")
-                            print(file.content, end="" if file.content.endswith("\n") else "\n")
-                    return 0
-
-                output = {
-                    "ok": True,
-                    "target": args.target,
-                    "deploymentId": payload.get("deploymentId"),
-                    "deploymentRevisionId": payload.get("deploymentRevisionId"),
-                    "planHash": payload.get("planHash"),
-                    "manifestDigest": manifest_digest,
-                    "manifests": manifest_set.documents,
-                }
-                if args.json:
-                    print(json.dumps(output, indent=2, sort_keys=True))
-                else:
-                    print(yaml.safe_dump_all(manifest_set.documents, sort_keys=True), end="")
-                return 0
-            except (ImportError, OSError, TypeError, ValueError, json.JSONDecodeError) as error:
-                if args.json:
-                    print(json.dumps({"ok": False, "error": str(error)}, indent=2, sort_keys=True))
-                else:
-                    print(f"FAIL {error}")
-                return 1
-        if args.deploy_command == "plan":
-            assert release is not None
-            try:
-                release.validate_production_pins()
-                deployment_documents = [
-                    document
-                    for document in release_documents
-                    if document.get("kind") == "GraphDeployment"
-                ]
-                if len(deployment_documents) != 1:
-                    raise ValueError(
-                        f"expected one GraphDeployment document, found {len(deployment_documents)}"
-                    )
-                deployment_document = deployment_documents[0]
-                metadata = deployment_document.get("metadata", {})
-                spec = deployment_document.get("spec", {})
-                if not isinstance(metadata, Mapping) or not isinstance(spec, Mapping):
-                    raise ValueError(
-                        "GraphDeployment documents require metadata and spec mappings"
-                    )
-                deployment_id = str(_field(metadata, "name", default="")).strip()
-                if not deployment_id:
-                    raise ValueError("GraphDeployment metadata.name is required")
-
-                release_ref = _field(spec, "releaseRef", "release_ref", default={})
-                if not isinstance(release_ref, Mapping):
-                    raise ValueError("GraphDeployment spec.releaseRef must be a mapping")
-                release_name = _field(release_ref, "name")
-                if release_name is not None and str(release_name) != release.name:
-                    raise ValueError(
-                        f"GraphDeployment releaseRef.name {release_name!r} "
-                        f"does not match {release.name!r}"
-                    )
-                release_digest = _field(release_ref, "digest")
-                if (
-                    release_digest is not None
-                    and str(release_digest) != release.content_digest()
-                ):
-                    raise ValueError(
-                        f"GraphDeployment releaseRef.digest {release_digest!r} "
-                        f"does not match {release.content_digest()!r}"
-                    )
-
-                graph_name_value = args.graph or _field(
-                    spec,
-                    "graph",
-                    "graphName",
-                    "graph_name",
-                )
-                if graph_name_value is None:
-                    if len(release.graphs) != 1:
-                        raise ValueError(
-                            "GraphDeployment requires --graph when the release does not contain exactly one graph"
-                        )
-                    graph_name_value = next(iter(release.graphs))
-                graph_name = str(graph_name_value)
-                if graph_name not in release.graphs:
-                    raise ValueError(
-                        f"GraphRelease {release.name!r} has no graph {graph_name!r}"
-                    )
-
-                deployment = GraphDeployment(
-                    deployment_id=deployment_id,
-                    release=release,
-                    graph_name=graph_name,
-                    deployment_revision_id=args.revision,
-                    environment=str(
-                        _field(spec, "environment", "profile", default="local")
-                    ),
-                )
-                targets_data = _field(spec, "targets", default={})
-                if not isinstance(targets_data, Mapping):
-                    raise ValueError("GraphDeployment spec.targets must be a mapping")
-                target_kind_names = {
-                    "service": "service",
-                    "workerPool": "worker_pool",
-                    "worker_pool": "worker_pool",
-                    "jobPool": "job_pool",
-                    "job_pool": "job_pool",
-                    "sandboxPool": "sandbox_pool",
-                    "sandbox_pool": "sandbox_pool",
-                    "statefulService": "stateful_service",
-                    "stateful_service": "stateful_service",
-                    "external": "external",
-                }
-                for target_id, target_data in targets_data.items():
-                    if not isinstance(target_data, Mapping):
-                        raise ValueError(
-                            f"GraphDeployment target {target_id!r} must be a mapping"
-                        )
-                    raw_kind = str(_field(target_data, "kind", default=""))
-                    target_kind = target_kind_names.get(raw_kind)
-                    if target_kind is None:
-                        raise ValueError(
-                            f"GraphDeployment target {target_id!r} has unknown kind {raw_kind!r}"
-                        )
-                    execution_host = str(
-                        _field(
-                            target_data,
-                            "executionHost",
-                            "execution_host",
-                            default="",
-                        )
-                    )
-                    if not execution_host:
-                        raise ValueError(
-                            f"GraphDeployment target {target_id!r} requires executionHost"
-                        )
-                    accepts = _field(target_data, "accepts", default={})
-                    if not isinstance(accepts, Mapping):
-                        raise ValueError(
-                            f"GraphDeployment target {target_id!r} accepts must be a mapping"
-                        )
-                    target = ExecutionTarget(
-                        target_id=str(target_id),
-                        kind=target_kind,
-                        execution_host=execution_host,
-                        capabilities=_tuple_field(
-                            accepts,
-                            "capabilities",
-                        )
-                        or _tuple_field(target_data, "capabilities"),
-                        effects=_tuple_field(accepts, "effects")
-                        or _tuple_field(target_data, "effects"),
-                        package_lock=(
-                            str(
-                                _field(
-                                    target_data,
-                                    "packageLock",
-                                    "package_lock",
-                                )
-                            )
-                            if _field(
-                                target_data,
-                                "packageLock",
-                                "package_lock",
-                            )
-                            is not None
-                            else None
-                        ),
-                        image=(
-                            str(_field(target_data, "image"))
-                            if _field(target_data, "image") is not None
-                            else None
-                        ),
-                    )
-                    deployment = deployment.with_target(target)
-
-                coordinator = _field(spec, "coordinator", default={})
-                if coordinator is not None and not isinstance(coordinator, Mapping):
-                    raise ValueError("GraphDeployment spec.coordinator must be a mapping")
-                default_target = (
-                    str(_field(coordinator, "target"))
-                    if isinstance(coordinator, Mapping)
-                    and _field(coordinator, "target") is not None
-                    else None
-                )
-                placements_data = _field(spec, "placements", default=())
-                if not isinstance(placements_data, list):
-                    raise ValueError("GraphDeployment spec.placements must be a list")
-                selector_kinds = {
-                    "nodes": "nodes",
-                    "executionGroups": "execution_groups",
-                    "execution_groups": "execution_groups",
-                    "blocks": "blocks",
-                    "blockNamespaces": "blocks",
-                    "block_namespaces": "blocks",
-                    "capabilities": "capabilities",
-                    "effects": "effects",
-                    "executionClasses": "execution_classes",
-                    "execution_classes": "execution_classes",
-                }
-                for index, placement_data in enumerate(placements_data):
-                    if not isinstance(placement_data, Mapping):
-                        raise ValueError(
-                            f"GraphDeployment placement {index} must be a mapping"
-                        )
-                    selector_data = _field(placement_data, "select", "selector")
-                    if not isinstance(selector_data, Mapping):
-                        raise ValueError(
-                            f"GraphDeployment placement {index} requires select mapping"
-                        )
-                    target_id = str(_field(placement_data, "target", default=""))
-                    if not target_id:
-                        raise ValueError(
-                            f"GraphDeployment placement {index} requires target"
-                        )
-                    default_selector = _field(
-                        selector_data,
-                        "default",
-                        default=False,
-                    )
-                    if not isinstance(default_selector, bool):
-                        raise ValueError(
-                            f"GraphDeployment placement {index} default must be a boolean"
-                        )
-                    if default_selector:
-                        if default_target is not None and default_target != target_id:
-                            raise ValueError(
-                                "GraphDeployment declares conflicting default targets "
-                                f"{default_target!r} and {target_id!r}"
-                            )
-                        default_target = target_id
-                        continue
-                    selected = [
-                        (selector_kinds[key], _tuple_field(selector_data, key))
-                        for key in selector_kinds
-                        if key in selector_data
-                    ]
-                    if len(selected) != 1:
-                        raise ValueError(
-                            f"GraphDeployment placement {index} must declare exactly one selector"
-                        )
-                    selector_kind, selector_values = selected[0]
-                    if not selector_values:
-                        raise ValueError(
-                            f"GraphDeployment placement {index} selector cannot be empty"
-                        )
-                    deployment = deployment.with_placement(
-                        PlacementRule(
-                            rule_id=str(
-                                _field(
-                                    placement_data,
-                                    "ruleId",
-                                    "rule_id",
-                                    "id",
-                                    default=f"placement-{index + 1}",
-                                )
-                            ),
-                            selector=PlacementSelector(
-                                selector_kind,
-                                selector_values,
-                            ),
-                            target_id=target_id,
-                        )
-                    )
-                if default_target is not None:
-                    if default_target not in deployment.targets:
-                        raise ValueError(
-                            f"GraphDeployment default target {default_target!r} is not defined"
-                        )
-                    deployment = deployment.with_default_target(default_target)
-
-                package_lock_hash = _field(
-                    spec,
-                    "packageLockHash",
-                    "package_lock_hash",
-                )
-                plan = deployment.to_physical_plan(
-                    package_lock_hash=(
-                        str(package_lock_hash)
-                        if package_lock_hash is not None
-                        else None
-                    )
-                )
-                deployment_spec_hash = deployment.deployment_spec_hash()
-                plan_hash = plan.plan_hash()
-                resolved_binding_hash_value = _field(
-                    spec,
-                    "resolvedBindingHash",
-                    "resolved_binding_hash",
-                )
-                if resolved_binding_hash_value is None:
-                    binding_ref = _field(spec, "bindingRef", "binding_ref", default={})
-                    resolved_binding_hash = canonical_hash(binding_ref)
-                else:
-                    resolved_binding_hash = str(resolved_binding_hash_value)
-                revision = DeploymentRevision(
-                    revision_id=deployment.deployment_revision_id,
-                    release_digest=plan.release_digest,
-                    deployment_spec_hash=deployment_spec_hash,
-                    physical_plan_hash=plan_hash,
-                    resolved_binding_hash=resolved_binding_hash,
-                    target_capability_hash=plan.target_capability_hash(),
-                    created_at=args.created_at,
-                )
-                payload = {
-                    "ok": True,
-                    "deploymentId": deployment.deployment_id,
-                    "deploymentRevisionId": deployment.deployment_revision_id,
-                    "graphName": deployment.graph_name,
-                    "releaseDigest": plan.release_digest,
-                    "deploymentSpecHash": deployment_spec_hash,
-                    "planHash": plan_hash,
-                    "deploymentRevision": {
-                        "revisionId": revision.revision_id,
-                        "releaseDigest": revision.release_digest,
-                        "deploymentSpecHash": revision.deployment_spec_hash,
-                        "physicalPlanHash": revision.physical_plan_hash,
-                        "resolvedBindingHash": revision.resolved_binding_hash,
-                        "targetCapabilityHash": revision.target_capability_hash,
-                        "createdAt": revision.created_at,
-                        "contentDigest": revision.content_digest(),
-                    },
-                    "plan": {
-                        "graphHash": plan.graph_hash,
-                        "packageLockHash": plan.package_lock_hash,
-                        "defaultTarget": plan.default_target,
-                        "targets": {
-                            target_id: {
-                                "kind": target.kind,
-                                "executionHost": target.execution_host,
-                                "capabilities": list(target.capabilities),
-                                "effects": list(target.effects),
-                                "packageLock": target.package_lock,
-                                "image": target.image,
-                            }
-                            for target_id, target in sorted(plan.targets.items())
-                        },
-                        "placements": [
-                            {
-                                "ruleId": placement.rule_id,
-                                "selector": {
-                                    "kind": placement.selector.kind,
-                                    "values": list(placement.selector.values),
-                                },
-                                "target": placement.target_id,
-                            }
-                            for placement in plan.placements
-                        ],
-                    },
-                }
-                if args.json:
-                    print(json.dumps(payload, indent=2, sort_keys=True))
-                else:
-                    print(
-                        f"{deployment.deployment_id} {plan.plan_hash()} "
-                        f"release={plan.release_digest} revision={plan.deployment_revision_id}"
-                    )
-                return 0
-            except (OSError, TypeError, ValueError, yaml.YAMLError) as error:
-                if args.json:
-                    print(
-                        json.dumps(
-                            {"ok": False, "error": str(error)},
-                            indent=2,
-                            sort_keys=True,
-                        )
-                    )
-                else:
-                    print(f"deploy plan error: {error}")
-                return 1
-        command_parsers["deploy"].print_help()
-        return 0
     parser.print_help()
     return 0
 
