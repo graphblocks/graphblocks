@@ -7,6 +7,10 @@ from functools import wraps
 from threading import RLock
 from typing import ParamSpec, TypeVar, cast
 
+from ._validation import (
+    validate_non_empty_string as _validate_non_empty_string,
+    validate_optional_non_empty_string as _validate_optional_non_empty_string,
+)
 from .canonical import _has_unicode_surrogate, canonical_dumps, canonical_hash
 from .evaluation import ChangeSet, CheckResult, GateResult, ResourceSnapshotRef, ReviewRecord
 from .orchestration import LeaseGrant
@@ -26,26 +30,6 @@ def _with_workspace_lock(method: Callable[_P, _R]) -> Callable[_P, _R]:
             return method(*args, **kwargs)
 
     return locked
-
-
-def _validate_non_empty_string(owner: str, field_name: str, value: object) -> str:
-    if not isinstance(value, str):
-        raise ValueError(f"{owner} {field_name} must be a string")
-    if not value.strip():
-        raise ValueError(f"{owner} {field_name} must not be empty")
-    if value != value.strip():
-        raise ValueError(f"{owner} {field_name} must not contain surrounding whitespace")
-    if _has_unicode_surrogate(value):
-        raise ValueError(
-            f"{owner} {field_name} must contain only Unicode scalar values"
-        )
-    return value
-
-
-def _validate_optional_non_empty_string(owner: str, field_name: str, value: object | None) -> str | None:
-    if value is None:
-        return None
-    return _validate_non_empty_string(owner, field_name, value)
 
 
 def _validate_string_tuple(owner: str, field_name: str, value: object) -> tuple[str, ...]:

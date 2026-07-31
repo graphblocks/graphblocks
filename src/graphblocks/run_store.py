@@ -11,6 +11,10 @@ import sqlite3
 from threading import RLock
 from typing import Any, Literal, ParamSpec, TypeVar, cast
 
+from ._validation import (
+    validate_non_empty_string as _validate_non_empty_string,
+    validate_optional_non_empty_string as _validate_optional_non_empty_string,
+)
 from .canonical import _has_unicode_surrogate
 from .evaluation import ModelVisibleToolRef
 
@@ -110,24 +114,6 @@ def _with_sqlite_run_store_lock(
             return method(*args, **kwargs)
 
     return locked
-
-
-def _validate_non_empty_string(owner: str, field_name: str, value: object) -> str:
-    if not isinstance(value, str):
-        raise ValueError(f"{owner} {field_name} must be a string")
-    if not value.strip():
-        raise ValueError(f"{owner} {field_name} must not be empty")
-    if value != value.strip():
-        raise ValueError(f"{owner} {field_name} must not contain surrounding whitespace")
-    if _has_unicode_surrogate(value):
-        raise ValueError(f"{owner} {field_name} must contain only Unicode scalar values")
-    return value
-
-
-def _validate_optional_non_empty_string(owner: str, field_name: str, value: object | None) -> str | None:
-    if value is None:
-        return None
-    return _validate_non_empty_string(owner, field_name, value)
 
 
 def _validate_json_object(
