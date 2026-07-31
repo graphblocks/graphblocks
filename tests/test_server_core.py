@@ -1465,7 +1465,17 @@ def test_server_app_authorization_resource_policy_matrix(
 
 
 def test_default_protected_resource_routes_have_authorization_policy() -> None:
-    for endpoint in default_server_route_manifest().endpoints:
+    endpoints = default_server_route_manifest().endpoints
+    operations = {endpoint.operation for endpoint in endpoints}
+
+    assert set(graphblocks_server._SERVER_OPERATION_REGISTRY) == operations
+
+    for endpoint in endpoints:
+        operation_spec = graphblocks_server._SERVER_OPERATION_REGISTRY[
+            endpoint.operation
+        ]
+        assert operation_spec.handler_key
+        assert operation_spec.auth_required is endpoint.auth_required
         path_parameters = {
             part[1:-1]
             for part in endpoint.path.strip("/").split("/")
@@ -1479,8 +1489,111 @@ def test_default_protected_resource_routes_have_authorization_policy() -> None:
             )
         )
         assert policy is not None, endpoint.operation
-        resource_parameter, _ = policy
+        resource_parameter, resource_kind = policy
         assert resource_parameter in path_parameters
+        assert resource_parameter == operation_spec.resource_parameter
+        assert resource_kind == operation_spec.resource_kind
+
+
+def test_default_protected_routes_reach_authorizer_with_registered_action() -> None:
+    observed_requests: list[ServerAuthorizationRequest] = []
+
+    class DenyingAuthorizer:
+        def authorize(
+            self,
+            request: ServerAuthorizationRequest,
+        ) -> ServerAuthorizationDecision:
+            observed_requests.append(request)
+            return ServerAuthorizationDecision(
+                False,
+                reason_codes=("authz.test_stop",),
+            )
+
+    app = GraphBlocksServerApp(
+        auth_hook=StaticBearerAuthHook(
+            {
+                "token-1": PrincipalRef(
+                    "user-1",
+                    tenant_id="tenant-1",
+                )
+            }
+        ),
+        authorization_hook=DenyingAuthorizer(),
+    )
+
+    for endpoint in default_server_route_manifest().endpoints:
+        if not endpoint.auth_required:
+            continue
+        path = endpoint.path
+        for part in endpoint.path.strip("/").split("/"):
+            if part.startswith("{") and part.endswith("}"):
+                parameter = part[1:-1]
+                path = path.replace(part, f"{parameter}-1")
+        headers = {"authorization": "Bearer token-1"}
+        if endpoint.transport == "sse":
+            headers["accept"] = "text/event-stream"
+        elif endpoint.transport == "websocket":
+            headers["upgrade"] = "websocket"
+
+        response = app.handle(
+            ServerRequest(
+                method=endpoint.method,
+                path=path,
+                headers=headers,
+                query={},
+                cookies={},
+            )
+        )
+
+        assert response.status_code == 403, endpoint.operation
+        assert observed_requests[-1].action == endpoint.operation
+        assert observed_requests[-1].route == endpoint
+
+
+def test_server_app_rejects_known_operation_authentication_downgrade() -> None:
+    manifest = ServerRouteManifest(
+        (
+            ServerEndpoint(
+                "POST",
+                "/unsafe-run",
+                "http",
+                "invoke_graph",
+                auth_required=False,
+            ),
+        )
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="'invoke_graph' requires authentication",
+    ):
+        GraphBlocksServerApp(
+            route_manifest=manifest,
+            allow_unauthenticated_dev=True,
+        )
+
+
+def test_server_app_rejects_known_operation_without_resource_parameter() -> None:
+    manifest = ServerRouteManifest(
+        (
+            ServerEndpoint(
+                "GET",
+                "/run-without-id",
+                "http",
+                "get_run_status",
+                auth_required=True,
+            ),
+        )
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="'get_run_status' requires path parameter 'run_id'",
+    ):
+        GraphBlocksServerApp(
+            route_manifest=manifest,
+            allow_unauthenticated_dev=True,
+        )
 
 
 @pytest.mark.parametrize(

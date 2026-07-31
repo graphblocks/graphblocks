@@ -169,40 +169,139 @@ MAX_SERVER_CALLBACK_DELIVERY_ERROR_BYTES = 16_384
 MAX_SERVER_CALLBACK_DELIVERY_TIMESTAMP_BYTES = 128
 MAX_SERVER_AUTH_AUDIT_REQUEST_ID_BYTES = 256
 MAX_SERVER_AUTH_AUDIT_FAILURE_TYPE_BYTES = 256
-_SERVER_AUTHORIZATION_RESOURCE_POLICIES = MappingProxyType(
+_ServerOperationDomain = Literal[
+    "system",
+    "runs",
+    "subscriptions",
+    "callbacks",
+    "application_streams",
+]
+
+
+@dataclass(frozen=True, slots=True)
+class _ServerOperationSpec:
+    handler_key: _ServerOperationDomain
+    resource_parameter: str | None = None
+    resource_kind: str | None = None
+    auth_required: bool = True
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.auth_required, bool):
+            raise ValueError(
+                "server operation auth_required must be a boolean"
+            )
+        if (self.resource_parameter is None) != (self.resource_kind is None):
+            raise ValueError(
+                "server operation resource parameter and kind must be "
+                "declared together"
+            )
+
+
+_SERVER_OPERATION_REGISTRY = MappingProxyType(
     {
-        "get_run_status": ("run_id", "run"),
-        "delete_run": ("run_id", "run"),
-        "attach_to_run": ("run_id", "run"),
-        "detach_from_run": ("run_id", "run"),
-        "subscribe_events": ("run_id", "run"),
-        "ack_event": ("subscription_id", "event_subscription"),
-        "unsubscribe_events": (
+        "health": _ServerOperationSpec(
+            "system",
+            auth_required=False,
+        ),
+        "list_runs": _ServerOperationSpec("runs"),
+        "invoke_graph": _ServerOperationSpec("runs"),
+        "get_run_status": _ServerOperationSpec(
+            "runs",
+            "run_id",
+            "run",
+        ),
+        "delete_run": _ServerOperationSpec(
+            "runs",
+            "run_id",
+            "run",
+        ),
+        "attach_to_run": _ServerOperationSpec(
+            "runs",
+            "run_id",
+            "run",
+        ),
+        "detach_from_run": _ServerOperationSpec(
+            "runs",
+            "run_id",
+            "run",
+        ),
+        "subscribe_events": _ServerOperationSpec(
+            "subscriptions",
+            "run_id",
+            "run",
+        ),
+        "ack_event": _ServerOperationSpec(
+            "subscriptions",
             "subscription_id",
             "event_subscription",
         ),
-        "cancel_run": ("run_id", "run"),
-        "pause_run": ("run_id", "run"),
-        "resume_run": ("run_id", "run"),
-        "expire_run": ("run_id", "run"),
-        "revoke_callback": (
+        "unsubscribe_events": _ServerOperationSpec(
+            "subscriptions",
+            "subscription_id",
+            "event_subscription",
+        ),
+        "cancel_run": _ServerOperationSpec(
+            "runs",
+            "run_id",
+            "run",
+        ),
+        "pause_run": _ServerOperationSpec(
+            "runs",
+            "run_id",
+            "run",
+        ),
+        "resume_run": _ServerOperationSpec(
+            "runs",
+            "run_id",
+            "run",
+        ),
+        "expire_run": _ServerOperationSpec(
+            "runs",
+            "run_id",
+            "run",
+        ),
+        "register_callback": _ServerOperationSpec("callbacks"),
+        "revoke_callback": _ServerOperationSpec(
+            "callbacks",
             "subscription_id",
             "callback_subscription",
         ),
-        "redrive_callback_delivery": (
+        "redrive_callback_delivery": _ServerOperationSpec(
+            "callbacks",
             "delivery_id",
             "callback_delivery",
         ),
-        "move_callback_to_dead_letter": (
+        "move_callback_to_dead_letter": _ServerOperationSpec(
+            "callbacks",
             "delivery_id",
             "callback_delivery",
         ),
-        "submit_async_callback": (
+        "submit_async_callback": _ServerOperationSpec(
+            "callbacks",
             "operation_id",
             "callback_operation",
         ),
-        "application_events": ("run_id", "run"),
-        "application_stream": ("run_id", "run"),
+        "application_events": _ServerOperationSpec(
+            "application_streams",
+            "run_id",
+            "run",
+        ),
+        "application_stream": _ServerOperationSpec(
+            "application_streams",
+            "run_id",
+            "run",
+        ),
+    }
+)
+_SERVER_AUTHORIZATION_RESOURCE_POLICIES = MappingProxyType(
+    {
+        operation: (
+            spec.resource_parameter,
+            spec.resource_kind,
+        )
+        for operation, spec in _SERVER_OPERATION_REGISTRY.items()
+        if spec.resource_parameter is not None
+        and spec.resource_kind is not None
     }
 )
 
@@ -3510,6 +3609,29 @@ class GraphBlocksServerApp:
             raise ValueError(
                 "server allow_unsafe_multi_tenant_dev must be a boolean"
             )
+        for endpoint in self.route_manifest.endpoints:
+            operation_spec = _SERVER_OPERATION_REGISTRY.get(
+                endpoint.operation
+            )
+            if operation_spec is None:
+                continue
+            if operation_spec.auth_required and not endpoint.auth_required:
+                raise ValueError(
+                    "server operation "
+                    f"{endpoint.operation!r} requires authentication"
+                )
+            if operation_spec.resource_parameter is not None:
+                path_parameters = {
+                    part[1:-1]
+                    for part in endpoint.path.strip("/").split("/")
+                    if part.startswith("{") and part.endswith("}")
+                }
+                if operation_spec.resource_parameter not in path_parameters:
+                    raise ValueError(
+                        "server operation "
+                        f"{endpoint.operation!r} requires path parameter "
+                        f"{operation_spec.resource_parameter!r}"
+                    )
         if self.reference_tenant_id is not None:
             self.reference_tenant_id = _validate_exact_non_empty_string(
                 "server",
