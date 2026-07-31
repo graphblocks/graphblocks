@@ -1,6 +1,6 @@
-use graphblocks_runtime_core::output_policy::PendingToolCallsDisposition;
-use graphblocks_runtime_core::tool_call::ToolCallStatus;
-use graphblocks_runtime_core::tool_execution::{
+use crate::output_policy::PendingToolCallsDisposition;
+use crate::tool_call::ToolCallStatus;
+use crate::tool_execution::{
     ToolExecutionCancellationPolicy, ToolExecutionFailurePolicy, ToolExecutionPlan,
     ToolExecutionPlanError, ToolExecutionState, ToolPlanCall,
 };

@@ -1,12 +1,11 @@
 use std::sync::{Arc, Mutex, PoisonError};
 
-use graphblocks_runtime_core::outcome::{BlockError, CancelReason};
-use graphblocks_runtime_core::readiness::PortRef;
-use graphblocks_runtime_core::typed_value::TypedValue;
-
 use crate::bounded::{
     SequenceError, SequenceReceiver, SequenceSender, SequenceState, bounded_sequence,
 };
+use crate::outcome::{BlockError, CancelReason};
+use crate::readiness::PortRef;
+use crate::typed_value::TypedValue;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct PortEnvelope {
@@ -102,10 +101,9 @@ impl PortReceiver {
 
 #[cfg(test)]
 mod tests {
-    use graphblocks_runtime_core::readiness::PortRef;
-    use graphblocks_runtime_core::typed_value::{TypedValue, ValueEncoding};
-
     use super::{PortChannelError, typed_port_channel};
+    use crate::readiness::PortRef;
+    use crate::typed_value::{TypedValue, ValueEncoding};
 
     fn value() -> TypedValue {
         TypedValue::new(

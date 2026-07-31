@@ -52,7 +52,7 @@ review before the release gate can be declared passed.
 
 | Artifact | 1.0 tier | Reason |
 | --- | --- | --- |
-| `graphblocks-schema`, `graphblocks-types`, `graphblocks-compiler`, `graphblocks-flow`, `graphblocks-runtime-core`, `graphblocks-runtime-seq`, `graphblocks-runtime-durable`, `graphblocks-protocol`, `graphblocks-telemetry`, `graphblocks-control-plane`, and `graphblocks-python` crates | Internal | Implementation crates used by the native bindings, native CLIs, and conformance work. Their Rust APIs are not yet a public SemVer surface. |
+| `graphblocks-schema`, `graphblocks-compiler`, `graphblocks-flow`, `graphblocks-runtime-core`, `graphblocks-runtime-durable`, `graphblocks-protocol`, `graphblocks-telemetry`, `graphblocks-control-plane`, and `graphblocks-python` crates | Internal | Implementation crates used by the native bindings, native CLIs, and conformance work. Their Rust APIs are not yet a public SemVer surface. |
 | `graphblocks-native` executable (`graphblocks-cli-native` crate) | Preview | Python-free validate/plan/run is useful, but native block coverage, adapter injection, diagnostics, and differential evidence are not yet at the stable gate. |
 | `graphblocksd` executable | Internal | The binary is delivered by the `graphblocks-control-plane` crate. It is a one-shot worker/checkpoint control-plane tool, not the production daemon its name may imply. |
 | `graphblocks` Rust crate | Reserved | Name-reservation crate with no supported implementation. |

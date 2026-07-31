@@ -241,9 +241,12 @@ the transition, Python/Rust differential tests gate every normative phase.
 
 The reusable `graphblocks-control-plane` library boundary is extracted:
 `graphblocks-python` and the `graphblocksd` binary now depend on that library,
-so the binding no longer depends on a daemon-named package. Reassess very thin
-crates only after consumer, SemVer, or compile-isolation requirements are
-documented.
+so the binding no longer depends on a daemon-named package.
+[ADR-0002](../specification/decisions/0002-rust-crate-boundaries.md) defines
+the crate-boundary budget: the compatibility-only `graphblocks-types` crate is
+retired, bounded sequence primitives are absorbed into runtime core, and every
+remaining workspace crate records its consumer, artifact, or compile-isolation
+reason before any public Rust API promotion.
 
 ### Product and profile boundary
 

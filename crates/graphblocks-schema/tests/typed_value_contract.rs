@@ -1,5 +1,4 @@
-use graphblocks_schema::SchemaIdError;
-use graphblocks_types::TypedValue;
+use graphblocks_schema::{SchemaIdError, TypedValue};
 use serde_json::Value;
 use serde_json::json;
 

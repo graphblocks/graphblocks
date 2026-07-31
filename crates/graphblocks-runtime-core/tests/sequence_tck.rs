@@ -1,4 +1,4 @@
-use graphblocks_runtime_seq::bounded::{SequenceError, SequenceState, bounded_sequence};
+use graphblocks_runtime_core::bounded::{SequenceError, SequenceState, bounded_sequence};
 use serde_json::Value;
 
 #[test]

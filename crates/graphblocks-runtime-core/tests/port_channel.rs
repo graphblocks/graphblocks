@@ -1,8 +1,8 @@
+use graphblocks_runtime_core::bounded::{SequenceError, SequenceState};
 use graphblocks_runtime_core::outcome::{CancelCode, CancelReason};
+use graphblocks_runtime_core::port_channel::{PortChannelError, PortEnvelope, typed_port_channel};
 use graphblocks_runtime_core::readiness::PortRef;
 use graphblocks_runtime_core::typed_value::{TypedValue, ValueEncoding};
-use graphblocks_runtime_seq::bounded::{SequenceError, SequenceState};
-use graphblocks_runtime_seq::port_channel::{PortChannelError, PortEnvelope, typed_port_channel};
 
 fn message_value(text: &str) -> TypedValue {
     TypedValue::new(

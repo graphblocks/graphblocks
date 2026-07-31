@@ -94,11 +94,6 @@ artifacts:
     kind: library-crate
     path: crates/graphblocks-schema/Cargo.toml
     tier: internal
-  - id: crate:graphblocks-types
-    ecosystem: rust
-    kind: library-crate
-    path: crates/graphblocks-types/Cargo.toml
-    tier: internal
   - id: crate:graphblocks-compiler
     ecosystem: rust
     kind: library-crate
@@ -113,11 +108,6 @@ artifacts:
     ecosystem: rust
     kind: library-crate
     path: crates/graphblocks-runtime-core/Cargo.toml
-    tier: internal
-  - id: crate:graphblocks-runtime-seq
-    ecosystem: rust
-    kind: library-crate
-    path: crates/graphblocks-runtime-seq/Cargo.toml
     tier: internal
   - id: crate:graphblocks-runtime-durable
     ecosystem: rust

@@ -1,7 +1,7 @@
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
-use graphblocks_runtime_core::outcome::{BlockError, CancelReason};
+use crate::outcome::{BlockError, CancelReason};
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum SequenceState {

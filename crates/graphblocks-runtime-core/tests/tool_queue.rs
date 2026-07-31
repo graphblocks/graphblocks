@@ -1,7 +1,7 @@
 use graphblocks_runtime_core::output_policy::PendingToolCallsDisposition;
 use graphblocks_runtime_core::tool_call::{ToolCall, ToolCallDraft, ToolCallStatus};
 use graphblocks_runtime_core::tool_execution::{ToolExecutionState, ToolPlanCall};
-use graphblocks_runtime_seq::tool_queue::{SequentialToolQueue, SequentialToolQueueError};
+use graphblocks_runtime_core::tool_queue::{SequentialToolQueue, SequentialToolQueueError};
 
 fn tool_call(tool_call_id: &str, status: ToolCallStatus) -> ToolCall {
     let mut draft = ToolCallDraft::proposed("response-1", tool_call_id, "ticket.create");

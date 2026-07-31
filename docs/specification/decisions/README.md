@@ -16,6 +16,9 @@ The living architecture follows these durable decisions:
   normative compiler and target production execution authority; Python is the
   authoring facade and explicit reference oracle. See
   [ADR-0001](0001-rust-normative-authority.md).
+- Keep a Rust crate only for an independently justified artifact, consumer,
+  protocol, persistence, extension-isolation, or reservation boundary. See
+  [ADR-0002](0002-rust-crate-boundaries.md).
 
 New decisions that alter a public contract should be added as numbered ADRs
 with context, decision, consequences, migration, and conformance impact. Git

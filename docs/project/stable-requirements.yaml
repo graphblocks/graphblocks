@@ -242,7 +242,7 @@ profiles:
             - src/graphblocks/tools.py
           targetNormative:
             - crates/graphblocks-runtime-core/src/scheduler.rs
-            - crates/graphblocks-runtime-seq/src/bounded.rs
+            - crates/graphblocks-runtime-core/src/bounded.rs
         schemas:
           - schemas/graphblocks.ai/v1/graph.schema.json
         tckSuites: [retry, sequence, tool-execution]

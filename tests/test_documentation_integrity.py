@@ -102,11 +102,12 @@ def test_rust_packages_declare_publishable_path_versions_and_bundle_local_fixtur
         "crates/graphblocks-runtime-core/tests/fixtures/usage-cases.json": "tck/usage/cases.json",
         "crates/graphblocks-runtime-core/tests/fixtures/voice-cases.json": "tck/voice/cases.json",
         "crates/graphblocks-runtime-durable/tests/fixtures/durable-cases.json": "tck/durable/cases.json",
-        "crates/graphblocks-runtime-seq/tests/fixtures/sequence-cases.json": "tck/sequence/cases.json",
+        "crates/graphblocks-runtime-core/tests/fixtures/sequence-cases.json": (
+            "tck/sequence/cases.json"
+        ),
         "crates/graphblocks-schema/tests/fixtures/cases.json": "tck/schema/cases.json",
         "crates/graphblocks-schema/tests/fixtures/resources.json": "tck/schema/resources.json",
         "crates/graphblocks-schema/tests/fixtures/typed-values.json": "tck/schema/typed-values.json",
-        "crates/graphblocks-types/tests/fixtures/typed-values.json": "tck/schema/typed-values.json",
     }
     shipped_fixtures = {
         path.relative_to(ROOT).as_posix()
@@ -121,6 +122,56 @@ def test_rust_packages_declare_publishable_path_versions_and_bundle_local_fixtur
         source = rust_source.read_text(encoding="utf-8")
         assert "../../../tck/" not in source
         assert 'join("../../tck/' not in source
+
+
+def test_rust_workspace_crate_boundaries_are_documented() -> None:
+    workspace = tomllib.loads((ROOT / "Cargo.toml").read_text(encoding="utf-8"))
+    members = workspace["workspace"]["members"]
+    decision = (
+        ROOT
+        / "docs"
+        / "specification"
+        / "decisions"
+        / "0002-rust-crate-boundaries.md"
+    ).read_text(encoding="utf-8")
+    retired_crates = {
+        "crates/graphblocks-runtime-seq",
+        "crates/graphblocks-types",
+    }
+
+    assert retired_crates.isdisjoint(members)
+    for retired_crate in retired_crates:
+        assert not (ROOT / retired_crate / "Cargo.toml").exists()
+
+    workspace_package_names = set()
+    for member in members:
+        manifest = tomllib.loads(
+            (ROOT / member / "Cargo.toml").read_text(encoding="utf-8")
+        )
+        workspace_package_names.add(manifest["package"]["name"])
+
+    table_rows = []
+    in_boundary_table = False
+    for line in decision.splitlines():
+        if line == "| Crate | Boundary and consumer rationale | Rust API budget |":
+            in_boundary_table = True
+            continue
+        if not in_boundary_table:
+            continue
+        if line.startswith("| ---"):
+            continue
+        if not line.startswith("|"):
+            break
+        cells = [cell.strip() for cell in line.strip("|").split("|")]
+        assert len(cells) == 3
+        crate_cell, rationale, api_budget = cells
+        assert crate_cell.startswith("`") and crate_cell.endswith("`")
+        assert rationale
+        assert api_budget
+        table_rows.append(crate_cell[1:-1])
+
+    assert len(table_rows) == len(set(table_rows))
+    assert set(table_rows) == workspace_package_names
 
 
 def test_project_markdown_links_resolve() -> None:

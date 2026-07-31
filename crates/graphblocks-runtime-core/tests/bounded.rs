@@ -1,5 +1,5 @@
+use graphblocks_runtime_core::bounded::{SequenceError, SequenceState, bounded_sequence};
 use graphblocks_runtime_core::outcome::{BlockError, CancelCode, CancelReason, ErrorCategory};
-use graphblocks_runtime_seq::bounded::{SequenceError, SequenceState, bounded_sequence};
 
 #[test]
 fn bounded_sequence_enforces_capacity_and_fifo_receive() -> Result<(), SequenceError> {

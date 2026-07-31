@@ -93,6 +93,7 @@ use graphblocks_runtime_core::tool_execution::{
     ToolExecutionCancellationPolicy, ToolExecutionFailurePolicy, ToolExecutionPlan,
     ToolExecutionPlanError, ToolExecutionState, ToolPlanCall,
 };
+use graphblocks_runtime_core::tool_queue::{SequentialToolQueue, SequentialToolQueueError};
 use graphblocks_runtime_core::tool_result::{
     ArtifactRef, ContentPart, ContentPartKind, Diagnostic, DiagnosticSeverity, ToolEffectOutcome,
     ToolResult, ToolResultContentPolicy, ToolResultEvent, ToolResultStatus, ToolResultStreamError,
@@ -108,7 +109,6 @@ use graphblocks_runtime_durable::{
     DurableOutputCutoffTerminalReason, DurableResponsePolicyStopRecord, DurableToolTerminalRecord,
     DurableToolTerminalState, InMemoryDurableToolTerminalStore, ToolTerminalStoreError,
 };
-use graphblocks_runtime_seq::tool_queue::{SequentialToolQueue, SequentialToolQueueError};
 use graphblocks_schema::parse_canonical_json;
 use pyo3::exceptions::{PyRuntimeError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
