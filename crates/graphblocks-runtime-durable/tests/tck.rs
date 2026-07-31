@@ -20,6 +20,8 @@ use serde_json::{Map, Value, json};
 
 #[test]
 fn rust_durable_runtime_matches_shared_tck_cases() -> Result<(), String> {
+    // Generated from tck/durable/cases.json so packaged crate tests remain
+    // self-contained; tools/generate_durable_tck_fixture.py owns the mirror.
     let cases = serde_json::from_str::<Value>(include_str!("fixtures/durable-cases.json"))
         .map_err(|error| error.to_string())?;
     let cases = cases

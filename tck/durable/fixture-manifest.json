@@ -1,0 +1,16 @@
+{
+  "canonical": {
+    "bytes": 508280,
+    "path": "tck/durable/cases.json",
+    "sha256": "sha256:fa65e0a0dc7edaa98a0c2cbe27e0468a6dc5f4a8c88727ecf35b30de1bccbc02"
+  },
+  "generatedBy": "tools/generate_durable_tck_fixture.py",
+  "manifestVersion": 1,
+  "mirrors": [
+    {
+      "bytes": 508280,
+      "path": "crates/graphblocks-runtime-durable/tests/fixtures/durable-cases.json",
+      "sha256": "sha256:fa65e0a0dc7edaa98a0c2cbe27e0468a6dc5f4a8c88727ecf35b30de1bccbc02"
+    }
+  ]
+}
