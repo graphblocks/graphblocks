@@ -251,8 +251,18 @@ aliases needed to read earlier report pickles. Facade dependency forwarding
 preserves the existing compiler and installed-wheel override seams. Exact
 export, owner identity, pickle round-trip, stable API/CLI snapshot, fixture
 digest, packaged-fixture, and acceptance regressions enforce the split.
-`TckRunner` remains the intentionally isolated large owner; its durable
-mega-dispatch is the separate `GB-ARCH-010` work item.
+
+`GB-ARCH-010` now has executable closure evidence: the former 6,169-line
+`TckRunner._run_durable_case` is a two-line delegate to a bounded shared
+dispatcher. A closed lightweight contract owns all 15 durable kinds; immutable
+registries map each kind to exactly one frozen per-kind decoder and one handler
+without making fixture loading import the handler implementation. The 331
+canonical fixtures must cover exactly that contract, and AST budgets cap the
+delegate, dispatcher, and individual handlers. Unknown kinds fail before
+expected-diagnostic reconciliation, preventing an unsupported kind from being
+accepted by naming `DurableKindUnknown` as an expected diagnostic. A pinned
+full-suite report digest preserves ordered diagnostics and observations for all
+331 cases across the extraction.
 
 ### Python API
 
