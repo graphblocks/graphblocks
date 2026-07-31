@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 import hashlib
 import json
 import math
-from threading import Condition, get_ident, TIMEOUT_MAX
+from threading import Condition, get_ident, Lock, TIMEOUT_MAX
 from time import monotonic, time
 from types import MappingProxyType
 from typing import Literal, Protocol
@@ -151,6 +151,7 @@ DEFAULT_MAX_EVENT_ACKS_PER_SUBSCRIPTION = 4_096
 DEFAULT_MAX_EVENT_ACK_HISTORY_BYTES_PER_SUBSCRIPTION = 1024 * 1024
 DEFAULT_MAX_CALLBACK_OPERATION_HISTORIES = 4_096
 DEFAULT_MAX_CALLBACK_SUBMISSION_HISTORY_BYTES = 64 * 1024 * 1024
+DEFAULT_MAX_ASYNC_CALLBACK_REJECTION_HISTORY_BYTES = 4 * 1024 * 1024
 DEFAULT_MAX_OPTIONAL_CALLBACK_DIAGNOSTIC_EVENTS_PER_RUN = 256
 DEFAULT_MAX_OPTIONAL_CALLBACK_DIAGNOSTIC_HISTORY_BYTES_PER_RUN = 1024 * 1024
 DEFAULT_MAX_CALLBACK_REGISTRATIONS = 4_096
@@ -1883,18 +1884,226 @@ class _BoundedAsyncCallbackRejectionHistory(
 
     _MAX_OPERATION_IDS = 1_024
     _MAX_REJECTIONS_PER_OPERATION = 32
+    _MISSING = object()
+
+    def __init__(
+        self,
+        max_retained_bytes: int = (
+            DEFAULT_MAX_ASYNC_CALLBACK_REJECTION_HISTORY_BYTES
+        ),
+    ) -> None:
+        super().__init__()
+        if (
+            isinstance(max_retained_bytes, bool)
+            or not isinstance(max_retained_bytes, int)
+            or max_retained_bytes < 1
+        ):
+            raise ValueError(
+                "server max_async_callback_rejection_history_bytes "
+                "must be a positive integer"
+            )
+        self._max_retained_bytes = max_retained_bytes
+        self._retained_bytes_by_operation_id: dict[str, int] = {}
+        self._retained_bytes = 0
+        self._lock = Lock()
+
+    @staticmethod
+    def _history_size_bytes(
+        operation_id: str,
+        rejections: tuple[ServerAsyncCallbackRejection, ...],
+    ) -> int:
+        return _canonical_json_size_bytes(
+            {
+                "operationId": operation_id,
+                "rejections": [
+                    rejection.protocol_value()
+                    for rejection in rejections
+                ],
+            }
+        )
+
+    def _newest_fitting_history(
+        self,
+        operation_id: str,
+        rejections: tuple[ServerAsyncCallbackRejection, ...],
+    ) -> tuple[
+        tuple[ServerAsyncCallbackRejection, ...],
+        int,
+    ] | None:
+        if len(operation_id) > self._max_retained_bytes:
+            return None
+        retained_rejections: tuple[
+            ServerAsyncCallbackRejection,
+            ...,
+        ] = ()
+        retained_bytes = 0
+        for rejection in reversed(
+            rejections[-self._MAX_REJECTIONS_PER_OPERATION :]
+        ):
+            candidate = (rejection, *retained_rejections)
+            candidate_bytes = self._history_size_bytes(
+                operation_id,
+                candidate,
+            )
+            if candidate_bytes > self._max_retained_bytes:
+                break
+            retained_rejections = candidate
+            retained_bytes = candidate_bytes
+        if not retained_rejections:
+            return None
+        return retained_rejections, retained_bytes
+
+    def _remove_locked(
+        self,
+        operation_id: str,
+    ) -> tuple[ServerAsyncCallbackRejection, ...]:
+        value = super().pop(operation_id)
+        self._retained_bytes -= (
+            self._retained_bytes_by_operation_id.pop(operation_id)
+        )
+        return value
+
+    def _evict_oldest_other_locked(
+        self,
+        operation_id: str,
+    ) -> bool:
+        for retained_operation_id in tuple(super().keys()):
+            if retained_operation_id != operation_id:
+                self._remove_locked(retained_operation_id)
+                return True
+        return False
+
+    def _store_locked(
+        self,
+        operation_id: str,
+        retained_rejections: tuple[ServerAsyncCallbackRejection, ...],
+        retained_bytes: int,
+    ) -> None:
+        existing_bytes = self._retained_bytes_by_operation_id.get(
+            operation_id,
+            0,
+        )
+        if (
+            operation_id not in self
+            and len(self) >= self._MAX_OPERATION_IDS
+        ):
+            self._evict_oldest_other_locked(operation_id)
+        while (
+            self._retained_bytes
+            - existing_bytes
+            + retained_bytes
+            > self._max_retained_bytes
+        ):
+            if not self._evict_oldest_other_locked(operation_id):
+                return
+        super().__setitem__(operation_id, retained_rejections)
+        self._retained_bytes_by_operation_id[
+            operation_id
+        ] = retained_bytes
+        self._retained_bytes = (
+            self._retained_bytes
+            - existing_bytes
+            + retained_bytes
+        )
 
     def __setitem__(
         self,
         operation_id: str,
         rejections: tuple[ServerAsyncCallbackRejection, ...],
     ) -> None:
-        if operation_id not in self and len(self) >= self._MAX_OPERATION_IDS:
-            del self[next(iter(self))]
-        super().__setitem__(
+        if not rejections:
+            self.pop(operation_id, None)
+            return
+        fitting_history = self._newest_fitting_history(
             operation_id,
-            tuple(rejections[-self._MAX_REJECTIONS_PER_OPERATION :]),
+            rejections,
         )
+        if fitting_history is None:
+            return
+        retained_rejections, retained_bytes = fitting_history
+        with self._lock:
+            self._store_locked(
+                operation_id,
+                retained_rejections,
+                retained_bytes,
+            )
+
+    def append(self, rejection: ServerAsyncCallbackRejection) -> None:
+        operation_id = rejection.operation_id
+        with self._lock:
+            fitting_history = self._newest_fitting_history(
+                operation_id,
+                (
+                    *super().get(operation_id, ()),
+                    rejection,
+                ),
+            )
+            if fitting_history is None:
+                return
+            retained_rejections, retained_bytes = fitting_history
+            self._store_locked(
+                operation_id,
+                retained_rejections,
+                retained_bytes,
+            )
+
+    def __delitem__(self, operation_id: str) -> None:
+        with self._lock:
+            self._remove_locked(operation_id)
+
+    def pop(
+        self,
+        operation_id: str,
+        default: object = _MISSING,
+    ) -> tuple[ServerAsyncCallbackRejection, ...] | object:
+        with self._lock:
+            if operation_id in self:
+                return self._remove_locked(operation_id)
+            if default is self._MISSING:
+                raise KeyError(operation_id)
+            return default
+
+    def clear(self) -> None:
+        with self._lock:
+            super().clear()
+            self._retained_bytes_by_operation_id.clear()
+            self._retained_bytes = 0
+
+    def remove_run(self, run_id: str) -> None:
+        with self._lock:
+            for operation_id, rejections in tuple(super().items()):
+                retained_rejections = tuple(
+                    rejection
+                    for rejection in rejections
+                    if rejection.run_id != run_id
+                )
+                if not retained_rejections:
+                    self._remove_locked(operation_id)
+                    continue
+                retained_bytes = self._history_size_bytes(
+                    operation_id,
+                    retained_rejections,
+                )
+                existing_bytes = (
+                    self._retained_bytes_by_operation_id[operation_id]
+                )
+                super().__setitem__(
+                    operation_id,
+                    retained_rejections,
+                )
+                self._retained_bytes_by_operation_id[
+                    operation_id
+                ] = retained_bytes
+                self._retained_bytes = (
+                    self._retained_bytes
+                    - existing_bytes
+                    + retained_bytes
+                )
+
+    @property
+    def retained_size_bytes(self) -> int:
+        with self._lock:
+            return self._retained_bytes
 
 
 @dataclass(frozen=True, slots=True)
@@ -3114,6 +3323,9 @@ class GraphBlocksServerApp:
     max_accepted_run_runtime_state_bytes: int = (
         DEFAULT_MAX_ACCEPTED_RUN_RUNTIME_STATE_BYTES
     )
+    max_async_callback_rejection_history_bytes: int = (
+        DEFAULT_MAX_ASYNC_CALLBACK_REJECTION_HISTORY_BYTES
+    )
     _effective_reference_tenant_id: str | None = field(
         default=None,
         init=False,
@@ -3166,7 +3378,7 @@ class GraphBlocksServerApp:
         init=False,
         repr=False,
     )
-    _async_callback_rejections_by_operation_id: dict[str, tuple[ServerAsyncCallbackRejection, ...]] = field(
+    _async_callback_rejections_by_operation_id: _BoundedAsyncCallbackRejectionHistory = field(
         default_factory=_BoundedAsyncCallbackRejectionHistory,
         init=False,
         repr=False,
@@ -3368,6 +3580,7 @@ class GraphBlocksServerApp:
             "max_event_page_events",
             "max_event_page_bytes",
             "max_accepted_run_runtime_state_bytes",
+            "max_async_callback_rejection_history_bytes",
             "max_in_memory_runs",
             "max_in_memory_runs_per_tenant",
             "max_retired_run_tombstones",
@@ -3397,6 +3610,11 @@ class GraphBlocksServerApp:
                 raise ValueError(f"server {field_name} must be a positive integer")
         self._auth_audit_events = deque(
             maxlen=self.max_auth_audit_events,
+        )
+        self._async_callback_rejections_by_operation_id = (
+            _BoundedAsyncCallbackRejectionHistory(
+                self.max_async_callback_rejection_history_bytes
+            )
         )
         if not isinstance(self.require_async_callback_authentication, bool):
             raise ValueError("server require_async_callback_authentication must be a boolean")
@@ -3711,23 +3929,9 @@ class GraphBlocksServerApp:
                 for submissions in self._callbacks_by_operation_id.values()
                 for submission in submissions
             )
-            for operation_id, rejections in tuple(
-                self._async_callback_rejections_by_operation_id.items()
-            ):
-                retained_rejections = tuple(
-                    rejection
-                    for rejection in rejections
-                    if rejection.run_id != run_id
-                )
-                if retained_rejections:
-                    self._async_callback_rejections_by_operation_id[
-                        operation_id
-                    ] = retained_rejections
-                else:
-                    self._async_callback_rejections_by_operation_id.pop(
-                        operation_id,
-                        None,
-                    )
+            self._async_callback_rejections_by_operation_id.remove_run(
+                run_id
+            )
 
             self._detachments_by_run_id.pop(run_id, None)
             self._run_controls_by_run_id.pop(run_id, None)
@@ -4095,9 +4299,8 @@ class GraphBlocksServerApp:
                             request=request,
                         )
                         rejection = ServerAsyncCallbackRejection.authentication_failed(submission)
-                        self._async_callback_rejections_by_operation_id[submission.operation_id] = (
-                            *self._async_callback_rejections_by_operation_id.get(submission.operation_id, ()),
-                            rejection,
+                        self._async_callback_rejections_by_operation_id.append(
+                            rejection
                         )
                     except (TypeError, ValueError, json.JSONDecodeError):
                         pass
@@ -5359,9 +5562,8 @@ class GraphBlocksServerApp:
                 payload_size_bytes = len(canonical_dumps(_thaw_json_value(submission.payload)).encode("utf-8"))
                 if payload_size_bytes > self.max_async_callback_payload_bytes:
                     rejection = ServerAsyncCallbackRejection.payload_too_large(submission)
-                    self._async_callback_rejections_by_operation_id[submission.operation_id] = (
-                        *self._async_callback_rejections_by_operation_id.get(submission.operation_id, ()),
-                        rejection,
+                    self._async_callback_rejections_by_operation_id.append(
+                        rejection
                     )
                     return ServerResponse.json(
                         413,
@@ -5397,9 +5599,8 @@ class GraphBlocksServerApp:
                         )
                 if submission.run_id is not None and submission.run_id not in self._events_by_run_id:
                     rejection = ServerAsyncCallbackRejection.unknown_run(submission)
-                    self._async_callback_rejections_by_operation_id[submission.operation_id] = (
-                        *self._async_callback_rejections_by_operation_id.get(submission.operation_id, ()),
-                        rejection,
+                    self._async_callback_rejections_by_operation_id.append(
+                        rejection
                     )
                     if self.anti_enumerate_async_callbacks:
                         return ServerResponse.json(
@@ -5420,9 +5621,8 @@ class GraphBlocksServerApp:
                     )
                 if submission.run_id is not None and submission.attempt_id is None:
                     rejection = ServerAsyncCallbackRejection.missing_attempt_fence(submission)
-                    self._async_callback_rejections_by_operation_id[submission.operation_id] = (
-                        *self._async_callback_rejections_by_operation_id.get(submission.operation_id, ()),
-                        rejection,
+                    self._async_callback_rejections_by_operation_id.append(
+                        rejection
                     )
                     self._append_async_callback_diagnostic_event(
                         "ExternalCallbackRejected",
@@ -5440,9 +5640,8 @@ class GraphBlocksServerApp:
                     )
                 if submission.run_id is not None and submission.node_id is None:
                     rejection = ServerAsyncCallbackRejection.missing_node_fence(submission)
-                    self._async_callback_rejections_by_operation_id[submission.operation_id] = (
-                        *self._async_callback_rejections_by_operation_id.get(submission.operation_id, ()),
-                        rejection,
+                    self._async_callback_rejections_by_operation_id.append(
+                        rejection
                     )
                     self._append_async_callback_diagnostic_event(
                         "ExternalCallbackRejected",
@@ -5467,9 +5666,8 @@ class GraphBlocksServerApp:
                     state = run_status.get("state")
                     if state in {"completed", "succeeded", "failed", "cancelled", "expired", "policy_stopped"}:
                         rejection = ServerAsyncCallbackRejection.terminal_run(submission, state)
-                        self._async_callback_rejections_by_operation_id[submission.operation_id] = (
-                            *self._async_callback_rejections_by_operation_id.get(submission.operation_id, ()),
-                            rejection,
+                        self._async_callback_rejections_by_operation_id.append(
+                            rejection
                         )
                         self._append_async_callback_diagnostic_event(
                             "LateExternalCallbackReceived",
@@ -5495,14 +5693,8 @@ class GraphBlocksServerApp:
                         rejection = ServerAsyncCallbackRejection.unknown_run(
                             submission
                         )
-                        self._async_callback_rejections_by_operation_id[
-                            submission.operation_id
-                        ] = (
-                            *self._async_callback_rejections_by_operation_id.get(
-                                submission.operation_id,
-                                (),
-                            ),
-                            rejection,
+                        self._async_callback_rejections_by_operation_id.append(
+                            rejection
                         )
                         if self.anti_enumerate_async_callbacks:
                             return ServerResponse.json(
@@ -5542,14 +5734,8 @@ class GraphBlocksServerApp:
                             submission,
                             current_state,
                         )
-                        self._async_callback_rejections_by_operation_id[
-                            submission.operation_id
-                        ] = (
-                            *self._async_callback_rejections_by_operation_id.get(
-                                submission.operation_id,
-                                (),
-                            ),
-                            rejection,
+                        self._async_callback_rejections_by_operation_id.append(
+                            rejection
                         )
                         self._append_async_callback_diagnostic_event(
                             "LateExternalCallbackReceived",
@@ -5598,14 +5784,8 @@ class GraphBlocksServerApp:
                                 submission.provider_operation_id
                             ),
                         )
-                        self._async_callback_rejections_by_operation_id[
-                            submission.operation_id
-                        ] = (
-                            *self._async_callback_rejections_by_operation_id.get(
-                                submission.operation_id,
-                                (),
-                            ),
-                            rejection,
+                        self._async_callback_rejections_by_operation_id.append(
+                            rejection
                         )
                         return ServerResponse.json(
                             409,
@@ -5634,9 +5814,8 @@ class GraphBlocksServerApp:
                             != submission.policy_snapshot_id
                         ):
                             rejection = ServerAsyncCallbackRejection.idempotency_conflict(submission)
-                            self._async_callback_rejections_by_operation_id[submission.operation_id] = (
-                                *self._async_callback_rejections_by_operation_id.get(submission.operation_id, ()),
-                                rejection,
+                            self._async_callback_rejections_by_operation_id.append(
+                                rejection
                             )
                             self._append_async_callback_diagnostic_event(
                                 "ExternalCallbackRejected",
@@ -5664,9 +5843,8 @@ class GraphBlocksServerApp:
                             if submission.attempt_id is not None:
                                 payload["attemptId"] = submission.attempt_id
                         rejection = ServerAsyncCallbackRejection.scope_mismatch(submission)
-                        self._async_callback_rejections_by_operation_id[submission.operation_id] = (
-                            *self._async_callback_rejections_by_operation_id.get(submission.operation_id, ()),
-                            rejection,
+                        self._async_callback_rejections_by_operation_id.append(
+                            rejection
                         )
                         self._append_async_callback_diagnostic_event(
                             "ExternalCallbackRejected",
@@ -5676,9 +5854,8 @@ class GraphBlocksServerApp:
                         return ServerResponse.json(409, payload)
                     if previous.attempt_id != submission.attempt_id:
                         rejection = ServerAsyncCallbackRejection.stale_attempt(submission)
-                        self._async_callback_rejections_by_operation_id[submission.operation_id] = (
-                            *self._async_callback_rejections_by_operation_id.get(submission.operation_id, ()),
-                            rejection,
+                        self._async_callback_rejections_by_operation_id.append(
+                            rejection
                         )
                         self._append_async_callback_diagnostic_event(
                             "ExternalCallbackRejected",
@@ -5701,9 +5878,8 @@ class GraphBlocksServerApp:
                         and (previous.run_id != submission.run_id or previous.attempt_id != submission.attempt_id)
                     ):
                         rejection = ServerAsyncCallbackRejection.stale_attempt(submission)
-                        self._async_callback_rejections_by_operation_id[submission.operation_id] = (
-                            *self._async_callback_rejections_by_operation_id.get(submission.operation_id, ()),
-                            rejection,
+                        self._async_callback_rejections_by_operation_id.append(
+                            rejection
                         )
                         self._append_async_callback_diagnostic_event(
                             "ExternalCallbackRejected",
@@ -5726,9 +5902,8 @@ class GraphBlocksServerApp:
                         and previous.node_id != submission.node_id
                     ):
                         rejection = ServerAsyncCallbackRejection.node_mismatch(submission)
-                        self._async_callback_rejections_by_operation_id[submission.operation_id] = (
-                            *self._async_callback_rejections_by_operation_id.get(submission.operation_id, ()),
-                            rejection,
+                        self._async_callback_rejections_by_operation_id.append(
+                            rejection
                         )
                         self._append_async_callback_diagnostic_event(
                             "ExternalCallbackRejected",
@@ -5748,9 +5923,8 @@ class GraphBlocksServerApp:
                         )
                     if previous.provider_operation_id != submission.provider_operation_id:
                         rejection = ServerAsyncCallbackRejection.provider_operation_mismatch(submission)
-                        self._async_callback_rejections_by_operation_id[submission.operation_id] = (
-                            *self._async_callback_rejections_by_operation_id.get(submission.operation_id, ()),
-                            rejection,
+                        self._async_callback_rejections_by_operation_id.append(
+                            rejection
                         )
                         self._append_async_callback_diagnostic_event(
                             "ExternalCallbackRejected",
@@ -5772,9 +5946,8 @@ class GraphBlocksServerApp:
                             payload["providerOperationId"] = submission.provider_operation_id
                         return ServerResponse.json(409, payload)
                     rejection = ServerAsyncCallbackRejection.duplicate_operation_receipt(submission)
-                    self._async_callback_rejections_by_operation_id[submission.operation_id] = (
-                        *self._async_callback_rejections_by_operation_id.get(submission.operation_id, ()),
-                        rejection,
+                    self._async_callback_rejections_by_operation_id.append(
+                        rejection
                     )
                     self._append_async_callback_diagnostic_event(
                         "ExternalCallbackRejected",
@@ -5840,14 +6013,8 @@ class GraphBlocksServerApp:
                         rejection = ServerAsyncCallbackRejection.authentication_failed(
                             submission
                         )
-                        self._async_callback_rejections_by_operation_id[
-                            submission.operation_id
-                        ] = (
-                            *self._async_callback_rejections_by_operation_id.get(
-                                submission.operation_id,
-                                (),
-                            ),
-                            rejection,
+                        self._async_callback_rejections_by_operation_id.append(
+                            rejection
                         )
                         self._append_async_callback_diagnostic_event(
                             "ExternalCallbackRejected",
@@ -5892,14 +6059,8 @@ class GraphBlocksServerApp:
                                     submission.provider_operation_id
                                 ),
                             )
-                            self._async_callback_rejections_by_operation_id[
-                                submission.operation_id
-                            ] = (
-                                *self._async_callback_rejections_by_operation_id.get(
-                                    submission.operation_id,
-                                    (),
-                                ),
-                                rejection,
+                            self._async_callback_rejections_by_operation_id.append(
+                                rejection
                             )
                             self._append_async_callback_diagnostic_event(
                                 "ExternalCallbackRejected",
@@ -6298,9 +6459,8 @@ class GraphBlocksServerApp:
                             ),
                         )
                         rejection = ServerAsyncCallbackRejection.operation_id_mismatch(submission)
-                        self._async_callback_rejections_by_operation_id[submission.operation_id] = (
-                            *self._async_callback_rejections_by_operation_id.get(submission.operation_id, ()),
-                            rejection,
+                        self._async_callback_rejections_by_operation_id.append(
+                            rejection
                         )
                     except (TypeError, ValueError, json.JSONDecodeError):
                         pass

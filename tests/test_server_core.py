@@ -691,6 +691,7 @@ def test_server_app_validates_reference_tenant_boundary() -> None:
         "max_event_page_events",
         "max_event_page_bytes",
         "max_accepted_run_runtime_state_bytes",
+        "max_async_callback_rejection_history_bytes",
         "max_in_memory_runs",
         "max_in_memory_runs_per_tenant",
         "max_retired_run_tombstones",
@@ -6922,6 +6923,40 @@ def test_server_app_terminal_deletion_cleans_run_scoped_state_and_bounds_tombsto
     app._callback_submission_history_bytes = (
         callback_submission._retained_size_bytes()
     )
+    callback_rejection = ServerAsyncCallbackRejection(
+        operation_id=callback_submission.operation_id,
+        callback_id="callback-rejection-delete-cleanup-1",
+        idempotency_key="callback-rejection-delete-cleanup-idem-1",
+        reason="authentication_failed",
+        received_at="2026-07-29T00:00:03Z",
+        payload_digest="sha256:" + "b" * 64,
+        run_id=first_run_id,
+    )
+    surviving_callback_rejection = replace(
+        callback_rejection,
+        callback_id="callback-rejection-surviving-1",
+        idempotency_key="callback-rejection-surviving-idem-1",
+        run_id="run-surviving-rejection-1",
+    )
+    app._async_callback_rejections_by_operation_id.append(
+        callback_rejection
+    )
+    app._async_callback_rejections_by_operation_id.append(
+        surviving_callback_rejection
+    )
+    rejection_history_bytes_before_delete = (
+        app._async_callback_rejections_by_operation_id.retained_size_bytes
+    )
+    surviving_rejection_history_bytes = (
+        app._async_callback_rejections_by_operation_id._history_size_bytes(
+            callback_rejection.operation_id,
+            (surviving_callback_rejection,),
+        )
+    )
+    assert (
+        rejection_history_bytes_before_delete
+        > 0
+    )
     app._append_async_callback_diagnostic_event(
         "LateExternalCallbackReceived",
         callback_submission,
@@ -6958,6 +6993,23 @@ def test_server_app_terminal_deletion_cleans_run_scoped_state_and_bounds_tombsto
     assert app._callback_delivery_dead_letter_moves == {}
     assert app._callbacks_by_operation_id == {}
     assert app._callback_submission_history_bytes == 0
+    assert tuple(
+        rejection["callbackId"]
+        for rejection in app.async_callback_rejections(
+            callback_rejection.operation_id
+        )
+    ) == ("callback-rejection-surviving-1",)
+    retained_rejection_history_bytes = (
+        app._async_callback_rejections_by_operation_id.retained_size_bytes
+    )
+    assert (
+        retained_rejection_history_bytes
+        < rejection_history_bytes_before_delete
+    )
+    assert (
+        retained_rejection_history_bytes
+        == surviving_rejection_history_bytes
+    )
     assert (
         first_run_id
         not in app._optional_callback_diagnostic_event_count_by_run_id
@@ -8771,6 +8823,236 @@ def test_server_app_bounds_async_callback_rejection_history() -> None:
     latest = history["op-1024"][0]
     history["op-1024"] = (latest,) * 33
     assert len(app.async_callback_rejections("op-1024")) == 32
+    assert (
+        history.retained_size_bytes
+        <= app.max_async_callback_rejection_history_bytes
+    )
+
+
+def test_server_app_enforces_async_callback_rejection_byte_budget() -> None:
+    probe = GraphBlocksServerApp(allow_unauthenticated_dev=True)
+    probe_history = probe._async_callback_rejections_by_operation_id
+    probe_history["op-a"] = (
+        ServerAsyncCallbackRejection(
+            operation_id="op-a",
+            callback_id="cb-budget",
+            idempotency_key="idem-budget",
+            reason="authentication_failed",
+            received_at="2026-07-03T00:00:00Z",
+            payload_digest="sha256:" + "a" * 64,
+        ),
+    )
+    one_history_bytes = probe_history.retained_size_bytes
+    app = GraphBlocksServerApp(
+        allow_unauthenticated_dev=True,
+        max_async_callback_rejection_history_bytes=(
+            one_history_bytes * 2
+        ),
+    )
+    history = app._async_callback_rejections_by_operation_id
+
+    for operation_id in ("op-a", "op-b", "op-c"):
+        history[operation_id] = (
+            ServerAsyncCallbackRejection(
+                operation_id=operation_id,
+                callback_id="cb-budget",
+                idempotency_key="idem-budget",
+                reason="authentication_failed",
+                received_at="2026-07-03T00:00:00Z",
+                payload_digest="sha256:" + "a" * 64,
+            ),
+        )
+
+    assert app.async_callback_rejections("op-a") == ()
+    assert len(app.async_callback_rejections("op-b")) == 1
+    assert len(app.async_callback_rejections("op-c")) == 1
+    assert (
+        history.retained_size_bytes
+        <= app.max_async_callback_rejection_history_bytes
+    )
+    retained_two_histories = history.retained_size_bytes
+    removed = history.pop("op-b")
+    assert isinstance(removed, tuple)
+    assert history.retained_size_bytes < retained_two_histories
+    history["op-b"] = removed
+    assert history.retained_size_bytes == retained_two_histories
+    history.pop("op-b")
+    history.pop("op-c")
+    assert history.retained_size_bytes == 0
+
+
+def test_server_app_retains_newest_rejection_that_fits_byte_budget() -> None:
+    first = ServerAsyncCallbackRejection(
+        operation_id="op-newest-rejection",
+        callback_id="callback-first",
+        idempotency_key="idempotency-first",
+        reason="authentication_failed",
+        received_at="2026-07-03T00:00:00Z",
+        payload_digest="sha256:" + "a" * 64,
+    )
+    second = ServerAsyncCallbackRejection(
+        operation_id="op-newest-rejection",
+        callback_id="callback-later",
+        idempotency_key="idempotency-later",
+        reason="authentication_failed",
+        received_at="2026-07-03T00:00:01Z",
+        payload_digest="sha256:" + "b" * 64,
+    )
+    probe = GraphBlocksServerApp(allow_unauthenticated_dev=True)
+    probe_history = probe._async_callback_rejections_by_operation_id
+    probe_history.append(first)
+    single_rejection_bytes = probe_history.retained_size_bytes
+    app = GraphBlocksServerApp(
+        allow_unauthenticated_dev=True,
+        max_async_callback_rejection_history_bytes=(
+            single_rejection_bytes
+        ),
+    )
+    history = app._async_callback_rejections_by_operation_id
+
+    history.append(first)
+    history.append(second)
+
+    retained = app.async_callback_rejections(
+        "op-newest-rejection"
+    )
+    assert tuple(
+        rejection["callbackId"]
+        for rejection in retained
+    ) == ("callback-later",)
+    assert history.retained_size_bytes <= single_rejection_bytes
+
+
+def test_server_app_drops_oversized_callback_rejection_diagnostic() -> None:
+    oversized_operation_id = "op-" + "x" * (64 * 1024)
+    app = GraphBlocksServerApp(
+        auth_hook=StaticBearerAuthHook(
+            {"token-1": PrincipalRef("callback-relay")}
+        ),
+        max_async_callback_rejection_history_bytes=1024,
+    )
+
+    response = app.handle(
+        ServerRequest(
+            method="POST",
+            path=f"/callbacks/{oversized_operation_id}",
+            headers={
+                "Authorization": "Bearer wrong-token",
+                "GraphBlocks-Idempotency-Key": "idem-oversized-rejection",
+            },
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "callback_id": "cb-oversized-rejection",
+                    "payload": {"status": "completed"},
+                }
+            ).encode("utf-8"),
+            requested_at="2026-07-03T00:00:00Z",
+        )
+    )
+
+    assert response.status_code == 401
+    assert json.loads(response.body.decode("utf-8")) == {
+        "ok": False,
+        "reasonCodes": ["auth.invalid_bearer_token"],
+    }
+    assert app.async_callback_rejections(oversized_operation_id) == ()
+    assert (
+        app._async_callback_rejections_by_operation_id.retained_size_bytes
+        == 0
+    )
+
+
+def test_server_app_records_concurrent_same_operation_rejections() -> None:
+    authorization_barrier = Barrier(2)
+
+    class TrackingRejectionHistory(
+        graphblocks_server._BoundedAsyncCallbackRejectionHistory
+    ):
+        def __init__(self) -> None:
+            super().__init__()
+            self.appended_callback_ids: list[str] = []
+            self.read_operation_ids: list[str] = []
+
+        def append(
+            self,
+            rejection: ServerAsyncCallbackRejection,
+        ) -> None:
+            self.appended_callback_ids.append(rejection.callback_id)
+            super().append(rejection)
+
+        def get(
+            self,
+            operation_id: str,
+            default: object = None,
+        ) -> object:
+            self.read_operation_ids.append(operation_id)
+            return super().get(operation_id, default)
+
+    class ConcurrentRejectingAuthHook:
+        def authorize(
+            self,
+            request: ServerAuthRequest,
+        ) -> ServerAuthDecision:
+            del request
+            authorization_barrier.wait(timeout=5)
+            return ServerAuthDecision(
+                False,
+                reason_codes=("auth.concurrent_rejection",),
+            )
+
+    app = GraphBlocksServerApp(auth_hook=ConcurrentRejectingAuthHook())
+    tracking_history = TrackingRejectionHistory()
+    app._async_callback_rejections_by_operation_id = tracking_history
+    requests = tuple(
+        ServerRequest(
+            method="POST",
+            path="/callbacks/op-concurrent-rejection",
+            headers={
+                "GraphBlocks-Idempotency-Key": f"idem-concurrent-{index}",
+            },
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "callback_id": f"cb-concurrent-{index}",
+                    "payload": {"status": "completed"},
+                }
+            ).encode("utf-8"),
+            requested_at="2026-07-03T00:00:00Z",
+        )
+        for index in range(2)
+    )
+    threads = tuple(
+        Thread(
+            target=app.handle,
+            args=(request,),
+        )
+        for request in requests
+    )
+
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=5)
+
+    assert all(not thread.is_alive() for thread in threads)
+    assert tracking_history.read_operation_ids == []
+    assert set(tracking_history.appended_callback_ids) == {
+        "cb-concurrent-0",
+        "cb-concurrent-1",
+    }
+    rejections = dict.get(
+        tracking_history,
+        "op-concurrent-rejection",
+        (),
+    )
+    assert len(rejections) == 2
+    assert {
+        rejection.callback_id
+        for rejection in rejections
+    } == {"cb-concurrent-0", "cb-concurrent-1"}
 
 
 def test_server_app_records_async_callback_authentication_failure_rejection() -> None:
