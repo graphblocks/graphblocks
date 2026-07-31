@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from io import BytesIO
 import json
 from pathlib import Path
 import sqlite3
@@ -14,7 +15,7 @@ from graphblocks.durable_server import (
     DurableAcceptedRunService,
 )
 from graphblocks.policy import PrincipalRef
-from graphblocks.server import ServerRequest, StaticBearerAuthHook
+from graphblocks.server import ServerRequest, ServerRequestHead, StaticBearerAuthHook
 from graphblocks.server_storage import (
     AcceptedRunEffectDeliveryClaimRequest,
     AcceptedRunPhase,
@@ -145,6 +146,195 @@ def _request(
         cookies={},
         body=(b"" if body is None else json.dumps(body).encode("utf-8")),
     )
+
+
+@pytest.mark.parametrize(
+    ("method", "path", "token"),
+    (
+        ("GET", "/health", None),
+        ("GET", "/not-a-route", None),
+        ("POST", "/runs", None),
+    ),
+    ids=("health", "unknown-route", "unauthenticated"),
+)
+def test_durable_http_applies_body_limit_before_route_and_authentication(
+    tmp_path: Path,
+    method: str,
+    path: str,
+    token: str | None,
+) -> None:
+    app = _app(tmp_path / "durable-http-global-body-cap.sqlite3", clock_value=1_000)
+    app.max_request_body_bytes = 8
+    headers = {} if token is None else {"authorization": f"Bearer {token}"}
+
+    response = app.handle(
+        ServerRequest(
+            method=method,
+            path=path,
+            headers=headers,
+            query={},
+            cookies={},
+            body=b"x" * 9,
+        )
+    )
+
+    assert response.status_code == 413
+    assert json.loads(response.body) == {
+        "ok": False,
+        "error": "RequestBodyTooLarge",
+        "maxBytes": 8,
+    }
+
+
+def test_durable_http_stream_ingress_rejects_declared_body_before_read(
+    tmp_path: Path,
+) -> None:
+    app = _app(tmp_path / "durable-http-stream-cap.sqlite3", clock_value=1_000)
+    app.max_request_body_bytes = 32
+    read_calls = 0
+    abort_calls: list[None] = []
+
+    def read_body(size: int) -> bytes:
+        del size
+        nonlocal read_calls
+        read_calls += 1
+        raise AssertionError("oversized declared body was read")
+
+    response = app.handle_stream(
+        ServerRequestHead(
+            method="POST",
+            path="/runs",
+            headers={"Content-Length": "33"},
+            query={},
+            cookies={},
+        ),
+        read_body,
+        abort_body=lambda: abort_calls.append(None),
+    )
+
+    assert response.status_code == 413
+    assert json.loads(response.body) == {
+        "ok": False,
+        "error": "RequestBodyTooLarge",
+        "maxBytes": 32,
+    }
+    assert read_calls == 0
+    assert abort_calls == [None]
+
+
+def test_durable_http_stream_ingress_aborts_malformed_framing(
+    tmp_path: Path,
+) -> None:
+    app = _app(tmp_path / "durable-http-stream-framing.sqlite3", clock_value=1_000)
+    read_calls: list[int] = []
+    abort_calls: list[None] = []
+
+    with pytest.raises(
+        ValueError,
+        match="server request content-length must use ASCII decimal digits",
+    ):
+        app.handle_stream(
+            ServerRequestHead(
+                method="POST",
+                path="/runs",
+                headers={"Content-Length": "١"},
+                query={},
+                cookies={},
+            ),
+            lambda size: read_calls.append(size) or b"",
+            abort_body=lambda: abort_calls.append(None),
+        )
+
+    assert read_calls == []
+    assert abort_calls == [None]
+
+
+def test_durable_http_stream_ingress_caps_unknown_chunked_body(
+    tmp_path: Path,
+) -> None:
+    app = _app(tmp_path / "durable-http-stream-chunked.sqlite3", clock_value=1_000)
+    app.max_request_body_bytes = 32
+    read_sizes: list[int] = []
+    abort_calls: list[None] = []
+
+    def read_body(size: int) -> bytes:
+        read_sizes.append(size)
+        return b"x" * size
+
+    response = app.handle_stream(
+        ServerRequestHead(
+            method="POST",
+            path="/not-a-route",
+            headers={"Transfer-Encoding": "chunked"},
+            query={},
+            cookies={},
+        ),
+        read_body,
+        abort_body=lambda: abort_calls.append(None),
+    )
+
+    assert response.status_code == 413
+    assert json.loads(response.body) == {
+        "ok": False,
+        "error": "RequestBodyTooLarge",
+        "maxBytes": 32,
+    }
+    assert read_sizes == [33]
+    assert abort_calls == [None]
+
+
+def test_durable_http_stream_ingress_rejects_content_length_mismatch(
+    tmp_path: Path,
+) -> None:
+    app = _app(tmp_path / "durable-http-stream-length.sqlite3", clock_value=1_000)
+    app.max_request_body_bytes = 32
+    abort_calls: list[None] = []
+
+    response = app.handle_stream(
+        ServerRequestHead(
+            method="POST",
+            path="/runs",
+            headers={"Content-Length": "2"},
+            query={},
+            cookies={},
+        ),
+        BytesIO(b"{}x").read,
+        abort_body=lambda: abort_calls.append(None),
+    )
+
+    assert response.status_code == 400
+    assert json.loads(response.body) == {
+        "ok": False,
+        "error": "server request content-length must match body length",
+    }
+    assert abort_calls == [None]
+
+
+def test_durable_http_stream_ingress_accepts_bounded_request(
+    tmp_path: Path,
+) -> None:
+    app = _app(tmp_path / "durable-http-stream-valid.sqlite3", clock_value=1_000)
+    abort_calls: list[None] = []
+
+    response = app.handle_stream(
+        ServerRequestHead(
+            method="GET",
+            path="/health",
+            headers={"Content-Length": "0"},
+            query={},
+            cookies={},
+        ),
+        BytesIO(b"").read,
+        abort_body=lambda: abort_calls.append(None),
+    )
+
+    assert response.status_code == 200
+    assert json.loads(response.body) == {
+        "ok": True,
+        "profile": "durable-preview",
+        "status": "healthy",
+    }
+    assert abort_calls == []
 
 
 def _prepare_waiting_callback(

@@ -10,6 +10,7 @@ from concurrent.futures import (
 )
 from dataclasses import replace
 import hashlib
+from io import BytesIO
 from itertools import permutations
 import json
 import math
@@ -40,6 +41,7 @@ from graphblocks.server import (
     ServerEventSubscription,
     ServerHealth,
     ServerRequest,
+    ServerRequestHead,
     ServerResponse,
     ServerProtocolVersionMismatchError,
     ServerRouteMatch,
@@ -1711,6 +1713,15 @@ def test_server_request_auth_and_response_validate_contracts() -> None:
     with pytest.raises(ValueError, match="server request requested_at must not be empty"):
         ServerRequest(method="GET", path="/health", headers={}, query={}, cookies={}, requested_at=" ")
 
+    request_head = ServerRequestHead(
+        method="POST",
+        path="/runs",
+        headers={"content-length": "2"},
+        query={},
+        cookies={},
+    )
+    assert request_head.headers["content-length"] == "2"
+
     route = default_server_route_manifest().lookup("GET", "/health")
 
     with pytest.raises(ValueError, match="server auth request route must be a ServerEndpoint"):
@@ -2028,6 +2039,8 @@ def test_server_app_handles_health_auth_and_run_requests() -> None:
     assert [event["kind"] for event in payload["events"]] == ["RunStarted", "RunSucceeded"]
     assert payload["events"][0]["metadata"]["responseId"] == "response-server-1"
     assert graphblocks.GraphBlocksServerApp is GraphBlocksServerApp
+    assert graphblocks.ServerRequestHead is ServerRequestHead
+    assert "ServerRequestHead" not in graphblocks.__all__
     assert "ServerResponse" not in graphblocks.__all__
 
 
@@ -2526,6 +2539,529 @@ def test_server_app_applies_callback_request_body_limit_before_decoding(
         "maxBodyBytes": 48,
         "error": "request body exceeds max body bytes",
     }
+
+
+@pytest.mark.parametrize(
+    ("method", "path"),
+    (
+        ("GET", "/health"),
+        ("POST", "/not-a-route"),
+        ("POST", "/runs"),
+    ),
+    ids=("public", "unknown-route", "protected"),
+)
+def test_server_app_applies_global_body_limit_before_route_and_authentication(
+    method: str,
+    path: str,
+) -> None:
+    app = GraphBlocksServerApp(
+        auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}),
+        max_request_body_bytes=8,
+    )
+
+    response = app.handle(
+        ServerRequest(
+            method=method,
+            path=path,
+            headers={},
+            query={},
+            cookies={},
+            body=b"x" * 9,
+        )
+    )
+
+    assert response.status_code == 413
+
+
+def test_server_stream_ingress_rejects_content_length_before_body_read(
+    monkeypatch,
+) -> None:
+    parser_calls = 0
+    read_calls = 0
+    abort_calls = 0
+
+    def fail_if_parsed(request: ServerRequest, owner: str) -> object:
+        del request, owner
+        nonlocal parser_calls
+        parser_calls += 1
+        raise AssertionError("oversized request reached JSON parser")
+
+    def read_body(size: int) -> bytes:
+        del size
+        nonlocal read_calls
+        read_calls += 1
+        raise AssertionError("oversized declared body was read")
+
+    def abort_body() -> None:
+        nonlocal abort_calls
+        abort_calls += 1
+
+    monkeypatch.setattr(
+        graphblocks_server,
+        "_server_request_json_body",
+        fail_if_parsed,
+    )
+    app = GraphBlocksServerApp(
+        allow_unauthenticated_dev=True,
+        max_request_body_bytes=32,
+    )
+
+    response = app.handle_stream(
+        ServerRequestHead(
+            method="POST",
+            path="/runs",
+            headers={"Content-Length": "33"},
+            query={},
+            cookies={},
+        ),
+        read_body,
+        abort_body=abort_body,
+    )
+
+    assert response.status_code == 413
+    assert json.loads(response.body) == {
+        "ok": False,
+        "bodySizeBytes": 33,
+        "maxBodyBytes": 32,
+        "error": "request body exceeds max body bytes",
+    }
+    assert read_calls == 0
+    assert abort_calls == 1
+    assert parser_calls == 0
+
+
+def test_server_stream_ingress_preflights_global_limit_before_route_lookup() -> None:
+    manifest = ServerRouteManifest(
+        (
+            ServerEndpoint(
+                "POST",
+                "/ambiguous",
+                "http",
+                "health",
+                auth_required=False,
+            ),
+            ServerEndpoint(
+                "POST",
+                "/ambiguous",
+                "sse",
+                "health",
+                auth_required=False,
+            ),
+        )
+    )
+    read_calls: list[int] = []
+    abort_calls: list[None] = []
+    app = GraphBlocksServerApp(
+        allow_unauthenticated_dev=True,
+        route_manifest=manifest,
+        max_request_body_bytes=8,
+    )
+
+    response = app.handle_stream(
+        ServerRequestHead(
+            method="POST",
+            path="/ambiguous",
+            headers={
+                "Content-Length": "9",
+                "Upgrade": "websocket",
+            },
+            query={},
+            cookies={},
+        ),
+        lambda size: read_calls.append(size) or b"",
+        abort_body=lambda: abort_calls.append(None),
+    )
+
+    assert response.status_code == 413
+    assert json.loads(response.body) == {
+        "ok": False,
+        "bodySizeBytes": 9,
+        "maxBodyBytes": 8,
+        "error": "request body exceeds max body bytes",
+    }
+    assert read_calls == []
+    assert abort_calls == [None]
+
+
+@pytest.mark.parametrize(
+    ("headers", "error"),
+    (
+        (
+            {"Content-Length": "١"},
+            "server request content-length must use ASCII decimal digits",
+        ),
+        (
+            {
+                "Content-Length": "1",
+                "Transfer-Encoding": "chunked",
+            },
+            (
+                "server request must not combine content-length "
+                "and transfer-encoding"
+            ),
+        ),
+    ),
+    ids=("non-ascii-content-length", "ambiguous-framing"),
+)
+def test_server_stream_ingress_aborts_malformed_framing_before_read(
+    headers: dict[str, str],
+    error: str,
+) -> None:
+    read_calls: list[int] = []
+    abort_calls: list[None] = []
+    app = GraphBlocksServerApp(
+        allow_unauthenticated_dev=True,
+        max_request_body_bytes=8,
+    )
+
+    with pytest.raises(ValueError, match=error):
+        app.handle_stream(
+            ServerRequestHead(
+                method="POST",
+                path="/runs",
+                headers=headers,
+                query={},
+                cookies={},
+            ),
+            lambda size: read_calls.append(size) or b"",
+            abort_body=lambda: abort_calls.append(None),
+        )
+
+    assert read_calls == []
+    assert abort_calls == [None]
+
+
+def test_server_stream_ingress_aborts_when_route_lookup_fails() -> None:
+    manifest = ServerRouteManifest(
+        (
+            ServerEndpoint(
+                "POST",
+                "/ambiguous",
+                "http",
+                "health",
+                auth_required=False,
+            ),
+            ServerEndpoint(
+                "POST",
+                "/ambiguous",
+                "sse",
+                "health",
+                auth_required=False,
+            ),
+        )
+    )
+    read_calls: list[int] = []
+    abort_calls: list[None] = []
+    app = GraphBlocksServerApp(
+        allow_unauthenticated_dev=True,
+        route_manifest=manifest,
+        max_request_body_bytes=8,
+    )
+
+    with pytest.raises(ValueError, match="ambiguous across transports"):
+        app.handle_stream(
+            ServerRequestHead(
+                method="POST",
+                path="/ambiguous",
+                headers={
+                    "Content-Length": "0",
+                    "Upgrade": "websocket",
+                },
+                query={},
+                cookies={},
+            ),
+            lambda size: read_calls.append(size) or b"",
+            abort_body=lambda: abort_calls.append(None),
+        )
+
+    assert read_calls == []
+    assert abort_calls == [None]
+
+
+def test_server_stream_ingress_caps_unbounded_chunked_body_before_parsing(
+    monkeypatch,
+) -> None:
+    parser_calls = 0
+    read_sizes: list[int] = []
+    abort_calls: list[None] = []
+
+    def fail_if_parsed(request: ServerRequest, owner: str) -> object:
+        del request, owner
+        nonlocal parser_calls
+        parser_calls += 1
+        raise AssertionError("oversized request reached JSON parser")
+
+    def read_body(size: int) -> bytes:
+        read_sizes.append(size)
+        return b"x" * size
+
+    monkeypatch.setattr(
+        graphblocks_server,
+        "_server_request_json_body",
+        fail_if_parsed,
+    )
+    app = GraphBlocksServerApp(
+        allow_unauthenticated_dev=True,
+        max_request_body_bytes=32,
+    )
+
+    response = app.handle_stream(
+        ServerRequestHead(
+            method="POST",
+            path="/runs",
+            headers={"Transfer-Encoding": "chunked"},
+            query={},
+            cookies={},
+        ),
+        read_body,
+        abort_body=lambda: abort_calls.append(None),
+    )
+
+    assert response.status_code == 413
+    assert json.loads(response.body) == {
+        "ok": False,
+        "bodySizeBytesAtLeast": 33,
+        "maxBodyBytes": 32,
+        "error": "request body exceeds max body bytes",
+    }
+    assert read_sizes == [33]
+    assert abort_calls == [None]
+    assert parser_calls == 0
+
+
+def test_server_stream_ingress_caps_each_wire_read_to_64_kib() -> None:
+    read_sizes: list[int] = []
+    abort_calls: list[None] = []
+
+    def read_body(size: int) -> bytes:
+        read_sizes.append(size)
+        return b"x" * size
+
+    app = GraphBlocksServerApp(
+        allow_unauthenticated_dev=True,
+        max_request_body_bytes=128 * 1024,
+    )
+
+    response = app.handle_stream(
+        ServerRequestHead(
+            method="GET",
+            path="/health",
+            headers={"Transfer-Encoding": "chunked"},
+            query={},
+            cookies={},
+        ),
+        read_body,
+        abort_body=lambda: abort_calls.append(None),
+    )
+
+    assert response.status_code == 413
+    assert json.loads(response.body)["bodySizeBytesAtLeast"] == (128 * 1024) + 1
+    assert read_sizes == [64 * 1024, 64 * 1024, 1]
+    assert abort_calls == [None]
+
+
+def test_server_stream_ingress_applies_callback_route_limit_before_body_read() -> None:
+    read_calls = 0
+    abort_calls: list[None] = []
+
+    def read_body(size: int) -> bytes:
+        del size
+        nonlocal read_calls
+        read_calls += 1
+        raise AssertionError("oversized declared callback body was read")
+
+    app = GraphBlocksServerApp(
+        allow_unauthenticated_dev=True,
+        max_request_body_bytes=1024,
+        max_async_callback_request_body_bytes=48,
+    )
+
+    response = app.handle_stream(
+        ServerRequestHead(
+            method="POST",
+            path="/callbacks/operation-1",
+            headers={"Content-Length": "49"},
+            query={},
+            cookies={},
+        ),
+        read_body,
+        abort_body=lambda: abort_calls.append(None),
+    )
+
+    assert response.status_code == 413
+    assert json.loads(response.body) == {
+        "ok": False,
+        "bodySizeBytes": 49,
+        "maxBodyBytes": 48,
+        "error": "request body exceeds max body bytes",
+    }
+    assert read_calls == 0
+    assert abort_calls == [None]
+
+
+def test_server_stream_ingress_rejects_unbounded_reader_without_calling_it() -> None:
+    class UnboundedReader:
+        def __init__(self) -> None:
+            self.read_calls = 0
+
+        def read(self) -> bytes:
+            self.read_calls += 1
+            return b"x" * 1_000_000
+
+    reader = UnboundedReader()
+    abort_calls: list[None] = []
+    app = GraphBlocksServerApp(
+        allow_unauthenticated_dev=True,
+        max_request_body_bytes=32,
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="body reader must accept a size limit",
+    ):
+        app.handle_stream(
+            ServerRequestHead(
+                method="GET",
+                path="/health",
+                headers={},
+                query={},
+                cookies={},
+            ),
+            reader.read,  # type: ignore[arg-type]
+            abort_body=lambda: abort_calls.append(None),
+        )
+
+    assert reader.read_calls == 0
+    assert abort_calls == [None]
+
+
+def test_server_stream_ingress_rejects_reader_that_ignores_requested_size() -> None:
+    read_sizes: list[int] = []
+    abort_calls: list[None] = []
+
+    def read_body(size: int) -> bytes:
+        read_sizes.append(size)
+        return b"x" * (size + 1)
+
+    app = GraphBlocksServerApp(
+        allow_unauthenticated_dev=True,
+        max_request_body_bytes=32,
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="body reader returned more than 33 bytes",
+    ):
+        app.handle_stream(
+            ServerRequestHead(
+                method="GET",
+                path="/health",
+                headers={},
+                query={},
+                cookies={},
+            ),
+            read_body,
+            abort_body=lambda: abort_calls.append(None),
+        )
+
+    assert read_sizes == [33]
+    assert abort_calls == [None]
+
+
+def test_server_stream_ingress_rejects_bytes_subclass_size_spoof() -> None:
+    class SpoofedBytes(bytes):
+        def __len__(self) -> int:
+            return 1
+
+    abort_calls: list[None] = []
+    app = GraphBlocksServerApp(
+        allow_unauthenticated_dev=True,
+        max_request_body_bytes=32,
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="body reader must return exact bytes",
+    ):
+        app.handle_stream(
+            ServerRequestHead(
+                method="GET",
+                path="/health",
+                headers={},
+                query={},
+                cookies={},
+            ),
+            lambda size: SpoofedBytes(b"x" * (size + 1)),
+            abort_body=lambda: abort_calls.append(None),
+        )
+
+    assert abort_calls == [None]
+
+
+def test_server_stream_ingress_accepts_bounded_request_body() -> None:
+    abort_calls: list[None] = []
+    app = GraphBlocksServerApp(
+        allow_unauthenticated_dev=True,
+        max_request_body_bytes=32,
+    )
+
+    response = app.handle_stream(
+        ServerRequestHead(
+            method="GET",
+            path="/health",
+            headers={"Content-Length": "0"},
+            query={},
+            cookies={},
+        ),
+        BytesIO(b"").read,
+        abort_body=lambda: abort_calls.append(None),
+    )
+
+    assert response.status_code == 200
+    assert abort_calls == []
+
+
+def test_server_stream_ingress_rejects_content_length_mismatch_before_parsing(
+    monkeypatch,
+) -> None:
+    parser_calls = 0
+    abort_calls: list[None] = []
+
+    def fail_if_parsed(request: ServerRequest, owner: str) -> object:
+        del request, owner
+        nonlocal parser_calls
+        parser_calls += 1
+        raise AssertionError("mismatched request reached JSON parser")
+
+    monkeypatch.setattr(
+        graphblocks_server,
+        "_server_request_json_body",
+        fail_if_parsed,
+    )
+    app = GraphBlocksServerApp(
+        allow_unauthenticated_dev=True,
+        max_request_body_bytes=32,
+    )
+
+    response = app.handle_stream(
+        ServerRequestHead(
+            method="POST",
+            path="/runs",
+            headers={"Content-Length": "2"},
+            query={},
+            cookies={},
+        ),
+        BytesIO(b"{}x").read,
+        abort_body=lambda: abort_calls.append(None),
+    )
+
+    assert response.status_code == 400
+    assert json.loads(response.body) == {
+        "ok": False,
+        "error": "server request content-length must match body length",
+    }
+    assert abort_calls == [None]
+    assert parser_calls == 0
 
 
 def test_server_app_rejects_non_unicode_request_json_strings() -> None:

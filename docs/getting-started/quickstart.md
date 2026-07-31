@@ -70,6 +70,16 @@ can omit it.
 
 Single-tenant local/reference server integrations construct
 `GraphBlocksServerApp` and adapt its request/response types to their transport.
+Network adapters must pass a body-free `graphblocks.ServerRequestHead`, a
+bounded `read(size)` callback, and a protocol-specific stream reset callback as
+`abort_body` to `app.handle_stream(...)`; they must not buffer an untrusted body
+before calling the app. The streaming ingress checks
+`Content-Length` before reading, stops chunked input at the route limit plus one
+byte, validates EOF and declared length, and returns 413 before JSON parsing.
+The reader must return exact `bytes`, honor the requested maximum, and return
+`b""` at EOF. When ingress rejects or cannot finish consuming a body, it invokes
+`abort_body`; adapters must close an HTTP/1 connection or reset the HTTP/2
+stream so unread bytes cannot be reused as the next request.
 Configure `reference_tenant_id` when using a custom authenticator. Multi-tenant
 accepted/background services use `DurableAcceptedRunServerApp` with an
 `AcceptedRunRepository`; the process-local app is not a multi-tenant authority.

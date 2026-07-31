@@ -134,6 +134,7 @@ MAX_SERVER_REQUEST_JSON_DEPTH = 64
 MAX_RUN_CURSOR_SEQUENCE = (1 << 64) - 1
 DEFAULT_MAX_SERVER_REQUEST_BODY_BYTES = 1024 * 1024
 DEFAULT_MAX_ASYNC_CALLBACK_REQUEST_BODY_BYTES = 512 * 1024
+_SERVER_REQUEST_BODY_READ_CHUNK_BYTES = 64 * 1024
 DEFAULT_MAX_SERVER_EVENT_PAGE_EVENTS = 100
 DEFAULT_MAX_SERVER_EVENT_PAGE_BYTES = 1024 * 1024
 DEFAULT_MAX_IN_MEMORY_RUNS = 10_000
@@ -535,21 +536,29 @@ def _validate_http_headers(owner: str, value: object) -> MappingProxyType[str, s
     return headers
 
 
-def _validate_http_message_framing(
+def _validate_http_message_head_framing(
     owner: str,
     headers: Mapping[str, str],
-    body: bytes,
-) -> None:
+) -> int | None:
     content_length = headers.get("content-length")
     if content_length is not None and "transfer-encoding" in headers:
         raise ValueError(
             f"{owner} must not combine content-length and transfer-encoding"
         )
     if content_length is None:
-        return
+        return None
     if not content_length.isascii() or not content_length.isdecimal():
         raise ValueError(f"{owner} content-length must use ASCII decimal digits")
-    if int(content_length) != len(body):
+    return int(content_length)
+
+
+def _validate_http_message_framing(
+    owner: str,
+    headers: Mapping[str, str],
+    body: bytes,
+) -> None:
+    content_length = _validate_http_message_head_framing(owner, headers)
+    if content_length is not None and content_length != len(body):
         raise ValueError(f"{owner} content-length must match body length")
 
 
@@ -1053,6 +1062,70 @@ class ServerAuthRequest:
 
 
 @dataclass(frozen=True, slots=True)
+class ServerRequestHead:
+    """Normalized HTTP request metadata without an already-buffered body."""
+
+    method: str
+    path: str
+    headers: dict[str, str]
+    query: dict[str, str]
+    cookies: dict[str, str]
+    requested_at: str = ""
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "method",
+            _validate_non_empty_string(
+                "server request head",
+                "method",
+                self.method,
+            ).upper(),
+        )
+        object.__setattr__(
+            self,
+            "path",
+            _validate_route_path("server request head", self.path),
+        )
+        object.__setattr__(
+            self,
+            "headers",
+            _validate_http_headers("server request head", self.headers),
+        )
+        object.__setattr__(
+            self,
+            "query",
+            _validate_string_mapping(
+                "server request head",
+                "query",
+                self.query,
+            ),
+        )
+        object.__setattr__(
+            self,
+            "cookies",
+            _validate_string_mapping(
+                "server request head",
+                "cookies",
+                self.cookies,
+            ),
+        )
+        object.__setattr__(
+            self,
+            "requested_at",
+            (
+                ""
+                if self.requested_at == ""
+                else _validate_non_empty_string(
+                    "server request head",
+                    "requested_at",
+                    self.requested_at,
+                )
+            ),
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class ServerRequest:
     method: str
     path: str
@@ -1141,6 +1214,93 @@ class ServerResponse:
             headers=response_headers,
             body=json.dumps(payload_copy, separators=(",", ":"), sort_keys=True, allow_nan=False).encode("utf-8"),
         )
+
+
+class _ServerRequestBodyTooLargeError(ValueError):
+    def __init__(
+        self,
+        body_size_bytes: int,
+        max_body_bytes: int,
+        *,
+        exact_size: bool,
+    ) -> None:
+        super().__init__("server request body exceeds max body bytes")
+        self.body_size_bytes = body_size_bytes
+        self.max_body_bytes = max_body_bytes
+        self.exact_size = exact_size
+
+
+class _ServerRequestBodyLengthMismatchError(ValueError):
+    pass
+
+
+def _read_bounded_server_request_body(
+    request: ServerRequestHead,
+    read_body: Callable[[int], bytes],
+    *,
+    max_body_bytes: int,
+) -> bytes:
+    if not isinstance(request, ServerRequestHead):
+        raise TypeError("streaming server request must be a ServerRequestHead")
+    if not callable(read_body):
+        raise TypeError("streaming server request body reader must be callable")
+    if (
+        isinstance(max_body_bytes, bool)
+        or not isinstance(max_body_bytes, int)
+        or max_body_bytes < 1
+    ):
+        raise ValueError(
+            "streaming server request max_body_bytes must be a positive integer"
+        )
+
+    content_length = _validate_http_message_head_framing(
+        "server request",
+        request.headers,
+    )
+    if content_length is not None and content_length > max_body_bytes:
+        raise _ServerRequestBodyTooLargeError(
+            content_length,
+            max_body_bytes,
+            exact_size=True,
+        )
+
+    body = bytearray()
+    target_bytes = max_body_bytes + 1
+    while len(body) < target_bytes:
+        read_size = min(
+            _SERVER_REQUEST_BODY_READ_CHUNK_BYTES,
+            target_bytes - len(body),
+        )
+        try:
+            chunk = read_body(read_size)
+        except TypeError:
+            raise ValueError(
+                "streaming server request body reader must accept a size limit"
+            ) from None
+        if type(chunk) is not bytes:
+            raise ValueError(
+                "streaming server request body reader must return exact bytes"
+            )
+        if len(chunk) > read_size:
+            raise ValueError(
+                "streaming server request body reader returned more than "
+                f"{read_size} bytes"
+            )
+        if not chunk:
+            break
+        body.extend(chunk)
+
+    if len(body) > max_body_bytes:
+        raise _ServerRequestBodyTooLargeError(
+            len(body),
+            max_body_bytes,
+            exact_size=False,
+        )
+    if content_length is not None and content_length != len(body):
+        raise _ServerRequestBodyLengthMismatchError(
+            "server request content-length must match body length"
+        )
+    return bytes(body)
 
 
 @dataclass(frozen=True, slots=True)
@@ -3647,22 +3807,155 @@ class GraphBlocksServerApp:
                 collected_run_ids.append(run_id)
         return tuple(collected_run_ids)
 
-    def handle(self, request: ServerRequest) -> ServerResponse:
+    def _match_request_route(
+        self,
+        request: ServerRequest | ServerRequestHead,
+    ) -> ServerRouteMatch:
+        requested_transport: ServerTransport = "http"
+        if request.headers.get("upgrade", "").casefold() == "websocket":
+            requested_transport = "websocket"
+        elif "text/event-stream" in request.headers.get("accept", "").casefold():
+            requested_transport = "sse"
         try:
-            requested_transport: ServerTransport = "http"
-            if request.headers.get("upgrade", "").casefold() == "websocket":
-                requested_transport = "websocket"
-            elif "text/event-stream" in request.headers.get("accept", "").casefold():
-                requested_transport = "sse"
-            try:
-                route_match = self.route_manifest.match(
-                    request.method,
-                    request.path,
-                    transport=requested_transport,
-                )
-            except ServerRouteNotFoundError:
-                # SSE endpoints are also commonly polled over a plain HTTP GET.
-                route_match = self.route_manifest.match(request.method, request.path)
+            return self.route_manifest.match(
+                request.method,
+                request.path,
+                transport=requested_transport,
+            )
+        except ServerRouteNotFoundError:
+            # SSE endpoints are also commonly polled over a plain HTTP GET.
+            return self.route_manifest.match(request.method, request.path)
+
+    def _request_body_limit(self, route: ServerEndpoint) -> int:
+        max_body_bytes = self.max_request_body_bytes
+        if route.operation == "submit_async_callback":
+            max_body_bytes = min(
+                max_body_bytes,
+                self.max_async_callback_request_body_bytes,
+            )
+        return max_body_bytes
+
+    @staticmethod
+    def _request_body_too_large_response(
+        body_size_bytes: int,
+        max_body_bytes: int,
+        *,
+        exact_size: bool,
+    ) -> ServerResponse:
+        size_key = "bodySizeBytes" if exact_size else "bodySizeBytesAtLeast"
+        return ServerResponse.json(
+            413,
+            {
+                "ok": False,
+                size_key: body_size_bytes,
+                "maxBodyBytes": max_body_bytes,
+                "error": "request body exceeds max body bytes",
+            },
+        )
+
+    def handle_stream(
+        self,
+        request: ServerRequestHead,
+        read_body: Callable[[int], bytes],
+        *,
+        abort_body: Callable[[], None],
+    ) -> ServerResponse:
+        """Read at most the selected route limit before constructing a request."""
+
+        if not isinstance(request, ServerRequestHead):
+            raise TypeError("streaming server request must be a ServerRequestHead")
+        if not callable(abort_body):
+            raise TypeError("streaming server request abort callback must be callable")
+        try:
+            content_length = _validate_http_message_head_framing(
+                "server request",
+                request.headers,
+            )
+        except Exception:
+            abort_body()
+            raise
+        if (
+            content_length is not None
+            and content_length > self.max_request_body_bytes
+        ):
+            abort_body()
+            return self._request_body_too_large_response(
+                content_length,
+                self.max_request_body_bytes,
+                exact_size=True,
+            )
+        route_match: ServerRouteMatch | None
+        route_error: ServerRouteNotFoundError | None
+        try:
+            route_match = self._match_request_route(request)
+            route_error = None
+        except ServerRouteNotFoundError as error:
+            route_match = None
+            route_error = error
+        except Exception:
+            abort_body()
+            raise
+        max_body_bytes = (
+            self.max_request_body_bytes
+            if route_match is None
+            else self._request_body_limit(route_match.endpoint)
+        )
+        try:
+            body = _read_bounded_server_request_body(
+                request,
+                read_body,
+                max_body_bytes=max_body_bytes,
+            )
+        except _ServerRequestBodyTooLargeError as error:
+            abort_body()
+            return self._request_body_too_large_response(
+                error.body_size_bytes,
+                error.max_body_bytes,
+                exact_size=error.exact_size,
+            )
+        except _ServerRequestBodyLengthMismatchError as error:
+            abort_body()
+            return ServerResponse.json(
+                400,
+                {
+                    "ok": False,
+                    "error": str(error),
+                },
+            )
+        except Exception:
+            abort_body()
+            raise
+
+        if route_error is not None:
+            return ServerResponse.json(
+                404,
+                {
+                    "ok": False,
+                    "error": str(route_error),
+                },
+            )
+        return self.handle(
+            ServerRequest(
+                method=request.method,
+                path=request.path,
+                headers=dict(request.headers),
+                query=dict(request.query),
+                cookies=dict(request.cookies),
+                body=body,
+                requested_at=request.requested_at,
+            )
+        )
+
+    def handle(self, request: ServerRequest) -> ServerResponse:
+        body_size_bytes = len(request.body)
+        if body_size_bytes > self.max_request_body_bytes:
+            return self._request_body_too_large_response(
+                body_size_bytes,
+                self.max_request_body_bytes,
+                exact_size=True,
+            )
+        try:
+            route_match = self._match_request_route(request)
             route = route_match.endpoint
         except ServerRouteNotFoundError as error:
             return ServerResponse.json(
@@ -3673,22 +3966,12 @@ class GraphBlocksServerApp:
                 },
             )
 
-        max_body_bytes = self.max_request_body_bytes
-        if route.operation == "submit_async_callback":
-            max_body_bytes = min(
-                max_body_bytes,
-                self.max_async_callback_request_body_bytes,
-            )
-        body_size_bytes = len(request.body)
+        max_body_bytes = self._request_body_limit(route)
         if body_size_bytes > max_body_bytes:
-            return ServerResponse.json(
-                413,
-                {
-                    "ok": False,
-                    "bodySizeBytes": body_size_bytes,
-                    "maxBodyBytes": max_body_bytes,
-                    "error": "request body exceeds max body bytes",
-                },
+            return self._request_body_too_large_response(
+                body_size_bytes,
+                max_body_bytes,
+                exact_size=True,
             )
 
         auth_decision = ServerAuthDecision(True)
@@ -10170,6 +10453,7 @@ __all__ = [
     "ServerHealthStatus",
     "ServerProtocolVersionMismatchError",
     "ServerRequest",
+    "ServerRequestHead",
     "ServerResponse",
     "ServerRouteMatch",
     "ServerRouteManifest",

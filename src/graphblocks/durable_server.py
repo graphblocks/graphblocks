@@ -33,9 +33,13 @@ from .server import (
     ServerAuthRequest,
     ServerEndpoint,
     ServerRequest,
+    ServerRequestHead,
     ServerResponse,
     ServerRouteManifest,
     ServerRouteNotFoundError,
+    _read_bounded_server_request_body,
+    _ServerRequestBodyLengthMismatchError,
+    _ServerRequestBodyTooLargeError,
 )
 from .server_storage import (
     CHECKPOINT_FORMAT_VERSION,
@@ -1231,11 +1235,69 @@ class DurableAcceptedRunServerApp:
                 "a positive integer"
             )
 
+    def _request_body_too_large_response(self) -> ServerResponse:
+        return ServerResponse.json(
+            413,
+            {
+                "ok": False,
+                "error": "RequestBodyTooLarge",
+                "maxBytes": self.max_request_body_bytes,
+            },
+        )
+
+    def handle_stream(
+        self,
+        request: ServerRequestHead,
+        read_body: Callable[[int], bytes],
+        *,
+        abort_body: Callable[[], None],
+    ) -> ServerResponse:
+        """Read a bounded wire body before routing or authentication."""
+
+        if not callable(abort_body):
+            raise TypeError(
+                "durable streaming server request abort callback must be callable"
+            )
+        try:
+            body = _read_bounded_server_request_body(
+                request,
+                read_body,
+                max_body_bytes=self.max_request_body_bytes,
+            )
+        except _ServerRequestBodyTooLargeError:
+            abort_body()
+            return self._request_body_too_large_response()
+        except _ServerRequestBodyLengthMismatchError as error:
+            abort_body()
+            return ServerResponse.json(
+                400,
+                {
+                    "ok": False,
+                    "error": str(error),
+                },
+            )
+        except Exception:
+            abort_body()
+            raise
+        return self.handle(
+            ServerRequest(
+                method=request.method,
+                path=request.path,
+                headers=dict(request.headers),
+                query=dict(request.query),
+                cookies=dict(request.cookies),
+                body=body,
+                requested_at=request.requested_at,
+            )
+        )
+
     def handle(self, request: ServerRequest) -> ServerResponse:
         if not isinstance(request, ServerRequest):
             raise TypeError(
                 "durable accepted-run server request must be a ServerRequest"
             )
+        if len(request.body) > self.max_request_body_bytes:
+            return self._request_body_too_large_response()
         try:
             route = self.route_manifest.match(
                 request.method,
@@ -1306,26 +1368,6 @@ class DurableAcceptedRunServerApp:
             )
 
         try:
-            if (
-                route.endpoint.operation
-                in {
-                    "admit_run",
-                    "cancel_run",
-                    "expire_run",
-                    "pause_run",
-                    "resume_run",
-                    "submit_run_callback",
-                }
-                and len(request.body) > self.max_request_body_bytes
-            ):
-                return ServerResponse.json(
-                    413,
-                    {
-                        "ok": False,
-                        "error": "RequestBodyTooLarge",
-                        "maxBytes": self.max_request_body_bytes,
-                    },
-                )
             if route.endpoint.operation == "admit_run":
                 payload = canonical_loads(request.body)
                 if not isinstance(payload, dict):

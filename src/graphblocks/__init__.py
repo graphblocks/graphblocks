@@ -575,6 +575,7 @@ from .server import (
     ServerHealthStatus,
     ServerProtocolVersionMismatchError,
     ServerRequest,
+    ServerRequestHead,
     ServerResponse,
     ServerRouteMatch,
     ServerRouteManifest,
