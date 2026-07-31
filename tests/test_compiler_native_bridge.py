@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import ast
 from collections.abc import Callable, Iterator, Mapping
+from dataclasses import FrozenInstanceError
+import inspect
 import math
 import sys
 from types import SimpleNamespace
@@ -48,6 +51,77 @@ def test_compile_graph_reference_is_the_explicit_python_entrypoint() -> None:
 
     assert reference_plan.ok
     assert reference_plan.normalized == NORMALIZED_GRAPH
+
+
+def test_reference_compiler_phase_golden_fixture() -> None:
+    decoded = compiler_module._decode_graph_phase(
+        NORMALIZED_GRAPH,
+        BlockCatalog({}, allow_unknown_blocks=True),
+        allow_unknown_blocks=False,
+    )
+    assert not isinstance(decoded, Plan)
+    assert decoded.document == NORMALIZED_GRAPH
+    assert decoded.document is not NORMALIZED_GRAPH
+    with pytest.raises(FrozenInstanceError):
+        decoded.api_version = "changed"  # type: ignore[misc]
+
+    catalog = compiler_module._catalog_graph_phase(decoded)
+    migrated = compiler_module._migrate_graph_phase(catalog)
+    validated = compiler_module._validate_graph_phase(migrated)
+    assert not isinstance(validated, Plan)
+    normalized = compiler_module._normalize_graph_phase(validated)
+    typechecked = compiler_module._typecheck_graph_phase(normalized)
+    lowered = compiler_module._lower_graph_phase(typechecked)
+    plan = compiler_module._evidence_graph_phase(lowered)
+
+    assert decoded.diagnostics == ()
+    assert validated.diagnostics == ()
+    assert typechecked.diagnostics == ()
+    assert plan.to_dict() == {
+        "diagnostics": [],
+        "graph": NORMALIZED_GRAPH,
+        "hash": "sha256:9e2ec3d84827074143199e9064687eb3aa658f124750f38d8056831685308d69",
+        "ok": True,
+    }
+
+
+def test_reference_compiler_runs_declared_phases_in_order(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    observed: list[str] = []
+    for phase_name in compiler_module._REFERENCE_COMPILER_PHASE_ORDER:
+        attribute = f"_{phase_name}_graph_phase"
+        original = getattr(compiler_module, attribute)
+
+        def observe(
+            *args: object,
+            _name: str = phase_name,
+            _original: Callable[..., object] = original,
+            **kwargs: object,
+        ) -> object:
+            observed.append(_name)
+            return _original(*args, **kwargs)
+
+        monkeypatch.setattr(compiler_module, attribute, observe)
+
+    plan = compile_graph_reference(
+        NORMALIZED_GRAPH,
+        block_catalog=BlockCatalog({}, allow_unknown_blocks=True),
+    )
+
+    assert plan.ok
+    assert tuple(observed) == compiler_module._REFERENCE_COMPILER_PHASE_ORDER
+
+
+def test_reference_compiler_entrypoint_is_only_a_phase_orchestrator() -> None:
+    source = inspect.getsource(compile_graph_reference)
+    function = next(
+        node for node in ast.parse(source).body if isinstance(node, ast.FunctionDef)
+    )
+
+    assert function.end_lineno is not None
+    assert function.end_lineno - function.lineno + 1 <= 30
+    assert not any(isinstance(node, ast.For) for node in ast.walk(function))
 
 
 def test_compile_graph_dispatches_to_the_native_plan_entrypoint(
@@ -332,8 +406,7 @@ def test_native_plan_bridge_accepts_a_python_block_catalog() -> None:
     assert native.graph_hash == reference.graph_hash
     assert native.normalized == reference.normalized
     assert [
-        (item.code, item.severity, item.path)
-        for item in native.diagnostics.diagnostics
+        (item.code, item.severity, item.path) for item in native.diagnostics.diagnostics
     ] == [
         (item.code, item.severity, item.path)
         for item in reference.diagnostics.diagnostics
@@ -383,8 +456,7 @@ def test_native_plan_bridge_selects_the_builtin_catalog_profile(
     assert native.graph_hash == reference.graph_hash
     assert native.normalized == reference.normalized
     assert [
-        (item.code, item.severity, item.path)
-        for item in native.diagnostics.diagnostics
+        (item.code, item.severity, item.path) for item in native.diagnostics.diagnostics
     ] == [
         (item.code, item.severity, item.path)
         for item in reference.diagnostics.diagnostics
@@ -570,8 +642,7 @@ def test_native_plan_bridge_preserves_bounded_large_integers() -> None:
     assert native.graph_hash == reference.graph_hash
     assert native.normalized == reference.normalized
     assert [
-        (item.code, item.severity, item.path)
-        for item in native.diagnostics.diagnostics
+        (item.code, item.severity, item.path) for item in native.diagnostics.diagnostics
     ] == [
         (item.code, item.severity, item.path)
         for item in reference.diagnostics.diagnostics

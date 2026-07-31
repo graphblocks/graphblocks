@@ -36,7 +36,12 @@ from .output_policy import (
 )
 from .plugins import BlockCatalog, builtin_block_catalog
 from .policy import VALID_ENFORCEMENT_POINTS as VALID_POLICY_ENFORCEMENT_POINTS
-from .schema import SchemaId, SchemaIdError, resource_schema_errors
+from .schema import (
+    ResourceSchemaViolation,
+    SchemaId,
+    SchemaIdError,
+    resource_schema_errors,
+)
 from .tools import (
     VALID_TOOL_APPROVALS,
     VALID_TOOL_CANCELLATIONS,
@@ -46,7 +51,9 @@ from .tools import (
 )
 from .url_validation import validate_webhook_url
 
-STATE_CHANGING_TOOL_EFFECTS = frozenset({"external_write", "filesystem_write", "process", "destructive"})
+STATE_CHANGING_TOOL_EFFECTS = frozenset(
+    {"external_write", "filesystem_write", "process", "destructive"}
+)
 MAX_NODE_RETRY_ATTEMPTS = 100
 FORBIDDEN_TOOL_DEFINITION_FIELDS = (
     "credentials",
@@ -59,16 +66,22 @@ FORBIDDEN_TOOL_DEFINITION_FIELDS = (
     "provider_sdk",
     "implementation",
 )
-MANDATORY_CALLBACK_FAILURE_POLICIES = frozenset({"pause_run_on_failure", "fail_run_on_failure"})
-VALID_CALLBACK_SUBSCRIPTION_SCOPES = frozenset({"run", "conversation", "project", "tenant", "deployment"})
-VALID_CALLBACK_DELIVERY_KINDS = frozenset({
-    "webhook",
-    "websocket",
-    "sse",
-    "push_notification",
-    "email",
-    "local_callback",
-})
+MANDATORY_CALLBACK_FAILURE_POLICIES = frozenset(
+    {"pause_run_on_failure", "fail_run_on_failure"}
+)
+VALID_CALLBACK_SUBSCRIPTION_SCOPES = frozenset(
+    {"run", "conversation", "project", "tenant", "deployment"}
+)
+VALID_CALLBACK_DELIVERY_KINDS = frozenset(
+    {
+        "webhook",
+        "websocket",
+        "sse",
+        "push_notification",
+        "email",
+        "local_callback",
+    }
+)
 ORDER_CAPABLE_CALLBACK_TARGETS = frozenset({"webhook", "websocket", "sse"})
 DEFAULT_CALLBACK_MAX_PAYLOAD_BYTES = 262_144
 MAX_CONFIG_VALIDATION_ERRORS = 100
@@ -116,11 +129,17 @@ def _config_error_message(error: ValidationError) -> str:
                 if isinstance(item, str) and item not in error.instance
             )
             return f"required properties are missing: {canonical_dumps(missing)}"
-    if error.validator == "additionalProperties" and isinstance(error.instance, Mapping):
+    if error.validator == "additionalProperties" and isinstance(
+        error.instance, Mapping
+    ):
         declared = error.schema.get("properties", {})
         if isinstance(declared, Mapping):
-            unexpected = sorted(str(key) for key in error.instance if key not in declared)
-            return f"unexpected properties are not allowed: {canonical_dumps(unexpected)}"
+            unexpected = sorted(
+                str(key) for key in error.instance if key not in declared
+            )
+            return (
+                f"unexpected properties are not allowed: {canonical_dumps(unexpected)}"
+            )
     if error.validator == "const":
         return f"value must equal {canonical_dumps(error.validator_value)}"
     if error.validator == "enum":
@@ -134,10 +153,7 @@ def _config_error_message(error: ValidationError) -> str:
     if error.validator == "not":
         return "value matches a forbidden schema"
     if len(error.message) > MAX_CONFIG_VALIDATION_ERROR_MESSAGE_CHARS:
-        return (
-            error.message[: MAX_CONFIG_VALIDATION_ERROR_MESSAGE_CHARS - 3]
-            + "..."
-        )
+        return error.message[: MAX_CONFIG_VALIDATION_ERROR_MESSAGE_CHARS - 3] + "..."
     return error.message
 
 
@@ -196,7 +212,9 @@ def _is_canonical_sha256_digest(value: object) -> bool:
     if not isinstance(value, str) or not value.startswith("sha256:"):
         return False
     digest = value.removeprefix("sha256:")
-    return len(digest) == 64 and all(character in "0123456789abcdef" for character in digest)
+    return len(digest) == 64 and all(
+        character in "0123456789abcdef" for character in digest
+    )
 
 
 def _has_async_relative_timeout(config: dict[str, Any]) -> bool:
@@ -211,12 +229,16 @@ def _has_async_relative_timeout(config: dict[str, Any]) -> bool:
 
 
 def _has_async_absolute_deadline(config: dict[str, Any]) -> bool:
-    return _is_positive_integer(config.get("expiresAtUnixMs") or config.get("expires_at_unix_ms"))
+    return _is_positive_integer(
+        config.get("expiresAtUnixMs") or config.get("expires_at_unix_ms")
+    )
 
 
 def _has_async_explicit_infinite_wait(config: dict[str, Any]) -> bool:
     infinite_wait = config.get("infiniteWait", config.get("infinite_wait", False))
-    explicit_infinite_wait_policy = config.get("infiniteWaitPolicy") or config.get("infinite_wait_policy")
+    explicit_infinite_wait_policy = config.get("infiniteWaitPolicy") or config.get(
+        "infinite_wait_policy"
+    )
     return infinite_wait is True or _has_non_empty_string(explicit_infinite_wait_policy)
 
 
@@ -228,7 +250,9 @@ def _invalid_optional_duration_field(config: dict[str, Any], *names: str) -> str
 
 
 def _has_async_idempotency_key(config: dict[str, Any]) -> bool:
-    return _has_non_empty_string(config.get("idempotencyKey") or config.get("idempotency_key"))
+    return _has_non_empty_string(
+        config.get("idempotencyKey") or config.get("idempotency_key")
+    )
 
 
 def _has_async_callback_schema(config: dict[str, Any]) -> bool:
@@ -242,22 +266,22 @@ def _has_async_callback_schema(config: dict[str, Any]) -> bool:
             or callback.get("expected_schema")
         )
         return _has_non_empty_string(schema)
-    return _has_non_empty_string(config.get("callbackSchema") or config.get("callback_schema"))
+    return _has_non_empty_string(
+        config.get("callbackSchema") or config.get("callback_schema")
+    )
 
 
 def _has_async_callback_completion_ref(config: dict[str, Any]) -> bool:
     callback = config.get("callback")
-    return (
-        isinstance(callback, dict)
-        or _has_non_empty_string(config.get("callbackRef") or config.get("callback_ref"))
+    return isinstance(callback, dict) or _has_non_empty_string(
+        config.get("callbackRef") or config.get("callback_ref")
     )
 
 
 def _has_async_polling_completion_ref(config: dict[str, Any]) -> bool:
     polling = config.get("polling")
-    return (
-        isinstance(polling, dict)
-        or _has_non_empty_string(config.get("pollingRef") or config.get("polling_ref"))
+    return isinstance(polling, dict) or _has_non_empty_string(
+        config.get("pollingRef") or config.get("polling_ref")
     )
 
 
@@ -301,7 +325,11 @@ def _callback_schema_required(config: dict[str, Any]) -> bool:
     callback = config.get("callback")
     if isinstance(callback, dict):
         return callback.get("required", True) is not False
-    return "callback" in config or "callbackSchema" in config or "callback_schema" in config
+    return (
+        "callback" in config
+        or "callbackSchema" in config
+        or "callback_schema" in config
+    )
 
 
 def _has_async_resume_reevaluation(config: dict[str, Any]) -> bool:
@@ -347,32 +375,38 @@ def _has_async_resume_reevaluation(config: dict[str, Any]) -> bool:
 def _has_async_attempt_fencing(config: dict[str, Any]) -> bool:
     callback = config.get("callback")
     callback_config = callback if isinstance(callback, dict) else {}
-    return (
-        _truthy_config_flag(config, "attemptFencing", "attempt_fencing", "fencingTokenRequired", "fencing_token_required")
-        or _truthy_config_flag(
-            callback_config,
-            "attemptFencing",
-            "attempt_fencing",
-            "fencingTokenRequired",
-            "fencing_token_required",
-        )
+    return _truthy_config_flag(
+        config,
+        "attemptFencing",
+        "attempt_fencing",
+        "fencingTokenRequired",
+        "fencing_token_required",
+    ) or _truthy_config_flag(
+        callback_config,
+        "attemptFencing",
+        "attempt_fencing",
+        "fencingTokenRequired",
+        "fencing_token_required",
     )
 
 
 def _has_async_ownership_fence(config: dict[str, Any]) -> bool:
     resume = config.get("resume")
     resume_config = resume if isinstance(resume, dict) else {}
-    return (
-        _truthy_config_flag(config, "ownershipFence", "ownership_fence", "runOwnershipLease", "run_ownership_lease")
-        or _truthy_config_flag(
-            resume_config,
-            "requireOwnershipFence",
-            "require_ownership_fence",
-            "ownershipFence",
-            "ownership_fence",
-            "runOwnershipLease",
-            "run_ownership_lease",
-        )
+    return _truthy_config_flag(
+        config,
+        "ownershipFence",
+        "ownership_fence",
+        "runOwnershipLease",
+        "run_ownership_lease",
+    ) or _truthy_config_flag(
+        resume_config,
+        "requireOwnershipFence",
+        "require_ownership_fence",
+        "ownershipFence",
+        "ownership_fence",
+        "runOwnershipLease",
+        "run_ownership_lease",
     )
 
 
@@ -447,7 +481,9 @@ def _diagnose_async_operation_config(
                 ("runOwnershipLease", "run_ownership_lease"),
             ),
         )
-    if _has_async_callback_completion_ref(config) and _has_async_polling_completion_ref(config):
+    if _has_async_callback_completion_ref(config) and _has_async_polling_completion_ref(
+        config
+    ):
         diagnostics.append(
             Diagnostic(
                 "GB1026",
@@ -456,7 +492,9 @@ def _diagnose_async_operation_config(
             )
         )
     resume_token_hash = config.get("resumeTokenHash", config.get("resume_token_hash"))
-    if resume_token_hash is not None and not _is_canonical_sha256_digest(resume_token_hash):
+    if resume_token_hash is not None and not _is_canonical_sha256_digest(
+        resume_token_hash
+    ):
         diagnostics.append(
             Diagnostic(
                 "GB1026",
@@ -511,7 +549,10 @@ def _diagnose_async_operation_config(
         )
     for field, names in (
         ("interval", ("interval", "intervalMs", "interval_ms")),
-        ("maxInterval", ("maxInterval", "max_interval", "maxIntervalMs", "max_interval_ms")),
+        (
+            "maxInterval",
+            ("maxInterval", "max_interval", "maxIntervalMs", "max_interval_ms"),
+        ),
     ):
         if _invalid_optional_duration_field(config, *names) is not None:
             diagnostics.append(
@@ -521,7 +562,9 @@ def _diagnose_async_operation_config(
                     f"{path}.{field}",
                 )
             )
-    if (require_callback_schema or _callback_schema_required(config)) and not _has_async_callback_schema(config):
+    if (
+        require_callback_schema or _callback_schema_required(config)
+    ) and not _has_async_callback_schema(config):
         diagnostics.append(
             Diagnostic(
                 "GB6007",
@@ -541,9 +584,14 @@ def _diagnose_async_operation_config(
         ),
         ("maxPayloadBytes", ("maxPayloadBytes", "max_payload_bytes")),
     ):
-        for payload_config, payload_path in ((callback_config, f"{path}.callback"), (config, path)):
+        for payload_config, payload_path in (
+            (callback_config, f"{path}.callback"),
+            (config, path),
+        ):
             for field_name in field_names:
-                if field_name in payload_config and not _is_positive_integer(payload_config.get(field_name)):
+                if field_name in payload_config and not _is_positive_integer(
+                    payload_config.get(field_name)
+                ):
                     diagnostics.append(
                         Diagnostic(
                             "GB1026",
@@ -564,16 +612,23 @@ def _diagnose_async_operation_config(
         "expectedMaxPayloadBytes",
         "expected_max_payload_bytes",
     )
-    max_payload_bytes = _configured_positive_integer(
-        callback_config,
-        "maxPayloadBytes",
-        "max_payload_bytes",
-    ) or _configured_positive_integer(
-        config,
-        "maxPayloadBytes",
-        "max_payload_bytes",
-    ) or DEFAULT_CALLBACK_MAX_PAYLOAD_BYTES
-    if expected_payload_bytes is not None and expected_payload_bytes > max_payload_bytes:
+    max_payload_bytes = (
+        _configured_positive_integer(
+            callback_config,
+            "maxPayloadBytes",
+            "max_payload_bytes",
+        )
+        or _configured_positive_integer(
+            config,
+            "maxPayloadBytes",
+            "max_payload_bytes",
+        )
+        or DEFAULT_CALLBACK_MAX_PAYLOAD_BYTES
+    )
+    if (
+        expected_payload_bytes is not None
+        and expected_payload_bytes > max_payload_bytes
+    ):
         diagnostics.append(
             Diagnostic(
                 "GB6010",
@@ -633,7 +688,9 @@ def _execution_is_client_bound(execution: dict[str, Any]) -> bool:
         return True
     detach = execution.get("detach")
     if isinstance(detach, dict):
-        disconnect_behavior = detach.get("onClientDisconnect") or detach.get("on_client_disconnect")
+        disconnect_behavior = detach.get("onClientDisconnect") or detach.get(
+            "on_client_disconnect"
+        )
         return disconnect_behavior in {"cancel", "cancel_run", "client_connection"}
     return False
 
@@ -722,7 +779,11 @@ def _diagnose_background_execution_config(
         or event_stream.get("replayGuarantee")
         or event_stream.get("replay_guarantee")
     )
-    if retention is not None and replay_guarantee is not None and retention < replay_guarantee:
+    if (
+        retention is not None
+        and replay_guarantee is not None
+        and retention < replay_guarantee
+    ):
         diagnostics.append(
             Diagnostic(
                 "GB6013",
@@ -749,7 +810,9 @@ def _callback_url_is_unsafe(url: object) -> bool:
     ).allowed
 
 
-def _has_callback_dead_letter_behavior(config: dict[str, Any], delivery: dict[str, Any]) -> bool:
+def _has_callback_dead_letter_behavior(
+    config: dict[str, Any], delivery: dict[str, Any]
+) -> bool:
     dead_letter = (
         config.get("deadLetterPolicy")
         or config.get("dead_letter_policy")
@@ -875,7 +938,11 @@ def _diagnose_callback_subscription_config(
             )
 
     authoritative_for = config.get("authoritativeFor", config.get("authoritative_for"))
-    if config.get("sourceOfTruth") is True or config.get("source_of_truth") is True or authoritative_for:
+    if (
+        config.get("sourceOfTruth") is True
+        or config.get("source_of_truth") is True
+        or authoritative_for
+    ):
         diagnostics.append(
             Diagnostic(
                 "GB6004",
@@ -896,7 +963,9 @@ def _diagnose_callback_subscription_config(
         or delivery.get("retryPolicyRef")
         or delivery.get("retry_policy_ref")
     )
-    has_retry_policy = _has_non_empty_string(retry_policy) or isinstance(retry_policy, dict)
+    has_retry_policy = _has_non_empty_string(retry_policy) or isinstance(
+        retry_policy, dict
+    )
     if (
         mandatory
         and not failure_policy
@@ -914,7 +983,11 @@ def _diagnose_callback_subscription_config(
     ordering = delivery.get("ordering")
     if not isinstance(ordering, dict):
         ordering = config.get("ordering")
-    if isinstance(ordering, dict) and ordering.get("mode") == "ordered" and delivery_kind not in ORDER_CAPABLE_CALLBACK_TARGETS:
+    if (
+        isinstance(ordering, dict)
+        and ordering.get("mode") == "ordered"
+        and delivery_kind not in ORDER_CAPABLE_CALLBACK_TARGETS
+    ):
         diagnostics.append(
             Diagnostic(
                 "GB6012",
@@ -923,10 +996,10 @@ def _diagnose_callback_subscription_config(
             )
         )
 
-    if (
-        failure_policy in {*MANDATORY_CALLBACK_FAILURE_POLICIES, "retry_then_dead_letter"}
-        and not _has_callback_dead_letter_behavior(config, delivery)
-    ):
+    if failure_policy in {
+        *MANDATORY_CALLBACK_FAILURE_POLICIES,
+        "retry_then_dead_letter",
+    } and not _has_callback_dead_letter_behavior(config, delivery):
         diagnostics.append(
             Diagnostic(
                 "GB6014",
@@ -936,12 +1009,78 @@ def _diagnose_callback_subscription_config(
         )
 
 
-def compile_graph_reference(
+@dataclass(frozen=True, slots=True)
+class _DecodedGraph:
+    document: dict[str, Any]
+    api_version: object
+    requested_catalog: BlockCatalog | None
+    allow_unknown_blocks: bool
+    diagnostics: tuple[Diagnostic, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class _CatalogResolvedGraph:
+    document: dict[str, Any]
+    api_version: object
+    block_catalog: BlockCatalog
+    diagnostics: tuple[Diagnostic, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class _MigratedGraph:
+    migrated: dict[str, Any]
+    api_version: object
+    block_catalog: BlockCatalog
+    diagnostics: tuple[Diagnostic, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class _ValidatedGraph:
+    migrated: dict[str, Any]
+    block_catalog: BlockCatalog
+    schema_violations: tuple[ResourceSchemaViolation, ...]
+    diagnostics: tuple[Diagnostic, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class _NormalizedGraph:
+    normalized: dict[str, Any]
+    block_catalog: BlockCatalog
+    schema_violations: tuple[ResourceSchemaViolation, ...]
+    diagnostics: tuple[Diagnostic, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class _TypecheckedGraph:
+    normalized: dict[str, Any]
+    schema_violations: tuple[ResourceSchemaViolation, ...]
+    diagnostics: tuple[Diagnostic, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class _LoweredGraph:
+    normalized: dict[str, Any]
+    diagnostics: DiagnosticSet
+
+
+_REFERENCE_COMPILER_PHASE_ORDER = (
+    "decode",
+    "catalog",
+    "migrate",
+    "validate",
+    "normalize",
+    "typecheck",
+    "lower",
+    "evidence",
+)
+
+
+def _decode_graph_phase(
     document: dict[str, Any],
-    block_catalog: BlockCatalog | None = None,
+    block_catalog: BlockCatalog | None,
     *,
-    allow_unknown_blocks: bool = False,
-) -> Plan:
+    allow_unknown_blocks: bool,
+) -> _DecodedGraph | Plan:
     if not isinstance(document, Mapping):
         raise TypeError("graph document must be a mapping")
     if block_catalog is not None and not isinstance(block_catalog, BlockCatalog):
@@ -949,7 +1088,6 @@ def compile_graph_reference(
     if not isinstance(allow_unknown_blocks, bool):
         raise TypeError("allow_unknown_blocks must be a boolean")
 
-    diagnostics: list[Diagnostic] = []
     try:
         domain_violations = tuple(
             violation
@@ -1003,7 +1141,20 @@ def compile_graph_reference(
     if not isinstance(snapshot, dict):
         raise ValueError("graph document must contain a canonical JSON object")
     document = snapshot
-    api_version = document.get("apiVersion")
+    return _DecodedGraph(
+        document=document,
+        api_version=document.get("apiVersion"),
+        requested_catalog=block_catalog,
+        allow_unknown_blocks=allow_unknown_blocks,
+        diagnostics=(),
+    )
+
+
+def _catalog_graph_phase(decoded: _DecodedGraph) -> _CatalogResolvedGraph:
+    document = decoded.document
+    api_version = decoded.api_version
+    block_catalog = decoded.requested_catalog
+    allow_unknown_blocks = decoded.allow_unknown_blocks
     if block_catalog is None:
         profile = "stable" if api_version == GRAPH_API_VERSION else "preview"
         block_catalog = builtin_block_catalog(profile=profile)
@@ -1012,20 +1163,50 @@ def compile_graph_reference(
             block_catalog.descriptors,
             allow_unknown_blocks=True,
         )
+    return _CatalogResolvedGraph(
+        document=document,
+        api_version=api_version,
+        block_catalog=block_catalog,
+        diagnostics=decoded.diagnostics,
+    )
+
+
+def _migrate_graph_phase(
+    catalog: _CatalogResolvedGraph,
+) -> _MigratedGraph:
+    document = catalog.document
     try:
         migrated = migrate_document(document)
     except MigrationError:
         migrated = document
-    if migrated.get("kind") != "Graph":
-        diagnostics.append(Diagnostic("GB0001", "document kind must be Graph", "$.kind"))
-        normalized = _normalize_graph_unchecked(migrated)
-        return Plan(normalized, canonical_hash(normalized), DiagnosticSet(tuple(diagnostics)))
+    return _MigratedGraph(
+        migrated=migrated,
+        api_version=catalog.api_version,
+        block_catalog=catalog.block_catalog,
+        diagnostics=catalog.diagnostics,
+    )
 
-    schema_violations = ()
-    if (
-        not isinstance(api_version, str)
-        or api_version not in {GRAPH_API_VERSION, *LEGACY_GRAPH_API_VERSIONS}
-    ):
+
+def _validate_graph_phase(
+    migrated_graph: _MigratedGraph,
+) -> _ValidatedGraph | Plan:
+    migrated = migrated_graph.migrated
+    api_version = migrated_graph.api_version
+    diagnostics = list(migrated_graph.diagnostics)
+    if migrated.get("kind") != "Graph":
+        diagnostics.append(
+            Diagnostic("GB0001", "document kind must be Graph", "$.kind")
+        )
+        normalized = _normalize_graph_unchecked(migrated)
+        return Plan(
+            normalized, canonical_hash(normalized), DiagnosticSet(tuple(diagnostics))
+        )
+
+    schema_violations: tuple[ResourceSchemaViolation, ...] = ()
+    if not isinstance(api_version, str) or api_version not in {
+        GRAPH_API_VERSION,
+        *LEGACY_GRAPH_API_VERSIONS,
+    }:
         diagnostics.append(
             Diagnostic(
                 "GB0002",
@@ -1037,8 +1218,14 @@ def compile_graph_reference(
         schema_violations = resource_schema_errors(migrated)
 
     metadata = migrated.get("metadata")
-    if not isinstance(metadata, dict) or not isinstance(metadata.get("name"), str) or not metadata["name"]:
-        diagnostics.append(Diagnostic("GB0003", "metadata.name is required", "$.metadata.name"))
+    if (
+        not isinstance(metadata, dict)
+        or not isinstance(metadata.get("name"), str)
+        or not metadata["name"]
+    ):
+        diagnostics.append(
+            Diagnostic("GB0003", "metadata.name is required", "$.metadata.name")
+        )
 
     spec = migrated.get("spec")
     if not isinstance(spec, dict):
@@ -1074,7 +1261,9 @@ def compile_graph_reference(
     if nodes is None:
         nodes = {}
     if not isinstance(nodes, dict):
-        diagnostics.append(Diagnostic("GB0005", "spec.nodes must be a mapping", "$.spec.nodes"))
+        diagnostics.append(
+            Diagnostic("GB0005", "spec.nodes must be a mapping", "$.spec.nodes")
+        )
         nodes = {}
 
     if "composition" in spec:
@@ -1115,12 +1304,26 @@ def compile_graph_reference(
 
     for node_name, node in nodes.items():
         if not isinstance(node_name, str) or not node_name:
-            diagnostics.append(Diagnostic("GB0006", "node name must be a non-empty string", "$.spec.nodes"))
+            diagnostics.append(
+                Diagnostic(
+                    "GB0006", "node name must be a non-empty string", "$.spec.nodes"
+                )
+            )
             continue
         if node_name.startswith("$"):
-            diagnostics.append(Diagnostic("GB0007", "node names cannot use pseudo-node prefix '$'", f"$.spec.nodes.{node_name}"))
+            diagnostics.append(
+                Diagnostic(
+                    "GB0007",
+                    "node names cannot use pseudo-node prefix '$'",
+                    f"$.spec.nodes.{node_name}",
+                )
+            )
         if not isinstance(node, dict):
-            diagnostics.append(Diagnostic("GB0008", "node spec must be a mapping", f"$.spec.nodes.{node_name}"))
+            diagnostics.append(
+                Diagnostic(
+                    "GB0008", "node spec must be a mapping", f"$.spec.nodes.{node_name}"
+                )
+            )
             continue
         if "slot" in node:
             diagnostics.append(
@@ -1133,9 +1336,21 @@ def compile_graph_reference(
             continue
         block = node.get("block")
         if not isinstance(block, str) or "@" not in block or block.endswith("@"):
-            diagnostics.append(Diagnostic("GB0009", "node.block must use '<type>@<major>'", f"$.spec.nodes.{node_name}.block"))
-        block_type = block.split("@", 1)[0] if isinstance(block, str) and "@" in block else None
-        if block_type in {"async.start_operation", "async.await_callback", "async.poll_operation"}:
+            diagnostics.append(
+                Diagnostic(
+                    "GB0009",
+                    "node.block must use '<type>@<major>'",
+                    f"$.spec.nodes.{node_name}.block",
+                )
+            )
+        block_type = (
+            block.split("@", 1)[0] if isinstance(block, str) and "@" in block else None
+        )
+        if block_type in {
+            "async.start_operation",
+            "async.await_callback",
+            "async.poll_operation",
+        }:
             config = node.get("config", {})
             if config is None:
                 config = {}
@@ -1165,9 +1380,15 @@ def compile_graph_reference(
         effects = node.get("effects", [])
         if isinstance(effects, str):
             effects = [effects]
-        effect_set = {str(effect) for effect in effects} if isinstance(effects, list) else set()
+        effect_set = (
+            {str(effect) for effect in effects} if isinstance(effects, list) else set()
+        )
         flow = node.get("flow", {})
-        if isinstance(flow, dict) and "timeout" in flow and parse_duration_seconds(flow["timeout"]) is None:
+        if (
+            isinstance(flow, dict)
+            and "timeout" in flow
+            and parse_duration_seconds(flow["timeout"]) is None
+        ):
             diagnostics.append(
                 Diagnostic(
                     "GB1019",
@@ -1185,9 +1406,13 @@ def compile_graph_reference(
             )
             configured_max_attempts = retry.get(max_attempts_key, 1)
             max_attempts_path = f"{max_attempts_path}.{max_attempts_key}"
-            if isinstance(configured_max_attempts, int) and not isinstance(configured_max_attempts, bool):
+            if isinstance(configured_max_attempts, int) and not isinstance(
+                configured_max_attempts, bool
+            ):
                 max_attempts = configured_max_attempts
-            idempotency_key = retry.get("idempotencyKey") or retry.get("idempotency_key")
+            idempotency_key = retry.get("idempotencyKey") or retry.get(
+                "idempotency_key"
+            )
         elif isinstance(retry, int) and not isinstance(retry, bool):
             max_attempts = retry
         if (
@@ -1226,7 +1451,9 @@ def compile_graph_reference(
             event_stream if isinstance(event_stream, dict) else None,
         )
 
-    async_operations_key = "asyncOperations" if "asyncOperations" in spec else "async_operations"
+    async_operations_key = (
+        "asyncOperations" if "asyncOperations" in spec else "async_operations"
+    )
     async_operations = spec.get(async_operations_key)
     if async_operations is not None:
         if isinstance(async_operations, dict):
@@ -1241,7 +1468,9 @@ def compile_graph_reference(
                         )
                     )
                     continue
-                _diagnose_async_operation_config(diagnostics, operation_config, operation_path)
+                _diagnose_async_operation_config(
+                    diagnostics, operation_config, operation_path
+                )
         elif isinstance(async_operations, list):
             for operation_index, operation_config in enumerate(async_operations):
                 operation_path = f"$.spec.{async_operations_key}[{operation_index}]"
@@ -1254,7 +1483,9 @@ def compile_graph_reference(
                         )
                     )
                     continue
-                _diagnose_async_operation_config(diagnostics, operation_config, operation_path)
+                _diagnose_async_operation_config(
+                    diagnostics, operation_config, operation_path
+                )
         else:
             diagnostics.append(
                 Diagnostic(
@@ -1264,12 +1495,18 @@ def compile_graph_reference(
                 )
             )
 
-    callback_subscriptions_key = "callbackSubscriptions" if "callbackSubscriptions" in spec else "callback_subscriptions"
+    callback_subscriptions_key = (
+        "callbackSubscriptions"
+        if "callbackSubscriptions" in spec
+        else "callback_subscriptions"
+    )
     callback_subscriptions = spec.get(callback_subscriptions_key)
     if callback_subscriptions is not None:
         if isinstance(callback_subscriptions, dict):
             for subscription_key, subscription_config in callback_subscriptions.items():
-                subscription_path = f"$.spec.{callback_subscriptions_key}.{subscription_key}"
+                subscription_path = (
+                    f"$.spec.{callback_subscriptions_key}.{subscription_key}"
+                )
                 if not isinstance(subscription_config, dict):
                     diagnostics.append(
                         Diagnostic(
@@ -1279,10 +1516,16 @@ def compile_graph_reference(
                         )
                     )
                     continue
-                _diagnose_callback_subscription_config(diagnostics, subscription_config, subscription_path)
+                _diagnose_callback_subscription_config(
+                    diagnostics, subscription_config, subscription_path
+                )
         elif isinstance(callback_subscriptions, list):
-            for subscription_index, subscription_config in enumerate(callback_subscriptions):
-                subscription_path = f"$.spec.{callback_subscriptions_key}[{subscription_index}]"
+            for subscription_index, subscription_config in enumerate(
+                callback_subscriptions
+            ):
+                subscription_path = (
+                    f"$.spec.{callback_subscriptions_key}[{subscription_index}]"
+                )
                 if not isinstance(subscription_config, dict):
                     diagnostics.append(
                         Diagnostic(
@@ -1292,7 +1535,9 @@ def compile_graph_reference(
                         )
                     )
                     continue
-                _diagnose_callback_subscription_config(diagnostics, subscription_config, subscription_path)
+                _diagnose_callback_subscription_config(
+                    diagnostics, subscription_config, subscription_path
+                )
         else:
             diagnostics.append(
                 Diagnostic(
@@ -1326,7 +1571,9 @@ def compile_graph_reference(
             delivery = None
         if delivery is not None:
             mode = delivery.get("mode")
-            if mode is not None and (not isinstance(mode, str) or mode not in VALID_OUTPUT_DELIVERY_MODES):
+            if mode is not None and (
+                not isinstance(mode, str) or mode not in VALID_OUTPUT_DELIVERY_MODES
+            ):
                 diagnostics.append(
                     Diagnostic(
                         "GB1030",
@@ -1334,9 +1581,12 @@ def compile_graph_reference(
                         "$.spec.outputPolicy.delivery.mode",
                     )
                 )
-            delivery_on_violation = delivery.get("onViolation", delivery.get("on_violation"))
+            delivery_on_violation = delivery.get(
+                "onViolation", delivery.get("on_violation")
+            )
             if delivery_on_violation is not None and (
-                not isinstance(delivery_on_violation, str) or delivery_on_violation not in VALID_VIOLATION_ACTIONS
+                not isinstance(delivery_on_violation, str)
+                or delivery_on_violation not in VALID_VIOLATION_ACTIONS
             ):
                 diagnostics.append(
                     Diagnostic(
@@ -1347,10 +1597,16 @@ def compile_graph_reference(
                 )
             if "deliveredDraftDisposition" in delivery:
                 delivered_draft_disposition = delivery.get("deliveredDraftDisposition")
-                delivered_draft_path = "$.spec.outputPolicy.delivery.deliveredDraftDisposition"
+                delivered_draft_path = (
+                    "$.spec.outputPolicy.delivery.deliveredDraftDisposition"
+                )
             else:
-                delivered_draft_disposition = delivery.get("delivered_draft_disposition")
-                delivered_draft_path = "$.spec.outputPolicy.delivery.delivered_draft_disposition"
+                delivered_draft_disposition = delivery.get(
+                    "delivered_draft_disposition"
+                )
+                delivered_draft_path = (
+                    "$.spec.outputPolicy.delivery.delivered_draft_disposition"
+                )
             if delivered_draft_disposition is not None and (
                 not isinstance(delivered_draft_disposition, str)
                 or delivered_draft_disposition not in VALID_DRAFT_DISPOSITIONS
@@ -1372,7 +1628,10 @@ def compile_graph_reference(
             if flush_boundaries is not None:
                 if isinstance(flush_boundaries, list):
                     for boundary_index, boundary in enumerate(flush_boundaries):
-                        if not isinstance(boundary, str) or boundary not in VALID_FLUSH_BOUNDARIES:
+                        if (
+                            not isinstance(boundary, str)
+                            or boundary not in VALID_FLUSH_BOUNDARIES
+                        ):
                             diagnostics.append(
                                 Diagnostic(
                                     "GB1029",
@@ -1402,7 +1661,9 @@ def compile_graph_reference(
             )
             has_token_bound = _is_positive_integer(holdback_max_tokens)
             has_byte_bound = _is_positive_integer(holdback_max_bytes)
-            has_duration_bound = _duration_milliseconds(holdback_max_duration) is not None
+            has_duration_bound = (
+                _duration_milliseconds(holdback_max_duration) is not None
+            )
             if mode == "bounded_holdback":
                 if holdback_max_duration is not None:
                     diagnostics.append(
@@ -1461,13 +1722,18 @@ def compile_graph_reference(
             evaluation = None
         enforcement_points = None
         if evaluation is not None:
-            enforcement_points = evaluation.get("enforcementPoints") or evaluation.get("enforcement_points")
+            enforcement_points = evaluation.get("enforcementPoints") or evaluation.get(
+                "enforcement_points"
+            )
         if isinstance(enforcement_points, list):
             on_generation_chunk_index = None
             before_client_delivery_index = None
             before_output_commit_index = None
             for index, enforcement_point in enumerate(enforcement_points):
-                if not isinstance(enforcement_point, str) or enforcement_point not in VALID_POLICY_ENFORCEMENT_POINTS:
+                if (
+                    not isinstance(enforcement_point, str)
+                    or enforcement_point not in VALID_POLICY_ENFORCEMENT_POINTS
+                ):
                     diagnostics.append(
                         Diagnostic(
                             "GB1033",
@@ -1542,7 +1808,9 @@ def compile_graph_reference(
                 )
             )
 
-        on_violation = output_policy.get("onViolation") or output_policy.get("on_violation")
+        on_violation = output_policy.get("onViolation") or output_policy.get(
+            "on_violation"
+        )
         if on_violation is not None and not isinstance(on_violation, dict):
             diagnostics.append(
                 Diagnostic(
@@ -1554,7 +1822,10 @@ def compile_graph_reference(
             on_violation = None
         if on_violation is not None:
             disposition = on_violation.get("disposition", "abort_response")
-            valid_disposition = isinstance(disposition, str) and disposition in VALID_OUTPUT_DISPOSITIONS
+            valid_disposition = (
+                isinstance(disposition, str)
+                and disposition in VALID_OUTPUT_DISPOSITIONS
+            )
             if not valid_disposition:
                 diagnostics.append(
                     Diagnostic(
@@ -1564,13 +1835,21 @@ def compile_graph_reference(
                     )
                 )
 
-            provider_cancellation = on_violation.get("providerCancellation", on_violation.get("provider_cancellation"))
+            provider_cancellation = on_violation.get(
+                "providerCancellation", on_violation.get("provider_cancellation")
+            )
             if isinstance(provider_cancellation, dict):
-                provider_cancellation_mode = provider_cancellation.get("mode", "request")
-                provider_cancellation_path = "$.spec.outputPolicy.onViolation.providerCancellation.mode"
+                provider_cancellation_mode = provider_cancellation.get(
+                    "mode", "request"
+                )
+                provider_cancellation_path = (
+                    "$.spec.outputPolicy.onViolation.providerCancellation.mode"
+                )
             else:
                 provider_cancellation_mode = provider_cancellation
-                provider_cancellation_path = "$.spec.outputPolicy.onViolation.providerCancellation"
+                provider_cancellation_path = (
+                    "$.spec.outputPolicy.onViolation.providerCancellation"
+                )
             if provider_cancellation_mode is not None and (
                 not isinstance(provider_cancellation_mode, str)
                 or provider_cancellation_mode not in VALID_PROVIDER_CANCELLATIONS
@@ -1584,12 +1863,19 @@ def compile_graph_reference(
                     )
                 )
 
-            pending_tool_calls = on_violation.get("pendingToolCalls") or on_violation.get("pending_tool_calls")
-            pending_tool_calls = pending_tool_calls if isinstance(pending_tool_calls, dict) else {}
-            pending_tool_calls_disposition = pending_tool_calls.get("disposition", "deny")
+            pending_tool_calls = on_violation.get(
+                "pendingToolCalls"
+            ) or on_violation.get("pending_tool_calls")
+            pending_tool_calls = (
+                pending_tool_calls if isinstance(pending_tool_calls, dict) else {}
+            )
+            pending_tool_calls_disposition = pending_tool_calls.get(
+                "disposition", "deny"
+            )
             valid_pending_tool_calls_disposition = (
                 isinstance(pending_tool_calls_disposition, str)
-                and pending_tool_calls_disposition in VALID_PENDING_TOOL_CALLS_DISPOSITIONS
+                and pending_tool_calls_disposition
+                in VALID_PENDING_TOOL_CALLS_DISPOSITIONS
             )
             if not valid_pending_tool_calls_disposition:
                 diagnostics.append(
@@ -1601,8 +1887,12 @@ def compile_graph_reference(
                     )
                 )
 
-            delivered_draft = on_violation.get("deliveredDraft") or on_violation.get("delivered_draft")
-            delivered_draft = delivered_draft if isinstance(delivered_draft, dict) else {}
+            delivered_draft = on_violation.get("deliveredDraft") or on_violation.get(
+                "delivered_draft"
+            )
+            delivered_draft = (
+                delivered_draft if isinstance(delivered_draft, dict) else {}
+            )
             delivered_draft_disposition = delivered_draft.get("disposition", "retract")
             if not (
                 isinstance(delivered_draft_disposition, str)
@@ -1617,7 +1907,9 @@ def compile_graph_reference(
                     )
                 )
 
-            durable_result = on_violation.get("durableResult") or on_violation.get("durable_result")
+            durable_result = on_violation.get("durableResult") or on_violation.get(
+                "durable_result"
+            )
             durable_result = durable_result if isinstance(durable_result, dict) else {}
             durable_result_disposition = durable_result.get("disposition", "none")
             valid_durable_result_disposition = (
@@ -1635,7 +1927,10 @@ def compile_graph_reference(
                 )
 
             if disposition in {"abort_response", "abort_turn"}:
-                if valid_pending_tool_calls_disposition and pending_tool_calls_disposition == "keep":
+                if (
+                    valid_pending_tool_calls_disposition
+                    and pending_tool_calls_disposition == "keep"
+                ):
                     diagnostics.append(
                         Diagnostic(
                             "GB1047",
@@ -1644,7 +1939,10 @@ def compile_graph_reference(
                         )
                     )
 
-                if valid_durable_result_disposition and durable_result_disposition != "none":
+                if (
+                    valid_durable_result_disposition
+                    and durable_result_disposition != "none"
+                ):
                     diagnostics.append(
                         Diagnostic(
                             "GB1024",
@@ -1658,7 +1956,9 @@ def compile_graph_reference(
     tools = bindings.get("tools") if bindings is not None else None
     tools = tools if isinstance(tools, dict) else None
     if tools is not None:
-        tool_execution_key = "toolExecution" if "toolExecution" in spec else "tool_execution"
+        tool_execution_key = (
+            "toolExecution" if "toolExecution" in spec else "tool_execution"
+        )
         tool_execution = spec.get(tool_execution_key)
         if tool_execution is not None and not isinstance(tool_execution, dict):
             diagnostics.append(
@@ -1674,13 +1974,17 @@ def compile_graph_reference(
         has_effect_serialization_key = False
         if tool_execution is not None:
             maximum_parallelism_key = (
-                "maximumParallelism" if "maximumParallelism" in tool_execution else "maximum_parallelism"
+                "maximumParallelism"
+                if "maximumParallelism" in tool_execution
+                else "maximum_parallelism"
             )
             configured_parallelism = tool_execution.get(
                 maximum_parallelism_key,
                 1,
             )
-            if isinstance(configured_parallelism, int) and not isinstance(configured_parallelism, bool):
+            if isinstance(configured_parallelism, int) and not isinstance(
+                configured_parallelism, bool
+            ):
                 maximum_parallelism = configured_parallelism
                 if maximum_parallelism < 1:
                     diagnostics.append(
@@ -1699,7 +2003,9 @@ def compile_graph_reference(
                     )
                 )
             parallel_tool_calls_key = (
-                "parallelToolCalls" if "parallelToolCalls" in tool_execution else "parallel_tool_calls"
+                "parallelToolCalls"
+                if "parallelToolCalls" in tool_execution
+                else "parallel_tool_calls"
             )
             configured_parallel_tool_calls = tool_execution.get(
                 parallel_tool_calls_key,
@@ -1716,14 +2022,25 @@ def compile_graph_reference(
                     )
                 )
             effect_serialization_key = (
-                "effectSerialization" if "effectSerialization" in tool_execution else "effect_serialization"
+                "effectSerialization"
+                if "effectSerialization" in tool_execution
+                else "effect_serialization"
             )
             effect_serialization = tool_execution.get(effect_serialization_key)
             if isinstance(effect_serialization, dict):
-                key_template_key = "keyTemplate" if "keyTemplate" in effect_serialization else "key_template"
+                key_template_key = (
+                    "keyTemplate"
+                    if "keyTemplate" in effect_serialization
+                    else "key_template"
+                )
                 key_template = effect_serialization.get(key_template_key)
-                has_effect_serialization_key = isinstance(key_template, str) and bool(key_template.strip())
-                if key_template_key in effect_serialization and not has_effect_serialization_key:
+                has_effect_serialization_key = isinstance(key_template, str) and bool(
+                    key_template.strip()
+                )
+                if (
+                    key_template_key in effect_serialization
+                    and not has_effect_serialization_key
+                ):
                     diagnostics.append(
                         Diagnostic(
                             "GB1041",
@@ -1811,7 +2128,11 @@ def compile_graph_reference(
                 binds_arguments_digest = bool(bind_arguments_digest) or (
                     isinstance(arguments_digest, str) and bool(arguments_digest.strip())
                 )
-                if valid_approval and mode in {"policy", "always"} and not binds_arguments_digest:
+                if (
+                    valid_approval
+                    and mode in {"policy", "always"}
+                    and not binds_arguments_digest
+                ):
                     diagnostics.append(
                         Diagnostic(
                             "GB1023",
@@ -1820,7 +2141,10 @@ def compile_graph_reference(
                         )
                     )
             elif approval is not None:
-                if not isinstance(approval, str) or approval not in VALID_TOOL_APPROVALS:
+                if (
+                    not isinstance(approval, str)
+                    or approval not in VALID_TOOL_APPROVALS
+                ):
                     diagnostics.append(
                         Diagnostic(
                             "GB1037",
@@ -1839,7 +2163,8 @@ def compile_graph_reference(
 
             idempotency = tool.get("idempotency")
             if idempotency is not None and (
-                not isinstance(idempotency, str) or idempotency not in VALID_TOOL_IDEMPOTENCIES
+                not isinstance(idempotency, str)
+                or idempotency not in VALID_TOOL_IDEMPOTENCIES
             ):
                 diagnostics.append(
                     Diagnostic(
@@ -1851,7 +2176,8 @@ def compile_graph_reference(
 
             cancellation = tool.get("cancellation")
             if cancellation is not None and (
-                not isinstance(cancellation, str) or cancellation not in VALID_TOOL_CANCELLATIONS
+                not isinstance(cancellation, str)
+                or cancellation not in VALID_TOOL_CANCELLATIONS
             ):
                 diagnostics.append(
                     Diagnostic(
@@ -1864,7 +2190,8 @@ def compile_graph_reference(
             result_mode_key = "resultMode" if "resultMode" in tool else "result_mode"
             result_mode = tool.get(result_mode_key)
             if result_mode is not None and (
-                not isinstance(result_mode, str) or result_mode not in VALID_TOOL_RESULT_MODES
+                not isinstance(result_mode, str)
+                or result_mode not in VALID_TOOL_RESULT_MODES
             ):
                 diagnostics.append(
                     Diagnostic(
@@ -1874,9 +2201,17 @@ def compile_graph_reference(
                     )
                 )
 
-            retry_policy_ref = tool.get("retryPolicyRef") or tool.get("retry_policy_ref")
-            has_retry_policy_ref = isinstance(retry_policy_ref, str) and bool(retry_policy_ref.strip())
-            if state_changing_tool and has_retry_policy_ref and tool.get("idempotency") != "required":
+            retry_policy_ref = tool.get("retryPolicyRef") or tool.get(
+                "retry_policy_ref"
+            )
+            has_retry_policy_ref = isinstance(retry_policy_ref, str) and bool(
+                retry_policy_ref.strip()
+            )
+            if (
+                state_changing_tool
+                and has_retry_policy_ref
+                and tool.get("idempotency") != "required"
+            ):
                 diagnostics.append(
                     Diagnostic(
                         "GB1045",
@@ -1889,7 +2224,10 @@ def compile_graph_reference(
             if isinstance(definition, dict):
                 for definition_field in ("name", "description"):
                     definition_value = definition.get(definition_field)
-                    if not isinstance(definition_value, str) or not definition_value.strip():
+                    if (
+                        not isinstance(definition_value, str)
+                        or not definition_value.strip()
+                    ):
                         diagnostics.append(
                             Diagnostic(
                                 "GB1039",
@@ -1898,7 +2236,9 @@ def compile_graph_reference(
                             )
                         )
                 version = definition.get("version")
-                if version is not None and (not isinstance(version, str) or not version.strip()):
+                if version is not None and (
+                    not isinstance(version, str) or not version.strip()
+                ):
                     diagnostics.append(
                         Diagnostic(
                             "GB1039",
@@ -1935,7 +2275,9 @@ def compile_graph_reference(
                                 f"$.spec.bindings.tools.{tool_key}.definition.{forbidden_field}",
                             )
                         )
-                input_schema = definition.get("inputSchema") or definition.get("input_schema")
+                input_schema = definition.get("inputSchema") or definition.get(
+                    "input_schema"
+                )
                 if not isinstance(input_schema, str) or not input_schema.strip():
                     diagnostics.append(
                         Diagnostic(
@@ -1955,7 +2297,9 @@ def compile_graph_reference(
                                 f"$.spec.bindings.tools.{tool_key}.definition.inputSchema",
                             )
                         )
-                output_schema = definition.get("outputSchema") or definition.get("output_schema")
+                output_schema = definition.get("outputSchema") or definition.get(
+                    "output_schema"
+                )
                 if isinstance(output_schema, str) and output_schema.strip():
                     try:
                         SchemaId.parse(output_schema)
@@ -2004,14 +2348,18 @@ def compile_graph_reference(
                         missing_implementation_field = "operation"
                 elif implementation_kind == "mcp":
                     server = implementation.get("server")
-                    remote_name = implementation.get("remoteName") or implementation.get("remote_name")
+                    remote_name = implementation.get(
+                        "remoteName"
+                    ) or implementation.get("remote_name")
                     if not isinstance(server, str) or not server.strip():
                         missing_implementation_field = "server"
                     elif not isinstance(remote_name, str) or not remote_name.strip():
                         missing_implementation_field = "remoteName"
                 elif implementation_kind == "openapi":
                     connection = implementation.get("connection")
-                    operation_id = implementation.get("operationId") or implementation.get("operation_id")
+                    operation_id = implementation.get(
+                        "operationId"
+                    ) or implementation.get("operation_id")
                     if not isinstance(connection, str) or not connection.strip():
                         missing_implementation_field = "connection"
                     elif not isinstance(operation_id, str) or not operation_id.strip():
@@ -2034,7 +2382,11 @@ def compile_graph_reference(
                         )
                     )
 
-        if (maximum_parallelism > 1 or parallel_tool_calls) and has_state_changing_tool and not has_effect_serialization_key:
+        if (
+            (maximum_parallelism > 1 or parallel_tool_calls)
+            and has_state_changing_tool
+            and not has_effect_serialization_key
+        ):
             diagnostics.append(
                 Diagnostic(
                     "GB1053",
@@ -2042,15 +2394,54 @@ def compile_graph_reference(
                     "$.spec.toolExecution.effectSerialization",
                 )
             )
+    return _ValidatedGraph(
+        migrated=migrated,
+        block_catalog=migrated_graph.block_catalog,
+        schema_violations=schema_violations,
+        diagnostics=tuple(diagnostics),
+    )
 
+
+def _normalize_graph_phase(validated: _ValidatedGraph) -> _NormalizedGraph:
+    migrated = validated.migrated
     normalized = _normalize_graph_unchecked(migrated)
+    return _NormalizedGraph(
+        normalized=normalized,
+        block_catalog=validated.block_catalog,
+        schema_violations=validated.schema_violations,
+        diagnostics=validated.diagnostics,
+    )
+
+
+def _typecheck_graph_phase(normalized_graph: _NormalizedGraph) -> _TypecheckedGraph:
+    normalized = normalized_graph.normalized
+    block_catalog = normalized_graph.block_catalog
+    diagnostics = list(normalized_graph.diagnostics)
     normalized_spec = normalized.get("spec", {})
-    normalized_nodes = normalized_spec.get("nodes", {}) if isinstance(normalized_spec, dict) else {}
-    edges = normalized_spec.get("edges", []) if isinstance(normalized_spec, dict) else []
-    normalized_interface = normalized_spec.get("interface", {}) if isinstance(normalized_spec, dict) else {}
-    extensions = normalized_spec.get("extensions", []) if isinstance(normalized_spec, dict) else []
-    execution = normalized_spec.get("execution", {}) if isinstance(normalized_spec, dict) else {}
-    voice = normalized_spec.get("voice", {}) if isinstance(normalized_spec, dict) else {}
+    normalized_nodes = (
+        normalized_spec.get("nodes", {}) if isinstance(normalized_spec, dict) else {}
+    )
+    edges = (
+        normalized_spec.get("edges", []) if isinstance(normalized_spec, dict) else []
+    )
+    normalized_interface = (
+        normalized_spec.get("interface", {})
+        if isinstance(normalized_spec, dict)
+        else {}
+    )
+    extensions = (
+        normalized_spec.get("extensions", [])
+        if isinstance(normalized_spec, dict)
+        else []
+    )
+    execution = (
+        normalized_spec.get("execution", {})
+        if isinstance(normalized_spec, dict)
+        else {}
+    )
+    voice = (
+        normalized_spec.get("voice", {}) if isinstance(normalized_spec, dict) else {}
+    )
     voice_pipeline = voice.get("pipeline", {}) if isinstance(voice, dict) else {}
     allows_duplex_voice_feedback = (
         isinstance(extensions, list)
@@ -2062,8 +2453,16 @@ def compile_graph_reference(
         and isinstance(voice_pipeline, dict)
         and voice_pipeline.get("kind") == "realtime"
     )
-    interface_inputs = normalized_interface.get("inputs") if isinstance(normalized_interface, dict) else None
-    interface_outputs = normalized_interface.get("outputs") if isinstance(normalized_interface, dict) else None
+    interface_inputs = (
+        normalized_interface.get("inputs")
+        if isinstance(normalized_interface, dict)
+        else None
+    )
+    interface_outputs = (
+        normalized_interface.get("outputs")
+        if isinstance(normalized_interface, dict)
+        else None
+    )
     if not isinstance(interface_inputs, dict):
         interface_inputs = None
     if not isinstance(interface_outputs, dict):
@@ -2084,12 +2483,22 @@ def compile_graph_reference(
         target_parts_by_target: dict[str, tuple[str, tuple[str, ...]]] = {}
         for index, edge in enumerate(edges):
             if not isinstance(edge, dict):
-                diagnostics.append(Diagnostic("GB0010", "edge must be a mapping", f"$.spec.edges[{index}]"))
+                diagnostics.append(
+                    Diagnostic(
+                        "GB0010", "edge must be a mapping", f"$.spec.edges[{index}]"
+                    )
+                )
                 continue
             source = edge.get("from")
             target = edge.get("to")
             if not isinstance(source, str) or not isinstance(target, str):
-                diagnostics.append(Diagnostic("GB0011", "edge.from and edge.to must be strings", f"$.spec.edges[{index}]"))
+                diagnostics.append(
+                    Diagnostic(
+                        "GB0011",
+                        "edge.from and edge.to must be strings",
+                        f"$.spec.edges[{index}]",
+                    )
+                )
                 continue
             edge_identity = (source, target)
             duplicate_identity = edge_identity in seen_edge_identities
@@ -2116,8 +2525,7 @@ def compile_graph_reference(
                             existing_owner == target_owner
                             and (
                                 existing_parts == target_parts[: len(existing_parts)]
-                                or target_parts
-                                == existing_parts[: len(target_parts)]
+                                or target_parts == existing_parts[: len(target_parts)]
                             )
                         )
                     ),
@@ -2167,8 +2575,7 @@ def compile_graph_reference(
                     )
                     continue
                 if any(
-                    part.isascii() and part.isdigit()
-                    for part in endpoint_parts[1:]
+                    part.isascii() and part.isdigit() for part in endpoint_parts[1:]
                 ):
                     diagnostics.append(
                         Diagnostic(
@@ -2212,7 +2619,10 @@ def compile_graph_reference(
                     continue
                 if key == "from" and owner == "$input":
                     port_name = endpoint.partition(".")[2].split(".", 1)[0]
-                    if interface_inputs is not None and port_name not in interface_inputs:
+                    if (
+                        interface_inputs is not None
+                        and port_name not in interface_inputs
+                    ):
                         diagnostics.append(
                             Diagnostic(
                                 "GB1014",
@@ -2223,7 +2633,10 @@ def compile_graph_reference(
                     continue
                 if key == "to" and owner == "$output":
                     port_name = endpoint.partition(".")[2].split(".", 1)[0]
-                    if interface_outputs is not None and port_name not in interface_outputs:
+                    if (
+                        interface_outputs is not None
+                        and port_name not in interface_outputs
+                    ):
                         diagnostics.append(
                             Diagnostic(
                                 "GB1013",
@@ -2271,17 +2684,29 @@ def compile_graph_reference(
                 target_owner, _, target_path = target.partition(".")
                 if source_owner == "$input":
                     port_name, separator, _nested_path = source_path.partition(".")
-                    if interface_inputs is not None and port_name in interface_inputs and not separator:
+                    if (
+                        interface_inputs is not None
+                        and port_name in interface_inputs
+                        and not separator
+                    ):
                         schema_id = interface_inputs[port_name]
                         if isinstance(schema_id, str):
                             source_type = schema_id
-                elif source_owner not in PSEUDO_NODES and source_owner in normalized_nodes and source_path:
+                elif (
+                    source_owner not in PSEUDO_NODES
+                    and source_owner in normalized_nodes
+                    and source_path
+                ):
                     source_node = normalized_nodes[source_owner]
                     if isinstance(source_node, dict):
                         descriptor = block_catalog.get(str(source_node.get("block")))
                         if descriptor is not None:
-                            port_name, separator, _nested_path = source_path.partition(".")
-                            output_ports = {port.name: port for port in descriptor.outputs}
+                            port_name, separator, _nested_path = source_path.partition(
+                                "."
+                            )
+                            output_ports = {
+                                port.name: port for port in descriptor.outputs
+                            }
                             if port_name not in output_ports:
                                 diagnostics.append(
                                     Diagnostic(
@@ -2308,13 +2733,21 @@ def compile_graph_reference(
                         schema_id = interface_outputs[port_name]
                         if isinstance(schema_id, str) and not separator:
                             target_type = schema_id
-                elif target_owner not in PSEUDO_NODES and target_owner in normalized_nodes and target_path:
+                elif (
+                    target_owner not in PSEUDO_NODES
+                    and target_owner in normalized_nodes
+                    and target_path
+                ):
                     target_node = normalized_nodes[target_owner]
                     if isinstance(target_node, dict):
                         descriptor = block_catalog.get(str(target_node.get("block")))
                         if descriptor is not None:
-                            port_name, separator, _nested_path = target_path.partition(".")
-                            input_ports = {port.name: port for port in descriptor.inputs}
+                            port_name, separator, _nested_path = target_path.partition(
+                                "."
+                            )
+                            input_ports = {
+                                port.name: port for port in descriptor.inputs
+                            }
                             if port_name not in input_ports:
                                 invalid_input_port_nodes.add(target_owner)
                                 diagnostics.append(
@@ -2329,7 +2762,13 @@ def compile_graph_reference(
                                 target_required = target_port.required
                                 if not separator:
                                     target_type = target_port.type_ref
-                if source_type and target_type and source_type != "Any" and target_type != "Any" and source_type != target_type:
+                if (
+                    source_type
+                    and target_type
+                    and source_type != "Any"
+                    and target_type != "Any"
+                    and source_type != target_type
+                ):
                     diagnostics.append(
                         Diagnostic(
                             "GB1018",
@@ -2347,7 +2786,9 @@ def compile_graph_reference(
                     )
 
     if block_catalog is not None:
-        inbound_by_node: dict[str, set[str]] = {name: set() for name in normalized_nodes}
+        inbound_by_node: dict[str, set[str]] = {
+            name: set() for name in normalized_nodes
+        }
         validation_schemas: dict[str, object] = {}
         if isinstance(edges, list):
             for edge in edges:
@@ -2416,9 +2857,9 @@ def compile_graph_reference(
             omitted_config_error_count = 0
             config_errors: list[ValidationError] = []
             try:
-                for config_error in Draft202012Validator(
-                    validation_schema
-                ).iter_errors(validation_config):
+                for config_error in Draft202012Validator(validation_schema).iter_errors(
+                    validation_config
+                ):
                     if len(config_errors) < MAX_CONFIG_VALIDATION_ERRORS:
                         config_errors.append(config_error)
                     else:
@@ -2475,7 +2916,11 @@ def compile_graph_reference(
                     bindings = {}
                 if not isinstance(bindings, dict):
                     diagnostics.append(
-                        Diagnostic("GB1017", "node bindings must be a mapping", f"$.spec.nodes.{node_name}.bindings")
+                        Diagnostic(
+                            "GB1017",
+                            "node bindings must be a mapping",
+                            f"$.spec.nodes.{node_name}.bindings",
+                        )
                     )
                     bindings = {}
                 slot_names = {slot.name for slot in descriptor.resource_slots}
@@ -2490,7 +2935,11 @@ def compile_graph_reference(
                             )
                         )
                 for slot in descriptor.resource_slots:
-                    if node_name not in invalid_resource_binding_nodes and not slot.optional and slot.name not in bindings:
+                    if (
+                        node_name not in invalid_resource_binding_nodes
+                        and not slot.optional
+                        and slot.name not in bindings
+                    ):
                         diagnostics.append(
                             Diagnostic(
                                 "GB1016",
@@ -2564,7 +3013,11 @@ def compile_graph_reference(
                 )
             elif owner not in PSEUDO_NODES and owner not in normalized_nodes:
                 diagnostics.append(
-                    Diagnostic("GB1002", f"when references unknown node {owner!r}", f"$.spec.nodes.{node_name}.when")
+                    Diagnostic(
+                        "GB1002",
+                        f"when references unknown node {owner!r}",
+                        f"$.spec.nodes.{node_name}.when",
+                    )
                 )
             elif owner not in PSEUDO_NODES:
                 source_node = normalized_nodes[owner]
@@ -2572,7 +3025,9 @@ def compile_graph_reference(
                 if block_catalog is not None and isinstance(source_node, dict):
                     descriptor = block_catalog.get(str(source_node.get("block")))
                 port_name = when_path.split(".", 1)[0]
-                if descriptor is not None and port_name not in {port.name for port in descriptor.outputs}:
+                if descriptor is not None and port_name not in {
+                    port.name for port in descriptor.outputs
+                }:
                     diagnostics.append(
                         Diagnostic(
                             "GB1014",
@@ -2700,10 +3155,20 @@ def compile_graph_reference(
             )
         )
 
-    interface = normalized_spec.get("interface", {}) if isinstance(normalized_spec, dict) else {}
+    interface = (
+        normalized_spec.get("interface", {})
+        if isinstance(normalized_spec, dict)
+        else {}
+    )
     outputs = interface.get("outputs", {}) if isinstance(interface, dict) else {}
     has_declared_output = isinstance(outputs, dict) and bool(outputs)
-    output_edges = [edge for edge in edges if isinstance(edge, dict) and isinstance(edge.get("to"), str) and edge["to"].startswith("$output.")]
+    output_edges = [
+        edge
+        for edge in edges
+        if isinstance(edge, dict)
+        and isinstance(edge.get("to"), str)
+        and edge["to"].startswith("$output.")
+    ]
     if has_declared_output and not output_edges:
         diagnostics.append(
             Diagnostic(
@@ -2716,10 +3181,18 @@ def compile_graph_reference(
 
     if output_edges:
         reachable: set[str] = set()
-        stack = [edge["from"].split(".", 1)[0] for edge in output_edges if isinstance(edge.get("from"), str)]
+        stack = [
+            edge["from"].split(".", 1)[0]
+            for edge in output_edges
+            if isinstance(edge.get("from"), str)
+        ]
         reverse_edges: dict[str, list[str]] = {}
         for edge in edges:
-            if isinstance(edge, dict) and isinstance(edge.get("from"), str) and isinstance(edge.get("to"), str):
+            if (
+                isinstance(edge, dict)
+                and isinstance(edge.get("from"), str)
+                and isinstance(edge.get("to"), str)
+            ):
                 source_owner = edge["from"].split(".", 1)[0]
                 target_owner = edge["to"].split(".", 1)[0]
                 reverse_edges.setdefault(target_owner, []).append(source_owner)
@@ -2730,9 +3203,30 @@ def compile_graph_reference(
             reachable.add(owner)
             stack.extend(reverse_edges.get(owner, []))
         for node_name in sorted(normalized_nodes):
-            if node_name not in reachable and node_name not in produced_nodes and node_name not in consumed_nodes:
-                diagnostics.append(Diagnostic("GB1001", f"node {node_name!r} is not connected", f"$.spec.nodes.{node_name}", "warning"))
+            if (
+                node_name not in reachable
+                and node_name not in produced_nodes
+                and node_name not in consumed_nodes
+            ):
+                diagnostics.append(
+                    Diagnostic(
+                        "GB1001",
+                        f"node {node_name!r} is not connected",
+                        f"$.spec.nodes.{node_name}",
+                        "warning",
+                    )
+                )
+    return _TypecheckedGraph(
+        normalized=normalized,
+        schema_violations=normalized_graph.schema_violations,
+        diagnostics=tuple(diagnostics),
+    )
 
+
+def _lower_graph_phase(typechecked: _TypecheckedGraph) -> _LoweredGraph:
+    normalized = typechecked.normalized
+    diagnostics = typechecked.diagnostics
+    schema_violations = typechecked.schema_violations
     diagnostic_paths = {diagnostic.path for diagnostic in diagnostics}
     schema_diagnostics = [
         Diagnostic(violation.code, violation.message, violation.path)
@@ -2740,11 +3234,42 @@ def compile_graph_reference(
         if violation.keyword == "additionalProperties"
         or violation.path not in diagnostic_paths
     ]
-    return Plan(
-        normalized,
-        canonical_hash(normalized),
-        DiagnosticSet(tuple([*schema_diagnostics, *diagnostics])),
+    return _LoweredGraph(
+        normalized=normalized,
+        diagnostics=DiagnosticSet(tuple([*schema_diagnostics, *diagnostics])),
     )
+
+
+def _evidence_graph_phase(lowered: _LoweredGraph) -> Plan:
+    return Plan(
+        normalized=lowered.normalized,
+        graph_hash=canonical_hash(lowered.normalized),
+        diagnostics=lowered.diagnostics,
+    )
+
+
+def compile_graph_reference(
+    document: dict[str, Any],
+    block_catalog: BlockCatalog | None = None,
+    *,
+    allow_unknown_blocks: bool = False,
+) -> Plan:
+    decoded = _decode_graph_phase(
+        document,
+        block_catalog,
+        allow_unknown_blocks=allow_unknown_blocks,
+    )
+    if isinstance(decoded, Plan):
+        return decoded
+    catalog = _catalog_graph_phase(decoded)
+    migrated = _migrate_graph_phase(catalog)
+    validated = _validate_graph_phase(migrated)
+    if isinstance(validated, Plan):
+        return validated
+    normalized = _normalize_graph_phase(validated)
+    typechecked = _typecheck_graph_phase(normalized)
+    lowered = _lower_graph_phase(typechecked)
+    return _evidence_graph_phase(lowered)
 
 
 def compile_graph(
@@ -2813,8 +3338,7 @@ def compile_graph_native(
         else block_catalog
     )
     native_allow_unknown_blocks = allow_unknown_blocks or (
-        isinstance(block_catalog, BlockCatalog)
-        and block_catalog.allow_unknown_blocks
+        isinstance(block_catalog, BlockCatalog) and block_catalog.allow_unknown_blocks
     )
     return native_compile_graph(
         document,
@@ -2851,11 +3375,7 @@ def compile_graph_native_plan(
             }
         )
     except (TypeError, ValueError, RuntimeError, LookupError) as error:
-        cause = (
-            error.__cause__
-            if isinstance(error.__cause__, Exception)
-            else error
-        )
+        cause = error.__cause__ if isinstance(error.__cause__, Exception) else error
         raise ValueError(
             "graph document must contain stable canonical JSON values"
         ) from cause
@@ -2889,11 +3409,7 @@ def compile_graph_native_plan(
     try:
         snapshot = canonical_loads(canonical_dumps(document))
     except (TypeError, ValueError, RuntimeError, LookupError) as error:
-        cause = (
-            error.__cause__
-            if isinstance(error.__cause__, Exception)
-            else error
-        )
+        cause = error.__cause__ if isinstance(error.__cause__, Exception) else error
         raise ValueError(
             "graph document must contain stable canonical JSON values"
         ) from cause
@@ -2912,9 +3428,7 @@ def compile_graph_native_plan(
         )
 
     graph_hash = result["hash"]
-    if not isinstance(graph_hash, str) or not _is_canonical_sha256_digest(
-        graph_hash
-    ):
+    if not isinstance(graph_hash, str) or not _is_canonical_sha256_digest(graph_hash):
         raise NativeCompilerContractError(
             "native compiler result hash must be a canonical sha256 digest"
         )
