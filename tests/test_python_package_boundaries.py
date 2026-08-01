@@ -248,8 +248,20 @@ def test_cold_imports_stay_within_time_memory_module_and_api_budgets() -> None:
 
                 counters = ProcessMemoryCounters()
                 counters.cb = ctypes.sizeof(counters)
-                process = ctypes.windll.kernel32.GetCurrentProcess()
-                if not ctypes.windll.psapi.GetProcessMemoryInfo(
+                get_current_process = ctypes.windll.kernel32.GetCurrentProcess
+                get_current_process.argtypes = []
+                get_current_process.restype = wintypes.HANDLE
+                get_process_memory_info = (
+                    ctypes.windll.psapi.GetProcessMemoryInfo
+                )
+                get_process_memory_info.argtypes = [
+                    wintypes.HANDLE,
+                    ctypes.POINTER(ProcessMemoryCounters),
+                    wintypes.DWORD,
+                ]
+                get_process_memory_info.restype = wintypes.BOOL
+                process = get_current_process()
+                if not get_process_memory_info(
                     process, ctypes.byref(counters), counters.cb
                 ):
                     raise OSError("GetProcessMemoryInfo failed")
