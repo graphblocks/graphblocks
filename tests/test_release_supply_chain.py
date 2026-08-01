@@ -3728,6 +3728,11 @@ def test_ci_primes_offline_rust_inputs_and_retains_failure_diagnostics() -> None
         assert "rustup run 1.94.0 cargo fmt --version" in preflight
 
     python_steps = {step["name"]: step for step in jobs["python"]["steps"]}
+    testing_install = python_steps["Install GraphBlocks testing package"]["run"]
+    assert testing_install == (
+        "python -m pip install --no-build-isolation --no-deps "
+        "./packages/graphblocks-testing"
+    )
     cargo_fetch = python_steps["Prime offline Rust example dependencies"]["run"]
     assert "cargo fetch --locked --manifest-path" in cargo_fetch
     assert (
@@ -3756,6 +3761,13 @@ def test_ci_primes_offline_rust_inputs_and_retains_failure_diagnostics() -> None
     assert installed_diagnostics["with"]["if-no-files-found"] == "warn"
 
     example_steps = {step["name"]: step for step in jobs["examples"]["steps"]}
+    example_dependencies = example_steps["Install test dependencies"]["run"]
+    assert "python -m pip install maturin==1.14.1" in example_dependencies
+    native_install = example_steps["Install native compiler target"]["run"]
+    assert native_install == (
+        "python -m pip install --no-build-isolation --no-deps --editable "
+        "./packages/graphblocks-runtime"
+    )
     example_fetch = example_steps["Prime offline Rust example dependencies"]["run"]
     assert "cargo fetch --locked --manifest-path" in example_fetch
     assert (
