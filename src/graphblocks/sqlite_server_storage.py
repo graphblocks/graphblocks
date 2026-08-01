@@ -63,7 +63,7 @@ from .server_storage import (
 
 
 SQLITE_ACCEPTED_RUN_APPLICATION_ID = 0x47424152
-SQLITE_ACCEPTED_RUN_SCHEMA_VERSION = 7
+SQLITE_ACCEPTED_RUN_SCHEMA_VERSION = 8
 _SQLITE_ACCEPTED_RUN_SCHEMA_NAME = "graphblocks.accepted-runs.sqlite"
 _SQLITE_ACCEPTED_RUN_INITIAL_SCHEMA_VERSION = 1
 _MAX_BUSY_TIMEOUT_MS = 60_000
@@ -518,6 +518,87 @@ _SCHEMA_V7_MIGRATION_STATEMENTS = (
     """,
 )
 
+_PROVIDER_EFFECT_STATES_SQL = (
+    "'pending', 'claimed', 'send_started', 'quarantined_unknown', "
+    "'reconciling', 'manual_review_unknown', 'confirmed_committed', "
+    "'confirmed_not_committed', 'confirmed_cancelled'"
+)
+
+_SCHEMA_V8_MIGRATION_STATEMENTS = (
+    f"""
+    CREATE TABLE provider_effects (
+      run_internal_id TEXT NOT NULL,
+      effect_id TEXT NOT NULL,
+      idempotency_key TEXT NOT NULL,
+      provider_target TEXT NOT NULL,
+      provider_operation TEXT NOT NULL,
+      intent_json TEXT NOT NULL,
+      intent_digest TEXT NOT NULL,
+      capability_snapshot_json TEXT NOT NULL,
+      capability_snapshot_digest TEXT NOT NULL,
+      origin_transfer_json TEXT NOT NULL,
+      origin_transfer_digest TEXT NOT NULL,
+      state TEXT NOT NULL CHECK (
+        state IN ({_PROVIDER_EFFECT_STATES_SQL})
+      ),
+      state_version INTEGER NOT NULL CHECK (state_version > 0),
+      event_high_watermark INTEGER NOT NULL CHECK (event_high_watermark > 0),
+      created_at_unix_ms INTEGER NOT NULL CHECK (created_at_unix_ms >= 0),
+      updated_at_unix_ms INTEGER NOT NULL CHECK (
+        updated_at_unix_ms >= created_at_unix_ms
+      ),
+      PRIMARY KEY (run_internal_id, effect_id),
+      UNIQUE (intent_digest),
+      UNIQUE (origin_transfer_digest),
+      UNIQUE (
+        run_internal_id,
+        provider_target,
+        provider_operation,
+        idempotency_key
+      ),
+      FOREIGN KEY (run_internal_id)
+        REFERENCES accepted_runs (internal_id)
+        ON DELETE RESTRICT,
+      CHECK (length(effect_id) > 0),
+      CHECK (length(idempotency_key) > 0),
+      CHECK (length(provider_target) > 0),
+      CHECK (length(provider_operation) > 0),
+      CHECK (state_version = event_high_watermark)
+    )
+    """,
+    f"""
+    CREATE TABLE provider_effect_events (
+      run_internal_id TEXT NOT NULL,
+      effect_id TEXT NOT NULL,
+      sequence INTEGER NOT NULL CHECK (sequence > 0),
+      kind TEXT NOT NULL CHECK (length(kind) > 0),
+      from_state TEXT CHECK (
+        from_state IS NULL OR from_state IN ({_PROVIDER_EFFECT_STATES_SQL})
+      ),
+      to_state TEXT NOT NULL CHECK (
+        to_state IN ({_PROVIDER_EFFECT_STATES_SQL})
+      ),
+      payload_json TEXT NOT NULL,
+      payload_digest TEXT NOT NULL,
+      created_at_unix_ms INTEGER NOT NULL CHECK (created_at_unix_ms >= 0),
+      PRIMARY KEY (run_internal_id, effect_id, sequence),
+      FOREIGN KEY (run_internal_id, effect_id)
+        REFERENCES provider_effects (run_internal_id, effect_id)
+        ON DELETE RESTRICT
+    )
+    """,
+    """
+    CREATE INDEX provider_effects_claimable
+    ON provider_effects (
+      state,
+      updated_at_unix_ms,
+      created_at_unix_ms,
+      run_internal_id,
+      effect_id
+    )
+    """,
+)
+
 _REQUIRED_COLUMNS_V1 = {
     "accepted_run_storage_metadata": frozenset({"key", "value"}),
     "accepted_runs": frozenset(
@@ -657,7 +738,7 @@ _REQUIRED_COLUMNS_V5 = {
     ),
 }
 _REQUIRED_COLUMNS_V6 = _REQUIRED_COLUMNS_V5
-_REQUIRED_COLUMNS = {
+_REQUIRED_COLUMNS_V7 = {
     **_REQUIRED_COLUMNS_V6,
     "effect_outbox": (
         _REQUIRED_COLUMNS_V6["effect_outbox"]
@@ -668,6 +749,42 @@ _REQUIRED_COLUMNS = {
                 "last_delivery_command_digest",
             }
         )
+    ),
+}
+_REQUIRED_COLUMNS = {
+    **_REQUIRED_COLUMNS_V7,
+    "provider_effects": frozenset(
+        {
+            "run_internal_id",
+            "effect_id",
+            "idempotency_key",
+            "provider_target",
+            "provider_operation",
+            "intent_json",
+            "intent_digest",
+            "capability_snapshot_json",
+            "capability_snapshot_digest",
+            "origin_transfer_json",
+            "origin_transfer_digest",
+            "state",
+            "state_version",
+            "event_high_watermark",
+            "created_at_unix_ms",
+            "updated_at_unix_ms",
+        }
+    ),
+    "provider_effect_events": frozenset(
+        {
+            "run_internal_id",
+            "effect_id",
+            "sequence",
+            "kind",
+            "from_state",
+            "to_state",
+            "payload_json",
+            "payload_digest",
+            "created_at_unix_ms",
+        }
     ),
 }
 
@@ -1085,6 +1202,7 @@ class SQLiteAcceptedRunDatabase:
                     4,
                     5,
                     6,
+                    7,
                 }:
                     self._migrate_to_current(connection)
                 else:
@@ -1154,6 +1272,8 @@ class SQLiteAcceptedRunDatabase:
                     connection.execute(statement)
                 for statement in _SCHEMA_V7_MIGRATION_STATEMENTS:
                     connection.execute(statement)
+                for statement in _SCHEMA_V8_MIGRATION_STATEMENTS:
+                    connection.execute(statement)
                 connection.executemany(
                     """
                     INSERT INTO accepted_run_storage_metadata (key, value)
@@ -1200,6 +1320,7 @@ class SQLiteAcceptedRunDatabase:
                 4,
                 5,
                 6,
+                7,
             }:
                 raise SQLiteAcceptedRunSchemaVersionError(
                     "unsupported accepted-run SQLite schema version "
@@ -1394,6 +1515,28 @@ class SQLiteAcceptedRunDatabase:
                     raise SQLiteAcceptedRunSchemaMismatchError(
                         "accepted-run SQLite schema metadata version changed "
                         "during v7 migration"
+                    )
+                connection.execute("PRAGMA user_version = 7")
+                user_version = 7
+            if user_version == 7:
+                self._validate_schema_version(
+                    connection,
+                    schema_version=7,
+                    required_columns=_REQUIRED_COLUMNS_V7,
+                )
+                for statement in _SCHEMA_V8_MIGRATION_STATEMENTS:
+                    connection.execute(statement)
+                updated = connection.execute(
+                    """
+                    UPDATE accepted_run_storage_metadata
+                    SET value = '8'
+                    WHERE key = 'schema_version' AND value = '7'
+                    """
+                )
+                if updated.rowcount != 1:
+                    raise SQLiteAcceptedRunSchemaMismatchError(
+                        "accepted-run SQLite schema metadata version changed "
+                        "during v8 migration"
                     )
                 connection.execute(
                     f"PRAGMA user_version = {SQLITE_ACCEPTED_RUN_SCHEMA_VERSION}"

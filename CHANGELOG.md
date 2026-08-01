@@ -72,9 +72,19 @@ preparing the first 1.0 release candidate.
   authenticated and the repository confirms the exact attempt is still active.
   Prior-attempt evidence cannot settle a retry, and only an unchanged intent can
   retry after confirmed non-commit or cancellation. This contract-only preview
-  adds no provider I/O or storage, does not reinterpret the generic operation
-  outbox, and establishes no exactly-once claim without real adapter and
-  repository evidence.
+  adds no provider I/O and establishes no exactly-once claim without real
+  adapter and repository evidence.
+- Added the first provider-specific durable storage slice in accepted-run
+  SQLite schema v8. `SQLiteProviderEffectRepository` atomically rechecks the
+  tenant-scoped live run owner, state version, checkpoint, lease generation,
+  fence, and repository-time expiry before storing exact canonical intent,
+  capability, origin-transfer, and initial journal records. Exact committed
+  replays survive source-lease expiry and response loss; divergent effect or
+  idempotency reuse, stale authority, cross-tenant or cross-owner lookup, and
+  corrupted stored wire identities fail closed. The migration creates empty
+  `provider_effects` and `provider_effect_events` tables and never reinterprets
+  generic operation outbox rows. Claim, send-attempt, receipt, evidence,
+  adapter I/O, and reconciliation persistence remain subsequent preview work.
 - Added a bounded CommonMark and GitHub-heading integrity checker, a closed
   generated-documentation registry with content-bound results, and an always-run
   fast documentation workflow plus named stable release gate.

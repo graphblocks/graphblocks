@@ -547,21 +547,37 @@ retried send. Changing any request, identity, provider, adapter, correlation,
 origin authority, lease, fence, checkpoint, or creation field creates an
 identity conflict rather than a retry.
 
-These contracts and their state machine perform no provider I/O, persistence,
-claiming, or scheduling. Existing operation-dispatch rows MUST NOT be migrated
-or reinterpreted as provider-effect intents because they do not contain this
-authority or evidence. A production profile still requires a separate durable
-provider-effect repository, real adapter capability and verifier-registry
-authorities, ambiguous-send reconciliation, kill/restart/fencing tests, and
-provider-side idempotency or status/cancellation evidence. Repository
-snapshots, transfers, claim fields, and verifier authorities MUST come from
-trusted service dependencies and MUST NOT be accepted from request data. Claim
-admission, one-shot consumption, repository-time assignment, receipt creation,
-and active attempt installation MUST be one repository transaction with the
-corresponding state change. Every closed record loaded from persistence MUST
-pass its exact decoder again at the admission, send, or evidence boundary; an
-in-memory type check alone is not rehydration evidence. The contracts alone
-establish neither safe delivery nor an exactly-once claim.
+The core contracts and their state machine perform no provider I/O, claiming,
+or scheduling. The preview SQLite v8 origin-transfer repository provides the
+first persistence slice in a provider-specific `provider_effects` projection
+and authoritative `provider_effect_events` journal. It shares the accepted-run
+database so one `BEGIN IMMEDIATE` transaction can resolve the tenant-scoped run,
+recheck owner, state version, checkpoint, lease generation, fence, and
+repository-time expiry, and atomically persist the exact intent, capability
+snapshot, transfer, and initial event. Exact committed replay MAY return that
+stored transfer after the source lease expires; a changed effect identity,
+idempotency identity, capability, or repository authority MUST conflict. Every
+stored wire record and digest MUST pass its closed decoder and canonical
+identity check when read. Tenant, run, and owner scope MUST be part of every
+external lookup even when two runs use the same effect identifier.
+
+Existing operation-dispatch rows MUST NOT be migrated or reinterpreted as
+provider-effect intents because they do not contain this authority or evidence.
+SQLite v8 creates empty provider-specific tables and does not backfill the
+generic outbox. Operators upgrading the preview database MUST prevent
+mixed-version writers and retain the normal pre-migration backup. A production
+profile still requires durable provider-effect claim, attempt, receipt, and
+evidence storage, real adapter capability and verifier-registry authorities,
+ambiguous-send reconciliation, kill/restart/fencing tests, and provider-side
+idempotency or status/cancellation evidence. Repository snapshots, transfers,
+claim fields, and verifier authorities MUST come from trusted service
+dependencies and MUST NOT be accepted from request data. Claim admission,
+one-shot consumption, repository-time assignment, receipt creation, and active
+attempt installation MUST be one repository transaction with the corresponding
+state change. Every closed record loaded from persistence MUST pass its exact
+decoder again at the admission, send, or evidence boundary; an in-memory type
+check alone is not rehydration evidence. The origin-transfer repository alone
+establishes neither safe delivery nor an exactly-once claim.
 
 The preview executor supplies the killable-process, structural result
 validation, and live-revalidation hook of the stronger timeout contract. It
