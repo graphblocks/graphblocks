@@ -11,6 +11,7 @@ import pytest
 from graphblocks.canonical import canonical_dumps, canonical_hash, canonical_loads
 from graphblocks.compiler import compile_graph_reference
 from graphblocks.durable_server import DurableAcceptedRunService
+from graphblocks.durable_worker import DEFAULT_DURABLE_WORKER_TARGET
 from graphblocks.isolated_worker import (
     ProcessWorkerDeadlineExceeded,
     ProcessWorkerPolicy,
@@ -483,6 +484,7 @@ def test_durable_service_executes_claim_in_a_fresh_process(
         clock=clock,
         worker_target=ProcessWorkerTarget(module_name, "succeed"),
         worker_policy=ProcessWorkerPolicy(timeout_seconds=15),
+        allow_unsafe_custom_worker_dev=True,
     )
     _admit_empty_run(service, run_id="run-isolated")
 
@@ -519,6 +521,7 @@ def test_durable_service_rejects_tampered_worker_authority(
             "tamper_authority",
         ),
         worker_policy=ProcessWorkerPolicy(timeout_seconds=15),
+        allow_unsafe_custom_worker_dev=True,
     )
     _admit_empty_run(service, run_id="run-tampered")
 
@@ -562,6 +565,7 @@ def test_durable_service_reaps_timed_out_worker_and_reclaims_after_lease(
             timeout_seconds=0.3,
             termination_grace_seconds=0.2,
         ),
+        allow_unsafe_custom_worker_dev=True,
     )
     _admit_empty_run(timed_out_service, run_id="run-timeout")
 
@@ -631,6 +635,7 @@ def test_durable_service_preserves_existing_positional_constructor_order(
         return 1_000
 
     registry = stdlib_registry()
+    worker_policy = ProcessWorkerPolicy(timeout_seconds=15)
 
     service = DurableAcceptedRunService(
         SQLiteAcceptedRunRepository(
@@ -642,11 +647,166 @@ def test_durable_service_preserves_existing_positional_constructor_order(
         registry,
         compile_graph_reference,
         clock,
+        DEFAULT_DURABLE_WORKER_TARGET,
+        worker_policy,
     )
 
     assert service.registry is registry
     assert service.compiler is compile_graph_reference
     assert service.clock is clock
+    assert service.worker_target is DEFAULT_DURABLE_WORKER_TARGET
+    assert service.worker_policy is worker_policy
+
+
+def test_durable_service_rejects_custom_worker_without_unsafe_dev_opt_in(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(
+        ValueError,
+        match="custom worker_target requires explicit",
+    ):
+        DurableAcceptedRunService(
+            repository=SQLiteAcceptedRunRepository(
+                tmp_path / "custom-worker-default-deny.sqlite3"
+            ),
+            lease_owner_id="worker-1",
+            worker_target=ProcessWorkerTarget(
+                "untrusted.worker",
+                "publish_effect_then_spin",
+            ),
+        )
+
+
+def test_durable_service_rejects_target_subclass_that_spoofs_default_equality(
+    tmp_path: Path,
+) -> None:
+    class DefaultSpoofingTarget(ProcessWorkerTarget):
+        def __eq__(self, other: object) -> bool:
+            del other
+            return True
+
+        def __ne__(self, other: object) -> bool:
+            del other
+            return False
+
+    with pytest.raises(
+        ValueError,
+        match="worker_target must be an exact ProcessWorkerTarget",
+    ):
+        DurableAcceptedRunService(
+            repository=SQLiteAcceptedRunRepository(
+                tmp_path / "custom-worker-subclass.sqlite3"
+            ),
+            lease_owner_id="worker-1",
+            worker_target=DefaultSpoofingTarget(
+                "untrusted.worker",
+                "publish_effect_then_spin",
+            ),
+        )
+
+
+def test_durable_service_rejects_non_boolean_custom_worker_dev_opt_in(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(
+        ValueError,
+        match="allow_unsafe_custom_worker_dev must be a boolean",
+    ):
+        DurableAcceptedRunService(
+            repository=SQLiteAcceptedRunRepository(
+                tmp_path / "custom-worker-invalid-opt-in.sqlite3"
+            ),
+            lease_owner_id="worker-1",
+            allow_unsafe_custom_worker_dev="yes",  # type: ignore[arg-type]
+        )
+
+
+def test_durable_service_cannot_enable_custom_worker_after_construction(
+    tmp_path: Path,
+) -> None:
+    service = DurableAcceptedRunService(
+        repository=SQLiteAcceptedRunRepository(
+            tmp_path / "custom-worker-late-opt-in.sqlite3"
+        ),
+        lease_owner_id="worker-1",
+    )
+    service.worker_target = ProcessWorkerTarget(
+        "untrusted.worker",
+        "publish_effect_then_spin",
+    )
+    service.allow_unsafe_custom_worker_dev = True
+
+    with pytest.raises(
+        ValueError,
+        match="configuration changed after construction",
+    ):
+        service.advance_next_run()
+
+
+def test_durable_service_cannot_disable_custom_worker_opt_in_after_construction(
+    tmp_path: Path,
+) -> None:
+    service = DurableAcceptedRunService(
+        repository=SQLiteAcceptedRunRepository(
+            tmp_path / "custom-worker-late-disable.sqlite3"
+        ),
+        lease_owner_id="worker-1",
+        worker_target=ProcessWorkerTarget(
+            "untrusted.worker",
+            "publish_effect_then_spin",
+        ),
+        allow_unsafe_custom_worker_dev=True,
+    )
+    service.allow_unsafe_custom_worker_dev = False
+
+    with pytest.raises(
+        ValueError,
+        match="configuration changed after construction",
+    ):
+        service.advance_next_run()
+
+
+def test_durable_service_executes_validated_target_snapshot(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module_name = _write_durable_worker_fixture(tmp_path)
+    monkeypatch.syspath_prepend(str(tmp_path))
+    mutate_target = False
+    service: DurableAcceptedRunService | None = None
+
+    def clock() -> int:
+        nonlocal mutate_target
+        if mutate_target:
+            assert service is not None
+            service.worker_target = ProcessWorkerTarget(module_name, "succeed")
+            mutate_target = False
+        return 2_000
+
+    service = DurableAcceptedRunService(
+        repository=SQLiteAcceptedRunRepository(
+            tmp_path / "custom-worker-validation-race.sqlite3",
+            clock=clock,
+        ),
+        lease_owner_id="worker-1",
+        lease_duration_ms=30_000,
+        compiler=compile_graph_reference,
+        clock=clock,
+        worker_policy=ProcessWorkerPolicy(timeout_seconds=15),
+    )
+    _admit_empty_run(service, run_id="run-validation-race")
+    mutate_target = True
+
+    completed = service.advance_run(
+        tenant_id="tenant-1",
+        run_id="run-validation-race",
+    )
+
+    assert completed.terminal_result_json is not None
+    result = canonical_loads(completed.terminal_result_json)
+    assert isinstance(result, dict)
+    assert result["status"] == "succeeded"
+    assert result["outputs"] == {}
 
 
 def test_default_durable_worker_rejects_a_replaced_registry(
@@ -826,6 +986,7 @@ def test_durable_worker_deadline_shrinks_to_the_remaining_lease(
             timeout_seconds=15,
             termination_grace_seconds=0.2,
         ),
+        allow_unsafe_custom_worker_dev=True,
     )
     _admit_empty_run(service, run_id="run-remaining-lease")
 
@@ -912,6 +1073,7 @@ def test_oversized_durable_worker_response_fails_terminally(
             timeout_seconds=15,
             max_result_bytes=256,
         ),
+        allow_unsafe_custom_worker_dev=True,
     )
     _admit_empty_run(service, run_id="run-oversized-response")
 

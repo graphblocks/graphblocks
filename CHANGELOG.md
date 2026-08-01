@@ -19,6 +19,10 @@ preparing the first 1.0 release candidate.
 
 ### Changed
 
+- Made preview durable accepted-run services reject custom process worker
+  targets by default. Test and local-development users must now opt in with
+  `allow_unsafe_custom_worker_dev=True`, which is ineligible for durable,
+  production, compatibility, or security claims.
 - Added a bounded CommonMark and GitHub-heading integrity checker, a closed
   generated-documentation registry with content-bound results, and an always-run
   fast documentation workflow plus named stable release gate.

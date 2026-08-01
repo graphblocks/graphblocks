@@ -121,6 +121,17 @@ class DurableAcceptedRunService:
     )
     worker_target: ProcessWorkerTarget = DEFAULT_DURABLE_WORKER_TARGET
     worker_policy: ProcessWorkerPolicy | None = None
+    allow_unsafe_custom_worker_dev: bool = field(default=False, repr=False)
+    _unsafe_custom_worker_dev_enabled: bool = field(
+        default=False,
+        init=False,
+        repr=False,
+    )
+    _configured_worker_target: ProcessWorkerTarget | None = field(
+        default=None,
+        init=False,
+        repr=False,
+    )
     _default_worker_registry: RuntimeRegistry | None = field(
         default=None,
         init=False,
@@ -143,6 +154,18 @@ class DurableAcceptedRunService:
     )
 
     def __post_init__(self) -> None:
+        if type(self.allow_unsafe_custom_worker_dev) is not bool:
+            raise ValueError(
+                "durable accepted-run service "
+                "allow_unsafe_custom_worker_dev must be a boolean"
+            )
+        if type(self.worker_target) is not ProcessWorkerTarget:
+            raise ValueError(
+                "durable accepted-run service worker_target must be an exact "
+                "ProcessWorkerTarget"
+            )
+        self._unsafe_custom_worker_dev_enabled = self.allow_unsafe_custom_worker_dev
+        self._configured_worker_target = self.worker_target
         required_repository_operations = (
             "accept_run",
             "get_run",
@@ -231,12 +254,50 @@ class DurableAcceptedRunService:
                 "the exact clock authority"
             )
 
-    def _validated_worker_policy(self) -> ProcessWorkerPolicy:
+    def _validated_worker_policy(
+        self,
+    ) -> tuple[ProcessWorkerTarget, ProcessWorkerPolicy]:
         self._validate_clock_authority()
-        if not isinstance(self.worker_target, ProcessWorkerTarget):
+        if type(self.allow_unsafe_custom_worker_dev) is not bool:
             raise ValueError(
-                "durable accepted-run service worker_target must be a "
+                "durable accepted-run service "
+                "allow_unsafe_custom_worker_dev must be a boolean"
+            )
+        if (
+            self.allow_unsafe_custom_worker_dev
+            is not self._unsafe_custom_worker_dev_enabled
+        ):
+            raise ValueError(
+                "durable accepted-run service unsafe custom worker "
+                "configuration changed after construction"
+            )
+        worker_target = self.worker_target
+        configured_worker_target = self._configured_worker_target
+        if type(worker_target) is not ProcessWorkerTarget:
+            raise ValueError(
+                "durable accepted-run service worker_target must be an exact "
                 "ProcessWorkerTarget"
+            )
+        if type(configured_worker_target) is not ProcessWorkerTarget:
+            raise DurableAcceptedRunIntegrityError(
+                "durable accepted-run service configured worker target is invalid"
+            )
+        if (
+            worker_target.module != configured_worker_target.module
+            or worker_target.function != configured_worker_target.function
+        ):
+            raise ValueError(
+                "durable accepted-run service worker_target changed after construction"
+            )
+        default_worker_target = (
+            configured_worker_target.module == DEFAULT_DURABLE_WORKER_TARGET.module
+            and configured_worker_target.function
+            == DEFAULT_DURABLE_WORKER_TARGET.function
+        )
+        if not default_worker_target and not self._unsafe_custom_worker_dev_enabled:
+            raise ValueError(
+                "durable accepted-run service custom worker_target requires "
+                "explicit allow_unsafe_custom_worker_dev=True"
             )
         worker_policy = self.worker_policy
         if not isinstance(worker_policy, ProcessWorkerPolicy):
@@ -260,7 +321,7 @@ class DurableAcceptedRunService:
             )
         if not callable(self.compiler):
             raise ValueError("durable accepted-run service compiler must be callable")
-        if self.worker_target == DEFAULT_DURABLE_WORKER_TARGET:
+        if default_worker_target:
             if (
                 self.compiler is not compile_graph
                 and self.compiler is not compile_graph_reference
@@ -305,7 +366,7 @@ class DurableAcceptedRunService:
                     "durable accepted-run service default worker registry "
                     "changed after configuration"
                 )
-        return worker_policy
+        return configured_worker_target, worker_policy
 
     def _now_unix_ms(self) -> int:
         self._validate_clock_authority()
@@ -819,7 +880,7 @@ class DurableAcceptedRunService:
         tenant_id: str,
         run_id: str,
     ) -> AcceptedRunSnapshot:
-        worker_policy = self._validated_worker_policy()
+        worker_target, worker_policy = self._validated_worker_policy()
         claimed_at_unix_ms = self._now_unix_ms()
         work = self.repository.claim_work(
             AcceptedRunClaimRequest(
@@ -838,14 +899,14 @@ class DurableAcceptedRunService:
             if snapshot is None:
                 raise AcceptedRunNotFoundError(tenant_id, run_id)
             return snapshot
-        return self._advance_work(work, worker_policy)
+        return self._advance_work(work, worker_target, worker_policy)
 
     def advance_next_run(
         self,
         *,
         tenant_id: str | None = None,
     ) -> AcceptedRunSnapshot | None:
-        worker_policy = self._validated_worker_policy()
+        worker_target, worker_policy = self._validated_worker_policy()
         claimed_at_unix_ms = self._now_unix_ms()
         work = self.repository.claim_next_work(
             AcceptedRunQueueClaimRequest(
@@ -857,11 +918,12 @@ class DurableAcceptedRunService:
         )
         if work is None:
             return None
-        return self._advance_work(work, worker_policy)
+        return self._advance_work(work, worker_target, worker_policy)
 
     def _advance_work(
         self,
         work: AcceptedRunWorkItem,
+        worker_target: ProcessWorkerTarget,
         worker_policy: ProcessWorkerPolicy,
     ) -> AcceptedRunSnapshot:
         graph = canonical_loads(work.envelope.graph_json)
@@ -948,7 +1010,7 @@ class DurableAcceptedRunService:
 
         try:
             worker_result = ProcessWorkerExecutor(
-                target=self.worker_target,
+                target=worker_target,
                 policy=execution_policy,
                 authority_validator=validate_worker_authority,
             ).invoke(worker_request)

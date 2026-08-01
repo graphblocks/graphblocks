@@ -280,16 +280,28 @@ child process is started.
 
 `DurableAcceptedRunService` uses this boundary for every claimed graph
 execution. Its default importable worker target reconstructs the preview
-standard-library registry in the child process. A service that replaces that
+standard-library registry in the child process. The current package-owned
+target descriptor is checked exactly, and its current built-in handlers
+construct local values or operation intents rather than importing provider
+transports. Adding a transport-capable standard-library handler does not make it
+durable-safe automatically; it requires a dedicated durable registry or an
+equivalent audited capability gate. A custom worker target can publish an
+external effect before it returns or times out, so the durable service MUST
+reject custom targets by default. The explicit
+`allow_unsafe_custom_worker_dev=True` escape hatch is fixed at construction,
+is for tests and local development only, and MUST NOT support a durable,
+production, compatibility, or security claim. Mutating that public field after
+construction MUST NOT enable the escape hatch. A service that replaces the
 registry or selects a compiler other than the native or deterministic reference
-compiler MUST provide a matching importable worker target; it MUST NOT silently
-run the replacement in the scheduler process or execute the default handler
-under different semantics. The worker deadline, termination grace, and
-publication margin MUST fit inside the run lease. The scheduler recomputes the
-available deadline from the actual remaining lease immediately before process
-start. A timeout does not fabricate a terminal result: the run remains `running`
-under the original claim until that lease expires, after which a new claim with
-a higher lease generation and fencing token may retry it.
+compiler requires this unsafe mode and a matching importable worker target; it
+MUST NOT silently run the replacement in the scheduler process or execute the
+default handler under different semantics. Graph-declared `effects` metadata
+does not establish external-effect authority. The worker deadline, termination
+grace, and publication margin MUST fit inside the run lease. The scheduler
+recomputes the available deadline from the actual remaining lease immediately
+before process start. A timeout does not fabricate a terminal result: the run
+remains `running` under the original claim until that lease expires, after which
+a new claim with a higher lease generation and fencing token may retry it.
 By contrast, a deterministic worker request or response byte-limit violation
 commits a bounded `failed` result under the same repository fence so oversized
 poison work is not reclaimed forever.
@@ -343,11 +355,37 @@ for the database write lock.
 This boundary controls the worker process only. A handler that delegates work
 to an untracked child, background service, or provider MUST NOT claim
 `force_terminable` without proving that delegated work is also terminated or
-fenced. External effects still require provider cancellation plus a durable
-outbox or idempotency key checked under the current lease/fencing token. The
-preview executor therefore supplies the killable-process, structural result
-validation, and live-revalidation hook of the stronger timeout contract; it
-does not by itself prove atomic publication, rollback, or exactly-once effects.
+fenced. The current preview therefore rejects custom worker targets by default
+and does not claim that its generic operation-dispatch outbox is a complete
+provider-effect boundary.
+
+A stronger profile that permits a force-terminated worker to request a
+state-changing external effect MUST atomically transfer authority from the
+current run claim to a closed durable effect intent before any send. The intent
+MUST bind the tenant, run, logical effect identity, stable idempotency key,
+request digest, provider target and operation, and originating lease generation
+and fencing token. The dispatcher MUST atomically acquire the current
+independent effect claim before starting a send and MUST acknowledge delivery
+only with that same unexpired claim. The logical effect identity and
+idempotency key MUST remain stable across every retry or reclaim of the same
+logical effect.
+
+If the delivery claim expires before acknowledgement, the outcome is ambiguous
+and the dispatcher MUST reconcile only that same provider-correlated intent.
+It MAY replay the send only when the provider atomically deduplicates the stable
+idempotency key; otherwise it MUST query provider status or obtain confirmed
+cancellation. Requesting cancellation is not confirmation. Until terminal
+reconciliation, the runtime MUST NOT issue a new mutation for the same logical
+effect. A profile MUST reject admission or dispatch when the provider offers no
+applicable deduplication, status, or confirmed-cancellation capability, and
+GraphBlocks MUST NOT make an exactly-once effect claim without a matching
+provider atomic-deduplication boundary.
+
+The preview executor supplies the killable-process, structural result
+validation, and live-revalidation hook of the stronger timeout contract. It
+does not by itself prove atomic publication, rollback, or exactly-once effects;
+the existing operation-dispatch outbox is partial evidence until a closed
+adapter contract satisfies the stronger requirements above.
 
 ### Local timeout and retry
 
