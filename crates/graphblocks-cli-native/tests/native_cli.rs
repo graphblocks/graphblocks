@@ -290,8 +290,15 @@ fn native_validate_returns_structured_diagnostics() {
     assert!(!report.ok);
     assert_eq!(report.graph_hash, None);
     assert_eq!(report.normalized, None);
-    assert_eq!(report.diagnostics[0].code, "GB0003");
-    assert_eq!(report.diagnostics[0].severity, Severity::Error);
+    assert_eq!(
+        report
+            .diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.severity == Severity::Error)
+            .map(|diagnostic| diagnostic.code.as_str())
+            .collect::<Vec<_>>(),
+        vec!["GB0014", "GB0003"]
+    );
 }
 
 #[test]
