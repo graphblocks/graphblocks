@@ -53,14 +53,21 @@ preparing the first 1.0 release candidate.
   the runtime upgrade contract. This preserves at-least-once semantics and does
   not resolve an ambiguous provider send or establish an exactly-once effect
   claim.
-- Added separate closed provider-effect intent, repository run-authority,
-  deployment capability, fenced send-attempt, reconciliation-evidence, and
-  fail-closed state-machine contracts. Send entry now requires an opaque
-  admission from a deployment-owned capability verifier and repository-owned
-  run and claim authorities; the admission fixes the next claim identity and
-  must be atomically consumed once. Admission and evidence verification resolve
-  the exact capability-bound verifier through a deployment-owned registry, so a
-  caller cannot substitute a verifier that merely copies the admitted identity.
+- Added separate closed provider-effect intent, live run-authority, durable
+  origin-transfer, deployment capability, fenced send-attempt,
+  reconciliation-evidence, and fail-closed state-machine contracts. Send entry
+  now requires an opaque admission with no supported authority-rehydration
+  format from a deployment-owned capability verifier and structurally distinct
+  repository-owned transferred-origin and claim authorities. The transfer
+  content-binds the exact immutable intent and a self-consistent live-run
+  snapshot. The admission fixes the next claim identity and must be atomically
+  consumed once into a repository-timed attempt plus a serializable,
+  send-authority-free receipt that revalidates the full claim interval.
+  Restored intent, capability, transfer, attempt, receipt, and evidence records
+  are exact-decoded again at their authority boundary. Admission and evidence
+  verification resolve the exact capability-bound verifier through a
+  deployment-owned registry, so a caller cannot substitute a verifier that
+  merely copies the admitted identity.
   Response ambiguity remains quarantined until canonical provider evidence is
   authenticated and the repository confirms the exact attempt is still active.
   Prior-attempt evidence cannot settle a retry, and only an unchanged intent can

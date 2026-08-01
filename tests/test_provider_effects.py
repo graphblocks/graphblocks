@@ -1,14 +1,17 @@
 from __future__ import annotations
 
+import pickle
 from copy import deepcopy
-from dataclasses import replace
+from dataclasses import fields, replace
 
 import pytest
 
 from graphblocks.canonical import canonical_dumps, canonical_hash
 from graphblocks.provider_effects import (
     PROVIDER_CAPABILITY_SNAPSHOT_FORMAT_VERSION,
+    PROVIDER_EFFECT_ADMISSION_RECEIPT_FORMAT_VERSION,
     PROVIDER_EFFECT_INTENT_FORMAT_VERSION,
+    PROVIDER_EFFECT_ORIGIN_TRANSFER_FORMAT_VERSION,
     PROVIDER_EFFECT_SEND_ATTEMPT_FORMAT_VERSION,
     PROVIDER_RECONCILIATION_EVIDENCE_FORMAT_VERSION,
     PROVIDER_RUN_AUTHORITY_SNAPSHOT_FORMAT_VERSION,
@@ -17,6 +20,7 @@ from graphblocks.provider_effects import (
     ProviderCapabilitySnapshot,
     ProviderDeduplication,
     ProviderEffectAdmission,
+    ProviderEffectAdmissionReceipt,
     ProviderEffectAdmissionError,
     ProviderEffectContractError,
     ProviderEffectDecodeError,
@@ -24,6 +28,8 @@ from graphblocks.provider_effects import (
     ProviderEffectIdentityConflictError,
     ProviderEffectIntent,
     ProviderEffectKind,
+    ProviderEffectOriginTransfer,
+    ProviderEffectOriginAuthorityVerifier,
     ProviderEffectSendAttempt,
     ProviderEffectState,
     ProviderEffectStateConflictError,
@@ -33,7 +39,6 @@ from graphblocks.provider_effects import (
     ProviderReconciliationOutcome,
     ProviderReconciliationVerifierAuthority,
     ProviderRunAuthoritySnapshot,
-    ProviderRunAuthorityVerifier,
     ProviderStatusLookup,
     admit_provider_effect_intent,
     apply_provider_reconciliation_evidence,
@@ -60,6 +65,32 @@ class _StringSubclass(str):
 
 class _IntegerSubclass(int):
     pass
+
+
+class _AllReconciliationMethods(frozenset[ProviderReconciliationMethod]):
+    def __contains__(self, value: object) -> bool:
+        del value
+        return True
+
+
+class _EqualStatusLookupMethod:
+    value = ProviderReconciliationMethod.STATUS_LOOKUP.value
+
+    def __eq__(self, other: object) -> bool:
+        return other is ProviderReconciliationMethod.STATUS_LOOKUP
+
+    def __hash__(self) -> int:
+        return hash(ProviderReconciliationMethod.STATUS_LOOKUP)
+
+
+class _UnknownWireNotCommittedOutcome:
+    value = ProviderReconciliationOutcome.UNKNOWN.value
+
+    def __eq__(self, other: object) -> bool:
+        return other is ProviderReconciliationOutcome.NOT_COMMITTED
+
+    def __hash__(self) -> int:
+        return hash(ProviderReconciliationOutcome.NOT_COMMITTED)
 
 
 def _capability(
@@ -126,6 +157,14 @@ def _intent(
     )
 
 
+def _origin_transfer(intent: ProviderEffectIntent) -> ProviderEffectOriginTransfer:
+    return ProviderEffectOriginTransfer.from_intent_and_run_authority(
+        intent=intent,
+        run_authority=_run_authority(),
+        repository_authority_digest=_DIGEST_B,
+    )
+
+
 class _CapabilityAuthority:
     authority_digest = _DIGEST_D
 
@@ -139,7 +178,46 @@ class _CapabilityAuthority:
 _CAPABILITY_AUTHORITY: ProviderCapabilityAuthorityVerifier = _CapabilityAuthority()
 
 
-class _RunAuthorityVerifier:
+class _OriginAuthorityVerifier:
+    authority_digest = _DIGEST_B
+
+    def __init__(
+        self,
+        *,
+        stored_transfer: ProviderEffectOriginTransfer,
+        accepts: bool = True,
+    ) -> None:
+        self.stored_transfer = stored_transfer
+        self.accepts = accepts
+
+    def verify_transferred_origin(
+        self,
+        *,
+        intent: ProviderEffectIntent,
+        origin_transfer: ProviderEffectOriginTransfer,
+        admitted_at_unix_ms: int,
+    ) -> bool:
+        return (
+            self.accepts
+            and origin_transfer == self.stored_transfer
+            and origin_transfer.intent_digest == intent.digest
+            and intent.origin_authority_digest == origin_transfer.run_authority_digest
+            and admitted_at_unix_ms >= intent.created_at_unix_ms
+        )
+
+
+def _origin_authority_verifier(
+    intent: ProviderEffectIntent,
+    *,
+    accepts: bool = True,
+) -> ProviderEffectOriginAuthorityVerifier:
+    return _OriginAuthorityVerifier(
+        stored_transfer=_origin_transfer(intent),
+        accepts=accepts,
+    )
+
+
+class _LiveOnlyRunAuthorityVerifier:
     authority_digest = _DIGEST_B
 
     def __init__(self, *, accepts: bool = True) -> None:
@@ -155,20 +233,29 @@ class _RunAuthorityVerifier:
         return (
             self.accepts
             and run_authority == _run_authority()
-            and intent.origin_authority_digest == run_authority.digest
             and admitted_at_unix_ms >= intent.created_at_unix_ms
         )
-
-
-_RUN_AUTHORITY_VERIFIER: ProviderRunAuthorityVerifier = _RunAuthorityVerifier()
 
 
 class _ClaimAuthority:
     authority_digest = _DIGEST_G
 
-    def __init__(self, *, accepts: bool = True) -> None:
+    def __init__(
+        self,
+        *,
+        accepts: bool = True,
+        send_started_at_unix_ms: int = 1_020,
+        consumed_at_unix_ms: int | None = None,
+    ) -> None:
         self.accepts = accepts
+        self.send_started_at_unix_ms = send_started_at_unix_ms
+        self.consumed_at_unix_ms = (
+            send_started_at_unix_ms
+            if consumed_at_unix_ms is None
+            else consumed_at_unix_ms
+        )
         self.consumed_admission_digests: set[str] = set()
+        self.active_admission_receipt_digest: str | None = None
         self.active_send_attempt_digest: str | None = None
         self.latest_send_attempt_digest: str | None = None
 
@@ -200,33 +287,50 @@ class _ClaimAuthority:
         self,
         *,
         admission: ProviderEffectAdmission,
-        send_attempt: ProviderEffectSendAttempt,
-    ) -> bool:
+        intent: ProviderEffectIntent,
+    ) -> tuple[ProviderEffectSendAttempt, ProviderEffectAdmissionReceipt] | None:
         if (
             not self.accepts
             or admission.digest in self.consumed_admission_digests
             or self.active_send_attempt_digest is not None
-            or send_attempt.admission_digest != admission.digest
-            or send_attempt.claim_authority_digest != self.authority_digest
+            or admission.intent_digest != intent.digest
         ):
-            return False
+            return None
+        send_attempt = ProviderEffectSendAttempt(
+            effect_id=intent.effect_id,
+            intent_digest=intent.digest,
+            capability_snapshot_digest=admission.capability_snapshot_digest,
+            admission_digest=admission.digest,
+            claim_authority_digest=self.authority_digest,
+            attempt_id=admission.send_attempt_id,
+            claim_owner_id=admission.claim_owner_id,
+            claim_generation=admission.claim_generation,
+            claim_fencing_token=admission.claim_fencing_token,
+            started_at_unix_ms=self.send_started_at_unix_ms,
+        )
+        receipt = ProviderEffectAdmissionReceipt.from_consumed(
+            admission,
+            send_attempt,
+            consumed_at_unix_ms=self.consumed_at_unix_ms,
+        )
         self.consumed_admission_digests.add(admission.digest)
+        self.active_admission_receipt_digest = receipt.digest
         self.active_send_attempt_digest = send_attempt.digest
         self.latest_send_attempt_digest = send_attempt.digest
-        return True
+        return send_attempt, receipt
 
     def verify_active_send(
         self,
         *,
         current: ProviderEffectState,
-        admission: ProviderEffectAdmission,
+        admission_receipt: ProviderEffectAdmissionReceipt,
         send_attempt: ProviderEffectSendAttempt,
     ) -> bool:
-        del admission
         return (
             self.accepts
             and current
             in {ProviderEffectState.SEND_STARTED, ProviderEffectState.RECONCILING}
+            and self.active_admission_receipt_digest == admission_receipt.digest
             and self.active_send_attempt_digest == send_attempt.digest
         )
 
@@ -235,18 +339,23 @@ class _ClaimAuthority:
         *,
         current: ProviderEffectState,
         next_state: ProviderEffectState,
-        admission: ProviderEffectAdmission,
+        admission_receipt: ProviderEffectAdmissionReceipt,
         send_attempt: ProviderEffectSendAttempt,
-        evidence_digest: str,
+        evidence: ProviderReconciliationEvidence,
     ) -> bool:
-        del current, admission, evidence_digest
-        if not self.accepts or self.active_send_attempt_digest != send_attempt.digest:
+        del current, evidence
+        if (
+            not self.accepts
+            or self.active_admission_receipt_digest != admission_receipt.digest
+            or self.active_send_attempt_digest != send_attempt.digest
+        ):
             return False
         if next_state in {
             ProviderEffectState.CONFIRMED_COMMITTED,
             ProviderEffectState.CONFIRMED_NOT_COMMITTED,
             ProviderEffectState.CONFIRMED_CANCELLED,
         }:
+            self.active_admission_receipt_digest = None
             self.active_send_attempt_digest = None
         return True
 
@@ -266,10 +375,10 @@ def _admission(
     return admit_provider_effect_intent(
         intent,
         capability,
-        _run_authority(),
+        _origin_transfer(intent),
         capability_authority=_CAPABILITY_AUTHORITY,
         verifier_authority=active_verifier_authority,
-        run_authority_verifier=_RUN_AUTHORITY_VERIFIER,
+        origin_authority_verifier=_origin_authority_verifier(intent),
         claim_authority=active_claim_authority,
         send_attempt_id=f"send-attempt-{retry_offset + 1}",
         claim_owner_id=f"dispatcher-{retry_offset + 1}",
@@ -287,7 +396,12 @@ def _send_attempt(
     *,
     previous_send_attempt: ProviderEffectSendAttempt | None = None,
     claim_authority: _ClaimAuthority | None = None,
-) -> tuple[ProviderEffectAdmission, ProviderEffectSendAttempt, _ClaimAuthority]:
+) -> tuple[
+    ProviderEffectAdmission,
+    ProviderEffectAdmissionReceipt,
+    ProviderEffectSendAttempt,
+    _ClaimAuthority,
+]:
     active_claim_authority = claim_authority or _ClaimAuthority()
     retry_offset = 0 if previous_send_attempt is None else 1
     admission = _admission(
@@ -297,17 +411,18 @@ def _send_attempt(
         admitted_at_unix_ms=1_010 + (retry_offset * 100),
         claim_authority=active_claim_authority,
     )
-    state, attempt = begin_provider_effect_send(
+    active_claim_authority.send_started_at_unix_ms = 1_020 + (retry_offset * 100)
+    active_claim_authority.consumed_at_unix_ms = 1_020 + (retry_offset * 100)
+    state, attempt, admission_receipt = begin_provider_effect_send(
         ProviderEffectState.CLAIMED,
         intent,
         capability,
         admission,
         active_claim_authority,
-        started_at_unix_ms=1_020 + (retry_offset * 100),
         previous_send_attempt=previous_send_attempt,
     )
     assert state is ProviderEffectState.SEND_STARTED
-    return admission, attempt, active_claim_authority
+    return admission, admission_receipt, attempt, active_claim_authority
 
 
 class _EvidenceVerifier:
@@ -397,7 +512,7 @@ def _evidence(
     observed_at_unix_ms: int = 1_100,
 ) -> ProviderReconciliationEvidence:
     if send_attempt is None:
-        _, send_attempt, _ = _send_attempt(intent, capability)
+        _, _, send_attempt, _ = _send_attempt(intent, capability)
     provider_evidence = {
         "adapterReleaseDigest": capability.adapter_release_digest,
         "effectId": intent.effect_id,
@@ -431,27 +546,48 @@ def test_provider_effect_contracts_are_closed_versioned_and_content_bound() -> N
     )
     run_authority = _run_authority()
     intent = _intent(capability)
-    admission, send_attempt, _ = _send_attempt(intent, capability)
+    origin_transfer = _origin_transfer(intent)
+    admission, admission_receipt, send_attempt, _ = _send_attempt(
+        intent,
+        capability,
+    )
     evidence = _evidence(intent, capability, send_attempt=send_attempt)
 
     assert capability.format_version == PROVIDER_CAPABILITY_SNAPSHOT_FORMAT_VERSION
     assert (
         run_authority.format_version == PROVIDER_RUN_AUTHORITY_SNAPSHOT_FORMAT_VERSION
     )
+    assert (
+        origin_transfer.format_version == PROVIDER_EFFECT_ORIGIN_TRANSFER_FORMAT_VERSION
+    )
     assert intent.format_version == PROVIDER_EFFECT_INTENT_FORMAT_VERSION
+    assert (
+        admission_receipt.format_version
+        == PROVIDER_EFFECT_ADMISSION_RECEIPT_FORMAT_VERSION
+    )
     assert send_attempt.format_version == PROVIDER_EFFECT_SEND_ATTEMPT_FORMAT_VERSION
     assert evidence.format_version == PROVIDER_RECONCILIATION_EVIDENCE_FORMAT_VERSION
     assert ProviderCapabilitySnapshot.from_wire(capability.to_wire()) == capability
     assert (
         ProviderRunAuthoritySnapshot.from_wire(run_authority.to_wire()) == run_authority
     )
+    assert (
+        ProviderEffectOriginTransfer.from_wire(origin_transfer.to_wire())
+        == origin_transfer
+    )
     assert ProviderEffectIntent.from_wire(intent.to_wire()) == intent
+    assert (
+        ProviderEffectAdmissionReceipt.from_wire(admission_receipt.to_wire())
+        == admission_receipt
+    )
     assert ProviderEffectSendAttempt.from_wire(send_attempt.to_wire()) == send_attempt
     assert ProviderReconciliationEvidence.from_wire(evidence.to_wire()) == evidence
     assert capability.digest == canonical_hash(capability.to_wire())
     assert run_authority.digest == canonical_hash(run_authority.to_wire())
+    assert origin_transfer.digest == canonical_hash(origin_transfer.to_wire())
     assert intent.digest == canonical_hash(intent.to_wire())
-    assert admission.digest == canonical_hash(admission.to_wire())
+    assert admission.digest == admission_receipt.admission_digest
+    assert admission_receipt.digest == canonical_hash(admission_receipt.to_wire())
     assert send_attempt.digest == canonical_hash(send_attempt.to_wire())
     assert evidence.digest == canonical_hash(evidence.to_wire())
 
@@ -474,11 +610,228 @@ def test_provider_effect_contracts_reject_primitive_subclasses() -> None:
         replace(evidence, observed_at_unix_ms=_IntegerSubclass(1_100))
 
 
+def test_provider_effect_receipt_cannot_rebind_its_consumed_admission() -> None:
+    capability = _capability(
+        status_lookup=ProviderStatusLookup.DEFINITIVE_BY_IDEMPOTENCY_KEY
+    )
+    intent = _intent(capability)
+    _, admission_receipt, _, _ = _send_attempt(intent, capability)
+
+    with pytest.raises(ProviderEffectContractError):
+        replace(admission_receipt, claim_owner_id="forged-dispatcher")
+
+    forged_wire = admission_receipt.to_wire()
+    forged_wire["claimOwnerId"] = "forged-dispatcher"
+    with pytest.raises(ProviderEffectDecodeError):
+        ProviderEffectAdmissionReceipt.from_wire(forged_wire)
+
+
+def test_provider_effect_admission_has_no_supported_serialized_form() -> None:
+    capability = _capability(
+        status_lookup=ProviderStatusLookup.DEFINITIVE_BY_IDEMPOTENCY_KEY
+    )
+    admission = _admission(_intent(capability), capability)
+
+    assert not hasattr(admission, "to_wire")
+    with pytest.raises(AttributeError, match="immutable"):
+        setattr(admission, "intent_digest", _DIGEST_A)
+    with pytest.raises(TypeError, match="cannot be serialized"):
+        pickle.dumps(admission)
+    restored = object.__new__(ProviderEffectAdmission)
+    with pytest.raises(TypeError, match="cannot be restored"):
+        restored.__setstate__(())
+
+
+@pytest.mark.parametrize(
+    ("send_started_at_unix_ms", "consumed_at_unix_ms"),
+    [
+        (1_009, 1_009),
+        (1_110, 1_110),
+        (1_020, 1_019),
+    ],
+)
+def test_provider_effect_send_rejects_repository_times_outside_claim(
+    send_started_at_unix_ms: int,
+    consumed_at_unix_ms: int,
+) -> None:
+    capability = _capability(
+        status_lookup=ProviderStatusLookup.DEFINITIVE_BY_IDEMPOTENCY_KEY
+    )
+    intent = _intent(capability)
+    claim_authority = _ClaimAuthority(
+        send_started_at_unix_ms=send_started_at_unix_ms,
+        consumed_at_unix_ms=consumed_at_unix_ms,
+    )
+    admission = _admission(
+        intent,
+        capability,
+        claim_authority=claim_authority,
+    )
+
+    with pytest.raises(ProviderEffectAdmissionError):
+        begin_provider_effect_send(
+            ProviderEffectState.CLAIMED,
+            intent,
+            capability,
+            admission,
+            claim_authority,
+        )
+
+
+def test_provider_effect_receipt_revalidates_the_complete_send_interval() -> None:
+    capability = _capability(
+        status_lookup=ProviderStatusLookup.DEFINITIVE_BY_IDEMPOTENCY_KEY
+    )
+    intent = _intent(capability)
+    _, admission_receipt, _, _ = _send_attempt(intent, capability)
+
+    with pytest.raises(ProviderEffectContractError):
+        replace(
+            admission_receipt,
+            send_started_at_unix_ms=admission_receipt.consumed_at_unix_ms + 1,
+        )
+
+    forged_wire = admission_receipt.to_wire()
+    forged_wire["sendStartedAtUnixMs"] = admission_receipt.consumed_at_unix_ms + 1
+    with pytest.raises(ProviderEffectDecodeError):
+        ProviderEffectAdmissionReceipt.from_wire(forged_wire)
+
+
+def test_provider_effect_send_revalidates_restored_repository_receipt() -> None:
+    class _InvalidReceiptClaimAuthority(_ClaimAuthority):
+        def claim_send(
+            self,
+            *,
+            admission: ProviderEffectAdmission,
+            intent: ProviderEffectIntent,
+        ) -> tuple[ProviderEffectSendAttempt, ProviderEffectAdmissionReceipt] | None:
+            claimed_send = super().claim_send(
+                admission=admission,
+                intent=intent,
+            )
+            assert claimed_send is not None
+            send_attempt, receipt = claimed_send
+            restored = object.__new__(ProviderEffectAdmissionReceipt)
+            for field in fields(receipt):
+                object.__setattr__(restored, field.name, getattr(receipt, field.name))
+            object.__setattr__(
+                restored,
+                "consumed_at_unix_ms",
+                receipt.claim_expires_at_unix_ms,
+            )
+            return send_attempt, restored
+
+    capability = _capability(
+        status_lookup=ProviderStatusLookup.DEFINITIVE_BY_IDEMPOTENCY_KEY
+    )
+    intent = _intent(capability)
+    claim_authority = _InvalidReceiptClaimAuthority()
+    admission = _admission(
+        intent,
+        capability,
+        claim_authority=claim_authority,
+    )
+
+    with pytest.raises(ProviderEffectAdmissionError):
+        begin_provider_effect_send(
+            ProviderEffectState.CLAIMED,
+            intent,
+            capability,
+            admission,
+            claim_authority,
+        )
+
+
+def test_provider_effect_send_revalidates_restored_repository_attempt() -> None:
+    class _InvalidAttemptClaimAuthority(_ClaimAuthority):
+        def claim_send(
+            self,
+            *,
+            admission: ProviderEffectAdmission,
+            intent: ProviderEffectIntent,
+        ) -> tuple[ProviderEffectSendAttempt, ProviderEffectAdmissionReceipt] | None:
+            claimed_send = super().claim_send(
+                admission=admission,
+                intent=intent,
+            )
+            assert claimed_send is not None
+            send_attempt, _ = claimed_send
+            object.__setattr__(
+                send_attempt,
+                "format_version",
+                "graphblocks.provider-effect-send-attempt.v999",
+            )
+            receipt = ProviderEffectAdmissionReceipt.from_consumed(
+                admission,
+                send_attempt,
+                consumed_at_unix_ms=self.consumed_at_unix_ms,
+            )
+            return send_attempt, receipt
+
+    capability = _capability(
+        status_lookup=ProviderStatusLookup.DEFINITIVE_BY_IDEMPOTENCY_KEY
+    )
+    intent = _intent(capability)
+    claim_authority = _InvalidAttemptClaimAuthority()
+    admission = _admission(
+        intent,
+        capability,
+        claim_authority=claim_authority,
+    )
+
+    with pytest.raises(ProviderEffectAdmissionError):
+        begin_provider_effect_send(
+            ProviderEffectState.CLAIMED,
+            intent,
+            capability,
+            admission,
+            claim_authority,
+        )
+
+
+def test_provider_effect_send_rejects_behavioral_receipt_collections() -> None:
+    class _BehavioralReceiptClaimAuthority(_ClaimAuthority):
+        def claim_send(
+            self,
+            *,
+            admission: ProviderEffectAdmission,
+            intent: ProviderEffectIntent,
+        ) -> tuple[ProviderEffectSendAttempt, ProviderEffectAdmissionReceipt] | None:
+            claimed_send = super().claim_send(
+                admission=admission,
+                intent=intent,
+            )
+            assert claimed_send is not None
+            send_attempt, receipt = claimed_send
+            object.__setattr__(
+                receipt,
+                "applicable_methods",
+                _AllReconciliationMethods(receipt.applicable_methods),
+            )
+            return send_attempt, receipt
+
+    capability = _capability(
+        status_lookup=ProviderStatusLookup.DEFINITIVE_BY_IDEMPOTENCY_KEY
+    )
+    intent = _intent(capability)
+    claim_authority = _BehavioralReceiptClaimAuthority()
+    with pytest.raises(ProviderEffectAdmissionError):
+        _send_attempt(
+            intent,
+            capability,
+            claim_authority=claim_authority,
+        )
+
+
 @pytest.mark.parametrize(
     ("decoder", "wire"),
     [
         (ProviderCapabilitySnapshot.from_wire, _capability().to_wire()),
         (ProviderRunAuthoritySnapshot.from_wire, _run_authority().to_wire()),
+        (
+            ProviderEffectOriginTransfer.from_wire,
+            _origin_transfer(_intent(_capability())).to_wire(),
+        ),
         (
             ProviderEffectIntent.from_wire,
             _intent(
@@ -486,6 +839,19 @@ def test_provider_effect_contracts_reject_primitive_subclasses() -> None:
                     deduplication=(ProviderDeduplication.ATOMIC_BY_IDEMPOTENCY_KEY)
                 )
             ).to_wire(),
+        ),
+        (
+            ProviderEffectAdmissionReceipt.from_wire,
+            _send_attempt(
+                _intent(
+                    _capability(
+                        deduplication=(ProviderDeduplication.ATOMIC_BY_IDEMPOTENCY_KEY)
+                    )
+                ),
+                _capability(
+                    deduplication=(ProviderDeduplication.ATOMIC_BY_IDEMPOTENCY_KEY)
+                ),
+            )[1].to_wire(),
         ),
         (
             ProviderEffectSendAttempt.from_wire,
@@ -498,7 +864,7 @@ def test_provider_effect_contracts_reject_primitive_subclasses() -> None:
                 _capability(
                     deduplication=(ProviderDeduplication.ATOMIC_BY_IDEMPOTENCY_KEY)
                 ),
-            )[1].to_wire(),
+            )[2].to_wire(),
         ),
         (
             ProviderReconciliationEvidence.from_wire,
@@ -779,10 +1145,10 @@ def test_provider_effect_admission_requires_registry_authentic_capability() -> N
         admit_provider_effect_intent(
             intent,
             capability,
-            _run_authority(),
+            _origin_transfer(intent),
             capability_authority=_CapabilityAuthority(accepts=False),
             verifier_authority=_VERIFIER_AUTHORITY,
-            run_authority_verifier=_RUN_AUTHORITY_VERIFIER,
+            origin_authority_verifier=_origin_authority_verifier(intent),
             claim_authority=_ClaimAuthority(),
             send_attempt_id="send-attempt-1",
             claim_owner_id="dispatcher-1",
@@ -795,10 +1161,180 @@ def test_provider_effect_admission_requires_registry_authentic_capability() -> N
         admit_provider_effect_intent(
             intent,
             capability,
-            _run_authority(),
+            _origin_transfer(intent),
             capability_authority=_CAPABILITY_AUTHORITY,
             verifier_authority=_VERIFIER_AUTHORITY,
-            run_authority_verifier=_RunAuthorityVerifier(accepts=False),
+            origin_authority_verifier=_origin_authority_verifier(
+                intent,
+                accepts=False,
+            ),
+            claim_authority=_ClaimAuthority(),
+            send_attempt_id="send-attempt-1",
+            claim_owner_id="dispatcher-1",
+            claim_generation=10,
+            claim_fencing_token=20,
+            claim_expires_at_unix_ms=1_110,
+            admitted_at_unix_ms=1_010,
+        )
+
+
+def test_provider_effect_admission_rejects_live_run_verifier_substitution() -> None:
+    capability = _capability(
+        deduplication=ProviderDeduplication.ATOMIC_BY_IDEMPOTENCY_KEY
+    )
+    intent = _intent(capability)
+
+    with pytest.raises(ProviderEffectAdmissionError):
+        admit_provider_effect_intent(
+            intent,
+            capability,
+            _origin_transfer(intent),
+            capability_authority=_CAPABILITY_AUTHORITY,
+            verifier_authority=_VERIFIER_AUTHORITY,
+            origin_authority_verifier=_LiveOnlyRunAuthorityVerifier(),  # type: ignore[arg-type]
+            claim_authority=_ClaimAuthority(),
+            send_attempt_id="send-attempt-1",
+            claim_owner_id="dispatcher-1",
+            claim_generation=10,
+            claim_fencing_token=20,
+            claim_expires_at_unix_ms=1_110,
+            admitted_at_unix_ms=1_010,
+        )
+
+
+def test_provider_effect_admission_uses_transfer_after_live_lease_expires() -> None:
+    capability = _capability(
+        deduplication=ProviderDeduplication.ATOMIC_BY_IDEMPOTENCY_KEY
+    )
+    intent = _intent(capability)
+    live_verifier = _LiveOnlyRunAuthorityVerifier(accepts=False)
+
+    assert not live_verifier.verify(
+        intent=intent,
+        run_authority=_run_authority(),
+        admitted_at_unix_ms=1_010,
+    )
+    assert _admission(intent, capability).origin_transfer_digest == (
+        _origin_transfer(intent).digest
+    )
+
+
+def test_provider_effect_admission_rejects_transfer_for_a_different_intent() -> None:
+    capability = _capability(
+        deduplication=ProviderDeduplication.ATOMIC_BY_IDEMPOTENCY_KEY
+    )
+    intent = _intent(capability)
+    changed_request = {"amount": 999, "currency": "KRW"}
+    changed_intent = replace(
+        intent,
+        idempotency_key="tenant-a:run-7:changed-effect",
+        request_json=canonical_dumps(changed_request),
+        request_digest=canonical_hash(changed_request),
+    )
+
+    with pytest.raises(ProviderEffectAdmissionError):
+        admit_provider_effect_intent(
+            changed_intent,
+            capability,
+            _origin_transfer(intent),
+            capability_authority=_CAPABILITY_AUTHORITY,
+            verifier_authority=_VERIFIER_AUTHORITY,
+            origin_authority_verifier=_origin_authority_verifier(intent),
+            claim_authority=_ClaimAuthority(),
+            send_attempt_id="send-attempt-1",
+            claim_owner_id="dispatcher-1",
+            claim_generation=10,
+            claim_fencing_token=20,
+            claim_expires_at_unix_ms=1_110,
+            admitted_at_unix_ms=1_010,
+        )
+
+
+def test_provider_effect_admission_revalidates_restored_origin_transfer() -> None:
+    capability = _capability(
+        deduplication=ProviderDeduplication.ATOMIC_BY_IDEMPOTENCY_KEY
+    )
+    intent = _intent(capability)
+    origin_transfer = _origin_transfer(intent)
+    object.__setattr__(
+        origin_transfer,
+        "format_version",
+        "graphblocks.provider-effect-origin-transfer.v999",
+    )
+
+    with pytest.raises(ProviderEffectAdmissionError):
+        admit_provider_effect_intent(
+            intent,
+            capability,
+            origin_transfer,
+            capability_authority=_CAPABILITY_AUTHORITY,
+            verifier_authority=_VERIFIER_AUTHORITY,
+            origin_authority_verifier=_OriginAuthorityVerifier(
+                stored_transfer=origin_transfer
+            ),
+            claim_authority=_ClaimAuthority(),
+            send_attempt_id="send-attempt-1",
+            claim_owner_id="dispatcher-1",
+            claim_generation=10,
+            claim_fencing_token=20,
+            claim_expires_at_unix_ms=1_110,
+            admitted_at_unix_ms=1_010,
+        )
+
+
+def test_provider_effect_admission_revalidates_restored_intent() -> None:
+    capability = _capability(
+        deduplication=ProviderDeduplication.ATOMIC_BY_IDEMPOTENCY_KEY
+    )
+    intent = _intent(capability)
+    origin_transfer = _origin_transfer(intent)
+    object.__setattr__(intent, "request_digest", _DIGEST_A)
+    object.__setattr__(origin_transfer, "intent_digest", intent.digest)
+
+    with pytest.raises(ProviderEffectAdmissionError):
+        admit_provider_effect_intent(
+            intent,
+            capability,
+            origin_transfer,
+            capability_authority=_CAPABILITY_AUTHORITY,
+            verifier_authority=_VERIFIER_AUTHORITY,
+            origin_authority_verifier=_OriginAuthorityVerifier(
+                stored_transfer=origin_transfer
+            ),
+            claim_authority=_ClaimAuthority(),
+            send_attempt_id="send-attempt-1",
+            claim_owner_id="dispatcher-1",
+            claim_generation=10,
+            claim_fencing_token=20,
+            claim_expires_at_unix_ms=1_110,
+            admitted_at_unix_ms=1_010,
+        )
+
+
+def test_provider_effect_admission_revalidates_restored_capability() -> None:
+    capability = _capability(
+        deduplication=ProviderDeduplication.ATOMIC_BY_IDEMPOTENCY_KEY
+    )
+    intent = _intent(capability)
+    origin_transfer = _origin_transfer(intent)
+    object.__setattr__(
+        capability,
+        "format_version",
+        "graphblocks.provider-capability-snapshot.v999",
+    )
+    object.__setattr__(intent, "capability_snapshot_digest", capability.digest)
+    object.__setattr__(origin_transfer, "intent_digest", intent.digest)
+
+    with pytest.raises(ProviderEffectAdmissionError):
+        admit_provider_effect_intent(
+            intent,
+            capability,
+            origin_transfer,
+            capability_authority=_CAPABILITY_AUTHORITY,
+            verifier_authority=_VERIFIER_AUTHORITY,
+            origin_authority_verifier=_OriginAuthorityVerifier(
+                stored_transfer=origin_transfer
+            ),
             claim_authority=_ClaimAuthority(),
             send_attempt_id="send-attempt-1",
             claim_owner_id="dispatcher-1",
@@ -833,9 +1369,42 @@ def test_provider_effect_admission_requires_a_registered_verifier() -> None:
         ("lease_generation", 5),
         ("fencing_token", 6),
         ("checkpoint_digest", None),
+        ("run_authority_digest", _DIGEST_A),
     ],
 )
-def test_provider_effect_admission_binds_repository_run_authority(
+def test_provider_effect_origin_transfer_rejects_source_authority_mismatch(
+    field_name: str,
+    replacement: object,
+) -> None:
+    intent = _intent(
+        _capability(deduplication=ProviderDeduplication.ATOMIC_BY_IDEMPOTENCY_KEY)
+    )
+
+    with pytest.raises(ProviderEffectContractError):
+        replace(_origin_transfer(intent), **{field_name: replacement})
+
+
+def test_provider_effect_origin_transfer_decoder_rejects_source_mismatch() -> None:
+    intent = _intent(
+        _capability(deduplication=ProviderDeduplication.ATOMIC_BY_IDEMPOTENCY_KEY)
+    )
+    wire = _origin_transfer(intent).to_wire()
+    wire["tenantId"] = "tenant-b"
+
+    with pytest.raises(ProviderEffectDecodeError):
+        ProviderEffectOriginTransfer.from_wire(wire)
+
+
+@pytest.mark.parametrize(
+    ("field_name", "replacement"),
+    [
+        ("effect_id", "effect-8"),
+        ("intent_digest", _DIGEST_A),
+        ("repository_authority_digest", _DIGEST_C),
+        ("transferred_at_unix_ms", 1_001),
+    ],
+)
+def test_provider_effect_admission_binds_repository_origin_transfer(
     field_name: str,
     replacement: object,
 ) -> None:
@@ -848,10 +1417,10 @@ def test_provider_effect_admission_binds_repository_run_authority(
         admit_provider_effect_intent(
             intent,
             capability,
-            replace(_run_authority(), **{field_name: replacement}),
+            replace(_origin_transfer(intent), **{field_name: replacement}),
             capability_authority=_CAPABILITY_AUTHORITY,
             verifier_authority=_VERIFIER_AUTHORITY,
-            run_authority_verifier=_RUN_AUTHORITY_VERIFIER,
+            origin_authority_verifier=_origin_authority_verifier(intent),
             claim_authority=_ClaimAuthority(),
             send_attempt_id="send-attempt-1",
             claim_owner_id="dispatcher-1",
@@ -943,7 +1512,10 @@ def test_provider_effect_send_requires_admission_and_advances_attempt_fence() ->
         status_lookup=ProviderStatusLookup.DEFINITIVE_BY_IDEMPOTENCY_KEY
     )
     intent = _intent(capability)
-    admission_1, attempt_1, claim_authority = _send_attempt(intent, capability)
+    admission_1, receipt_1, attempt_1, claim_authority = _send_attempt(
+        intent,
+        capability,
+    )
 
     with pytest.raises(ProviderEffectStateConflictError):
         transition_provider_effect_state(
@@ -957,7 +1529,6 @@ def test_provider_effect_send_requires_admission_and_advances_attempt_fence() ->
             capability,
             admission_1,
             claim_authority,
-            started_at_unix_ms=1_021,
         )
     with pytest.raises(ProviderEffectAdmissionError):
         begin_provider_effect_send(
@@ -966,8 +1537,15 @@ def test_provider_effect_send_requires_admission_and_advances_attempt_fence() ->
             capability,
             admission_1,
             claim_authority,
-            started_at_unix_ms=1_120,
             previous_send_attempt=attempt_1,
+        )
+    with pytest.raises(TypeError):
+        begin_provider_effect_send(
+            ProviderEffectState.CLAIMED,
+            intent,
+            capability,
+            receipt_1,  # type: ignore[arg-type]
+            claim_authority,
         )
 
     terminal_evidence = _evidence(
@@ -981,7 +1559,7 @@ def test_provider_effect_send_requires_admission_and_advances_attempt_fence() ->
             ProviderEffectState.SEND_STARTED,
             intent,
             capability,
-            admission_1,
+            receipt_1,
             attempt_1,
             terminal_evidence,
             claim_authority,
@@ -997,17 +1575,19 @@ def test_provider_effect_send_requires_admission_and_advances_attempt_fence() ->
         admitted_at_unix_ms=1_110,
         claim_authority=claim_authority,
     )
-    state_2, attempt_2 = begin_provider_effect_send(
+    claim_authority.send_started_at_unix_ms = 1_120
+    claim_authority.consumed_at_unix_ms = 1_120
+    state_2, attempt_2, receipt_2 = begin_provider_effect_send(
         ProviderEffectState.CLAIMED,
         intent,
         capability,
         admission_2,
         claim_authority,
-        started_at_unix_ms=1_120,
         previous_send_attempt=attempt_1,
     )
 
     assert state_2 is ProviderEffectState.SEND_STARTED
+    assert receipt_2.send_attempt_digest == attempt_2.digest
     assert attempt_2.claim_generation > attempt_1.claim_generation
     assert attempt_2.claim_fencing_token > attempt_1.claim_fencing_token
     with pytest.raises(ProviderEffectAdmissionError):
@@ -1017,7 +1597,6 @@ def test_provider_effect_send_requires_admission_and_advances_attempt_fence() ->
             capability,
             admission_2,
             claim_authority,
-            started_at_unix_ms=1_120,
             previous_send_attempt=attempt_1,
         )
 
@@ -1110,6 +1689,111 @@ def test_provider_reconciliation_method_has_a_closed_outcome_set(
             _evidence(intent, capability, method=method, outcome=outcome)
 
 
+@pytest.mark.parametrize(
+    ("field_name", "replacement"),
+    [
+        (
+            "format_version",
+            "graphblocks.provider-reconciliation-evidence.v999",
+        ),
+        ("provider_evidence_digest", _DIGEST_A),
+    ],
+)
+def test_provider_reconciliation_revalidates_restored_evidence(
+    field_name: str,
+    replacement: str,
+) -> None:
+    capability = _capability(
+        status_lookup=ProviderStatusLookup.DEFINITIVE_BY_IDEMPOTENCY_KEY
+    )
+    intent = _intent(capability)
+    _, admission_receipt, send_attempt, claim_authority = _send_attempt(
+        intent,
+        capability,
+    )
+    evidence = _evidence(intent, capability, send_attempt=send_attempt)
+    object.__setattr__(evidence, field_name, replacement)
+
+    with pytest.raises(ProviderEffectEvidenceError):
+        apply_provider_reconciliation_evidence(
+            ProviderEffectState.SEND_STARTED,
+            intent,
+            capability,
+            admission_receipt,
+            send_attempt,
+            evidence,
+            claim_authority,
+            _VERIFIER_AUTHORITY,
+        )
+
+
+def test_provider_reconciliation_normalizes_behavioral_evidence_method() -> None:
+    capability = _capability(
+        status_lookup=(ProviderStatusLookup.DEFINITIVE_BY_PREBOUND_CORRELATION_ID)
+    )
+    intent = _intent(capability)
+    _, admission_receipt, send_attempt, claim_authority = _send_attempt(
+        intent,
+        capability,
+    )
+    evidence = _evidence(
+        intent,
+        capability,
+        send_attempt=send_attempt,
+        method=ProviderReconciliationMethod.STATUS_LOOKUP,
+        outcome=ProviderReconciliationOutcome.NOT_COMMITTED,
+        correlation_id=None,
+    )
+    object.__setattr__(evidence, "method", _EqualStatusLookupMethod())
+
+    with pytest.raises(ProviderEffectEvidenceError):
+        apply_provider_reconciliation_evidence(
+            ProviderEffectState.SEND_STARTED,
+            intent,
+            capability,
+            admission_receipt,
+            send_attempt,
+            evidence,
+            claim_authority,
+            _VERIFIER_AUTHORITY,
+        )
+
+
+def test_provider_reconciliation_rejects_behavioral_evidence_outcome() -> None:
+    capability = _capability(
+        status_lookup=ProviderStatusLookup.DEFINITIVE_BY_IDEMPOTENCY_KEY
+    )
+    intent = _intent(capability)
+    _, admission_receipt, send_attempt, claim_authority = _send_attempt(
+        intent,
+        capability,
+    )
+    evidence = _evidence(
+        intent,
+        capability,
+        send_attempt=send_attempt,
+        method=ProviderReconciliationMethod.STATUS_LOOKUP,
+        outcome=ProviderReconciliationOutcome.UNKNOWN,
+    )
+    object.__setattr__(
+        evidence,
+        "outcome",
+        _UnknownWireNotCommittedOutcome(),
+    )
+
+    with pytest.raises(ProviderEffectEvidenceError):
+        apply_provider_reconciliation_evidence(
+            ProviderEffectState.SEND_STARTED,
+            intent,
+            capability,
+            admission_receipt,
+            send_attempt,
+            evidence,
+            claim_authority,
+            _VERIFIER_AUTHORITY,
+        )
+
+
 def test_provider_reconciliation_evidence_binds_intent_capability_and_time() -> None:
     capability = _capability(
         deduplication=ProviderDeduplication.ATOMIC_BY_IDEMPOTENCY_KEY,
@@ -1117,18 +1801,32 @@ def test_provider_reconciliation_evidence_binds_intent_capability_and_time() -> 
         cancellation=ProviderCancellation.CONFIRMED_BY_IDEMPOTENCY_KEY,
     )
     intent = _intent(capability)
-    admission, send_attempt, claim_authority = _send_attempt(intent, capability)
+    _, admission_receipt, send_attempt, claim_authority = _send_attempt(
+        intent,
+        capability,
+    )
     evidence = _evidence(intent, capability, send_attempt=send_attempt)
     validate_provider_reconciliation_evidence(
         ProviderEffectState.SEND_STARTED,
         intent,
         capability,
-        admission,
+        admission_receipt,
         send_attempt,
         evidence,
         claim_authority,
         _VERIFIER_AUTHORITY,
     )
+    with pytest.raises(ProviderEffectEvidenceError):
+        validate_provider_reconciliation_evidence(
+            ProviderEffectState.SEND_STARTED,
+            intent,
+            capability,
+            replace(admission_receipt, send_attempt_digest=_DIGEST_A),
+            send_attempt,
+            evidence,
+            claim_authority,
+            _VERIFIER_AUTHORITY,
+        )
 
     mutations = [
         replace(evidence, effect_id="effect-8"),
@@ -1144,7 +1842,7 @@ def test_provider_reconciliation_evidence_binds_intent_capability_and_time() -> 
                 ProviderEffectState.SEND_STARTED,
                 intent,
                 capability,
-                admission,
+                admission_receipt,
                 send_attempt,
                 changed,
                 claim_authority,
@@ -1157,7 +1855,10 @@ def test_provider_reconciliation_requires_authenticated_content() -> None:
         status_lookup=ProviderStatusLookup.DEFINITIVE_BY_IDEMPOTENCY_KEY
     )
     intent = _intent(capability)
-    admission, send_attempt, claim_authority = _send_attempt(intent, capability)
+    _, admission_receipt, send_attempt, claim_authority = _send_attempt(
+        intent,
+        capability,
+    )
     evidence = _evidence(intent, capability, send_attempt=send_attempt)
 
     with pytest.raises(ProviderEffectContractError):
@@ -1180,7 +1881,7 @@ def test_provider_reconciliation_requires_authenticated_content() -> None:
             ProviderEffectState.SEND_STARTED,
             intent,
             capability,
-            admission,
+            admission_receipt,
             send_attempt,
             forged,
             claim_authority,
@@ -1191,7 +1892,7 @@ def test_provider_reconciliation_requires_authenticated_content() -> None:
             ProviderEffectState.SEND_STARTED,
             intent,
             capability,
-            admission,
+            admission_receipt,
             send_attempt,
             forged,
             claim_authority,
@@ -1203,7 +1904,7 @@ def test_provider_reconciliation_requires_authenticated_content() -> None:
             ProviderEffectState.SEND_STARTED,
             intent,
             capability,
-            admission,
+            admission_receipt,
             send_attempt,
             replace(evidence, verifier_id=alternate_verifier.verifier_id),
             claim_authority,
@@ -1214,7 +1915,7 @@ def test_provider_reconciliation_requires_authenticated_content() -> None:
             ProviderEffectState.SEND_STARTED,
             intent,
             capability,
-            admission,
+            admission_receipt,
             send_attempt,
             evidence,
             claim_authority,
@@ -1225,7 +1926,7 @@ def test_provider_reconciliation_requires_authenticated_content() -> None:
             ProviderEffectState.SEND_STARTED,
             intent,
             capability,
-            admission,
+            admission_receipt,
             send_attempt,
             replace(evidence, verifier_id="untrusted.verifier"),
             claim_authority,
@@ -1255,7 +1956,7 @@ def test_prior_terminal_evidence_cannot_settle_a_retried_send(
         cancellation=ProviderCancellation.CONFIRMED_BY_IDEMPOTENCY_KEY,
     )
     intent = _intent(capability)
-    admission_1, attempt_1, claim_authority = _send_attempt(intent, capability)
+    _, receipt_1, attempt_1, claim_authority = _send_attempt(intent, capability)
     evidence_1 = _evidence(
         intent,
         capability,
@@ -1267,7 +1968,7 @@ def test_prior_terminal_evidence_cannot_settle_a_retried_send(
         ProviderEffectState.SEND_STARTED,
         intent,
         capability,
-        admission_1,
+        receipt_1,
         attempt_1,
         evidence_1,
         claim_authority,
@@ -1278,7 +1979,7 @@ def test_prior_terminal_evidence_cannot_settle_a_retried_send(
         is ProviderEffectState.PENDING
     )
 
-    admission_2, attempt_2, _ = _send_attempt(
+    _, receipt_2, attempt_2, _ = _send_attempt(
         intent,
         capability,
         previous_send_attempt=attempt_1,
@@ -1289,7 +1990,7 @@ def test_prior_terminal_evidence_cannot_settle_a_retried_send(
             ProviderEffectState.SEND_STARTED,
             intent,
             capability,
-            admission_1,
+            receipt_1,
             attempt_1,
             evidence_1,
             claim_authority,
@@ -1300,7 +2001,7 @@ def test_prior_terminal_evidence_cannot_settle_a_retried_send(
             ProviderEffectState.SEND_STARTED,
             intent,
             capability,
-            admission_2,
+            receipt_2,
             attempt_2,
             evidence_1,
             claim_authority,
@@ -1320,7 +2021,7 @@ def test_prior_terminal_evidence_cannot_settle_a_retried_send(
             ProviderEffectState.SEND_STARTED,
             intent,
             capability,
-            admission_2,
+            receipt_2,
             attempt_2,
             evidence_before_attempt_2,
             claim_authority,
@@ -1333,7 +2034,10 @@ def test_provider_reconciliation_rejects_a_method_missing_from_the_snapshot() ->
         status_lookup=ProviderStatusLookup.DEFINITIVE_BY_IDEMPOTENCY_KEY
     )
     intent = _intent(capability)
-    admission, send_attempt, claim_authority = _send_attempt(intent, capability)
+    _, admission_receipt, send_attempt, claim_authority = _send_attempt(
+        intent,
+        capability,
+    )
     evidence = _evidence(
         intent,
         capability,
@@ -1347,7 +2051,7 @@ def test_provider_reconciliation_rejects_a_method_missing_from_the_snapshot() ->
             ProviderEffectState.SEND_STARTED,
             intent,
             capability,
-            admission,
+            admission_receipt,
             send_attempt,
             evidence,
             claim_authority,
@@ -1383,7 +2087,10 @@ def test_provider_reconciliation_requires_the_prebound_correlation_identity(
         cancellation=cancellation,
     )
     intent = _intent(capability)
-    admission, send_attempt, claim_authority = _send_attempt(intent, capability)
+    _, admission_receipt, send_attempt, claim_authority = _send_attempt(
+        intent,
+        capability,
+    )
     evidence = _evidence(
         intent,
         capability,
@@ -1398,7 +2105,7 @@ def test_provider_reconciliation_requires_the_prebound_correlation_identity(
             ProviderEffectState.SEND_STARTED,
             intent,
             capability,
-            admission,
+            admission_receipt,
             send_attempt,
             evidence,
             claim_authority,
@@ -1446,7 +2153,7 @@ def test_provider_evidence_controls_terminal_and_quarantine_transitions(
         ProviderEffectState.SEND_STARTED,
         ProviderEffectState.RECONCILING,
     ):
-        admission, send_attempt, claim_authority = _send_attempt(
+        _, admission_receipt, send_attempt, claim_authority = _send_attempt(
             intent,
             capability,
         )
@@ -1463,7 +2170,7 @@ def test_provider_evidence_controls_terminal_and_quarantine_transitions(
                 current,
                 intent,
                 capability,
-                admission,
+                admission_receipt,
                 send_attempt,
                 evidence,
                 claim_authority,
@@ -1478,7 +2185,10 @@ def test_unknown_provider_evidence_cannot_escape_quarantine() -> None:
         status_lookup=ProviderStatusLookup.DEFINITIVE_BY_IDEMPOTENCY_KEY
     )
     intent = _intent(capability)
-    admission, send_attempt, claim_authority = _send_attempt(intent, capability)
+    _, admission_receipt, send_attempt, claim_authority = _send_attempt(
+        intent,
+        capability,
+    )
     evidence = _evidence(
         intent,
         capability,
@@ -1491,7 +2201,7 @@ def test_unknown_provider_evidence_cannot_escape_quarantine() -> None:
             ProviderEffectState.RECONCILING,
             intent,
             capability,
-            admission,
+            admission_receipt,
             send_attempt,
             evidence,
             claim_authority,
@@ -1510,7 +2220,7 @@ def test_unknown_provider_evidence_cannot_escape_quarantine() -> None:
             ProviderEffectState.QUARANTINED_UNKNOWN,
             intent,
             capability,
-            admission,
+            admission_receipt,
             send_attempt,
             evidence,
             claim_authority,

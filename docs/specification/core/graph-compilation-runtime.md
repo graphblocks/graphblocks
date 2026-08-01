@@ -472,16 +472,30 @@ by that key or an already-bound correlation identifier, or confirmed
 cancellation by one of those identities. A correlation-based capability is
 not applicable when the correlation identifier was not bound before send.
 The intent's tenant, run, owner, state version, lease generation, fencing token,
-and checkpoint MUST also match the content digest of a repository-resolved
+and checkpoint MUST first match a repository-resolved
 `graphblocks.provider-run-authority-snapshot.v1`. Request-supplied authority
-values do not satisfy this comparison; a repository-owned verifier MUST also
-return exact true for that snapshot in the admission transaction. Successful
-validation issues an opaque admission bound to the intent, capability
-authority, run authority and its verifier, admission time, applicable methods,
-any prior send attempt, and the repository-issued next attempt identifier,
-claim owner, generation, fencing token, expiry, and claim-authority digest. The
-claim authority MUST return exact true for those values in the admission
-transaction.
+values do not satisfy this comparison. The accepted-run repository MUST verify
+that live run claim and atomically commit both the immutable provider-effect
+intent and a closed `graphblocks.provider-effect-origin-transfer.v1`. The
+transfer binds the exact immutable intent content digest, effect, tenant, run,
+owner, state version, lease generation, fencing token, checkpoint, source
+run-authority digest, repository-authority digest, and the same timestamp used
+for intent creation. Its copied source fields MUST reconstruct the exact
+run-authority digest, and the intent's origin authority digest MUST equal that
+source digest. Later send and retry admission MUST require the transfer's intent
+digest to equal the supplied intent's digest and verify the exact stored pair
+through the structurally distinct `verify_transferred_origin` authority
+operation. It MUST NOT require the original run lease to remain current. A
+live-run verifier that lacks that operation is not a transferred-origin
+verifier. Successful validation issues
+an opaque admission bound to the intent, capability authority, transferred
+origin authority and its verifier, admission time, applicable methods, any
+prior send attempt, and the repository-issued next attempt identifier, claim
+owner, generation, fencing token, expiry, and claim-authority digest. The
+admission has no supported authority-rehydration or persistence format. Its
+private canonical identity projection and inspectable in-memory fields do not
+convey send authority; repository one-shot consumption and fencing remain the
+authority boundary.
 
 The generic state transition API MUST NOT enter `send_started`. A send begins
 only through that admission and a closed
@@ -491,19 +505,31 @@ generation, fencing token, and repository-issued start time. After a terminally
 safe retry, the new attempt identifier MUST differ and both generation and
 fence MUST increase. An attempt that predates admission or omits the admitted
 prior-attempt digest MUST fail before provider I/O. Send entry MUST atomically
-consume the admission exactly once and install its attempt as repository-active;
-a stale, expired, or already-consumed admission MUST fail before provider I/O.
+consume the admission exactly once and return both the repository-timed attempt
+installed as active and a closed
+`graphblocks.provider-effect-admission-receipt.v1`. That serializable receipt
+retains the admission fields and digests, binds the installed attempt digest,
+records the repository-issued send and consumption times, and conveys no
+permission to begin another send. Rehydrating a receipt MUST revalidate
+`admitted <= send-started <= consumed < claim-expiry` and the attempt's start
+MUST equal the receipt's start. A stale, expired, or already-consumed admission
+MUST fail before provider I/O. Persistence MUST retain the receipt and attempt,
+not the send-capable admission. Both persisted records MUST pass their closed,
+versioned decoder and exact content revalidation before provider I/O or evidence
+application.
 
 Once sending starts, an uncertain result MUST enter `quarantined_unknown`, not
 the pending queue. Reconciliation moves it to `reconciling`; an unknown result
 returns it to quarantine, and optional manual review remains an unknown state.
 Only content-bound `graphblocks.provider-reconciliation-evidence.v1` matching
-the complete intent, capability, admission, and current send-attempt digests MAY
-establish
+the complete intent, capability, consumed-admission receipt, and current
+send-attempt digests MAY establish
 `confirmed_committed`, `confirmed_not_committed`, or `confirmed_cancelled`.
 It MUST retain canonical provider evidence and its matching digest, observation
 time no earlier than the current send start, and the identifier, release digest,
-and authority digest of a deployment-owned verifier. That verifier MUST return
+and authority digest of a deployment-owned verifier. Persisted evidence MUST
+pass its closed, versioned decoder and exact canonical body-digest revalidation
+before verification or terminal settlement. That verifier MUST return
 exact true after authenticating the provider evidence and its normalized
 method/outcome mapping. The evidence API MUST resolve the implementation again
 through the deployment-owned verifier authority and MUST NOT accept an
@@ -528,10 +554,13 @@ authority or evidence. A production profile still requires a separate durable
 provider-effect repository, real adapter capability and verifier-registry
 authorities, ambiguous-send reconciliation, kill/restart/fencing tests, and
 provider-side idempotency or status/cancellation evidence. Repository
-snapshots, claim fields, and verifier authorities MUST come from trusted service
-dependencies and MUST NOT be accepted from request data. Claim admission,
-one-shot consumption, and active attempt verification MUST be one repository
-transaction with the corresponding state change. The contracts alone
+snapshots, transfers, claim fields, and verifier authorities MUST come from
+trusted service dependencies and MUST NOT be accepted from request data. Claim
+admission, one-shot consumption, repository-time assignment, receipt creation,
+and active attempt installation MUST be one repository transaction with the
+corresponding state change. Every closed record loaded from persistence MUST
+pass its exact decoder again at the admission, send, or evidence boundary; an
+in-memory type check alone is not rehydration evidence. The contracts alone
 establish neither safe delivery nor an exactly-once claim.
 
 The preview executor supplies the killable-process, structural result

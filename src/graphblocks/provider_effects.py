@@ -8,9 +8,9 @@ dependencies, never from request data.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, fields, is_dataclass
 from enum import StrEnum
-from typing import Protocol
+from typing import NoReturn, Protocol, SupportsIndex
 
 from .canonical import canonical_dumps, canonical_hash, canonical_loads
 
@@ -19,11 +19,17 @@ PROVIDER_CAPABILITY_SNAPSHOT_FORMAT_VERSION = (
     "graphblocks.provider-capability-snapshot.v1"
 )
 PROVIDER_EFFECT_INTENT_FORMAT_VERSION = "graphblocks.provider-effect-intent.v1"
+PROVIDER_EFFECT_ADMISSION_RECEIPT_FORMAT_VERSION = (
+    "graphblocks.provider-effect-admission-receipt.v1"
+)
 PROVIDER_EFFECT_SEND_ATTEMPT_FORMAT_VERSION = (
     "graphblocks.provider-effect-send-attempt.v1"
 )
 PROVIDER_RUN_AUTHORITY_SNAPSHOT_FORMAT_VERSION = (
     "graphblocks.provider-run-authority-snapshot.v1"
+)
+PROVIDER_EFFECT_ORIGIN_TRANSFER_FORMAT_VERSION = (
+    "graphblocks.provider-effect-origin-transfer.v1"
 )
 PROVIDER_RECONCILIATION_EVIDENCE_FORMAT_VERSION = (
     "graphblocks.provider-reconciliation-evidence.v1"
@@ -56,6 +62,23 @@ _RUN_AUTHORITY_SNAPSHOT_FIELDS = frozenset(
         "runId",
         "runStateVersion",
         "tenantId",
+    }
+)
+_ORIGIN_TRANSFER_FIELDS = frozenset(
+    {
+        "checkpointDigest",
+        "effectId",
+        "fencingToken",
+        "formatVersion",
+        "intentDigest",
+        "leaseGeneration",
+        "ownerPrincipalId",
+        "repositoryAuthorityDigest",
+        "runAuthorityDigest",
+        "runId",
+        "runStateVersion",
+        "tenantId",
+        "transferredAtUnixMs",
     }
 )
 _INTENT_FIELDS = frozenset(
@@ -93,6 +116,30 @@ _INTENT_PROVIDER_FIELDS = frozenset(
     }
 )
 _INTENT_REQUEST_FIELDS = frozenset({"canonicalJson", "digest"})
+_ADMISSION_RECEIPT_FIELDS = frozenset(
+    {
+        "admissionDigest",
+        "admittedAtUnixMs",
+        "applicableMethods",
+        "capabilityAuthorityDigest",
+        "capabilitySnapshotDigest",
+        "claimAuthorityDigest",
+        "claimExpiresAtUnixMs",
+        "claimFencingToken",
+        "claimGeneration",
+        "claimOwnerId",
+        "consumedAtUnixMs",
+        "effectId",
+        "formatVersion",
+        "intentDigest",
+        "originAuthorityVerifierDigest",
+        "previousSendAttemptDigest",
+        "originTransferDigest",
+        "sendAttemptDigest",
+        "sendAttemptId",
+        "sendStartedAtUnixMs",
+    }
+)
 _SEND_ATTEMPT_FIELDS = frozenset(
     {
         "admissionDigest",
@@ -391,6 +438,56 @@ def _require_closed_object(
     return value
 
 
+def _matches_exact_closed_value(value: object, decoded: object) -> bool:
+    if type(value) is not type(decoded):
+        return False
+    if is_dataclass(value):
+        return all(
+            _matches_exact_closed_value(
+                getattr(value, field.name),
+                getattr(decoded, field.name),
+            )
+            for field in fields(value)
+        )
+    if type(value) in {list, tuple}:
+        assert isinstance(value, (list, tuple))
+        assert isinstance(decoded, (list, tuple))
+        original_items = list(value)
+        decoded_items = list(decoded)
+        return len(original_items) == len(decoded_items) and all(
+            _matches_exact_closed_value(original, normalized)
+            for original, normalized in zip(original_items, decoded_items, strict=True)
+        )
+    if type(value) in {frozenset, set}:
+        assert isinstance(value, (frozenset, set))
+        assert isinstance(decoded, (frozenset, set))
+        remaining = list(decoded)
+        for item in value:
+            for index, candidate in enumerate(remaining):
+                if _matches_exact_closed_value(item, candidate):
+                    del remaining[index]
+                    break
+            else:
+                return False
+        return not remaining
+    if type(value) is dict:
+        assert isinstance(value, dict)
+        assert isinstance(decoded, dict)
+        remaining_items = list(decoded.items())
+        for key, item in value.items():
+            for index, (candidate_key, candidate_item) in enumerate(remaining_items):
+                if _matches_exact_closed_value(
+                    key,
+                    candidate_key,
+                ) and _matches_exact_closed_value(item, candidate_item):
+                    del remaining_items[index]
+                    break
+            else:
+                return False
+        return not remaining_items
+    return value == decoded
+
+
 @dataclass(frozen=True, slots=True)
 class ProviderRunAuthoritySnapshot:
     tenant_id: str
@@ -514,6 +611,257 @@ class ProviderRunAuthoritySnapshot:
         except (TypeError, ValueError) as error:
             raise ProviderEffectDecodeError(
                 "provider run authority snapshot is invalid"
+            ) from error
+
+
+@dataclass(frozen=True, slots=True)
+class ProviderEffectOriginTransfer:
+    effect_id: str
+    intent_digest: str
+    tenant_id: str
+    run_id: str
+    owner_principal_id: str
+    run_state_version: int
+    lease_generation: int
+    fencing_token: int
+    run_authority_digest: str
+    repository_authority_digest: str
+    transferred_at_unix_ms: int
+    checkpoint_digest: str | None = None
+    format_version: str = PROVIDER_EFFECT_ORIGIN_TRANSFER_FORMAT_VERSION
+
+    def __post_init__(self) -> None:
+        owner = "provider effect origin transfer"
+        for field_name in (
+            "effect_id",
+            "tenant_id",
+            "run_id",
+            "owner_principal_id",
+        ):
+            object.__setattr__(
+                self,
+                field_name,
+                _validate_exact_string(owner, field_name, getattr(self, field_name)),
+            )
+        object.__setattr__(
+            self,
+            "run_state_version",
+            _validate_u64(owner, "run_state_version", self.run_state_version),
+        )
+        for field_name in ("lease_generation", "fencing_token"):
+            object.__setattr__(
+                self,
+                field_name,
+                _validate_u64(
+                    owner,
+                    field_name,
+                    getattr(self, field_name),
+                    positive=True,
+                ),
+            )
+        for field_name in (
+            "intent_digest",
+            "run_authority_digest",
+            "repository_authority_digest",
+        ):
+            object.__setattr__(
+                self,
+                field_name,
+                _validate_digest(owner, field_name, getattr(self, field_name)),
+            )
+        object.__setattr__(
+            self,
+            "transferred_at_unix_ms",
+            _validate_u64(
+                owner,
+                "transferred_at_unix_ms",
+                self.transferred_at_unix_ms,
+            ),
+        )
+        object.__setattr__(
+            self,
+            "checkpoint_digest",
+            _validate_optional_digest(
+                owner,
+                "checkpoint_digest",
+                self.checkpoint_digest,
+            ),
+        )
+        format_version = _validate_exact_string(
+            owner,
+            "format_version",
+            self.format_version,
+        )
+        object.__setattr__(self, "format_version", format_version)
+        if format_version != PROVIDER_EFFECT_ORIGIN_TRANSFER_FORMAT_VERSION:
+            raise ProviderEffectContractError(
+                f"{owner} format_version is not supported"
+            )
+        source_authority = ProviderRunAuthoritySnapshot(
+            tenant_id=self.tenant_id,
+            run_id=self.run_id,
+            owner_principal_id=self.owner_principal_id,
+            run_state_version=self.run_state_version,
+            lease_generation=self.lease_generation,
+            fencing_token=self.fencing_token,
+            checkpoint_digest=self.checkpoint_digest,
+        )
+        if source_authority.digest != self.run_authority_digest:
+            raise ProviderEffectContractError(
+                f"{owner} run_authority_digest does not match its source fields"
+            )
+
+    @classmethod
+    def from_intent_and_run_authority(
+        cls,
+        *,
+        intent: ProviderEffectIntent,
+        run_authority: ProviderRunAuthoritySnapshot,
+        repository_authority_digest: str,
+    ) -> ProviderEffectOriginTransfer:
+        """Create the record committed with an intent after live-run verification."""
+
+        if type(intent) is not ProviderEffectIntent:
+            raise TypeError(
+                "provider effect origin transfer intent must be ProviderEffectIntent"
+            )
+        if type(run_authority) is not ProviderRunAuthoritySnapshot:
+            raise TypeError(
+                "provider effect origin transfer authority must be "
+                "ProviderRunAuthoritySnapshot"
+            )
+        intent = _revalidate_provider_effect_intent(intent)
+        decoded_run_authority = ProviderRunAuthoritySnapshot.from_wire(
+            run_authority.to_wire()
+        )
+        if not _matches_exact_closed_value(run_authority, decoded_run_authority):
+            raise ProviderEffectContractError(
+                "provider effect run authority failed exact revalidation"
+            )
+        run_authority = decoded_run_authority
+        if (
+            intent.tenant_id != run_authority.tenant_id
+            or intent.run_id != run_authority.run_id
+            or intent.owner_principal_id != run_authority.owner_principal_id
+            or intent.origin_run_state_version != run_authority.run_state_version
+            or intent.origin_lease_generation != run_authority.lease_generation
+            or intent.origin_fencing_token != run_authority.fencing_token
+            or intent.origin_checkpoint_digest != run_authority.checkpoint_digest
+            or intent.origin_authority_digest != run_authority.digest
+        ):
+            raise ProviderEffectContractError(
+                "provider effect origin transfer intent does not match live run "
+                "authority"
+            )
+        return cls(
+            effect_id=intent.effect_id,
+            intent_digest=intent.digest,
+            tenant_id=run_authority.tenant_id,
+            run_id=run_authority.run_id,
+            owner_principal_id=run_authority.owner_principal_id,
+            run_state_version=run_authority.run_state_version,
+            lease_generation=run_authority.lease_generation,
+            fencing_token=run_authority.fencing_token,
+            checkpoint_digest=run_authority.checkpoint_digest,
+            run_authority_digest=run_authority.digest,
+            repository_authority_digest=repository_authority_digest,
+            transferred_at_unix_ms=intent.created_at_unix_ms,
+        )
+
+    @property
+    def digest(self) -> str:
+        return canonical_hash(self.to_wire())
+
+    def to_wire(self) -> dict[str, object]:
+        return {
+            "checkpointDigest": self.checkpoint_digest,
+            "effectId": self.effect_id,
+            "fencingToken": self.fencing_token,
+            "formatVersion": self.format_version,
+            "intentDigest": self.intent_digest,
+            "leaseGeneration": self.lease_generation,
+            "ownerPrincipalId": self.owner_principal_id,
+            "repositoryAuthorityDigest": self.repository_authority_digest,
+            "runAuthorityDigest": self.run_authority_digest,
+            "runId": self.run_id,
+            "runStateVersion": self.run_state_version,
+            "tenantId": self.tenant_id,
+            "transferredAtUnixMs": self.transferred_at_unix_ms,
+        }
+
+    @classmethod
+    def from_wire(cls, value: object) -> ProviderEffectOriginTransfer:
+        owner = "provider effect origin transfer"
+        payload = _require_closed_object(value, _ORIGIN_TRANSFER_FIELDS, owner)
+        try:
+            return cls(
+                effect_id=_validate_exact_string(
+                    owner,
+                    "effectId",
+                    payload["effectId"],
+                ),
+                intent_digest=_validate_digest(
+                    owner,
+                    "intentDigest",
+                    payload["intentDigest"],
+                ),
+                tenant_id=_validate_exact_string(
+                    owner,
+                    "tenantId",
+                    payload["tenantId"],
+                ),
+                run_id=_validate_exact_string(owner, "runId", payload["runId"]),
+                owner_principal_id=_validate_exact_string(
+                    owner,
+                    "ownerPrincipalId",
+                    payload["ownerPrincipalId"],
+                ),
+                run_state_version=_validate_u64(
+                    owner,
+                    "runStateVersion",
+                    payload["runStateVersion"],
+                ),
+                lease_generation=_validate_u64(
+                    owner,
+                    "leaseGeneration",
+                    payload["leaseGeneration"],
+                    positive=True,
+                ),
+                fencing_token=_validate_u64(
+                    owner,
+                    "fencingToken",
+                    payload["fencingToken"],
+                    positive=True,
+                ),
+                checkpoint_digest=_validate_optional_digest(
+                    owner,
+                    "checkpointDigest",
+                    payload["checkpointDigest"],
+                ),
+                run_authority_digest=_validate_digest(
+                    owner,
+                    "runAuthorityDigest",
+                    payload["runAuthorityDigest"],
+                ),
+                repository_authority_digest=_validate_digest(
+                    owner,
+                    "repositoryAuthorityDigest",
+                    payload["repositoryAuthorityDigest"],
+                ),
+                transferred_at_unix_ms=_validate_u64(
+                    owner,
+                    "transferredAtUnixMs",
+                    payload["transferredAtUnixMs"],
+                ),
+                format_version=_validate_exact_string(
+                    owner,
+                    "formatVersion",
+                    payload["formatVersion"],
+                ),
+            )
+        except (TypeError, ValueError) as error:
+            raise ProviderEffectDecodeError(
+                "provider effect origin transfer is invalid"
             ) from error
 
 
@@ -981,16 +1329,60 @@ class ProviderEffectIntent:
             ) from error
 
 
+def _revalidate_provider_effect_intent(
+    intent: ProviderEffectIntent,
+) -> ProviderEffectIntent:
+    if type(intent) is not ProviderEffectIntent:
+        raise TypeError("provider effect intent must be ProviderEffectIntent")
+    decoded = ProviderEffectIntent.from_wire(intent.to_wire())
+    if not _matches_exact_closed_value(intent, decoded):
+        raise ProviderEffectContractError(
+            "provider effect intent failed exact revalidation"
+        )
+    return decoded
+
+
+def _revalidate_provider_capability_snapshot(
+    capability: ProviderCapabilitySnapshot,
+) -> ProviderCapabilitySnapshot:
+    if type(capability) is not ProviderCapabilitySnapshot:
+        raise TypeError(
+            "provider capability snapshot must be ProviderCapabilitySnapshot"
+        )
+    decoded = ProviderCapabilitySnapshot.from_wire(capability.to_wire())
+    if not _matches_exact_closed_value(capability, decoded):
+        raise ProviderEffectContractError(
+            "provider capability snapshot failed exact revalidation"
+        )
+    return decoded
+
+
 _ADMISSION_SEAL = object()
 
 
-@dataclass(frozen=True, slots=True, init=False)
 class ProviderEffectAdmission:
+    __slots__ = (
+        "intent_digest",
+        "capability_snapshot_digest",
+        "capability_authority_digest",
+        "origin_transfer_digest",
+        "origin_authority_verifier_digest",
+        "claim_authority_digest",
+        "send_attempt_id",
+        "claim_owner_id",
+        "claim_generation",
+        "claim_fencing_token",
+        "claim_expires_at_unix_ms",
+        "applicable_methods",
+        "admitted_at_unix_ms",
+        "previous_send_attempt_digest",
+    )
+
     intent_digest: str
     capability_snapshot_digest: str
     capability_authority_digest: str
-    run_authority_digest: str
-    run_authority_verifier_digest: str
+    origin_transfer_digest: str
+    origin_authority_verifier_digest: str
     claim_authority_digest: str
     send_attempt_id: str
     claim_owner_id: str
@@ -1007,8 +1399,8 @@ class ProviderEffectAdmission:
         intent_digest: str,
         capability_snapshot_digest: str,
         capability_authority_digest: str,
-        run_authority_digest: str,
-        run_authority_verifier_digest: str,
+        origin_transfer_digest: str,
+        origin_authority_verifier_digest: str,
         claim_authority_digest: str,
         send_attempt_id: str,
         claim_owner_id: str,
@@ -1029,8 +1421,11 @@ class ProviderEffectAdmission:
             ("intent_digest", intent_digest),
             ("capability_snapshot_digest", capability_snapshot_digest),
             ("capability_authority_digest", capability_authority_digest),
-            ("run_authority_digest", run_authority_digest),
-            ("run_authority_verifier_digest", run_authority_verifier_digest),
+            ("origin_transfer_digest", origin_transfer_digest),
+            (
+                "origin_authority_verifier_digest",
+                origin_authority_verifier_digest,
+            ),
             ("claim_authority_digest", claim_authority_digest),
         ):
             object.__setattr__(
@@ -1099,9 +1494,9 @@ class ProviderEffectAdmission:
 
     @property
     def digest(self) -> str:
-        return canonical_hash(self.to_wire())
+        return canonical_hash(self._identity_wire())
 
-    def to_wire(self) -> dict[str, object]:
+    def _identity_wire(self) -> dict[str, object]:
         return {
             "admittedAtUnixMs": self.admitted_at_unix_ms,
             "applicableMethods": sorted(
@@ -1116,10 +1511,29 @@ class ProviderEffectAdmission:
             "claimOwnerId": self.claim_owner_id,
             "intentDigest": self.intent_digest,
             "previousSendAttemptDigest": self.previous_send_attempt_digest,
-            "runAuthorityDigest": self.run_authority_digest,
-            "runAuthorityVerifierDigest": self.run_authority_verifier_digest,
+            "originAuthorityVerifierDigest": self.origin_authority_verifier_digest,
+            "originTransferDigest": self.origin_transfer_digest,
             "sendAttemptId": self.send_attempt_id,
         }
+
+    def __reduce_ex__(self, protocol: SupportsIndex) -> NoReturn:
+        del protocol
+        raise TypeError("provider effect admission cannot be serialized")
+
+    def __getstate__(self) -> NoReturn:
+        raise TypeError("provider effect admission cannot be serialized")
+
+    def __setstate__(self, state: object) -> NoReturn:
+        del state
+        raise TypeError("provider effect admission cannot be restored")
+
+    def __setattr__(self, name: str, value: object) -> NoReturn:
+        del name, value
+        raise AttributeError("provider effect admission is immutable")
+
+    def __delattr__(self, name: str) -> NoReturn:
+        del name
+        raise AttributeError("provider effect admission is immutable")
 
 
 @dataclass(frozen=True, slots=True)
@@ -1269,6 +1683,376 @@ class ProviderEffectSendAttempt:
             raise ProviderEffectDecodeError(
                 "provider effect send attempt is invalid"
             ) from error
+
+
+def _revalidate_provider_effect_send_attempt(
+    send_attempt: ProviderEffectSendAttempt,
+) -> ProviderEffectSendAttempt:
+    if type(send_attempt) is not ProviderEffectSendAttempt:
+        raise TypeError(
+            "provider effect send attempt must be ProviderEffectSendAttempt"
+        )
+    decoded = ProviderEffectSendAttempt.from_wire(send_attempt.to_wire())
+    if not _matches_exact_closed_value(send_attempt, decoded):
+        raise ProviderEffectContractError(
+            "provider effect send attempt failed exact revalidation"
+        )
+    return decoded
+
+
+@dataclass(frozen=True, slots=True)
+class ProviderEffectAdmissionReceipt:
+    effect_id: str
+    admission_digest: str
+    send_attempt_digest: str
+    intent_digest: str
+    capability_snapshot_digest: str
+    capability_authority_digest: str
+    origin_transfer_digest: str
+    origin_authority_verifier_digest: str
+    claim_authority_digest: str
+    send_attempt_id: str
+    claim_owner_id: str
+    claim_generation: int
+    claim_fencing_token: int
+    claim_expires_at_unix_ms: int
+    applicable_methods: frozenset[ProviderReconciliationMethod]
+    admitted_at_unix_ms: int
+    previous_send_attempt_digest: str | None
+    send_started_at_unix_ms: int
+    consumed_at_unix_ms: int
+    format_version: str = PROVIDER_EFFECT_ADMISSION_RECEIPT_FORMAT_VERSION
+
+    def __post_init__(self) -> None:
+        owner = "provider effect admission receipt"
+        for field_name in ("effect_id", "send_attempt_id", "claim_owner_id"):
+            object.__setattr__(
+                self,
+                field_name,
+                _validate_exact_string(owner, field_name, getattr(self, field_name)),
+            )
+        for field_name in (
+            "admission_digest",
+            "send_attempt_digest",
+            "intent_digest",
+            "capability_snapshot_digest",
+            "capability_authority_digest",
+            "origin_transfer_digest",
+            "origin_authority_verifier_digest",
+            "claim_authority_digest",
+        ):
+            object.__setattr__(
+                self,
+                field_name,
+                _validate_digest(owner, field_name, getattr(self, field_name)),
+            )
+        for field_name in (
+            "claim_generation",
+            "claim_fencing_token",
+            "claim_expires_at_unix_ms",
+        ):
+            object.__setattr__(
+                self,
+                field_name,
+                _validate_u64(
+                    owner,
+                    field_name,
+                    getattr(self, field_name),
+                    positive=True,
+                ),
+            )
+        if (
+            type(self.applicable_methods) is not frozenset
+            or not self.applicable_methods
+            or any(
+                type(method) is not ProviderReconciliationMethod
+                for method in self.applicable_methods
+            )
+        ):
+            raise ProviderEffectContractError(
+                f"{owner} applicable_methods must be a non-empty exact frozenset"
+            )
+        object.__setattr__(
+            self,
+            "admitted_at_unix_ms",
+            _validate_u64(owner, "admitted_at_unix_ms", self.admitted_at_unix_ms),
+        )
+        object.__setattr__(
+            self,
+            "previous_send_attempt_digest",
+            _validate_optional_digest(
+                owner,
+                "previous_send_attempt_digest",
+                self.previous_send_attempt_digest,
+            ),
+        )
+        object.__setattr__(
+            self,
+            "send_started_at_unix_ms",
+            _validate_u64(
+                owner,
+                "send_started_at_unix_ms",
+                self.send_started_at_unix_ms,
+            ),
+        )
+        object.__setattr__(
+            self,
+            "consumed_at_unix_ms",
+            _validate_u64(owner, "consumed_at_unix_ms", self.consumed_at_unix_ms),
+        )
+        if not (
+            self.admitted_at_unix_ms
+            <= self.send_started_at_unix_ms
+            <= self.consumed_at_unix_ms
+            < self.claim_expires_at_unix_ms
+        ):
+            raise ProviderEffectContractError(
+                f"{owner} send and consumption must occur during the admitted interval"
+            )
+        format_version = _validate_exact_string(
+            owner,
+            "format_version",
+            self.format_version,
+        )
+        object.__setattr__(self, "format_version", format_version)
+        if format_version != PROVIDER_EFFECT_ADMISSION_RECEIPT_FORMAT_VERSION:
+            raise ProviderEffectContractError(
+                f"{owner} format_version is not supported"
+            )
+        if canonical_hash(self.admission_wire()) != self.admission_digest:
+            raise ProviderEffectContractError(
+                f"{owner} admission digest does not match its retained fields"
+            )
+
+    @classmethod
+    def from_consumed(
+        cls,
+        admission: ProviderEffectAdmission,
+        send_attempt: ProviderEffectSendAttempt,
+        *,
+        consumed_at_unix_ms: int,
+    ) -> ProviderEffectAdmissionReceipt:
+        if type(admission) is not ProviderEffectAdmission:
+            raise TypeError(
+                "provider effect receipt admission must be ProviderEffectAdmission"
+            )
+        if type(send_attempt) is not ProviderEffectSendAttempt:
+            raise TypeError(
+                "provider effect receipt attempt must be ProviderEffectSendAttempt"
+            )
+        if (
+            send_attempt.admission_digest != admission.digest
+            or send_attempt.intent_digest != admission.intent_digest
+            or send_attempt.capability_snapshot_digest
+            != admission.capability_snapshot_digest
+            or send_attempt.claim_authority_digest != admission.claim_authority_digest
+            or send_attempt.attempt_id != admission.send_attempt_id
+            or send_attempt.claim_owner_id != admission.claim_owner_id
+            or send_attempt.claim_generation != admission.claim_generation
+            or send_attempt.claim_fencing_token != admission.claim_fencing_token
+        ):
+            raise ProviderEffectContractError(
+                "provider effect receipt attempt does not match its admission"
+            )
+        return cls(
+            effect_id=send_attempt.effect_id,
+            admission_digest=admission.digest,
+            send_attempt_digest=send_attempt.digest,
+            intent_digest=admission.intent_digest,
+            capability_snapshot_digest=admission.capability_snapshot_digest,
+            capability_authority_digest=admission.capability_authority_digest,
+            origin_transfer_digest=admission.origin_transfer_digest,
+            origin_authority_verifier_digest=(
+                admission.origin_authority_verifier_digest
+            ),
+            claim_authority_digest=admission.claim_authority_digest,
+            send_attempt_id=admission.send_attempt_id,
+            claim_owner_id=admission.claim_owner_id,
+            claim_generation=admission.claim_generation,
+            claim_fencing_token=admission.claim_fencing_token,
+            claim_expires_at_unix_ms=admission.claim_expires_at_unix_ms,
+            applicable_methods=admission.applicable_methods,
+            admitted_at_unix_ms=admission.admitted_at_unix_ms,
+            previous_send_attempt_digest=admission.previous_send_attempt_digest,
+            send_started_at_unix_ms=send_attempt.started_at_unix_ms,
+            consumed_at_unix_ms=consumed_at_unix_ms,
+        )
+
+    @property
+    def digest(self) -> str:
+        return canonical_hash(self.to_wire())
+
+    def admission_wire(self) -> dict[str, object]:
+        return {
+            "admittedAtUnixMs": self.admitted_at_unix_ms,
+            "applicableMethods": sorted(
+                method.value for method in self.applicable_methods
+            ),
+            "capabilityAuthorityDigest": self.capability_authority_digest,
+            "capabilitySnapshotDigest": self.capability_snapshot_digest,
+            "claimAuthorityDigest": self.claim_authority_digest,
+            "claimExpiresAtUnixMs": self.claim_expires_at_unix_ms,
+            "claimFencingToken": self.claim_fencing_token,
+            "claimGeneration": self.claim_generation,
+            "claimOwnerId": self.claim_owner_id,
+            "intentDigest": self.intent_digest,
+            "originAuthorityVerifierDigest": self.origin_authority_verifier_digest,
+            "originTransferDigest": self.origin_transfer_digest,
+            "previousSendAttemptDigest": self.previous_send_attempt_digest,
+            "sendAttemptId": self.send_attempt_id,
+        }
+
+    def to_wire(self) -> dict[str, object]:
+        return {
+            **self.admission_wire(),
+            "admissionDigest": self.admission_digest,
+            "consumedAtUnixMs": self.consumed_at_unix_ms,
+            "effectId": self.effect_id,
+            "formatVersion": self.format_version,
+            "sendAttemptDigest": self.send_attempt_digest,
+            "sendStartedAtUnixMs": self.send_started_at_unix_ms,
+        }
+
+    @classmethod
+    def from_wire(cls, value: object) -> ProviderEffectAdmissionReceipt:
+        owner = "provider effect admission receipt"
+        payload = _require_closed_object(value, _ADMISSION_RECEIPT_FIELDS, owner)
+        methods_value = payload["applicableMethods"]
+        if type(methods_value) is not list or not methods_value:
+            raise ProviderEffectDecodeError(
+                f"{owner} applicableMethods must be a non-empty array"
+            )
+        if any(type(method) is not str for method in methods_value):
+            raise ProviderEffectDecodeError(
+                f"{owner} applicableMethods must contain strings"
+            )
+        if methods_value != sorted(set(methods_value)):
+            raise ProviderEffectDecodeError(
+                f"{owner} applicableMethods must be sorted and unique"
+            )
+        try:
+            return cls(
+                effect_id=_validate_exact_string(
+                    owner,
+                    "effectId",
+                    payload["effectId"],
+                ),
+                admission_digest=_validate_digest(
+                    owner,
+                    "admissionDigest",
+                    payload["admissionDigest"],
+                ),
+                send_attempt_digest=_validate_digest(
+                    owner,
+                    "sendAttemptDigest",
+                    payload["sendAttemptDigest"],
+                ),
+                intent_digest=_validate_digest(
+                    owner,
+                    "intentDigest",
+                    payload["intentDigest"],
+                ),
+                capability_snapshot_digest=_validate_digest(
+                    owner,
+                    "capabilitySnapshotDigest",
+                    payload["capabilitySnapshotDigest"],
+                ),
+                capability_authority_digest=_validate_digest(
+                    owner,
+                    "capabilityAuthorityDigest",
+                    payload["capabilityAuthorityDigest"],
+                ),
+                origin_transfer_digest=_validate_digest(
+                    owner,
+                    "originTransferDigest",
+                    payload["originTransferDigest"],
+                ),
+                origin_authority_verifier_digest=_validate_digest(
+                    owner,
+                    "originAuthorityVerifierDigest",
+                    payload["originAuthorityVerifierDigest"],
+                ),
+                claim_authority_digest=_validate_digest(
+                    owner,
+                    "claimAuthorityDigest",
+                    payload["claimAuthorityDigest"],
+                ),
+                send_attempt_id=_validate_exact_string(
+                    owner,
+                    "sendAttemptId",
+                    payload["sendAttemptId"],
+                ),
+                claim_owner_id=_validate_exact_string(
+                    owner,
+                    "claimOwnerId",
+                    payload["claimOwnerId"],
+                ),
+                claim_generation=_validate_u64(
+                    owner,
+                    "claimGeneration",
+                    payload["claimGeneration"],
+                    positive=True,
+                ),
+                claim_fencing_token=_validate_u64(
+                    owner,
+                    "claimFencingToken",
+                    payload["claimFencingToken"],
+                    positive=True,
+                ),
+                claim_expires_at_unix_ms=_validate_u64(
+                    owner,
+                    "claimExpiresAtUnixMs",
+                    payload["claimExpiresAtUnixMs"],
+                    positive=True,
+                ),
+                applicable_methods=frozenset(
+                    ProviderReconciliationMethod(method) for method in methods_value
+                ),
+                admitted_at_unix_ms=_validate_u64(
+                    owner,
+                    "admittedAtUnixMs",
+                    payload["admittedAtUnixMs"],
+                ),
+                previous_send_attempt_digest=_validate_optional_digest(
+                    owner,
+                    "previousSendAttemptDigest",
+                    payload["previousSendAttemptDigest"],
+                ),
+                send_started_at_unix_ms=_validate_u64(
+                    owner,
+                    "sendStartedAtUnixMs",
+                    payload["sendStartedAtUnixMs"],
+                ),
+                consumed_at_unix_ms=_validate_u64(
+                    owner,
+                    "consumedAtUnixMs",
+                    payload["consumedAtUnixMs"],
+                ),
+                format_version=_validate_exact_string(
+                    owner,
+                    "formatVersion",
+                    payload["formatVersion"],
+                ),
+            )
+        except (TypeError, ValueError) as error:
+            raise ProviderEffectDecodeError(
+                "provider effect admission receipt is invalid"
+            ) from error
+
+
+def _revalidate_provider_effect_admission_receipt(
+    receipt: ProviderEffectAdmissionReceipt,
+) -> ProviderEffectAdmissionReceipt:
+    if type(receipt) is not ProviderEffectAdmissionReceipt:
+        raise TypeError(
+            "provider effect admission receipt must be ProviderEffectAdmissionReceipt"
+        )
+    decoded = ProviderEffectAdmissionReceipt.from_wire(receipt.to_wire())
+    if not _matches_exact_closed_value(receipt, decoded):
+        raise ProviderEffectContractError(
+            "provider effect admission receipt failed exact revalidation"
+        )
+    return decoded
 
 
 @dataclass(frozen=True, slots=True)
@@ -1511,6 +2295,21 @@ class ProviderRunAuthorityVerifier(Protocol):
         """Return exact ``True`` only for current transactional run authority."""
 
 
+class ProviderEffectOriginAuthorityVerifier(Protocol):
+    """Repository verifier for authority durably transferred to one effect."""
+
+    authority_digest: str
+
+    def verify_transferred_origin(
+        self,
+        *,
+        intent: ProviderEffectIntent,
+        origin_transfer: ProviderEffectOriginTransfer,
+        admitted_at_unix_ms: int,
+    ) -> bool:
+        """Return exact ``True`` only for the stored origin-authority transfer."""
+
+
 class ProviderEffectClaimAuthority(Protocol):
     """Repository authority for one-shot send claims and active attempts."""
 
@@ -1534,15 +2333,15 @@ class ProviderEffectClaimAuthority(Protocol):
         self,
         *,
         admission: ProviderEffectAdmission,
-        send_attempt: ProviderEffectSendAttempt,
-    ) -> bool:
-        """Atomically consume admission and install this active send attempt."""
+        intent: ProviderEffectIntent,
+    ) -> tuple[ProviderEffectSendAttempt, ProviderEffectAdmissionReceipt] | None:
+        """Atomically consume admission and return the repository-timed send."""
 
     def verify_active_send(
         self,
         *,
         current: ProviderEffectState,
-        admission: ProviderEffectAdmission,
+        admission_receipt: ProviderEffectAdmissionReceipt,
         send_attempt: ProviderEffectSendAttempt,
     ) -> bool:
         """Return exact ``True`` only when this attempt remains repository-active."""
@@ -1552,9 +2351,9 @@ class ProviderEffectClaimAuthority(Protocol):
         *,
         current: ProviderEffectState,
         next_state: ProviderEffectState,
-        admission: ProviderEffectAdmission,
+        admission_receipt: ProviderEffectAdmissionReceipt,
         send_attempt: ProviderEffectSendAttempt,
-        evidence_digest: str,
+        evidence: ProviderReconciliationEvidence,
     ) -> bool:
         """Atomically recheck the attempt and commit its evidence transition."""
 
@@ -1632,22 +2431,25 @@ def _validate_intent_capability_binding(
         )
 
 
-def _validate_intent_run_authority_binding(
+def _validate_intent_origin_transfer_binding(
     intent: ProviderEffectIntent,
-    run_authority: ProviderRunAuthoritySnapshot,
+    origin_transfer: ProviderEffectOriginTransfer,
 ) -> None:
     if (
-        intent.tenant_id != run_authority.tenant_id
-        or intent.run_id != run_authority.run_id
-        or intent.owner_principal_id != run_authority.owner_principal_id
-        or intent.origin_run_state_version != run_authority.run_state_version
-        or intent.origin_lease_generation != run_authority.lease_generation
-        or intent.origin_fencing_token != run_authority.fencing_token
-        or intent.origin_checkpoint_digest != run_authority.checkpoint_digest
-        or intent.origin_authority_digest != run_authority.digest
+        intent.effect_id != origin_transfer.effect_id
+        or intent.digest != origin_transfer.intent_digest
+        or intent.tenant_id != origin_transfer.tenant_id
+        or intent.run_id != origin_transfer.run_id
+        or intent.owner_principal_id != origin_transfer.owner_principal_id
+        or intent.origin_run_state_version != origin_transfer.run_state_version
+        or intent.origin_lease_generation != origin_transfer.lease_generation
+        or intent.origin_fencing_token != origin_transfer.fencing_token
+        or intent.origin_checkpoint_digest != origin_transfer.checkpoint_digest
+        or intent.origin_authority_digest != origin_transfer.run_authority_digest
+        or intent.created_at_unix_ms != origin_transfer.transferred_at_unix_ms
     ):
         raise ProviderEffectAdmissionError(
-            "provider effect intent does not match repository run authority"
+            "provider effect intent does not match its origin-authority transfer"
         )
 
 
@@ -1702,11 +2504,11 @@ def _resolve_registered_reconciliation_verifier(
 def admit_provider_effect_intent(
     intent: ProviderEffectIntent,
     capability: ProviderCapabilitySnapshot,
-    run_authority: ProviderRunAuthoritySnapshot,
+    origin_transfer: ProviderEffectOriginTransfer,
     *,
     capability_authority: ProviderCapabilityAuthorityVerifier,
     verifier_authority: ProviderReconciliationVerifierAuthority,
-    run_authority_verifier: ProviderRunAuthorityVerifier,
+    origin_authority_verifier: ProviderEffectOriginAuthorityVerifier,
     claim_authority: ProviderEffectClaimAuthority,
     send_attempt_id: str,
     claim_owner_id: str,
@@ -1724,10 +2526,28 @@ def admit_provider_effect_intent(
         raise TypeError(
             "provider effect admission capability must be ProviderCapabilitySnapshot"
         )
-    if type(run_authority) is not ProviderRunAuthoritySnapshot:
+    if type(origin_transfer) is not ProviderEffectOriginTransfer:
         raise TypeError(
-            "provider effect admission authority must be ProviderRunAuthoritySnapshot"
+            "provider effect admission authority must be ProviderEffectOriginTransfer"
         )
+    try:
+        intent = _revalidate_provider_effect_intent(intent)
+        capability = _revalidate_provider_capability_snapshot(capability)
+        decoded_origin_transfer = ProviderEffectOriginTransfer.from_wire(
+            origin_transfer.to_wire()
+        )
+        if not _matches_exact_closed_value(
+            origin_transfer,
+            decoded_origin_transfer,
+        ):
+            raise ProviderEffectContractError(
+                "provider effect origin transfer failed exact revalidation"
+            )
+        origin_transfer = decoded_origin_transfer
+    except (TypeError, ValueError) as error:
+        raise ProviderEffectAdmissionError(
+            "provider effect admission contract is invalid"
+        ) from error
     try:
         trusted_authority_digest = _validate_digest(
             "provider capability authority",
@@ -1757,7 +2577,7 @@ def admit_provider_effect_intent(
         raise ProviderEffectAdmissionError(
             "provider reconciliation verifier is not registered for admission"
         ) from error
-    _validate_intent_run_authority_binding(intent, run_authority)
+    _validate_intent_origin_transfer_binding(intent, origin_transfer)
     admitted_at = _validate_u64(
         "provider effect admission",
         "admitted_at_unix_ms",
@@ -1801,23 +2621,27 @@ def admit_provider_effect_intent(
             "provider effect claim must remain live after admission"
         )
     try:
-        run_authority_verifier_digest = _validate_digest(
-            "provider run authority verifier",
+        origin_authority_verifier_digest = _validate_digest(
+            "provider effect origin authority verifier",
             "authority_digest",
-            run_authority_verifier.authority_digest,
+            origin_authority_verifier.authority_digest,
         )
-        run_authority_verified = run_authority_verifier.verify(
+        origin_authority_verified = origin_authority_verifier.verify_transferred_origin(
             intent=intent,
-            run_authority=run_authority,
+            origin_transfer=origin_transfer,
             admitted_at_unix_ms=admitted_at,
         )
     except Exception as error:
         raise ProviderEffectAdmissionError(
-            "provider run authority verification failed"
+            "provider effect origin authority verification failed"
         ) from error
-    if type(run_authority_verified) is not bool or not run_authority_verified:
+    if (
+        origin_authority_verifier_digest != origin_transfer.repository_authority_digest
+        or type(origin_authority_verified) is not bool
+        or not origin_authority_verified
+    ):
         raise ProviderEffectAdmissionError(
-            "provider run authority is not live in its repository transaction"
+            "provider effect origin authority was not durably transferred"
         )
     previous_send_attempt_digest: str | None = None
     if previous_send_attempt is not None:
@@ -1826,6 +2650,14 @@ def admit_provider_effect_intent(
                 "previous provider effect send attempt must be "
                 "ProviderEffectSendAttempt"
             )
+        try:
+            previous_send_attempt = _revalidate_provider_effect_send_attempt(
+                previous_send_attempt
+            )
+        except (TypeError, ValueError) as error:
+            raise ProviderEffectAdmissionError(
+                "previous provider effect send attempt is invalid"
+            ) from error
         if (
             previous_send_attempt.effect_id != intent.effect_id
             or previous_send_attempt.intent_digest != intent.digest
@@ -1874,8 +2706,8 @@ def admit_provider_effect_intent(
         intent_digest=intent.digest,
         capability_snapshot_digest=capability.digest,
         capability_authority_digest=capability.authority_digest,
-        run_authority_digest=run_authority.digest,
-        run_authority_verifier_digest=run_authority_verifier_digest,
+        origin_transfer_digest=origin_transfer.digest,
+        origin_authority_verifier_digest=origin_authority_verifier_digest,
         claim_authority_digest=claim_authority_digest,
         send_attempt_id=validated_send_attempt_id,
         claim_owner_id=validated_claim_owner_id,
@@ -1900,22 +2732,35 @@ def assert_same_provider_effect_intent(
         or type(requested) is not ProviderEffectIntent
     ):
         raise TypeError("provider effect retry identities must be ProviderEffectIntent")
+    try:
+        current = _revalidate_provider_effect_intent(current)
+        requested = _revalidate_provider_effect_intent(requested)
+    except (TypeError, ValueError) as error:
+        raise ProviderEffectIdentityConflictError(
+            "provider effect retry intent contract is invalid"
+        ) from error
     if current != requested or current.digest != requested.digest:
         raise ProviderEffectIdentityConflictError(
             "provider effect retry must preserve the complete intent identity"
         )
 
 
-def validate_provider_reconciliation_evidence(
+def _validate_provider_reconciliation_evidence(
     current: ProviderEffectState,
     intent: ProviderEffectIntent,
     capability: ProviderCapabilitySnapshot,
-    admission: ProviderEffectAdmission,
+    admission_receipt: ProviderEffectAdmissionReceipt,
     send_attempt: ProviderEffectSendAttempt,
     evidence: ProviderReconciliationEvidence,
     claim_authority: ProviderEffectClaimAuthority,
     verifier_authority: ProviderReconciliationVerifierAuthority,
-) -> None:
+) -> tuple[
+    ProviderEffectIntent,
+    ProviderCapabilitySnapshot,
+    ProviderEffectAdmissionReceipt,
+    ProviderEffectSendAttempt,
+    ProviderReconciliationEvidence,
+]:
     """Bind authentic provider evidence to one admitted send attempt."""
 
     if type(current) is not ProviderEffectState:
@@ -1933,31 +2778,72 @@ def validate_provider_reconciliation_evidence(
         raise TypeError(
             "provider effect evidence capability must be ProviderCapabilitySnapshot"
         )
-    if type(admission) is not ProviderEffectAdmission:
+    try:
+        intent = _revalidate_provider_effect_intent(intent)
+        capability = _revalidate_provider_capability_snapshot(capability)
+    except (TypeError, ValueError) as error:
+        raise ProviderEffectEvidenceError(
+            "provider reconciliation input contract is invalid"
+        ) from error
+    if type(admission_receipt) is not ProviderEffectAdmissionReceipt:
         raise TypeError(
-            "provider effect evidence admission must be ProviderEffectAdmission"
+            "provider effect evidence admission receipt must be "
+            "ProviderEffectAdmissionReceipt"
         )
+    try:
+        admission_receipt = _revalidate_provider_effect_admission_receipt(
+            admission_receipt
+        )
+    except (TypeError, ValueError) as error:
+        raise ProviderEffectEvidenceError(
+            "provider effect admission receipt is invalid"
+        ) from error
     if type(send_attempt) is not ProviderEffectSendAttempt:
         raise TypeError(
             "provider effect evidence attempt must be ProviderEffectSendAttempt"
         )
+    try:
+        send_attempt = _revalidate_provider_effect_send_attempt(send_attempt)
+    except (TypeError, ValueError) as error:
+        raise ProviderEffectEvidenceError(
+            "provider effect send attempt is invalid"
+        ) from error
     if type(evidence) is not ProviderReconciliationEvidence:
         raise TypeError(
             "provider effect evidence must be ProviderReconciliationEvidence"
         )
+    try:
+        decoded_evidence = ProviderReconciliationEvidence.from_wire(evidence.to_wire())
+        if not _matches_exact_closed_value(evidence, decoded_evidence):
+            raise ProviderEffectContractError(
+                "provider reconciliation evidence failed exact revalidation"
+            )
+        evidence = decoded_evidence
+    except (TypeError, ValueError) as error:
+        raise ProviderEffectEvidenceError(
+            "provider reconciliation evidence contract is invalid"
+        ) from error
     _validate_intent_capability_binding(intent, capability)
     if (
-        admission.intent_digest != intent.digest
-        or admission.capability_snapshot_digest != capability.digest
-        or admission.capability_authority_digest != capability.authority_digest
+        admission_receipt.effect_id != intent.effect_id
+        or admission_receipt.intent_digest != intent.digest
+        or admission_receipt.capability_snapshot_digest != capability.digest
+        or admission_receipt.capability_authority_digest != capability.authority_digest
         or send_attempt.effect_id != intent.effect_id
         or send_attempt.intent_digest != intent.digest
         or send_attempt.capability_snapshot_digest != capability.digest
-        or send_attempt.admission_digest != admission.digest
-        or send_attempt.claim_authority_digest != admission.claim_authority_digest
+        or send_attempt.admission_digest != admission_receipt.admission_digest
+        or send_attempt.digest != admission_receipt.send_attempt_digest
+        or send_attempt.claim_authority_digest
+        != admission_receipt.claim_authority_digest
+        or send_attempt.attempt_id != admission_receipt.send_attempt_id
+        or send_attempt.claim_owner_id != admission_receipt.claim_owner_id
+        or send_attempt.claim_generation != admission_receipt.claim_generation
+        or send_attempt.claim_fencing_token != admission_receipt.claim_fencing_token
+        or send_attempt.started_at_unix_ms != admission_receipt.send_started_at_unix_ms
     ):
         raise ProviderEffectEvidenceError(
-            "provider reconciliation attempt does not match its admission"
+            "provider reconciliation attempt does not match its admission receipt"
         )
     try:
         claim_authority_digest = _validate_digest(
@@ -1967,7 +2853,7 @@ def validate_provider_reconciliation_evidence(
         )
         active_send_verified = claim_authority.verify_active_send(
             current=current,
-            admission=admission,
+            admission_receipt=admission_receipt,
             send_attempt=send_attempt,
         )
     except Exception as error:
@@ -1975,7 +2861,7 @@ def validate_provider_reconciliation_evidence(
             "provider active send authority verification failed"
         ) from error
     if (
-        claim_authority_digest != admission.claim_authority_digest
+        claim_authority_digest != admission_receipt.claim_authority_digest
         or type(active_send_verified) is not bool
         or not active_send_verified
     ):
@@ -1991,7 +2877,7 @@ def validate_provider_reconciliation_evidence(
         raise ProviderEffectEvidenceError(
             "provider reconciliation evidence does not match its send attempt"
         )
-    if evidence.method not in admission.applicable_methods:
+    if evidence.method not in admission_receipt.applicable_methods:
         raise ProviderEffectEvidenceError(
             "provider reconciliation method is not supported by the snapshot"
         )
@@ -2056,6 +2942,31 @@ def validate_provider_reconciliation_evidence(
         raise ProviderEffectEvidenceError(
             "provider reconciliation evidence was not authenticated"
         )
+    return intent, capability, admission_receipt, send_attempt, evidence
+
+
+def validate_provider_reconciliation_evidence(
+    current: ProviderEffectState,
+    intent: ProviderEffectIntent,
+    capability: ProviderCapabilitySnapshot,
+    admission_receipt: ProviderEffectAdmissionReceipt,
+    send_attempt: ProviderEffectSendAttempt,
+    evidence: ProviderReconciliationEvidence,
+    claim_authority: ProviderEffectClaimAuthority,
+    verifier_authority: ProviderReconciliationVerifierAuthority,
+) -> None:
+    """Validate authentic provider evidence without applying its outcome."""
+
+    _validate_provider_reconciliation_evidence(
+        current,
+        intent,
+        capability,
+        admission_receipt,
+        send_attempt,
+        evidence,
+        claim_authority,
+        verifier_authority,
+    )
 
 
 def transition_provider_effect_state(
@@ -2105,9 +3016,12 @@ def begin_provider_effect_send(
     admission: ProviderEffectAdmission,
     claim_authority: ProviderEffectClaimAuthority,
     *,
-    started_at_unix_ms: int,
     previous_send_attempt: ProviderEffectSendAttempt | None = None,
-) -> tuple[ProviderEffectState, ProviderEffectSendAttempt]:
+) -> tuple[
+    ProviderEffectState,
+    ProviderEffectSendAttempt,
+    ProviderEffectAdmissionReceipt,
+]:
     """Enter send-started only with a bound admission and fresh claim fence."""
 
     if type(current) is not ProviderEffectState:
@@ -2122,6 +3036,13 @@ def begin_provider_effect_send(
         raise TypeError(
             "provider effect send admission must be ProviderEffectAdmission"
         )
+    try:
+        intent = _revalidate_provider_effect_intent(intent)
+        capability = _revalidate_provider_capability_snapshot(capability)
+    except (TypeError, ValueError) as error:
+        raise ProviderEffectAdmissionError(
+            "provider effect send contract is invalid"
+        ) from error
     next_state = _transition_provider_effect_state(
         current,
         ProviderEffectTransition.BEGIN_SEND,
@@ -2156,24 +3077,21 @@ def begin_provider_effect_send(
         raise TypeError(
             "previous provider effect send attempt must be ProviderEffectSendAttempt"
         )
+    if previous_send_attempt is not None:
+        try:
+            previous_send_attempt = _revalidate_provider_effect_send_attempt(
+                previous_send_attempt
+            )
+        except (TypeError, ValueError) as error:
+            raise ProviderEffectAdmissionError(
+                "previous provider effect send attempt is invalid"
+            ) from error
     previous_digest = (
         None if previous_send_attempt is None else previous_send_attempt.digest
     )
     if previous_digest != admission.previous_send_attempt_digest:
         raise ProviderEffectAdmissionError(
             "provider effect send does not match admitted attempt history"
-        )
-    started_at = _validate_u64(
-        "provider effect send attempt",
-        "started_at_unix_ms",
-        started_at_unix_ms,
-    )
-    if (
-        started_at < admission.admitted_at_unix_ms
-        or started_at >= admission.claim_expires_at_unix_ms
-    ):
-        raise ProviderEffectAdmissionError(
-            "provider effect send is outside its admitted claim interval"
         )
     if previous_send_attempt is not None:
         if (
@@ -2184,37 +3102,86 @@ def begin_provider_effect_send(
             or admission.claim_generation <= previous_send_attempt.claim_generation
             or admission.claim_fencing_token
             <= previous_send_attempt.claim_fencing_token
-            or started_at < previous_send_attempt.started_at_unix_ms
         ):
             raise ProviderEffectAdmissionError(
                 "retried provider effect send must advance attempt identity and fence"
             )
-    attempt = ProviderEffectSendAttempt(
-        effect_id=intent.effect_id,
-        intent_digest=intent.digest,
-        capability_snapshot_digest=capability.digest,
-        admission_digest=admission.digest,
-        claim_authority_digest=claim_authority_digest,
-        attempt_id=admission.send_attempt_id,
-        claim_owner_id=admission.claim_owner_id,
-        claim_generation=admission.claim_generation,
-        claim_fencing_token=admission.claim_fencing_token,
-        started_at_unix_ms=started_at,
-    )
     try:
-        claimed = claim_authority.claim_send(
+        claimed_send = claim_authority.claim_send(
             admission=admission,
-            send_attempt=attempt,
+            intent=intent,
         )
     except Exception as error:
         raise ProviderEffectAdmissionError(
             "provider effect claim consumption failed"
         ) from error
-    if type(claimed) is not bool or not claimed:
+    if (
+        type(claimed_send) is not tuple
+        or len(claimed_send) != 2
+        or type(claimed_send[0]) is not ProviderEffectSendAttempt
+        or type(claimed_send[1]) is not ProviderEffectAdmissionReceipt
+    ):
         raise ProviderEffectAdmissionError(
             "provider effect admission was stale or already consumed"
         )
-    return next_state, attempt
+    attempt, admission_receipt = claimed_send
+    try:
+        attempt = _revalidate_provider_effect_send_attempt(attempt)
+    except (TypeError, ValueError) as error:
+        raise ProviderEffectAdmissionError(
+            "provider effect claim authority returned an invalid send attempt"
+        ) from error
+    try:
+        admission_receipt = _revalidate_provider_effect_admission_receipt(
+            admission_receipt
+        )
+    except (TypeError, ValueError) as error:
+        raise ProviderEffectAdmissionError(
+            "provider effect claim authority returned an invalid receipt"
+        ) from error
+    if (
+        attempt.effect_id != intent.effect_id
+        or attempt.intent_digest != intent.digest
+        or attempt.capability_snapshot_digest != capability.digest
+        or attempt.admission_digest != admission.digest
+        or attempt.claim_authority_digest != claim_authority_digest
+        or attempt.attempt_id != admission.send_attempt_id
+        or attempt.claim_owner_id != admission.claim_owner_id
+        or attempt.claim_generation != admission.claim_generation
+        or attempt.claim_fencing_token != admission.claim_fencing_token
+        or attempt.started_at_unix_ms < admission.admitted_at_unix_ms
+        or attempt.started_at_unix_ms >= admission.claim_expires_at_unix_ms
+        or (
+            previous_send_attempt is not None
+            and attempt.started_at_unix_ms < previous_send_attempt.started_at_unix_ms
+        )
+        or admission_receipt.effect_id != intent.effect_id
+        or admission_receipt.admission_digest != admission.digest
+        or admission_receipt.send_attempt_digest != attempt.digest
+        or admission_receipt.intent_digest != intent.digest
+        or admission_receipt.capability_snapshot_digest != capability.digest
+        or admission_receipt.capability_authority_digest != capability.authority_digest
+        or admission_receipt.origin_transfer_digest != admission.origin_transfer_digest
+        or admission_receipt.origin_authority_verifier_digest
+        != admission.origin_authority_verifier_digest
+        or admission_receipt.claim_authority_digest != claim_authority_digest
+        or admission_receipt.send_attempt_id != attempt.attempt_id
+        or admission_receipt.claim_owner_id != attempt.claim_owner_id
+        or admission_receipt.claim_generation != attempt.claim_generation
+        or admission_receipt.claim_fencing_token != attempt.claim_fencing_token
+        or admission_receipt.claim_expires_at_unix_ms
+        != admission.claim_expires_at_unix_ms
+        or admission_receipt.applicable_methods != admission.applicable_methods
+        or admission_receipt.admitted_at_unix_ms != admission.admitted_at_unix_ms
+        or admission_receipt.previous_send_attempt_digest
+        != admission.previous_send_attempt_digest
+        or admission_receipt.send_started_at_unix_ms != attempt.started_at_unix_ms
+        or admission_receipt.consumed_at_unix_ms < attempt.started_at_unix_ms
+    ):
+        raise ProviderEffectAdmissionError(
+            "provider effect claim authority returned a mismatched receipt"
+        )
+    return next_state, attempt, admission_receipt
 
 
 def retry_same_provider_effect_intent(
@@ -2237,7 +3204,7 @@ def apply_provider_reconciliation_evidence(
     current: ProviderEffectState,
     intent: ProviderEffectIntent,
     capability: ProviderCapabilitySnapshot,
-    admission: ProviderEffectAdmission,
+    admission_receipt: ProviderEffectAdmissionReceipt,
     send_attempt: ProviderEffectSendAttempt,
     evidence: ProviderReconciliationEvidence,
     claim_authority: ProviderEffectClaimAuthority,
@@ -2245,11 +3212,17 @@ def apply_provider_reconciliation_evidence(
 ) -> ProviderEffectState:
     """Validate evidence and project its outcome through the state machine."""
 
-    validate_provider_reconciliation_evidence(
+    (
+        intent,
+        capability,
+        admission_receipt,
+        send_attempt,
+        evidence,
+    ) = _validate_provider_reconciliation_evidence(
         current,
         intent,
         capability,
-        admission,
+        admission_receipt,
         send_attempt,
         evidence,
         claim_authority,
@@ -2280,9 +3253,9 @@ def apply_provider_reconciliation_evidence(
         settled = claim_authority.settle_active_send(
             current=current,
             next_state=next_state,
-            admission=admission,
+            admission_receipt=admission_receipt,
             send_attempt=send_attempt,
-            evidence_digest=evidence.digest,
+            evidence=evidence,
         )
     except Exception as error:
         raise ProviderEffectEvidenceError(
@@ -2297,7 +3270,9 @@ def apply_provider_reconciliation_evidence(
 
 __all__ = [
     "PROVIDER_CAPABILITY_SNAPSHOT_FORMAT_VERSION",
+    "PROVIDER_EFFECT_ADMISSION_RECEIPT_FORMAT_VERSION",
     "PROVIDER_EFFECT_INTENT_FORMAT_VERSION",
+    "PROVIDER_EFFECT_ORIGIN_TRANSFER_FORMAT_VERSION",
     "PROVIDER_EFFECT_SEND_ATTEMPT_FORMAT_VERSION",
     "PROVIDER_RECONCILIATION_EVIDENCE_FORMAT_VERSION",
     "PROVIDER_RUN_AUTHORITY_SNAPSHOT_FORMAT_VERSION",
@@ -2306,6 +3281,7 @@ __all__ = [
     "ProviderCapabilitySnapshot",
     "ProviderDeduplication",
     "ProviderEffectAdmission",
+    "ProviderEffectAdmissionReceipt",
     "ProviderEffectAdmissionError",
     "ProviderEffectClaimAuthority",
     "ProviderEffectContractError",
@@ -2314,6 +3290,8 @@ __all__ = [
     "ProviderEffectIdentityConflictError",
     "ProviderEffectIntent",
     "ProviderEffectKind",
+    "ProviderEffectOriginAuthorityVerifier",
+    "ProviderEffectOriginTransfer",
     "ProviderEffectSendAttempt",
     "ProviderEffectState",
     "ProviderEffectStateConflictError",
