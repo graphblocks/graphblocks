@@ -81,6 +81,19 @@ must identify both the Rust authority and Python facade/reference roles.
 | `GB-X2-VOICE` | Preview (experimental) | Retains the catalog's experimental qualifier until transport/provider support and interruption/playback authority gates pass. |
 | `GB-X3-DURABLE-STREAM` | Preview (experimental) | Existing source replay, barrier, watermark, window, checkpoint, and sink-commit primitives remain preview evidence. Promotion requires real multi-process restart/crash failpoints, fresh lease and authority checks at commit, durable outbox/idempotency evidence, and an explicit boundary between at-least-once delivery and any exactly-once effect claim. |
 
+The release matrix assigns every profile a claim-owner artifact, distinct
+implementation and evidence artifacts, role-scoped active/target/reference
+authority, compatibility tier, release track, ancestors, and promotion gate.
+Only C0 and C1 belong to the release-blocking 1.0 core track. Each preview
+profile belongs to a named extension track and must eventually be promoted with
+profile-identity-bound evidence through the currently blocked
+`REL-EXTENSION-PROFILE` definition. A child cannot outrank an ancestor or omit
+its applicable gate, and shipping extension code in a core package does not
+widen the stable compatibility claim. The package catalog also binds every
+component to required profiles and rejects dependencies outside their
+transitive profile ancestry. Mixed modules such as the CLI record stable core
+commands and preview production commands as separate profile surfaces.
+
 Passing C0 or C1 does not make a preview profile stable. Conversely, keeping a
 profile preview does not remove it from the specification or future roadmap.
 Capability-completeness gates that apply only to C4 or X3 do not block the

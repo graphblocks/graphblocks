@@ -685,6 +685,479 @@ jobs:
         )
 
 
+def test_profile_release_tracks_are_closed_owned_and_independent() -> None:
+    matrix = yaml.safe_load(
+        (ROOT / "docs" / "project" / "stable-release-matrix.yaml").read_text(
+            encoding="utf-8"
+        )
+    )
+    catalog_path = (
+        ROOT / "src" / "graphblocks" / "data" / "conformance-profiles.yaml"
+    )
+    conformance_catalog = yaml.safe_load(catalog_path.read_text(encoding="utf-8"))
+    profiles = {entry["id"]: entry for entry in matrix["profiles"]}
+    catalog_profile_ids = {
+        entry["id"] for entry in conformance_catalog["spec"]["profiles"]
+    }
+    assert set(profiles) == catalog_profile_ids
+
+    policy = matrix["profileReleasePolicy"]
+    assert policy["readiness"] == "boundary-candidate-enforced"
+    assert policy["scope"] == "release-boundary-metadata-only"
+    assert policy["conformanceCatalog"] == (
+        "src/graphblocks/data/conformance-profiles.yaml"
+    )
+    assert (ROOT / policy["conformanceCatalog"]).resolve() == catalog_path.resolve()
+    assert policy["componentCatalog"] == "src/graphblocks/data/package-catalog.yaml"
+    component_catalog_path = ROOT / policy["componentCatalog"]
+    component_catalog = yaml.safe_load(
+        component_catalog_path.read_text(encoding="utf-8")
+    )
+    assert policy["recordsAuthority"] == "profiles"
+    assert policy["stableTargetReleaseTrack"] == "core"
+    assert policy["artifactRoleDefinitions"] == {
+        "claimOwnerArtifact": (
+            "compatibility-claim-accountability-not-exclusive-implementation"
+        ),
+        "implementationArtifacts": (
+            "shipped-code-participating-in-profile-implementation"
+        ),
+        "evidenceArtifacts": (
+            "packaged-conformance-evidence-producers-not-complete-release-evidence"
+        ),
+    }
+    assert policy["authorityInheritanceMode"] == (
+        "transitive-role-preserving-from-extends"
+    )
+    required_fields = {
+        "releaseTrack",
+        "catalogReleaseTrain",
+        "claimOwnerArtifact",
+        "implementationArtifacts",
+        "evidenceArtifacts",
+        "authority",
+        "extends",
+        "tier",
+        "promotionGate",
+        "requiredGates",
+    }
+    assert set(policy["requiredFields"]) == required_fields
+    assert policy["extensionRequiredFields"] == ["extensionTrack"]
+    assert policy["externalIntegrationTrack"] == "integrationPromotionPolicy"
+
+    tracks = policy["tracks"]
+    assert set(tracks) == {"core", "extension"}
+    core_profile_ids = set(tracks["core"]["profileIds"])
+    extension_profile_ids = set(tracks["extension"]["profileIds"])
+    assert core_profile_ids == {"GB-C0-SCHEMA", "GB-C1-LOCAL-RUNTIME"}
+    assert not core_profile_ids & extension_profile_ids
+    assert core_profile_ids | extension_profile_ids == set(profiles)
+    assert tracks["core"]["allowedTiers"] == ["stable"]
+    assert tracks["core"]["promotionGate"] == "REL-CORE-PROFILE"
+    assert tracks["core"]["includedInTargetRelease"] is True
+    assert tracks["core"]["eligibility"] == {
+        "portableExecutionSemanticsRequired": True,
+        "minimumIndependentRuntimeImplementations": 2,
+        "providerNeutralTckRequired": True,
+        "providerDatabaseDeploymentPolicyAllowed": False,
+    }
+    assert tracks["extension"]["allowedTiers"] == ["preview"]
+    assert tracks["extension"]["promotionGate"] == "REL-EXTENSION-PROFILE"
+    assert tracks["extension"]["includedInTargetRelease"] is False
+    assert tracks["extension"]["independentPromotionRequired"] is True
+    assert tracks["extension"]["ancestorPromotionRequired"] is True
+    assert tracks["extension"]["ancestorRequiredGateMode"] == "transitive-union"
+    assert tracks["extension"]["promotionEvidenceIdentity"] == "profile-id-bound"
+    assert tracks["extension"]["shippedSecurityDefectsRemainReleaseBlocking"] is True
+
+    artifacts = {entry["id"]: entry for entry in matrix["artifacts"]}
+    release_gates = {entry["id"]: entry for entry in matrix["releaseGates"]}
+    for track_name, track in tracks.items():
+        track_profile_ids = set(track["profileIds"])
+        assert track_profile_ids == {
+            profile_id
+            for profile_id, profile in profiles.items()
+            if profile["releaseTrack"] == track_name
+        }
+        for profile_id in track_profile_ids:
+            profile = profiles[profile_id]
+            assert required_fields <= profile.keys()
+            assert profile["tier"] in track["allowedTiers"]
+            assert profile["promotionGate"] == track["promotionGate"]
+            assert profile["promotionGate"] in profile["requiredGates"]
+            assert profile["promotionGate"] in release_gates
+            claim_owner_artifact = profile["claimOwnerArtifact"]
+            implementation_artifacts = profile["implementationArtifacts"]
+            evidence_artifacts = profile["evidenceArtifacts"]
+            assert claim_owner_artifact in artifacts
+            assert isinstance(implementation_artifacts, list)
+            assert implementation_artifacts
+            assert len(implementation_artifacts) == len(
+                set(implementation_artifacts)
+            )
+            assert claim_owner_artifact in implementation_artifacts
+            assert set(implementation_artifacts) <= set(artifacts)
+            assert isinstance(evidence_artifacts, list) and evidence_artifacts
+            assert len(evidence_artifacts) == len(set(evidence_artifacts))
+            assert set(evidence_artifacts) <= set(artifacts)
+            assert not set(implementation_artifacts) & set(evidence_artifacts)
+            authority = profile["authority"]
+            assert isinstance(authority, dict) and authority
+            assert all(
+                isinstance(role, str)
+                and role
+                and isinstance(implementation, str)
+                and implementation
+                for role, implementation in authority.items()
+            )
+            assert all(
+                role.startswith(("active", "target", "reference", "inherited"))
+                for role in authority
+            )
+
+    catalog_profiles = {
+        entry["id"]: entry for entry in conformance_catalog["spec"]["profiles"]
+    }
+    tier_rank = {"preview": 0, "stable": 1}
+    ancestors_by_profile: dict[str, set[str]] = {}
+    for profile_id, profile in profiles.items():
+        catalog_extends = catalog_profiles[profile_id].get("extends", [])
+        assert profile["extends"] == catalog_extends
+        ancestors: set[str] = set()
+        pending_ancestors = list(catalog_extends)
+        while pending_ancestors:
+            ancestor_id = pending_ancestors.pop()
+            if ancestor_id in ancestors:
+                continue
+            assert ancestor_id in profiles
+            ancestors.add(ancestor_id)
+            pending_ancestors.extend(catalog_profiles[ancestor_id].get("extends", []))
+        assert profile_id not in ancestors
+        ancestors_by_profile[profile_id] = ancestors
+        assert all(
+            tier_rank[profile["tier"]] <= tier_rank[profiles[ancestor_id]["tier"]]
+            for ancestor_id in ancestors
+        )
+        assert {
+            gate
+            for ancestor_id in ancestors
+            for gate in profiles[ancestor_id]["requiredGates"]
+        } <= set(profile["requiredGates"])
+        for ancestor_id in ancestors:
+            for role, implementation in profiles[ancestor_id]["authority"].items():
+                if (
+                    role in profile["authority"]
+                    and role != "inheritedAuthorityFrom"
+                ):
+                    assert profile["authority"][role] == implementation
+
+    assert profiles["GB-C0-SCHEMA"]["authority"] == {
+        "activeCompiler": "rust",
+        "activeAuthoringFacade": "python",
+        "referenceOracle": "python",
+        "targetStandaloneCanonicalAndSchema": "rust-transition-blocked",
+    }
+    assert profiles["GB-C1-LOCAL-RUNTIME"]["authority"] == {
+        "activeCompiler": "rust",
+        "activeReferenceInterpreter": "python",
+        "targetProductionScheduler": "rust-transition-blocked",
+        "inheritedAuthorityFrom": "extends",
+    }
+    for profile_id in extension_profile_ids:
+        extension_authority = profiles[profile_id]["authority"]
+        assert extension_authority["activeContract"] == "specification"
+        assert extension_authority["activeReferenceImplementation"] == "python"
+        assert extension_authority["inheritedAuthorityFrom"] == "extends"
+        resolved_authority = {
+            (source_profile_id, role): implementation
+            for source_profile_id in {
+                profile_id,
+                *ancestors_by_profile[profile_id],
+            }
+            for role, implementation in profiles[source_profile_id][
+                "authority"
+            ].items()
+        }
+        assert resolved_authority[
+            ("GB-C1-LOCAL-RUNTIME", "activeReferenceInterpreter")
+        ] == "python"
+        assert resolved_authority[
+            ("GB-C1-LOCAL-RUNTIME", "targetProductionScheduler")
+        ] == "rust-transition-blocked"
+        assert resolved_authority[("GB-C0-SCHEMA", "activeCompiler")] == "rust"
+    assert profiles["GB-C4-PRODUCTION"]["authority"][
+        "targetProductionRuntime"
+    ] == "rust-transition-blocked"
+    assert profiles["GB-X3-DURABLE-STREAM"]["authority"][
+        "targetDurableRuntime"
+    ] == "rust-transition-blocked"
+
+    release_trains = component_catalog["releaseTrains"]
+    assert set(release_trains) == {
+        "core",
+        "aiApplication",
+        "governance",
+        "productionPlatform",
+        "orchestration",
+        "voice",
+        "durableStream",
+        "integrations",
+    }
+    expected_train_profiles = {
+        "core": core_profile_ids,
+        "aiApplication": {"GB-C2-AI-APPLICATION"},
+        "governance": {"GB-C3-GOVERNED-RUNTIME"},
+        "productionPlatform": {"GB-C4-PRODUCTION"},
+        "orchestration": {"GB-X1-ORCHESTRATION"},
+        "voice": {"GB-X2-VOICE"},
+        "durableStream": {"GB-X3-DURABLE-STREAM"},
+        "integrations": set(),
+    }
+    for train_name, expected_profiles in expected_train_profiles.items():
+        train = release_trains[train_name]
+        assert set(train["profiles"]) == expected_profiles
+        assert train["promotionGate"] in release_gates
+        if train_name == "core":
+            assert train["minorVersionCoordinated"] is True
+        else:
+            assert train["minorVersionCoordinated"] is False
+        if expected_profiles:
+            assert {
+                profiles[profile_id]["catalogReleaseTrain"]
+                for profile_id in expected_profiles
+            } == {train_name}
+            assert {
+                profiles[profile_id]["promotionGate"]
+                for profile_id in expected_profiles
+            } == {train["promotionGate"]}
+    assert release_trains["integrations"]["promotionGate"] == (
+        "REL-INTEGRATION-PROMOTION"
+    )
+
+    component_records = {
+        entry["name"]: entry for entry in component_catalog["components"]
+    }
+    component_required_profiles: dict[str, set[str]] = {}
+    cross_track_surfaces: dict[str, dict[str, list[str]]] = {}
+    cross_track_requirements: dict[str, dict[str, object]] = {}
+    for train_name, train in release_trains.items():
+        required_profiles = train["componentRequiredProfiles"]
+        assert set(required_profiles) == set(train["components"])
+        train_cross_track_surfaces = train.get("crossTrackSurfaces", {})
+        assert set(train_cross_track_surfaces) <= set(train["components"])
+        cross_track_surfaces.update(train_cross_track_surfaces)
+        train_cross_track_requirements = train.get("crossTrackRequirements", {})
+        assert set(train_cross_track_requirements) <= set(train["components"])
+        cross_track_requirements.update(train_cross_track_requirements)
+        for component, profile_ids in required_profiles.items():
+            assert isinstance(profile_ids, list) and profile_ids
+            assert len(profile_ids) == len(set(profile_ids))
+            assert set(profile_ids) <= set(profiles)
+            if (
+                train_name != "integrations"
+                and component not in train_cross_track_surfaces
+                and component not in train_cross_track_requirements
+            ):
+                assert set(profile_ids) <= set(train["profiles"])
+            if component in train_cross_track_surfaces:
+                assert set(profile_ids) == {
+                    profile_id
+                    for surface_profile_ids in train_cross_track_surfaces[
+                        component
+                    ].values()
+                    for profile_id in surface_profile_ids
+                }
+            if component in train_cross_track_requirements:
+                requirement = train_cross_track_requirements[component]
+                owning_profile = requirement["owningProfile"]
+                additional_profiles = requirement["additionalRequiredProfiles"]
+                assert isinstance(owning_profile, str)
+                assert isinstance(additional_profiles, list)
+                assert all(
+                    isinstance(profile_id, str)
+                    for profile_id in additional_profiles
+                )
+                assert set(profile_ids) == {
+                    owning_profile,
+                    *additional_profiles,
+                }
+            component_required_profiles[component] = set(profile_ids)
+    assert set(component_required_profiles) == set(component_records)
+    assert cross_track_requirements == {
+        "graphblocks-agents": {
+            "owningProfile": "GB-C2-AI-APPLICATION",
+            "additionalRequiredProfiles": ["GB-C3-GOVERNED-RUNTIME"],
+        }
+    }
+    assert cross_track_surfaces == {
+        "graphblocks-cli": {
+            "stableCoreCommands": ["GB-C0-SCHEMA", "GB-C1-LOCAL-RUNTIME"],
+            "previewProductionCommands": ["GB-C4-PRODUCTION"],
+        }
+    }
+    for surface_name, profile_ids in cross_track_surfaces[
+        "graphblocks-cli"
+    ].items():
+        expected_tier = (
+            "stable" if surface_name.startswith("stable") else "preview"
+        )
+        assert all(
+            profiles[profile_id]["tier"] == expected_tier
+            for profile_id in profile_ids
+        )
+
+    assert {
+        component: component_required_profiles[component]
+        for component in release_trains["integrations"]["components"]
+    } == {
+        "graphblocks-pdf": {"GB-C2-AI-APPLICATION"},
+        "graphblocks-qdrant": {"GB-C2-AI-APPLICATION"},
+        "graphblocks-mcp": {"GB-C1-LOCAL-RUNTIME"},
+        "graphblocks-openapi": {"GB-C1-LOCAL-RUNTIME"},
+        "graphblocks-openai": {"GB-C2-AI-APPLICATION"},
+        "graphblocks-haystack": {"GB-C2-AI-APPLICATION"},
+        "graphblocks-policy-opa": {"GB-C3-GOVERNED-RUNTIME"},
+        "graphblocks-policy-cedar": {"GB-C3-GOVERNED-RUNTIME"},
+        "graphblocks-budget-postgres": {"GB-C3-GOVERNED-RUNTIME"},
+        "graphblocks-usage-postgres": {"GB-C3-GOVERNED-RUNTIME"},
+        "graphblocks-kubernetes": {"GB-C4-PRODUCTION"},
+        "graphblocks-terraform": {"GB-C4-PRODUCTION"},
+        "graphblocks-oci": {"GB-C4-PRODUCTION"},
+        "graphblocks-gitops": {"GB-C4-PRODUCTION"},
+        "graphblocks-otel": {"GB-C4-PRODUCTION"},
+        "graphblocks-langfuse": {"GB-C4-PRODUCTION"},
+        "graphblocks-prometheus": {"GB-C4-PRODUCTION"},
+        "graphblocks-dashboards": {"GB-C4-PRODUCTION"},
+        "graphblocks-webrtc": {"GB-X2-VOICE"},
+        "graphblocks-websocket-media": {"GB-X2-VOICE"},
+        "graphblocks-openai-realtime": {"GB-X2-VOICE"},
+        "graphblocks-silero-vad": {"GB-X2-VOICE"},
+        "graphblocks-kafka": {"GB-X3-DURABLE-STREAM"},
+        "graphblocks-nats": {"GB-X3-DURABLE-STREAM"},
+        "graphblocks-sqs": {"GB-X3-DURABLE-STREAM"},
+        "graphblocks-pubsub": {"GB-X3-DURABLE-STREAM"},
+        "graphblocks-scripted": {"GB-C2-AI-APPLICATION"},
+    }
+
+    for component, component_record in component_records.items():
+        source_profile_closure = {
+            profile_id
+            for required_profile_id in component_required_profiles[component]
+            for profile_id in {
+                required_profile_id,
+                *ancestors_by_profile[required_profile_id],
+            }
+        }
+        for dependency in component_record.get("dependsOn", []):
+            assert component_required_profiles[dependency] <= source_profile_closure
+
+    integration_tiers = {
+        entry["id"]: entry["tier"] for entry in matrix["integrations"]
+    }
+    for component in release_trains["integrations"]["components"]:
+        if integration_tiers[component] == "stable":
+            assert all(
+                profiles[profile_id]["tier"] == "stable"
+                for profile_id in component_required_profiles[component]
+            )
+
+    component_memberships = Counter(
+        component
+        for train in release_trains.values()
+        for component in train["components"]
+    )
+    assert component_memberships == Counter(
+        {component_name: 1 for component_name in component_records}
+    )
+    assert set(release_trains["integrations"]["components"]) == set(
+        component_catalog["integrationRules"]["maturityManagedComponents"]
+    )
+    assert all(
+        component_records[component]["stability"] == "foundation"
+        for component in release_trains["core"]["components"]
+    )
+    assert all(
+        component_records[component]["stability"] != "foundation"
+        for train_name in (
+            "aiApplication",
+            "governance",
+            "productionPlatform",
+            "orchestration",
+            "voice",
+            "durableStream",
+        )
+        for component in release_trains[train_name]["components"]
+    )
+    production_train = release_trains["productionPlatform"]
+    assert set(production_train["domains"]) == {
+        "runtime-service",
+        "deployment",
+        "observability",
+        "tooling",
+    }
+    assert Counter(
+        component
+        for domain_components in production_train["domains"].values()
+        for component in domain_components
+    ) == Counter({component: 1 for component in production_train["components"]})
+    assert any(
+        "crosses release tracks" in note
+        for note in component_catalog["defaultSelection"]["notes"]
+    )
+
+    assert all(
+        "extensionTrack" not in profiles[profile_id]
+        for profile_id in core_profile_ids
+    )
+    assert {
+        profiles[profile_id]["extensionTrack"]
+        for profile_id in extension_profile_ids
+    } == {
+        "ai-application",
+        "governance",
+        "production-platform",
+        "orchestration",
+        "voice",
+        "durable-stream",
+    }
+    stable_claimed_profiles = {
+        profile_id
+        for artifact in artifacts.values()
+        for profile_id in artifact.get("stableProfiles", [])
+    }
+    assert stable_claimed_profiles == core_profile_ids
+    assert extension_profile_ids <= set(artifacts["pypi:graphblocks"]["exclusions"])
+    assert set(artifacts["pypi:graphblocks-runtime"]["previewSurfaces"]) == (
+        extension_profile_ids
+    )
+
+    core_gate = release_gates["REL-CORE-PROFILE"]
+    extension_gate = release_gates["REL-EXTENSION-PROFILE"]
+    assert core_gate["releaseTrack"] == "core"
+    assert core_gate["blocksTargetRelease"] is True
+    assert core_gate["id"] in matrix["globalRequiredGates"]
+    assert extension_gate["releaseTrack"] == "extension"
+    assert extension_gate["readiness"] == "definition-blocked"
+    assert extension_gate["blocksTargetRelease"] is False
+    assert extension_gate["independentPromotionRequired"] is True
+    assert extension_gate["ancestorPromotionRequired"] is True
+    assert extension_gate["ancestorRequiredGateMode"] == "transitive-union"
+    assert extension_gate["profileIdentityBoundEvidenceRequired"] is True
+    assert extension_gate["blockers"] == [
+        "profile-scoped-promotion-evidence-contract-not-frozen"
+    ]
+    assert extension_gate["id"] not in matrix["globalRequiredGates"]
+    expected_evidence = {
+        "src/graphblocks/data/conformance-profiles.yaml",
+        "docs/project/stable-release-matrix.yaml",
+        "docs/specification/conformance/profiles.md",
+        "tests/test_documentation_integrity.py",
+    }
+    assert set(core_gate["evidence"]) == expected_evidence
+    assert set(extension_gate["evidence"]) == expected_evidence
+    assert all((ROOT / path).is_file() for path in expected_evidence)
+
+
 def test_stable_release_matrix_is_complete_and_machine_readable() -> None:
     matrix = yaml.safe_load((ROOT / "docs" / "project" / "stable-release-matrix.yaml").read_text())
     assert matrix["matrixVersion"] == 1
@@ -932,6 +1405,7 @@ def test_stable_release_matrix_is_complete_and_machine_readable() -> None:
         for gate in entry.get("companionGates", [])
     )
     referenced_gates.update(entry["promotionGate"] for entry in integration_entries)
+    referenced_gates.update(entry["promotionGate"] for entry in matrix["profiles"])
     referenced_gates.update(matrix["globalRequiredGates"])
     assert referenced_gates == set(gate_ids)
 
@@ -1027,9 +1501,10 @@ def test_stable_release_matrix_is_complete_and_machine_readable() -> None:
         "rust-native-runtime-target+python-reference-oracle"
     )
     assert matrix_profiles["GB-C1-LOCAL-RUNTIME"]["authority"] == {
-        "compiler": "rust",
-        "productionRuntimeTarget": "rust",
-        "referenceInterpreter": "python",
+        "activeCompiler": "rust",
+        "activeReferenceInterpreter": "python",
+        "targetProductionScheduler": "rust-transition-blocked",
+        "inheritedAuthorityFrom": "extends",
     }
     assert "REL-NORMATIVE-AUTHORITY" in matrix_profiles["GB-C1-LOCAL-RUNTIME"][
         "requiredGates"

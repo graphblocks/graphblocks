@@ -19,6 +19,11 @@ preparing the first 1.0 release candidate.
 
 ### Changed
 
+- Split the machine-readable package and profile release model into a C0/C1
+  core train plus independently owned AI, governance, production,
+  orchestration, voice, durable-stream, and integration tracks, with exact
+  ancestor, authority-role, artifact, tier, component-dependency closure, and
+  promotion-gate checks.
 - Classified every shipped integration as contract-only or test-double and
   added a machine-enforced promotion gate for authentication, supported
   versions, their complete Cartesian support matrix, retry/failure ownership,

@@ -28,6 +28,24 @@ release matrix.
 - Versioned schemas and provider-neutral package catalogs.
 - Shared TCK fixtures and executable acceptance applications.
 
+## Release tracks
+
+The 1.0 core track contains only `GB-C0-SCHEMA` and
+`GB-C1-LOCAL-RUNTIME`. AI application, governance, production platform,
+orchestration, voice, durable stream, deployment, observability, and external
+integration capabilities remain independently promoted extensions. Their code
+may ship in a core package, but package presence does not expand the stable
+compatibility claim.
+
+The [machine-readable release matrix](docs/project/stable-release-matrix.yaml)
+assigns every profile a claim-owner artifact, separate implementation and
+evidence artifacts, role-scoped active/target/reference authority, tier,
+release track, ancestors, and promotion gate. Core promotion is
+release-blocking; extension promotion is profile-scoped and cannot ride a
+successful core or parent-profile gate.
+Authority is inherited role by role through `extends`, so a blocked Rust target
+cannot be flattened into an active extension authority.
+
 ## Development quickstart
 
 Requirements are Python 3.11 or 3.12 and the Rust toolchain selected by

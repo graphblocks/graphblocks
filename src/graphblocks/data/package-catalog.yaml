@@ -1,4 +1,4 @@
-catalogVersion: 6
+catalogVersion: 7
 specVersion: '1.0'
 defaultSelection:
   artifacts:
@@ -34,6 +34,8 @@ defaultSelection:
     artifact named by stableClaimRequires.
   - Policy, budget, and usage default components provide only provider-neutral contracts and
     local in-memory/SQLite development implementations.
+  - Default selection is an authoring convenience that crosses release tracks; component
+    presence does not promote an extension profile or widen a stable compatibility claim.
   - Distributed ledgers, external PDPs, providers, parsers, cloud SDKs, servers, voice, and
     deployment adapters remain optional.
 artifacts:
@@ -65,54 +67,183 @@ artifacts:
   versionConstraint: ~=0.1
   dependsOn: []
 releaseTrains:
-  foundation:
+  core:
+    profiles: [GB-C0-SCHEMA, GB-C1-LOCAL-RUNTIME]
     minorVersionCoordinated: true
+    promotionGate: REL-CORE-PROFILE
     components:
     - graphblocks-core
     - graphblocks-runtime
     - graphblocks-stdlib
+    - graphblocks-testing
+    componentRequiredProfiles:
+      graphblocks-core: [GB-C0-SCHEMA]
+      graphblocks-runtime: [GB-C1-LOCAL-RUNTIME]
+      graphblocks-stdlib: [GB-C0-SCHEMA]
+      graphblocks-testing: [GB-C0-SCHEMA, GB-C1-LOCAL-RUNTIME]
+  aiApplication:
+    profiles: [GB-C2-AI-APPLICATION]
+    minorVersionCoordinated: false
+    promotionGate: REL-EXTENSION-PROFILE
+    components:
     - graphblocks-documents
     - graphblocks-rag
     - graphblocks-conversation
+    - graphblocks-agents
+    - graphblocks-evaluation
+    - graphblocks-client
+    - graphblocks-tui
+    componentRequiredProfiles:
+      graphblocks-documents: [GB-C2-AI-APPLICATION]
+      graphblocks-rag: [GB-C2-AI-APPLICATION]
+      graphblocks-conversation: [GB-C2-AI-APPLICATION]
+      graphblocks-agents: [GB-C2-AI-APPLICATION, GB-C3-GOVERNED-RUNTIME]
+      graphblocks-evaluation: [GB-C2-AI-APPLICATION]
+      graphblocks-client: [GB-C2-AI-APPLICATION]
+      graphblocks-tui: [GB-C2-AI-APPLICATION]
+    crossTrackRequirements:
+      graphblocks-agents:
+        owningProfile: GB-C2-AI-APPLICATION
+        additionalRequiredProfiles: [GB-C3-GOVERNED-RUNTIME]
+  governance:
+    profiles: [GB-C3-GOVERNED-RUNTIME]
+    minorVersionCoordinated: false
+    promotionGate: REL-EXTENSION-PROFILE
+    components:
     - graphblocks-policy
     - graphblocks-budget
     - graphblocks-usage
-    - graphblocks-testing
-  firstPartyExtensions:
-    minorVersionCoordinated: false
-    components:
-    - graphblocks-agents
-    - graphblocks-evaluation
-    - graphblocks-orchestration
     - graphblocks-review
     - graphblocks-workspace
-    - graphblocks-client
-    - graphblocks-tui
+    componentRequiredProfiles:
+      graphblocks-policy: [GB-C3-GOVERNED-RUNTIME]
+      graphblocks-budget: [GB-C3-GOVERNED-RUNTIME]
+      graphblocks-usage: [GB-C3-GOVERNED-RUNTIME]
+      graphblocks-review: [GB-C3-GOVERNED-RUNTIME]
+      graphblocks-workspace: [GB-C3-GOVERNED-RUNTIME]
+  productionPlatform:
+    profiles: [GB-C4-PRODUCTION]
+    minorVersionCoordinated: false
+    promotionGate: REL-EXTENSION-PROFILE
+    components:
+    - graphblocks-callbacks
     - graphblocks-cli
     - graphblocks-server
     - graphblocks-worker
     - graphblocks-deployment
     - graphblocks-telemetry
+    - graphblocks-audit
     - graphblocks-devtools
-    - graphblocks-oci
+    - graphblocks-operator
+    componentRequiredProfiles:
+      graphblocks-callbacks: [GB-C4-PRODUCTION]
+      graphblocks-cli: [GB-C0-SCHEMA, GB-C1-LOCAL-RUNTIME, GB-C4-PRODUCTION]
+      graphblocks-server: [GB-C4-PRODUCTION]
+      graphblocks-worker: [GB-C4-PRODUCTION]
+      graphblocks-deployment: [GB-C4-PRODUCTION]
+      graphblocks-telemetry: [GB-C4-PRODUCTION]
+      graphblocks-audit: [GB-C4-PRODUCTION]
+      graphblocks-devtools: [GB-C4-PRODUCTION]
+      graphblocks-operator: [GB-C4-PRODUCTION]
+    crossTrackSurfaces:
+      graphblocks-cli:
+        stableCoreCommands: [GB-C0-SCHEMA, GB-C1-LOCAL-RUNTIME]
+        previewProductionCommands: [GB-C4-PRODUCTION]
+    domains:
+      runtime-service:
+      - graphblocks-callbacks
+      - graphblocks-server
+      - graphblocks-worker
+      - graphblocks-audit
+      deployment:
+      - graphblocks-deployment
+      - graphblocks-operator
+      observability:
+      - graphblocks-telemetry
+      tooling:
+      - graphblocks-cli
+      - graphblocks-devtools
+  orchestration:
+    profiles: [GB-X1-ORCHESTRATION]
+    minorVersionCoordinated: false
+    promotionGate: REL-EXTENSION-PROFILE
+    components: [graphblocks-orchestration]
+    componentRequiredProfiles:
+      graphblocks-orchestration: [GB-X1-ORCHESTRATION]
+  voice:
+    profiles: [GB-X2-VOICE]
+    minorVersionCoordinated: false
+    promotionGate: REL-EXTENSION-PROFILE
+    components: [graphblocks-voice]
+    componentRequiredProfiles:
+      graphblocks-voice: [GB-X2-VOICE]
+  durableStream:
+    profiles: [GB-X3-DURABLE-STREAM]
+    minorVersionCoordinated: false
+    promotionGate: REL-EXTENSION-PROFILE
+    components: [graphblocks-durable]
+    componentRequiredProfiles:
+      graphblocks-durable: [GB-X3-DURABLE-STREAM]
+  integrations:
+    profiles: []
+    minorVersionCoordinated: false
+    promotionGate: REL-INTEGRATION-PROMOTION
+    components:
+    - graphblocks-pdf
+    - graphblocks-qdrant
+    - graphblocks-mcp
+    - graphblocks-openapi
+    - graphblocks-openai
+    - graphblocks-haystack
+    - graphblocks-policy-opa
+    - graphblocks-policy-cedar
+    - graphblocks-budget-postgres
+    - graphblocks-usage-postgres
     - graphblocks-kubernetes
     - graphblocks-terraform
+    - graphblocks-oci
     - graphblocks-gitops
-    - graphblocks-operator
     - graphblocks-otel
     - graphblocks-langfuse
-    - graphblocks-audit
     - graphblocks-prometheus
     - graphblocks-dashboards
-    compatibilityBy:
-    - requires_core
-    - requires_runtime_protocol
-    - plugin_api
-    - schema_api
-    - policy_api
-    - ledger_api
-  integrations:
-    minorVersionCoordinated: false
+    - graphblocks-webrtc
+    - graphblocks-websocket-media
+    - graphblocks-openai-realtime
+    - graphblocks-silero-vad
+    - graphblocks-kafka
+    - graphblocks-nats
+    - graphblocks-sqs
+    - graphblocks-pubsub
+    - graphblocks-scripted
+    componentRequiredProfiles:
+      graphblocks-pdf: [GB-C2-AI-APPLICATION]
+      graphblocks-qdrant: [GB-C2-AI-APPLICATION]
+      graphblocks-mcp: [GB-C1-LOCAL-RUNTIME]
+      graphblocks-openapi: [GB-C1-LOCAL-RUNTIME]
+      graphblocks-openai: [GB-C2-AI-APPLICATION]
+      graphblocks-haystack: [GB-C2-AI-APPLICATION]
+      graphblocks-policy-opa: [GB-C3-GOVERNED-RUNTIME]
+      graphblocks-policy-cedar: [GB-C3-GOVERNED-RUNTIME]
+      graphblocks-budget-postgres: [GB-C3-GOVERNED-RUNTIME]
+      graphblocks-usage-postgres: [GB-C3-GOVERNED-RUNTIME]
+      graphblocks-kubernetes: [GB-C4-PRODUCTION]
+      graphblocks-terraform: [GB-C4-PRODUCTION]
+      graphblocks-oci: [GB-C4-PRODUCTION]
+      graphblocks-gitops: [GB-C4-PRODUCTION]
+      graphblocks-otel: [GB-C4-PRODUCTION]
+      graphblocks-langfuse: [GB-C4-PRODUCTION]
+      graphblocks-prometheus: [GB-C4-PRODUCTION]
+      graphblocks-dashboards: [GB-C4-PRODUCTION]
+      graphblocks-webrtc: [GB-X2-VOICE]
+      graphblocks-websocket-media: [GB-X2-VOICE]
+      graphblocks-openai-realtime: [GB-X2-VOICE]
+      graphblocks-silero-vad: [GB-X2-VOICE]
+      graphblocks-kafka: [GB-X3-DURABLE-STREAM]
+      graphblocks-nats: [GB-X3-DURABLE-STREAM]
+      graphblocks-sqs: [GB-X3-DURABLE-STREAM]
+      graphblocks-pubsub: [GB-X3-DURABLE-STREAM]
+      graphblocks-scripted: [GB-C2-AI-APPLICATION]
     compatibilityBy:
     - requires_core
     - requires_runtime_protocol
@@ -184,7 +315,7 @@ components:
   - parser SDKs
   - OCR engines
   implementationPhase: 1
-  stability: foundation
+  stability: profile-extension
 - name: graphblocks-pdf
   artifact: graphblocks
   import: graphblocks.integrations.pdf
@@ -218,7 +349,7 @@ components:
   forbiddenDependencies:
   - vector DB clients
   implementationPhase: 1
-  stability: foundation
+  stability: profile-extension
 - name: graphblocks-qdrant
   artifact: graphblocks
   import: graphblocks.integrations.qdrant
@@ -253,7 +384,7 @@ components:
   - server frameworks
   - DB clients
   implementationPhase: 1
-  stability: foundation
+  stability: profile-extension
 - name: graphblocks-agents
   artifact: graphblocks
   import: graphblocks.agents
@@ -516,7 +647,7 @@ components:
   - provider usage reconciliation
   - local in-memory/SQLite implementation
   implementationPhase: 2
-  stability: foundation
+  stability: profile-extension
 - name: graphblocks-testing
   artifact: graphblocks-testing
   import: graphblocks_testing
@@ -618,7 +749,7 @@ components:
   - OPA SDK
   - Cedar SDK
   implementationPhase: 2
-  stability: foundation
+  stability: profile-extension
 - name: graphblocks-budget
   artifact: graphblocks
   import: graphblocks.budget
@@ -633,7 +764,7 @@ components:
   - BudgetPermit
   - local in-memory/SQLite implementation
   implementationPhase: 2
-  stability: foundation
+  stability: profile-extension
 - name: graphblocks-orchestration
   artifact: graphblocks
   import: graphblocks.orchestration
@@ -736,6 +867,7 @@ components:
   - Haystack component and pipeline block descriptors
   - Haystack ChatMessage adapters
   - explicit descriptor diagnostics for dynamic sockets
+  - contract-only application surface with no supported Haystack execution runtime
   forbiddenDependencies:
   - haystack framework
   implementationPhase: integration-defined

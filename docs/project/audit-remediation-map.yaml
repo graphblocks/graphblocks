@@ -312,8 +312,8 @@ workstreams:
   - id: M2-PRODUCT-BOUNDARY
     phase: phase-2-implementation-boundaries
     ownerArea: product-and-packaging
-    affectedProfiles: [GB-C2-AI-APPLICATION, GB-C3-GOVERNED-RUNTIME, GB-C4-PRODUCTION]
-    releaseGates: [REL-AUDIT-REMEDIATION]
+    affectedProfiles: [GB-C0-SCHEMA, GB-C1-LOCAL-RUNTIME, GB-C2-AI-APPLICATION, GB-C3-GOVERNED-RUNTIME, GB-C4-PRODUCTION, GB-X1-ORCHESTRATION, GB-X2-VOICE, GB-X3-DURABLE-STREAM]
+    releaseGates: [REL-AUDIT-REMEDIATION, REL-CORE-PROFILE, REL-EXTENSION-PROFILE]
     findings:
       - GB-ARCH-014
       - GB-ARCH-015

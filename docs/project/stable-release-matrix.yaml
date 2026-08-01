@@ -6,6 +6,7 @@ diagnosticRegistry: ../specification/reference/diagnostic-codes.yaml
 globalRequiredGates:
   - REL-AUDIT-REMEDIATION
   - REL-NORMATIVE-AUTHORITY
+  - REL-CORE-PROFILE
   - REL-PLATFORM-MATRIX
   - REL-MACOS-NATIVE-SMOKE
   - REL-SUPPLY-CHAIN
@@ -63,6 +64,53 @@ tierDefinitions:
   preview: Shipped for evaluation; documented breaking changes may occur in a minor release.
   internal: Build or verification implementation with no supported public API.
   reserved: Name or future surface only; no usable implementation or compatibility promise.
+
+profileReleasePolicy:
+  readiness: boundary-candidate-enforced
+  scope: release-boundary-metadata-only
+  conformanceCatalog: src/graphblocks/data/conformance-profiles.yaml
+  componentCatalog: src/graphblocks/data/package-catalog.yaml
+  recordsAuthority: profiles
+  stableTargetReleaseTrack: core
+  artifactRoleDefinitions:
+    claimOwnerArtifact: compatibility-claim-accountability-not-exclusive-implementation
+    implementationArtifacts: shipped-code-participating-in-profile-implementation
+    evidenceArtifacts: packaged-conformance-evidence-producers-not-complete-release-evidence
+  authorityInheritanceMode: transitive-role-preserving-from-extends
+  requiredFields:
+    - releaseTrack
+    - catalogReleaseTrain
+    - claimOwnerArtifact
+    - implementationArtifacts
+    - evidenceArtifacts
+    - authority
+    - extends
+    - tier
+    - promotionGate
+    - requiredGates
+  extensionRequiredFields: [extensionTrack]
+  tracks:
+    core:
+      profileIds: [GB-C0-SCHEMA, GB-C1-LOCAL-RUNTIME]
+      allowedTiers: [stable]
+      promotionGate: REL-CORE-PROFILE
+      includedInTargetRelease: true
+      eligibility:
+        portableExecutionSemanticsRequired: true
+        minimumIndependentRuntimeImplementations: 2
+        providerNeutralTckRequired: true
+        providerDatabaseDeploymentPolicyAllowed: false
+    extension:
+      profileIds: [GB-C2-AI-APPLICATION, GB-C3-GOVERNED-RUNTIME, GB-C4-PRODUCTION, GB-X1-ORCHESTRATION, GB-X2-VOICE, GB-X3-DURABLE-STREAM]
+      allowedTiers: [preview]
+      promotionGate: REL-EXTENSION-PROFILE
+      includedInTargetRelease: false
+      independentPromotionRequired: true
+      ancestorPromotionRequired: true
+      ancestorRequiredGateMode: transitive-union
+      promotionEvidenceIdentity: profile-id-bound
+      shippedSecurityDefectsRemainReleaseBlocking: true
+  externalIntegrationTrack: integrationPromotionPolicy
 
 artifacts:
   - id: pypi:graphblocks
@@ -168,53 +216,126 @@ artifacts:
 
 profiles:
   - id: GB-C0-SCHEMA
+    releaseTrack: core
+    catalogReleaseTrain: core
+    claimOwnerArtifact: pypi:graphblocks
+    implementationArtifacts: [pypi:graphblocks, pypi:graphblocks-runtime, crate:graphblocks-schema, crate:graphblocks-compiler, crate:graphblocks-python]
+    evidenceArtifacts: [pypi:graphblocks-testing]
     implementation: rust-native-compiler+python-facade
     tier: stable
     readiness: blocked
-    authority: {compiler: rust, authoringAndReferenceOracle: python}
-    requiredGates: [REL-WIRE-V1, REL-CLOSED-SCHEMA, REL-CLOSED-WORLD, REL-DIAGNOSTICS, REL-TRACEABILITY, REL-INSTALLED-TCK, REL-NORMATIVE-AUTHORITY]
+    authority: {activeCompiler: rust, activeAuthoringFacade: python, referenceOracle: python, targetStandaloneCanonicalAndSchema: rust-transition-blocked}
+    extends: []
+    promotionGate: REL-CORE-PROFILE
+    requiredGates: [REL-CORE-PROFILE, REL-WIRE-V1, REL-CLOSED-SCHEMA, REL-CLOSED-WORLD, REL-DIAGNOSTICS, REL-TRACEABILITY, REL-INSTALLED-TCK, REL-NORMATIVE-AUTHORITY]
   - id: GB-C1-LOCAL-RUNTIME
+    releaseTrack: core
+    catalogReleaseTrain: core
+    claimOwnerArtifact: pypi:graphblocks-runtime
+    implementationArtifacts: [pypi:graphblocks, pypi:graphblocks-runtime, crate:graphblocks-flow, crate:graphblocks-runtime-core, crate:graphblocks-protocol, crate:graphblocks-python]
+    evidenceArtifacts: [pypi:graphblocks-testing]
     implementation: rust-native-runtime-target+python-reference-oracle
     tier: stable
     readiness: blocked
-    authority: {compiler: rust, productionRuntimeTarget: rust, referenceInterpreter: python}
+    authority: {activeCompiler: rust, activeReferenceInterpreter: python, targetProductionScheduler: rust-transition-blocked, inheritedAuthorityFrom: extends}
+    promotionGate: REL-CORE-PROFILE
     extends: [GB-C0-SCHEMA]
-    requiredGates: [REL-API-SNAPSHOT, REL-RUNTIME-CORRECTNESS, REL-INSTALLED-TCK, REL-NORMATIVE-AUTHORITY]
+    requiredGates: [REL-CORE-PROFILE, REL-WIRE-V1, REL-CLOSED-SCHEMA, REL-CLOSED-WORLD, REL-DIAGNOSTICS, REL-TRACEABILITY, REL-INSTALLED-TCK, REL-NORMATIVE-AUTHORITY, REL-API-SNAPSHOT, REL-RUNTIME-CORRECTNESS]
   - id: GB-C2-AI-APPLICATION
+    releaseTrack: extension
+    extensionTrack: ai-application
+    catalogReleaseTrain: aiApplication
+    claimOwnerArtifact: pypi:graphblocks
+    implementationArtifacts: [pypi:graphblocks]
+    evidenceArtifacts: [pypi:graphblocks-testing]
     extensionImplementation: python-reference
     inheritsCoreAuthority: true
+    authority: {activeContract: specification, activeReferenceImplementation: python, inheritedAuthorityFrom: extends}
+    extends: [GB-C1-LOCAL-RUNTIME]
     tier: preview
     roadmap: active
+    promotionGate: REL-EXTENSION-PROFILE
+    requiredGates: &extension-profile-gates [REL-CORE-PROFILE, REL-WIRE-V1, REL-CLOSED-SCHEMA, REL-CLOSED-WORLD, REL-DIAGNOSTICS, REL-TRACEABILITY, REL-INSTALLED-TCK, REL-NORMATIVE-AUTHORITY, REL-API-SNAPSHOT, REL-RUNTIME-CORRECTNESS, REL-EXTENSION-PROFILE]
   - id: GB-C3-GOVERNED-RUNTIME
+    releaseTrack: extension
+    extensionTrack: governance
+    catalogReleaseTrain: governance
+    claimOwnerArtifact: pypi:graphblocks
+    implementationArtifacts: [pypi:graphblocks]
+    evidenceArtifacts: [pypi:graphblocks-testing]
     extensionImplementation: python-reference
     inheritsCoreAuthority: true
+    authority: {activeContract: specification, activeReferenceImplementation: python, inheritedAuthorityFrom: extends}
+    extends: [GB-C1-LOCAL-RUNTIME]
     tier: preview
     roadmap: active
+    promotionGate: REL-EXTENSION-PROFILE
+    requiredGates: *extension-profile-gates
     blockers: [fail-closed-policy-decoding, exact-external-codecs, durable-governance-transactions]
   - id: GB-C4-PRODUCTION
+    releaseTrack: extension
+    extensionTrack: production-platform
+    catalogReleaseTrain: productionPlatform
+    claimOwnerArtifact: pypi:graphblocks
+    implementationArtifacts: [pypi:graphblocks, crate:graphblocks-runtime-durable, crate:graphblocks-telemetry, crate:graphblocks-control-plane, helm:graphblocks-operator]
+    evidenceArtifacts: [pypi:graphblocks-testing]
     extensionImplementation: python-reference
     inheritsCoreAuthority: true
+    authority: {activeContract: specification, activeReferenceImplementation: python, targetProductionRuntime: rust-transition-blocked, inheritedAuthorityFrom: extends}
+    extends: [GB-C2-AI-APPLICATION, GB-C3-GOVERNED-RUNTIME]
     tier: preview
     roadmap: active
+    promotionGate: REL-EXTENSION-PROFILE
+    requiredGates: *extension-profile-gates
     blockers: [fail-closed-protected-routes, tenant-scoped-object-authorization, restart-durable-accepted-runs, authenticated-idempotent-resume, worker-crash-recovery, atomic-outbox-claims, retention-and-pagination, resource-execution-budgets, fencing, production-adapter-evidence]
   - id: GB-X1-ORCHESTRATION
+    releaseTrack: extension
+    extensionTrack: orchestration
+    catalogReleaseTrain: orchestration
+    claimOwnerArtifact: pypi:graphblocks
+    implementationArtifacts: [pypi:graphblocks]
+    evidenceArtifacts: [pypi:graphblocks-testing]
     extensionImplementation: python-reference
     inheritsCoreAuthority: true
+    authority: {activeContract: specification, activeReferenceImplementation: python, inheritedAuthorityFrom: extends}
+    extends: [GB-C3-GOVERNED-RUNTIME]
     tier: preview
     qualifier: provisional
     roadmap: active
+    promotionGate: REL-EXTENSION-PROFILE
+    requiredGates: *extension-profile-gates
   - id: GB-X2-VOICE
+    releaseTrack: extension
+    extensionTrack: voice
+    catalogReleaseTrain: voice
+    claimOwnerArtifact: pypi:graphblocks
+    implementationArtifacts: [pypi:graphblocks]
+    evidenceArtifacts: [pypi:graphblocks-testing]
     extensionImplementation: python-reference
     inheritsCoreAuthority: true
+    authority: {activeContract: specification, activeReferenceImplementation: python, inheritedAuthorityFrom: extends}
+    extends: [GB-C2-AI-APPLICATION]
     tier: preview
     qualifier: experimental
     roadmap: active
+    promotionGate: REL-EXTENSION-PROFILE
+    requiredGates: *extension-profile-gates
   - id: GB-X3-DURABLE-STREAM
+    releaseTrack: extension
+    extensionTrack: durable-stream
+    catalogReleaseTrain: durableStream
+    claimOwnerArtifact: pypi:graphblocks
+    implementationArtifacts: [pypi:graphblocks, crate:graphblocks-runtime-durable]
+    evidenceArtifacts: [pypi:graphblocks-testing]
     extensionImplementation: python-reference
     inheritsCoreAuthority: true
+    authority: {activeContract: specification, activeReferenceImplementation: python, targetDurableRuntime: rust-transition-blocked, inheritedAuthorityFrom: extends}
+    extends: [GB-C1-LOCAL-RUNTIME]
     tier: preview
     qualifier: experimental
     roadmap: active
+    promotionGate: REL-EXTENSION-PROFILE
+    requiredGates: *extension-profile-gates
 
 wireVersions:
   - id: graphblocks.ai/v1:Graph
@@ -464,6 +585,32 @@ integrations:
     tier: internal
 
 releaseGates:
+  - id: REL-CORE-PROFILE
+    description: Only the owned C0/C1 portable contract profiles with explicit active, target, and reference authority roles may join the 1.0 stable release track.
+    readiness: candidate-enforced
+    releaseTrack: core
+    blocksTargetRelease: true
+    evidence:
+      - src/graphblocks/data/conformance-profiles.yaml
+      - docs/project/stable-release-matrix.yaml
+      - docs/specification/conformance/profiles.md
+      - tests/test_documentation_integrity.py
+  - id: REL-EXTENSION-PROFILE
+    description: Each application, governance, production, orchestration, voice, or durable profile remains on an independently promoted extension track.
+    readiness: definition-blocked
+    releaseTrack: extension
+    blocksTargetRelease: false
+    independentPromotionRequired: true
+    ancestorPromotionRequired: true
+    ancestorRequiredGateMode: transitive-union
+    profileIdentityBoundEvidenceRequired: true
+    evidence:
+      - src/graphblocks/data/conformance-profiles.yaml
+      - docs/project/stable-release-matrix.yaml
+      - docs/specification/conformance/profiles.md
+      - tests/test_documentation_integrity.py
+    blockers:
+      - profile-scoped-promotion-evidence-contract-not-frozen
   - id: REL-API-SNAPSHOT
     description: Stable Python signatures and CLI JSON and exit-code contracts are snapshotted.
     readiness: candidate-enforced

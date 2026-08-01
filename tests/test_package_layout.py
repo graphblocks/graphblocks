@@ -416,7 +416,7 @@ def test_catalog_declares_three_python_artifacts_and_operator_delivery_artifact(
         artifact["distribution"]: artifact for artifact in catalog["artifacts"]
     }
 
-    assert catalog["catalogVersion"] == 6
+    assert catalog["catalogVersion"] == 7
     assert "defaultMetaPackage" not in catalog
     assert "packages" not in catalog
     assert artifacts == {
