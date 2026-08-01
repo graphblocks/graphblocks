@@ -107,16 +107,16 @@ jobs:
       - name: Run manifest-bound stable security gates
         if: ${{ matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11' }}
         env:
-          RUNNER_OS: ${{ matrix.os }}
-          RUNNER_PYTHON: ${{ matrix.python-version }}
+          SECURITY_GATE_RUNNER_OS: ${{ matrix.os }}
+          SECURITY_GATE_RUNNER_PYTHON: ${{ matrix.python-version }}
           SECURITY_GATE_ARTIFACT_NAME: graphblocks-stable-security-gates-${{ github.run_attempt }}
         run: >-
           python tools/stable_security_gates.py
           --result dist/ci/stable-security-gates.json
           --junit dist/ci/stable-security-gates.xml
           --candidate-commit "$GITHUB_SHA"
-          --runner-os "$RUNNER_OS"
-          --runner-python "$RUNNER_PYTHON"
+          --runner-os "$SECURITY_GATE_RUNNER_OS"
+          --runner-python "$SECURITY_GATE_RUNNER_PYTHON"
           --artifact-name "$SECURITY_GATE_ARTIFACT_NAME"
       - name: Retain manifest-bound stable security-gate evidence
         if: ${{ always() && matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11' }}

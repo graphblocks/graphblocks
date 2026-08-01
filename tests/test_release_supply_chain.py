@@ -3470,14 +3470,16 @@ def test_ci_enforces_pinned_platform_aggregation_and_isolated_release_signing() 
         "${{ matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11' }}"
     )
     assert stable_security_run["env"] == {
-        "RUNNER_OS": "${{ matrix.os }}",
-        "RUNNER_PYTHON": "${{ matrix.python-version }}",
+        "SECURITY_GATE_RUNNER_OS": "${{ matrix.os }}",
+        "SECURITY_GATE_RUNNER_PYTHON": "${{ matrix.python-version }}",
         "SECURITY_GATE_ARTIFACT_NAME": (
             "graphblocks-stable-security-gates-${{ github.run_attempt }}"
         ),
     }
     assert "python tools/stable_security_gates.py" in stable_security_run["run"]
     assert "--candidate-commit \"$GITHUB_SHA\"" in stable_security_run["run"]
+    assert '--runner-os "$SECURITY_GATE_RUNNER_OS"' in stable_security_run["run"]
+    assert '--runner-python "$SECURITY_GATE_RUNNER_PYTHON"' in stable_security_run["run"]
     assert '--artifact-name "$SECURITY_GATE_ARTIFACT_NAME"' in stable_security_run[
         "run"
     ]
