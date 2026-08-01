@@ -69,8 +69,28 @@ catalog-derived wheelhouse is also built and installed for both Python versions
 on both operating systems.
 
 Example-local integration tests invoke each example's runner. Documentation
-integrity tests verify links and ensure retired bundle artifacts do not become a
-second source of truth.
+integrity tests ensure retired bundle artifacts do not become a second source
+of truth. Run the fast documentation gate directly with:
+
+```bash
+python tools/check_docs.py
+```
+
+The gate discovers living Markdown outside dependency/build trees and uses a
+CommonMark token stream plus the upstream GitHub-compatible slugger. It rejects
+undefined references, repository escapes, missing or case-mismatched local
+targets, missing heading or source-line fragments, and duplicate explicit
+anchors. Literal all-uppercase issue IDs and supported GFM blockquote alert
+directives are the only shortcut-reference exceptions; images and
+explicit/collapsed references remain checked. The closed
+[`generated-documentation.yaml`](../project/generated-documentation.yaml)
+registry owns each generator command, primary source, and output; the checker
+runs every entry in `--check` mode and binds the checker, document, and projection
+content digests into its report. HTTP, HTTPS, and mail links are counted but
+deliberately not fetched, so a third-party outage cannot make the deterministic
+local gate flaky. The five-minute `Documentation` workflow runs on every push
+and pull request without a Rust build or the full test matrix, avoiding
+path-filter gaps and skipped required-check states.
 
 For conformance work, install or expose the
 `packages/graphblocks-testing` distribution and use the commands in

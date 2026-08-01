@@ -37,7 +37,9 @@ pdf = [
   "pypdf>=4.0",
 ]
 test = [
+  "github-slugger==0.0.3",
   "hypothesis>=6.160,<7",
+  "markdown-it-py>=4.2,<5",
   "mypy>=1.15,<2",
   "pytest>=8.0",
 ]

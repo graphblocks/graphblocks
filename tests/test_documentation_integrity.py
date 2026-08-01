@@ -11,7 +11,6 @@ import yaml
 
 
 ROOT = Path(__file__).parents[1]
-MARKDOWN_LINK = re.compile(r"(?<!!)\[[^]]+\]\(([^)]+)\)")
 
 
 def _validate_real_service_evidence(
@@ -379,31 +378,6 @@ def test_rust_workspace_crate_boundaries_are_documented() -> None:
 
     assert len(table_rows) == len(set(table_rows))
     assert set(table_rows) == workspace_package_names
-
-
-def test_project_markdown_links_resolve() -> None:
-    documents = [
-        ROOT / "README.md",
-        ROOT / "CHANGELOG.md",
-        ROOT / "CODE_OF_CONDUCT.md",
-        ROOT / "CONTRIBUTING.md",
-        ROOT / "GOVERNANCE.md",
-        ROOT / "SECURITY.md",
-        *sorted((ROOT / "docs").rglob("*.md")),
-        *sorted((ROOT / "examples").rglob("*.md")),
-    ]
-    failures: list[str] = []
-
-    for document in documents:
-        for raw_target in MARKDOWN_LINK.findall(document.read_text(encoding="utf-8")):
-            target = raw_target.strip().strip("<>").split("#", maxsplit=1)[0]
-            if not target or target.startswith(("http://", "https://", "mailto:")):
-                continue
-            resolved = (document.parent / target).resolve()
-            if not resolved.exists():
-                failures.append(f"{document.relative_to(ROOT)} -> {raw_target}")
-
-    assert not failures, "unresolved Markdown links:\n" + "\n".join(failures)
 
 
 def test_living_documentation_has_one_authority_tree() -> None:

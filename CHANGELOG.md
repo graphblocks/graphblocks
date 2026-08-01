@@ -19,6 +19,9 @@ preparing the first 1.0 release candidate.
 
 ### Changed
 
+- Added a bounded CommonMark and GitHub-heading integrity checker, a closed
+  generated-documentation registry with content-bound results, and an always-run
+  fast documentation workflow plus named stable release gate.
 - Split release readiness into generated supply-chain, API, runtime-security,
   durability, and adapter axes, and made stable promotion bind actor-identified
   object-authorization review plus manifest-selected, JUnit-bound adversarial

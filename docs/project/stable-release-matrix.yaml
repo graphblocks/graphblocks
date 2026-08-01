@@ -56,6 +56,7 @@ globalRequiredGates:
   - REL-CORE-PROFILE
   - REL-PLATFORM-MATRIX
   - REL-MACOS-NATIVE-SMOKE
+  - REL-DOCS-INTEGRITY
   - REL-SUPPLY-CHAIN
   - REL-RC-SOAK
 deepAudit:
@@ -809,6 +810,19 @@ releaseGates:
       - src/graphblocks/data/conformance-profiles.yaml
       - docs/project/stable-requirements.yaml
       - tests/test_stable_traceability.py
+  - id: REL-DOCS-INTEGRITY
+    description: Every living Markdown path and fragment resolves locally and every declared generated documentation projection is current.
+    readiness: candidate-enforced
+    blocksTargetRelease: true
+    externalNetworkAvailabilityClaimed: false
+    evidence:
+      - docs/project/generated-documentation.yaml
+      - tools/check_docs.py
+      - tools/generate_status_readiness.py
+      - tools/generate_stdlib_inventory.py
+      - tests/test_docs_checker.py
+      - pyproject.toml
+      - .github/workflows/docs.yml
   - {id: REL-RUNTIME-CORRECTNESS, description: C1 lifecycle cancellation journal bounded-flow and tool gates pass.}
   - id: REL-INTEGRATION-PROMOTION
     description: Integration maturity, authentication, version, failure-model, and candidate-bound signed real-service runs are verified before promotion.

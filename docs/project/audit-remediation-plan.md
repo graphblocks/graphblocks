@@ -533,6 +533,18 @@ Each gate needs a documented budget, deterministic failure output, and a named
 release-matrix requirement. Merely adding a tool without an enforced threshold
 does not close a finding.
 
+`GB-QA-011` is enforced by the named `REL-DOCS-INTEGRITY` gate. A bounded
+checker discovers living Markdown while pruning build and dependency trees,
+uses a CommonMark AST and upstream GitHub-compatible slugger, and validates
+undefined references, repository containment, exact-case local paths, heading
+and source-line fragments, and explicit anchor uniqueness. One closed generated
+documentation registry owns every generator command, primary source, and output;
+the checker runs every entry in `--check` mode and binds checker, document, and
+projection content digests into its result. An always-run five-minute workflow
+avoids both path-filter omissions and skipped required-check states. External
+URLs are counted but intentionally not fetched; the gate claims deterministic
+local integrity, not third-party availability.
+
 The `GB-QA-008` implementation is specified in
 [security-fuzzing.md](security-fuzzing.md). Normal pull-request CI runs the
 Hypothesis and proptest properties, while the dedicated security-fuzz workflow

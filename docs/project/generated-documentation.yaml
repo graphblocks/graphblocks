@@ -1,0 +1,19 @@
+formatVersion: 1
+projections:
+  - id: status-readiness
+    generator: tools/generate_status_readiness.py
+    arguments: [--check]
+    sources:
+      - docs/project/stable-release-matrix.yaml
+    outputs:
+      - docs/project/status.md
+  - id: standard-library-inventory
+    generator: tools/generate_stdlib_inventory.py
+    arguments: [--check]
+    sources:
+      - src/graphblocks/data/builtin-plugin.yaml
+      - src/graphblocks/plugins.py
+      - src/graphblocks/stdlib_blocks.py
+    outputs:
+      - docs/specification/reference/stdlib-inventory.md
+      - tck/stdlib/inventory.json

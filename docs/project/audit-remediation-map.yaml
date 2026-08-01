@@ -344,7 +344,10 @@ workstreams:
     phase: cross-cutting-quality-gates
     ownerArea: quality-and-release-engineering
     affectedProfiles: [GB-C0-SCHEMA, GB-C1-LOCAL-RUNTIME, GB-C4-PRODUCTION]
-    releaseGates: [REL-AUDIT-REMEDIATION, REL-MACOS-NATIVE-SMOKE]
+    releaseGates:
+      - REL-AUDIT-REMEDIATION
+      - REL-MACOS-NATIVE-SMOKE
+      - REL-DOCS-INTEGRITY
     findings:
       - GB-QA-008
       - GB-COR-011
@@ -366,7 +369,7 @@ workstreams:
       - strict typing exception assert and optimized-mode debt budgets
       - branch changed-lines dependency SAST and model-checking gates
       - quick versus full CI with locked development dependencies
-      - separate macOS native and documentation smoke gates
+      - separate macOS native and always-run CommonMark anchor generated-facts gates
   - id: QG-DOCUMENTATION-FACTS
     phase: cross-cutting-generated-facts
     ownerArea: documentation-and-claims
