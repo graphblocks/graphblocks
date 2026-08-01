@@ -6,8 +6,9 @@ from typing import Literal
 
 from .canonical import canonical_dumps, canonical_hash, canonical_loads
 from .compiler import compile_graph_reference
+from .durable_registry import durable_intent_registry
 from .isolated_worker import ProcessWorkerProtocolError, ProcessWorkerTarget
-from .runtime import InProcessRuntime, RuntimeCheckpoint, stdlib_registry
+from .runtime import InProcessRuntime, RuntimeCheckpoint
 from .server_storage import (
     AcceptedRunWorkItem,
     CheckpointIntegrityError,
@@ -212,10 +213,9 @@ def _validate_durable_worker_request(
     checkpoint_digest = authority["checkpointDigest"]
     callback_payload_digest = authority["callbackPayloadDigest"]
     callback_receipt_digest = authority["callbackReceiptDigest"]
-    if (
-        (checkpoint_digest is None) != (callback_payload_digest is None)
-        or (checkpoint_digest is None) != (callback_receipt_digest is None)
-    ):
+    if (checkpoint_digest is None) != (callback_payload_digest is None) or (
+        checkpoint_digest is None
+    ) != (callback_receipt_digest is None):
         raise ProcessWorkerProtocolError(
             "durable worker resume authority digests must be paired"
         )
@@ -442,7 +442,7 @@ def execute_durable_worker_request(
             "durable worker graph and inputs must be objects"
         )
 
-    registry = stdlib_registry()
+    registry = durable_intent_registry()
     plan = compile_graph_reference(
         graph,
         block_catalog=registry.compilation_catalog(),

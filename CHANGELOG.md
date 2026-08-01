@@ -23,6 +23,12 @@ preparing the first 1.0 release candidate.
   targets by default. Test and local-development users must now opt in with
   `allow_unsafe_custom_worker_dev=True`, which is ineligible for durable,
   production, compatibility, or security claims.
+- Pinned the package-owned durable parent and child to a closed intent-only
+  block, implementation, and handler-construction inventory. New preview
+  handlers and same-ID aggregate handler substitutions are not consumed,
+  implementation-ID rebindings fail closed, and nested `control.map@2`
+  resolution cannot escape the restricted registry. Explicit callers should
+  migrate from the full preview registry to `durable_intent_registry()`.
 - Added a bounded CommonMark and GitHub-heading integrity checker, a closed
   generated-documentation registry with content-bound results, and an always-run
   fast documentation workflow plus named stable release gate.

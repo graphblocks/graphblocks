@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from multiprocessing import active_children
 import os
 from pathlib import Path
@@ -8,8 +8,10 @@ from textwrap import dedent
 
 import pytest
 
+import graphblocks.durable_worker as durable_worker_module
 from graphblocks.canonical import canonical_dumps, canonical_hash, canonical_loads
 from graphblocks.compiler import compile_graph_reference
+from graphblocks.durable_registry import is_durable_intent_registry
 from graphblocks.durable_server import DurableAcceptedRunService
 from graphblocks.durable_worker import DEFAULT_DURABLE_WORKER_TARGET
 from graphblocks.isolated_worker import (
@@ -21,6 +23,7 @@ from graphblocks.isolated_worker import (
 from graphblocks.runtime import stdlib_registry
 from graphblocks.server_storage import (
     AcceptedRunCallbackCommit,
+    AcceptedRunClaimRequest,
     AcceptedRunEffectDeliveryClaimRequest,
     AcceptedRunEffectDeliveryState,
     AcceptedRunEventIntent,
@@ -213,6 +216,113 @@ def test_durable_service_executes_admitted_run_after_process_restart(
         "run_claimed",
         "run_succeeded",
     ]
+
+
+def test_default_durable_parent_and_child_share_intent_registry(
+    tmp_path: Path,
+) -> None:
+    clock = _fixed_clock(2_000)
+    service = _service(
+        tmp_path / "durable-intent-parent-child.sqlite3",
+        worker_id="worker-1",
+        clock=clock,
+    )
+    assert is_durable_intent_registry(service.registry)
+    service.admit_run(
+        tenant_id="tenant-1",
+        owner_principal_id="principal-1",
+        run_id="run-intent-parent-child",
+        idempotency_key="request-intent-parent-child",
+        graph={
+            "apiVersion": "graphblocks.ai/v1",
+            "kind": "Graph",
+            "metadata": {"name": "durable-intent-parent-child"},
+            "spec": {
+                "interface": {
+                    "inputs": {"message": "graphblocks.ai/Message@1"},
+                    "outputs": {"prompt": "graphblocks.ai/Prompt@1"},
+                },
+                "nodes": {
+                    "render": {
+                        "block": "prompt.render@1",
+                        "config": {"template": "Echo {message.text}"},
+                        "inputs": {"message": "$input.message"},
+                        "outputs": {"prompt": "$output.prompt"},
+                    }
+                },
+            },
+        },
+        inputs={"message": {"text": "hello"}},
+        invocation={
+            "policySnapshotId": "policy-1",
+            "releaseId": "release-1",
+            "responseId": "response-1",
+            "turnId": None,
+        },
+    )
+
+    completed = service.advance_run(
+        tenant_id="tenant-1",
+        run_id="run-intent-parent-child",
+    )
+
+    assert completed.terminal_result_json is not None
+    assert canonical_loads(completed.terminal_result_json) == {
+        "outputs": {"prompt": "Echo hello"},
+        "status": "succeeded",
+    }
+
+
+def test_durable_child_entrypoint_reconstructs_intent_registry(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clock = _fixed_clock(2_000)
+    service = _service(
+        tmp_path / "durable-intent-child-entrypoint.sqlite3",
+        worker_id="worker-1",
+        clock=clock,
+    )
+    _admit_empty_run(service, run_id="run-intent-child-entrypoint")
+    work = service.repository.claim_work(
+        AcceptedRunClaimRequest(
+            tenant_id="tenant-1",
+            run_id="run-intent-child-entrypoint",
+            lease_owner_id="worker-1",
+            now_unix_ms=2_000,
+            lease_duration_ms=30_000,
+        )
+    )
+    assert work is not None
+    graph = canonical_loads(work.envelope.graph_json)
+    inputs = canonical_loads(work.envelope.inputs_json)
+    assert isinstance(graph, dict)
+    assert isinstance(inputs, dict)
+    request = durable_worker_module.build_durable_worker_request(
+        work,
+        graph=graph,
+        inputs=inputs,
+    )
+    factory_calls = 0
+    intent_registry_factory = durable_worker_module.durable_intent_registry
+
+    def tracked_intent_registry_factory():
+        nonlocal factory_calls
+        factory_calls += 1
+        return intent_registry_factory()
+
+    monkeypatch.setattr(
+        durable_worker_module,
+        "durable_intent_registry",
+        tracked_intent_registry_factory,
+    )
+
+    result = durable_worker_module.execute_durable_worker_request(request)
+
+    assert factory_calls == 1
+    runtime_result = result.outputs["runtimeResult"]
+    assert isinstance(runtime_result, Mapping)
+    assert runtime_result["status"] == "succeeded"
 
 
 def test_durable_service_executes_next_tenant_scoped_run_after_restart(

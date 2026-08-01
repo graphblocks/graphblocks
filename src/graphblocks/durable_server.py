@@ -13,6 +13,10 @@ from .durable_worker import (
     build_durable_worker_request,
     decode_durable_worker_result,
 )
+from .durable_registry import (
+    durable_intent_registry,
+    is_durable_worker_compatible_registry,
+)
 from .isolated_worker import (
     ProcessWorkerExecutor,
     ProcessWorkerPolicy,
@@ -24,8 +28,6 @@ from .isolated_worker_server import AcceptedRunWorkerAuthorityValidator
 from .plugins import BlockCatalog
 from .runtime import (
     RuntimeRegistry,
-    is_full_stdlib_registry,
-    stdlib_registry,
 )
 from .server import (
     ServerAuthDecision,
@@ -110,7 +112,7 @@ class DurableAcceptedRunService:
     repository: AcceptedRunRepository
     lease_owner_id: str
     lease_duration_ms: int = 30_000
-    registry: RuntimeRegistry = field(default_factory=stdlib_registry)
+    registry: RuntimeRegistry = field(default_factory=durable_intent_registry)
     compiler: DurableGraphCompiler = field(
         default=compile_graph,
         repr=False,
@@ -330,10 +332,12 @@ class DurableAcceptedRunService:
                     "durable accepted-run service custom compiler requires "
                     "a matching custom process worker target"
                 )
-            if not is_full_stdlib_registry(self.registry):
+            if not is_durable_worker_compatible_registry(self.registry):
                 raise ValueError(
-                    "durable accepted-run service custom registry requires "
-                    "a matching custom process worker target"
+                    "durable accepted-run service custom registry is not "
+                    "compatible with the default durable worker; use "
+                    "durable_intent_registry() or a matching unsafe custom "
+                    "process worker target"
                 )
             current_handlers = tuple(sorted(self.registry.blocks.items()))
             if self._default_worker_registry is None:

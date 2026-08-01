@@ -279,29 +279,39 @@ serialization and process setup; if that preparation consumes the budget, no
 child process is started.
 
 `DurableAcceptedRunService` uses this boundary for every claimed graph
-execution. Its default importable worker target reconstructs the preview
-standard-library registry in the child process. The current package-owned
-target descriptor is checked exactly, and its current built-in handlers
-construct local values or operation intents rather than importing provider
-transports. Adding a transport-capable standard-library handler does not make it
-durable-safe automatically; it requires a dedicated durable registry or an
-equivalent audited capability gate. A custom worker target can publish an
-external effect before it returns or times out, so the durable service MUST
-reject custom targets by default. The explicit
+execution. Its default importable worker target reconstructs the closed durable
+intent-only subset of the preview standard library in the child process. The
+current package-owned target descriptor is checked exactly, and its current
+built-in handlers construct local values or operation intents rather than
+importing provider transports. Default parent admission and child execution
+build separate registries from one closed inventory that binds every admitted
+block ID to an exact implementation ID and package-owned handler construction
+authority. A new preview standard-library block is excluded until that
+inventory is explicitly reviewed, and an implementation rebinding fails
+closed. Nested dispatch such as `control.map@2` resolves against the same
+restricted registry rather than a captured full-registry resolver. A custom
+worker target can publish an external effect before it returns or times
+out, so the durable service MUST reject custom targets by default. The explicit
 `allow_unsafe_custom_worker_dev=True` escape hatch is fixed at construction,
 is for tests and local development only, and MUST NOT support a durable,
 production, compatibility, or security claim. Mutating that public field after
 construction MUST NOT enable the escape hatch. A service that replaces the
-registry or selects a compiler other than the native or deterministic reference
-compiler requires this unsafe mode and a matching importable worker target; it
-MUST NOT silently run the replacement in the scheduler process or execute the
-default handler under different semantics. Graph-declared `effects` metadata
-does not establish external-effect authority. The worker deadline, termination
-grace, and publication margin MUST fit inside the run lease. The scheduler
-recomputes the available deadline from the actual remaining lease immediately
-before process start. A timeout does not fabricate a terminal result: the run
-remains `running` under the original claim until that lease expires, after which
-a new claim with a higher lease generation and fencing token may retry it.
+registry with one that is not verified as admission-compatible with the closed
+durable inventory, or selects a compiler other than the native or deterministic
+reference compiler, requires this unsafe mode and a matching importable worker
+target. For legacy positional compatibility, an unmodified full preview
+registry is accepted for admission only while its block and catalog ID sets
+exactly equal the closed inventory; adding a preview block makes that path fail
+closed, and callers should use `durable_intent_registry()` directly. The service
+MUST NOT silently run a replacement handler in the scheduler process or execute
+the default handler under different semantics. Graph-declared `effects`
+metadata does not establish external-effect authority. The worker deadline,
+termination grace, and publication margin MUST fit inside the run lease. The
+scheduler recomputes the available deadline from the actual remaining lease
+immediately before process start. A timeout does not fabricate a terminal
+result: the run remains `running` under the original claim until that lease
+expires, after which a new claim with a higher lease generation and fencing
+token may retry it.
 By contrast, a deterministic worker request or response byte-limit violation
 commits a bounded `failed` result under the same repository fence so oversized
 poison work is not reclaimed forever.
