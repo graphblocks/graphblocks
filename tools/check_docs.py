@@ -278,20 +278,99 @@ def _read_regular_file(path: Path, *, owner: str, max_bytes: int) -> _Blob:
         raise DocsCheckError(f"{owner} exceeds {max_bytes} bytes: {path}")
     try:
         with path.open("rb") as stream:
-            data = stream.read(max_bytes + 1)
             opened_metadata = os.fstat(stream.fileno())
+            current_metadata = path.lstat()
+            metadata_identity = (
+                metadata.st_dev,
+                metadata.st_ino,
+                metadata.st_mode,
+                metadata.st_size,
+                metadata.st_mtime_ns,
+                metadata.st_ctime_ns,
+            )
+            current_identity = (
+                current_metadata.st_dev,
+                current_metadata.st_ino,
+                current_metadata.st_mode,
+                current_metadata.st_size,
+                current_metadata.st_mtime_ns,
+                current_metadata.st_ctime_ns,
+            )
+            # Windows 3.12 path stat preserves creation time in st_ctime_ns,
+            # while descriptor stat exposes metadata change time. Compare the
+            # full identity within each API and omit only ctime across APIs.
+            opened_cross_api_identity = (
+                opened_metadata.st_dev,
+                opened_metadata.st_ino,
+                stat.S_IFMT(opened_metadata.st_mode),
+                opened_metadata.st_size,
+                opened_metadata.st_mtime_ns,
+            )
+            current_cross_api_identity = (
+                current_metadata.st_dev,
+                current_metadata.st_ino,
+                stat.S_IFMT(current_metadata.st_mode),
+                current_metadata.st_size,
+                current_metadata.st_mtime_ns,
+            )
+            if (
+                not stat.S_ISREG(opened_metadata.st_mode)
+                or current_identity != metadata_identity
+                or current_cross_api_identity
+                != opened_cross_api_identity
+            ):
+                raise DocsCheckError(
+                    f"{owner} changed while it was read: {path}"
+                )
+            data = stream.read(max_bytes + 1)
+            final_opened_metadata = os.fstat(stream.fileno())
+            final_metadata = path.lstat()
     except OSError as error:
         raise DocsCheckError(f"{owner} is unreadable: {path}") from error
     if len(data) > max_bytes:
         raise DocsCheckError(f"{owner} exceeds {max_bytes} bytes: {path}")
-    if not os.path.samestat(metadata, opened_metadata) or (
-        metadata.st_size,
-        metadata.st_mtime_ns,
-        metadata.st_ctime_ns,
-    ) != (
+    opened_identity = (
+        opened_metadata.st_dev,
+        opened_metadata.st_ino,
+        opened_metadata.st_mode,
         opened_metadata.st_size,
         opened_metadata.st_mtime_ns,
         opened_metadata.st_ctime_ns,
+    )
+    final_opened_identity = (
+        final_opened_metadata.st_dev,
+        final_opened_metadata.st_ino,
+        final_opened_metadata.st_mode,
+        final_opened_metadata.st_size,
+        final_opened_metadata.st_mtime_ns,
+        final_opened_metadata.st_ctime_ns,
+    )
+    final_identity = (
+        final_metadata.st_dev,
+        final_metadata.st_ino,
+        final_metadata.st_mode,
+        final_metadata.st_size,
+        final_metadata.st_mtime_ns,
+        final_metadata.st_ctime_ns,
+    )
+    final_opened_cross_api_identity = (
+        final_opened_metadata.st_dev,
+        final_opened_metadata.st_ino,
+        stat.S_IFMT(final_opened_metadata.st_mode),
+        final_opened_metadata.st_size,
+        final_opened_metadata.st_mtime_ns,
+    )
+    final_cross_api_identity = (
+        final_metadata.st_dev,
+        final_metadata.st_ino,
+        stat.S_IFMT(final_metadata.st_mode),
+        final_metadata.st_size,
+        final_metadata.st_mtime_ns,
+    )
+    if (
+        final_opened_identity != opened_identity
+        or final_identity != metadata_identity
+        or final_cross_api_identity != final_opened_cross_api_identity
     ):
         raise DocsCheckError(f"{owner} changed while it was read: {path}")
     return _Blob(data=data, sha256=_sha256(data))

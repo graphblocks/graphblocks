@@ -7,16 +7,88 @@ import re
 import subprocess
 import sys
 import tomllib
+from types import SimpleNamespace
 
 import pytest
 import yaml
 
+from tools import check_docs
 from tools.check_docs import check_markdown_documents, discover_markdown_documents
 
 
 ROOT = Path(__file__).parents[1]
 CHECKER = ROOT / "tools" / "check_docs.py"
 WORKFLOW = ROOT / ".github" / "workflows" / "docs.yml"
+
+
+def test_document_reader_accepts_windows_path_descriptor_ctime_divergence(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    document = tmp_path / "README.md"
+    document.write_bytes(b"# Verified documentation\n")
+    descriptor_status = document.lstat()
+    path_status = SimpleNamespace(
+        st_dev=descriptor_status.st_dev,
+        st_ino=descriptor_status.st_ino,
+        st_mode=descriptor_status.st_mode,
+        st_size=descriptor_status.st_size,
+        st_mtime_ns=descriptor_status.st_mtime_ns,
+        st_ctime_ns=descriptor_status.st_ctime_ns + 1,
+    )
+    original_lstat = Path.lstat
+
+    def platform_lstat(path: Path):
+        if path == document:
+            return path_status
+        return original_lstat(path)
+
+    monkeypatch.setattr(Path, "lstat", platform_lstat)
+
+    blob = check_docs._read_regular_file(
+        document,
+        owner="Markdown document",
+        max_bytes=1_024,
+    )
+
+    assert blob.data == b"# Verified documentation\n"
+
+
+def test_document_reader_rejects_descriptor_change_while_reading(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    document = tmp_path / "README.md"
+    document.write_bytes(b"# Verified documentation\n")
+    original_fstat = check_docs.os.fstat
+    fstat_calls = 0
+
+    def changing_fstat(descriptor: int):
+        nonlocal fstat_calls
+        descriptor_status = original_fstat(descriptor)
+        fstat_calls += 1
+        if fstat_calls == 1:
+            return descriptor_status
+        return SimpleNamespace(
+            st_dev=descriptor_status.st_dev,
+            st_ino=descriptor_status.st_ino,
+            st_mode=descriptor_status.st_mode,
+            st_size=descriptor_status.st_size,
+            st_mtime_ns=descriptor_status.st_mtime_ns,
+            st_ctime_ns=descriptor_status.st_ctime_ns + 1,
+        )
+
+    monkeypatch.setattr(check_docs.os, "fstat", changing_fstat)
+
+    with pytest.raises(
+        check_docs.DocsCheckError,
+        match="changed while it was read",
+    ):
+        check_docs._read_regular_file(
+            document,
+            owner="Markdown document",
+            max_bytes=1_024,
+        )
 
 
 def test_markdown_checker_accepts_commonmark_links_and_github_heading_anchors(
