@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from dataclasses import replace
 from multiprocessing import get_context
@@ -26,6 +27,31 @@ from graphblocks.server_storage import (
 )
 from graphblocks.sqlite_outbox import SQLiteOutboxDispatcherRepository
 from graphblocks.sqlite_server_storage import SQLiteAcceptedRunRepository
+
+
+class _MutableClock:
+    def __init__(self, now_unix_ms: int = 3_000) -> None:
+        self.now_unix_ms = now_unix_ms
+
+    def __call__(self) -> int:
+        return self.now_unix_ms
+
+
+def _outbox_repository(
+    path,
+    *,
+    clock: Callable[[], int] | None = None,
+    failpoint: Callable[[str], None] | None = None,
+    max_lease_duration_ms: int = 30_000,
+) -> SQLiteOutboxDispatcherRepository:
+    if clock is None:
+        clock = _MutableClock()
+    return SQLiteOutboxDispatcherRepository(
+        path,
+        clock=clock,
+        failpoint=failpoint,
+        max_lease_duration_ms=max_lease_duration_ms,
+    )
 
 
 def _admission() -> AcceptedRunAdmission:
@@ -67,9 +93,7 @@ def _admission() -> AcceptedRunAdmission:
         graph_hash=canonical_hash(graph),
         inputs_json=canonical_dumps(inputs),
         invocation_json=canonical_dumps(invocation),
-        ticket_json=canonical_dumps(
-            {"runId": "run-1", "state": "accepted"}
-        ),
+        ticket_json=canonical_dumps({"runId": "run-1", "state": "accepted"}),
         graph_format_version="graphblocks.ai/Graph@v1",
         runtime_format_version="graphblocks.runtime@v1",
         checkpoint_format_version="graphblocks.runtime-checkpoint.v1",
@@ -152,9 +176,7 @@ def _claim_effect(
     repository: SQLiteOutboxDispatcherRepository,
     **request_overrides,
 ):
-    claimed = repository.claim_next_effect(
-        _claim_request(**request_overrides)
-    )
+    claimed = repository.claim_next_effect(_claim_request(**request_overrides))
     assert claimed is not None
     assert claimed.claim is not None
     return claimed
@@ -164,9 +186,7 @@ def _claim_effect_in_process(
     arguments: tuple[str, str],
 ) -> tuple[str, int, int] | None:
     path, owner = arguments
-    claimed = SQLiteOutboxDispatcherRepository(path).claim_next_effect(
-        _claim_request(owner=owner)
-    )
+    claimed = _outbox_repository(path).claim_next_effect(_claim_request(owner=owner))
     if claimed is None:
         return None
     assert claimed.claim is not None
@@ -178,7 +198,7 @@ def _claim_effect_in_process(
 
 
 def test_sqlite_outbox_claim_returns_bound_effect_envelope(outbox_path) -> None:
-    repository = SQLiteOutboxDispatcherRepository(outbox_path)
+    repository = _outbox_repository(outbox_path)
 
     claimed = _claim_effect(repository)
 
@@ -193,15 +213,143 @@ def test_sqlite_outbox_claim_returns_bound_effect_envelope(outbox_path) -> None:
     assert claimed.claim.delivery_owner_id == "dispatcher-1"
     assert claimed.claim.claim_generation == 1
     assert claimed.claim.fencing_token == 1
-    assert claimed.claim.lease_expires_at_unix_ms == 3_600
+    assert claimed.claim.lease_expires_at_unix_ms == 4_000
+
+
+@pytest.mark.parametrize("max_lease_duration_ms", [True, 0, -1, 1 << 63])
+def test_sqlite_outbox_rejects_invalid_lease_policy(
+    tmp_path,
+    max_lease_duration_ms,
+) -> None:
+    with pytest.raises(
+        ValueError,
+        match="max lease duration must be a positive SQLite integer",
+    ):
+        SQLiteOutboxDispatcherRepository(
+            tmp_path / "accepted-runs.sqlite3",
+            max_lease_duration_ms=max_lease_duration_ms,
+        )
+
+
+def test_sqlite_outbox_rejects_non_callable_clock(tmp_path) -> None:
+    with pytest.raises(ValueError, match="clock must be callable"):
+        SQLiteOutboxDispatcherRepository(
+            tmp_path / "accepted-runs.sqlite3",
+            clock=3_000,  # type: ignore[arg-type]
+        )
+
+
+@pytest.mark.parametrize("clock_value", [True, "3000", -1, 1 << 63])
+def test_sqlite_outbox_clock_fails_closed(
+    outbox_path,
+    clock_value,
+) -> None:
+    repository = SQLiteOutboxDispatcherRepository(
+        outbox_path,
+        clock=lambda: clock_value,  # type: ignore[arg-type,return-value]
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="clock must return a non-negative SQLite integer",
+    ):
+        repository.claim_next_effect(_claim_request())
+
+    stored = repository.get_effect(effect_id="effect-completion-1")
+    assert stored is not None
+    assert stored.delivery_state is AcceptedRunEffectDeliveryState.PENDING
+
+
+def test_sqlite_outbox_clock_exception_fails_closed(outbox_path) -> None:
+    def broken_clock() -> int:
+        raise RuntimeError("clock unavailable")
+
+    repository = _outbox_repository(outbox_path, clock=broken_clock)
+
+    with pytest.raises(RuntimeError, match="clock unavailable"):
+        repository.claim_next_effect(_claim_request())
+
+    stored = repository.get_effect(effect_id="effect-completion-1")
+    assert stored is not None
+    assert stored.delivery_state is AcceptedRunEffectDeliveryState.PENDING
+
+
+def test_sqlite_outbox_claim_uses_bounded_authoritative_time(
+    outbox_path,
+) -> None:
+    repository = _outbox_repository(
+        outbox_path,
+        max_lease_duration_ms=1_000,
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="claim request timestamp must not be later than the repository clock",
+    ):
+        repository.claim_next_effect(_claim_request(now=3_001))
+    with pytest.raises(
+        ValueError,
+        match="lease duration exceeds the repository maximum",
+    ):
+        repository.claim_next_effect(_claim_request(lease_duration=1_001))
+
+    claimed = _claim_effect(repository, lease_duration=1_000)
+    assert claimed.claim is not None
+    assert claimed.claim.lease_expires_at_unix_ms == 4_000
+
+
+def test_sqlite_outbox_rolls_back_claim_that_expires_before_commit(
+    outbox_path,
+) -> None:
+    clock = _MutableClock()
+
+    def expire_claim(point: str) -> None:
+        if point == "claim_next_effect.after_state_update":
+            clock.now_unix_ms = 4_000
+
+    repository = _outbox_repository(
+        outbox_path,
+        clock=clock,
+        failpoint=expire_claim,
+    )
+
+    with pytest.raises(
+        AcceptedRunEffectDeliveryLeaseExpiredError,
+        match="effect delivery claim expired before claim acquisition",
+    ):
+        repository.claim_next_effect(_claim_request())
+
+    stored = repository.get_effect(effect_id="effect-completion-1")
+    assert stored is not None
+    assert stored.delivery_state is AcceptedRunEffectDeliveryState.PENDING
+
+
+def test_sqlite_outbox_rolls_back_when_clock_moves_backwards(
+    outbox_path,
+) -> None:
+    clock_values = iter((3_000, 2_999))
+    repository = _outbox_repository(
+        outbox_path,
+        clock=lambda: next(clock_values),
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="clock moved backwards during claim acquisition",
+    ):
+        repository.claim_next_effect(_claim_request())
+
+    stored = repository.get_effect(effect_id="effect-completion-1")
+    assert stored is not None
+    assert stored.delivery_state is AcceptedRunEffectDeliveryState.PENDING
 
 
 def test_two_sqlite_outbox_dispatchers_cannot_claim_same_effect(
     outbox_path,
 ) -> None:
     repositories = (
-        SQLiteOutboxDispatcherRepository(outbox_path),
-        SQLiteOutboxDispatcherRepository(outbox_path),
+        _outbox_repository(outbox_path),
+        _outbox_repository(outbox_path),
     )
     starting = Barrier(2)
 
@@ -247,11 +395,11 @@ def test_two_processes_cannot_claim_same_sqlite_outbox_effect(
 def test_sqlite_outbox_does_not_claim_effect_before_availability(
     outbox_path,
 ) -> None:
-    repository = SQLiteOutboxDispatcherRepository(outbox_path)
+    clock = _MutableClock(2_499)
+    repository = _outbox_repository(outbox_path, clock=clock)
 
-    assert repository.claim_next_effect(
-        _claim_request(now=2_499)
-    ) is None
+    assert repository.claim_next_effect(_claim_request(now=2_499)) is None
+    clock.now_unix_ms = 2_500
     assert _claim_effect(repository, now=2_500).attempt_count == 1
 
 
@@ -264,11 +412,11 @@ def test_sqlite_outbox_claim_is_not_visible_before_commit(outbox_path) -> None:
             state_updated.set()
             assert allow_commit.wait(timeout=5)
 
-    claiming = SQLiteOutboxDispatcherRepository(
+    claiming = _outbox_repository(
         outbox_path,
         failpoint=pause,
     )
-    observing = SQLiteOutboxDispatcherRepository(outbox_path)
+    observing = _outbox_repository(outbox_path)
     with ThreadPoolExecutor(max_workers=1) as executor:
         future = executor.submit(
             claiming.claim_next_effect,
@@ -287,21 +435,37 @@ def test_sqlite_outbox_claim_is_not_visible_before_commit(outbox_path) -> None:
 
 
 def test_sqlite_outbox_takeover_requires_expired_lease(outbox_path) -> None:
-    first = SQLiteOutboxDispatcherRepository(outbox_path)
+    clock = _MutableClock()
+    first = _outbox_repository(outbox_path, clock=clock)
     current = _claim_effect(first)
     assert current.claim is not None
-    second = SQLiteOutboxDispatcherRepository(outbox_path)
+    second = _outbox_repository(outbox_path, clock=clock)
 
+    clock.now_unix_ms = current.claim.lease_expires_at_unix_ms - 1
     assert (
         second.claim_next_effect(
-            _claim_request(owner="dispatcher-2", now=3_599)
+            _claim_request(
+                owner="dispatcher-2",
+                now=current.claim.lease_expires_at_unix_ms - 1,
+            )
         )
         is None
     )
+    with pytest.raises(
+        ValueError,
+        match="claim request timestamp must not be later than the repository clock",
+    ):
+        second.claim_next_effect(
+            _claim_request(
+                owner="dispatcher-2",
+                now=current.claim.lease_expires_at_unix_ms,
+            )
+        )
+    clock.now_unix_ms = current.claim.lease_expires_at_unix_ms
     takeover = _claim_effect(
         second,
         owner="dispatcher-2",
-        now=3_600,
+        now=current.claim.lease_expires_at_unix_ms,
         lease_duration=500,
     )
 
@@ -310,13 +474,15 @@ def test_sqlite_outbox_takeover_requires_expired_lease(outbox_path) -> None:
     assert takeover.claim.delivery_owner_id == "dispatcher-2"
     assert takeover.claim.claim_generation == 2
     assert takeover.claim.fencing_token == 2
-    assert takeover.claim.lease_expires_at_unix_ms == 4_100
+    assert takeover.claim.lease_expires_at_unix_ms == 4_500
 
 
 def test_sqlite_outbox_rejects_stale_ack_after_takeover(outbox_path) -> None:
-    repository = SQLiteOutboxDispatcherRepository(outbox_path)
+    clock = _MutableClock()
+    repository = _outbox_repository(outbox_path, clock=clock)
     stale = _claim_effect(repository)
     assert stale.claim is not None
+    clock.now_unix_ms = stale.claim.lease_expires_at_unix_ms
     current = _claim_effect(
         repository,
         owner="dispatcher-2",
@@ -339,10 +505,41 @@ def test_sqlite_outbox_rejects_stale_ack_after_takeover(outbox_path) -> None:
     assert stored.delivery_state is AcceptedRunEffectDeliveryState.CLAIMED
 
 
+def test_sqlite_outbox_rejects_stale_retry_after_takeover(outbox_path) -> None:
+    clock = _MutableClock()
+    repository = _outbox_repository(outbox_path, clock=clock)
+    stale = _claim_effect(repository)
+    assert stale.claim is not None
+    clock.now_unix_ms = stale.claim.lease_expires_at_unix_ms
+    current = _claim_effect(
+        repository,
+        owner="dispatcher-2",
+        now=stale.claim.lease_expires_at_unix_ms,
+        lease_duration=500,
+    )
+    assert current.claim is not None
+
+    with pytest.raises(StaleAcceptedRunEffectDeliveryClaimError):
+        repository.release_effect_for_retry(
+            AcceptedRunEffectDeliveryRetry(
+                claim=stale.claim,
+                released_at_unix_ms=3_000,
+                available_at_unix_ms=4_500,
+            )
+        )
+
+    stored = repository.get_effect(effect_id=stale.effect_id)
+    assert stored is not None
+    assert stored.claim == current.claim
+    assert stored.delivery_state is AcceptedRunEffectDeliveryState.CLAIMED
+
+
 def test_sqlite_outbox_rejects_ack_at_lease_expiry(outbox_path) -> None:
-    repository = SQLiteOutboxDispatcherRepository(outbox_path)
+    clock = _MutableClock()
+    repository = _outbox_repository(outbox_path, clock=clock)
     claimed = _claim_effect(repository)
     assert claimed.claim is not None
+    clock.now_unix_ms = claimed.claim.lease_expires_at_unix_ms
 
     with pytest.raises(
         AcceptedRunEffectDeliveryLeaseExpiredError,
@@ -351,13 +548,68 @@ def test_sqlite_outbox_rejects_ack_at_lease_expiry(outbox_path) -> None:
         repository.mark_effect_delivered(
             AcceptedRunEffectDeliveryAck(
                 claim=claimed.claim,
-                delivered_at_unix_ms=claimed.claim.lease_expires_at_unix_ms,
+                delivered_at_unix_ms=3_000,
             )
         )
 
 
+def test_sqlite_outbox_rejects_future_delivery_timestamp(outbox_path) -> None:
+    repository = _outbox_repository(outbox_path)
+    claimed = _claim_effect(repository)
+    assert claimed.claim is not None
+
+    with pytest.raises(
+        ValueError,
+        match="delivery timestamp must not be later than the repository clock",
+    ):
+        repository.mark_effect_delivered(
+            AcceptedRunEffectDeliveryAck(
+                claim=claimed.claim,
+                delivered_at_unix_ms=3_001,
+            )
+        )
+
+    stored = repository.get_effect(effect_id=claimed.effect_id)
+    assert stored is not None
+    assert stored.delivery_state is AcceptedRunEffectDeliveryState.CLAIMED
+
+
+def test_sqlite_outbox_rolls_back_ack_that_expires_before_commit(
+    outbox_path,
+) -> None:
+    clock = _MutableClock()
+    repository = _outbox_repository(outbox_path, clock=clock)
+    claimed = _claim_effect(repository)
+    assert claimed.claim is not None
+
+    def expire_claim(point: str) -> None:
+        if point == "mark_effect_delivered.after_state_update":
+            clock.now_unix_ms = claimed.claim.lease_expires_at_unix_ms
+
+    with pytest.raises(
+        AcceptedRunEffectDeliveryLeaseExpiredError,
+        match="effect delivery claim expired before delivery acknowledgement",
+    ):
+        _outbox_repository(
+            outbox_path,
+            clock=clock,
+            failpoint=expire_claim,
+        ).mark_effect_delivered(
+            AcceptedRunEffectDeliveryAck(
+                claim=claimed.claim,
+                delivered_at_unix_ms=3_000,
+            )
+        )
+
+    stored = repository.get_effect(effect_id=claimed.effect_id)
+    assert stored is not None
+    assert stored.delivery_state is AcceptedRunEffectDeliveryState.CLAIMED
+    assert stored.claim == claimed.claim
+
+
 def test_sqlite_outbox_ack_is_fenced_and_idempotent(outbox_path) -> None:
-    repository = SQLiteOutboxDispatcherRepository(outbox_path)
+    clock = _MutableClock()
+    repository = _outbox_repository(outbox_path, clock=clock)
     claimed = _claim_effect(repository)
     assert claimed.claim is not None
     command = AcceptedRunEffectDeliveryAck(
@@ -372,13 +624,16 @@ def test_sqlite_outbox_ack_is_fenced_and_idempotent(outbox_path) -> None:
     assert delivered.delivery_state is AcceptedRunEffectDeliveryState.DELIVERED
     assert delivered.claim is None
     assert delivered.delivered_at_unix_ms == 3_000
-    assert repository.claim_next_effect(
-        _claim_request(owner="dispatcher-2", now=4_000)
-    ) is None
+    clock.now_unix_ms = 4_000
+    assert (
+        repository.claim_next_effect(_claim_request(owner="dispatcher-2", now=4_000))
+        is None
+    )
 
 
 def test_sqlite_outbox_ack_replays_after_response_loss(outbox_path) -> None:
-    repository = SQLiteOutboxDispatcherRepository(outbox_path)
+    clock = _MutableClock()
+    repository = _outbox_repository(outbox_path, clock=clock)
     claimed = _claim_effect(repository)
     assert claimed.claim is not None
     command = AcceptedRunEffectDeliveryAck(
@@ -394,18 +649,20 @@ def test_sqlite_outbox_ack_replays_after_response_loss(outbox_path) -> None:
         RuntimeError,
         match="injected acknowledgement response loss",
     ):
-        SQLiteOutboxDispatcherRepository(
+        _outbox_repository(
             outbox_path,
+            clock=clock,
             failpoint=inject,
         ).mark_effect_delivered(command)
 
+    clock.now_unix_ms = claimed.claim.lease_expires_at_unix_ms
     replay = repository.mark_effect_delivered(command)
     assert replay.delivery_state is AcceptedRunEffectDeliveryState.DELIVERED
     assert replay.delivered_at_unix_ms == 3_000
 
 
 def test_sqlite_outbox_rolls_back_failed_ack_transaction(outbox_path) -> None:
-    repository = SQLiteOutboxDispatcherRepository(outbox_path)
+    repository = _outbox_repository(outbox_path)
     claimed = _claim_effect(repository)
     assert claimed.claim is not None
 
@@ -414,7 +671,7 @@ def test_sqlite_outbox_rolls_back_failed_ack_transaction(outbox_path) -> None:
             raise RuntimeError("injected acknowledgement failure")
 
     with pytest.raises(RuntimeError, match="injected acknowledgement failure"):
-        SQLiteOutboxDispatcherRepository(
+        _outbox_repository(
             outbox_path,
             failpoint=inject,
         ).mark_effect_delivered(
@@ -431,7 +688,8 @@ def test_sqlite_outbox_rolls_back_failed_ack_transaction(outbox_path) -> None:
 
 
 def test_sqlite_outbox_retry_waits_until_scheduled_time(outbox_path) -> None:
-    repository = SQLiteOutboxDispatcherRepository(outbox_path)
+    clock = _MutableClock()
+    repository = _outbox_repository(outbox_path, clock=clock)
     claimed = _claim_effect(repository)
     assert claimed.claim is not None
 
@@ -447,9 +705,12 @@ def test_sqlite_outbox_retry_waits_until_scheduled_time(outbox_path) -> None:
     assert pending.claim is None
     assert pending.attempt_count == 1
     assert pending.available_at_unix_ms == 4_000
-    assert repository.claim_next_effect(
-        _claim_request(owner="dispatcher-2", now=3_999)
-    ) is None
+    clock.now_unix_ms = 3_999
+    assert (
+        repository.claim_next_effect(_claim_request(owner="dispatcher-2", now=3_999))
+        is None
+    )
+    clock.now_unix_ms = 4_000
     retried = _claim_effect(
         repository,
         owner="dispatcher-2",
@@ -465,8 +726,94 @@ def test_sqlite_outbox_retry_waits_until_scheduled_time(outbox_path) -> None:
     assert retried.payload_digest == claimed.payload_digest
 
 
+def test_sqlite_outbox_rejects_expired_backdated_retry(outbox_path) -> None:
+    clock = _MutableClock()
+    repository = _outbox_repository(outbox_path, clock=clock)
+    claimed = _claim_effect(repository)
+    assert claimed.claim is not None
+    clock.now_unix_ms = claimed.claim.lease_expires_at_unix_ms
+
+    with pytest.raises(
+        AcceptedRunEffectDeliveryLeaseExpiredError,
+        match="effect delivery claim expired before retry release",
+    ):
+        repository.release_effect_for_retry(
+            AcceptedRunEffectDeliveryRetry(
+                claim=claimed.claim,
+                released_at_unix_ms=3_000,
+                available_at_unix_ms=4_500,
+            )
+        )
+
+
+def test_sqlite_outbox_rejects_future_or_immediately_available_retry(
+    outbox_path,
+) -> None:
+    repository = _outbox_repository(outbox_path)
+    claimed = _claim_effect(repository)
+    assert claimed.claim is not None
+
+    with pytest.raises(
+        ValueError,
+        match="retry timestamp must not be later than the repository clock",
+    ):
+        repository.release_effect_for_retry(
+            AcceptedRunEffectDeliveryRetry(
+                claim=claimed.claim,
+                released_at_unix_ms=3_001,
+                available_at_unix_ms=4_000,
+            )
+        )
+    with pytest.raises(
+        ValueError,
+        match="retry availability must not precede the repository clock",
+    ):
+        repository.release_effect_for_retry(
+            AcceptedRunEffectDeliveryRetry(
+                claim=claimed.claim,
+                released_at_unix_ms=2_900,
+                available_at_unix_ms=2_999,
+            )
+        )
+
+
+def test_sqlite_outbox_rolls_back_retry_that_expires_before_commit(
+    outbox_path,
+) -> None:
+    clock = _MutableClock()
+    repository = _outbox_repository(outbox_path, clock=clock)
+    claimed = _claim_effect(repository)
+    assert claimed.claim is not None
+
+    def expire_claim(point: str) -> None:
+        if point == "release_effect_for_retry.after_state_update":
+            clock.now_unix_ms = claimed.claim.lease_expires_at_unix_ms
+
+    with pytest.raises(
+        AcceptedRunEffectDeliveryLeaseExpiredError,
+        match="effect delivery claim expired before retry release",
+    ):
+        _outbox_repository(
+            outbox_path,
+            clock=clock,
+            failpoint=expire_claim,
+        ).release_effect_for_retry(
+            AcceptedRunEffectDeliveryRetry(
+                claim=claimed.claim,
+                released_at_unix_ms=3_000,
+                available_at_unix_ms=4_500,
+            )
+        )
+
+    stored = repository.get_effect(effect_id=claimed.effect_id)
+    assert stored is not None
+    assert stored.delivery_state is AcceptedRunEffectDeliveryState.CLAIMED
+    assert stored.claim == claimed.claim
+
+
 def test_sqlite_outbox_retry_replays_after_response_loss(outbox_path) -> None:
-    repository = SQLiteOutboxDispatcherRepository(outbox_path)
+    clock = _MutableClock()
+    repository = _outbox_repository(outbox_path, clock=clock)
     claimed = _claim_effect(repository)
     assert claimed.claim is not None
     command = AcceptedRunEffectDeliveryRetry(
@@ -480,11 +827,13 @@ def test_sqlite_outbox_retry_replays_after_response_loss(outbox_path) -> None:
             raise RuntimeError("injected retry response loss")
 
     with pytest.raises(RuntimeError, match="injected retry response loss"):
-        SQLiteOutboxDispatcherRepository(
+        _outbox_repository(
             outbox_path,
+            clock=clock,
             failpoint=inject,
         ).release_effect_for_retry(command)
 
+    clock.now_unix_ms = claimed.claim.lease_expires_at_unix_ms
     replay = repository.release_effect_for_retry(command)
     assert replay.delivery_state is AcceptedRunEffectDeliveryState.PENDING
     assert replay.available_at_unix_ms == 4_000
@@ -492,7 +841,7 @@ def test_sqlite_outbox_retry_replays_after_response_loss(outbox_path) -> None:
 
 
 def test_sqlite_outbox_rolls_back_failed_retry_transaction(outbox_path) -> None:
-    repository = SQLiteOutboxDispatcherRepository(outbox_path)
+    repository = _outbox_repository(outbox_path)
     claimed = _claim_effect(repository)
     assert claimed.claim is not None
 
@@ -501,7 +850,7 @@ def test_sqlite_outbox_rolls_back_failed_retry_transaction(outbox_path) -> None:
             raise RuntimeError("injected retry failure")
 
     with pytest.raises(RuntimeError, match="injected retry failure"):
-        SQLiteOutboxDispatcherRepository(
+        _outbox_repository(
             outbox_path,
             failpoint=inject,
         ).release_effect_for_retry(
@@ -519,7 +868,7 @@ def test_sqlite_outbox_rolls_back_failed_retry_transaction(outbox_path) -> None:
 
 
 def test_sqlite_outbox_rejects_conflicting_retry_replay(outbox_path) -> None:
-    repository = SQLiteOutboxDispatcherRepository(outbox_path)
+    repository = _outbox_repository(outbox_path)
     claimed = _claim_effect(repository)
     assert claimed.claim is not None
     command = AcceptedRunEffectDeliveryRetry(

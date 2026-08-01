@@ -1081,6 +1081,8 @@ class AcceptedRunEffectDeliveryRecord:
 
 @dataclass(frozen=True, slots=True)
 class AcceptedRunEffectDeliveryClaimRequest:
+    """Claim declaration whose timestamps do not replace repository authority."""
+
     delivery_owner_id: str
     now_unix_ms: int
     lease_duration_ms: int
@@ -1116,6 +1118,8 @@ class AcceptedRunEffectDeliveryClaimRequest:
 
     @property
     def lease_expires_at_unix_ms(self) -> int:
+        """Return the declared expiry, not an authority-issued lease expiry."""
+
         return self.now_unix_ms + self.lease_duration_ms
 
 

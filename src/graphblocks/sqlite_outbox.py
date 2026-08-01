@@ -23,6 +23,7 @@ from .server_storage import (
     AcceptedRunEffectKind,
     AcceptedRunEffectNotFoundError,
     StaleAcceptedRunEffectDeliveryClaimError,
+    accepted_run_system_clock,
     assert_current_effect_delivery_claim,
 )
 from .sqlite_server_storage import (
@@ -35,6 +36,9 @@ from .sqlite_server_storage import (
 )
 
 
+_DEFAULT_MAX_LEASE_DURATION_MS = 30_000
+
+
 class SQLiteOutboxDispatcherRepository:
     """SQLite authority for the two transactions around an external send."""
 
@@ -44,20 +48,52 @@ class SQLiteOutboxDispatcherRepository:
         *,
         busy_timeout_ms: int = 5_000,
         failpoint: Callable[[str], None] | None = None,
+        clock: Callable[[], int] = accepted_run_system_clock,
+        max_lease_duration_ms: int = _DEFAULT_MAX_LEASE_DURATION_MS,
     ) -> None:
         if failpoint is not None and not callable(failpoint):
+            raise ValueError("accepted-run SQLite outbox failpoint must be callable")
+        if not callable(clock):
+            raise ValueError("accepted-run SQLite outbox clock must be callable")
+        if (
+            isinstance(max_lease_duration_ms, bool)
+            or not isinstance(max_lease_duration_ms, int)
+            or max_lease_duration_ms <= 0
+            or max_lease_duration_ms > _MAX_SQLITE_INTEGER
+        ):
             raise ValueError(
-                "accepted-run SQLite outbox failpoint must be callable"
+                "accepted-run SQLite outbox max lease duration must be a "
+                "positive SQLite integer"
             )
         self._database = SQLiteAcceptedRunDatabase(
             path,
             busy_timeout_ms=busy_timeout_ms,
         )
         self._failpoint = failpoint
+        self._clock = clock
+        self._max_lease_duration_ms = max_lease_duration_ms
+
+    @property
+    def transaction_clock(self) -> Callable[[], int]:
+        return self._clock
 
     def _hit_failpoint(self, name: str) -> None:
         if self._failpoint is not None:
             self._failpoint(name)
+
+    def _transaction_now_unix_ms(self) -> int:
+        now_unix_ms = self._clock()
+        if (
+            isinstance(now_unix_ms, bool)
+            or not isinstance(now_unix_ms, int)
+            or now_unix_ms < 0
+            or now_unix_ms > _MAX_SQLITE_INTEGER
+        ):
+            raise ValueError(
+                "accepted-run SQLite outbox clock must return a non-negative "
+                "SQLite integer"
+            )
+        return now_unix_ms
 
     @staticmethod
     def _effect_row(
@@ -103,10 +139,7 @@ class SQLiteOutboxDispatcherRepository:
                 delivery_state = stored_delivery_state
                 cancelled_at_unix_ms = None
             else:
-                if (
-                    stored_delivery_state
-                    is not AcceptedRunEffectDeliveryState.PENDING
-                ):
+                if stored_delivery_state is not AcceptedRunEffectDeliveryState.PENDING:
                     raise SQLiteAcceptedRunCorruptionError(
                         "accepted-run SQLite cancelled outbox effect has an "
                         "invalid physical state"
@@ -214,8 +247,7 @@ class SQLiteOutboxDispatcherRepository:
         claim: AcceptedRunEffectDeliveryClaim,
     ) -> None:
         if (
-            _decode_sqlite_text("effect_id", row["effect_id"])
-            != claim.effect_id
+            _decode_sqlite_text("effect_id", row["effect_id"]) != claim.effect_id
             or _decode_sqlite_integer(
                 "claim_generation",
                 row["claim_generation"],
@@ -257,16 +289,27 @@ class SQLiteOutboxDispatcherRepository:
                 "accepted-run SQLite outbox claim request must be an "
                 "AcceptedRunEffectDeliveryClaimRequest"
             )
-        lease_expires_at = request.lease_expires_at_unix_ms
-        if lease_expires_at > _MAX_SQLITE_INTEGER:
+        if request.lease_duration_ms > self._max_lease_duration_ms:
             raise ValueError(
-                "accepted-run SQLite outbox lease expiry exceeds SQLite "
-                "integer range"
+                "accepted-run SQLite outbox lease duration exceeds the "
+                "repository maximum"
             )
 
         def transition(
             connection: sqlite3.Connection,
         ) -> AcceptedRunEffectDeliveryRecord | None:
+            transaction_now = self._transaction_now_unix_ms()
+            if request.now_unix_ms > transaction_now:
+                raise ValueError(
+                    "accepted-run SQLite outbox claim request timestamp must "
+                    "not be later than the repository clock"
+                )
+            if transaction_now > _MAX_SQLITE_INTEGER - request.lease_duration_ms:
+                raise ValueError(
+                    "accepted-run SQLite outbox lease expiry exceeds SQLite "
+                    "integer range"
+                )
+            lease_expires_at = transaction_now + request.lease_duration_ms
             row = connection.execute(
                 """
                 SELECT effect_outbox.*,
@@ -299,7 +342,7 @@ class SQLiteOutboxDispatcherRepository:
                   effect_outbox.effect_id
                 LIMIT 1
                 """,
-                (request.now_unix_ms, request.now_unix_ms),
+                (transaction_now, transaction_now),
             ).fetchone()
             if row is None:
                 return None
@@ -361,15 +404,12 @@ class SQLiteOutboxDispatcherRepository:
                         lease_expires_at,
                         current.effect_id,
                         current.available_at_unix_ms,
-                        request.now_unix_ms,
+                        transaction_now,
                         next_generation - 1,
                         next_fence - 1,
                     ),
                 )
-            elif (
-                current.delivery_state
-                is AcceptedRunEffectDeliveryState.CLAIMED
-            ):
+            elif current.delivery_state is AcceptedRunEffectDeliveryState.CLAIMED:
                 assert current.claim is not None
                 updated = connection.execute(
                     """
@@ -399,7 +439,7 @@ class SQLiteOutboxDispatcherRepository:
                         current.claim.claim_generation,
                         current.claim.fencing_token,
                         current.claim.lease_expires_at_unix_ms,
-                        request.now_unix_ms,
+                        transaction_now,
                     ),
                 )
             else:
@@ -416,7 +456,20 @@ class SQLiteOutboxDispatcherRepository:
                 raise SQLiteAcceptedRunCorruptionError(
                     "accepted-run SQLite outbox claim lost its effect"
                 )
-            return self._record_from_row(claimed_row)
+            claimed = self._record_from_row(claimed_row)
+            assert claimed.claim is not None
+            commit_now = self._transaction_now_unix_ms()
+            if commit_now < transaction_now:
+                raise ValueError(
+                    "accepted-run SQLite outbox clock moved backwards during "
+                    "claim acquisition"
+                )
+            if commit_now >= claimed.claim.lease_expires_at_unix_ms:
+                raise AcceptedRunEffectDeliveryLeaseExpiredError(
+                    claimed.claim,
+                    "claim acquisition",
+                )
+            return claimed
 
         claimed = self._database._run_immediate(transition)
         if claimed is not None:
@@ -448,10 +501,7 @@ class SQLiteOutboxDispatcherRepository:
             current = self._record_from_row(row)
             if current.delivery_state is AcceptedRunEffectDeliveryState.DELIVERED:
                 self._assert_replay_claim(row, claim)
-                if (
-                    current.delivered_at_unix_ms
-                    != command.delivered_at_unix_ms
-                ):
+                if current.delivered_at_unix_ms != command.delivered_at_unix_ms:
                     raise AcceptedRunEffectDeliveryStateConflictError(
                         claim.effect_id,
                         current.delivery_state,
@@ -472,10 +522,16 @@ class SQLiteOutboxDispatcherRepository:
                 current=current.claim,
                 provided=claim,
             )
-            if command.delivered_at_unix_ms >= claim.lease_expires_at_unix_ms:
+            transaction_now = self._transaction_now_unix_ms()
+            if transaction_now >= claim.lease_expires_at_unix_ms:
                 raise AcceptedRunEffectDeliveryLeaseExpiredError(
                     claim,
                     "delivery acknowledgement",
+                )
+            if command.delivered_at_unix_ms > transaction_now:
+                raise ValueError(
+                    "accepted-run SQLite outbox delivery timestamp must not "
+                    "be later than the repository clock"
                 )
             if command.delivered_at_unix_ms < current.created_at_unix_ms:
                 raise ValueError(
@@ -495,6 +551,7 @@ class SQLiteOutboxDispatcherRepository:
                   AND claim_generation = ?
                   AND claim_fencing_token = ?
                   AND claim_expires_at_unix_ms = ?
+                  AND claim_expires_at_unix_ms > ?
                 """,
                 (
                     command.delivered_at_unix_ms,
@@ -503,6 +560,7 @@ class SQLiteOutboxDispatcherRepository:
                     claim.claim_generation,
                     claim.fencing_token,
                     claim.lease_expires_at_unix_ms,
+                    transaction_now,
                 ),
             )
             if updated.rowcount != 1:
@@ -516,7 +574,19 @@ class SQLiteOutboxDispatcherRepository:
                 raise SQLiteAcceptedRunCorruptionError(
                     "accepted-run SQLite outbox acknowledgement lost its effect"
                 )
-            return self._record_from_row(delivered_row)
+            delivered = self._record_from_row(delivered_row)
+            commit_now = self._transaction_now_unix_ms()
+            if commit_now < transaction_now:
+                raise ValueError(
+                    "accepted-run SQLite outbox clock moved backwards during "
+                    "delivery acknowledgement"
+                )
+            if commit_now >= claim.lease_expires_at_unix_ms:
+                raise AcceptedRunEffectDeliveryLeaseExpiredError(
+                    claim,
+                    "delivery acknowledgement",
+                )
+            return delivered
 
         delivered = self._database._run_immediate(transition)
         self._hit_failpoint("mark_effect_delivered.after_commit")
@@ -550,10 +620,7 @@ class SQLiteOutboxDispatcherRepository:
             current = self._record_from_row(row)
             if current.delivery_state is AcceptedRunEffectDeliveryState.PENDING:
                 self._assert_replay_claim(row, claim)
-                if (
-                    current.available_at_unix_ms
-                    != command.available_at_unix_ms
-                ):
+                if current.available_at_unix_ms != command.available_at_unix_ms:
                     raise AcceptedRunEffectDeliveryStateConflictError(
                         claim.effect_id,
                         current.delivery_state,
@@ -574,15 +641,26 @@ class SQLiteOutboxDispatcherRepository:
                 current=current.claim,
                 provided=claim,
             )
-            if command.released_at_unix_ms >= claim.lease_expires_at_unix_ms:
+            transaction_now = self._transaction_now_unix_ms()
+            if transaction_now >= claim.lease_expires_at_unix_ms:
                 raise AcceptedRunEffectDeliveryLeaseExpiredError(
                     claim,
                     "retry release",
+                )
+            if command.released_at_unix_ms > transaction_now:
+                raise ValueError(
+                    "accepted-run SQLite outbox retry timestamp must not be "
+                    "later than the repository clock"
                 )
             if command.released_at_unix_ms < current.created_at_unix_ms:
                 raise ValueError(
                     "accepted-run SQLite outbox retry timestamp must not "
                     "precede effect creation"
+                )
+            if command.available_at_unix_ms < transaction_now:
+                raise ValueError(
+                    "accepted-run SQLite outbox retry availability must not "
+                    "precede the repository clock"
                 )
             updated = connection.execute(
                 """
@@ -598,6 +676,7 @@ class SQLiteOutboxDispatcherRepository:
                   AND claim_generation = ?
                   AND claim_fencing_token = ?
                   AND claim_expires_at_unix_ms = ?
+                  AND claim_expires_at_unix_ms > ?
                 """,
                 (
                     command.available_at_unix_ms,
@@ -606,6 +685,7 @@ class SQLiteOutboxDispatcherRepository:
                     claim.claim_generation,
                     claim.fencing_token,
                     claim.lease_expires_at_unix_ms,
+                    transaction_now,
                 ),
             )
             if updated.rowcount != 1:
@@ -619,7 +699,19 @@ class SQLiteOutboxDispatcherRepository:
                 raise SQLiteAcceptedRunCorruptionError(
                     "accepted-run SQLite outbox retry lost its effect"
                 )
-            return self._record_from_row(pending_row)
+            pending = self._record_from_row(pending_row)
+            commit_now = self._transaction_now_unix_ms()
+            if commit_now < transaction_now:
+                raise ValueError(
+                    "accepted-run SQLite outbox clock moved backwards during "
+                    "retry release"
+                )
+            if commit_now >= claim.lease_expires_at_unix_ms:
+                raise AcceptedRunEffectDeliveryLeaseExpiredError(
+                    claim,
+                    "retry release",
+                )
+            return pending
 
         pending = self._database._run_immediate(transition)
         self._hit_failpoint("release_effect_for_retry.after_commit")

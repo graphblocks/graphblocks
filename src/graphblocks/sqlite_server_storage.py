@@ -59,7 +59,7 @@ from .server_storage import (
 
 
 SQLITE_ACCEPTED_RUN_APPLICATION_ID = 0x47424152
-SQLITE_ACCEPTED_RUN_SCHEMA_VERSION = 5
+SQLITE_ACCEPTED_RUN_SCHEMA_VERSION = 6
 _SQLITE_ACCEPTED_RUN_SCHEMA_NAME = "graphblocks.accepted-runs.sqlite"
 _SQLITE_ACCEPTED_RUN_INITIAL_SCHEMA_VERSION = 1
 _MAX_BUSY_TIMEOUT_MS = 60_000
@@ -447,6 +447,19 @@ _SCHEMA_V5_MIGRATION_STATEMENTS = (
     """,
 )
 
+_SCHEMA_V6_MIGRATION_STATEMENTS = (
+    """
+    UPDATE effect_outbox
+    SET delivery_state = 'pending',
+        claim_owner_id = NULL,
+        claim_generation = claim_generation + 1,
+        claim_fencing_token = claim_fencing_token + 1,
+        claim_expires_at_unix_ms = NULL,
+        delivered_at_unix_ms = NULL
+    WHERE delivery_state = 'claimed'
+    """,
+)
+
 _REQUIRED_COLUMNS_V1 = {
     "accepted_run_storage_metadata": frozenset({"key", "value"}),
     "accepted_runs": frozenset(
@@ -571,7 +584,7 @@ _REQUIRED_COLUMNS_V4 = {
         }
     ),
 }
-_REQUIRED_COLUMNS = {
+_REQUIRED_COLUMNS_V5 = {
     **_REQUIRED_COLUMNS_V4,
     "accepted_runs": (
         _REQUIRED_COLUMNS_V4["accepted_runs"]
@@ -585,6 +598,7 @@ _REQUIRED_COLUMNS = {
         _REQUIRED_COLUMNS_V4["run_controls"] | frozenset({"resulting_phase"})
     ),
 }
+_REQUIRED_COLUMNS = _REQUIRED_COLUMNS_V5
 
 
 def _validate_lookup_text(owner: str, field_name: str, value: object) -> str:
@@ -812,6 +826,7 @@ class SQLiteAcceptedRunDatabase:
                     2,
                     3,
                     4,
+                    5,
                 }:
                     self._migrate_to_current(connection)
                 else:
@@ -877,6 +892,8 @@ class SQLiteAcceptedRunDatabase:
                     connection.execute(statement)
                 for statement in _SCHEMA_V5_MIGRATION_STATEMENTS:
                     connection.execute(statement)
+                for statement in _SCHEMA_V6_MIGRATION_STATEMENTS:
+                    connection.execute(statement)
                 connection.executemany(
                     """
                     INSERT INTO accepted_run_storage_metadata (key, value)
@@ -921,6 +938,7 @@ class SQLiteAcceptedRunDatabase:
                 2,
                 3,
                 4,
+                5,
             }:
                 raise SQLiteAcceptedRunSchemaVersionError(
                     "unsupported accepted-run SQLite schema version "
@@ -1025,6 +1043,51 @@ class SQLiteAcceptedRunDatabase:
                     raise SQLiteAcceptedRunSchemaMismatchError(
                         "accepted-run SQLite schema metadata version changed "
                         "during v5 migration"
+                    )
+                connection.execute("PRAGMA user_version = 5")
+                user_version = 5
+            if user_version == 5:
+                self._validate_schema_version(
+                    connection,
+                    schema_version=5,
+                    required_columns=_REQUIRED_COLUMNS_V5,
+                )
+                unreclaimable_claim = connection.execute(
+                    """
+                    SELECT effect_id
+                    FROM effect_outbox
+                    WHERE delivery_state = 'claimed'
+                      AND (
+                        attempt_count >= ?
+                        OR claim_generation >= ?
+                        OR claim_fencing_token >= ?
+                      )
+                    LIMIT 1
+                    """,
+                    (
+                        _MAX_SQLITE_INTEGER,
+                        _MAX_SQLITE_INTEGER - 1,
+                        _MAX_SQLITE_INTEGER - 1,
+                    ),
+                ).fetchone()
+                if unreclaimable_claim is not None:
+                    raise SQLiteAcceptedRunSchemaMismatchError(
+                        "accepted-run SQLite v5 effect claim counters lack "
+                        "reclaim headroom"
+                    )
+                for statement in _SCHEMA_V6_MIGRATION_STATEMENTS:
+                    connection.execute(statement)
+                updated = connection.execute(
+                    """
+                    UPDATE accepted_run_storage_metadata
+                    SET value = '6'
+                    WHERE key = 'schema_version' AND value = '5'
+                    """
+                )
+                if updated.rowcount != 1:
+                    raise SQLiteAcceptedRunSchemaMismatchError(
+                        "accepted-run SQLite schema metadata version changed "
+                        "during v6 migration"
                     )
                 connection.execute(
                     f"PRAGMA user_version = {SQLITE_ACCEPTED_RUN_SCHEMA_VERSION}"

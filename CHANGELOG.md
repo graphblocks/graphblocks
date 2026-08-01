@@ -29,6 +29,16 @@ preparing the first 1.0 release candidate.
   implementation-ID rebindings fail closed, and nested `control.map@2`
   resolution cannot escape the restricted registry. Explicit callers should
   migrate from the full preview registry to `durable_intent_registry()`.
+- Made the SQLite effect outbox own the authoritative transaction clock for
+  claim eligibility, lease expiry, acknowledgements, and retry release. Effect
+  leases are policy-bounded, future claim and observation timestamps fail
+  closed, live state transitions are rechecked before commit, and matching
+  committed replays remain recoverable after lease expiry. The v6 storage
+  migration requeues every legacy caller-timed active effect claim while
+  advancing its generation and fence, and fails closed unless the attempt,
+  generation, and fence counters retain enough headroom for a new claim.
+  Operators should quiesce v5 dispatchers before migration; otherwise the
+  documented at-least-once receiver-deduplication requirement applies.
 - Added a bounded CommonMark and GitHub-heading integrity checker, a closed
   generated-documentation registry with content-bound results, and an always-run
   fast documentation workflow plus named stable release gate.

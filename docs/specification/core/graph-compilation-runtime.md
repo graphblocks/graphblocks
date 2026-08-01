@@ -380,6 +380,28 @@ only with that same unexpired claim. The logical effect identity and
 idempotency key MUST remain stable across every retry or reclaim of the same
 logical effect.
 
+The delivery repository MUST own the clock used for claim eligibility and
+lease authority. Inside the write transaction it MUST reject a caller-declared
+future timestamp, derive the expiry from its own clock and a finite
+policy-bounded duration, and use that authoritative time in both selection and
+compare-and-swap predicates. Acknowledgement and retry release timestamps are
+caller-declared metadata, not proof of live authority: a new transition MUST
+also observe repository time before the stored expiry, reject declared future
+times, and recheck the lease immediately before commit. Retry availability
+MUST NOT precede repository time. A matching replay of an already committed
+acknowledgement or retry MAY succeed after expiry so response loss does not turn
+a completed transaction into a conflicting mutation.
+
+A storage upgrade that first adopts repository-owned delivery time MUST NOT
+retain active claims whose expiry was issued from caller-controlled time. It
+MUST transactionally invalidate and requeue those claims while advancing their
+generation and fencing token, or fail the migration closed unless every
+delivery counter retains enough headroom to issue the requeued claim. Requeued
+delivery remains at-least-once and therefore retains the stable
+receiver-deduplication requirement. An upgrade that cannot tolerate an
+immediate duplicate MUST quiesce legacy dispatchers before opening the database
+with the new schema authority.
+
 If the delivery claim expires before acknowledgement, the outcome is ambiguous
 and the dispatcher MUST reconcile only that same provider-correlated intent.
 It MAY replay the send only when the provider atomically deduplicates the stable
