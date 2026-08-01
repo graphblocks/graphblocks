@@ -314,8 +314,8 @@ installed-wheel gate compares that contract with distribution metadata. During
 the transition, Python/Rust differential tests gate every normative phase.
 
 The reusable `graphblocks-control-plane` library boundary is extracted:
-`graphblocks-python` and the `graphblocksd` binary now depend on that library,
-so the binding no longer depends on a daemon-named package.
+`graphblocks-python` and the `graphblocks-control` binary now depend on that
+library, so the binding no longer depends on an executable package.
 [ADR-0002](../specification/decisions/0002-rust-crate-boundaries.md) defines
 the crate-boundary budget: the compatibility-only `graphblocks-types` crate is
 retired, bounded sequence primitives are absorbed into runtime core, and every
@@ -345,11 +345,12 @@ from an example or adapter.
 
 Every integration promotion record must state contract-only versus real-adapter
 maturity, supported authentication modes, SDK/service versions, real-service
-evidence, retry/failure model, and promotion gate. Decide whether
-`graphblocksd` is renamed or becomes a real daemon; decide whether the operator
-is renamed/internal or gains reconciliation, upgrade, finalizer, leader
-election, envtest, and kind evidence. Reserved Rust/npm artifacts must install
-only an unambiguous reserved-package notice.
+evidence, retry/failure model, and promotion gate. The one-shot control-plane
+command is named `graphblocks-control`; it must not claim a listener, `serve`
+command, or daemon lifecycle. Decide whether the operator is renamed/internal
+or gains reconciliation, upgrade, finalizer, leader election, envtest, and kind
+evidence. Reserved Rust/npm artifacts must install only an unambiguous
+reserved-package notice.
 
 ### Generated project facts and naming
 
@@ -361,9 +362,9 @@ digests. Produce status tables, README facts, compatibility matrices, badges,
 and release evidence as digest-bound projections and fail CI on drift.
 
 Align `SECURITY.md`, package classifiers, Python version wording, roadmap state,
-and status wording through those projections. Describe `graphblocksd`, the
-operator artifact, and contract-only integrations by their implemented behavior
-rather than by aspirational product names. Generate evidence-bound risk status,
+and status wording through those projections. Describe `graphblocks-control`,
+the operator artifact, and contract-only integrations by their implemented
+behavior rather than by aspirational product names. Generate evidence-bound risk status,
 owner, resolved version, and digest; reopen a resolved risk when its required
 evidence disappears or changes. The status projection reports supply chain,
 API, runtime security, durability, and adapter maturity as separate axes.

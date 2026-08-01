@@ -414,17 +414,27 @@ def test_living_documentation_has_one_authority_tree() -> None:
     assert (ROOT / "profiles" / "policy-profiles.yaml").is_file()
 
 
-def test_python_binding_depends_on_control_plane_library_not_daemon() -> None:
+def test_control_plane_cli_name_and_binding_boundary_are_explicit() -> None:
     control_plane = tomllib.loads(
         (ROOT / "crates" / "graphblocksd" / "Cargo.toml").read_text(
             encoding="utf-8"
         )
     )
     assert control_plane["package"]["name"] == "graphblocks-control-plane"
+    assert control_plane["package"]["description"] == (
+        "Reusable GraphBlocks control-plane contracts and one-shot "
+        "graphblocks-control CLI"
+    )
     assert control_plane["lib"]["name"] == "graphblocks_control_plane"
     assert control_plane["bin"] == [
-        {"name": "graphblocksd", "path": "src/main.rs"}
+        {"name": "graphblocks-control", "path": "src/main.rs"}
     ]
+
+    control_source = (
+        ROOT / "crates" / "graphblocksd" / "src" / "main.rs"
+    ).read_text(encoding="utf-8")
+    assert '"usage: graphblocks-control <' in control_source
+    assert '"usage: graphblocksd <' not in control_source
 
     binding = tomllib.loads(
         (ROOT / "crates" / "graphblocks-python" / "Cargo.toml").read_text(
@@ -438,6 +448,19 @@ def test_python_binding_depends_on_control_plane_library_not_daemon() -> None:
         "path": "../graphblocksd",
     }
     assert "graphblocksd" not in dependencies
+
+    documented_surfaces = [
+        ROOT / "README.md",
+        ROOT / "README.ko.md",
+        ROOT / "README.zh-CN.md",
+        ROOT / "docs" / "getting-started" / "installation.md",
+        ROOT / "docs" / "project" / "first-stable-release.md",
+        ROOT / "docs" / "project" / "status.md",
+    ]
+    for document in documented_surfaces:
+        content = document.read_text(encoding="utf-8")
+        assert "`graphblocks-control`" in content
+        assert "`graphblocksd`" not in content
 
 
 def test_real_adapter_evidence_binds_test_workflow_revision_and_run(
@@ -1189,8 +1212,64 @@ def test_stable_release_matrix_is_complete_and_machine_readable() -> None:
     assert workspace_crates <= set(artifacts)
     assert "crate:graphblocks-control-plane" in artifacts
     assert "crate:graphblocksd" not in artifacts
-    assert artifacts["executable:graphblocksd"]["source"] == (
-        "crate:graphblocks-control-plane"
+    assert "executable:graphblocksd" not in artifacts
+    control_cli = artifacts["executable:graphblocks-control"]
+    assert control_cli == {
+        "id": "executable:graphblocks-control",
+        "ecosystem": "native",
+        "kind": "executable",
+        "source": "crate:graphblocks-control-plane",
+        "tier": "internal",
+        "readiness": "implemented-internal",
+        "binaryName": "graphblocks-control",
+        "commandMode": "one-shot",
+        "transport": "local-process",
+        "requestArguments": "argv-options",
+        "stdinPayloadFormat": "json",
+        "stdinPayloadMode": "command-specific",
+        "stdinJsonPayloadCommands": [
+            "admit-worker-message",
+            "submit-async-callback",
+            "quarantine-async-callback",
+        ],
+        "successResponse": "stdout-json",
+        "errorResponse": "stderr-json",
+        "networkListener": False,
+        "serveCommand": False,
+        "capabilities": [
+            "worker-message-admission",
+            "run-lease-and-status-transitions",
+            "async-callback-lifecycle",
+            "callback-delivery-lifecycle",
+            "checkpoint-claim-lifecycle",
+        ],
+        "nonCapabilities": [
+            "long-running-daemon",
+            "http-server",
+            "supervisor-lifecycle",
+        ],
+    }
+    control_manifest = tomllib.loads(
+        (ROOT / artifacts[control_cli["source"]]["path"]).read_text(encoding="utf-8")
+    )
+    assert [target["name"] for target in control_manifest["bin"]] == [
+        control_cli["binaryName"]
+    ]
+    control_source = (
+        ROOT / "crates" / "graphblocksd" / "src" / "main.rs"
+    ).read_text(encoding="utf-8")
+    stdin_contract = re.search(
+        r"const JSON_STDIN_PAYLOAD_COMMANDS: \[&str; \d+\] = \[(.*?)\];",
+        control_source,
+        re.DOTALL,
+    )
+    assert stdin_contract is not None
+    implementation_stdin_commands = re.findall(r'"([a-z-]+)"', stdin_contract.group(1))
+    assert implementation_stdin_commands == control_cli["stdinJsonPayloadCommands"]
+    for command in implementation_stdin_commands:
+        assert control_source.count(f'read_json_stdin_payload("{command}")') == 1
+    assert control_source.count("read_json_stdin_payload(") == (
+        len(implementation_stdin_commands) + 1
     )
 
     profile_catalog = yaml.safe_load(

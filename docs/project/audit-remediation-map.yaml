@@ -325,7 +325,8 @@ workstreams:
     acceptanceFocus:
       - core inclusion and explicit non-goal ADR policy
       - contract-only versus real-adapter maturity evidence
-      - accurate daemon operator reserved-artifact naming
+      - one-shot control CLI name and fail-closed non-daemon capability metadata
+      - accurate operator and reserved-artifact naming
       - pattern examples without domain guarantees
   - id: M2-SCHEMA-CACHING
     phase: phase-2-implementation-boundaries

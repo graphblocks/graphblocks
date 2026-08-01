@@ -61,7 +61,11 @@ Python-only advanced reference contracts are listed in
 without Python, and can select a named graph from multi-document YAML, using the
 Rust stdlib runtime. It does not yet inject arbitrary integration adapters.
 The reusable `graphblocks-control-plane` library is consumed by both the Python
-binding and the `graphblocksd` binary, so the binding no longer depends on a
-daemon-named package. Despite its name, `graphblocksd` is currently a one-shot
-worker control-plane CLI for worker admission and SQLite checkpoint claim
-lifecycle operations rather than a long-running HTTP server.
+binding and the `graphblocks-control` binary, so the binding does not depend on
+an executable package. `graphblocks-control` is deliberately a one-shot
+local-process CLI for worker admission and SQLite-backed run, callback,
+delivery, and checkpoint lifecycle operations. Requests use argv options; only
+`admit-worker-message`, `submit-async-callback`, and
+`quarantine-async-callback` read JSON payloads from stdin. Success is JSON on
+stdout and errors are JSON on stderr. It is not a long-running HTTP server and
+has no `serve` command or network listener.

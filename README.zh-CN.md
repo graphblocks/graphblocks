@@ -63,8 +63,12 @@ cargo test --workspace --all-targets
 
 该仓库还会构建 `graphblocks-native`，这是一个不依赖 Python 的 Rust 可执行文件，用于
 执行 `validate`、`plan` 和 `run`。它通过标准输入接收 JSON 或 YAML，可以从多文档 YAML
-流中选择具名 `Graph`，并执行原生标准库块集。`graphblocksd` 是工作进程控制平面命令，
-目前还不是监听 HTTP 的服务器进程。
+流中选择具名 `Graph`，并执行原生标准库块集。`graphblocks-control` 是用于工作进程准入
+以及 run、callback、delivery 和 checkpoint 状态变更的一次性本地进程控制平面 CLI。
+请求字段通过 argv 选项传递；只有 `admit-worker-message`、`submit-async-callback` 和
+`quarantine-async-callback` 还会从 stdin 读取 JSON payload。成功响应以 JSON 写入
+stdout，错误响应以 JSON 写入 stderr。它没有 `serve` 命令、网络监听器或长期运行的
+守护进程生命周期。
 
 ## 文档
 

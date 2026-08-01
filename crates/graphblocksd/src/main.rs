@@ -21,6 +21,12 @@ use graphblocks_runtime_durable::{
 use graphblocks_schema::parse_canonical_json;
 use serde_json::{Value, json};
 
+const JSON_STDIN_PAYLOAD_COMMANDS: [&str; 3] = [
+    "admit-worker-message",
+    "submit-async-callback",
+    "quarantine-async-callback",
+];
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct AdmitWorkerMessageOptions {
     daemon_id: String,
@@ -83,7 +89,7 @@ fn main() {
         Some("renew-checkpoint-claim") => run_renew_checkpoint_claim(args.collect()),
         Some("complete-checkpoint-claim") => run_complete_checkpoint_claim(args.collect()),
         _ => Err(CliError::Usage(
-            "usage: graphblocksd <admit-worker-message|acquire-run-lease|renew-run-lease|set-run-status-with-lease|register-async-operation|submit-async-callback|quarantine-async-callback|accept-quarantined-async-callbacks|enqueue-callback-delivery|claim-callback-deliveries|complete-callback-delivery|move-callback-to-dead-letter|redrive-callback-delivery|cancel-async-operation|expire-async-operation|claim-checkpoint|renew-checkpoint-claim|complete-checkpoint-claim> [options]".to_owned(),
+            "usage: graphblocks-control <admit-worker-message|acquire-run-lease|renew-run-lease|set-run-status-with-lease|register-async-operation|submit-async-callback|quarantine-async-callback|accept-quarantined-async-callbacks|enqueue-callback-delivery|claim-callback-deliveries|complete-callback-delivery|move-callback-to-dead-letter|redrive-callback-delivery|cancel-async-operation|expire-async-operation|claim-checkpoint|renew-checkpoint-claim|complete-checkpoint-claim> [options]".to_owned(),
         )),
     };
 
@@ -102,14 +108,23 @@ fn main() {
     }
 }
 
-fn run_admit_worker_message(args: Vec<String>) -> Result<Value, CliError> {
-    let options = parse_admit_worker_message_options(args)?;
+fn read_json_stdin_payload(command: &str) -> Result<Value, CliError> {
+    if !JSON_STDIN_PAYLOAD_COMMANDS.contains(&command) {
+        return Err(CliError::Config(format!(
+            "command {command:?} is not declared to accept a JSON stdin payload"
+        )));
+    }
+
     let mut input = String::new();
     io::stdin()
         .read_to_string(&mut input)
         .map_err(|error| CliError::ReadStdin(error.to_string()))?;
-    let message =
-        parse_canonical_json(&input).map_err(|error| CliError::ParseJson(error.to_string()))?;
+    parse_canonical_json(&input).map_err(|error| CliError::ParseJson(error.to_string()))
+}
+
+fn run_admit_worker_message(args: Vec<String>) -> Result<Value, CliError> {
+    let options = parse_admit_worker_message_options(args)?;
+    let message = read_json_stdin_payload("admit-worker-message")?;
 
     let mut config = DaemonConfig::new(options.daemon_id, options.bind_address)
         .with_max_workers(options.max_workers);
@@ -661,12 +676,7 @@ fn run_submit_async_callback(args: Vec<String>) -> Result<Value, CliError> {
     let schema_json =
         schema_json.ok_or_else(|| CliError::Usage("--schema-json is required".to_owned()))?;
 
-    let mut input = String::new();
-    io::stdin()
-        .read_to_string(&mut input)
-        .map_err(|error| CliError::ReadStdin(error.to_string()))?;
-    let payload =
-        parse_canonical_json(&input).map_err(|error| CliError::ParseJson(error.to_string()))?;
+    let payload = read_json_stdin_payload("submit-async-callback")?;
     let registry = callback_schema_registry_from_json(schema_id, schema_json)?;
 
     let mut submission = AsyncCallbackSubmission::new(
@@ -738,7 +748,7 @@ fn callback_schema_registry_from_json(
     })?;
     let schema = JsonSchema::from_json_schema_value(schema_id, &schema_value).map_err(|error| {
         CliError::Usage(format!(
-            "--schema-json is not supported by graphblocksd: {error:?}"
+            "--schema-json is not supported by graphblocks-control: {error:?}"
         ))
     })?;
     ToolSchemaRegistry::new([schema])
@@ -857,12 +867,7 @@ fn run_quarantine_async_callback(args: Vec<String>) -> Result<Value, CliError> {
     let quarantine_expires_at_unix_ms = quarantine_expires_at_unix_ms
         .ok_or_else(|| CliError::Usage("--quarantine-expires-at-unix-ms is required".to_owned()))?;
 
-    let mut input = String::new();
-    io::stdin()
-        .read_to_string(&mut input)
-        .map_err(|error| CliError::ReadStdin(error.to_string()))?;
-    let payload =
-        parse_canonical_json(&input).map_err(|error| CliError::ParseJson(error.to_string()))?;
+    let payload = read_json_stdin_payload("quarantine-async-callback")?;
 
     let mut submission = AsyncCallbackSubmission::new(
         callback_id.clone(),
@@ -2496,7 +2501,19 @@ fn worker_message_kind_name(kind: WorkerProtocolMessageKind) -> &'static str {
 mod tests {
     use graphblocks_runtime_durable::CheckpointStoreError;
 
-    use super::CliError;
+    use super::{CliError, JSON_STDIN_PAYLOAD_COMMANDS};
+
+    #[test]
+    fn json_stdin_payload_commands_are_explicit_and_closed() {
+        assert_eq!(
+            JSON_STDIN_PAYLOAD_COMMANDS,
+            [
+                "admit-worker-message",
+                "submit-async-callback",
+                "quarantine-async-callback",
+            ]
+        );
+    }
 
     #[test]
     fn checkpoint_fencing_overflow_has_structured_error_json() {

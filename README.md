@@ -80,8 +80,12 @@ to separately published Python wheels. The Python release surface consists of
 The repository also builds `graphblocks-native`, a Python-free Rust executable
 for `validate`, `plan`, and `run`. It accepts JSON or YAML on stdin, can select a
 named `Graph` from a multi-document YAML stream, and executes the native stdlib
-block set. `graphblocksd` is a worker control-plane command, not yet a listening
-HTTP/server process.
+block set. `graphblocks-control` is a one-shot local-process control-plane CLI
+for worker admission and run, callback, delivery, and checkpoint state changes.
+Request fields use argv options; `admit-worker-message`, `submit-async-callback`,
+and `quarantine-async-callback` additionally read a JSON payload from stdin.
+Success is JSON on stdout and errors are JSON on stderr. It has no `serve`
+command, network listener, or long-running daemon lifecycle.
 
 ## Documentation
 

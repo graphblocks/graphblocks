@@ -32,7 +32,7 @@ fn sqlite_async_operation_path(label: &str) -> std::path::PathBuf {
         .expect("system time should be after epoch")
         .as_nanos();
     std::env::temp_dir().join(format!(
-        "graphblocksd-async-operation-{label}-{unique}.sqlite3"
+        "graphblocks-control-async-operation-{label}-{unique}.sqlite3"
     ))
 }
 
@@ -42,7 +42,7 @@ fn sqlite_callback_delivery_path(label: &str) -> std::path::PathBuf {
         .expect("system time should be after epoch")
         .as_nanos();
     std::env::temp_dir().join(format!(
-        "graphblocksd-callback-delivery-{label}-{unique}.sqlite3"
+        "graphblocks-control-callback-delivery-{label}-{unique}.sqlite3"
     ))
 }
 
@@ -52,7 +52,7 @@ fn sqlite_callback_dead_letter_path(label: &str) -> std::path::PathBuf {
         .expect("system time should be after epoch")
         .as_nanos();
     std::env::temp_dir().join(format!(
-        "graphblocksd-callback-dead-letter-{label}-{unique}.sqlite3"
+        "graphblocks-control-callback-dead-letter-{label}-{unique}.sqlite3"
     ))
 }
 
@@ -75,7 +75,7 @@ fn waiting_daemon_async_operation() -> AsyncOperation {
 fn enqueue_daemon_callback_delivery(
     path_text: &str,
 ) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
-    let output = Command::new(env!("CARGO_BIN_EXE_graphblocksd"))
+    let output = Command::new(env!("CARGO_BIN_EXE_graphblocks-control"))
         .args([
             "enqueue-callback-delivery",
             "--callback-delivery-store",
@@ -106,7 +106,7 @@ fn claim_daemon_callback_deliveries(
     path_text: &str,
     now_unix_ms: &str,
 ) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
-    let output = Command::new(env!("CARGO_BIN_EXE_graphblocksd"))
+    let output = Command::new(env!("CARGO_BIN_EXE_graphblocks-control"))
         .args([
             "claim-callback-deliveries",
             "--callback-delivery-store",
@@ -172,7 +172,7 @@ fn complete_daemon_callback_delivery(
     ];
     args.extend_from_slice(response);
 
-    let output = Command::new(env!("CARGO_BIN_EXE_graphblocksd"))
+    let output = Command::new(env!("CARGO_BIN_EXE_graphblocks-control"))
         .args(args)
         .output()?;
     assert!(output.status.success());
@@ -201,7 +201,7 @@ fn submit_daemon_ci_callback_with_resume_args(
     received_at_unix_ms: &str,
     resume_args: &[&str],
 ) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
-    let mut child = Command::new(env!("CARGO_BIN_EXE_graphblocksd"))
+    let mut child = Command::new(env!("CARGO_BIN_EXE_graphblocks-control"))
         .args([
             "submit-async-callback",
             "--async-operation-store",
@@ -238,7 +238,7 @@ fn submit_daemon_ci_callback_with_resume_args(
     let stdin = child
         .stdin
         .as_mut()
-        .ok_or("graphblocksd stdin pipe was not available")?;
+        .ok_or("graphblocks-control stdin pipe was not available")?;
     stdin.write_all(
         serde_json::to_string(&json!({"status": "completed", "workflow_run_id": "gha-run-1"}))?
             .as_bytes(),
@@ -255,7 +255,7 @@ fn quarantine_daemon_ci_callback(
     idempotency_key: &str,
     quarantine_expires_at_unix_ms: &str,
 ) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
-    let mut child = Command::new(env!("CARGO_BIN_EXE_graphblocksd"))
+    let mut child = Command::new(env!("CARGO_BIN_EXE_graphblocks-control"))
         .args([
             "quarantine-async-callback",
             "--async-operation-store",
@@ -289,7 +289,7 @@ fn quarantine_daemon_ci_callback(
     let stdin = child
         .stdin
         .as_mut()
-        .ok_or("graphblocksd stdin pipe was not available")?;
+        .ok_or("graphblocks-control stdin pipe was not available")?;
     stdin.write_all(
         serde_json::to_string(&json!({"status": "completed", "workflow_run_id": "gha-run-1"}))?
             .as_bytes(),
@@ -303,7 +303,7 @@ fn quarantine_daemon_ci_callback(
 fn register_daemon_waiting_operation(
     path_text: &str,
 ) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
-    let output = Command::new(env!("CARGO_BIN_EXE_graphblocksd"))
+    let output = Command::new(env!("CARGO_BIN_EXE_graphblocks-control"))
         .args([
             "register-async-operation",
             "--async-operation-store",
@@ -341,7 +341,7 @@ fn register_daemon_waiting_operation(
 fn accept_quarantined_daemon_callbacks(
     path_text: &str,
 ) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
-    let output = Command::new(env!("CARGO_BIN_EXE_graphblocksd"))
+    let output = Command::new(env!("CARGO_BIN_EXE_graphblocks-control"))
         .args([
             "accept-quarantined-async-callbacks",
             "--async-operation-store",
@@ -359,7 +359,23 @@ fn accept_quarantined_daemon_callbacks(
 }
 
 #[test]
-fn graphblocksd_claims_and_completes_callback_delivery() -> Result<(), Box<dyn std::error::Error>> {
+fn graphblocks_control_reports_its_one_shot_cli_name_in_usage()
+-> Result<(), Box<dyn std::error::Error>> {
+    let output = Command::new(env!("CARGO_BIN_EXE_graphblocks-control")).output()?;
+    assert_eq!(output.status.code(), Some(2));
+
+    let payload: serde_json::Value = serde_json::from_slice(&output.stderr)?;
+    let message = payload["error"]["message"]
+        .as_str()
+        .ok_or("usage error message was not a string")?;
+    assert!(message.starts_with("usage: graphblocks-control <"));
+    assert!(!message.contains("graphblocksd"));
+    Ok(())
+}
+
+#[test]
+fn graphblocks_control_claims_and_completes_callback_delivery()
+-> Result<(), Box<dyn std::error::Error>> {
     let path = sqlite_callback_delivery_path("claim-complete");
     let path_text = path
         .to_str()
@@ -428,7 +444,7 @@ fn graphblocksd_claims_and_completes_callback_delivery() -> Result<(), Box<dyn s
 }
 
 #[test]
-fn graphblocksd_retries_callback_delivery_after_server_error()
+fn graphblocks_control_retries_callback_delivery_after_server_error()
 -> Result<(), Box<dyn std::error::Error>> {
     let path = sqlite_callback_delivery_path("server-error-retry");
     let path_text = path
@@ -486,7 +502,7 @@ fn graphblocksd_retries_callback_delivery_after_server_error()
 }
 
 #[test]
-fn graphblocksd_moves_dead_letter_and_redrives_callback_delivery()
+fn graphblocks_control_moves_dead_letter_and_redrives_callback_delivery()
 -> Result<(), Box<dyn std::error::Error>> {
     let delivery_path = sqlite_callback_delivery_path("dead-letter-redrive");
     let dead_letter_path = sqlite_callback_dead_letter_path("dead-letter-redrive");
@@ -516,7 +532,7 @@ fn graphblocksd_moves_dead_letter_and_redrives_callback_delivery()
         Some("dead_lettered")
     );
 
-    let moved_output = Command::new(env!("CARGO_BIN_EXE_graphblocksd"))
+    let moved_output = Command::new(env!("CARGO_BIN_EXE_graphblocks-control"))
         .args([
             "move-callback-to-dead-letter",
             "--callback-delivery-store",
@@ -545,7 +561,7 @@ fn graphblocksd_moves_dead_letter_and_redrives_callback_delivery()
         Some(1)
     );
 
-    let redriven_output = Command::new(env!("CARGO_BIN_EXE_graphblocksd"))
+    let redriven_output = Command::new(env!("CARGO_BIN_EXE_graphblocks-control"))
         .args([
             "redrive-callback-delivery",
             "--callback-delivery-store",
@@ -607,7 +623,7 @@ fn graphblocksd_moves_dead_letter_and_redrives_callback_delivery()
 }
 
 #[test]
-fn graphblocksd_redrive_recovers_when_dead_letter_history_write_is_interrupted()
+fn graphblocks_control_redrive_recovers_when_dead_letter_history_write_is_interrupted()
 -> Result<(), Box<dyn std::error::Error>> {
     let delivery_path = sqlite_callback_delivery_path("redrive-recovery");
     let dead_letter_path = sqlite_callback_dead_letter_path("redrive-recovery");
@@ -628,7 +644,7 @@ fn graphblocksd_redrive_recovers_when_dead_letter_history_write_is_interrupted()
         "1100",
         "1",
     )?;
-    let moved = Command::new(env!("CARGO_BIN_EXE_graphblocksd"))
+    let moved = Command::new(env!("CARGO_BIN_EXE_graphblocks-control"))
         .args([
             "move-callback-to-dead-letter",
             "--callback-delivery-store",
@@ -669,7 +685,7 @@ fn graphblocksd_redrive_recovers_when_dead_letter_history_write_is_interrupted()
         "--redriven-at-unix-ms",
         "1300",
     ];
-    let interrupted = Command::new(env!("CARGO_BIN_EXE_graphblocksd"))
+    let interrupted = Command::new(env!("CARGO_BIN_EXE_graphblocks-control"))
         .args(redrive_args)
         .output()?;
     assert!(!interrupted.status.success());
@@ -697,7 +713,7 @@ fn graphblocksd_redrive_recovers_when_dead_letter_history_write_is_interrupted()
     assert_eq!(completed_redrive["delivery"]["status"], "delivered");
 
     Connection::open(&dead_letter_path)?.execute_batch("DROP TRIGGER reject_redrive_history;")?;
-    let retried = Command::new(env!("CARGO_BIN_EXE_graphblocksd"))
+    let retried = Command::new(env!("CARGO_BIN_EXE_graphblocks-control"))
         .args(redrive_args)
         .output()?;
     assert!(retried.status.success());
@@ -946,7 +962,8 @@ fn worker_registry_rejects_worker_message_kind_payload_mismatch() {
 }
 
 #[test]
-fn graphblocksd_admits_worker_message_from_stdin() -> Result<(), Box<dyn std::error::Error>> {
+fn graphblocks_control_admits_worker_message_from_stdin() -> Result<(), Box<dyn std::error::Error>>
+{
     let message = json!({
         "protocolVersion": WORKER_PROTOCOL_VERSION,
         "messageId": "message-worker-1",
@@ -963,7 +980,7 @@ fn graphblocksd_admits_worker_message_from_stdin() -> Result<(), Box<dyn std::er
             "state": "ready",
         },
     });
-    let mut child = Command::new(env!("CARGO_BIN_EXE_graphblocksd"))
+    let mut child = Command::new(env!("CARGO_BIN_EXE_graphblocks-control"))
         .args([
             "admit-worker-message",
             "--daemon-id",
@@ -981,7 +998,7 @@ fn graphblocksd_admits_worker_message_from_stdin() -> Result<(), Box<dyn std::er
     let stdin = child
         .stdin
         .as_mut()
-        .ok_or("graphblocksd stdin pipe was not available")?;
+        .ok_or("graphblocks-control stdin pipe was not available")?;
     stdin.write_all(serde_json::to_string(&message)?.as_bytes())?;
 
     let output = child.wait_with_output()?;
@@ -1020,8 +1037,9 @@ fn graphblocksd_admits_worker_message_from_stdin() -> Result<(), Box<dyn std::er
 }
 
 #[test]
-fn graphblocksd_rejects_duplicate_worker_message_keys() -> Result<(), Box<dyn std::error::Error>> {
-    let mut child = Command::new(env!("CARGO_BIN_EXE_graphblocksd"))
+fn graphblocks_control_rejects_duplicate_worker_message_keys()
+-> Result<(), Box<dyn std::error::Error>> {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_graphblocks-control"))
         .arg("admit-worker-message")
         .stdin(Stdio::piped())
         .stderr(Stdio::piped())
@@ -1029,7 +1047,7 @@ fn graphblocksd_rejects_duplicate_worker_message_keys() -> Result<(), Box<dyn st
     child
         .stdin
         .as_mut()
-        .ok_or("graphblocksd stdin pipe was not available")?
+        .ok_or("graphblocks-control stdin pipe was not available")?
         .write_all(br#"{"protocolVersion":1,"protocolVersion":1}"#)?;
 
     let output = child.wait_with_output()?;
@@ -1051,13 +1069,15 @@ fn graphblocksd_rejects_duplicate_worker_message_keys() -> Result<(), Box<dyn st
 }
 
 #[test]
-fn graphblocksd_claims_sqlite_checkpoint_for_worker_recovery()
+fn graphblocks_control_claims_sqlite_checkpoint_for_worker_recovery()
 -> Result<(), Box<dyn std::error::Error>> {
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("system clock is after unix epoch")
         .as_nanos();
-    let path = std::env::temp_dir().join(format!("graphblocksd-checkpoint-claim-{unique}.sqlite3"));
+    let path = std::env::temp_dir().join(format!(
+        "graphblocks-control-checkpoint-claim-{unique}.sqlite3"
+    ));
     let mut store = SqliteCheckpointStore::open(&path).expect("sqlite checkpoint store opens");
     store
         .put(CheckpointBarrier {
@@ -1082,7 +1102,7 @@ fn graphblocksd_claims_sqlite_checkpoint_for_worker_recovery()
         .expect("checkpoint should persist");
     drop(store);
 
-    let output = Command::new(env!("CARGO_BIN_EXE_graphblocksd"))
+    let output = Command::new(env!("CARGO_BIN_EXE_graphblocks-control"))
         .args([
             "claim-checkpoint",
             "--checkpoint-store",
@@ -1135,14 +1155,15 @@ fn graphblocksd_claims_sqlite_checkpoint_for_worker_recovery()
 }
 
 #[test]
-fn graphblocksd_completes_sqlite_checkpoint_claim_for_worker_recovery()
+fn graphblocks_control_completes_sqlite_checkpoint_claim_for_worker_recovery()
 -> Result<(), Box<dyn std::error::Error>> {
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("system clock is after unix epoch")
         .as_nanos();
-    let path =
-        std::env::temp_dir().join(format!("graphblocksd-checkpoint-complete-{unique}.sqlite3"));
+    let path = std::env::temp_dir().join(format!(
+        "graphblocks-control-checkpoint-complete-{unique}.sqlite3"
+    ));
     let mut store = SqliteCheckpointStore::open(&path).expect("sqlite checkpoint store opens");
     store
         .put(CheckpointBarrier {
@@ -1168,7 +1189,7 @@ fn graphblocksd_completes_sqlite_checkpoint_claim_for_worker_recovery()
     drop(store);
 
     let path_text = path.to_str().ok_or("checkpoint path was not utf-8")?;
-    let claim_output = Command::new(env!("CARGO_BIN_EXE_graphblocksd"))
+    let claim_output = Command::new(env!("CARGO_BIN_EXE_graphblocks-control"))
         .args([
             "claim-checkpoint",
             "--checkpoint-store",
@@ -1201,7 +1222,7 @@ fn graphblocksd_completes_sqlite_checkpoint_claim_for_worker_recovery()
         Some(1),
     );
 
-    let complete_output = Command::new(env!("CARGO_BIN_EXE_graphblocksd"))
+    let complete_output = Command::new(env!("CARGO_BIN_EXE_graphblocks-control"))
         .args([
             "complete-checkpoint-claim",
             "--checkpoint-store",
@@ -1234,7 +1255,7 @@ fn graphblocksd_completes_sqlite_checkpoint_claim_for_worker_recovery()
         Some(true),
     );
 
-    let next_claim_output = Command::new(env!("CARGO_BIN_EXE_graphblocksd"))
+    let next_claim_output = Command::new(env!("CARGO_BIN_EXE_graphblocks-control"))
         .args([
             "claim-checkpoint",
             "--checkpoint-store",
@@ -1271,13 +1292,15 @@ fn graphblocksd_completes_sqlite_checkpoint_claim_for_worker_recovery()
 }
 
 #[test]
-fn graphblocksd_renews_sqlite_checkpoint_claim_for_worker_recovery()
+fn graphblocks_control_renews_sqlite_checkpoint_claim_for_worker_recovery()
 -> Result<(), Box<dyn std::error::Error>> {
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("system clock is after unix epoch")
         .as_nanos();
-    let path = std::env::temp_dir().join(format!("graphblocksd-checkpoint-renew-{unique}.sqlite3"));
+    let path = std::env::temp_dir().join(format!(
+        "graphblocks-control-checkpoint-renew-{unique}.sqlite3"
+    ));
     let mut store = SqliteCheckpointStore::open(&path).expect("sqlite checkpoint store opens");
     store
         .put(CheckpointBarrier {
@@ -1303,7 +1326,7 @@ fn graphblocksd_renews_sqlite_checkpoint_claim_for_worker_recovery()
     drop(store);
 
     let path_text = path.to_str().ok_or("checkpoint path was not utf-8")?;
-    let claim_output = Command::new(env!("CARGO_BIN_EXE_graphblocksd"))
+    let claim_output = Command::new(env!("CARGO_BIN_EXE_graphblocks-control"))
         .args([
             "claim-checkpoint",
             "--checkpoint-store",
@@ -1328,7 +1351,7 @@ fn graphblocksd_renews_sqlite_checkpoint_claim_for_worker_recovery()
         .output()?;
     assert!(claim_output.status.success());
 
-    let early_renew_output = Command::new(env!("CARGO_BIN_EXE_graphblocksd"))
+    let early_renew_output = Command::new(env!("CARGO_BIN_EXE_graphblocks-control"))
         .args([
             "renew-checkpoint-claim",
             "--checkpoint-store",
@@ -1375,7 +1398,7 @@ fn graphblocksd_renews_sqlite_checkpoint_claim_for_worker_recovery()
         Some(999),
     );
 
-    let renew_output = Command::new(env!("CARGO_BIN_EXE_graphblocksd"))
+    let renew_output = Command::new(env!("CARGO_BIN_EXE_graphblocks-control"))
         .args([
             "renew-checkpoint-claim",
             "--checkpoint-store",
@@ -1421,7 +1444,7 @@ fn graphblocksd_renews_sqlite_checkpoint_claim_for_worker_recovery()
         Some(1200),
     );
 
-    let blocked_claim_output = Command::new(env!("CARGO_BIN_EXE_graphblocksd"))
+    let blocked_claim_output = Command::new(env!("CARGO_BIN_EXE_graphblocks-control"))
         .args([
             "claim-checkpoint",
             "--checkpoint-store",
@@ -1463,14 +1486,15 @@ fn graphblocksd_renews_sqlite_checkpoint_claim_for_worker_recovery()
 }
 
 #[test]
-fn graphblocksd_rejects_checkpoint_claim_renewal_that_shortens_lease()
+fn graphblocks_control_rejects_checkpoint_claim_renewal_that_shortens_lease()
 -> Result<(), Box<dyn std::error::Error>> {
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("system clock is after unix epoch")
         .as_nanos();
-    let path =
-        std::env::temp_dir().join(format!("graphblocksd-checkpoint-shorten-{unique}.sqlite3"));
+    let path = std::env::temp_dir().join(format!(
+        "graphblocks-control-checkpoint-shorten-{unique}.sqlite3"
+    ));
     let mut store = SqliteCheckpointStore::open(&path).expect("sqlite checkpoint store opens");
     store
         .put(CheckpointBarrier {
@@ -1496,7 +1520,7 @@ fn graphblocksd_rejects_checkpoint_claim_renewal_that_shortens_lease()
     drop(store);
 
     let path_text = path.to_str().ok_or("checkpoint path was not utf-8")?;
-    let claim_output = Command::new(env!("CARGO_BIN_EXE_graphblocksd"))
+    let claim_output = Command::new(env!("CARGO_BIN_EXE_graphblocks-control"))
         .args([
             "claim-checkpoint",
             "--checkpoint-store",
@@ -1521,7 +1545,7 @@ fn graphblocksd_rejects_checkpoint_claim_renewal_that_shortens_lease()
         .output()?;
     assert!(claim_output.status.success());
 
-    let renew_output = Command::new(env!("CARGO_BIN_EXE_graphblocksd"))
+    let renew_output = Command::new(env!("CARGO_BIN_EXE_graphblocks-control"))
         .args([
             "renew-checkpoint-claim",
             "--checkpoint-store",
@@ -1564,14 +1588,14 @@ fn graphblocksd_rejects_checkpoint_claim_renewal_that_shortens_lease()
 }
 
 #[test]
-fn graphblocksd_reports_active_checkpoint_claim_as_structured_json()
+fn graphblocks_control_reports_active_checkpoint_claim_as_structured_json()
 -> Result<(), Box<dyn std::error::Error>> {
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("system clock is after unix epoch")
         .as_nanos();
     let path = std::env::temp_dir().join(format!(
-        "graphblocksd-checkpoint-active-claim-{unique}.sqlite3"
+        "graphblocks-control-checkpoint-active-claim-{unique}.sqlite3"
     ));
     let mut store = SqliteCheckpointStore::open(&path).expect("sqlite checkpoint store opens");
     store
@@ -1598,7 +1622,7 @@ fn graphblocksd_reports_active_checkpoint_claim_as_structured_json()
     drop(store);
 
     let path_text = path.to_str().ok_or("checkpoint path was not utf-8")?;
-    let first_claim_output = Command::new(env!("CARGO_BIN_EXE_graphblocksd"))
+    let first_claim_output = Command::new(env!("CARGO_BIN_EXE_graphblocks-control"))
         .args([
             "claim-checkpoint",
             "--checkpoint-store",
@@ -1623,7 +1647,7 @@ fn graphblocksd_reports_active_checkpoint_claim_as_structured_json()
         .output()?;
     assert!(first_claim_output.status.success());
 
-    let blocked_claim_output = Command::new(env!("CARGO_BIN_EXE_graphblocksd"))
+    let blocked_claim_output = Command::new(env!("CARGO_BIN_EXE_graphblocks-control"))
         .args([
             "claim-checkpoint",
             "--checkpoint-store",
@@ -1687,14 +1711,14 @@ fn graphblocksd_reports_active_checkpoint_claim_as_structured_json()
 }
 
 #[test]
-fn graphblocksd_reports_stale_checkpoint_completion_as_structured_json()
+fn graphblocks_control_reports_stale_checkpoint_completion_as_structured_json()
 -> Result<(), Box<dyn std::error::Error>> {
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("system clock is after unix epoch")
         .as_nanos();
     let path = std::env::temp_dir().join(format!(
-        "graphblocksd-checkpoint-stale-claim-{unique}.sqlite3"
+        "graphblocks-control-checkpoint-stale-claim-{unique}.sqlite3"
     ));
     let mut store = SqliteCheckpointStore::open(&path).expect("sqlite checkpoint store opens");
     store
@@ -1721,7 +1745,7 @@ fn graphblocksd_reports_stale_checkpoint_completion_as_structured_json()
     drop(store);
 
     let path_text = path.to_str().ok_or("checkpoint path was not utf-8")?;
-    let first_claim_output = Command::new(env!("CARGO_BIN_EXE_graphblocksd"))
+    let first_claim_output = Command::new(env!("CARGO_BIN_EXE_graphblocks-control"))
         .args([
             "claim-checkpoint",
             "--checkpoint-store",
@@ -1745,7 +1769,7 @@ fn graphblocksd_reports_stale_checkpoint_completion_as_structured_json()
         ])
         .output()?;
     assert!(first_claim_output.status.success());
-    let replacement_claim_output = Command::new(env!("CARGO_BIN_EXE_graphblocksd"))
+    let replacement_claim_output = Command::new(env!("CARGO_BIN_EXE_graphblocks-control"))
         .args([
             "claim-checkpoint",
             "--checkpoint-store",
@@ -1770,7 +1794,7 @@ fn graphblocksd_reports_stale_checkpoint_completion_as_structured_json()
         .output()?;
     assert!(replacement_claim_output.status.success());
 
-    let stale_complete_output = Command::new(env!("CARGO_BIN_EXE_graphblocksd"))
+    let stale_complete_output = Command::new(env!("CARGO_BIN_EXE_graphblocks-control"))
         .args([
             "complete-checkpoint-claim",
             "--checkpoint-store",
@@ -1840,14 +1864,14 @@ fn graphblocksd_reports_stale_checkpoint_completion_as_structured_json()
 }
 
 #[test]
-fn graphblocksd_reports_forged_checkpoint_claim_identity_as_structured_json()
+fn graphblocks_control_reports_forged_checkpoint_claim_identity_as_structured_json()
 -> Result<(), Box<dyn std::error::Error>> {
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("system clock is after unix epoch")
         .as_nanos();
     let path = std::env::temp_dir().join(format!(
-        "graphblocksd-checkpoint-forged-claim-{unique}.sqlite3"
+        "graphblocks-control-checkpoint-forged-claim-{unique}.sqlite3"
     ));
     let mut store = SqliteCheckpointStore::open(&path).expect("sqlite checkpoint store opens");
     store
@@ -1874,7 +1898,7 @@ fn graphblocksd_reports_forged_checkpoint_claim_identity_as_structured_json()
     drop(store);
 
     let path_text = path.to_str().ok_or("checkpoint path was not utf-8")?;
-    let claim_output = Command::new(env!("CARGO_BIN_EXE_graphblocksd"))
+    let claim_output = Command::new(env!("CARGO_BIN_EXE_graphblocks-control"))
         .args([
             "claim-checkpoint",
             "--checkpoint-store",
@@ -1899,7 +1923,7 @@ fn graphblocksd_reports_forged_checkpoint_claim_identity_as_structured_json()
         .output()?;
     assert!(claim_output.status.success());
 
-    let forged_complete_output = Command::new(env!("CARGO_BIN_EXE_graphblocksd"))
+    let forged_complete_output = Command::new(env!("CARGO_BIN_EXE_graphblocks-control"))
         .args([
             "complete-checkpoint-claim",
             "--checkpoint-store",
@@ -1971,13 +1995,13 @@ fn graphblocksd_reports_forged_checkpoint_claim_identity_as_structured_json()
 }
 
 #[test]
-fn graphblocksd_acquires_and_renews_sqlite_run_ownership_lease()
+fn graphblocks_control_acquires_and_renews_sqlite_run_ownership_lease()
 -> Result<(), Box<dyn std::error::Error>> {
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("system time should be after epoch")
         .as_nanos();
-    let path = std::env::temp_dir().join(format!("graphblocksd-run-lease-{unique}.sqlite3"));
+    let path = std::env::temp_dir().join(format!("graphblocks-control-run-lease-{unique}.sqlite3"));
     let path_text = path.to_str().ok_or("temp path is not utf-8")?;
     let _ = std::fs::remove_file(&path);
 
@@ -1992,7 +2016,7 @@ fn graphblocksd_acquires_and_renews_sqlite_run_ownership_lease()
             .map_err(|error| format!("{error:?}"))?;
     }
 
-    let acquire_output = Command::new(env!("CARGO_BIN_EXE_graphblocksd"))
+    let acquire_output = Command::new(env!("CARGO_BIN_EXE_graphblocks-control"))
         .args([
             "acquire-run-lease",
             "--run-store",
@@ -2029,7 +2053,7 @@ fn graphblocksd_acquires_and_renews_sqlite_run_ownership_lease()
         Some(1),
     );
 
-    let renew_output = Command::new(env!("CARGO_BIN_EXE_graphblocksd"))
+    let renew_output = Command::new(env!("CARGO_BIN_EXE_graphblocks-control"))
         .args([
             "renew-run-lease",
             "--run-store",
@@ -2070,7 +2094,7 @@ fn graphblocksd_acquires_and_renews_sqlite_run_ownership_lease()
         Some(1200),
     );
 
-    let blocked_output = Command::new(env!("CARGO_BIN_EXE_graphblocksd"))
+    let blocked_output = Command::new(env!("CARGO_BIN_EXE_graphblocks-control"))
         .args([
             "acquire-run-lease",
             "--run-store",
@@ -2112,13 +2136,15 @@ fn graphblocksd_acquires_and_renews_sqlite_run_ownership_lease()
 }
 
 #[test]
-fn graphblocksd_reports_forged_run_lease_renewal_as_structured_json()
+fn graphblocks_control_reports_forged_run_lease_renewal_as_structured_json()
 -> Result<(), Box<dyn std::error::Error>> {
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("system time should be after epoch")
         .as_nanos();
-    let path = std::env::temp_dir().join(format!("graphblocksd-run-lease-forged-{unique}.sqlite3"));
+    let path = std::env::temp_dir().join(format!(
+        "graphblocks-control-run-lease-forged-{unique}.sqlite3"
+    ));
     let path_text = path.to_str().ok_or("temp path is not utf-8")?;
     let _ = std::fs::remove_file(&path);
 
@@ -2136,7 +2162,7 @@ fn graphblocksd_reports_forged_run_lease_renewal_as_structured_json()
             .map_err(|error| format!("{error:?}"))?;
     }
 
-    let forged_output = Command::new(env!("CARGO_BIN_EXE_graphblocksd"))
+    let forged_output = Command::new(env!("CARGO_BIN_EXE_graphblocks-control"))
         .args([
             "renew-run-lease",
             "--run-store",
@@ -2194,13 +2220,14 @@ fn graphblocksd_reports_forged_run_lease_renewal_as_structured_json()
 }
 
 #[test]
-fn graphblocksd_sets_run_status_only_with_current_ownership_lease()
+fn graphblocks_control_sets_run_status_only_with_current_ownership_lease()
 -> Result<(), Box<dyn std::error::Error>> {
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("system time should be after epoch")
         .as_nanos();
-    let path = std::env::temp_dir().join(format!("graphblocksd-run-status-{unique}.sqlite3"));
+    let path =
+        std::env::temp_dir().join(format!("graphblocks-control-run-status-{unique}.sqlite3"));
     let path_text = path.to_str().ok_or("temp path is not utf-8")?;
     let _ = std::fs::remove_file(&path);
 
@@ -2218,7 +2245,7 @@ fn graphblocksd_sets_run_status_only_with_current_ownership_lease()
             .map_err(|error| format!("{error:?}"))?;
     }
 
-    let output = Command::new(env!("CARGO_BIN_EXE_graphblocksd"))
+    let output = Command::new(env!("CARGO_BIN_EXE_graphblocks-control"))
         .args([
             "set-run-status-with-lease",
             "--run-store",
@@ -2272,14 +2299,15 @@ fn graphblocksd_sets_run_status_only_with_current_ownership_lease()
 }
 
 #[test]
-fn graphblocksd_rejects_forged_run_status_lease_identity() -> Result<(), Box<dyn std::error::Error>>
-{
+fn graphblocks_control_rejects_forged_run_status_lease_identity()
+-> Result<(), Box<dyn std::error::Error>> {
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("system time should be after epoch")
         .as_nanos();
-    let path =
-        std::env::temp_dir().join(format!("graphblocksd-run-status-forged-{unique}.sqlite3"));
+    let path = std::env::temp_dir().join(format!(
+        "graphblocks-control-run-status-forged-{unique}.sqlite3"
+    ));
     let path_text = path.to_str().ok_or("temp path is not utf-8")?;
     let _ = std::fs::remove_file(&path);
 
@@ -2297,7 +2325,7 @@ fn graphblocksd_rejects_forged_run_status_lease_identity() -> Result<(), Box<dyn
             .map_err(|error| format!("{error:?}"))?;
     }
 
-    let output = Command::new(env!("CARGO_BIN_EXE_graphblocksd"))
+    let output = Command::new(env!("CARGO_BIN_EXE_graphblocks-control"))
         .args([
             "set-run-status-with-lease",
             "--run-store",
@@ -2351,13 +2379,13 @@ fn graphblocksd_rejects_forged_run_status_lease_identity() -> Result<(), Box<dyn
 }
 
 #[test]
-fn graphblocksd_registers_async_operation_for_callback_wait()
+fn graphblocks_control_registers_async_operation_for_callback_wait()
 -> Result<(), Box<dyn std::error::Error>> {
     let path = sqlite_async_operation_path("register-callback-wait");
     let path_text = path.to_str().ok_or("temp path is not utf-8")?;
     let _ = std::fs::remove_file(&path);
 
-    let output = Command::new(env!("CARGO_BIN_EXE_graphblocksd"))
+    let output = Command::new(env!("CARGO_BIN_EXE_graphblocks-control"))
         .args([
             "register-async-operation",
             "--async-operation-store",
@@ -2439,13 +2467,13 @@ fn graphblocksd_registers_async_operation_for_callback_wait()
 }
 
 #[test]
-fn graphblocksd_rejects_waiting_callback_async_operation_without_timeout()
+fn graphblocks_control_rejects_waiting_callback_async_operation_without_timeout()
 -> Result<(), Box<dyn std::error::Error>> {
     let path = sqlite_async_operation_path("register-callback-without-timeout");
     let path_text = path.to_str().ok_or("temp path is not utf-8")?;
     let _ = std::fs::remove_file(&path);
 
-    let output = Command::new(env!("CARGO_BIN_EXE_graphblocksd"))
+    let output = Command::new(env!("CARGO_BIN_EXE_graphblocks-control"))
         .args([
             "register-async-operation",
             "--async-operation-store",
@@ -2502,7 +2530,7 @@ fn graphblocksd_rejects_waiting_callback_async_operation_without_timeout()
 }
 
 #[test]
-fn graphblocksd_quarantines_early_async_callback_and_accepts_after_registration()
+fn graphblocks_control_quarantines_early_async_callback_and_accepts_after_registration()
 -> Result<(), Box<dyn std::error::Error>> {
     let path = sqlite_async_operation_path("quarantine-callback");
     let path_text = path.to_str().ok_or("temp path is not utf-8")?;
@@ -2570,7 +2598,7 @@ fn graphblocksd_quarantines_early_async_callback_and_accepts_after_registration(
 }
 
 #[test]
-fn graphblocksd_quarantined_duplicate_callback_replays_once()
+fn graphblocks_control_quarantined_duplicate_callback_replays_once()
 -> Result<(), Box<dyn std::error::Error>> {
     let path = sqlite_async_operation_path("quarantine-callback-duplicate");
     let path_text = path.to_str().ok_or("temp path is not utf-8")?;
@@ -2632,7 +2660,7 @@ fn graphblocksd_quarantined_duplicate_callback_replays_once()
 }
 
 #[test]
-fn graphblocksd_cancels_async_operation_and_records_late_callback_without_resume()
+fn graphblocks_control_cancels_async_operation_and_records_late_callback_without_resume()
 -> Result<(), Box<dyn std::error::Error>> {
     let path = sqlite_async_operation_path("cancel-callback-wait");
     let path_text = path.to_str().ok_or("temp path is not utf-8")?;
@@ -2645,7 +2673,7 @@ fn graphblocksd_cancels_async_operation_and_records_late_callback_without_resume
             .map_err(|error| format!("{error:?}"))?;
     }
 
-    let output = Command::new(env!("CARGO_BIN_EXE_graphblocksd"))
+    let output = Command::new(env!("CARGO_BIN_EXE_graphblocks-control"))
         .args([
             "cancel-async-operation",
             "--async-operation-store",
@@ -2712,7 +2740,7 @@ fn graphblocksd_cancels_async_operation_and_records_late_callback_without_resume
 }
 
 #[test]
-fn graphblocksd_reports_storage_failure_when_terminal_response_reload_is_corrupt()
+fn graphblocks_control_reports_storage_failure_when_terminal_response_reload_is_corrupt()
 -> Result<(), Box<dyn std::error::Error>> {
     let path = sqlite_async_operation_path("cancel-corrupt-response-reload");
     let path_text = path.to_str().ok_or("temp path is not utf-8")?;
@@ -2739,7 +2767,7 @@ fn graphblocksd_reports_storage_failure_when_terminal_response_reload_is_corrupt
         )?;
     }
 
-    let output = Command::new(env!("CARGO_BIN_EXE_graphblocksd"))
+    let output = Command::new(env!("CARGO_BIN_EXE_graphblocks-control"))
         .args([
             "cancel-async-operation",
             "--async-operation-store",
@@ -2765,7 +2793,7 @@ fn graphblocksd_reports_storage_failure_when_terminal_response_reload_is_corrupt
 }
 
 #[test]
-fn graphblocksd_expires_async_operation_and_records_late_callback_without_resume()
+fn graphblocks_control_expires_async_operation_and_records_late_callback_without_resume()
 -> Result<(), Box<dyn std::error::Error>> {
     let path = sqlite_async_operation_path("expire-callback-wait");
     let path_text = path.to_str().ok_or("temp path is not utf-8")?;
@@ -2784,7 +2812,7 @@ fn graphblocksd_expires_async_operation_and_records_late_callback_without_resume
         Some(AsyncOperationState::WaitingCallback),
     );
 
-    let output = Command::new(env!("CARGO_BIN_EXE_graphblocksd"))
+    let output = Command::new(env!("CARGO_BIN_EXE_graphblocks-control"))
         .args([
             "expire-async-operation",
             "--async-operation-store",
@@ -2855,7 +2883,7 @@ fn graphblocksd_expires_async_operation_and_records_late_callback_without_resume
 }
 
 #[test]
-fn graphblocksd_submits_async_callback_through_sqlite_store()
+fn graphblocks_control_submits_async_callback_through_sqlite_store()
 -> Result<(), Box<dyn std::error::Error>> {
     let path = sqlite_async_operation_path("submit-callback");
     let path_text = path.to_str().ok_or("temp path is not utf-8")?;
@@ -2868,7 +2896,7 @@ fn graphblocksd_submits_async_callback_through_sqlite_store()
             .map_err(|error| format!("{error:?}"))?;
     }
 
-    let mut child = Command::new(env!("CARGO_BIN_EXE_graphblocksd"))
+    let mut child = Command::new(env!("CARGO_BIN_EXE_graphblocks-control"))
         .args([
             "submit-async-callback",
             "--async-operation-store",
@@ -2913,7 +2941,7 @@ fn graphblocksd_submits_async_callback_through_sqlite_store()
     let stdin = child
         .stdin
         .as_mut()
-        .ok_or("graphblocksd stdin pipe was not available")?;
+        .ok_or("graphblocks-control stdin pipe was not available")?;
     stdin.write_all(
         serde_json::to_string(&json!({"status": "completed", "workflow_run_id": "gha-run-1"}))?
             .as_bytes(),
@@ -2963,7 +2991,7 @@ fn graphblocksd_submits_async_callback_through_sqlite_store()
 }
 
 #[test]
-fn graphblocksd_verified_by_text_alone_cannot_authorize_callback_resume()
+fn graphblocks_control_verified_by_text_alone_cannot_authorize_callback_resume()
 -> Result<(), Box<dyn std::error::Error>> {
     let path = sqlite_async_operation_path("submit-callback-fail-closed");
     let path_text = path.to_str().ok_or("temp path is not utf-8")?;
@@ -3001,7 +3029,7 @@ fn graphblocksd_verified_by_text_alone_cannot_authorize_callback_resume()
 }
 
 #[test]
-fn graphblocksd_requires_authentication_and_every_resume_gate_for_resume()
+fn graphblocks_control_requires_authentication_and_every_resume_gate_for_resume()
 -> Result<(), Box<dyn std::error::Error>> {
     let path = sqlite_async_operation_path("submit-callback-authorized");
     let path_text = path.to_str().ok_or("temp path is not utf-8")?;
@@ -3044,7 +3072,7 @@ fn graphblocksd_requires_authentication_and_every_resume_gate_for_resume()
 }
 
 #[test]
-fn graphblocksd_holds_resume_when_gate_evidence_lacks_explicit_authentication()
+fn graphblocks_control_holds_resume_when_gate_evidence_lacks_explicit_authentication()
 -> Result<(), Box<dyn std::error::Error>> {
     let path = sqlite_async_operation_path("submit-callback-auth-held");
     let path_text = path.to_str().ok_or("temp path is not utf-8")?;
@@ -3092,7 +3120,7 @@ fn graphblocksd_holds_resume_when_gate_evidence_lacks_explicit_authentication()
 }
 
 #[test]
-fn graphblocksd_submitted_async_callback_duplicate_does_not_resume_twice()
+fn graphblocks_control_submitted_async_callback_duplicate_does_not_resume_twice()
 -> Result<(), Box<dyn std::error::Error>> {
     let path = sqlite_async_operation_path("submit-callback-duplicate");
     let path_text = path.to_str().ok_or("temp path is not utf-8")?;
@@ -3106,7 +3134,7 @@ fn graphblocksd_submitted_async_callback_duplicate_does_not_resume_twice()
     }
 
     for callback_id in ["cb-1", "cb-duplicate"] {
-        let mut child = Command::new(env!("CARGO_BIN_EXE_graphblocksd"))
+        let mut child = Command::new(env!("CARGO_BIN_EXE_graphblocks-control"))
             .args([
                 "submit-async-callback",
                 "--async-operation-store",
@@ -3151,7 +3179,7 @@ fn graphblocksd_submitted_async_callback_duplicate_does_not_resume_twice()
         let stdin = child
             .stdin
             .as_mut()
-            .ok_or("graphblocksd stdin pipe was not available")?;
+            .ok_or("graphblocks-control stdin pipe was not available")?;
         stdin.write_all(
             serde_json::to_string(&json!({"status": "completed", "workflow_run_id": "gha-run-1"}))?
                 .as_bytes(),
@@ -3200,7 +3228,7 @@ fn graphblocksd_submitted_async_callback_duplicate_does_not_resume_twice()
 }
 
 #[test]
-fn graphblocksd_rejects_schema_invalid_async_callback_without_resume()
+fn graphblocks_control_rejects_schema_invalid_async_callback_without_resume()
 -> Result<(), Box<dyn std::error::Error>> {
     let path = sqlite_async_operation_path("submit-callback-schema-invalid");
     let path_text = path.to_str().ok_or("temp path is not utf-8")?;
@@ -3213,7 +3241,7 @@ fn graphblocksd_rejects_schema_invalid_async_callback_without_resume()
             .map_err(|error| format!("{error:?}"))?;
     }
 
-    let mut child = Command::new(env!("CARGO_BIN_EXE_graphblocksd"))
+    let mut child = Command::new(env!("CARGO_BIN_EXE_graphblocks-control"))
         .args([
             "submit-async-callback",
             "--async-operation-store",
@@ -3249,7 +3277,7 @@ fn graphblocksd_rejects_schema_invalid_async_callback_without_resume()
     let stdin = child
         .stdin
         .as_mut()
-        .ok_or("graphblocksd stdin pipe was not available")?;
+        .ok_or("graphblocks-control stdin pipe was not available")?;
     stdin.write_all(serde_json::to_string(&json!({"status": "completed"}))?.as_bytes())?;
 
     let output = child.wait_with_output()?;

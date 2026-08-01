@@ -193,11 +193,36 @@ artifacts:
     kind: library-crate-with-binary-target
     path: crates/graphblocksd/Cargo.toml
     tier: internal
-  - id: executable:graphblocksd
+  - id: executable:graphblocks-control
     ecosystem: native
     kind: executable
     source: crate:graphblocks-control-plane
     tier: internal
+    readiness: implemented-internal
+    binaryName: graphblocks-control
+    commandMode: one-shot
+    transport: local-process
+    requestArguments: argv-options
+    stdinPayloadFormat: json
+    stdinPayloadMode: command-specific
+    stdinJsonPayloadCommands:
+      - admit-worker-message
+      - submit-async-callback
+      - quarantine-async-callback
+    successResponse: stdout-json
+    errorResponse: stderr-json
+    networkListener: false
+    serveCommand: false
+    capabilities:
+      - worker-message-admission
+      - run-lease-and-status-transitions
+      - async-callback-lifecycle
+      - callback-delivery-lifecycle
+      - checkpoint-claim-lifecycle
+    nonCapabilities:
+      - long-running-daemon
+      - http-server
+      - supervisor-lifecycle
   - id: crate:graphblocks
     ecosystem: rust
     kind: library-crate

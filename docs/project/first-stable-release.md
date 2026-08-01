@@ -54,7 +54,7 @@ review before the release gate can be declared passed.
 | --- | --- | --- |
 | `graphblocks-schema`, `graphblocks-compiler`, `graphblocks-flow`, `graphblocks-runtime-core`, `graphblocks-runtime-durable`, `graphblocks-protocol`, `graphblocks-telemetry`, `graphblocks-control-plane`, and `graphblocks-python` crates | Internal | Implementation crates used by the native bindings, native CLIs, and conformance work. Their Rust APIs are not yet a public SemVer surface. |
 | `graphblocks-native` executable (`graphblocks-cli-native` crate) | Preview | Python-free validate/plan/run is useful, but native block coverage, adapter injection, diagnostics, and differential evidence are not yet at the stable gate. |
-| `graphblocksd` executable | Internal | The binary is delivered by the `graphblocks-control-plane` crate. It is a one-shot worker/checkpoint control-plane tool, not the production daemon its name may imply. |
+| `graphblocks-control` executable | Internal | The binary is delivered by the `graphblocks-control-plane` crate. It is an argv-driven one-shot CLI with command-specific JSON stdin payloads and structured JSON stdout/stderr; it is not a server or daemon. |
 | `graphblocks` Rust crate | Reserved | Name-reservation crate with no supported implementation. |
 | `graphblocks` npm package | Reserved | Name-reservation package with no JavaScript/TypeScript API. |
 | `graphblocks-operator` Helm/OCI artifact | Internal | Templates exist, but there is no supported reconciliation controller or deployment lifecycle yet. |

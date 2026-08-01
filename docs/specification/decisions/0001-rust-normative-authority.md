@@ -90,9 +90,9 @@ Rust implementation crates remain internal APIs unless separately promoted.
    runtime protocol while retaining the Python local runtime as a reference
    interpreter.
 5. Extract the reusable control-plane library so language bindings do not
-   depend on the daemon binary/control-plane layer. This step is implemented:
-   `graphblocks-python` and the `graphblocksd` binary both consume the
-   `graphblocks-control-plane` library target.
+   depend on an executable/control-plane layer. This step is implemented:
+   `graphblocks-python` and the one-shot `graphblocks-control` CLI both consume
+   the `graphblocks-control-plane` library target.
 
 Until steps 3 and 4 are complete, `REL-NORMATIVE-AUTHORITY` remains blocked and
 the project must not describe the entire native runtime or C1/C4 production

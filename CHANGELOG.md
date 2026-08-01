@@ -19,6 +19,11 @@ preparing the first 1.0 release candidate.
 
 ### Changed
 
+- Renamed the one-shot Rust control-plane executable from daemon-shaped
+  `graphblocksd` to `graphblocks-control`, and bound its manifest, usage output,
+  release metadata, and documentation to an argv-driven command lifecycle with
+  command-specific JSON stdin payloads, structured JSON stdout/stderr, and no
+  server listener, `serve` command, or supervisor claim.
 - Split the machine-readable package and profile release model into a C0/C1
   core train plus independently owned AI, governance, production,
   orchestration, voice, durable-stream, and integration tracks, with exact

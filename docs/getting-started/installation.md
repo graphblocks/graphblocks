@@ -98,7 +98,11 @@ target/debug/graphblocks-native run --input-json '{"message":{"text":"hello"}}' 
 The native CLI currently accepts one JSON or YAML `Graph` from stdin, or selects
 a named `Graph` from a multi-document YAML stream with `--graph NAME`, and
 supports the native stdlib block set. Examples that use integration blocks still
-run through the Python authoring layer plus deterministic fakes. `graphblocksd`
-currently processes worker-control messages and SQLite checkpoint claim
-lifecycle commands; it does not bind a server socket or expose a `serve`
-command.
+run through the Python authoring layer plus deterministic fakes.
+`graphblocks-control` is a separate one-shot local-process control-plane CLI. It
+processes worker admission and SQLite-backed run, callback, delivery, and
+checkpoint lifecycle commands. Request fields use argv options;
+`admit-worker-message`, `submit-async-callback`, and
+`quarantine-async-callback` additionally read a JSON payload from stdin.
+Success is JSON on stdout and errors are JSON on stderr. The CLI does not bind a
+server socket, expose a `serve` command, or provide a supervisor lifecycle.

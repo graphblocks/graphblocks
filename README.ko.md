@@ -73,8 +73,12 @@ cargo test --workspace --all-targets
 이 저장소에서는 `validate`, `plan`, `run`을 위한 Python 비의존 Rust 실행 파일인
 `graphblocks-native`도 빌드합니다. 이 실행 파일은 표준 입력에서 JSON 또는 YAML을
 받고, 여러 문서로 이루어진 YAML 스트림에서 이름이 지정된 `Graph`를 선택할 수
-있으며, 네이티브 stdlib 블록 세트를 실행합니다. `graphblocksd`는 워커 제어 평면
-명령이며, 아직 요청을 수신하는 HTTP/서버 프로세스는 아닙니다.
+있으며, 네이티브 stdlib 블록 세트를 실행합니다. `graphblocks-control`은 워커 승인과
+run, callback, delivery, checkpoint 상태 변경을 위한 one-shot 로컬 프로세스 제어
+평면 CLI입니다. 요청 필드는 argv 옵션을 사용하며, `admit-worker-message`,
+`submit-async-callback`, `quarantine-async-callback`만 JSON payload를 stdin에서 추가로
+읽습니다. 성공 응답은 stdout의 JSON, 오류 응답은 stderr의 JSON입니다. `serve` 명령,
+네트워크 리스너, 장기 실행 daemon lifecycle은 없습니다.
 
 ## 문서
 

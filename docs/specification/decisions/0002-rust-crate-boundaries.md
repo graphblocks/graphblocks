@@ -53,7 +53,7 @@ The retained boundaries are:
 | `graphblocks-runtime-durable` | Owns the durable and checkpoint persistence boundary consumed by the Python binding and control plane. | Internal extension implementation. |
 | `graphblocks-python` | Produces the PyO3 native extension installed by the Python runtime wheel. | Binding ABI is release-controlled; Rust API is internal. |
 | `graphblocks-protocol` | Owns versioned worker wire contracts consumed by the Python binding and control plane. | Internal versioned protocol implementation. |
-| `graphblocks-control-plane` | Produces a reusable control-plane library and the separate `graphblocksd` executable. | Internal library and executable. |
+| `graphblocks-control-plane` | Produces a reusable control-plane library and the separate one-shot `graphblocks-control` executable. | Internal library and executable. |
 
 All retained implementation crates remain on the coordinated pre-1.0 version
 train. Being a workspace member does not create a stable Rust SemVer claim.
