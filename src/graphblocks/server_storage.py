@@ -850,6 +850,7 @@ class AcceptedRunEffectDeliveryClaim:
     delivery_owner_id: str
     claim_generation: int
     fencing_token: int
+    claim_started_at_unix_ms: int
     lease_expires_at_unix_ms: int
 
     def __post_init__(self) -> None:
@@ -875,16 +876,25 @@ class AcceptedRunEffectDeliveryClaim:
                     positive=True,
                 ),
             )
-        object.__setattr__(
-            self,
+        for field_name in (
+            "claim_started_at_unix_ms",
             "lease_expires_at_unix_ms",
-            _validate_u64(
-                owner,
-                "lease_expires_at_unix_ms",
-                self.lease_expires_at_unix_ms,
-                positive=True,
-            ),
-        )
+        ):
+            object.__setattr__(
+                self,
+                field_name,
+                _validate_u64(
+                    owner,
+                    field_name,
+                    getattr(self, field_name),
+                    positive=field_name == "lease_expires_at_unix_ms",
+                ),
+            )
+        if self.lease_expires_at_unix_ms <= self.claim_started_at_unix_ms:
+            raise ValueError(
+                f"{owner} lease_expires_at_unix_ms must be after "
+                "claim_started_at_unix_ms"
+            )
 
 
 def assert_current_effect_delivery_claim(

@@ -4,6 +4,7 @@ from collections.abc import Callable
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from dataclasses import replace
 from multiprocessing import get_context
+import sqlite3
 from threading import Barrier, Event
 
 import pytest
@@ -26,7 +27,10 @@ from graphblocks.server_storage import (
     StaleAcceptedRunEffectDeliveryClaimError,
 )
 from graphblocks.sqlite_outbox import SQLiteOutboxDispatcherRepository
-from graphblocks.sqlite_server_storage import SQLiteAcceptedRunRepository
+from graphblocks.sqlite_server_storage import (
+    SQLiteAcceptedRunCorruptionError,
+    SQLiteAcceptedRunRepository,
+)
 
 
 class _MutableClock:
@@ -35,6 +39,15 @@ class _MutableClock:
 
     def __call__(self) -> int:
         return self.now_unix_ms
+
+
+_REPLAY_CLAIM_MUTATIONS = (
+    {"delivery_owner_id": "dispatcher-forged"},
+    {"claim_generation": 2},
+    {"fencing_token": 2},
+    {"claim_started_at_unix_ms": 2_999},
+    {"lease_expires_at_unix_ms": 4_001},
+)
 
 
 def _outbox_repository(
@@ -197,6 +210,27 @@ def _claim_effect_in_process(
     )
 
 
+def _stored_replay_identity(path, effect_id: str) -> tuple[object, object]:
+    connection = sqlite3.connect(path)
+    try:
+        row = connection.execute(
+            """
+            SELECT last_delivery_command_json,
+                   last_delivery_command_digest
+            FROM effect_outbox
+            WHERE effect_id = ?
+            """,
+            (effect_id,),
+        ).fetchone()
+        assert row is not None
+        return (
+            row[0],
+            row[1],
+        )
+    finally:
+        connection.close()
+
+
 def test_sqlite_outbox_claim_returns_bound_effect_envelope(outbox_path) -> None:
     repository = _outbox_repository(outbox_path)
 
@@ -213,6 +247,7 @@ def test_sqlite_outbox_claim_returns_bound_effect_envelope(outbox_path) -> None:
     assert claimed.claim.delivery_owner_id == "dispatcher-1"
     assert claimed.claim.claim_generation == 1
     assert claimed.claim.fencing_token == 1
+    assert claimed.claim.claim_started_at_unix_ms == 3_000
     assert claimed.claim.lease_expires_at_unix_ms == 4_000
 
 
@@ -553,6 +588,32 @@ def test_sqlite_outbox_rejects_ack_at_lease_expiry(outbox_path) -> None:
         )
 
 
+def test_sqlite_outbox_rejects_ack_timestamp_before_claim_start(
+    outbox_path,
+) -> None:
+    repository = _outbox_repository(outbox_path)
+    claimed = _claim_effect(repository)
+    assert claimed.claim is not None
+
+    with pytest.raises(
+        ValueError,
+        match="delivery timestamp must not precede claim start",
+    ):
+        repository.mark_effect_delivered(
+            AcceptedRunEffectDeliveryAck(
+                claim=claimed.claim,
+                delivered_at_unix_ms=(
+                    claimed.claim.claim_started_at_unix_ms - 1
+                ),
+            )
+        )
+
+    stored = repository.get_effect(effect_id=claimed.effect_id)
+    assert stored is not None
+    assert stored.claim == claimed.claim
+    assert _stored_replay_identity(outbox_path, claimed.effect_id) == (None, None)
+
+
 def test_sqlite_outbox_rejects_future_delivery_timestamp(outbox_path) -> None:
     repository = _outbox_repository(outbox_path)
     claimed = _claim_effect(repository)
@@ -631,6 +692,67 @@ def test_sqlite_outbox_ack_is_fenced_and_idempotent(outbox_path) -> None:
     )
 
 
+@pytest.mark.parametrize("claim_changes", _REPLAY_CLAIM_MUTATIONS)
+def test_sqlite_outbox_delivered_replay_requires_exact_claim_identity(
+    outbox_path,
+    claim_changes,
+) -> None:
+    repository = _outbox_repository(outbox_path)
+    claimed = _claim_effect(repository)
+    assert claimed.claim is not None
+    command = AcceptedRunEffectDeliveryAck(
+        claim=claimed.claim,
+        delivered_at_unix_ms=3_000,
+    )
+    repository.mark_effect_delivered(command)
+
+    with pytest.raises(StaleAcceptedRunEffectDeliveryClaimError):
+        repository.mark_effect_delivered(
+            replace(command, claim=replace(claimed.claim, **claim_changes))
+        )
+
+
+def test_sqlite_outbox_delivered_replay_requires_exact_ack_command(
+    outbox_path,
+) -> None:
+    repository = _outbox_repository(outbox_path)
+    claimed = _claim_effect(repository)
+    assert claimed.claim is not None
+    command = AcceptedRunEffectDeliveryAck(
+        claim=claimed.claim,
+        delivered_at_unix_ms=3_000,
+    )
+    repository.mark_effect_delivered(command)
+
+    with pytest.raises(AcceptedRunEffectDeliveryStateConflictError):
+        repository.mark_effect_delivered(
+            replace(command, delivered_at_unix_ms=3_001)
+        )
+
+
+def test_sqlite_outbox_rejects_retry_as_delivered_ack_replay(
+    outbox_path,
+) -> None:
+    repository = _outbox_repository(outbox_path)
+    claimed = _claim_effect(repository)
+    assert claimed.claim is not None
+    repository.mark_effect_delivered(
+        AcceptedRunEffectDeliveryAck(
+            claim=claimed.claim,
+            delivered_at_unix_ms=3_000,
+        )
+    )
+
+    with pytest.raises(AcceptedRunEffectDeliveryStateConflictError):
+        repository.release_effect_for_retry(
+            AcceptedRunEffectDeliveryRetry(
+                claim=claimed.claim,
+                released_at_unix_ms=3_000,
+                available_at_unix_ms=4_000,
+            )
+        )
+
+
 def test_sqlite_outbox_ack_replays_after_response_loss(outbox_path) -> None:
     clock = _MutableClock()
     repository = _outbox_repository(outbox_path, clock=clock)
@@ -656,7 +778,9 @@ def test_sqlite_outbox_ack_replays_after_response_loss(outbox_path) -> None:
         ).mark_effect_delivered(command)
 
     clock.now_unix_ms = claimed.claim.lease_expires_at_unix_ms
-    replay = repository.mark_effect_delivered(command)
+    replay = _outbox_repository(outbox_path, clock=clock).mark_effect_delivered(
+        command
+    )
     assert replay.delivery_state is AcceptedRunEffectDeliveryState.DELIVERED
     assert replay.delivered_at_unix_ms == 3_000
 
@@ -685,6 +809,7 @@ def test_sqlite_outbox_rolls_back_failed_ack_transaction(outbox_path) -> None:
     assert stored is not None
     assert stored.delivery_state is AcceptedRunEffectDeliveryState.CLAIMED
     assert stored.claim == claimed.claim
+    assert _stored_replay_identity(outbox_path, claimed.effect_id) == (None, None)
 
 
 def test_sqlite_outbox_retry_waits_until_scheduled_time(outbox_path) -> None:
@@ -693,13 +818,12 @@ def test_sqlite_outbox_retry_waits_until_scheduled_time(outbox_path) -> None:
     claimed = _claim_effect(repository)
     assert claimed.claim is not None
 
-    pending = repository.release_effect_for_retry(
-        AcceptedRunEffectDeliveryRetry(
-            claim=claimed.claim,
-            released_at_unix_ms=2_900,
-            available_at_unix_ms=4_000,
-        )
+    first_retry = AcceptedRunEffectDeliveryRetry(
+        claim=claimed.claim,
+        released_at_unix_ms=3_000,
+        available_at_unix_ms=4_000,
     )
+    pending = repository.release_effect_for_retry(first_retry)
 
     assert pending.delivery_state is AcceptedRunEffectDeliveryState.PENDING
     assert pending.claim is None
@@ -724,6 +848,67 @@ def test_sqlite_outbox_retry_waits_until_scheduled_time(outbox_path) -> None:
     assert retried.idempotency_key == claimed.idempotency_key
     assert retried.payload_json == claimed.payload_json
     assert retried.payload_digest == claimed.payload_digest
+    assert _stored_replay_identity(outbox_path, claimed.effect_id) == (None, None)
+    with pytest.raises(StaleAcceptedRunEffectDeliveryClaimError):
+        repository.release_effect_for_retry(first_retry)
+
+    second_retry = AcceptedRunEffectDeliveryRetry(
+        claim=retried.claim,
+        released_at_unix_ms=4_000,
+        available_at_unix_ms=4_500,
+    )
+    second_pending = repository.release_effect_for_retry(second_retry)
+    assert repository.release_effect_for_retry(second_retry) == second_pending
+    with pytest.raises(StaleAcceptedRunEffectDeliveryClaimError):
+        repository.release_effect_for_retry(first_retry)
+
+
+def test_sqlite_outbox_rejects_retry_timestamp_before_claim_start(
+    outbox_path,
+) -> None:
+    repository = _outbox_repository(outbox_path)
+    claimed = _claim_effect(repository)
+    assert claimed.claim is not None
+
+    with pytest.raises(
+        ValueError,
+        match="retry timestamp must not precede claim start",
+    ):
+        repository.release_effect_for_retry(
+            AcceptedRunEffectDeliveryRetry(
+                claim=claimed.claim,
+                released_at_unix_ms=(
+                    claimed.claim.claim_started_at_unix_ms - 1
+                ),
+                available_at_unix_ms=4_000,
+            )
+        )
+
+    stored = repository.get_effect(effect_id=claimed.effect_id)
+    assert stored is not None
+    assert stored.claim == claimed.claim
+    assert _stored_replay_identity(outbox_path, claimed.effect_id) == (None, None)
+
+
+@pytest.mark.parametrize("claim_changes", _REPLAY_CLAIM_MUTATIONS)
+def test_sqlite_outbox_pending_retry_replay_requires_exact_claim_identity(
+    outbox_path,
+    claim_changes,
+) -> None:
+    repository = _outbox_repository(outbox_path)
+    claimed = _claim_effect(repository)
+    assert claimed.claim is not None
+    command = AcceptedRunEffectDeliveryRetry(
+        claim=claimed.claim,
+        released_at_unix_ms=3_000,
+        available_at_unix_ms=4_000,
+    )
+    repository.release_effect_for_retry(command)
+
+    with pytest.raises(StaleAcceptedRunEffectDeliveryClaimError):
+        repository.release_effect_for_retry(
+            replace(command, claim=replace(claimed.claim, **claim_changes))
+        )
 
 
 def test_sqlite_outbox_rejects_expired_backdated_retry(outbox_path) -> None:
@@ -749,7 +934,8 @@ def test_sqlite_outbox_rejects_expired_backdated_retry(outbox_path) -> None:
 def test_sqlite_outbox_rejects_future_or_immediately_available_retry(
     outbox_path,
 ) -> None:
-    repository = _outbox_repository(outbox_path)
+    clock = _MutableClock()
+    repository = _outbox_repository(outbox_path, clock=clock)
     claimed = _claim_effect(repository)
     assert claimed.claim is not None
 
@@ -764,6 +950,7 @@ def test_sqlite_outbox_rejects_future_or_immediately_available_retry(
                 available_at_unix_ms=4_000,
             )
         )
+    clock.now_unix_ms = 3_100
     with pytest.raises(
         ValueError,
         match="retry availability must not precede the repository clock",
@@ -771,8 +958,8 @@ def test_sqlite_outbox_rejects_future_or_immediately_available_retry(
         repository.release_effect_for_retry(
             AcceptedRunEffectDeliveryRetry(
                 claim=claimed.claim,
-                released_at_unix_ms=2_900,
-                available_at_unix_ms=2_999,
+                released_at_unix_ms=3_050,
+                available_at_unix_ms=3_099,
             )
         )
 
@@ -809,6 +996,7 @@ def test_sqlite_outbox_rolls_back_retry_that_expires_before_commit(
     assert stored is not None
     assert stored.delivery_state is AcceptedRunEffectDeliveryState.CLAIMED
     assert stored.claim == claimed.claim
+    assert _stored_replay_identity(outbox_path, claimed.effect_id) == (None, None)
 
 
 def test_sqlite_outbox_retry_replays_after_response_loss(outbox_path) -> None:
@@ -818,7 +1006,7 @@ def test_sqlite_outbox_retry_replays_after_response_loss(outbox_path) -> None:
     assert claimed.claim is not None
     command = AcceptedRunEffectDeliveryRetry(
         claim=claimed.claim,
-        released_at_unix_ms=2_900,
+        released_at_unix_ms=3_000,
         available_at_unix_ms=4_000,
     )
 
@@ -834,7 +1022,9 @@ def test_sqlite_outbox_retry_replays_after_response_loss(outbox_path) -> None:
         ).release_effect_for_retry(command)
 
     clock.now_unix_ms = claimed.claim.lease_expires_at_unix_ms
-    replay = repository.release_effect_for_retry(command)
+    replay = _outbox_repository(outbox_path, clock=clock).release_effect_for_retry(
+        command
+    )
     assert replay.delivery_state is AcceptedRunEffectDeliveryState.PENDING
     assert replay.available_at_unix_ms == 4_000
     assert replay.attempt_count == 1
@@ -856,7 +1046,7 @@ def test_sqlite_outbox_rolls_back_failed_retry_transaction(outbox_path) -> None:
         ).release_effect_for_retry(
             AcceptedRunEffectDeliveryRetry(
                 claim=claimed.claim,
-                released_at_unix_ms=2_900,
+                released_at_unix_ms=3_000,
                 available_at_unix_ms=4_000,
             )
         )
@@ -865,15 +1055,26 @@ def test_sqlite_outbox_rolls_back_failed_retry_transaction(outbox_path) -> None:
     assert stored is not None
     assert stored.delivery_state is AcceptedRunEffectDeliveryState.CLAIMED
     assert stored.claim == claimed.claim
+    assert _stored_replay_identity(outbox_path, claimed.effect_id) == (None, None)
 
 
-def test_sqlite_outbox_rejects_conflicting_retry_replay(outbox_path) -> None:
+@pytest.mark.parametrize(
+    "command_changes",
+    (
+        {"released_at_unix_ms": 3_001},
+        {"available_at_unix_ms": 4_500},
+    ),
+)
+def test_sqlite_outbox_rejects_conflicting_retry_replay(
+    outbox_path,
+    command_changes,
+) -> None:
     repository = _outbox_repository(outbox_path)
     claimed = _claim_effect(repository)
     assert claimed.claim is not None
     command = AcceptedRunEffectDeliveryRetry(
         claim=claimed.claim,
-        released_at_unix_ms=2_900,
+        released_at_unix_ms=3_000,
         available_at_unix_ms=4_000,
     )
     repository.release_effect_for_retry(command)
@@ -882,6 +1083,290 @@ def test_sqlite_outbox_rejects_conflicting_retry_replay(outbox_path) -> None:
         AcceptedRunEffectDeliveryStateConflictError,
         match="cannot transition from delivery state 'pending'",
     ):
-        repository.release_effect_for_retry(
-            replace(command, available_at_unix_ms=4_500)
+        repository.release_effect_for_retry(replace(command, **command_changes))
+
+
+def test_sqlite_outbox_rejects_partial_replay_identity_as_corruption(
+    outbox_path,
+) -> None:
+    repository = _outbox_repository(outbox_path)
+    claimed = _claim_effect(repository)
+    assert claimed.claim is not None
+    repository.mark_effect_delivered(
+        AcceptedRunEffectDeliveryAck(
+            claim=claimed.claim,
+            delivered_at_unix_ms=3_000,
         )
+    )
+    connection = sqlite3.connect(outbox_path)
+    try:
+        connection.execute("PRAGMA ignore_check_constraints = ON")
+        connection.execute(
+            """
+            UPDATE effect_outbox
+            SET last_delivery_command_digest = NULL
+            WHERE effect_id = ?
+            """,
+            (claimed.effect_id,),
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+    with pytest.raises(
+        SQLiteAcceptedRunCorruptionError,
+        match="replay command identity is partial",
+    ):
+        repository.get_effect(effect_id=claimed.effect_id)
+
+
+def test_sqlite_outbox_rejects_open_replay_envelope_as_corruption(
+    outbox_path,
+) -> None:
+    repository = _outbox_repository(outbox_path)
+    claimed = _claim_effect(repository)
+    assert claimed.claim is not None
+    command = AcceptedRunEffectDeliveryAck(
+        claim=claimed.claim,
+        delivered_at_unix_ms=3_000,
+    )
+    repository.mark_effect_delivered(command)
+    payload = {
+        "formatVersion": "graphblocks.effect-delivery-command.v1",
+        "kind": "ack",
+        "claim": {
+            "effectId": claimed.claim.effect_id,
+            "deliveryOwnerId": claimed.claim.delivery_owner_id,
+            "claimGeneration": claimed.claim.claim_generation,
+            "fencingToken": claimed.claim.fencing_token,
+            "claimStartedAtUnixMs": claimed.claim.claim_started_at_unix_ms,
+            "leaseExpiresAtUnixMs": claimed.claim.lease_expires_at_unix_ms,
+        },
+        "deliveredAtUnixMs": 3_000,
+        "unexpected": True,
+    }
+    connection = sqlite3.connect(outbox_path)
+    try:
+        connection.execute(
+            """
+            UPDATE effect_outbox
+            SET last_delivery_command_json = ?,
+                last_delivery_command_digest = ?
+            WHERE effect_id = ?
+            """,
+            (
+                canonical_dumps(payload),
+                canonical_hash(payload),
+                claimed.effect_id,
+            ),
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+    with pytest.raises(
+        SQLiteAcceptedRunCorruptionError,
+        match="replay command identity is invalid",
+    ):
+        repository.get_effect(effect_id=claimed.effect_id)
+
+
+def test_sqlite_outbox_rejects_replay_digest_mismatch_before_reclaim(
+    outbox_path,
+) -> None:
+    clock = _MutableClock()
+    repository = _outbox_repository(outbox_path, clock=clock)
+    claimed = _claim_effect(repository)
+    assert claimed.claim is not None
+    repository.release_effect_for_retry(
+        AcceptedRunEffectDeliveryRetry(
+            claim=claimed.claim,
+            released_at_unix_ms=3_000,
+            available_at_unix_ms=4_000,
+        )
+    )
+    stored_identity = _stored_replay_identity(outbox_path, claimed.effect_id)
+    connection = sqlite3.connect(outbox_path)
+    try:
+        connection.execute(
+            """
+            UPDATE effect_outbox
+            SET last_delivery_command_digest = ?
+            WHERE effect_id = ?
+            """,
+            (canonical_hash({"mismatch": True}), claimed.effect_id),
+        )
+        connection.commit()
+    finally:
+        connection.close()
+    clock.now_unix_ms = 4_000
+
+    with pytest.raises(
+        SQLiteAcceptedRunCorruptionError,
+        match="replay command identity is invalid",
+    ):
+        repository.claim_next_effect(
+            _claim_request(owner="dispatcher-2", now=4_000)
+        )
+
+    corrupted_identity = _stored_replay_identity(outbox_path, claimed.effect_id)
+    assert corrupted_identity[0] == stored_identity[0]
+    assert corrupted_identity[1] != stored_identity[1]
+
+
+@pytest.mark.parametrize(
+    "column",
+    (
+        "claim_generation",
+        "claim_fencing_token",
+        "delivered_at_unix_ms",
+    ),
+)
+def test_sqlite_outbox_rejects_replay_projection_mismatch(
+    outbox_path,
+    column,
+) -> None:
+    repository = _outbox_repository(outbox_path)
+    claimed = _claim_effect(repository)
+    assert claimed.claim is not None
+    repository.mark_effect_delivered(
+        AcceptedRunEffectDeliveryAck(
+            claim=claimed.claim,
+            delivered_at_unix_ms=3_000,
+        )
+    )
+    connection = sqlite3.connect(outbox_path)
+    try:
+        connection.execute(
+            f"""
+            UPDATE effect_outbox
+            SET {column} = {column} + 1
+            WHERE effect_id = ?
+            """,
+            (claimed.effect_id,),
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+    with pytest.raises(
+        SQLiteAcceptedRunCorruptionError,
+        match="replay command identity is invalid",
+    ):
+        repository.get_effect(effect_id=claimed.effect_id)
+
+
+def test_sqlite_outbox_rejects_ack_claim_before_stored_availability(
+    outbox_path,
+) -> None:
+    repository = _outbox_repository(outbox_path)
+    claimed = _claim_effect(repository)
+    assert claimed.claim is not None
+    repository.mark_effect_delivered(
+        AcceptedRunEffectDeliveryAck(
+            claim=claimed.claim,
+            delivered_at_unix_ms=3_000,
+        )
+    )
+    connection = sqlite3.connect(outbox_path)
+    try:
+        connection.execute(
+            """
+            UPDATE effect_outbox
+            SET available_at_unix_ms = ?
+            WHERE effect_id = ?
+            """,
+            (
+                claimed.claim.claim_started_at_unix_ms + 1,
+                claimed.effect_id,
+            ),
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+    with pytest.raises(
+        SQLiteAcceptedRunCorruptionError,
+        match="replay command identity is invalid",
+    ):
+        repository.get_effect(effect_id=claimed.effect_id)
+
+
+def test_sqlite_outbox_rejects_replay_observation_outside_claim(
+    outbox_path,
+) -> None:
+    repository = _outbox_repository(outbox_path)
+    claimed = _claim_effect(repository)
+    assert claimed.claim is not None
+    command = AcceptedRunEffectDeliveryAck(
+        claim=claimed.claim,
+        delivered_at_unix_ms=3_000,
+    )
+    repository.mark_effect_delivered(command)
+    payload = {
+        "formatVersion": "graphblocks.effect-delivery-command.v1",
+        "kind": "ack",
+        "claim": {
+            "effectId": claimed.claim.effect_id,
+            "deliveryOwnerId": claimed.claim.delivery_owner_id,
+            "claimGeneration": claimed.claim.claim_generation,
+            "fencingToken": claimed.claim.fencing_token,
+            "claimStartedAtUnixMs": claimed.claim.claim_started_at_unix_ms,
+            "leaseExpiresAtUnixMs": claimed.claim.lease_expires_at_unix_ms,
+        },
+        "deliveredAtUnixMs": claimed.claim.claim_started_at_unix_ms - 1,
+    }
+    connection = sqlite3.connect(outbox_path)
+    try:
+        connection.execute(
+            """
+            UPDATE effect_outbox
+            SET delivered_at_unix_ms = ?,
+                last_delivery_command_json = ?,
+                last_delivery_command_digest = ?
+            WHERE effect_id = ?
+            """,
+            (
+                payload["deliveredAtUnixMs"],
+                canonical_dumps(payload),
+                canonical_hash(payload),
+                claimed.effect_id,
+            ),
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+    with pytest.raises(
+        SQLiteAcceptedRunCorruptionError,
+        match="replay command identity is invalid",
+    ):
+        repository.get_effect(effect_id=claimed.effect_id)
+
+
+def test_sqlite_outbox_rejects_invalid_claim_interval_as_corruption(
+    outbox_path,
+) -> None:
+    repository = _outbox_repository(outbox_path)
+    claimed = _claim_effect(repository)
+    assert claimed.claim is not None
+    connection = sqlite3.connect(outbox_path)
+    try:
+        connection.execute("PRAGMA ignore_check_constraints = ON")
+        connection.execute(
+            """
+            UPDATE effect_outbox
+            SET claim_started_at_unix_ms = claim_expires_at_unix_ms
+            WHERE effect_id = ?
+            """,
+            (claimed.effect_id,),
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+    with pytest.raises(
+        SQLiteAcceptedRunCorruptionError,
+        match="outbox effect is invalid",
+    ):
+        repository.get_effect(effect_id=claimed.effect_id)

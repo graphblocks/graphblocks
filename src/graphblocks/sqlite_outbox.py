@@ -30,8 +30,10 @@ from .sqlite_server_storage import (
     _MAX_SQLITE_INTEGER,
     SQLiteAcceptedRunCorruptionError,
     SQLiteAcceptedRunDatabase,
+    _decode_effect_delivery_command_row,
     _decode_sqlite_integer,
     _decode_sqlite_text,
+    _effect_delivery_command_identity,
     _validate_lookup_text,
 )
 
@@ -122,7 +124,9 @@ class SQLiteOutboxDispatcherRepository:
         return row
 
     @staticmethod
-    def _record_from_row(row: sqlite3.Row) -> AcceptedRunEffectDeliveryRecord:
+    def _record_from_row(
+        row: sqlite3.Row,
+    ) -> AcceptedRunEffectDeliveryRecord:
         try:
             effect_id = _decode_sqlite_text(
                 "effect_id",
@@ -165,14 +169,23 @@ class SQLiteOutboxDispatcherRepository:
                         "claim_fencing_token",
                         row["claim_fencing_token"],
                     ),
+                    claim_started_at_unix_ms=_decode_sqlite_integer(
+                        "claim_started_at_unix_ms",
+                        row["claim_started_at_unix_ms"],
+                    ),
                     lease_expires_at_unix_ms=_decode_sqlite_integer(
                         "claim_expires_at_unix_ms",
                         row["claim_expires_at_unix_ms"],
                     ),
                 )
+            elif row["claim_started_at_unix_ms"] is not None:
+                raise SQLiteAcceptedRunCorruptionError(
+                    "accepted-run SQLite inactive outbox effect retains a "
+                    "claim start"
+                )
             checkpoint_digest = row["checkpoint_digest"]
             delivered_at = row["delivered_at_unix_ms"]
-            return AcceptedRunEffectDeliveryRecord(
+            record = AcceptedRunEffectDeliveryRecord(
                 effect_id=effect_id,
                 tenant_id=_decode_sqlite_text(
                     "tenant_id",
@@ -236,30 +249,48 @@ class SQLiteOutboxDispatcherRepository:
                 ),
                 cancelled_at_unix_ms=cancelled_at_unix_ms,
             )
+            if (
+                claim is not None
+                and claim.claim_started_at_unix_ms
+                < record.available_at_unix_ms
+            ):
+                raise SQLiteAcceptedRunCorruptionError(
+                    "accepted-run SQLite outbox claim starts before effect "
+                    "availability"
+                )
+            _decode_effect_delivery_command_row(row)
+            return record
         except (TypeError, ValueError) as error:
             raise SQLiteAcceptedRunCorruptionError(
                 "accepted-run SQLite outbox effect is invalid"
             ) from error
 
     @staticmethod
-    def _assert_replay_claim(
+    def _assert_replay_command(
         row: sqlite3.Row,
-        claim: AcceptedRunEffectDeliveryClaim,
+        command: AcceptedRunEffectDeliveryAck | AcceptedRunEffectDeliveryRetry,
     ) -> None:
-        if (
-            _decode_sqlite_text("effect_id", row["effect_id"]) != claim.effect_id
-            or _decode_sqlite_integer(
-                "claim_generation",
-                row["claim_generation"],
+        stored_command = _decode_effect_delivery_command_row(row)
+        stored_state = AcceptedRunEffectDeliveryState(
+            _decode_sqlite_text(
+                "delivery_state",
+                row["delivery_state"],
             )
-            != claim.claim_generation
-            or _decode_sqlite_integer(
-                "claim_fencing_token",
-                row["claim_fencing_token"],
+        )
+        if stored_command is None:
+            raise AcceptedRunEffectDeliveryStateConflictError(
+                command.claim.effect_id,
+                stored_state,
             )
-            != claim.fencing_token
-        ):
-            raise StaleAcceptedRunEffectDeliveryClaimError(None, claim)
+        assert_current_effect_delivery_claim(
+            current=stored_command.claim,
+            provided=command.claim,
+        )
+        if stored_command != command:
+            raise AcceptedRunEffectDeliveryStateConflictError(
+                command.claim.effect_id,
+                stored_state,
+            )
 
     def get_effect(
         self,
@@ -387,8 +418,11 @@ class SQLiteOutboxDispatcherRepository:
                         claim_owner_id = ?,
                         claim_generation = ?,
                         claim_fencing_token = ?,
+                        claim_started_at_unix_ms = ?,
                         claim_expires_at_unix_ms = ?,
-                        delivered_at_unix_ms = NULL
+                        delivered_at_unix_ms = NULL,
+                        last_delivery_command_json = NULL,
+                        last_delivery_command_digest = NULL
                     WHERE effect_id = ?
                       AND delivery_state = 'pending'
                       AND available_at_unix_ms = ?
@@ -401,6 +435,7 @@ class SQLiteOutboxDispatcherRepository:
                         request.delivery_owner_id,
                         next_generation,
                         next_fence,
+                        transaction_now,
                         lease_expires_at,
                         current.effect_id,
                         current.available_at_unix_ms,
@@ -418,13 +453,17 @@ class SQLiteOutboxDispatcherRepository:
                         claim_owner_id = ?,
                         claim_generation = ?,
                         claim_fencing_token = ?,
+                        claim_started_at_unix_ms = ?,
                         claim_expires_at_unix_ms = ?,
-                        delivered_at_unix_ms = NULL
+                        delivered_at_unix_ms = NULL,
+                        last_delivery_command_json = NULL,
+                        last_delivery_command_digest = NULL
                     WHERE effect_id = ?
                       AND delivery_state = 'claimed'
                       AND claim_owner_id = ?
                       AND claim_generation = ?
                       AND claim_fencing_token = ?
+                      AND claim_started_at_unix_ms = ?
                       AND claim_expires_at_unix_ms = ?
                       AND claim_expires_at_unix_ms <= ?
                     """,
@@ -433,11 +472,13 @@ class SQLiteOutboxDispatcherRepository:
                         request.delivery_owner_id,
                         next_generation,
                         next_fence,
+                        transaction_now,
                         lease_expires_at,
                         current.effect_id,
                         current.claim.delivery_owner_id,
                         current.claim.claim_generation,
                         current.claim.fencing_token,
+                        current.claim.claim_started_at_unix_ms,
                         current.claim.lease_expires_at_unix_ms,
                         transaction_now,
                     ),
@@ -490,6 +531,7 @@ class SQLiteOutboxDispatcherRepository:
                 "accepted-run SQLite outbox delivery timestamp exceeds "
                 "SQLite integer range"
             )
+        command_json, command_digest = _effect_delivery_command_identity(command)
 
         def transition(
             connection: sqlite3.Connection,
@@ -500,18 +542,18 @@ class SQLiteOutboxDispatcherRepository:
                 raise AcceptedRunEffectNotFoundError(claim.effect_id)
             current = self._record_from_row(row)
             if current.delivery_state is AcceptedRunEffectDeliveryState.DELIVERED:
-                self._assert_replay_claim(row, claim)
+                self._assert_replay_command(row, command)
                 if current.delivered_at_unix_ms != command.delivered_at_unix_ms:
-                    raise AcceptedRunEffectDeliveryStateConflictError(
-                        claim.effect_id,
-                        current.delivery_state,
+                    raise SQLiteAcceptedRunCorruptionError(
+                        "accepted-run SQLite delivered outbox projection does "
+                        "not match its replay command"
                     )
                 return current
             if (
                 current.delivery_state
                 is AcceptedRunEffectDeliveryState.SATISFIED_BY_CALLBACK
             ):
-                self._assert_replay_claim(row, claim)
+                self._assert_replay_command(row, command)
                 return current
             if current.delivery_state is not AcceptedRunEffectDeliveryState.CLAIMED:
                 raise AcceptedRunEffectDeliveryStateConflictError(
@@ -533,32 +575,39 @@ class SQLiteOutboxDispatcherRepository:
                     "accepted-run SQLite outbox delivery timestamp must not "
                     "be later than the repository clock"
                 )
-            if command.delivered_at_unix_ms < current.created_at_unix_ms:
+            if command.delivered_at_unix_ms < claim.claim_started_at_unix_ms:
                 raise ValueError(
                     "accepted-run SQLite outbox delivery timestamp must not "
-                    "precede effect creation"
+                    "precede claim start"
                 )
             updated = connection.execute(
                 """
                 UPDATE effect_outbox
                 SET delivery_state = 'delivered',
                     claim_owner_id = NULL,
+                    claim_started_at_unix_ms = NULL,
                     claim_expires_at_unix_ms = NULL,
-                    delivered_at_unix_ms = ?
+                    delivered_at_unix_ms = ?,
+                    last_delivery_command_json = ?,
+                    last_delivery_command_digest = ?
                 WHERE effect_id = ?
                   AND delivery_state = 'claimed'
                   AND claim_owner_id = ?
                   AND claim_generation = ?
                   AND claim_fencing_token = ?
+                  AND claim_started_at_unix_ms = ?
                   AND claim_expires_at_unix_ms = ?
                   AND claim_expires_at_unix_ms > ?
                 """,
                 (
                     command.delivered_at_unix_ms,
+                    command_json,
+                    command_digest,
                     claim.effect_id,
                     claim.delivery_owner_id,
                     claim.claim_generation,
                     claim.fencing_token,
+                    claim.claim_started_at_unix_ms,
                     claim.lease_expires_at_unix_ms,
                     transaction_now,
                 ),
@@ -609,6 +658,7 @@ class SQLiteOutboxDispatcherRepository:
                 "accepted-run SQLite outbox retry timestamp exceeds SQLite "
                 "integer range"
             )
+        command_json, command_digest = _effect_delivery_command_identity(command)
 
         def transition(
             connection: sqlite3.Connection,
@@ -619,18 +669,18 @@ class SQLiteOutboxDispatcherRepository:
                 raise AcceptedRunEffectNotFoundError(claim.effect_id)
             current = self._record_from_row(row)
             if current.delivery_state is AcceptedRunEffectDeliveryState.PENDING:
-                self._assert_replay_claim(row, claim)
+                self._assert_replay_command(row, command)
                 if current.available_at_unix_ms != command.available_at_unix_ms:
-                    raise AcceptedRunEffectDeliveryStateConflictError(
-                        claim.effect_id,
-                        current.delivery_state,
+                    raise SQLiteAcceptedRunCorruptionError(
+                        "accepted-run SQLite pending outbox projection does "
+                        "not match its replay command"
                     )
                 return current
             if current.delivery_state in {
                 AcceptedRunEffectDeliveryState.DELIVERED,
                 AcceptedRunEffectDeliveryState.SATISFIED_BY_CALLBACK,
             }:
-                self._assert_replay_claim(row, claim)
+                self._assert_replay_command(row, command)
                 return current
             if current.delivery_state is not AcceptedRunEffectDeliveryState.CLAIMED:
                 raise AcceptedRunEffectDeliveryStateConflictError(
@@ -652,10 +702,10 @@ class SQLiteOutboxDispatcherRepository:
                     "accepted-run SQLite outbox retry timestamp must not be "
                     "later than the repository clock"
                 )
-            if command.released_at_unix_ms < current.created_at_unix_ms:
+            if command.released_at_unix_ms < claim.claim_started_at_unix_ms:
                 raise ValueError(
                     "accepted-run SQLite outbox retry timestamp must not "
-                    "precede effect creation"
+                    "precede claim start"
                 )
             if command.available_at_unix_ms < transaction_now:
                 raise ValueError(
@@ -668,22 +718,29 @@ class SQLiteOutboxDispatcherRepository:
                 SET delivery_state = 'pending',
                     available_at_unix_ms = ?,
                     claim_owner_id = NULL,
+                    claim_started_at_unix_ms = NULL,
                     claim_expires_at_unix_ms = NULL,
-                    delivered_at_unix_ms = NULL
+                    delivered_at_unix_ms = NULL,
+                    last_delivery_command_json = ?,
+                    last_delivery_command_digest = ?
                 WHERE effect_id = ?
                   AND delivery_state = 'claimed'
                   AND claim_owner_id = ?
                   AND claim_generation = ?
                   AND claim_fencing_token = ?
+                  AND claim_started_at_unix_ms = ?
                   AND claim_expires_at_unix_ms = ?
                   AND claim_expires_at_unix_ms > ?
                 """,
                 (
                     command.available_at_unix_ms,
+                    command_json,
+                    command_digest,
                     claim.effect_id,
                     claim.delivery_owner_id,
                     claim.claim_generation,
                     claim.fencing_token,
+                    claim.claim_started_at_unix_ms,
                     claim.lease_expires_at_unix_ms,
                     transaction_now,
                 ),

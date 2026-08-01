@@ -16,7 +16,9 @@ from graphblocks.server_storage import (
     AcceptedRunClaimRequest,
     AcceptedRunEffectDeliveryAck,
     AcceptedRunEffectDeliveryClaimRequest,
+    AcceptedRunEffectDeliveryRetry,
     AcceptedRunEffectDeliveryState,
+    AcceptedRunEffectDeliveryStateConflictError,
     AcceptedRunEffectIntent,
     AcceptedRunEffectKind,
     AcceptedRunEventIntent,
@@ -490,12 +492,12 @@ def test_sqlite_repository_serializes_concurrent_conflicting_callbacks(
     assert callback_event_count == 1
 
 
-def test_sqlite_repository_callback_satisfies_claimed_dispatch(
+def test_sqlite_repository_callback_rejects_uncommitted_ack_replay(
     tmp_path,
 ) -> None:
     path = tmp_path / "accepted-runs.sqlite3"
     repository, waiting = _waiting_run(path)
-    dispatcher = SQLiteOutboxDispatcherRepository(path)
+    dispatcher = SQLiteOutboxDispatcherRepository(path, clock=lambda: 3_100)
     claimed = dispatcher.claim_next_effect(
         AcceptedRunEffectDeliveryClaimRequest(
             delivery_owner_id="dispatcher-1",
@@ -508,17 +510,119 @@ def test_sqlite_repository_callback_satisfies_claimed_dispatch(
 
     repository.accept_callback_and_queue_resume(_callback_command(waiting))
 
-    satisfied = dispatcher.mark_effect_delivered(
-        AcceptedRunEffectDeliveryAck(
-            claim=claimed.claim,
-            delivered_at_unix_ms=3_100,
+    with pytest.raises(AcceptedRunEffectDeliveryStateConflictError):
+        dispatcher.mark_effect_delivered(
+            AcceptedRunEffectDeliveryAck(
+                claim=claimed.claim,
+                delivered_at_unix_ms=3_100,
+            )
         )
-    )
+
+    satisfied = dispatcher.get_effect(effect_id=claimed.effect_id)
+    assert satisfied is not None
     assert (
         satisfied.delivery_state is AcceptedRunEffectDeliveryState.SATISFIED_BY_CALLBACK
     )
     assert satisfied.claim is None
     assert satisfied.delivered_at_unix_ms == 3_000
+
+
+def test_sqlite_repository_callback_preserves_exact_retry_replay(
+    tmp_path,
+) -> None:
+    path = tmp_path / "accepted-runs.sqlite3"
+    repository, waiting = _waiting_run(path)
+    dispatcher = SQLiteOutboxDispatcherRepository(path, clock=lambda: 3_100)
+    claimed = dispatcher.claim_next_effect(
+        AcceptedRunEffectDeliveryClaimRequest(
+            delivery_owner_id="dispatcher-1",
+            now_unix_ms=2_300,
+            lease_duration_ms=1_700,
+        )
+    )
+    assert claimed is not None
+    assert claimed.claim is not None
+    command = AcceptedRunEffectDeliveryRetry(
+        claim=claimed.claim,
+        released_at_unix_ms=3_100,
+        available_at_unix_ms=4_000,
+    )
+    dispatcher.release_effect_for_retry(command)
+
+    repository.accept_callback_and_queue_resume(_callback_command(waiting))
+
+    replay = dispatcher.release_effect_for_retry(command)
+    assert (
+        replay.delivery_state
+        is AcceptedRunEffectDeliveryState.SATISFIED_BY_CALLBACK
+    )
+    with pytest.raises(AcceptedRunEffectDeliveryStateConflictError):
+        dispatcher.release_effect_for_retry(
+            replace(command, released_at_unix_ms=3_101)
+        )
+
+
+def test_sqlite_repository_callback_rejects_corrupt_retry_identity(
+    tmp_path,
+) -> None:
+    path = tmp_path / "accepted-runs.sqlite3"
+    repository, waiting = _waiting_run(path)
+    dispatcher = SQLiteOutboxDispatcherRepository(path, clock=lambda: 3_100)
+    claimed = dispatcher.claim_next_effect(
+        AcceptedRunEffectDeliveryClaimRequest(
+            delivery_owner_id="dispatcher-1",
+            now_unix_ms=2_300,
+            lease_duration_ms=1_700,
+        )
+    )
+    assert claimed is not None
+    assert claimed.claim is not None
+    dispatcher.release_effect_for_retry(
+        AcceptedRunEffectDeliveryRetry(
+            claim=claimed.claim,
+            released_at_unix_ms=3_100,
+            available_at_unix_ms=4_000,
+        )
+    )
+    connection = sqlite3.connect(path)
+    try:
+        connection.execute(
+            """
+            UPDATE effect_outbox
+            SET last_delivery_command_digest = ?
+            WHERE effect_id = ?
+            """,
+            (canonical_hash({"corrupt": True}), claimed.effect_id),
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+    with pytest.raises(
+        SQLiteAcceptedRunCorruptionError,
+        match="replay command identity is invalid",
+    ):
+        repository.accept_callback_and_queue_resume(_callback_command(waiting))
+
+    connection = sqlite3.connect(path)
+    try:
+        stored_state = str(
+            connection.execute(
+                """
+                SELECT delivery_state
+                FROM effect_outbox
+                WHERE effect_id = ?
+                """,
+                (claimed.effect_id,),
+            ).fetchone()[0]
+        )
+        callback_count = int(
+            connection.execute("SELECT COUNT(*) FROM callback_inbox").fetchone()[0]
+        )
+    finally:
+        connection.close()
+    assert stored_state == "pending"
+    assert callback_count == 0
 
 
 @pytest.mark.parametrize(

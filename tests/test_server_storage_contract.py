@@ -167,6 +167,7 @@ def _effect_delivery_claim(
         delivery_owner_id=delivery_owner_id,
         claim_generation=claim_generation,
         fencing_token=fencing_token,
+        claim_started_at_unix_ms=1_000,
         lease_expires_at_unix_ms=2_000,
     )
 
@@ -408,6 +409,10 @@ def test_stale_or_foreign_claim_cannot_commit(
         _effect_delivery_claim(delivery_owner_id="dispatcher-2"),
         replace(
             _effect_delivery_claim(),
+            claim_started_at_unix_ms=1_001,
+        ),
+        replace(
+            _effect_delivery_claim(),
             lease_expires_at_unix_ms=2_001,
         ),
     ],
@@ -422,6 +427,24 @@ def test_stale_or_foreign_effect_delivery_claim_cannot_ack(
         assert_current_effect_delivery_claim(
             current=_effect_delivery_claim(),
             provided=provided,
+        )
+
+
+@pytest.mark.parametrize("claim_started_at_unix_ms", [2_000, 2_001])
+def test_effect_delivery_claim_requires_nonempty_lease_interval(
+    claim_started_at_unix_ms: int,
+) -> None:
+    with pytest.raises(
+        ValueError,
+        match="lease_expires_at_unix_ms must be after claim_started_at_unix_ms",
+    ):
+        AcceptedRunEffectDeliveryClaim(
+            effect_id="effect-operation_dispatch-1",
+            delivery_owner_id="dispatcher-1",
+            claim_generation=1,
+            fencing_token=1,
+            claim_started_at_unix_ms=claim_started_at_unix_ms,
+            lease_expires_at_unix_ms=2_000,
         )
 
 

@@ -22,6 +22,10 @@ from .server_storage import (
     AcceptedRunControlAcceptance,
     AcceptedRunControlAction,
     AcceptedRunControlConflictError,
+    AcceptedRunEffectDeliveryAck,
+    AcceptedRunEffectDeliveryClaim,
+    AcceptedRunEffectDeliveryRetry,
+    AcceptedRunEffectDeliveryState,
     AcceptedRunEvent,
     AcceptedRunEventIntent,
     AcceptedRunEventPage,
@@ -59,13 +63,16 @@ from .server_storage import (
 
 
 SQLITE_ACCEPTED_RUN_APPLICATION_ID = 0x47424152
-SQLITE_ACCEPTED_RUN_SCHEMA_VERSION = 6
+SQLITE_ACCEPTED_RUN_SCHEMA_VERSION = 7
 _SQLITE_ACCEPTED_RUN_SCHEMA_NAME = "graphblocks.accepted-runs.sqlite"
 _SQLITE_ACCEPTED_RUN_INITIAL_SCHEMA_VERSION = 1
 _MAX_BUSY_TIMEOUT_MS = 60_000
 _MAX_SQLITE_INTEGER = (1 << 63) - 1
 _MAX_UUID7_UNIX_MS = (1 << 48) - 1
 MAX_ACCEPTED_RUN_EVENT_PAGE_SIZE = 1_000
+_EFFECT_DELIVERY_COMMAND_FORMAT_VERSION = (
+    "graphblocks.effect-delivery-command.v1"
+)
 _TERMINAL_EVENT_KINDS = {
     "cancelled": "run_cancelled",
     "completed": "run_completed",
@@ -460,6 +467,57 @@ _SCHEMA_V6_MIGRATION_STATEMENTS = (
     """,
 )
 
+_SCHEMA_V7_MIGRATION_STATEMENTS = (
+    """
+    UPDATE effect_outbox
+    SET delivery_state = 'pending',
+        claim_owner_id = NULL,
+        claim_generation = claim_generation + 1,
+        claim_fencing_token = claim_fencing_token + 1,
+        claim_expires_at_unix_ms = NULL,
+        delivered_at_unix_ms = NULL
+    WHERE delivery_state = 'claimed'
+    """,
+    """
+    ALTER TABLE effect_outbox
+    ADD COLUMN claim_started_at_unix_ms INTEGER
+      CHECK (
+        (
+          delivery_state = 'claimed'
+          AND claim_started_at_unix_ms IS NOT NULL
+          AND claim_started_at_unix_ms >= created_at_unix_ms
+          AND claim_started_at_unix_ms >= available_at_unix_ms
+          AND claim_started_at_unix_ms < claim_expires_at_unix_ms
+        )
+        OR
+        (
+          delivery_state <> 'claimed'
+          AND claim_started_at_unix_ms IS NULL
+        )
+      )
+    """,
+    """
+    ALTER TABLE effect_outbox
+    ADD COLUMN last_delivery_command_json TEXT
+      CHECK (
+        delivery_state <> 'claimed'
+        OR last_delivery_command_json IS NULL
+      )
+    """,
+    """
+    ALTER TABLE effect_outbox
+    ADD COLUMN last_delivery_command_digest TEXT
+      CHECK (
+        (last_delivery_command_digest IS NULL)
+        = (last_delivery_command_json IS NULL)
+      )
+      CHECK (
+        delivery_state <> 'claimed'
+        OR last_delivery_command_digest IS NULL
+      )
+    """,
+)
+
 _REQUIRED_COLUMNS_V1 = {
     "accepted_run_storage_metadata": frozenset({"key", "value"}),
     "accepted_runs": frozenset(
@@ -598,7 +656,20 @@ _REQUIRED_COLUMNS_V5 = {
         _REQUIRED_COLUMNS_V4["run_controls"] | frozenset({"resulting_phase"})
     ),
 }
-_REQUIRED_COLUMNS = _REQUIRED_COLUMNS_V5
+_REQUIRED_COLUMNS_V6 = _REQUIRED_COLUMNS_V5
+_REQUIRED_COLUMNS = {
+    **_REQUIRED_COLUMNS_V6,
+    "effect_outbox": (
+        _REQUIRED_COLUMNS_V6["effect_outbox"]
+        | frozenset(
+            {
+                "claim_started_at_unix_ms",
+                "last_delivery_command_json",
+                "last_delivery_command_digest",
+            }
+        )
+    ),
+}
 
 
 def _validate_lookup_text(owner: str, field_name: str, value: object) -> str:
@@ -665,6 +736,192 @@ def _decode_sqlite_integer(field_name: str, value: object) -> int:
             f"accepted-run SQLite {field_name} is not an integer"
         )
     return value
+
+
+def _effect_delivery_command_identity(
+    command: AcceptedRunEffectDeliveryAck | AcceptedRunEffectDeliveryRetry,
+) -> tuple[str, str]:
+    claim = command.claim
+    claim_payload = {
+        "effectId": claim.effect_id,
+        "deliveryOwnerId": claim.delivery_owner_id,
+        "claimGeneration": claim.claim_generation,
+        "fencingToken": claim.fencing_token,
+        "claimStartedAtUnixMs": claim.claim_started_at_unix_ms,
+        "leaseExpiresAtUnixMs": claim.lease_expires_at_unix_ms,
+    }
+    if isinstance(command, AcceptedRunEffectDeliveryAck):
+        payload = {
+            "formatVersion": _EFFECT_DELIVERY_COMMAND_FORMAT_VERSION,
+            "kind": "ack",
+            "claim": claim_payload,
+            "deliveredAtUnixMs": command.delivered_at_unix_ms,
+        }
+    else:
+        payload = {
+            "formatVersion": _EFFECT_DELIVERY_COMMAND_FORMAT_VERSION,
+            "kind": "retry",
+            "claim": claim_payload,
+            "releasedAtUnixMs": command.released_at_unix_ms,
+            "availableAtUnixMs": command.available_at_unix_ms,
+        }
+    return canonical_dumps(payload), canonical_hash(payload)
+
+
+def _decode_effect_delivery_command_row(
+    row: sqlite3.Row,
+) -> AcceptedRunEffectDeliveryAck | AcceptedRunEffectDeliveryRetry | None:
+    stored_json_value = row["last_delivery_command_json"]
+    stored_digest_value = row["last_delivery_command_digest"]
+    if stored_json_value is None and stored_digest_value is None:
+        return None
+    if stored_json_value is None or stored_digest_value is None:
+        raise SQLiteAcceptedRunCorruptionError(
+            "accepted-run SQLite outbox replay command identity is partial"
+        )
+    try:
+        stored_json = _decode_sqlite_text(
+            "last_delivery_command_json",
+            stored_json_value,
+        )
+        stored_digest = _decode_sqlite_text(
+            "last_delivery_command_digest",
+            stored_digest_value,
+        )
+        payload = canonical_loads(stored_json)
+        if type(payload) is not dict:
+            raise ValueError("delivery command envelope must be an object")
+        if payload.get("formatVersion") != _EFFECT_DELIVERY_COMMAND_FORMAT_VERSION:
+            raise ValueError("delivery command format version is unsupported")
+        kind = payload.get("kind")
+        expected_fields = {
+            "formatVersion",
+            "kind",
+            "claim",
+            "deliveredAtUnixMs",
+        }
+        if kind == "retry":
+            expected_fields = {
+                "formatVersion",
+                "kind",
+                "claim",
+                "releasedAtUnixMs",
+                "availableAtUnixMs",
+            }
+        elif kind != "ack":
+            raise ValueError("delivery command kind is unsupported")
+        if set(payload) != expected_fields:
+            raise ValueError("delivery command envelope is not closed")
+        claim_payload = payload["claim"]
+        if type(claim_payload) is not dict or set(claim_payload) != {
+            "effectId",
+            "deliveryOwnerId",
+            "claimGeneration",
+            "fencingToken",
+            "claimStartedAtUnixMs",
+            "leaseExpiresAtUnixMs",
+        }:
+            raise ValueError("delivery command claim is not closed")
+        stored_claim = AcceptedRunEffectDeliveryClaim(
+            effect_id=claim_payload["effectId"],
+            delivery_owner_id=claim_payload["deliveryOwnerId"],
+            claim_generation=claim_payload["claimGeneration"],
+            fencing_token=claim_payload["fencingToken"],
+            claim_started_at_unix_ms=claim_payload["claimStartedAtUnixMs"],
+            lease_expires_at_unix_ms=claim_payload["leaseExpiresAtUnixMs"],
+        )
+        if kind == "ack":
+            stored_command: (
+                AcceptedRunEffectDeliveryAck | AcceptedRunEffectDeliveryRetry
+            ) = AcceptedRunEffectDeliveryAck(
+                claim=stored_claim,
+                delivered_at_unix_ms=payload["deliveredAtUnixMs"],
+            )
+        else:
+            stored_command = AcceptedRunEffectDeliveryRetry(
+                claim=stored_claim,
+                released_at_unix_ms=payload["releasedAtUnixMs"],
+                available_at_unix_ms=payload["availableAtUnixMs"],
+            )
+        if (
+            canonical_dumps(payload) != stored_json
+            or canonical_hash(payload) != stored_digest
+        ):
+            raise ValueError("delivery command identity is not canonical")
+        if stored_claim.effect_id != _decode_sqlite_text(
+            "effect_id",
+            row["effect_id"],
+        ):
+            raise ValueError("delivery command effect does not match its row")
+        if stored_claim.claim_generation != _decode_sqlite_integer(
+            "claim_generation",
+            row["claim_generation"],
+        ):
+            raise ValueError("delivery command generation does not match its row")
+        if stored_claim.fencing_token != _decode_sqlite_integer(
+            "claim_fencing_token",
+            row["claim_fencing_token"],
+        ):
+            raise ValueError("delivery command fence does not match its row")
+        if stored_claim.claim_started_at_unix_ms < _decode_sqlite_integer(
+            "effect created_at_unix_ms",
+            row["created_at_unix_ms"],
+        ):
+            raise ValueError("delivery command claim predates its effect")
+        observation_time = (
+            stored_command.delivered_at_unix_ms
+            if isinstance(stored_command, AcceptedRunEffectDeliveryAck)
+            else stored_command.released_at_unix_ms
+        )
+        if not (
+            stored_claim.claim_started_at_unix_ms
+            <= observation_time
+            < stored_claim.lease_expires_at_unix_ms
+        ):
+            raise ValueError("delivery command observation lies outside its claim")
+        if row["cancelled_at_unix_ms"] is not None:
+            raise ValueError("cancelled effect retains a delivery command")
+        stored_state = AcceptedRunEffectDeliveryState(
+            _decode_sqlite_text(
+                "delivery_state",
+                row["delivery_state"],
+            )
+        )
+        if stored_state is AcceptedRunEffectDeliveryState.DELIVERED:
+            if not isinstance(stored_command, AcceptedRunEffectDeliveryAck):
+                raise ValueError(
+                    "delivered effect does not retain an acknowledgement"
+                )
+            if stored_claim.claim_started_at_unix_ms < _decode_sqlite_integer(
+                "available_at_unix_ms",
+                row["available_at_unix_ms"],
+            ):
+                raise ValueError("delivery command claim predates availability")
+            if stored_command.delivered_at_unix_ms != _decode_sqlite_integer(
+                "delivered_at_unix_ms",
+                row["delivered_at_unix_ms"],
+            ):
+                raise ValueError(
+                    "delivered effect does not match its acknowledgement"
+                )
+        elif stored_state in {
+            AcceptedRunEffectDeliveryState.PENDING,
+            AcceptedRunEffectDeliveryState.SATISFIED_BY_CALLBACK,
+        }:
+            if not isinstance(stored_command, AcceptedRunEffectDeliveryRetry):
+                raise ValueError("retryable effect does not retain a retry command")
+            if stored_command.available_at_unix_ms != _decode_sqlite_integer(
+                "available_at_unix_ms",
+                row["available_at_unix_ms"],
+            ):
+                raise ValueError("retryable effect does not match its retry command")
+        else:
+            raise ValueError("delivery state does not permit replay command recovery")
+    except (KeyError, TypeError, ValueError) as error:
+        raise SQLiteAcceptedRunCorruptionError(
+            "accepted-run SQLite outbox replay command identity is invalid"
+        ) from error
+    return stored_command
 
 
 @dataclass(frozen=True, slots=True)
@@ -827,6 +1084,7 @@ class SQLiteAcceptedRunDatabase:
                     3,
                     4,
                     5,
+                    6,
                 }:
                     self._migrate_to_current(connection)
                 else:
@@ -894,6 +1152,8 @@ class SQLiteAcceptedRunDatabase:
                     connection.execute(statement)
                 for statement in _SCHEMA_V6_MIGRATION_STATEMENTS:
                     connection.execute(statement)
+                for statement in _SCHEMA_V7_MIGRATION_STATEMENTS:
+                    connection.execute(statement)
                 connection.executemany(
                     """
                     INSERT INTO accepted_run_storage_metadata (key, value)
@@ -939,6 +1199,7 @@ class SQLiteAcceptedRunDatabase:
                 3,
                 4,
                 5,
+                6,
             }:
                 raise SQLiteAcceptedRunSchemaVersionError(
                     "unsupported accepted-run SQLite schema version "
@@ -1089,6 +1350,51 @@ class SQLiteAcceptedRunDatabase:
                         "accepted-run SQLite schema metadata version changed "
                         "during v6 migration"
                     )
+                connection.execute("PRAGMA user_version = 6")
+                user_version = 6
+            if user_version == 6:
+                self._validate_schema_version(
+                    connection,
+                    schema_version=6,
+                    required_columns=_REQUIRED_COLUMNS_V6,
+                )
+                unreclaimable_claim = connection.execute(
+                    """
+                    SELECT effect_id
+                    FROM effect_outbox
+                    WHERE delivery_state = 'claimed'
+                      AND (
+                        attempt_count >= ?
+                        OR claim_generation >= ?
+                        OR claim_fencing_token >= ?
+                      )
+                    LIMIT 1
+                    """,
+                    (
+                        _MAX_SQLITE_INTEGER,
+                        _MAX_SQLITE_INTEGER - 1,
+                        _MAX_SQLITE_INTEGER - 1,
+                    ),
+                ).fetchone()
+                if unreclaimable_claim is not None:
+                    raise SQLiteAcceptedRunSchemaMismatchError(
+                        "accepted-run SQLite v6 effect claim counters lack "
+                        "reclaim headroom"
+                    )
+                for statement in _SCHEMA_V7_MIGRATION_STATEMENTS:
+                    connection.execute(statement)
+                updated = connection.execute(
+                    """
+                    UPDATE accepted_run_storage_metadata
+                    SET value = '7'
+                    WHERE key = 'schema_version' AND value = '6'
+                    """
+                )
+                if updated.rowcount != 1:
+                    raise SQLiteAcceptedRunSchemaMismatchError(
+                        "accepted-run SQLite schema metadata version changed "
+                        "during v7 migration"
+                    )
                 connection.execute(
                     f"PRAGMA user_version = {SQLITE_ACCEPTED_RUN_SCHEMA_VERSION}"
                 )
@@ -1146,6 +1452,39 @@ class SQLiteAcceptedRunDatabase:
             raise SQLiteAcceptedRunSchemaMismatchError(
                 "accepted-run SQLite schema metadata version does not match"
             )
+        if schema_version >= 7:
+            invalid_effect_claim = connection.execute(
+                """
+                SELECT effect_id
+                FROM effect_outbox
+                WHERE (
+                    delivery_state = 'claimed'
+                    AND (
+                        claim_owner_id IS NULL
+                        OR claim_started_at_unix_ms IS NULL
+                        OR claim_expires_at_unix_ms IS NULL
+                        OR claim_started_at_unix_ms < created_at_unix_ms
+                        OR claim_started_at_unix_ms < available_at_unix_ms
+                        OR claim_started_at_unix_ms >= claim_expires_at_unix_ms
+                        OR last_delivery_command_json IS NOT NULL
+                        OR last_delivery_command_digest IS NOT NULL
+                    )
+                )
+                OR (
+                    delivery_state <> 'claimed'
+                    AND claim_started_at_unix_ms IS NOT NULL
+                )
+                OR (
+                    (last_delivery_command_json IS NULL)
+                    <> (last_delivery_command_digest IS NULL)
+                )
+                LIMIT 1
+                """
+            ).fetchone()
+            if invalid_effect_claim is not None:
+                raise SQLiteAcceptedRunCorruptionError(
+                    "accepted-run SQLite effect claim or replay identity is invalid"
+                )
         foreign_key_failures = connection.execute("PRAGMA foreign_key_check").fetchall()
         if foreign_key_failures:
             raise SQLiteAcceptedRunCorruptionError(
@@ -2825,7 +3164,7 @@ class SQLiteAcceptedRunRepository:
             )
             dispatch = connection.execute(
                 """
-                SELECT delivery_state
+                SELECT effect_outbox.*
                 FROM effect_outbox
                 WHERE effect_id = ? AND run_internal_id = ?
                 """,
@@ -2835,6 +3174,7 @@ class SQLiteAcceptedRunRepository:
                 raise SQLiteAcceptedRunCorruptionError(
                     "accepted-run SQLite callback dispatch effect is missing"
                 )
+            _decode_effect_delivery_command_row(dispatch)
             delivery_state = _decode_sqlite_text(
                 "delivery_state",
                 dispatch["delivery_state"],
@@ -2845,6 +3185,7 @@ class SQLiteAcceptedRunRepository:
                     UPDATE effect_outbox
                     SET delivery_state = 'satisfied_by_callback',
                         claim_owner_id = NULL,
+                        claim_started_at_unix_ms = NULL,
                         claim_expires_at_unix_ms = NULL,
                         delivered_at_unix_ms = ?
                     WHERE effect_id = ?
@@ -3543,6 +3884,7 @@ class SQLiteAcceptedRunRepository:
                         "accepted-run SQLite dispatch was cancelled without "
                         "a control record"
                     )
+                _decode_effect_delivery_command_row(dispatch)
                 delivery_state = _decode_sqlite_text(
                     "delivery_state",
                     dispatch["delivery_state"],
@@ -3571,8 +3913,11 @@ class SQLiteAcceptedRunRepository:
                             claim_owner_id = NULL,
                             claim_generation = ?,
                             claim_fencing_token = ?,
+                            claim_started_at_unix_ms = NULL,
                             claim_expires_at_unix_ms = NULL,
                             delivered_at_unix_ms = NULL,
+                            last_delivery_command_json = NULL,
+                            last_delivery_command_digest = NULL,
                             cancelled_at_unix_ms = ?
                         WHERE effect_id = ?
                           AND delivery_state = ?

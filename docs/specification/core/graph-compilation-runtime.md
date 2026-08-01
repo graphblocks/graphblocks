@@ -388,9 +388,28 @@ compare-and-swap predicates. Acknowledgement and retry release timestamps are
 caller-declared metadata, not proof of live authority: a new transition MUST
 also observe repository time before the stored expiry, reject declared future
 times, and recheck the lease immediately before commit. Retry availability
-MUST NOT precede repository time. A matching replay of an already committed
-acknowledgement or retry MAY succeed after expiry so response loss does not turn
-a completed transaction into a conflicting mutation.
+MUST NOT precede repository time. While its replay slot remains retained, a
+matching replay of an already committed acknowledgement or retry MAY succeed
+after expiry so response loss does not turn a completed transaction into a
+conflicting mutation.
+
+Each delivery claim MUST persist a repository-issued claim start together with
+the effect ID, delivery owner, claim generation, fencing token, and lease
+expiry. A new acknowledgement or retry release MUST present that complete
+claim identity. Its observation timestamp MUST be no earlier than the claim
+start and no later than repository time, while repository time MUST remain
+strictly before claim expiry.
+
+After an acknowledgement or retry release commits, the repository MUST retain
+a versioned, closed, content-bound replay identity covering the transition
+kind, complete claim identity, and every command timestamp until a later claim
+or terminal transition supersedes that recovery slot. For an acknowledgement
+this includes `delivered_at_unix_ms`; for a retry it includes both
+`released_at_unix_ms` and `available_at_unix_ms`. While retained, only the
+identical command MAY recover a committed result after response loss or lease
+expiry. Changing the owner, generation, fence, claim interval, transition kind,
+or any command timestamp MUST fail without mutation. This replay exception
+authorizes no new external send.
 
 A storage upgrade that first adopts repository-owned delivery time MUST NOT
 retain active claims whose expiry was issued from caller-controlled time. It
@@ -401,6 +420,17 @@ delivery remains at-least-once and therefore retains the stable
 receiver-deduplication requirement. An upgrade that cannot tolerate an
 immediate duplicate MUST quiesce legacy dispatchers before opening the database
 with the new schema authority.
+
+A storage upgrade that first adopts complete replay identity MUST NOT invent a
+claim start, owner, expiry, or command timestamp that the prior schema did not
+retain. It MUST invalidate and requeue active claims without a reconstructable
+start while advancing their generation and fence, subject to the same counter
+headroom requirement. Already delivered or retry-pending effects retain their
+authoritative state, but a pre-upgrade command with no complete stored identity
+is not replayable after migration. Operators MUST stop legacy dispatchers and
+back up the database before upgrade, MUST NOT run mixed-version writers, and
+MUST reconcile any provider outcome that cannot tolerate the documented
+at-least-once requeue behavior.
 
 If the delivery claim expires before acknowledgement, the outcome is ambiguous
 and the dispatcher MUST reconcile only that same provider-correlated intent.

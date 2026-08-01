@@ -39,6 +39,20 @@ preparing the first 1.0 release candidate.
   generation, and fence counters retain enough headroom for a new claim.
   Operators should quiesce v5 dispatchers before migration; otherwise the
   documented at-least-once receiver-deduplication requirement applies.
+- Strengthened the preview SQLite effect-outbox replay boundary. New claims now
+  persist repository-issued start and expiry times, while a versioned canonical
+  command envelope and digest bind the complete claim plus every
+  acknowledgement or retry timestamp. Backdated new transitions and altered
+  post-commit replays fail closed; until a later claim or terminal transition
+  supersedes its replay slot, an identical committed command remains recoverable
+  after response loss and lease expiry. The v7 migration requeues active v6
+  claims whose start cannot be reconstructed and treats pre-v7 settled command
+  identities as unverifiable instead of guessing them. Before upgrade,
+  operators must quiesce v6 dispatchers, back up the database, prevent
+  mixed-version writers, and reconcile ambiguous provider sends as specified in
+  the runtime upgrade contract. This preserves at-least-once semantics and does
+  not resolve an ambiguous provider send or establish an exactly-once effect
+  claim.
 - Added a bounded CommonMark and GitHub-heading integrity checker, a closed
   generated-documentation registry with content-bound results, and an always-run
   fast documentation workflow plus named stable release gate.

@@ -9,7 +9,13 @@ import pytest
 
 from graphblocks.canonical import canonical_hash
 from graphblocks.run_store import SQLiteRunStore
-from graphblocks.server_storage import AcceptedRunEffectDeliveryClaimRequest
+from graphblocks.server_storage import (
+    AcceptedRunEffectDeliveryAck,
+    AcceptedRunEffectDeliveryClaim,
+    AcceptedRunEffectDeliveryClaimRequest,
+    AcceptedRunEffectDeliveryRetry,
+    AcceptedRunEffectDeliveryStateConflictError,
+)
 from graphblocks.sqlite_outbox import SQLiteOutboxDispatcherRepository
 from graphblocks.sqlite_server_storage import (
     SQLITE_ACCEPTED_RUN_APPLICATION_ID,
@@ -19,6 +25,7 @@ from graphblocks.sqlite_server_storage import (
     _SCHEMA_V3_MIGRATION_STATEMENTS,
     _SCHEMA_V4_MIGRATION_STATEMENTS,
     _SCHEMA_V5_MIGRATION_STATEMENTS,
+    _SCHEMA_V6_MIGRATION_STATEMENTS,
     _MAX_SQLITE_INTEGER,
     SQLiteAcceptedRunBusyError,
     SQLiteAcceptedRunCorruptionError,
@@ -251,6 +258,62 @@ def _initialize_version_five_claimed_effect(
         connection.close()
 
 
+def _upgrade_version_five_database_to_version_six(path: Path) -> None:
+    connection = sqlite3.connect(path, isolation_level=None)
+    try:
+        connection.execute("PRAGMA foreign_keys = ON")
+        connection.execute("BEGIN IMMEDIATE")
+        for statement in _SCHEMA_V6_MIGRATION_STATEMENTS:
+            connection.execute(statement)
+        connection.execute(
+            """
+            UPDATE accepted_run_storage_metadata
+            SET value = '6'
+            WHERE key = 'schema_version' AND value = '5'
+            """
+        )
+        connection.execute("PRAGMA user_version = 6")
+        connection.commit()
+    finally:
+        connection.close()
+
+
+def _initialize_version_six_claimed_effect(
+    path: Path,
+    *,
+    attempt_count: int = 2,
+    claim_generation: int = 9,
+    claim_fencing_token: int = 11,
+) -> None:
+    _initialize_version_five_claimed_effect(path)
+    _upgrade_version_five_database_to_version_six(path)
+    connection = sqlite3.connect(path, isolation_level=None)
+    try:
+        connection.execute("PRAGMA foreign_keys = ON")
+        connection.execute("BEGIN IMMEDIATE")
+        connection.execute(
+            """
+            UPDATE effect_outbox
+            SET delivery_state = 'claimed',
+                attempt_count = ?,
+                claim_owner_id = 'v6-dispatcher',
+                claim_generation = ?,
+                claim_fencing_token = ?,
+                claim_expires_at_unix_ms = ?
+            WHERE effect_id = 'effect-1'
+            """,
+            (
+                attempt_count,
+                claim_generation,
+                claim_fencing_token,
+                _MAX_SQLITE_INTEGER - 99,
+            ),
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+
 def test_sqlite_accepted_run_database_initializes_dedicated_schema(
     tmp_path,
 ) -> None:
@@ -268,7 +331,7 @@ def test_sqlite_accepted_run_database_initializes_dedicated_schema(
     assert schema.synchronous == 2
     assert schema.busy_timeout_ms == 250
     assert schema.tables == _EXPECTED_TABLES
-    assert SQLITE_ACCEPTED_RUN_SCHEMA_VERSION == 6
+    assert SQLITE_ACCEPTED_RUN_SCHEMA_VERSION == 7
 
 
 def test_sqlite_accepted_run_database_migrates_v1_to_current_schema(
@@ -289,10 +352,13 @@ def test_sqlite_accepted_run_database_migrates_v1_to_current_schema(
         )
     )
 
-    assert schema.user_version == 6
-    assert schema.schema_version == 6
+    assert schema.user_version == 7
+    assert schema.schema_version == 7
     assert "available_at_unix_ms" in effect_columns
     assert "cancelled_at_unix_ms" in effect_columns
+    assert "claim_started_at_unix_ms" in effect_columns
+    assert "last_delivery_command_json" in effect_columns
+    assert "last_delivery_command_digest" in effect_columns
     assert database._run_read(
         lambda connection: int(
             connection.execute(
@@ -327,7 +393,7 @@ def test_sqlite_accepted_run_database_migrates_v2_invocation_metadata(
 
     database = SQLiteAcceptedRunDatabase(path)
 
-    assert database.schema_info().schema_version == 6
+    assert database.schema_info().schema_version == 7
     assert database._run_read(
         lambda connection: str(
             connection.execute(
@@ -348,7 +414,7 @@ def test_sqlite_accepted_run_database_migrates_v3_control_schema(
 
     database = SQLiteAcceptedRunDatabase(path)
 
-    assert database.schema_info().schema_version == 6
+    assert database.schema_info().schema_version == 7
     assert database._run_read(
         lambda connection: frozenset(
             str(row["name"])
@@ -384,7 +450,7 @@ def test_sqlite_accepted_run_database_migrates_v4_pause_schema(
 
     database = SQLiteAcceptedRunDatabase(path)
 
-    assert database.schema_info().schema_version == 6
+    assert database.schema_info().schema_version == 7
     assert database._run_read(
         lambda connection: frozenset(
             str(row["name"])
@@ -485,7 +551,7 @@ def test_sqlite_accepted_run_database_invalidates_v5_effect_claims(
 
     database = SQLiteAcceptedRunDatabase(path)
 
-    assert database.schema_info().schema_version == 6
+    assert database.schema_info().schema_version == 7
     assert database._run_read(
         lambda connection: tuple(
             connection.execute(
@@ -592,6 +658,237 @@ def test_sqlite_accepted_run_database_rolls_back_unreclaimable_v5_claim(
     assert metadata_version == "5"
 
 
+def test_sqlite_accepted_run_database_invalidates_v6_effect_claims(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "accepted-runs-v6-claimed-effect.sqlite3"
+    _initialize_version_six_claimed_effect(path)
+
+    database = SQLiteAcceptedRunDatabase(path)
+
+    assert database.schema_info().schema_version == 7
+    assert database._run_read(
+        lambda connection: tuple(
+            connection.execute(
+                """
+                SELECT delivery_state,
+                       attempt_count,
+                       claim_owner_id,
+                       claim_generation,
+                       claim_fencing_token,
+                       claim_started_at_unix_ms,
+                       claim_expires_at_unix_ms,
+                       last_delivery_command_json,
+                       last_delivery_command_digest,
+                       available_at_unix_ms
+                FROM effect_outbox
+                WHERE effect_id = 'effect-1'
+                """
+            ).fetchone()
+        )
+    ) == ("pending", 2, None, 10, 12, None, None, None, None, 1_250)
+
+    claimed = SQLiteOutboxDispatcherRepository(
+        path,
+        clock=lambda: 3_000,
+    ).claim_next_effect(
+        AcceptedRunEffectDeliveryClaimRequest(
+            delivery_owner_id="current-dispatcher",
+            now_unix_ms=2_500,
+            lease_duration_ms=1_000,
+        )
+    )
+    assert claimed is not None
+    assert claimed.claim is not None
+    assert claimed.attempt_count == 3
+    assert claimed.claim.delivery_owner_id == "current-dispatcher"
+    assert claimed.claim.claim_generation == 11
+    assert claimed.claim.fencing_token == 13
+    assert claimed.claim.claim_started_at_unix_ms == 3_000
+    assert claimed.claim.lease_expires_at_unix_ms == 4_000
+
+
+@pytest.mark.parametrize(
+    ("attempt_count", "claim_generation", "claim_fencing_token"),
+    (
+        (1, _MAX_SQLITE_INTEGER - 1, 9),
+        (1, 7, _MAX_SQLITE_INTEGER - 1),
+        (_MAX_SQLITE_INTEGER, 7, 9),
+    ),
+)
+def test_sqlite_accepted_run_database_rolls_back_unreclaimable_v6_claim(
+    tmp_path: Path,
+    attempt_count: int,
+    claim_generation: int,
+    claim_fencing_token: int,
+) -> None:
+    path = tmp_path / "accepted-runs-v6-exhausted-effect.sqlite3"
+    _initialize_version_six_claimed_effect(
+        path,
+        attempt_count=attempt_count,
+        claim_generation=claim_generation,
+        claim_fencing_token=claim_fencing_token,
+    )
+
+    with pytest.raises(
+        SQLiteAcceptedRunSchemaMismatchError,
+        match="v6 effect claim counters lack reclaim headroom",
+    ):
+        SQLiteAcceptedRunDatabase(path)
+
+    connection = sqlite3.connect(path)
+    try:
+        stored = tuple(
+            connection.execute(
+                """
+                SELECT delivery_state,
+                       attempt_count,
+                       claim_owner_id,
+                       claim_generation,
+                       claim_fencing_token,
+                       claim_expires_at_unix_ms
+                FROM effect_outbox
+                WHERE effect_id = 'effect-1'
+                """
+            ).fetchone()
+        )
+        effect_columns = frozenset(
+            str(row[1])
+            for row in connection.execute(
+                'PRAGMA table_info("effect_outbox")'
+            ).fetchall()
+        )
+        user_version = int(connection.execute("PRAGMA user_version").fetchone()[0])
+        metadata_version = str(
+            connection.execute(
+                """
+                SELECT value
+                FROM accepted_run_storage_metadata
+                WHERE key = 'schema_version'
+                """
+            ).fetchone()[0]
+        )
+    finally:
+        connection.close()
+
+    assert stored == (
+        "claimed",
+        attempt_count,
+        "v6-dispatcher",
+        claim_generation,
+        claim_fencing_token,
+        _MAX_SQLITE_INTEGER - 99,
+    )
+    assert "claim_started_at_unix_ms" not in effect_columns
+    assert user_version == 6
+    assert metadata_version == "6"
+
+
+def test_sqlite_accepted_run_database_rejects_unverifiable_v6_ack_replay(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "accepted-runs-v6-delivered-effect.sqlite3"
+    _initialize_version_six_claimed_effect(path)
+    connection = sqlite3.connect(path, isolation_level=None)
+    try:
+        connection.execute("BEGIN IMMEDIATE")
+        connection.execute(
+            """
+            UPDATE effect_outbox
+            SET delivery_state = 'delivered',
+                claim_owner_id = NULL,
+                claim_expires_at_unix_ms = NULL,
+                delivered_at_unix_ms = 3000
+            WHERE effect_id = 'effect-1'
+            """
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+    dispatcher = SQLiteOutboxDispatcherRepository(path, clock=lambda: 4_000)
+    legacy_claim = AcceptedRunEffectDeliveryClaim(
+        effect_id="effect-1",
+        delivery_owner_id="v6-dispatcher",
+        claim_generation=9,
+        fencing_token=11,
+        claim_started_at_unix_ms=2_500,
+        lease_expires_at_unix_ms=_MAX_SQLITE_INTEGER - 99,
+    )
+
+    with pytest.raises(AcceptedRunEffectDeliveryStateConflictError):
+        dispatcher.mark_effect_delivered(
+            AcceptedRunEffectDeliveryAck(
+                claim=legacy_claim,
+                delivered_at_unix_ms=3_000,
+            )
+        )
+
+
+def test_sqlite_accepted_run_database_rejects_unverifiable_v6_retry_replay(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "accepted-runs-v6-retried-effect.sqlite3"
+    _initialize_version_six_claimed_effect(path)
+    connection = sqlite3.connect(path, isolation_level=None)
+    try:
+        connection.execute("BEGIN IMMEDIATE")
+        connection.execute(
+            """
+            UPDATE effect_outbox
+            SET delivery_state = 'pending',
+                available_at_unix_ms = 4000,
+                claim_owner_id = NULL,
+                claim_expires_at_unix_ms = NULL
+            WHERE effect_id = 'effect-1'
+            """
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+    dispatcher = SQLiteOutboxDispatcherRepository(path, clock=lambda: 4_000)
+    legacy_claim = AcceptedRunEffectDeliveryClaim(
+        effect_id="effect-1",
+        delivery_owner_id="v6-dispatcher",
+        claim_generation=9,
+        fencing_token=11,
+        claim_started_at_unix_ms=2_500,
+        lease_expires_at_unix_ms=_MAX_SQLITE_INTEGER - 99,
+    )
+
+    with pytest.raises(AcceptedRunEffectDeliveryStateConflictError):
+        dispatcher.release_effect_for_retry(
+            AcceptedRunEffectDeliveryRetry(
+                claim=legacy_claim,
+                released_at_unix_ms=3_000,
+                available_at_unix_ms=4_000,
+            )
+        )
+
+
+def test_sqlite_accepted_run_database_serializes_concurrent_v6_migration(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "accepted-runs-v6.sqlite3"
+    _initialize_version_five_claimed_effect(path)
+    _upgrade_version_five_database_to_version_six(path)
+    starting = Barrier(2)
+
+    def migrate(_: int):
+        starting.wait()
+        return SQLiteAcceptedRunDatabase(
+            path,
+            busy_timeout_ms=250,
+        ).schema_info()
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        infos = tuple(executor.map(migrate, range(2)))
+
+    assert infos == (infos[0], infos[0])
+    assert infos[0].schema_version == 7
+
+
 def test_sqlite_accepted_run_database_serializes_concurrent_v1_migration(
     tmp_path,
 ) -> None:
@@ -610,7 +907,7 @@ def test_sqlite_accepted_run_database_serializes_concurrent_v1_migration(
         infos = tuple(executor.map(migrate, range(2)))
 
     assert infos == (infos[0], infos[0])
-    assert infos[0].schema_version == 6
+    assert infos[0].schema_version == 7
 
 
 def test_sqlite_accepted_run_database_reopens_without_recreating_schema(
