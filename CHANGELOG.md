@@ -53,6 +53,21 @@ preparing the first 1.0 release candidate.
   the runtime upgrade contract. This preserves at-least-once semantics and does
   not resolve an ambiguous provider send or establish an exactly-once effect
   claim.
+- Added separate closed provider-effect intent, repository run-authority,
+  deployment capability, fenced send-attempt, reconciliation-evidence, and
+  fail-closed state-machine contracts. Send entry now requires an opaque
+  admission from a deployment-owned capability verifier and repository-owned
+  run and claim authorities; the admission fixes the next claim identity and
+  must be atomically consumed once. Admission and evidence verification resolve
+  the exact capability-bound verifier through a deployment-owned registry, so a
+  caller cannot substitute a verifier that merely copies the admitted identity.
+  Response ambiguity remains quarantined until canonical provider evidence is
+  authenticated and the repository confirms the exact attempt is still active.
+  Prior-attempt evidence cannot settle a retry, and only an unchanged intent can
+  retry after confirmed non-commit or cancellation. This contract-only preview
+  adds no provider I/O or storage, does not reinterpret the generic operation
+  outbox, and establishes no exactly-once claim without real adapter and
+  repository evidence.
 - Added a bounded CommonMark and GitHub-heading integrity checker, a closed
   generated-documentation registry with content-bound results, and an always-run
   fast documentation workflow plus named stable release gate.

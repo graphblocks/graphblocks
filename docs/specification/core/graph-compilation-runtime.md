@@ -443,6 +443,97 @@ applicable deduplication, status, or confirmed-cancellation capability, and
 GraphBlocks MUST NOT make an exactly-once effect claim without a matching
 provider atomic-deduplication boundary.
 
+Provider and tool mutations use a boundary distinct from the generic
+operation-dispatch outbox. The closed
+`graphblocks.provider-capability-snapshot.v1` contract binds a
+deployment-owned adapter identifier and release digest, provider target and
+operation, and exact deduplication, status-lookup, and cancellation
+capabilities together with its registry-authority digest. A caller declaration
+is not capability evidence: admission MUST require an exact-true result from a
+deployment-owned capability-authority verifier whose identity matches that
+digest. The same registry-authentic snapshot MUST bind the only permitted
+reconciliation verifier identifier, release digest, and verification-authority
+digest. Admission MUST use that authority as a deployment-owned registry and
+resolve the actual registered verifier implementation for the exact snapshot;
+a caller-supplied verifier that merely copies the admitted tuple is not an
+authenticated implementation. A snapshot whose cancellation capability is
+only `request_only` provides no confirmed cancellation recovery path.
+
+Before a first send, the closed `graphblocks.provider-effect-intent.v1`
+contract MUST bind the effect kind and identifier, tenant, run, owner,
+idempotency key, canonical request and digest, provider target and operation,
+adapter identity and release, capability-snapshot digest, any prebound provider
+correlation identifier, originating run state version, lease generation,
+fencing token, authority digest, optional checkpoint digest, and creation time.
+The referenced snapshot MUST match every bound adapter, target, and operation
+field. Admission MUST fail closed unless at least one applicable recovery path
+exists: atomic replay by the stable idempotency key, definitive status lookup
+by that key or an already-bound correlation identifier, or confirmed
+cancellation by one of those identities. A correlation-based capability is
+not applicable when the correlation identifier was not bound before send.
+The intent's tenant, run, owner, state version, lease generation, fencing token,
+and checkpoint MUST also match the content digest of a repository-resolved
+`graphblocks.provider-run-authority-snapshot.v1`. Request-supplied authority
+values do not satisfy this comparison; a repository-owned verifier MUST also
+return exact true for that snapshot in the admission transaction. Successful
+validation issues an opaque admission bound to the intent, capability
+authority, run authority and its verifier, admission time, applicable methods,
+any prior send attempt, and the repository-issued next attempt identifier,
+claim owner, generation, fencing token, expiry, and claim-authority digest. The
+claim authority MUST return exact true for those values in the admission
+transaction.
+
+The generic state transition API MUST NOT enter `send_started`. A send begins
+only through that admission and a closed
+`graphblocks.provider-effect-send-attempt.v1` binding the effect, intent,
+capability, admission, attempt identifier, repository claim owner and
+generation, fencing token, and repository-issued start time. After a terminally
+safe retry, the new attempt identifier MUST differ and both generation and
+fence MUST increase. An attempt that predates admission or omits the admitted
+prior-attempt digest MUST fail before provider I/O. Send entry MUST atomically
+consume the admission exactly once and install its attempt as repository-active;
+a stale, expired, or already-consumed admission MUST fail before provider I/O.
+
+Once sending starts, an uncertain result MUST enter `quarantined_unknown`, not
+the pending queue. Reconciliation moves it to `reconciling`; an unknown result
+returns it to quarantine, and optional manual review remains an unknown state.
+Only content-bound `graphblocks.provider-reconciliation-evidence.v1` matching
+the complete intent, capability, admission, and current send-attempt digests MAY
+establish
+`confirmed_committed`, `confirmed_not_committed`, or `confirmed_cancelled`.
+It MUST retain canonical provider evidence and its matching digest, observation
+time no earlier than the current send start, and the identifier, release digest,
+and authority digest of a deployment-owned verifier. That verifier MUST return
+exact true after authenticating the provider evidence and its normalized
+method/outcome mapping. The evidence API MUST resolve the implementation again
+through the deployment-owned verifier authority and MUST NOT accept an
+independently supplied verifier handle. Merely knowing or copying a digest is
+not verification. The resolved verifier triple MUST equal the capability
+registry's admitted triple, and the repository claim authority MUST
+independently return exact true that this attempt remains active at evidence
+application. A historically valid evidence bundle for an inactive attempt
+cannot settle the current state.
+Evidence based on atomic replay cannot establish non-commit, and a cancellation
+request cannot establish confirmed cancellation. Only confirmed non-commit or
+confirmed cancellation MAY return the exact, unchanged intent to pending;
+confirmed commit is terminal. Evidence from a prior attempt cannot settle a
+retried send. Changing any request, identity, provider, adapter, correlation,
+origin authority, lease, fence, checkpoint, or creation field creates an
+identity conflict rather than a retry.
+
+These contracts and their state machine perform no provider I/O, persistence,
+claiming, or scheduling. Existing operation-dispatch rows MUST NOT be migrated
+or reinterpreted as provider-effect intents because they do not contain this
+authority or evidence. A production profile still requires a separate durable
+provider-effect repository, real adapter capability and verifier-registry
+authorities, ambiguous-send reconciliation, kill/restart/fencing tests, and
+provider-side idempotency or status/cancellation evidence. Repository
+snapshots, claim fields, and verifier authorities MUST come from trusted service
+dependencies and MUST NOT be accepted from request data. Claim admission,
+one-shot consumption, and active attempt verification MUST be one repository
+transaction with the corresponding state change. The contracts alone
+establish neither safe delivery nor an exactly-once claim.
+
 The preview executor supplies the killable-process, structural result
 validation, and live-revalidation hook of the stronger timeout contract. It
 does not by itself prove atomic publication, rollback, or exactly-once effects;
