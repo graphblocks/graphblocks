@@ -347,10 +347,12 @@ Every integration promotion record must state contract-only versus real-adapter
 maturity, supported authentication modes, SDK/service versions, real-service
 evidence, retry/failure model, and promotion gate. The one-shot control-plane
 command is named `graphblocks-control`; it must not claim a listener, `serve`
-command, or daemon lifecycle. Decide whether the operator is renamed/internal
-or gains reconciliation, upgrade, finalizer, leader election, envtest, and kind
-evidence. Reserved Rust/npm artifacts must install only an unambiguous
-reserved-package notice.
+command, or daemon lifecycle. The Kubernetes artifact is named
+`graphblocks-deployment-chart`, is disabled by default, and contains no bundled
+controller or OCI image. It may claim operator maturity only after the blocked
+`REL-KUBERNETES-OPERATOR` gate receives revision-bound reconciliation, status,
+upgrade, finalizer, leader-election, envtest, and kind evidence. Reserved
+Rust/npm artifacts must install only an unambiguous reserved-package notice.
 
 ### Generated project facts and naming
 
@@ -363,7 +365,7 @@ and release evidence as digest-bound projections and fail CI on drift.
 
 Align `SECURITY.md`, package classifiers, Python version wording, roadmap state,
 and status wording through those projections. Describe `graphblocks-control`,
-the operator artifact, and contract-only integrations by their implemented
+the deployment scaffold, and contract-only integrations by their implemented
 behavior rather than by aspirational product names. Generate evidence-bound risk status,
 owner, resolved version, and digest; reopen a resolved risk when its required
 evidence disappears or changes. The status projection reports supply chain,

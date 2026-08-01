@@ -1272,6 +1272,36 @@ def test_stable_release_matrix_is_complete_and_machine_readable() -> None:
         len(implementation_stdin_commands) + 1
     )
 
+    assert "helm:graphblocks-operator" not in artifacts
+    deployment_chart = artifacts["helm:graphblocks-deployment-chart"]
+    assert deployment_chart == {
+        "id": "helm:graphblocks-deployment-chart",
+        "ecosystem": "kubernetes",
+        "kind": "helm-scaffold",
+        "path": "packages/graphblocks-deployment-chart/Chart.yaml",
+        "tier": "internal",
+        "readiness": "scaffold-only",
+        "controllerIncluded": False,
+        "ociImageIncluded": False,
+        "defaultEnabled": False,
+        "requiredProfile": "GB-C4-PRODUCTION",
+        "implementsProfile": False,
+        "promotionGate": "REL-KUBERNETES-OPERATOR",
+    }
+    chart = yaml.safe_load(
+        (ROOT / deployment_chart["path"]).read_text(encoding="utf-8")
+    )
+    assert chart["name"] == "graphblocks-deployment-chart"
+    assert chart["annotations"] == {
+        "graphblocks.ai/artifact-kind": "deployment-scaffold",
+        "graphblocks.ai/controller-included": "false",
+        "graphblocks.ai/maturity": "internal",
+    }
+    assert all(
+        deployment_chart["id"] not in profile["implementationArtifacts"]
+        for profile in matrix["profiles"]
+    )
+
     profile_catalog = yaml.safe_load(
         (ROOT / "src" / "graphblocks" / "data" / "conformance-profiles.yaml").read_text()
     )
@@ -1485,8 +1515,45 @@ def test_stable_release_matrix_is_complete_and_machine_readable() -> None:
     )
     referenced_gates.update(entry["promotionGate"] for entry in integration_entries)
     referenced_gates.update(entry["promotionGate"] for entry in matrix["profiles"])
+    referenced_gates.update(
+        entry["promotionGate"]
+        for entry in matrix["artifacts"]
+        if "promotionGate" in entry
+    )
     referenced_gates.update(matrix["globalRequiredGates"])
     assert referenced_gates == set(gate_ids)
+
+    operator_gate = next(
+        entry
+        for entry in matrix["releaseGates"]
+        if entry["id"] == "REL-KUBERNETES-OPERATOR"
+    )
+    assert operator_gate["readiness"] == "definition-blocked"
+    assert operator_gate["scope"] == "artifact-promotion"
+    assert operator_gate["blocksTargetRelease"] is False
+    assert operator_gate["artifact"] == deployment_chart["id"]
+    assert operator_gate["currentMaturity"] == "scaffold-only"
+    assert operator_gate["requiredEvidence"] == [
+        "controller-source-and-signed-oci-image",
+        "watch-reconcile-status-convergence",
+        "idempotent-reconcile-and-conflict-retry",
+        "finalizer-deletion-lifecycle",
+        "leader-election-and-failover",
+        "envtest-reconciliation",
+        "kind-install-and-upgrade",
+        "crd-version-migration-and-rollback",
+    ]
+    assert operator_gate["blockers"] == [
+        "controller-implementation-absent",
+        "controller-image-absent",
+        "reconciliation-lifecycle-evidence-absent",
+    ]
+    assert operator_gate["id"] not in matrix["globalRequiredGates"]
+    assert all(
+        operator_gate["id"] not in profile["requiredGates"]
+        for profile in matrix["profiles"]
+    )
+    assert all((ROOT / path).is_file() for path in operator_gate["currentEvidence"])
 
     audit = matrix["deepAudit"]
     assert audit["releaseBlockingSeverities"] == ["P0", "P1"]

@@ -313,7 +313,7 @@ workstreams:
     phase: phase-2-implementation-boundaries
     ownerArea: product-and-packaging
     affectedProfiles: [GB-C0-SCHEMA, GB-C1-LOCAL-RUNTIME, GB-C2-AI-APPLICATION, GB-C3-GOVERNED-RUNTIME, GB-C4-PRODUCTION, GB-X1-ORCHESTRATION, GB-X2-VOICE, GB-X3-DURABLE-STREAM]
-    releaseGates: [REL-AUDIT-REMEDIATION, REL-CORE-PROFILE, REL-EXTENSION-PROFILE]
+    releaseGates: [REL-AUDIT-REMEDIATION, REL-CORE-PROFILE, REL-EXTENSION-PROFILE, REL-KUBERNETES-OPERATOR]
     findings:
       - GB-ARCH-014
       - GB-ARCH-015
@@ -326,7 +326,8 @@ workstreams:
       - core inclusion and explicit non-goal ADR policy
       - contract-only versus real-adapter maturity evidence
       - one-shot control CLI name and fail-closed non-daemon capability metadata
-      - accurate operator and reserved-artifact naming
+      - disabled deployment scaffold and evidence-gated operator naming
+      - accurate reserved-artifact naming
       - pattern examples without domain guarantees
   - id: M2-SCHEMA-CACHING
     phase: phase-2-implementation-boundaries

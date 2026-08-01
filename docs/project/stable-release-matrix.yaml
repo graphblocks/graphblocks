@@ -233,11 +233,18 @@ artifacts:
     kind: package
     path: packages/graphblocks-npm/package.json
     tier: reserved
-  - id: helm:graphblocks-operator
+  - id: helm:graphblocks-deployment-chart
     ecosystem: kubernetes
-    kind: helm-and-oci-artifact
-    path: packages/graphblocks-operator/Chart.yaml
+    kind: helm-scaffold
+    path: packages/graphblocks-deployment-chart/Chart.yaml
     tier: internal
+    readiness: scaffold-only
+    controllerIncluded: false
+    ociImageIncluded: false
+    defaultEnabled: false
+    requiredProfile: GB-C4-PRODUCTION
+    implementsProfile: false
+    promotionGate: REL-KUBERNETES-OPERATOR
 
 profiles:
   - id: GB-C0-SCHEMA
@@ -302,7 +309,7 @@ profiles:
     extensionTrack: production-platform
     catalogReleaseTrain: productionPlatform
     claimOwnerArtifact: pypi:graphblocks
-    implementationArtifacts: [pypi:graphblocks, crate:graphblocks-runtime-durable, crate:graphblocks-telemetry, crate:graphblocks-control-plane, helm:graphblocks-operator]
+    implementationArtifacts: [pypi:graphblocks, crate:graphblocks-runtime-durable, crate:graphblocks-telemetry, crate:graphblocks-control-plane]
     evidenceArtifacts: [pypi:graphblocks-testing]
     extensionImplementation: python-reference
     inheritsCoreAuthority: true
@@ -689,6 +696,31 @@ releaseGates:
       - tools/release_supply_chain.py
       - tests/test_documentation_integrity.py
       - tests/test_release_supply_chain.py
+  - id: REL-KUBERNETES-OPERATOR
+    description: A Kubernetes artifact may claim operator or reconciliation-controller maturity only after controller implementation and lifecycle evidence are revision-bound.
+    readiness: definition-blocked
+    scope: artifact-promotion
+    blocksTargetRelease: false
+    artifact: helm:graphblocks-deployment-chart
+    currentMaturity: scaffold-only
+    requiredEvidence:
+      - controller-source-and-signed-oci-image
+      - watch-reconcile-status-convergence
+      - idempotent-reconcile-and-conflict-retry
+      - finalizer-deletion-lifecycle
+      - leader-election-and-failover
+      - envtest-reconciliation
+      - kind-install-and-upgrade
+      - crd-version-migration-and-rollback
+    currentEvidence:
+      - packages/graphblocks-deployment-chart/Chart.yaml
+      - packages/graphblocks-deployment-chart/values.yaml
+      - tests/test_deployment_chart_artifact.py
+      - docs/project/stable-release-matrix.yaml
+    blockers:
+      - controller-implementation-absent
+      - controller-image-absent
+      - reconciliation-lifecycle-evidence-absent
   - id: REL-INSTALLED-TCK
     description: Digest-bound TCK and acceptance evidence comes from installed release artifacts.
     readiness: candidate-enforced

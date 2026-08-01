@@ -1,0 +1,10 @@
+apiVersion: v2
+name: graphblocks-deployment-chart
+description: Internal disabled-by-default Helm scaffold for a user-supplied GraphBlocks Kubernetes controller; no controller implementation is included
+type: application
+version: 0.1.0
+appVersion: 0.1.0
+annotations:
+  graphblocks.ai/artifact-kind: deployment-scaffold
+  graphblocks.ai/controller-included: "false"
+  graphblocks.ai/maturity: internal

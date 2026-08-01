@@ -19,6 +19,10 @@ preparing the first 1.0 release candidate.
 
 ### Changed
 
+- Renamed the unsupported `graphblocks-operator` Helm/OCI claim to the internal
+  `graphblocks-deployment-chart` scaffold, disabled all resources by default,
+  removed the nonexistent default controller image and arguments, and added a
+  blocked evidence gate before any future operator or reconciliation claim.
 - Renamed the one-shot Rust control-plane executable from daemon-shaped
   `graphblocksd` to `graphblocks-control`, and bound its manifest, usage output,
   release metadata, and documentation to an argv-driven command lifecycle with

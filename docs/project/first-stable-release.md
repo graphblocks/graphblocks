@@ -57,11 +57,15 @@ review before the release gate can be declared passed.
 | `graphblocks-control` executable | Internal | The binary is delivered by the `graphblocks-control-plane` crate. It is an argv-driven one-shot CLI with command-specific JSON stdin payloads and structured JSON stdout/stderr; it is not a server or daemon. |
 | `graphblocks` Rust crate | Reserved | Name-reservation crate with no supported implementation. |
 | `graphblocks` npm package | Reserved | Name-reservation package with no JavaScript/TypeScript API. |
-| `graphblocks-operator` Helm/OCI artifact | Internal | Templates exist, but there is no supported reconciliation controller or deployment lifecycle yet. |
+| `graphblocks-deployment-chart` Helm scaffold | Internal | Disabled by default. It contains templates for a user-supplied controller but no controller implementation or OCI image and makes no operator/reconciliation claim. |
 
-Promotion of a Rust crate, native executable, npm API, or operator changes the
+Promotion of a Rust crate, native executable, npm API, or Kubernetes operator changes the
 release matrix and requires its own public-surface snapshot, packaging gates,
 and compatibility evidence. It is not implied by Python 1.0.
+The deployment scaffold cannot be promoted to an operator claim until
+`REL-KUBERNETES-OPERATOR` has revision-bound controller source and signed image,
+reconcile/status convergence, conflict retry, finalizer, leader-election,
+envtest, kind install/upgrade, and CRD migration/rollback evidence.
 
 ## Conformance-profile matrix
 

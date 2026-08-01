@@ -1,37 +1,37 @@
-{{- if .Values.rbac.create }}
+{{- if and .Values.scaffold.enabled .Values.rbac.create }}
 {{- if .Values.rbac.clusterWide }}
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: {{ include "graphblocks-operator.clusterFullname" . }}
+  name: {{ include "graphblocks-deployment-chart.clusterFullname" . }}
   labels:
-    app.kubernetes.io/name: graphblocks-operator
-    app.kubernetes.io/component: controller
+    app.kubernetes.io/name: graphblocks-deployment-chart
+    app.kubernetes.io/component: controller-scaffold
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/instance: {{ .Release.Name | quote }}
 rules:
-  {{- include "graphblocks-operator.rbacRules" . | nindent 2 }}
+  {{- toYaml .Values.rbac.rules | nindent 2 }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: {{ include "graphblocks-operator.clusterFullname" . }}
+  name: {{ include "graphblocks-deployment-chart.clusterFullname" . }}
   labels:
-    app.kubernetes.io/name: graphblocks-operator
-    app.kubernetes.io/component: controller
+    app.kubernetes.io/name: graphblocks-deployment-chart
+    app.kubernetes.io/component: controller-scaffold
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/instance: {{ .Release.Name | quote }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: {{ include "graphblocks-operator.clusterFullname" . }}
+  name: {{ include "graphblocks-deployment-chart.clusterFullname" . }}
 subjects:
   - kind: ServiceAccount
-    name: {{ include "graphblocks-operator.serviceAccountName" . | quote }}
+    name: {{ include "graphblocks-deployment-chart.serviceAccountName" . | quote }}
     namespace: {{ .Release.Namespace | quote }}
 {{- else }}
 {{- $root := . }}
-{{- $namespaces := .Values.controller.watchNamespaces }}
+{{- $namespaces := .Values.scaffold.accessNamespaces }}
 {{- if not $namespaces }}
 {{- $namespaces = list .Release.Namespace }}
 {{- end }}
@@ -42,33 +42,33 @@ subjects:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
-  name: {{ include "graphblocks-operator.fullname" $root }}
+  name: {{ include "graphblocks-deployment-chart.fullname" $root }}
   namespace: {{ $namespace | quote }}
   labels:
-    app.kubernetes.io/name: graphblocks-operator
-    app.kubernetes.io/component: controller
+    app.kubernetes.io/name: graphblocks-deployment-chart
+    app.kubernetes.io/component: controller-scaffold
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/instance: {{ $root.Release.Name | quote }}
 rules:
-  {{- include "graphblocks-operator.rbacRules" $root | nindent 2 }}
+  {{- toYaml $root.Values.rbac.rules | nindent 2 }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
-  name: {{ include "graphblocks-operator.fullname" $root }}
+  name: {{ include "graphblocks-deployment-chart.fullname" $root }}
   namespace: {{ $namespace | quote }}
   labels:
-    app.kubernetes.io/name: graphblocks-operator
-    app.kubernetes.io/component: controller
+    app.kubernetes.io/name: graphblocks-deployment-chart
+    app.kubernetes.io/component: controller-scaffold
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/instance: {{ $root.Release.Name | quote }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
-  name: {{ include "graphblocks-operator.fullname" $root }}
+  name: {{ include "graphblocks-deployment-chart.fullname" $root }}
 subjects:
   - kind: ServiceAccount
-    name: {{ include "graphblocks-operator.serviceAccountName" $root | quote }}
+    name: {{ include "graphblocks-deployment-chart.serviceAccountName" $root | quote }}
     namespace: {{ $root.Release.Namespace | quote }}
 {{- end }}
 {{- end }}

@@ -68,7 +68,7 @@ EXPECTED_COMPONENTS = {
     "graphblocks-openai",
     "graphblocks-openai-realtime",
     "graphblocks-openapi",
-    "graphblocks-operator",
+    "graphblocks-deployment-chart",
     "graphblocks-orchestration",
     "graphblocks-otel",
     "graphblocks-pdf",
@@ -410,13 +410,13 @@ def test_load_package_catalog_rejects_duplicate_identities(
         load_package_catalog(catalog_path)
 
 
-def test_catalog_declares_three_python_artifacts_and_operator_delivery_artifact() -> None:
+def test_catalog_declares_three_python_artifacts_and_deployment_scaffold() -> None:
     catalog = load_package_catalog()
     artifacts = {
         artifact["distribution"]: artifact for artifact in catalog["artifacts"]
     }
 
-    assert catalog["catalogVersion"] == 7
+    assert catalog["catalogVersion"] == 8
     assert "defaultMetaPackage" not in catalog
     assert "packages" not in catalog
     assert artifacts == {
@@ -445,11 +445,11 @@ def test_catalog_declares_three_python_artifacts_and_operator_delivery_artifact(
             "versionConstraint": "~=0.1",
             "dependsOn": ["graphblocks"],
         },
-        "graphblocks-operator": {
-            "distribution": "graphblocks-operator",
+        "graphblocks-deployment-chart": {
+            "distribution": "graphblocks-deployment-chart",
             "import": None,
-            "kind": "oci_image_and_helm",
-            "manifest": "packages/graphblocks-operator/Chart.yaml",
+            "kind": "helm_scaffold",
+            "manifest": "packages/graphblocks-deployment-chart/Chart.yaml",
             "versionConstraint": "~=0.1",
             "dependsOn": [],
         },
@@ -488,7 +488,15 @@ def test_catalog_preserves_logical_component_metadata_and_dependency_graph() -> 
         "graphblocks-conversation",
         "graphblocks-policy",
     ]
-    assert components["graphblocks-operator"]["kind"] == "oci_image_and_helm"
+    deployment_chart = components["graphblocks-deployment-chart"]
+    assert deployment_chart["kind"] == "helm_scaffold"
+    assert deployment_chart["layer"] == "deployment_scaffold"
+    assert deployment_chart["capabilityMaturity"] == "scaffold-only"
+    assert deployment_chart["controllerIncluded"] is False
+    assert deployment_chart["responsibility"] == [
+        "disabled_by_default_user_supplied_controller_deployment_scaffold",
+        "no_bundled_controller_or_oci_image_claim",
+    ]
 
 
 def test_components_map_to_artifacts_and_consolidated_imports() -> None:
@@ -501,8 +509,8 @@ def test_components_map_to_artifacts_and_consolidated_imports() -> None:
             assert component["artifact"] == "graphblocks-runtime"
         elif name == "graphblocks-testing":
             assert component["artifact"] == "graphblocks-testing"
-        elif name == "graphblocks-operator":
-            assert component["artifact"] == "graphblocks-operator"
+        elif name == "graphblocks-deployment-chart":
+            assert component["artifact"] == "graphblocks-deployment-chart"
             assert component["import"] is None
         else:
             assert component["artifact"] == "graphblocks"
@@ -514,7 +522,7 @@ def test_components_map_to_artifacts_and_consolidated_imports() -> None:
             assert component["import"] == DIRECT_IMPORTS[name]
 
     assert set(components) == INTEGRATION_COMPONENTS | set(DIRECT_IMPORTS) | {
-        "graphblocks-operator"
+        "graphblocks-deployment-chart"
     }
 
 
@@ -590,8 +598,8 @@ def test_package_rows_project_component_and_artifact_identities() -> None:
         "implementationPhase": "integration-defined",
         "stability": "integration",
     }
-    assert rows["graphblocks-operator"]["artifact"] == "graphblocks-operator"
-    assert rows["graphblocks-operator"]["import"] is None
+    assert rows["graphblocks-deployment-chart"]["artifact"] == "graphblocks-deployment-chart"
+    assert rows["graphblocks-deployment-chart"]["import"] is None
 
 
 def test_package_lock_resolves_default_component_and_artifact_selection() -> None:

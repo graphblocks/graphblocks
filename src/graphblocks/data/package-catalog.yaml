@@ -1,4 +1,4 @@
-catalogVersion: 7
+catalogVersion: 8
 specVersion: '1.0'
 defaultSelection:
   artifacts:
@@ -60,10 +60,10 @@ artifacts:
   versionConstraint: ~=0.1
   dependsOn:
   - graphblocks
-- distribution: graphblocks-operator
+- distribution: graphblocks-deployment-chart
   import: null
-  kind: oci_image_and_helm
-  manifest: packages/graphblocks-operator/Chart.yaml
+  kind: helm_scaffold
+  manifest: packages/graphblocks-deployment-chart/Chart.yaml
   versionConstraint: ~=0.1
   dependsOn: []
 releaseTrains:
@@ -134,7 +134,7 @@ releaseTrains:
     - graphblocks-telemetry
     - graphblocks-audit
     - graphblocks-devtools
-    - graphblocks-operator
+    - graphblocks-deployment-chart
     componentRequiredProfiles:
       graphblocks-callbacks: [GB-C4-PRODUCTION]
       graphblocks-cli: [GB-C0-SCHEMA, GB-C1-LOCAL-RUNTIME, GB-C4-PRODUCTION]
@@ -144,7 +144,7 @@ releaseTrains:
       graphblocks-telemetry: [GB-C4-PRODUCTION]
       graphblocks-audit: [GB-C4-PRODUCTION]
       graphblocks-devtools: [GB-C4-PRODUCTION]
-      graphblocks-operator: [GB-C4-PRODUCTION]
+      graphblocks-deployment-chart: [GB-C4-PRODUCTION]
     crossTrackSurfaces:
       graphblocks-cli:
         stableCoreCommands: [GB-C0-SCHEMA, GB-C1-LOCAL-RUNTIME]
@@ -157,7 +157,7 @@ releaseTrains:
       - graphblocks-audit
       deployment:
       - graphblocks-deployment
-      - graphblocks-operator
+      - graphblocks-deployment-chart
       observability:
       - graphblocks-telemetry
       tooling:
@@ -691,18 +691,21 @@ components:
   - argo_cd_flux_adapters
   implementationPhase: 4
   stability: first-party-extension
-- name: graphblocks-operator
-  artifact: graphblocks-operator
+- name: graphblocks-deployment-chart
+  artifact: graphblocks-deployment-chart
   import: null
-  layer: platform_controller
+  layer: deployment_scaffold
   default: false
-  kind: oci_image_and_helm
+  kind: helm_scaffold
   dependsOn:
   - graphblocks-deployment
   responsibility:
-  - kubernetes_reconciliation
+  - disabled_by_default_user_supplied_controller_deployment_scaffold
+  - no_bundled_controller_or_oci_image_claim
   implementationPhase: 4
   stability: first-party-extension
+  capabilityMaturity: scaffold-only
+  controllerIncluded: false
 - name: graphblocks-prometheus
   artifact: graphblocks
   import: graphblocks.integrations.prometheus
@@ -1162,7 +1165,7 @@ extensionComponents:
   - graphblocks-sqs
   - graphblocks-pubsub
   operations:
-  - graphblocks-operator
+  - graphblocks-deployment-chart
   - graphblocks-gitops
   - graphblocks-prometheus
   - graphblocks-dashboards

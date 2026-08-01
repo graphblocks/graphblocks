@@ -15,8 +15,10 @@ Python distribution surface is:
   normative compiler.
 - `graphblocks-testing`: the TCK library and `graphblocks-tck` command.
 
-The catalog also describes the non-Python `graphblocks-operator` release
-artifact. It does not count as a fourth Python distribution.
+The catalog also describes the non-Python `graphblocks-deployment-chart` Helm
+scaffold. It is disabled by default, contains no controller implementation or
+OCI image, and does not count as a fourth Python distribution. A future
+operator claim requires its separate blocked promotion gate.
 
 Built-in and integration identities remain independently discoverable in the
 catalog so graphs and locks can refer to stable capabilities. They are shipped

@@ -1,0 +1,75 @@
+{{- if .Values.scaffold.enabled }}
+{{- if not .Values.image.repository }}
+{{- fail "image.repository is required when scaffold.enabled=true; this chart does not include a controller image" }}
+{{- end }}
+{{- if and (not .Values.image.digest) (not .Values.image.tag) }}
+{{- fail "image.tag or image.digest is required when scaffold.enabled=true" }}
+{{- end }}
+{{- if and .Values.rbac.create (and (not .Values.serviceAccount.create) (not .Values.serviceAccount.name)) }}
+{{- fail "serviceAccount.create=true or serviceAccount.name is required when rbac.create=true" }}
+{{- end }}
+{{- $imageReference := printf "%s:%s" .Values.image.repository .Values.image.tag }}
+{{- if .Values.image.digest }}
+{{- $imageReference = printf "%s@%s" .Values.image.repository .Values.image.digest }}
+{{- end }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "graphblocks-deployment-chart.scaffoldName" . }}
+  labels:
+    app.kubernetes.io/name: graphblocks-deployment-chart
+    app.kubernetes.io/component: controller-scaffold
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/instance: {{ .Release.Name | quote }}
+spec:
+  replicas: {{ .Values.scaffold.replicas }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: graphblocks-deployment-chart
+      app.kubernetes.io/component: controller-scaffold
+      app.kubernetes.io/instance: {{ .Release.Name | quote }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: graphblocks-deployment-chart
+        app.kubernetes.io/component: controller-scaffold
+        app.kubernetes.io/instance: {{ .Release.Name | quote }}
+        {{- with (omit .Values.podLabels "app.kubernetes.io/name" "app.kubernetes.io/component" "app.kubernetes.io/instance") }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      annotations:
+        graphblocks.ai/deployment-scaffold-release-id: {{ .Values.scaffold.releaseId | quote }}
+        {{- with (omit .Values.podAnnotations "graphblocks.ai/deployment-scaffold-release-id") }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      {{- if or .Values.serviceAccount.create .Values.serviceAccount.name }}
+      serviceAccountName: {{ include "graphblocks-deployment-chart.serviceAccountName" . | quote }}
+      {{- end }}
+      containers:
+        - name: user-supplied-controller
+          image: {{ $imageReference | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy | quote }}
+          {{- with .Values.scaffold.args }}
+          args:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.scaffold.env }}
+          env:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

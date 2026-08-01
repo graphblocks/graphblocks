@@ -1,21 +1,25 @@
 image:
-  repository: ghcr.io/graphblocks/graphblocks-operator
-  tag: 0.1.0
+  repository: ""
+  tag: ""
   digest: ""
   pullPolicy: IfNotPresent
 
-controller:
-  releaseId: graphblocks-operator
-  watchNamespaces: []
+scaffold:
+  enabled: false
+  releaseId: graphblocks-deployment-chart
+  accessNamespaces: []
   replicas: 1
+  args: []
+  env: []
 
 serviceAccount:
-  create: true
+  create: false
   name: ""
 
 rbac:
-  create: true
+  create: false
   clusterWide: false
+  rules: []
 
 podAnnotations: {}
 podLabels: {}
