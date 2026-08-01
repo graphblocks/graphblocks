@@ -691,6 +691,113 @@ def test_normative_compiler_tck_rejects_reference_oracle_drift(monkeypatch) -> N
         ).run_cases((case,))
 
 
+def test_verified_regular_file_accepts_windows_ctime_difference(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monkeypatch.syspath_prepend(
+        str(ROOT / "packages" / "graphblocks-testing" / "src")
+    )
+    testing_cli = importlib.import_module("graphblocks_testing.cli")
+    artifact = tmp_path / "artifact.whl"
+    artifact.write_bytes(b"verified artifact")
+    descriptor_status = artifact.lstat()
+    path_status = SimpleNamespace(
+        st_dev=descriptor_status.st_dev,
+        st_ino=descriptor_status.st_ino,
+        st_mode=descriptor_status.st_mode,
+        st_size=descriptor_status.st_size,
+        st_mtime_ns=descriptor_status.st_mtime_ns,
+        st_ctime_ns=descriptor_status.st_ctime_ns + 1,
+    )
+    original_lstat = Path.lstat
+
+    def platform_lstat(path: Path):
+        if path == artifact:
+            return path_status
+        return original_lstat(path)
+
+    monkeypatch.setattr(Path, "lstat", platform_lstat)
+
+    with testing_cli._verified_regular_file(
+        artifact,
+        label="artifact",
+    ) as (verified, opened_status):
+        assert verified.read() == b"verified artifact"
+        assert opened_status.st_size == len(b"verified artifact")
+
+
+def test_verified_regular_file_rejects_cross_api_file_identity_mismatch(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monkeypatch.syspath_prepend(
+        str(ROOT / "packages" / "graphblocks-testing" / "src")
+    )
+    testing_cli = importlib.import_module("graphblocks_testing.cli")
+    artifact = tmp_path / "artifact.whl"
+    artifact.write_bytes(b"verified artifact")
+    descriptor_status = artifact.lstat()
+    path_status = SimpleNamespace(
+        st_dev=descriptor_status.st_dev,
+        st_ino=descriptor_status.st_ino + 1,
+        st_mode=descriptor_status.st_mode,
+        st_size=descriptor_status.st_size,
+        st_mtime_ns=descriptor_status.st_mtime_ns,
+        st_ctime_ns=descriptor_status.st_ctime_ns,
+    )
+    original_lstat = Path.lstat
+
+    def mismatched_lstat(path: Path):
+        if path == artifact:
+            return path_status
+        return original_lstat(path)
+
+    monkeypatch.setattr(Path, "lstat", mismatched_lstat)
+
+    with pytest.raises(ValueError, match="changed while it was opened"):
+        with testing_cli._verified_regular_file(artifact, label="artifact"):
+            pass
+
+
+def test_verified_regular_file_rejects_descriptor_change_while_reading(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monkeypatch.syspath_prepend(
+        str(ROOT / "packages" / "graphblocks-testing" / "src")
+    )
+    testing_cli = importlib.import_module("graphblocks_testing.cli")
+    artifact = tmp_path / "artifact.whl"
+    artifact.write_bytes(b"verified artifact")
+    original_fstat = os.fstat
+    fstat_calls = 0
+
+    def changing_fstat(descriptor: int):
+        nonlocal fstat_calls
+        descriptor_status = original_fstat(descriptor)
+        fstat_calls += 1
+        if fstat_calls == 1:
+            return descriptor_status
+        return SimpleNamespace(
+            st_dev=descriptor_status.st_dev,
+            st_ino=descriptor_status.st_ino,
+            st_mode=descriptor_status.st_mode,
+            st_size=descriptor_status.st_size,
+            st_mtime_ns=descriptor_status.st_mtime_ns,
+            st_ctime_ns=descriptor_status.st_ctime_ns + 1,
+        )
+
+    monkeypatch.setattr(testing_cli.os, "fstat", changing_fstat)
+
+    with pytest.raises(ValueError, match="changed while it was read"):
+        with testing_cli._verified_regular_file(
+            artifact,
+            label="artifact",
+        ) as (verified, _opened_status):
+            assert verified.read() == b"verified artifact"
+
+
 def test_native_compiler_wheel_artifact_binds_installed_binding(
     tmp_path,
     monkeypatch,

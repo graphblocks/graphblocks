@@ -110,9 +110,29 @@ def _verified_regular_file(
             current_status = path.lstat()
         except OSError as error:
             raise ValueError(f"{label} changed while it was opened") from error
-        if not stat.S_ISREG(opened_status.st_mode) or _stat_identity(
-            current_status
-        ) != _stat_identity(opened_status):
+        # Windows 3.12 path stat preserves creation time in st_ctime_ns while
+        # descriptor stat exposes metadata change time.  Bind the two views by
+        # file identity and content metadata, and compare each API's full stat
+        # result separately below.
+        opened_cross_api_identity = (
+            opened_status.st_dev,
+            opened_status.st_ino,
+            stat.S_IFMT(opened_status.st_mode),
+            opened_status.st_size,
+            opened_status.st_mtime_ns,
+        )
+        current_cross_api_identity = (
+            current_status.st_dev,
+            current_status.st_ino,
+            stat.S_IFMT(current_status.st_mode),
+            current_status.st_size,
+            current_status.st_mtime_ns,
+        )
+        if (
+            not stat.S_ISREG(opened_status.st_mode)
+            or _stat_identity(current_status) != _stat_identity(path_status)
+            or current_cross_api_identity != opened_cross_api_identity
+        ):
             raise ValueError(f"{label} changed while it was opened")
         yield file, opened_status
         final_status = os.fstat(file.fileno())
@@ -120,9 +140,25 @@ def _verified_regular_file(
             current_status = path.lstat()
         except OSError as error:
             raise ValueError(f"{label} changed while it was read") from error
-        if _stat_identity(final_status) != _stat_identity(
-            opened_status
-        ) or _stat_identity(current_status) != _stat_identity(opened_status):
+        final_cross_api_identity = (
+            final_status.st_dev,
+            final_status.st_ino,
+            stat.S_IFMT(final_status.st_mode),
+            final_status.st_size,
+            final_status.st_mtime_ns,
+        )
+        current_cross_api_identity = (
+            current_status.st_dev,
+            current_status.st_ino,
+            stat.S_IFMT(current_status.st_mode),
+            current_status.st_size,
+            current_status.st_mtime_ns,
+        )
+        if (
+            _stat_identity(final_status) != _stat_identity(opened_status)
+            or _stat_identity(current_status) != _stat_identity(path_status)
+            or final_cross_api_identity != current_cross_api_identity
+        ):
             raise ValueError(f"{label} changed while it was read")
 
 
