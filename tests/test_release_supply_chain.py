@@ -3727,12 +3727,12 @@ def test_ci_primes_offline_rust_inputs_and_retains_failure_diagnostics() -> None
         assert "rustup run 1.94.0 cargo clippy --version" in preflight
         assert "rustup run 1.94.0 cargo fmt --version" in preflight
 
-    python_steps = {step["name"]: step for step in jobs["python"]["steps"]}
-    testing_install = python_steps["Install GraphBlocks testing package"]["run"]
-    assert testing_install == (
-        "python -m pip install --no-build-isolation --no-deps "
-        "./packages/graphblocks-testing"
+    python_job = jobs["python"]
+    python_steps = {step["name"]: step for step in python_job["steps"]}
+    assert python_job["env"]["PYTHONPATH"] == (
+        "${{ github.workspace }}/packages/graphblocks-testing/src"
     )
+    assert "Install GraphBlocks testing package" not in python_steps
     cargo_fetch = python_steps["Prime offline Rust example dependencies"]["run"]
     assert "cargo fetch --locked --manifest-path" in cargo_fetch
     assert (
