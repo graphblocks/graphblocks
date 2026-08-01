@@ -225,14 +225,26 @@ artifacts:
       - supervisor-lifecycle
   - id: crate:graphblocks
     ecosystem: rust
-    kind: library-crate
+    kind: reserved-name-crate
     path: crates/graphblocks/Cargo.toml
     tier: reserved
+    readiness: repository-enforced-publish-pending
+    version: 0.0.2
+    usableApi: false
+    publicSurface: reserved-package-notice-only
+    buildBehavior: emits-reserved-package-warning
+    promotionGate: REL-RESERVED-ARTIFACTS
   - id: npm:graphblocks
     ecosystem: npm
-    kind: package
+    kind: reserved-name-package
     path: packages/graphblocks-npm/package.json
     tier: reserved
+    readiness: repository-enforced-publish-pending
+    version: 0.0.2
+    usableApi: false
+    importBehavior: throws-ERR_GRAPHBLOCKS_RESERVED_PACKAGE
+    registryDeprecationRequired: true
+    promotionGate: REL-RESERVED-ARTIFACTS
   - id: helm:graphblocks-deployment-chart
     ecosystem: kubernetes
     kind: helm-scaffold
@@ -721,6 +733,37 @@ releaseGates:
       - controller-implementation-absent
       - controller-image-absent
       - reconciliation-lifecycle-evidence-absent
+  - id: REL-RESERVED-ARTIFACTS
+    description: Reserved-name packages must expose no usable API, ship an unmistakable notice, fail closed when imported, and carry registry-visible reservation evidence.
+    readiness: repository-enforced-registry-blocked
+    scope: artifact-publication
+    blocksTargetRelease: false
+    artifacts: [crate:graphblocks, npm:graphblocks]
+    authorizationRequiredForRegistryMutation: true
+    requiredEvidence:
+      - reserved-marker-in-package-metadata-and-readme
+      - rust-build-warning-and-notice-only-public-surface
+      - npm-import-dedicated-reserved-package-error
+      - package-content-and-smoke-gates
+      - published-reserved-marker-revisions
+      - npm-registry-deprecation-message
+    currentEvidence:
+      - crates/graphblocks/Cargo.toml
+      - crates/graphblocks/README.md
+      - crates/graphblocks/RESERVED_PACKAGE_NOTICE.txt
+      - crates/graphblocks/build.rs
+      - crates/graphblocks/src/lib.rs
+      - packages/graphblocks-npm/package.json
+      - packages/graphblocks-npm/README.md
+      - packages/graphblocks-npm/index.js
+      - packages/graphblocks-npm/smoke.cjs
+      - tests/test_reserved_artifacts.py
+      - .github/workflows/ci.yml
+      - docs/project/stable-release-matrix.yaml
+    blockers:
+      - crates-io-graphblocks-0.0.2-not-published
+      - npm-graphblocks-0.0.2-not-published
+      - npm-registry-deprecation-message-not-applied
   - id: REL-INSTALLED-TCK
     description: Digest-bound TCK and acceptance evidence comes from installed release artifacts.
     readiness: candidate-enforced

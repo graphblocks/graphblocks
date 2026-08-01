@@ -19,6 +19,9 @@ preparing the first 1.0 release candidate.
 
 ### Changed
 
+- Replaced the normal-looking APIs of the reserved Rust and npm `graphblocks`
+  artifacts with explicit reserved-name metadata, a Rust build warning and
+  notice-only surface, and an npm import error backed by package smoke gates.
 - Renamed the unsupported `graphblocks-operator` Helm/OCI claim to the internal
   `graphblocks-deployment-chart` scaffold, disabled all resources by default,
   removed the nonexistent default controller image and arguments, and added a

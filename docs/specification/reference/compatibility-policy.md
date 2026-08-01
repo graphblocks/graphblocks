@@ -23,6 +23,14 @@ release notes and migrations when persisted data is affected. Preview patch
 releases remain non-breaking bug-fix releases. Internal and reserved surfaces
 have no compatibility promise and must not be presented as supported APIs.
 
+Reserved-name artifacts expose no usable implementation API. Their package
+metadata and README must lead with an unambiguous reservation marker; a Rust
+build emits the same notice, and an npm import fails with a dedicated error.
+Repository metadata alone does not produce an npm install warning. Before a
+reserved npm revision is treated as delivered, its release evidence must also
+verify the registry deprecation message applied through the official
+[`npm deprecate` mechanism](https://docs.npmjs.com/deprecating-and-undeprecating-packages-or-package-versions/).
+
 ## What compatibility covers
 
 For a stable surface, compatibility includes:

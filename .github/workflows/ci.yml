@@ -64,6 +64,20 @@ jobs:
           helm version --short
           helm lint packages/graphblocks-deployment-chart
           python -m pytest -q tests/test_deployment_chart_artifact.py
+      - name: Verify reserved Rust artifact boundary
+        if: ${{ matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11' }}
+        shell: bash
+        run: |
+          cargo test -p graphblocks --locked
+          cargo package -p graphblocks --list --locked
+      - name: Verify reserved npm artifact boundary
+        if: ${{ matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11' }}
+        working-directory: packages/graphblocks-npm
+        shell: bash
+        run: |
+          node --version
+          npm test
+          npm pack --dry-run --json
       - name: Install native compiler differential target
         run: python -m pip install --no-build-isolation --no-deps --editable ./packages/graphblocks-runtime
       - name: Prime offline Rust example dependencies

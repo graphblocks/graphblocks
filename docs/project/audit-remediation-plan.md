@@ -352,7 +352,11 @@ command, or daemon lifecycle. The Kubernetes artifact is named
 controller or OCI image. It may claim operator maturity only after the blocked
 `REL-KUBERNETES-OPERATOR` gate receives revision-bound reconciliation, status,
 upgrade, finalizer, leader-election, envtest, and kind evidence. Reserved
-Rust/npm artifacts must install only an unambiguous reserved-package notice.
+Rust/npm artifacts expose no usable API: the Rust crate emits an install/build
+notice and exports only that notice, while npm import throws a dedicated
+reserved-package error. `REL-RESERVED-ARTIFACTS` remains blocked until the
+marker releases are published and the npm registry deprecation message is
+verified.
 
 ### Generated project facts and naming
 

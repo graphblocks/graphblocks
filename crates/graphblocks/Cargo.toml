@@ -1,16 +1,20 @@
 [package]
 name = "graphblocks"
-version = "0.0.1"
-description = "Reserved alpha crate for GraphBlocks"
+version = "0.0.2"
+description = "RESERVED NAME ONLY; contains no supported GraphBlocks Rust API"
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 repository = "https://github.com/graphblocks/graphblocks"
-homepage = "https://github.com/graphblocks/graphblocks"
-documentation = "https://docs.rs/graphblocks"
+homepage = "https://github.com/graphblocks/graphblocks/tree/main/crates/graphblocks"
+documentation = "https://github.com/graphblocks/graphblocks/tree/main/crates/graphblocks/README.md"
 readme = "README.md"
-keywords = ["ai", "workflow", "graph", "runtime"]
-categories = ["development-tools"]
+keywords = ["reserved-name"]
+
+[package.metadata.graphblocks]
+artifact-status = "reserved-name-only"
+usable-api = false
+supported-distribution = "https://pypi.org/project/graphblocks/"
 
 [dependencies]
 

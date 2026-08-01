@@ -55,8 +55,8 @@ review before the release gate can be declared passed.
 | `graphblocks-schema`, `graphblocks-compiler`, `graphblocks-flow`, `graphblocks-runtime-core`, `graphblocks-runtime-durable`, `graphblocks-protocol`, `graphblocks-telemetry`, `graphblocks-control-plane`, and `graphblocks-python` crates | Internal | Implementation crates used by the native bindings, native CLIs, and conformance work. Their Rust APIs are not yet a public SemVer surface. |
 | `graphblocks-native` executable (`graphblocks-cli-native` crate) | Preview | Python-free validate/plan/run is useful, but native block coverage, adapter injection, diagnostics, and differential evidence are not yet at the stable gate. |
 | `graphblocks-control` executable | Internal | The binary is delivered by the `graphblocks-control-plane` crate. It is an argv-driven one-shot CLI with command-specific JSON stdin payloads and structured JSON stdout/stderr; it is not a server or daemon. |
-| `graphblocks` Rust crate | Reserved | Name-reservation crate with no supported implementation. |
-| `graphblocks` npm package | Reserved | Name-reservation package with no JavaScript/TypeScript API. |
+| `graphblocks` Rust crate | Reserved | Repository version 0.0.2 emits a build warning and exports only `RESERVED_PACKAGE_NOTICE`; it has no supported Rust API. Registry publication remains gated. |
+| `graphblocks` npm package | Reserved | Repository version 0.0.2 throws `ERR_GRAPHBLOCKS_RESERVED_PACKAGE` on import and has no JavaScript/TypeScript API. Publication and registry deprecation evidence remain gated. |
 | `graphblocks-deployment-chart` Helm scaffold | Internal | Disabled by default. It contains templates for a user-supplied controller but no controller implementation or OCI image and makes no operator/reconciliation claim. |
 
 Promotion of a Rust crate, native executable, npm API, or Kubernetes operator changes the
@@ -66,6 +66,10 @@ The deployment scaffold cannot be promoted to an operator claim until
 `REL-KUBERNETES-OPERATOR` has revision-bound controller source and signed image,
 reconcile/status convergence, conflict retry, finalizer, leader-election,
 envtest, kind install/upgrade, and CRD migration/rollback evidence.
+The repository contract for both reserved-name packages is enforced by
+`REL-RESERVED-ARTIFACTS`, but it does not change crates.io or npm registry state.
+Publishing 0.0.2 and applying a registry-visible npm deprecation message require
+separate release authorization and evidence.
 
 ## Conformance-profile matrix
 

@@ -1,14 +1,15 @@
-# graphblocks
+# graphblocks — RESERVED NAME ONLY
 
-Don't reinvent wheel.
+> **Do not install this package.** It contains no GraphBlocks JavaScript or
+> TypeScript API.
 
-This is an alpha placeholder package for GraphBlocks. It reserves the
-`graphblocks` npm package name while the JavaScript/TypeScript package surface
-is defined.
+This npm artifact reserves the `graphblocks` name. Importing or requiring it
+throws `ERR_GRAPHBLOCKS_RESERVED_PACKAGE`; it does not export a version or any
+runtime functionality.
 
-GraphBlocks is a provider-neutral contract layer for AI applications. Use the
-tools you already trust; use GraphBlocks to make their contracts portable,
-testable, and governable.
+The supported GraphBlocks distribution is the Python package on
+[PyPI](https://pypi.org/project/graphblocks/). No JavaScript or TypeScript
+surface is currently supported or planned by this package.
 
 Source and documentation:
 

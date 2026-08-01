@@ -20,6 +20,11 @@ scaffold. It is disabled by default, contains no controller implementation or
 OCI image, and does not count as a fourth Python distribution. A future
 operator claim requires its separate blocked promotion gate.
 
+The crates.io and npm artifacts both named `graphblocks` are reservation
+artifacts, not installation targets. The Rust crate exposes only a reservation
+notice, and importing the npm package throws a dedicated reserved-package
+error. They are deliberately excluded from the supported package surface.
+
 Built-in and integration identities remain independently discoverable in the
 catalog so graphs and locks can refer to stable capabilities. They are shipped
 as part of `graphblocks`, not as dozens of separately installed feature wheels.

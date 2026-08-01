@@ -43,7 +43,7 @@ The retained boundaries are:
 
 | Crate | Boundary and consumer rationale | Rust API budget |
 | --- | --- | --- |
-| `graphblocks` | Reserved crates.io name; no implementation contract. | Reserved only; no supported API. |
+| `graphblocks` | Reserved crates.io name with an install/build warning and notice-only public surface. | Reserved only; no supported API. |
 | `graphblocks-flow` | Optional flow-control extension with its own lease, rate, semaphore, and ticket implementation and tests. | Internal until separately promoted. |
 | `graphblocks-telemetry` | Optional observability extension with a distinct implementation and crate-local observability tests. | Internal until separately promoted. |
 | `graphblocks-cli-native` | Produces the separately installed `graphblocks-native` executable. | Preview executable; library API is not supported. |

@@ -1,0 +1,1 @@
+RESERVED PACKAGE: the crates.io package `graphblocks` contains no supported Rust API. Do not depend on it. The supported GraphBlocks distribution is the Python package at https://pypi.org/project/graphblocks/.

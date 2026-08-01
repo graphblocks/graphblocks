@@ -1,7 +1,7 @@
 {
   "name": "graphblocks",
-  "version": "0.0.1",
-  "description": "Reserved alpha package for GraphBlocks",
+  "version": "0.0.2",
+  "description": "RESERVED NAME ONLY; contains no GraphBlocks JavaScript or TypeScript API",
   "license": "Apache-2.0",
   "homepage": "https://github.com/graphblocks/graphblocks#readme",
   "repository": {
@@ -12,20 +12,26 @@
   "bugs": {
     "url": "https://github.com/graphblocks/graphblocks/issues"
   },
-  "keywords": [
-    "ai",
-    "workflow",
-    "rag",
-    "graph",
-    "runtime",
-    "contracts"
-  ],
+  "keywords": ["reserved-name"],
   "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./package.json": "./package.json"
+  },
   "files": [
     "index.js",
-    "README.md"
+    "README.md",
+    "smoke.cjs"
   ],
+  "scripts": {
+    "test": "node smoke.cjs"
+  },
   "engines": {
     "node": ">=18"
+  },
+  "graphblocksArtifact": {
+    "status": "reserved-name-only",
+    "usableApi": false,
+    "supportedDistribution": "https://pypi.org/project/graphblocks/"
   }
 }
