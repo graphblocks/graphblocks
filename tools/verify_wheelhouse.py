@@ -1094,11 +1094,17 @@ def _run_json_command(
                 if isinstance(completed.stderr, str) and completed.stderr.strip()
                 else completed.stdout
             )
+            if len(raw_detail) > 2_000:
+                raw_detail = (
+                    raw_detail[:500]
+                    + " ... output omitted ... "
+                    + raw_detail[-1_400:]
+                )
             detail = re.sub(
                 r"[^\x20-\x7e]",
                 "?",
-                " ".join(raw_detail[:2_000].split()),
-            )[:500]
+                " ".join(raw_detail.split()),
+            )[:2_000]
             detail_suffix = f": {detail}" if detail else ""
             raise RuntimeError(
                 f"installed {kind} command exited with status "

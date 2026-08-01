@@ -455,7 +455,7 @@ def test_run_json_command_reports_bounded_failed_tck_cases(
     assert message.endswith("additional failures omitted")
 
 
-def test_run_json_command_bounds_non_json_failure_message(
+def test_run_json_command_preserves_bounded_non_json_failure_context(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -465,7 +465,13 @@ def test_run_json_command_bounds_non_json_failure_message(
         module,
         returncode=7,
         stdout="",
-        stderr="\x1b[31mchild\nfailure\x00 " + ("detail " * 200) + "unbounded-tail",
+        stderr=(
+            "\x1b[31mchild\nfailure\x00 "
+            + ("head-detail " * 100)
+            + "omitted-middle-marker "
+            + ("tail-detail " * 200)
+            + "final ValueError: incompatible wheel"
+        ),
     )
 
     with pytest.raises(RuntimeError) as captured:
@@ -479,10 +485,12 @@ def test_run_json_command_bounds_non_json_failure_message(
     message = str(captured.value)
     assert "exited with status 7 without valid JSON" in message
     assert "?[31mchild failure?" in message
+    assert "output omitted" in message
+    assert "omitted-middle-marker" not in message
+    assert message.endswith("final ValueError: incompatible wheel")
     assert "\x1b" not in message
     assert "\n" not in message
-    assert "unbounded-tail" not in message
-    assert len(message) < 600
+    assert len(message) < 2_100
 
 
 def test_run_json_command_rejects_nonzero_exit_with_passing_evidence(
