@@ -102,11 +102,35 @@ jobs:
           python -m pytest \
             --junitxml=dist/ci/python-tests.xml \
             2>&1 | tee dist/ci/python-tests.log
+      - name: Run manifest-bound stable security gates
+        if: ${{ matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11' }}
+        env:
+          RUNNER_OS: ${{ matrix.os }}
+          RUNNER_PYTHON: ${{ matrix.python-version }}
+          SECURITY_GATE_ARTIFACT_NAME: graphblocks-stable-security-gates-${{ github.run_attempt }}
+        run: >-
+          python tools/stable_security_gates.py
+          --result dist/ci/stable-security-gates.json
+          --junit dist/ci/stable-security-gates.xml
+          --candidate-commit "$GITHUB_SHA"
+          --runner-os "$RUNNER_OS"
+          --runner-python "$RUNNER_PYTHON"
+          --artifact-name "$SECURITY_GATE_ARTIFACT_NAME"
+      - name: Retain manifest-bound stable security-gate evidence
+        if: ${{ always() && matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11' }}
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: graphblocks-stable-security-gates-${{ github.run_attempt }}
+          path: |
+            dist/ci/stable-security-gates.json
+            dist/ci/stable-security-gates.xml
+          if-no-files-found: error
+          retention-days: 90
       - name: Retain Python CI diagnostics
         if: always()
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
-          name: graphblocks-ci-python-${{ matrix.os }}-py${{ matrix.python-version }}
+          name: graphblocks-ci-python-${{ matrix.os }}-py${{ matrix.python-version }}-attempt-${{ github.run_attempt }}
           path: dist/ci
           if-no-files-found: warn
           retention-days: 30
@@ -166,7 +190,7 @@ jobs:
       - name: Retain platform release inputs and conformance evidence
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
-          name: graphblocks-release-input-${{ matrix.os }}-py${{ matrix.python-version }}
+          name: graphblocks-release-input-${{ matrix.os }}-py${{ matrix.python-version }}-attempt-${{ github.run_attempt }}
           path: |
             dist/platform-wheelhouse
             dist/platform-sdists
@@ -177,7 +201,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
-          name: graphblocks-ci-installed-${{ matrix.os }}-py${{ matrix.python-version }}
+          name: graphblocks-ci-installed-${{ matrix.os }}-py${{ matrix.python-version }}-attempt-${{ github.run_attempt }}
           path: dist/ci
           if-no-files-found: warn
           retention-days: 30
@@ -233,7 +257,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
-          name: graphblocks-ci-examples
+          name: graphblocks-ci-examples-attempt-${{ github.run_attempt }}
           path: dist/ci
           if-no-files-found: warn
           retention-days: 30
@@ -332,9 +356,14 @@ jobs:
       - name: Download exact supported-platform release inputs
         uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6
         with:
-          pattern: graphblocks-release-input-*
+          pattern: graphblocks-release-input-*-attempt-${{ github.run_attempt }}
           path: dist/platform-inputs
           merge-multiple: false
+      - name: Download exact manifest-bound stable security-gate evidence
+        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6
+        with:
+          name: graphblocks-stable-security-gates-${{ github.run_attempt }}
+          path: dist/stable-security-gates
       - name: Assemble and verify the offline release bundle
         env:
           BUILDER_ID: https://github.com/graphblocks/graphblocks/.github/workflows/ci.yml
@@ -364,18 +393,20 @@ jobs:
           --candidate-ref "$GITHUB_REF"
           --candidate-commit "$GITHUB_SHA"
           --run-id "$RUN_ATTEMPT_ID"
+          --security-gate-result dist/stable-security-gates/stable-security-gates.json
+          --security-gate-junit dist/stable-security-gates/stable-security-gates.xml
       - name: Retain the exact frozen candidate matrix attestation
         if: startsWith(github.ref, 'refs/tags/v1.0.0-rc.')
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
-          name: graphblocks-frozen-candidate-matrix-report
+          name: graphblocks-frozen-candidate-matrix-report-${{ github.run_attempt }}
           path: dist/frozen-candidate-matrix-report/report.json
           if-no-files-found: error
           retention-days: 30
       - name: Retain frozen unsigned release bundle
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
-          name: graphblocks-unsigned-release-candidate-bundle
+          name: graphblocks-unsigned-release-candidate-bundle-${{ github.run_attempt }}
           path: dist/release-bundle
           if-no-files-found: error
           retention-days: 30
@@ -396,7 +427,7 @@ jobs:
       - name: Download the exact frozen candidate matrix attestation
         uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6
         with:
-          name: graphblocks-frozen-candidate-matrix-report
+          name: graphblocks-frozen-candidate-matrix-report-${{ github.run_attempt }}
           path: dist/signed-candidate-matrix-report
       - name: Install pinned Cosign
         uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
@@ -439,7 +470,7 @@ jobs:
       - name: Download exact frozen unsigned release bundle
         uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6
         with:
-          name: graphblocks-unsigned-release-candidate-bundle
+          name: graphblocks-unsigned-release-candidate-bundle-${{ github.run_attempt }}
           path: dist/release-bundle
       - name: Install pinned Cosign
         uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
@@ -461,7 +492,7 @@ jobs:
       - name: Retain signed release artifacts, evidence, and attestations
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
-          name: graphblocks-release-candidate-bundle
+          name: graphblocks-release-candidate-bundle-${{ github.run_attempt }}
           path: dist/release-bundle
           if-no-files-found: error
           retention-days: 30
@@ -547,7 +578,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
-          name: graphblocks-ci-rust
+          name: graphblocks-ci-rust-attempt-${{ github.run_attempt }}
           path: dist/ci
           if-no-files-found: warn
           retention-days: 30

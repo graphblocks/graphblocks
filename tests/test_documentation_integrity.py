@@ -1599,7 +1599,11 @@ def test_stable_release_matrix_is_complete_and_machine_readable() -> None:
     )
     assert audit_gate["readiness"] == "blocked"
     assert audit_gate["exitCriteria"]["maxOpenBySeverity"] == {"P0": 0, "P1": 0}
-    assert audit_gate["companionGates"] == ["REL-MACOS-NATIVE-SMOKE"]
+    assert audit_gate["companionGates"] == [
+        "REL-OBJECT-AUTHORIZATION-REVIEW",
+        "REL-ADVERSARIAL-RESOURCE-TESTS",
+        "REL-MACOS-NATIVE-SMOKE",
+    ]
 
     macos_gate = next(
         entry for entry in matrix["releaseGates"] if entry["id"] == "REL-MACOS-NATIVE-SMOKE"

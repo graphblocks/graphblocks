@@ -9,11 +9,13 @@ import re
 import subprocess
 import sys
 from types import ModuleType
+import xml.etree.ElementTree as ElementTree
 
 import pytest
 import yaml
 
 from graphblocks.canonical import canonical_hash
+from tools import stable_security_gates
 
 
 COMMIT = "1" * 40
@@ -55,6 +57,77 @@ def _with_content_digest(payload: dict[str, object]) -> dict[str, object]:
     return payload
 
 
+def _security_gate_junit(module: ModuleType) -> bytes:
+    selectors = stable_security_gates.manifest_selectors(
+        module.STABLE_SECURITY_GATE_MANIFEST
+    )
+    suites = ElementTree.Element("testsuites")
+    suite = ElementTree.SubElement(
+        suites,
+        "testsuite",
+        {
+            "tests": str(len(selectors)),
+            "failures": "0",
+            "errors": "0",
+            "skipped": "0",
+        },
+    )
+    for selector in selectors:
+        path, name = selector.split("::", 1)
+        ElementTree.SubElement(
+            suite,
+            "testcase",
+            {
+                "classname": path.removesuffix(".py").replace("/", "."),
+                "name": name,
+            },
+        )
+    return ElementTree.tostring(suites, encoding="utf-8", xml_declaration=True)
+
+
+def _security_gate_result(
+    module: ModuleType,
+    *,
+    run_attempt: int = 1,
+) -> tuple[dict[str, object], bytes]:
+    junit_bytes = _security_gate_junit(module)
+    source_blobs = {
+        path: (Path(__file__).parents[1] / path).read_bytes()
+        for path in module.SECURITY_GATE_EVIDENCE_PATHS
+    }
+    return (
+        stable_security_gates.build_result(
+            manifest=module.STABLE_SECURITY_GATE_MANIFEST,
+            manifest_bytes=module.STABLE_SECURITY_GATE_MANIFEST_BYTES,
+            candidate_commit=CANDIDATE_COMMIT,
+            source_blobs=source_blobs,
+            junit_bytes=junit_bytes,
+            artifact_name=(
+                f"{stable_security_gates.ARTIFACT_NAME_PREFIX}-{run_attempt}"
+            ),
+        ),
+        junit_bytes,
+    )
+
+
+def _write_security_gate_evidence(
+    module: ModuleType,
+    directory: Path,
+    *,
+    run_attempt: int = 1,
+) -> tuple[Path, Path, dict[str, object]]:
+    result, junit_bytes = _security_gate_result(
+        module,
+        run_attempt=run_attempt,
+    )
+    directory.mkdir(parents=True)
+    result_path = directory / stable_security_gates.RESULT_FILE
+    junit_path = directory / stable_security_gates.JUNIT_FILE
+    result_path.write_bytes(module._canonical_json_bytes(result))
+    junit_path.write_bytes(junit_bytes)
+    return result_path, junit_path, result
+
+
 def _trust_test_source(
     module: ModuleType,
     *,
@@ -74,13 +147,18 @@ def _trust_test_source(
     }
     original_promotion_git_blob = module._promotion_git_blob
     integration_matrix_path = "docs/project/stable-release-matrix.yaml"
-    integration_matrix_bytes = (
-        Path(__file__).parents[1] / integration_matrix_path
-    ).read_bytes()
+    source_blobs = {
+        path: (Path(__file__).parents[1] / path).read_bytes()
+        for path in (
+            integration_matrix_path,
+            module.SECURITY_GATE_MANIFEST_PATH,
+            *module.SECURITY_GATE_EVIDENCE_PATHS,
+        )
+    }
     module._promotion_git_blob = (
         lambda commit, path: (
-            integration_matrix_bytes
-            if path == integration_matrix_path
+            source_blobs[path]
+            if path in source_blobs
             else original_promotion_git_blob(commit, path)
         )
     )
@@ -467,6 +545,7 @@ def _promotion_payload_and_files(
                 {"os": os_name, "python": python_version}
                 for os_name, python_version in module.SUPPORTED_PLATFORM_MATRIX
             ],
+            "securityGates": _security_gate_result(module)[0],
         }
         for index in range(1, 4)
     ]
@@ -490,16 +569,30 @@ def _promotion_payload_and_files(
     ]
     for application in applications:
         reports[str(application["applicationId"])] = dict(application)
+    reviewed_matrix_run_digests = [
+        "sha256:" + module._sha256_bytes(module._canonical_json_bytes(run))
+        for run in matrix_runs
+    ]
     for review_name, reviewer in (
         ("api", "reviewer-api@example.test"),
         ("security", "reviewer-security@example.test"),
     ):
-        reports[f"{review_name}-review"] = {
+        report: dict[str, object] = {
             "reviewerIdentity": reviewer,
             "approved": True,
             "candidateRef": RELEASE_REF,
             "candidateCommit": CANDIDATE_COMMIT,
         }
+        if review_name == "security":
+            report.update(
+                {
+                    "objectAuthorizationScope": list(
+                        module.OBJECT_AUTHORIZATION_REVIEW_SCOPE
+                    ),
+                    "reviewedMatrixRunDigests": reviewed_matrix_run_digests,
+                }
+            )
+        reports[f"{review_name}-review"] = report
     reports["protected-final-ref"] = {
         "releaseRef": "refs/tags/v1.0.0",
         "protected": True,
@@ -620,6 +713,10 @@ def _promotion_payload_and_files(
                 "reviewerIdentity": "reviewer-security@example.test",
                 "approved": True,
                 "reportDigest": report_digests["security-review"],
+                "objectAuthorizationScope": list(
+                    module.OBJECT_AUTHORIZATION_REVIEW_SCOPE
+                ),
+                "reviewedMatrixRunDigests": reviewed_matrix_run_digests,
             },
         },
         "stableScope": {
@@ -850,6 +947,83 @@ def test_promotion_source_diff_allows_only_release_metadata(
             candidate_commit=candidate_commit,
             final_commit=changed_commit,
             final_tree=changed_tree,
+            candidate_ref=RELEASE_REF,
+        )
+
+
+@pytest.mark.parametrize(
+    "authority_path",
+    (
+        "docs/project/stable-release-matrix.yaml",
+        "docs/project/stable-security-gates.yaml",
+    ),
+)
+def test_promotion_source_diff_rejects_release_authority_drift(
+    tmp_path: Path,
+    authority_path: str,
+) -> None:
+    module = _load_module()
+    repository = tmp_path / authority_path.rsplit("/", 1)[-1]
+    authority_file = repository / authority_path
+    authority_file.parent.mkdir(parents=True)
+    authority_file.write_text("authority: candidate\n", encoding="utf-8")
+    subprocess.run(["git", "init", "-q"], cwd=repository, check=True)
+    subprocess.run(
+        ["git", "config", "user.email", "test@example.test"],
+        cwd=repository,
+        check=True,
+    )
+    subprocess.run(
+        ["git", "config", "user.name", "GraphBlocks test"],
+        cwd=repository,
+        check=True,
+    )
+    subprocess.run(["git", "add", authority_path], cwd=repository, check=True)
+    subprocess.run(
+        ["git", "commit", "-qm", "candidate authority"],
+        cwd=repository,
+        check=True,
+    )
+    candidate_commit = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=repository,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    subprocess.run(
+        ["git", "tag", "v1.0.0-rc.1", candidate_commit],
+        cwd=repository,
+        check=True,
+    )
+    authority_file.write_text("authority: final\n", encoding="utf-8")
+    subprocess.run(["git", "add", authority_path], cwd=repository, check=True)
+    subprocess.run(
+        ["git", "commit", "-qm", "drift authority"],
+        cwd=repository,
+        check=True,
+    )
+    final_commit = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=repository,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    final_tree = subprocess.run(
+        ["git", "rev-parse", "HEAD^{tree}"],
+        cwd=repository,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    module.ROOT = repository
+
+    with pytest.raises(module.ReleaseBundleError, match="non-release source"):
+        module._promotion_source_diff(
+            candidate_commit=candidate_commit,
+            final_commit=final_commit,
+            final_tree=final_tree,
             candidate_ref=RELEASE_REF,
         )
 
@@ -1122,9 +1296,14 @@ def test_final_promotion_consumes_signed_concrete_real_service_runs(
         or PROMOTION_INTEGRATED_AT
     )
     candidate_matrix_reads: list[tuple[str, str]] = []
+    trusted_promotion_git_blob = module._promotion_git_blob
     module._promotion_git_blob = (
-        lambda commit, path: candidate_matrix_reads.append((commit, path))
-        or yaml.safe_dump(integration_matrix).encode("utf-8")
+        lambda commit, path: (
+            candidate_matrix_reads.append((commit, path))
+            or yaml.safe_dump(integration_matrix).encode("utf-8")
+            if path == "docs/project/stable-release-matrix.yaml"
+            else trusted_promotion_git_blob(commit, path)
+        )
     )
 
     validated, _content_digest, _snapshots = module._validate_promotion_evidence(
@@ -1257,7 +1436,7 @@ def test_final_promotion_consumes_signed_concrete_real_service_runs(
         ("source-diff", "does not match the candidate and final commits"),
         ("candidate-manifest", "does not resolve to a signed report"),
         ("short-soak", "at least 14 days"),
-        ("reviewer", "reviews must be independent"),
+        ("reviewer", "independent object-authorization"),
         ("noncanonical-digest", "lowercase SHA-256 digest"),
         ("defect", "zero unresolved"),
         ("upgrade", "first-stable upgrade exemption"),
@@ -1585,6 +1764,16 @@ def test_promotion_signature_rejects_invalid_rekor_times_after_cosign_verificati
                 "approved": True,
                 "candidateRef": RELEASE_REF,
                 "candidateCommit": CANDIDATE_COMMIT,
+                "objectAuthorizationScope": [
+                    "run-create-list-status-delete-attach-detach-events-and-streams",
+                    "run-cancel-pause-resume-and-expire",
+                    "subscription-create-revoke-and-event-acknowledgement",
+                    "callback-submit-register-and-revoke",
+                    "delivery-redrive-and-dead-letter",
+                ],
+                "reviewedMatrixRunDigests": [
+                    "sha256:" + str(index) * 64 for index in range(1, 4)
+                ],
             },
         ),
         (
@@ -1630,6 +1819,7 @@ def test_candidate_workflow_can_validate_and_freeze_each_promotion_report_type(
         report_type=report_type,
         candidate_ref=RELEASE_REF,
         candidate_commit=CANDIDATE_COMMIT,
+        workflow_actor=payload.get("reviewerIdentity"),
     )
 
     assert frozen.path == output_dir / "report.json"
@@ -1644,12 +1834,19 @@ def test_candidate_ci_freezes_one_canonical_matrix_run_attestation(
     run_id = (
         "https://github.com/graphblocks/graphblocks/actions/runs/123456/attempts/2"
     )
+    result_path, junit_path, security_gate_result = _write_security_gate_evidence(
+        module,
+        tmp_path / "security-gates",
+        run_attempt=2,
+    )
 
     frozen = module.freeze_candidate_matrix_report(
         output_dir=tmp_path / "frozen",
         candidate_ref=RELEASE_REF,
         candidate_commit=CANDIDATE_COMMIT,
         run_id=run_id,
+        security_gate_result_path=result_path,
+        security_gate_junit_path=junit_path,
     )
 
     candidate_manifest = {
@@ -1670,8 +1867,169 @@ def test_candidate_ci_freezes_one_canonical_matrix_run_attestation(
             {"os": os_name, "python": python_version}
             for os_name, python_version in module.SUPPORTED_PLATFORM_MATRIX
         ],
+        "securityGates": security_gate_result,
     }
     assert frozen.data == module._canonical_json_bytes(expected)
+
+
+@pytest.mark.parametrize(
+    "substitution",
+    (
+        "junit-digest",
+        "candidate-commit",
+        "selector-manifest",
+        "artifact-attempt",
+    ),
+)
+def test_candidate_ci_rejects_substituted_security_gate_evidence(
+    tmp_path: Path,
+    substitution: str,
+) -> None:
+    module = _load_module()
+    result_path, junit_path, result = _write_security_gate_evidence(
+        module,
+        tmp_path / substitution / "security-gates",
+        run_attempt=2,
+    )
+    if substitution == "junit-digest":
+        junit_path.write_bytes(junit_path.read_bytes() + b"<!-- substituted -->")
+    else:
+        if substitution == "candidate-commit":
+            result["candidateCommit"] = "4" * 40
+        elif substitution == "artifact-attempt":
+            result["pytest"]["junit"]["artifactName"] = (
+                f"{stable_security_gates.ARTIFACT_NAME_PREFIX}-1"
+            )
+        else:
+            result["adversarialResources"]["categories"][0][
+                "pytestSelectors"
+            ].pop()
+        result.pop("resultDigest")
+        result["resultDigest"] = canonical_hash(result)
+        result_path.write_bytes(module._canonical_json_bytes(result))
+
+    with pytest.raises(module.ReleaseBundleError, match="candidate security gates"):
+        module.freeze_candidate_matrix_report(
+            output_dir=tmp_path / substitution / "frozen",
+            candidate_ref=RELEASE_REF,
+            candidate_commit=CANDIDATE_COMMIT,
+            run_id=(
+                "https://github.com/graphblocks/graphblocks/actions/runs/"
+                "123456/attempts/2"
+            ),
+            security_gate_result_path=result_path,
+            security_gate_junit_path=junit_path,
+        )
+
+
+def test_security_review_freeze_requires_actor_scope_and_matrix_evidence(
+    tmp_path: Path,
+) -> None:
+    module = _load_module()
+    payload = {
+        "reviewerIdentity": "reviewer-security",
+        "approved": True,
+        "candidateRef": RELEASE_REF,
+        "candidateCommit": CANDIDATE_COMMIT,
+        "objectAuthorizationScope": list(module.OBJECT_AUTHORIZATION_REVIEW_SCOPE),
+        "reviewedMatrixRunDigests": [
+            "sha256:" + str(index) * 64 for index in range(1, 4)
+        ],
+    }
+    generic_payload = {
+        key: value
+        for key, value in payload.items()
+        if key not in {"objectAuthorizationScope", "reviewedMatrixRunDigests"}
+    }
+
+    for name, mutation, actor, error in (
+        (
+            "generic",
+            generic_payload,
+            "reviewer-security",
+            "invalid or incomplete shape",
+        ),
+        ("no-actor", payload, None, "workflow actor"),
+        ("wrong-actor", payload, "another-reviewer", "does not approve"),
+        (
+            "partial-scope",
+            {
+                **payload,
+                "objectAuthorizationScope": payload["objectAuthorizationScope"][:-1],
+            },
+            "reviewer-security",
+            "object-authorization",
+        ),
+        (
+            "duplicate-report",
+            {
+                **payload,
+                "reviewedMatrixRunDigests": [
+                    payload["reviewedMatrixRunDigests"][0],
+                ]
+                * 3,
+            },
+            "reviewer-security",
+            "adversarial-resource evidence",
+        ),
+    ):
+        input_path = tmp_path / f"{name}.json"
+        input_path.write_text(json.dumps(mutation), encoding="utf-8")
+        with pytest.raises(module.ReleaseBundleError, match=error):
+            module.freeze_promotion_report(
+                input_path=input_path,
+                output_dir=tmp_path / f"{name}-output",
+                report_type="security-review",
+                candidate_ref=RELEASE_REF,
+                candidate_commit=CANDIDATE_COMMIT,
+                workflow_actor=actor,
+            )
+
+
+@pytest.mark.parametrize(
+    "substitution",
+    ("resource-status", "resource-category", "source-digest", "review-digest"),
+)
+def test_final_promotion_rejects_security_gate_substitution(
+    tmp_path: Path,
+    substitution: str,
+) -> None:
+    module = _load_module()
+    _trust_test_source(module, stable_version="1.0.0")
+    payload = _promotion_payload(module)
+    first_run = payload["supportedMatrixRuns"][0]
+    if substitution == "resource-status":
+        first_run["securityGates"]["adversarialResources"]["status"] = "skipped"
+    elif substitution == "resource-category":
+        first_run["securityGates"]["adversarialResources"]["categories"].pop()
+    elif substitution == "source-digest":
+        first_run["securityGates"]["objectAuthorization"]["routeManifest"][
+            "sha256"
+        ] = "sha256:" + "9" * 64
+    else:
+        payload["reviews"]["security"]["reviewedMatrixRunDigests"][0] = (
+            "sha256:" + "9" * 64
+        )
+    payload.pop("contentDigest")
+    payload["contentDigest"] = canonical_hash(payload)
+    evidence = _write_promotion_payload(
+        module,
+        tmp_path / substitution / "promotion.json",
+        payload,
+    )
+
+    with pytest.raises(
+        module.ReleaseBundleError,
+        match="security gates|security review",
+    ):
+        module._validate_promotion_evidence(
+            module._snapshot_regular_file(evidence, owner="mutated security evidence"),
+            git_commit=COMMIT,
+            git_tree=TREE,
+            release_ref="refs/tags/v1.0.0",
+            release_version="1.0.0",
+            verify_source_diff=True,
+        )
 
 
 def test_candidate_ci_freezes_concrete_real_service_integration_evidence(
@@ -1786,6 +2144,8 @@ def test_candidate_ci_rejects_a_noncanonical_matrix_run_identity(tmp_path: Path)
             candidate_ref=RELEASE_REF,
             candidate_commit=CANDIDATE_COMMIT,
             run_id="matrix-run-1",
+            security_gate_result_path=tmp_path / "missing-result.json",
+            security_gate_junit_path=tmp_path / "missing-junit.xml",
         )
 
 
@@ -1839,6 +2199,7 @@ def test_candidate_workflow_rejects_a_report_for_another_candidate(
             report_type="api-review",
             candidate_ref=RELEASE_REF,
             candidate_commit=CANDIDATE_COMMIT,
+            workflow_actor="reviewer-api@example.test",
         )
 
 
@@ -2005,6 +2366,17 @@ def test_release_bundle_binds_exact_platform_artifacts_evidence_tools_and_rehear
         "graphblocks-testing": RELEASE_VERSION,
     }
     assert manifest["readiness"] == "candidate"
+    assert manifest["externalGates"] == [
+        "keyless-signing-identity",
+        "release-index-credentials",
+        "release-candidate-soak",
+        "independent-api-review",
+        "independent-security-review",
+        "candidate-object-authorization-review",
+        "candidate-adversarial-resource-attestations",
+        "protected-final-ref",
+        "authorized-real-staged-rehearsal",
+    ]
     assert manifest["toolIdentities"] == dict(sorted(module.PINNED_RELEASE_TOOLS.items()))
     assert manifest["observedToolIdentities"] == {"cosign": COSIGN_IDENTITY}
     assert manifest["platforms"] == [
@@ -3064,6 +3436,8 @@ def test_ci_enforces_pinned_platform_aggregation_and_isolated_release_signing() 
             _repository, separator, revision = action.partition("@")
             assert separator == "@"
             assert re.fullmatch(r"[0-9a-f]{40}", revision), action
+            if action.startswith("actions/upload-artifact@"):
+                assert "${{ github.run_attempt }}" in step["with"]["name"]
 
     installed = jobs["installed-artifacts"]
     assert installed["strategy"]["matrix"] == {
@@ -3089,6 +3463,36 @@ def test_ci_enforces_pinned_platform_aggregation_and_isolated_release_signing() 
     assert "dist/platform-wheelhouse" in retained["with"]["path"]
     assert "dist/platform-sdists" in retained["with"]["path"]
     assert "dist/platform-evidence" in retained["with"]["path"]
+
+    python_steps = {step["name"]: step for step in jobs["python"]["steps"]}
+    stable_security_run = python_steps["Run manifest-bound stable security gates"]
+    assert stable_security_run["if"] == (
+        "${{ matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11' }}"
+    )
+    assert stable_security_run["env"] == {
+        "RUNNER_OS": "${{ matrix.os }}",
+        "RUNNER_PYTHON": "${{ matrix.python-version }}",
+        "SECURITY_GATE_ARTIFACT_NAME": (
+            "graphblocks-stable-security-gates-${{ github.run_attempt }}"
+        ),
+    }
+    assert "python tools/stable_security_gates.py" in stable_security_run["run"]
+    assert "--candidate-commit \"$GITHUB_SHA\"" in stable_security_run["run"]
+    assert '--artifact-name "$SECURITY_GATE_ARTIFACT_NAME"' in stable_security_run[
+        "run"
+    ]
+    stable_security_upload = python_steps[
+        "Retain manifest-bound stable security-gate evidence"
+    ]
+    assert stable_security_upload["with"]["name"] == (
+        "graphblocks-stable-security-gates-${{ github.run_attempt }}"
+    )
+    assert "dist/ci/stable-security-gates.json" in stable_security_upload["with"][
+        "path"
+    ]
+    assert "dist/ci/stable-security-gates.xml" in stable_security_upload["with"][
+        "path"
+    ]
 
     ref_gate = jobs["release-ref-gate"]
     assert ref_gate["permissions"] == {}
@@ -3134,7 +3538,16 @@ def test_ci_enforces_pinned_platform_aggregation_and_isolated_release_signing() 
     aggregate_steps = {step["name"]: step for step in aggregate["steps"]}
     assert aggregate_steps["Check out repository"]["with"] == {"fetch-depth": 0}
     download = aggregate_steps["Download exact supported-platform release inputs"]
-    assert download["with"]["pattern"] == "graphblocks-release-input-*"
+    assert download["with"]["pattern"] == (
+        "graphblocks-release-input-*-attempt-${{ github.run_attempt }}"
+    )
+    security_download = aggregate_steps[
+        "Download exact manifest-bound stable security-gate evidence"
+    ]
+    assert security_download["with"] == {
+        "name": "graphblocks-stable-security-gates-${{ github.run_attempt }}",
+        "path": "dist/stable-security-gates",
+    }
     assemble = aggregate_steps["Assemble and verify the offline release bundle"]["run"]
     assert "--platform-inputs-dir dist/platform-inputs" in assemble
     assert '--release-ref "$GITHUB_REF"' in assemble
@@ -3160,6 +3573,16 @@ def test_ci_enforces_pinned_platform_aggregation_and_isolated_release_signing() 
     assert '--candidate-ref "$GITHUB_REF"' in freeze_matrix_command
     assert '--candidate-commit "$GITHUB_SHA"' in freeze_matrix_command
     assert '--run-id "$RUN_ATTEMPT_ID"' in freeze_matrix_command
+    assert (
+        "--security-gate-result "
+        "dist/stable-security-gates/stable-security-gates.json"
+        in freeze_matrix_command
+    )
+    assert (
+        "--security-gate-junit "
+        "dist/stable-security-gates/stable-security-gates.xml"
+        in freeze_matrix_command
+    )
     frozen_matrix_upload = aggregate_steps[
         "Retain the exact frozen candidate matrix attestation"
     ]
@@ -3167,14 +3590,14 @@ def test_ci_enforces_pinned_platform_aggregation_and_isolated_release_signing() 
         "startsWith(github.ref, 'refs/tags/v1.0.0-rc.')"
     )
     assert frozen_matrix_upload["with"]["name"] == (
-        "graphblocks-frozen-candidate-matrix-report"
+        "graphblocks-frozen-candidate-matrix-report-${{ github.run_attempt }}"
     )
     assert frozen_matrix_upload["with"]["path"] == (
         "dist/frozen-candidate-matrix-report/report.json"
     )
     unsigned_upload = aggregate_steps["Retain frozen unsigned release bundle"]
     assert unsigned_upload["with"]["name"] == (
-        "graphblocks-unsigned-release-candidate-bundle"
+        "graphblocks-unsigned-release-candidate-bundle-${{ github.run_attempt }}"
     )
     assert unsigned_upload["with"]["path"] == "dist/release-bundle"
 
@@ -3202,7 +3625,7 @@ def test_ci_enforces_pinned_platform_aggregation_and_isolated_release_signing() 
         "Download the exact frozen candidate matrix attestation"
     ]
     assert matrix_download["with"] == {
-        "name": "graphblocks-frozen-candidate-matrix-report",
+        "name": "graphblocks-frozen-candidate-matrix-report-${{ github.run_attempt }}",
         "path": "dist/signed-candidate-matrix-report",
     }
     matrix_signing_command = matrix_signing_steps[
@@ -3251,7 +3674,7 @@ def test_ci_enforces_pinned_platform_aggregation_and_isolated_release_signing() 
     assert all(re.fullmatch(r"[^@\s]+@[0-9a-f]{40}", action) for action in signing_actions)
     exact_download = signing_steps["Download exact frozen unsigned release bundle"]
     assert exact_download["with"] == {
-        "name": "graphblocks-unsigned-release-candidate-bundle",
+        "name": "graphblocks-unsigned-release-candidate-bundle-${{ github.run_attempt }}",
         "path": "dist/release-bundle",
     }
     cosign_install = signing_steps["Install pinned Cosign"]
@@ -3279,7 +3702,9 @@ def test_ci_enforces_pinned_platform_aggregation_and_isolated_release_signing() 
     signed_upload = signing_steps[
         "Retain signed release artifacts, evidence, and attestations"
     ]
-    assert signed_upload["with"]["name"] == "graphblocks-release-candidate-bundle"
+    assert signed_upload["with"]["name"] == (
+        "graphblocks-release-candidate-bundle-${{ github.run_attempt }}"
+    )
     assert signed_upload["with"]["path"] == "dist/release-bundle"
 
 
@@ -3386,7 +3811,7 @@ def test_ci_retains_each_rust_gate_log_on_failure() -> None:
     diagnostics = rust_steps["Retain Rust CI diagnostics"]
     assert diagnostics["if"] == "always()"
     assert diagnostics["with"] == {
-        "name": "graphblocks-ci-rust",
+        "name": "graphblocks-ci-rust-attempt-${{ github.run_attempt }}",
         "path": "dist/ci",
         "if-no-files-found": "warn",
         "retention-days": 30,
@@ -3456,13 +3881,20 @@ def test_candidate_promotion_report_workflow_freezes_before_isolated_signing() -
     assert inputs["report_type"]["options"] == list(module.PROMOTION_REPORT_TYPES)
     assert "matrix-run" not in inputs["report_type"]["options"]
     assert inputs["report_json"] == {
-        "description": "Public JSON report content; the validation job canonicalizes it",
+        "description": (
+            "Public JSON report; review identity must equal the dispatcher and security "
+            "review must bind candidate matrix digests"
+        ),
         "required": True,
         "type": "string",
     }
     assert workflow["permissions"] == {}
 
     jobs = workflow["jobs"]
+    for job in jobs.values():
+        for step in job.get("steps", []):
+            if str(step.get("uses", "")).startswith("actions/upload-artifact@"):
+                assert "${{ github.run_attempt }}" in step["with"]["name"]
     validation = jobs["validate-report"]
     assert validation["permissions"] == {"contents": "read"}
     assert "id-token" not in json.dumps(validation)
@@ -3473,10 +3905,13 @@ def test_candidate_promotion_report_workflow_freezes_before_isolated_signing() -
     assert "freeze-promotion-report" in freeze_command
     assert "--candidate-ref \"$GITHUB_REF\"" in freeze_command
     assert "--candidate-commit \"$GITHUB_SHA\"" in freeze_command
+    assert "--workflow-actor \"$GITHUB_ACTOR\"" in freeze_command
     frozen_upload = validation_steps[
         "Retain the exact frozen report for the signing boundary"
     ]
-    assert frozen_upload["with"]["name"] == "graphblocks-frozen-promotion-report"
+    assert frozen_upload["with"]["name"] == (
+        "graphblocks-frozen-promotion-report-${{ github.run_attempt }}"
+    )
     assert frozen_upload["with"]["path"] == "dist/frozen-promotion-report/report.json"
 
     signing = jobs["sign-report"]
@@ -3492,7 +3927,7 @@ def test_candidate_promotion_report_workflow_freezes_before_isolated_signing() -
     assert all(re.fullmatch(r"[^@\s]+@[0-9a-f]{40}", action) for action in signing_actions)
     exact_download = signing_steps["Download the exact frozen report"]
     assert exact_download["with"] == {
-        "name": "graphblocks-frozen-promotion-report",
+        "name": "graphblocks-frozen-promotion-report-${{ github.run_attempt }}",
         "path": "dist/signed-promotion-report",
     }
     signing_command = signing_steps[

@@ -371,7 +371,10 @@ workstreams:
     phase: cross-cutting-generated-facts
     ownerArea: documentation-and-claims
     affectedProfiles: [GB-C0-SCHEMA, GB-C1-LOCAL-RUNTIME, GB-C4-PRODUCTION]
-    releaseGates: [REL-AUDIT-REMEDIATION]
+    releaseGates:
+      - REL-AUDIT-REMEDIATION
+      - REL-OBJECT-AUTHORIZATION-REVIEW
+      - REL-ADVERSARIAL-RESOURCE-TESTS
     findings:
       - GB-DOC-001
       - GB-DOC-002
@@ -384,3 +387,4 @@ workstreams:
       - generated revision-bound test maturity support and claim facts
       - evidence-bound risk status and automatic reopening
       - separate supply-chain API runtime durability and adapter readiness axes
+      - manifest-selected candidate test nodes with source result and JUnit digests

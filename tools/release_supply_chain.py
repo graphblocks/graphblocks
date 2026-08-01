@@ -22,6 +22,17 @@ import yaml
 from graphblocks.canonical import canonical_dumps, canonical_hash
 
 try:
+    from tools.stable_security_gates import (
+        JUNIT_MAX_BYTES as SECURITY_GATE_JUNIT_MAX_BYTES,
+        MANIFEST_PATH as SECURITY_GATE_MANIFEST_PATH,
+        RESULT_MAX_BYTES as SECURITY_GATE_RESULT_MAX_BYTES,
+        StableSecurityGateError,
+        load_manifest as load_stable_security_gate_manifest,
+        load_manifest_bytes as load_stable_security_gate_manifest_bytes,
+        manifest_source_paths as stable_security_gate_source_paths,
+        validate_result as validate_stable_security_gate_result,
+        validate_result_bytes as validate_stable_security_gate_result_bytes,
+    )
     from tools.verify_wheelhouse import (
         CYCLONEDX_BOM_VERSION,
         PINNED_BUILD_TOOLS,
@@ -31,6 +42,17 @@ try:
         validate_release_evidence_payloads,
     )
 except ModuleNotFoundError:  # Direct `python tools/release_supply_chain.py` execution.
+    from stable_security_gates import (  # type: ignore[no-redef]
+        JUNIT_MAX_BYTES as SECURITY_GATE_JUNIT_MAX_BYTES,
+        MANIFEST_PATH as SECURITY_GATE_MANIFEST_PATH,
+        RESULT_MAX_BYTES as SECURITY_GATE_RESULT_MAX_BYTES,
+        StableSecurityGateError,
+        load_manifest as load_stable_security_gate_manifest,
+        load_manifest_bytes as load_stable_security_gate_manifest_bytes,
+        manifest_source_paths as stable_security_gate_source_paths,
+        validate_result as validate_stable_security_gate_result,
+        validate_result_bytes as validate_stable_security_gate_result_bytes,
+    )
     from verify_wheelhouse import (  # type: ignore[no-redef]
         CYCLONEDX_BOM_VERSION,
         PINNED_BUILD_TOOLS,
@@ -68,6 +90,10 @@ PROMOTION_DOCUMENTATION_PATHS = {
     "README.zh-CN.md",
 }
 PROMOTION_DOCUMENTATION_PREFIX = "docs/project/"
+PROMOTION_IMMUTABLE_AUTHORITY_PATHS = {
+    "docs/project/stable-release-matrix.yaml",
+    SECURITY_GATE_MANIFEST_PATH,
+}
 PROMOTION_PYPROJECT_PATHS = {
     "pyproject.toml",
     "packages/graphblocks-testing/pyproject.toml",
@@ -86,6 +112,9 @@ SUPPORTED_PLATFORM_MATRIX = (
     ("windows-latest", "3.11"),
     ("windows-latest", "3.12"),
 )
+STABLE_SECURITY_GATE_MANIFEST, STABLE_SECURITY_GATE_MANIFEST_BYTES = (
+    load_stable_security_gate_manifest(ROOT / SECURITY_GATE_MANIFEST_PATH)
+)
 MATRIX_PROMOTION_REPORT_KEYS = {
     "runId",
     "status",
@@ -94,7 +123,19 @@ MATRIX_PROMOTION_REPORT_KEYS = {
     "candidateCommit",
     "candidateManifestDigest",
     "supportedMatrix",
+    "securityGates",
 }
+OBJECT_AUTHORIZATION_REVIEW_SCOPE = tuple(
+    category["id"]
+    for category in STABLE_SECURITY_GATE_MANIFEST["objectAuthorization"]["categories"]
+)
+ADVERSARIAL_RESOURCE_CATEGORIES = tuple(
+    category["id"]
+    for category in STABLE_SECURITY_GATE_MANIFEST["adversarialResources"]["categories"]
+)
+SECURITY_GATE_EVIDENCE_PATHS = stable_security_gate_source_paths(
+    STABLE_SECURITY_GATE_MANIFEST
+)
 INTEGRATION_RESULT_KEYS = {
     "formatVersion",
     "integrationId",
@@ -218,13 +259,20 @@ def _sha256_bytes(value: bytes) -> str:
     return hashlib.sha256(value).hexdigest()
 
 
-def _snapshot_regular_file(path: Path, *, owner: str) -> FileSnapshot:
+def _snapshot_regular_file(
+    path: Path,
+    *,
+    owner: str,
+    max_bytes: int | None = None,
+) -> FileSnapshot:
     try:
         before = path.lstat()
     except OSError as error:
         raise ReleaseBundleError(f"{owner} is missing or unreadable: {path}") from error
     if stat.S_ISLNK(before.st_mode) or not stat.S_ISREG(before.st_mode):
         raise ReleaseBundleError(f"{owner} must be a regular non-symlink file: {path}")
+    if max_bytes is not None and before.st_size > max_bytes:
+        raise ReleaseBundleError(f"{owner} exceeds {max_bytes} bytes: {path}")
     flags = (
         os.O_RDONLY
         | getattr(os, "O_BINARY", 0)
@@ -243,11 +291,18 @@ def _snapshot_regular_file(path: Path, *, owner: str) -> FileSnapshot:
         ) != (opened.st_dev, opened.st_ino):
             raise ReleaseBundleError(f"{owner} changed while it was opened: {path}")
         chunks: list[bytes] = []
+        bytes_read = 0
         while True:
-            chunk = os.read(descriptor, 1024 * 1024)
+            read_size = 1024 * 1024
+            if max_bytes is not None:
+                read_size = min(read_size, max_bytes + 1 - bytes_read)
+            chunk = os.read(descriptor, read_size)
             if not chunk:
                 break
             chunks.append(chunk)
+            bytes_read += len(chunk)
+            if max_bytes is not None and bytes_read > max_bytes:
+                raise ReleaseBundleError(f"{owner} exceeds {max_bytes} bytes: {path}")
         after = os.fstat(descriptor)
     finally:
         os.close(descriptor)
@@ -327,6 +382,17 @@ def _require_ci_run_attempt_id(value: object, *, owner: str) -> str:
             f"{owner} must be a canonical graphblocks/graphblocks CI run-attempt identity"
         )
     return value
+
+
+def _security_gate_artifact_name_for_run_id(run_id: str) -> str:
+    match = CI_RUN_ATTEMPT_ID.fullmatch(run_id)
+    if match is None:
+        raise ReleaseBundleError("security-gate artifact requires a canonical run id")
+    artifact = STABLE_SECURITY_GATE_MANIFEST["artifact"]
+    assert isinstance(artifact, Mapping)
+    name_prefix = artifact["namePrefix"]
+    assert isinstance(name_prefix, str)
+    return f"{name_prefix}-{match.group('attempt')}"
 
 
 def _require_prefixed_repository_path(
@@ -434,6 +500,8 @@ def _require_content_digest(payload: Mapping[str, object], *, owner: str) -> str
 
 
 def _promotion_path_kind(path: str) -> str | None:
+    if path in PROMOTION_IMMUTABLE_AUTHORITY_PATHS:
+        return None
     if path in PROMOTION_DOCUMENTATION_PATHS or path.startswith(
         PROMOTION_DOCUMENTATION_PREFIX
     ):
@@ -998,6 +1066,77 @@ def _candidate_manifest_report(
     }
 
 
+def _candidate_security_gate_source_blobs_from_checkout(
+    root: Path = ROOT,
+) -> dict[str, bytes]:
+    return {
+        path: _snapshot_regular_file(
+            root / path,
+            owner=f"candidate security gate evidence {path}",
+        ).data
+        for path in SECURITY_GATE_EVIDENCE_PATHS
+    }
+
+
+def _candidate_security_gate_claim_from_files(
+    *,
+    result_path: Path,
+    junit_path: Path,
+    candidate_commit: str,
+    expected_artifact_name: str,
+    root: Path = ROOT,
+) -> dict[str, object]:
+    result_snapshot = _snapshot_regular_file(
+        result_path,
+        owner="candidate security-gate result",
+        max_bytes=SECURITY_GATE_RESULT_MAX_BYTES,
+    )
+    junit_snapshot = _snapshot_regular_file(
+        junit_path,
+        owner="candidate security-gate JUnit",
+        max_bytes=SECURITY_GATE_JUNIT_MAX_BYTES,
+    )
+    try:
+        return validate_stable_security_gate_result_bytes(
+            result_snapshot.data,
+            manifest=STABLE_SECURITY_GATE_MANIFEST,
+            manifest_bytes=STABLE_SECURITY_GATE_MANIFEST_BYTES,
+            candidate_commit=candidate_commit,
+            source_blobs=_candidate_security_gate_source_blobs_from_checkout(root),
+            junit_bytes=junit_snapshot.data,
+            expected_artifact_name=expected_artifact_name,
+        )
+    except StableSecurityGateError as error:
+        raise ReleaseBundleError(
+            f"candidate security gates are invalid: {error}"
+        ) from error
+
+
+def _validate_candidate_security_gate_claim(
+    value: object,
+    *,
+    owner: str,
+    candidate_commit: str,
+    manifest: Mapping[str, object] = STABLE_SECURITY_GATE_MANIFEST,
+    manifest_bytes: bytes = STABLE_SECURITY_GATE_MANIFEST_BYTES,
+    source_blobs: Mapping[str, bytes] | None = None,
+    expected_artifact_name: str | None = None,
+) -> dict[str, object]:
+    if source_blobs is None:
+        source_blobs = _candidate_security_gate_source_blobs_from_checkout()
+    try:
+        return validate_stable_security_gate_result(
+            value,
+            manifest=manifest,
+            manifest_bytes=manifest_bytes,
+            candidate_commit=candidate_commit,
+            source_blobs=source_blobs,
+            expected_artifact_name=expected_artifact_name,
+        )
+    except StableSecurityGateError as error:
+        raise ReleaseBundleError(f"{owner} are invalid: {error}") from error
+
+
 def _write_frozen_promotion_report(
     payload: Mapping[str, object],
     *,
@@ -1021,6 +1160,8 @@ def freeze_candidate_matrix_report(
     candidate_ref: str,
     candidate_commit: str,
     run_id: str,
+    security_gate_result_path: Path,
+    security_gate_junit_path: Path,
 ) -> FileSnapshot:
     """Freeze one successful matrix claim from the gated candidate CI run."""
 
@@ -1047,6 +1188,14 @@ def freeze_candidate_matrix_report(
             {"os": os_name, "python": python_version}
             for os_name, python_version in SUPPORTED_PLATFORM_MATRIX
         ],
+        "securityGates": _candidate_security_gate_claim_from_files(
+            result_path=security_gate_result_path,
+            junit_path=security_gate_junit_path,
+            candidate_commit=candidate_commit,
+            expected_artifact_name=_security_gate_artifact_name_for_run_id(
+                canonical_run_id
+            ),
+        ),
     }
     return _write_frozen_promotion_report(
         payload,
@@ -1175,6 +1324,7 @@ def freeze_promotion_report(
     report_type: str,
     candidate_ref: str,
     candidate_commit: str,
+    workflow_actor: str | None = None,
 ) -> FileSnapshot:
     """Validate and canonically freeze one report before entering the OIDC job."""
 
@@ -1222,22 +1372,70 @@ def freeze_promotion_report(
             raise ReleaseBundleError(
                 "soak application promotion report is not a completed 14-day nontrivial soak"
             )
-    elif report_type in {"api-review", "security-review"}:
+    elif report_type == "api-review":
         report = _require_exact_keys(
             payload,
             {"reviewerIdentity", "approved", "candidateRef", "candidateCommit"},
             owner=owner,
         )
-        _require_nonempty_string(
+        reviewer = _require_nonempty_string(
             report.get("reviewerIdentity"), owner=f"{report_type} reviewer identity"
         )
+        actor = _require_nonempty_string(
+            workflow_actor, owner=f"{report_type} workflow actor"
+        )
         if (
-            report.get("approved") is not True
+            reviewer != actor
+            or report.get("approved") is not True
             or report.get("candidateRef") != candidate_ref
             or report.get("candidateCommit") != candidate_commit
         ):
             raise ReleaseBundleError(
                 f"{report_type} promotion report does not approve this candidate"
+            )
+    elif report_type == "security-review":
+        report = _require_exact_keys(
+            payload,
+            {
+                "reviewerIdentity",
+                "approved",
+                "candidateRef",
+                "candidateCommit",
+                "objectAuthorizationScope",
+                "reviewedMatrixRunDigests",
+            },
+            owner=owner,
+        )
+        reviewer = _require_nonempty_string(
+            report.get("reviewerIdentity"), owner="security-review reviewer identity"
+        )
+        actor = _require_nonempty_string(
+            workflow_actor, owner="security-review workflow actor"
+        )
+        reviewed_digests = report.get("reviewedMatrixRunDigests")
+        if not isinstance(reviewed_digests, list) or len(reviewed_digests) < 3:
+            raise ReleaseBundleError(
+                "security-review must cover at least three candidate matrix reports"
+            )
+        normalized_digests = [
+            _require_prefixed_sha256(
+                digest,
+                owner=f"security-review matrix report digest {index}",
+            )
+            for index, digest in enumerate(reviewed_digests)
+        ]
+        if (
+            reviewer != actor
+            or report.get("approved") is not True
+            or report.get("candidateRef") != candidate_ref
+            or report.get("candidateCommit") != candidate_commit
+            or report.get("objectAuthorizationScope")
+            != list(OBJECT_AUTHORIZATION_REVIEW_SCOPE)
+            or len(normalized_digests) != len(set(normalized_digests))
+        ):
+            raise ReleaseBundleError(
+                "security-review does not approve the candidate object-authorization "
+                "and adversarial-resource evidence"
             )
     elif report_type == "stable-scope":
         report = _require_exact_keys(
@@ -1766,8 +1964,29 @@ def _validate_promotion_evidence(
         {"os": os_name, "python": python_version}
         for os_name, python_version in SUPPORTED_PLATFORM_MATRIX
     ]
+    candidate_security_manifest = STABLE_SECURITY_GATE_MANIFEST
+    candidate_security_manifest_bytes = STABLE_SECURITY_GATE_MANIFEST_BYTES
+    candidate_security_source_blobs: Mapping[str, bytes] | None = None
+    if verify_source_diff:
+        candidate_security_manifest_bytes = _promotion_git_blob(
+            candidate_commit,
+            SECURITY_GATE_MANIFEST_PATH,
+        )
+        try:
+            candidate_security_manifest = load_stable_security_gate_manifest_bytes(
+                candidate_security_manifest_bytes
+            )
+        except StableSecurityGateError as error:
+            raise ReleaseBundleError(
+                f"candidate security-gate manifest is invalid: {error}"
+            ) from error
+        candidate_security_source_blobs = {
+            path: _promotion_git_blob(candidate_commit, path)
+            for path in stable_security_gate_source_paths(candidate_security_manifest)
+        }
     run_ids: set[str] = set()
     run_digests: set[str] = set()
+    matrix_attestation_digests: list[str] = []
     for index, raw_run in enumerate(matrix_runs):
         run = _require_exact_keys(
             raw_run,
@@ -1779,6 +1998,7 @@ def _validate_promotion_evidence(
                 "candidateCommit",
                 "candidateManifestDigest",
                 "supportedMatrix",
+                "securityGates",
                 "attestationDigest",
             },
             owner=f"stable promotion matrix run {index}",
@@ -1794,6 +2014,15 @@ def _validate_promotion_evidence(
             run.get("candidateManifestDigest"),
             owner=f"stable promotion matrix run {index} candidate manifest digest",
         )
+        _validate_candidate_security_gate_claim(
+            run.get("securityGates"),
+            owner=f"stable promotion matrix run {index} security gates",
+            candidate_commit=candidate_commit,
+            manifest=candidate_security_manifest,
+            manifest_bytes=candidate_security_manifest_bytes,
+            source_blobs=candidate_security_source_blobs,
+            expected_artifact_name=_security_gate_artifact_name_for_run_id(run_id),
+        )
         if (
             run.get("status") != "success"
             or run.get("complete") is not True
@@ -1803,7 +2032,8 @@ def _validate_promotion_evidence(
             or run.get("supportedMatrix") != expected_matrix
         ):
             raise ReleaseBundleError(
-                "stable promotion matrix run is incomplete or does not bind the prior candidate"
+                "stable promotion matrix run is incomplete or does not bind the prior "
+                "candidate security gates"
             )
         if run_id in run_ids or attestation_digest in run_digests:
             raise ReleaseBundleError(
@@ -1811,6 +2041,7 @@ def _validate_promotion_evidence(
             )
         run_ids.add(run_id)
         run_digests.add(attestation_digest)
+        matrix_attestation_digests.append(attestation_digest)
         run_report = _promotion_report(
             reports,
             attestation_digest,
@@ -1910,47 +2141,82 @@ def _validate_promotion_evidence(
         {"api", "security"},
         owner="stable promotion reviews",
     )
-    reviewer_identities: set[str] = set()
-    review_digests: set[str] = set()
-    for review_name in ("api", "security"):
-        review = _require_exact_keys(
-            reviews.get(review_name),
-            {"reviewerIdentity", "approved", "reportDigest"},
-            owner=f"stable promotion {review_name} review",
+    api_review = _require_exact_keys(
+        reviews.get("api"),
+        {"reviewerIdentity", "approved", "reportDigest"},
+        owner="stable promotion API review",
+    )
+    api_reviewer = _require_nonempty_string(
+        api_review.get("reviewerIdentity"),
+        owner="stable promotion API reviewer identity",
+    )
+    api_report_digest = _require_prefixed_sha256(
+        api_review.get("reportDigest"),
+        owner="stable promotion API review report digest",
+    )
+    if api_review.get("approved") is not True or _promotion_report(
+        reports,
+        api_report_digest,
+        owner="stable promotion API review",
+    ) != {
+        "reviewerIdentity": api_reviewer,
+        "approved": True,
+        "candidateRef": candidate_ref,
+        "candidateCommit": candidate_commit,
+    }:
+        raise ReleaseBundleError(
+            "stable promotion API report does not bind the candidate review"
         )
-        reviewer = _require_nonempty_string(
-            review.get("reviewerIdentity"),
-            owner=f"stable promotion {review_name} reviewer identity",
+    used_report_digests.add(api_report_digest)
+
+    security_review = _require_exact_keys(
+        reviews.get("security"),
+        {
+            "reviewerIdentity",
+            "approved",
+            "reportDigest",
+            "objectAuthorizationScope",
+            "reviewedMatrixRunDigests",
+        },
+        owner="stable promotion security review",
+    )
+    security_reviewer = _require_nonempty_string(
+        security_review.get("reviewerIdentity"),
+        owner="stable promotion security reviewer identity",
+    )
+    security_report_digest = _require_prefixed_sha256(
+        security_review.get("reportDigest"),
+        owner="stable promotion security review report digest",
+    )
+    reviewed_matrix_digests = security_review.get("reviewedMatrixRunDigests")
+    if (
+        security_review.get("approved") is not True
+        or security_reviewer == api_reviewer
+        or security_report_digest == api_report_digest
+        or security_review.get("objectAuthorizationScope")
+        != list(OBJECT_AUTHORIZATION_REVIEW_SCOPE)
+        or reviewed_matrix_digests != matrix_attestation_digests
+    ):
+        raise ReleaseBundleError(
+            "stable promotion security review does not bind the independent "
+            "object-authorization and adversarial-resource gates"
         )
-        report_digest = _require_prefixed_sha256(
-            review.get("reportDigest"),
-            owner=f"stable promotion {review_name} review report digest",
+    if _promotion_report(
+        reports,
+        security_report_digest,
+        owner="stable promotion security review",
+    ) != {
+        "reviewerIdentity": security_reviewer,
+        "approved": True,
+        "candidateRef": candidate_ref,
+        "candidateCommit": candidate_commit,
+        "objectAuthorizationScope": list(OBJECT_AUTHORIZATION_REVIEW_SCOPE),
+        "reviewedMatrixRunDigests": matrix_attestation_digests,
+    }:
+        raise ReleaseBundleError(
+            "stable promotion security report does not bind the candidate gate evidence"
         )
-        if review.get("approved") is not True:
-            raise ReleaseBundleError(
-                f"stable promotion {review_name} review is not approved"
-            )
-        if reviewer in reviewer_identities or report_digest in review_digests:
-            raise ReleaseBundleError(
-                "stable promotion API and security reviews must be independent"
-            )
-        reviewer_identities.add(reviewer)
-        review_digests.add(report_digest)
-        review_report = _promotion_report(
-            reports,
-            report_digest,
-            owner=f"stable promotion {review_name} review",
-        )
-        if review_report != {
-            "reviewerIdentity": reviewer,
-            "approved": True,
-            "candidateRef": candidate_ref,
-            "candidateCommit": candidate_commit,
-        }:
-            raise ReleaseBundleError(
-                f"stable promotion {review_name} report does not bind the candidate review"
-            )
-        used_report_digests.add(report_digest)
+    used_report_digests.add(security_report_digest)
 
     stable_scope = _require_exact_keys(
         payload.get("stableScope"),
@@ -3565,6 +3831,8 @@ def assemble_release_bundle(
                 "release-candidate-soak",
                 "independent-api-review",
                 "independent-security-review",
+                "candidate-object-authorization-review",
+                "candidate-adversarial-resource-attestations",
                 "protected-final-ref",
                 "authorized-real-staged-rehearsal",
             ]
@@ -4133,6 +4401,8 @@ def _verify_release_bundle(
             "release-candidate-soak",
             "independent-api-review",
             "independent-security-review",
+            "candidate-object-authorization-review",
+            "candidate-adversarial-resource-attestations",
             "protected-final-ref",
             "authorized-real-staged-rehearsal",
         ]
@@ -4432,6 +4702,16 @@ def main(argv: list[str] | None = None) -> int:
     freeze_matrix_report.add_argument("--candidate-ref", required=True)
     freeze_matrix_report.add_argument("--candidate-commit", required=True)
     freeze_matrix_report.add_argument("--run-id", required=True)
+    freeze_matrix_report.add_argument(
+        "--security-gate-result",
+        type=Path,
+        required=True,
+    )
+    freeze_matrix_report.add_argument(
+        "--security-gate-junit",
+        type=Path,
+        required=True,
+    )
     freeze_integration = subparsers.add_parser("freeze-integration-report")
     freeze_integration.add_argument("--input", type=Path, required=True)
     freeze_integration.add_argument("--output", type=Path, required=True)
@@ -4452,6 +4732,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     freeze_report.add_argument("--candidate-ref", required=True)
     freeze_report.add_argument("--candidate-commit", required=True)
+    freeze_report.add_argument("--workflow-actor")
     verify = subparsers.add_parser("verify")
     verify.add_argument("--bundle-dir", type=Path, required=True)
     verify.add_argument("--signature-bundle", type=Path)
@@ -4482,6 +4763,8 @@ def main(argv: list[str] | None = None) -> int:
             candidate_ref=args.candidate_ref,
             candidate_commit=args.candidate_commit,
             run_id=args.run_id,
+            security_gate_result_path=args.security_gate_result.resolve(),
+            security_gate_junit_path=args.security_gate_junit.resolve(),
         )
         print(
             "froze candidate matrix report "
@@ -4512,6 +4795,7 @@ def main(argv: list[str] | None = None) -> int:
             report_type=args.report_type,
             candidate_ref=args.candidate_ref,
             candidate_commit=args.candidate_commit,
+            workflow_actor=args.workflow_actor,
         )
         print(
             "froze promotion report "

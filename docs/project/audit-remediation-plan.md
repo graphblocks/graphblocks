@@ -410,6 +410,20 @@ owner, resolved version, and digest; reopen a resolved risk when its required
 evidence disappears or changes. The status projection reports supply chain,
 API, runtime security, durability, and adapter maturity as separate axes.
 
+`GB-DOC-007` now has executable closure evidence. The stable release matrix owns
+five closed readiness axes with explicit 1.0 claim and tag-blocking semantics,
+and a checked generator projects them into the status page. Supply-chain
+readiness cannot alter runtime-security, durability, or adapter claims. Final
+promotion additionally requires CI-signed candidate reports that bind the
+closed authorization and adversarial-resource evidence to a candidate-bound
+selector manifest, exact test-source digests, all-pass counts, and retained
+JUnit digest, plus an actor-bound independent security review covering every
+retained matrix report digest. The durability axis separately records that C1
+local-runtime authority still blocks 1.0 even though C4/X3 production
+durability remains preview and outside the stable claim. Candidate reruns use
+attempt-scoped artifacts, and the release matrix plus security-gate manifest
+cannot change between the reviewed RC and final tag.
+
 ### Quality debt and developer loop
 
 Roll strict typing out package by package, require an error code and reason for

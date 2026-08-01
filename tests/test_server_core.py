@@ -18628,7 +18628,10 @@ def test_server_app_bounds_callback_delivery_control_history() -> None:
     ] == "failed"
 
 
-def test_server_app_hides_foreign_callback_delivery_from_control_request() -> None:
+@pytest.mark.parametrize("operation", ("redrive", "dead-letter"))
+def test_server_app_hides_foreign_callback_delivery_from_control_request(
+    operation: str,
+) -> None:
     alice = PrincipalRef("alice", tenant_id="tenant-a")
     bob = PrincipalRef("bob", tenant_id="tenant-b")
     app = GraphBlocksServerApp(
@@ -18640,7 +18643,7 @@ def test_server_app_hides_foreign_callback_delivery_from_control_request() -> No
     response = app.handle(
         ServerRequest(
             method="POST",
-            path="/callbacks/deliveries/del-alice/redrive",
+            path=f"/callbacks/deliveries/del-alice/{operation}",
             headers={"Authorization": "Bearer bob-token"},
             query={},
             cookies={},
@@ -18656,6 +18659,7 @@ def test_server_app_hides_foreign_callback_delivery_from_control_request() -> No
     }
     assert app.callback_delivery_results(subscription_id)[0]["status"] == "failed"
     assert app.callback_delivery_redrives("del-alice") == ()
+    assert app.callback_delivery_dead_letter_moves("del-alice") == ()
 
 
 def test_server_app_scopes_duplicate_callback_delivery_ids_to_owner() -> None:

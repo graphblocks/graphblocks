@@ -19,6 +19,11 @@ preparing the first 1.0 release candidate.
 
 ### Changed
 
+- Split release readiness into generated supply-chain, API, runtime-security,
+  durability, and adapter axes, and made stable promotion bind actor-identified
+  object-authorization review plus manifest-selected, JUnit-bound adversarial
+  resource evidence while keeping release-authority manifests immutable and
+  rerun artifacts attempt-scoped.
 - Replaced the normal-looking APIs of the reserved Rust and npm `graphblocks`
   artifacts with explicit reserved-name metadata, a Rust build warning and
   notice-only surface, and an npm import error backed by package smoke gates.

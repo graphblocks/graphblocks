@@ -1,0 +1,82 @@
+formatVersion: 1
+resultFormatVersion: 1
+artifact:
+  namePrefix: graphblocks-stable-security-gates
+  resultFile: stable-security-gates.json
+  junitFile: stable-security-gates.xml
+runner:
+  os: ubuntu-latest
+  python: '3.11'
+objectAuthorization:
+  routeManifestSource: src/graphblocks/server.py
+  categories:
+    - id: run-create-list-status-delete-attach-detach-events-and-streams
+      pytestSelectors:
+        - tests/test_server_core.py::test_server_app_requires_authorization_hook_contract
+        - tests/test_server_core.py::test_server_app_authorizer_receives_body_digest_without_body
+        - tests/test_server_core.py::test_default_protected_resource_routes_have_authorization_policy
+        - tests/test_server_core.py::test_server_app_hides_run_scoped_resources_from_other_principals_and_tenants
+        - tests/test_server_core.py::test_server_app_deletes_only_owner_visible_terminal_runs_and_reclaims_capacity
+    - id: run-cancel-pause-resume-and-expire
+      pytestSelectors:
+        - tests/test_server_core.py::test_server_app_rejects_cross_tenant_run_controls_atomically
+    - id: subscription-create-revoke-and-event-acknowledgement
+      pytestSelectors:
+        - tests/test_server_core.py::test_server_app_hides_run_scoped_resources_from_other_principals_and_tenants
+        - tests/test_server_core.py::test_server_app_rejects_unsubscribe_from_same_principal_different_tenant
+        - tests/test_server_core.py::test_server_app_rejects_ack_from_same_principal_different_tenant
+    - id: callback-submit-register-and-revoke
+      pytestSelectors:
+        - tests/test_server_core.py::test_server_app_hides_run_scoped_resources_from_other_principals_and_tenants
+        - tests/test_server_core.py::test_server_app_rejects_callback_registration_for_different_principal_tenant_scope
+        - tests/test_server_core.py::test_server_app_rejects_callback_revoke_from_same_principal_different_tenant
+    - id: delivery-redrive-and-dead-letter
+      pytestSelectors:
+        - tests/test_server_core.py::test_server_app_hides_foreign_callback_delivery_from_control_request[redrive]
+        - tests/test_server_core.py::test_server_app_hides_foreign_callback_delivery_from_control_request[dead-letter]
+        - tests/test_server_core.py::test_server_app_scopes_duplicate_callback_delivery_ids_to_owner
+adversarialResources:
+  categories:
+    - id: request-body-and-routing
+      pytestSelectors:
+        - tests/test_server_core.py::test_server_app_rejects_oversized_body_before_json_parsing[large-string]
+        - tests/test_server_core.py::test_server_app_rejects_oversized_body_before_json_parsing[chunked-deep]
+        - tests/test_server_core.py::test_server_app_rejects_oversized_body_before_json_parsing[large-number]
+        - tests/test_server_core.py::test_server_app_applies_callback_request_body_limit_before_decoding
+        - tests/test_server_core.py::test_server_app_applies_global_body_limit_before_route_and_authentication[public]
+        - tests/test_server_core.py::test_server_app_applies_global_body_limit_before_route_and_authentication[unknown-route]
+        - tests/test_server_core.py::test_server_app_applies_global_body_limit_before_route_and_authentication[protected]
+        - tests/test_server_core.py::test_server_stream_ingress_rejects_content_length_before_body_read
+        - tests/test_server_core.py::test_server_stream_ingress_caps_unbounded_chunked_body_before_parsing
+        - tests/test_server_core.py::test_server_stream_ingress_caps_each_wire_read_to_64_kib
+        - tests/test_server_core.py::test_server_stream_ingress_applies_callback_route_limit_before_body_read
+        - tests/test_server_core.py::test_server_stream_ingress_rejects_unbounded_reader_without_calling_it
+        - tests/test_server_core.py::test_server_stream_ingress_rejects_reader_that_ignores_requested_size
+    - id: response-body-and-streaming
+      pytestSelectors:
+        - tests/test_client_package.py::test_http_client_rejects_oversized_content_length_before_reading
+        - tests/test_client_package.py::test_http_client_caps_chunked_and_decompressed_response_bytes
+        - tests/test_client_package.py::test_http_client_enforces_total_response_read_deadline
+        - tests/test_client_package.py::test_http_client_rejects_unbounded_custom_response_reader_without_calling_it
+        - tests/test_client_package.py::test_http_client_rejects_reader_that_ignores_requested_size
+        - tests/test_client_package.py::test_http_client_caps_buffered_server_response_body
+    - id: schema-and-regex
+      pytestSelectors:
+        - tests/test_mcp_schema_execution.py::test_mcp_inline_schemas_reject_regular_expression_keywords
+    - id: yaml-parser-bounds
+      pytestSelectors:
+        - tests/test_loader.py::test_graph_document_loader_rejects_duplicate_yaml_mapping_keys
+        - tests/test_loader.py::test_load_documents_rejects_recursive_aliases
+        - tests/test_loader.py::test_load_documents_rejects_overdeep_documents
+        - tests/test_loader.py::test_load_documents_wraps_parser_recursion_for_extreme_depth
+        - tests/test_loader.py::test_load_documents_normalizes_invalid_utf8
+    - id: canonical-numbers
+      pytestSelectors:
+        - tests/test_canonical_integer_limits.py::test_canonical_integer_limit_accepts_exact_decimal_boundary
+        - tests/test_canonical_integer_limits.py::test_canonical_loads_rejects_oversized_integer_tokens[10001]
+        - tests/test_canonical_integer_limits.py::test_canonical_loads_rejects_oversized_integer_tokens[100000]
+        - tests/test_canonical_integer_limits.py::test_canonical_loads_rejects_oversized_integer_tokens[300000]
+        - tests/test_canonical_integer_limits.py::test_canonical_dumps_rejects_oversized_python_integers
+        - tests/test_canonical_properties.py::test_canonical_depth_budget_holds_for_generated_container_shapes
+        - tests/test_canonical_properties.py::test_canonical_integer_token_budget_holds_near_the_boundary
+        - tests/test_canonical_numeric_encoding.py::test_canonical_numeric_tokens_do_not_rescan_output_per_value

@@ -176,6 +176,20 @@ does not contain the audited source revision/archive digest or a complete
 command/tool manifest, and several reproduced findings have output without an
 executable harness. Those provenance and reconstruction gaps remain blocking.
 
+The stable promotion validator treats runtime security as evidence distinct
+from supply-chain integrity. Each candidate matrix attestation carries the
+closed object-authorization scope plus the digest of
+[`stable-security-gates.yaml`](stable-security-gates.yaml). One canonical CI
+leg executes that manifest's exact pytest node selectors for authorization,
+request, response, schema/regex, YAML-parser, and canonical-number behavior.
+The resulting canonical report binds the candidate commit, source digests,
+all-pass counts, and raw JUnit digest; candidate attestation freezing parses
+and revalidates both retained files before recording `passed`. The independent
+security review must be dispatched by the declared reviewer, approve that
+exact scope, and bind all three signed candidate matrix report digests. A
+generic `approved: true` report or a green unrelated test suite cannot satisfy
+either runtime-security gate.
+
 The profile tables now record the phase-scoped authority accepted by ADR-0001.
 `REL-NORMATIVE-AUTHORITY` still blocks 1.0 until canonical/schema facade routing,
 the runtime scheduler and protocol handshake, supported native artifacts, and
@@ -216,8 +230,12 @@ from the exact release artifacts:
    provenance and live issue inventory are digest-bound; all nine reproduced
    findings have executable regression harnesses; the inventory has zero open
    P0/P1; there are no unresolved critical/high stable-scope defects or
-   unexplained flakes; and three consecutive release-candidate matrix runs are
-   clean on supported Python and pinned Rust.
+   unexplained flakes; an independent object-authorization review approves the
+   exact candidate route manifest, selector manifest, source digests, and
+   all-pass JUnit result; adversarial request, response, schema, YAML-parser,
+   and canonical resource-budget tests pass with the same candidate-bound
+   evidence; and three consecutive release-candidate matrix runs are clean on
+   supported Python and pinned Rust.
 8. Artifacts carry checksums, an SBOM, provenance, and signatures; publishing,
    rollback, and yank procedures have been rehearsed.
 9. The unchanged release candidate completes a two-to-four-week soak in at
@@ -234,6 +252,10 @@ only after verified closure or after the affected code is removed from every
 1.0 release artifact.
 
 ### Supply-chain gate status
+
+This section describes artifact and promotion integrity only. Passing it does
+not satisfy the separate API, runtime-security, durability, or adapter axes in
+the [generated status projection](status.md#readiness-by-independent-axis).
 
 Installed-artifact CI covers Python 3.11 and 3.12 on Ubuntu and Windows. Each
 combination uses the pinned Rust 1.94.0 toolchain to build its wheelhouse once,
@@ -342,16 +364,17 @@ produced it. The signed API/security payloads bind the distinct reviewer
 principals reported by their trusted workflow, and the signed rehearsal payload
 binds its authorizer. The assembler validates the complete record
 against the clean, full-history final checkout. Only
-release documentation, the two Python package manifests, the public version
-constant, and the two version-bearing testing compatibility snapshots may
-differ from the candidate. Non-documentation files must be exact
+release documentation other than `stable-release-matrix.yaml` and
+`stable-security-gates.yaml`, the two Python package manifests, the public
+version constant, and the two version-bearing testing compatibility snapshots
+may differ from the candidate. Both release-authority YAML files are immutable
+between RC and final. Non-documentation files must be exact
 `1.0.0rc.N`-to-`1.0.0` replacements, apart from the optional packaging
 classifier promotion to Production/Stable; implementation, schema, TCK, and
 normative-specification changes require a new RC and soak.
-The `integrationPromotionPolicy` and `integrations` sections are the exception
-inside release documentation: they must be structurally identical in the
-candidate and final commits, so the final release cannot add or widen an
-adapter claim after its signed runs were collected.
+This whole-matrix immutability also prevents the final release from adding or
+widening an adapter, readiness, review, or test-gate claim after signed runs
+were collected.
 
 The promotion record binds the exact final ref and version without embedding
 the final commit or tree. This avoids an impossible self-reference when the
@@ -426,10 +449,17 @@ canonical matrix attestation for that workflow attempt, binding the candidate
 ref and commit, the deterministic candidate-manifest digest, the closed
 four-combination matrix, and the canonical
 `https://github.com/graphblocks/graphblocks/actions/runs/<run>/attempts/<attempt>`
-identity. A separate `id-token: write`-only job signs and directly verifies that
-fixed report under the CI workflow identity. Re-running the complete candidate
-workflow can produce another distinct attempt attestation; the manual report
-workflow cannot create or sign matrix claims.
+identity. Before freezing, it downloads the canonical Ubuntu/Python 3.11
+security-gate artifact and independently verifies its canonical result, exact
+selector manifest, candidate/source digests, all-pass counts, and JUnit digest.
+The artifact name is scoped to `github.run_attempt` and must match the attempt
+component of the attested run URL. Every other intermediate CI and manual
+promotion-report artifact is attempt-scoped as well, so a rerun cannot collide
+with or silently reuse an earlier attempt. A separate `id-token: write`-only
+job signs and directly verifies that fixed report under the CI workflow
+identity. Re-running the complete candidate workflow can produce another
+distinct attempt attestation; the manual report workflow cannot create or sign
+matrix claims.
 
 The deterministic candidate-manifest and post-candidate operational reports
 are signed by manually dispatching
