@@ -280,6 +280,7 @@ def _write_platform_input(
             ("jsonschema", "4.25.1"),
             ("packaging", "25.0"),
             ("PyYAML", "6.0.2"),
+            ("referencing", "0.37.0"),
         )
     ]
     graphblocks_ref = f"pkg:pypi/graphblocks@{stable_version}"
@@ -361,6 +362,7 @@ def _write_platform_input(
                         "jsonschema": "4.25.1",
                         "packaging": "25.0",
                         "pyyaml": "6.0.2",
+                        "referencing": "0.37.0",
                     }.items()
                 )
             ],
@@ -2014,6 +2016,7 @@ def test_release_bundle_binds_exact_platform_artifacts_evidence_tools_and_rehear
         "jsonschema",
         "packaging",
         "PyYAML",
+        "referencing",
     }
     dependency_graph = {
         relationship["ref"]: set(relationship["dependsOn"])
@@ -2024,6 +2027,7 @@ def test_release_bundle_binds_exact_platform_artifacts_evidence_tools_and_rehear
         "pkg:pypi/jsonschema@4.25.1",
         "pkg:pypi/packaging@25.0",
         "pkg:pypi/PyYAML@6.0.2",
+        "pkg:pypi/referencing@0.37.0",
     }.issubset(dependency_graph[graphblocks_ref])
 
     provenance = json.loads((bundle / "provenance.intoto.json").read_text(encoding="utf-8"))
@@ -2610,7 +2614,7 @@ def test_release_bundle_rejects_sbom_missing_installed_distribution(
     platform_path = next(inputs.iterdir()) / "platform-evidence" / "platform.json"
     platform = json.loads(platform_path.read_text(encoding="utf-8"))
     platform["installedDistributions"].append(
-        {"name": "referencing", "version": "0.36.2"}
+        {"name": "unexpected-installed", "version": "9.9.9"}
     )
     platform["installedDistributions"].sort(key=lambda item: item["name"])
     platform.pop("contentDigest")

@@ -13,6 +13,11 @@ checkpoint, callback, application, governance, and production experiments.
 
 - `stable-python-surface.yaml` is the reviewed list of candidate-stable C0/C1
   import paths.
+- `python-package-boundaries.yaml` classifies every unlisted public module as
+  preview, records the lazy root-compatibility policy, and caps base
+  dependencies plus cold root and canonical-leaf imports.
+- `python-root-compatibility.json` freezes every transitional package-root
+  runtime alias and its defining owner module without promoting it to stable.
 - `stable-python-api.json` records their exact inspectable signatures and the
   public fields of dataclasses.
 - `stable-cli-cases.yaml` is the reviewed list of `validate`, `plan`, and `run`

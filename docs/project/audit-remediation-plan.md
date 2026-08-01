@@ -284,6 +284,26 @@ warnings remain inside explicit namespaces. Enforce base-install dependency/API
 budgets, module-level preview typing/debt budgets, import-time, resident-memory,
 and loaded-module limits in CI.
 
+`GB-ARCH-019` now has executable closure evidence: importing the package root
+loads only the facade, version, lazy-export helper, and compatibility map. The
+606 historical root bindings remain runtime-compatible through exact lazy
+resolution and an independently generated name-to-owner snapshot, while only
+the reviewed C0/C1 `__all__` is publicly discoverable before explicit access.
+`compatibility/python-package-boundaries.yaml` classifies every unlisted public
+leaf module and integration as preview, requires preview typing to use the
+defining leaf namespace, freezes the base and optional dependency sets, and
+establishes three-run cold-import and stable-symbol first-access ceilings. The
+Python CI suite rejects alias replacement, duplication, missing owner modules,
+dependency or extra growth, preview discovery from a cold root, and time, RSS,
+total-module, GraphBlocks-module, or root-attribute budget regressions. The
+installed-artifact gate additionally creates a separate environment containing
+only the built `graphblocks` wheel and its base dependency closure, runs
+`pip check`, compares every base and extra PEP 508 requirement in wheel
+metadata, verifies the exact root and canonical module allowlists, and resolves
+every stable root export without the runtime or testing distributions. Direct
+use of `referencing` is now declared instead of relying on jsonschema's
+transitive dependency.
+
 ### Rust authority and crate graph
 
 Adopt the following target authority model:

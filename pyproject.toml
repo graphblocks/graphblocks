@@ -26,6 +26,7 @@ dependencies = [
   "jsonschema>=4.23,<5",
   "packaging>=24.0",
   "PyYAML>=6.0",
+  "referencing>=0.35,<1",
 ]
 
 [project.optional-dependencies]

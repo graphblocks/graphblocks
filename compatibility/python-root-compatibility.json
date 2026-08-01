@@ -1,0 +1,2431 @@
+{
+  "aliases": [
+    {
+      "name": "APPLICATION_COMMAND_KINDS",
+      "owner": "graphblocks.application_event"
+    },
+    {
+      "name": "APPLICATION_EVENT_VISIBILITIES",
+      "owner": "graphblocks.application_event"
+    },
+    {
+      "name": "APPLICATION_PROTOCOL_EVENT_KINDS",
+      "owner": "graphblocks.application_event"
+    },
+    {
+      "name": "APPLICATION_PROTOCOL_TCK_COMMAND_KINDS",
+      "owner": "graphblocks.application_event"
+    },
+    {
+      "name": "APPLICATION_PROTOCOL_TCK_EVENT_KINDS",
+      "owner": "graphblocks.application_event"
+    },
+    {
+      "name": "Abstention",
+      "owner": "graphblocks.rag"
+    },
+    {
+      "name": "AdmissionDecision",
+      "owner": "graphblocks.exhaustion"
+    },
+    {
+      "name": "AdmissionError",
+      "owner": "graphblocks.admission"
+    },
+    {
+      "name": "AdmissionIdempotencyConflictError",
+      "owner": "graphblocks.admission"
+    },
+    {
+      "name": "AdmissionQueueFullError",
+      "owner": "graphblocks.admission"
+    },
+    {
+      "name": "AdmissionStaleFencingTokenError",
+      "owner": "graphblocks.admission"
+    },
+    {
+      "name": "AdmissionSubmission",
+      "owner": "graphblocks.admission"
+    },
+    {
+      "name": "AdmissionTicket",
+      "owner": "graphblocks.admission"
+    },
+    {
+      "name": "AdmissionTicketNotFoundError",
+      "owner": "graphblocks.admission"
+    },
+    {
+      "name": "AdmissionTicketQueue",
+      "owner": "graphblocks.admission"
+    },
+    {
+      "name": "AdmissionTicketState",
+      "owner": "graphblocks.admission"
+    },
+    {
+      "name": "AdmissionTicketStateError",
+      "owner": "graphblocks.admission"
+    },
+    {
+      "name": "AdmittedToolCall",
+      "owner": "graphblocks.tools"
+    },
+    {
+      "name": "AgentLoopController",
+      "owner": "graphblocks.agent"
+    },
+    {
+      "name": "AgentLoopDecision",
+      "owner": "graphblocks.agent"
+    },
+    {
+      "name": "AgentLoopDisposition",
+      "owner": "graphblocks.agent"
+    },
+    {
+      "name": "AgentSpec",
+      "owner": "graphblocks.agent"
+    },
+    {
+      "name": "AgentState",
+      "owner": "graphblocks.agent"
+    },
+    {
+      "name": "AgentStateError",
+      "owner": "graphblocks.agent"
+    },
+    {
+      "name": "AgentStatePatch",
+      "owner": "graphblocks.agent"
+    },
+    {
+      "name": "AgentStatePatchOp",
+      "owner": "graphblocks.agent"
+    },
+    {
+      "name": "AgentStatePatchOpKind",
+      "owner": "graphblocks.agent"
+    },
+    {
+      "name": "AgentStateSchema",
+      "owner": "graphblocks.agent"
+    },
+    {
+      "name": "Answer",
+      "owner": "graphblocks.rag"
+    },
+    {
+      "name": "ApplicationCommand",
+      "owner": "graphblocks.application_event"
+    },
+    {
+      "name": "ApplicationCommandKind",
+      "owner": "graphblocks.application_event"
+    },
+    {
+      "name": "ApplicationCommandMetadata",
+      "owner": "graphblocks.application_event"
+    },
+    {
+      "name": "ApplicationEvent",
+      "owner": "graphblocks.application_event"
+    },
+    {
+      "name": "ApplicationEventError",
+      "owner": "graphblocks.application_event"
+    },
+    {
+      "name": "ApplicationEventKind",
+      "owner": "graphblocks.application_event"
+    },
+    {
+      "name": "ApplicationEventMetadata",
+      "owner": "graphblocks.application_event"
+    },
+    {
+      "name": "ApplicationEventStreamState",
+      "owner": "graphblocks.application_event"
+    },
+    {
+      "name": "ApplicationEventVisibility",
+      "owner": "graphblocks.application_event"
+    },
+    {
+      "name": "ApplicationProtocolCapabilities",
+      "owner": "graphblocks.server"
+    },
+    {
+      "name": "ApplicationProtocolError",
+      "owner": "graphblocks.application_event"
+    },
+    {
+      "name": "ApplicationProtocolEvent",
+      "owner": "graphblocks.application_event"
+    },
+    {
+      "name": "ApplicationProtocolEventKind",
+      "owner": "graphblocks.application_event"
+    },
+    {
+      "name": "ApplicationProtocolEventMetadata",
+      "owner": "graphblocks.application_event"
+    },
+    {
+      "name": "ApplicationProtocolLog",
+      "owner": "graphblocks.application_event"
+    },
+    {
+      "name": "ApplicationProtocolStreamState",
+      "owner": "graphblocks.application_event"
+    },
+    {
+      "name": "ApprovalRecord",
+      "owner": "graphblocks.approval"
+    },
+    {
+      "name": "ApprovalRequest",
+      "owner": "graphblocks.approval"
+    },
+    {
+      "name": "ApprovalStatus",
+      "owner": "graphblocks.approval"
+    },
+    {
+      "name": "ArtifactRef",
+      "owner": "graphblocks.documents"
+    },
+    {
+      "name": "AssetRevision",
+      "owner": "graphblocks.documents"
+    },
+    {
+      "name": "AsyncOperation",
+      "owner": "graphblocks.async_operation"
+    },
+    {
+      "name": "AsyncOperationResult",
+      "owner": "graphblocks.async_operation"
+    },
+    {
+      "name": "AsyncOperationResultStatus",
+      "owner": "graphblocks.async_operation"
+    },
+    {
+      "name": "AsyncOperationState",
+      "owner": "graphblocks.async_operation"
+    },
+    {
+      "name": "AuthContext",
+      "owner": "graphblocks.rag"
+    },
+    {
+      "name": "BlobKey",
+      "owner": "graphblocks.blob_store"
+    },
+    {
+      "name": "BlobListItem",
+      "owner": "graphblocks.blob_store"
+    },
+    {
+      "name": "BlobMetadata",
+      "owner": "graphblocks.blob_store"
+    },
+    {
+      "name": "BlobNotFoundError",
+      "owner": "graphblocks.blob_store"
+    },
+    {
+      "name": "BlobStoreError",
+      "owner": "graphblocks.blob_store"
+    },
+    {
+      "name": "BlockCallable",
+      "owner": "graphblocks.runtime"
+    },
+    {
+      "name": "BlockCapability",
+      "owner": "graphblocks.worker"
+    },
+    {
+      "name": "BlockCatalog",
+      "owner": "graphblocks.plugins"
+    },
+    {
+      "name": "BlockDescriptor",
+      "owner": "graphblocks.plugins"
+    },
+    {
+      "name": "BlockToolImplementation",
+      "owner": "graphblocks.tools"
+    },
+    {
+      "name": "BranchRequest",
+      "owner": "graphblocks.conversation"
+    },
+    {
+      "name": "BudgetAccount",
+      "owner": "graphblocks.budget"
+    },
+    {
+      "name": "BudgetAccountStateError",
+      "owner": "graphblocks.budget"
+    },
+    {
+      "name": "BudgetBalance",
+      "owner": "graphblocks.budget"
+    },
+    {
+      "name": "BudgetCompletionReserveConflictError",
+      "owner": "graphblocks.budget"
+    },
+    {
+      "name": "BudgetCompletionReserveNotFoundError",
+      "owner": "graphblocks.budget"
+    },
+    {
+      "name": "BudgetCompletionReserveStateError",
+      "owner": "graphblocks.budget"
+    },
+    {
+      "name": "BudgetCompletionReserveUnauthorizedError",
+      "owner": "graphblocks.budget"
+    },
+    {
+      "name": "BudgetConflictError",
+      "owner": "graphblocks.budget"
+    },
+    {
+      "name": "BudgetError",
+      "owner": "graphblocks.budget"
+    },
+    {
+      "name": "BudgetExceededError",
+      "owner": "graphblocks.budget"
+    },
+    {
+      "name": "BudgetNotFoundError",
+      "owner": "graphblocks.budget"
+    },
+    {
+      "name": "BudgetPermit",
+      "owner": "graphblocks.budget"
+    },
+    {
+      "name": "BudgetPermitExpiredError",
+      "owner": "graphblocks.budget"
+    },
+    {
+      "name": "BudgetPermitFencingError",
+      "owner": "graphblocks.budget"
+    },
+    {
+      "name": "BudgetPermitNotFoundError",
+      "owner": "graphblocks.budget"
+    },
+    {
+      "name": "BudgetPermitScopeError",
+      "owner": "graphblocks.budget"
+    },
+    {
+      "name": "BudgetReservation",
+      "owner": "graphblocks.budget"
+    },
+    {
+      "name": "BudgetReservationNotFoundError",
+      "owner": "graphblocks.budget"
+    },
+    {
+      "name": "BudgetReservationStateError",
+      "owner": "graphblocks.budget"
+    },
+    {
+      "name": "BudgetSettlement",
+      "owner": "graphblocks.budget"
+    },
+    {
+      "name": "BudgetStatus",
+      "owner": "graphblocks.budget"
+    },
+    {
+      "name": "ByteRange",
+      "owner": "graphblocks.blob_store"
+    },
+    {
+      "name": "COMPOSITION_API_VERSION",
+      "owner": "graphblocks.composition"
+    },
+    {
+      "name": "CallbackDelivery",
+      "owner": "graphblocks.callbacks"
+    },
+    {
+      "name": "CallbackReceiptVerifier",
+      "owner": "graphblocks.runtime"
+    },
+    {
+      "name": "CallbackSubscription",
+      "owner": "graphblocks.callbacks"
+    },
+    {
+      "name": "CancellationToken",
+      "owner": "graphblocks.runtime"
+    },
+    {
+      "name": "ChangeSet",
+      "owner": "graphblocks.evaluation"
+    },
+    {
+      "name": "CheckResult",
+      "owner": "graphblocks.evaluation"
+    },
+    {
+      "name": "ChildBudgetDelegation",
+      "owner": "graphblocks.orchestration"
+    },
+    {
+      "name": "ChildBudgetDelegationError",
+      "owner": "graphblocks.orchestration"
+    },
+    {
+      "name": "Citation",
+      "owner": "graphblocks.rag"
+    },
+    {
+      "name": "CitationSourceTrace",
+      "owner": "graphblocks.rag"
+    },
+    {
+      "name": "CitationValidationIssue",
+      "owner": "graphblocks.rag"
+    },
+    {
+      "name": "CitationValidationResult",
+      "owner": "graphblocks.rag"
+    },
+    {
+      "name": "Claim",
+      "owner": "graphblocks.rag"
+    },
+    {
+      "name": "CompactionRecord",
+      "owner": "graphblocks.conversation"
+    },
+    {
+      "name": "CompletionReserve",
+      "owner": "graphblocks.budget"
+    },
+    {
+      "name": "CompletionReservePurpose",
+      "owner": "graphblocks.budget"
+    },
+    {
+      "name": "CompletionReserveStatus",
+      "owner": "graphblocks.budget"
+    },
+    {
+      "name": "CompositionError",
+      "owner": "graphblocks.composition"
+    },
+    {
+      "name": "CompositionInstance",
+      "owner": "graphblocks.composition"
+    },
+    {
+      "name": "CompositionReport",
+      "owner": "graphblocks.composition"
+    },
+    {
+      "name": "CompositionResult",
+      "owner": "graphblocks.composition"
+    },
+    {
+      "name": "CompositionSource",
+      "owner": "graphblocks.composition"
+    },
+    {
+      "name": "ContentPart",
+      "owner": "graphblocks.conversation"
+    },
+    {
+      "name": "ContextAccessMode",
+      "owner": "graphblocks.orchestration"
+    },
+    {
+      "name": "ContextPack",
+      "owner": "graphblocks.rag"
+    },
+    {
+      "name": "ContinuationEnvelope",
+      "owner": "graphblocks.exhaustion"
+    },
+    {
+      "name": "Conversation",
+      "owner": "graphblocks.conversation"
+    },
+    {
+      "name": "ConversationArchivedError",
+      "owner": "graphblocks.conversation"
+    },
+    {
+      "name": "ConversationConflictError",
+      "owner": "graphblocks.conversation"
+    },
+    {
+      "name": "ConversationError",
+      "owner": "graphblocks.conversation"
+    },
+    {
+      "name": "ConversationNotFoundError",
+      "owner": "graphblocks.conversation"
+    },
+    {
+      "name": "ConversationSnapshot",
+      "owner": "graphblocks.conversation"
+    },
+    {
+      "name": "DeclarativeOutputPolicyEvaluator",
+      "owner": "graphblocks.output_policy"
+    },
+    {
+      "name": "DeclarativeOutputPolicyRule",
+      "owner": "graphblocks.output_policy"
+    },
+    {
+      "name": "DeliveryMode",
+      "owner": "graphblocks.output_policy"
+    },
+    {
+      "name": "DeploymentCondition",
+      "owner": "graphblocks.deployment"
+    },
+    {
+      "name": "DeploymentConditionStatus",
+      "owner": "graphblocks.deployment"
+    },
+    {
+      "name": "DeploymentEvent",
+      "owner": "graphblocks.deployment"
+    },
+    {
+      "name": "DeploymentEventKind",
+      "owner": "graphblocks.deployment"
+    },
+    {
+      "name": "DeploymentObservabilityContext",
+      "owner": "graphblocks.deployment"
+    },
+    {
+      "name": "DeploymentRecoveryProfile",
+      "owner": "graphblocks.deployment"
+    },
+    {
+      "name": "DeploymentRevision",
+      "owner": "graphblocks.deployment"
+    },
+    {
+      "name": "DeploymentSloProfile",
+      "owner": "graphblocks.deployment"
+    },
+    {
+      "name": "Diagnostic",
+      "owner": "graphblocks.diagnostics"
+    },
+    {
+      "name": "DiagnosticSet",
+      "owner": "graphblocks.diagnostics"
+    },
+    {
+      "name": "DocumentChunk",
+      "owner": "graphblocks.documents"
+    },
+    {
+      "name": "DocumentElement",
+      "owner": "graphblocks.documents"
+    },
+    {
+      "name": "DocumentParserError",
+      "owner": "graphblocks.document_parsers"
+    },
+    {
+      "name": "DocumentParserNotFoundError",
+      "owner": "graphblocks.document_parsers"
+    },
+    {
+      "name": "DocumentParserRegistry",
+      "owner": "graphblocks.document_parsers"
+    },
+    {
+      "name": "DocumentSpan",
+      "owner": "graphblocks.documents"
+    },
+    {
+      "name": "DraftDisposition",
+      "owner": "graphblocks.output_policy"
+    },
+    {
+      "name": "EnforcementPoint",
+      "owner": "graphblocks.policy"
+    },
+    {
+      "name": "EntitlementSnapshot",
+      "owner": "graphblocks.policy"
+    },
+    {
+      "name": "EventFilter",
+      "owner": "graphblocks.callbacks"
+    },
+    {
+      "name": "EvidenceRef",
+      "owner": "graphblocks.evaluation"
+    },
+    {
+      "name": "ExecutionJournal",
+      "owner": "graphblocks.runtime"
+    },
+    {
+      "name": "ExecutionTarget",
+      "owner": "graphblocks.deployment"
+    },
+    {
+      "name": "ExecutionTargetKind",
+      "owner": "graphblocks.deployment"
+    },
+    {
+      "name": "ExhaustionController",
+      "owner": "graphblocks.exhaustion"
+    },
+    {
+      "name": "ExhaustionPolicy",
+      "owner": "graphblocks.exhaustion"
+    },
+    {
+      "name": "ExhaustionPolicyError",
+      "owner": "graphblocks.exhaustion"
+    },
+    {
+      "name": "ExternalCallbackReceived",
+      "owner": "graphblocks.async_operation"
+    },
+    {
+      "name": "ExternalEffectRecord",
+      "owner": "graphblocks.async_operation"
+    },
+    {
+      "name": "FINAL_TOOL_RESULT_EVENT_STATUSES",
+      "owner": "graphblocks.tools"
+    },
+    {
+      "name": "FederatedFailureMode",
+      "owner": "graphblocks.rag"
+    },
+    {
+      "name": "FederatedRetrievalError",
+      "owner": "graphblocks.rag"
+    },
+    {
+      "name": "FederatedRetrievalSource",
+      "owner": "graphblocks.rag"
+    },
+    {
+      "name": "FileAttachment",
+      "owner": "graphblocks.conversation"
+    },
+    {
+      "name": "FlushBoundary",
+      "owner": "graphblocks.output_policy"
+    },
+    {
+      "name": "GateConstraint",
+      "owner": "graphblocks.evaluation"
+    },
+    {
+      "name": "GateResult",
+      "owner": "graphblocks.evaluation"
+    },
+    {
+      "name": "GenerationChunk",
+      "owner": "graphblocks.output_policy"
+    },
+    {
+      "name": "GraphBlocksServerApp",
+      "owner": "graphblocks.server"
+    },
+    {
+      "name": "GraphDeployment",
+      "owner": "graphblocks.deployment"
+    },
+    {
+      "name": "GraphDeploymentError",
+      "owner": "graphblocks.deployment"
+    },
+    {
+      "name": "GraphRef",
+      "owner": "graphblocks.tools"
+    },
+    {
+      "name": "GraphRelease",
+      "owner": "graphblocks.deployment"
+    },
+    {
+      "name": "GraphReleaseError",
+      "owner": "graphblocks.deployment"
+    },
+    {
+      "name": "GraphReleaseGraph",
+      "owner": "graphblocks.deployment"
+    },
+    {
+      "name": "GraphReleaseMutableReferencesError",
+      "owner": "graphblocks.deployment"
+    },
+    {
+      "name": "GraphToolImplementation",
+      "owner": "graphblocks.tools"
+    },
+    {
+      "name": "ImageRef",
+      "owner": "graphblocks.deployment"
+    },
+    {
+      "name": "InMemoryBudgetLedger",
+      "owner": "graphblocks.budget"
+    },
+    {
+      "name": "InMemoryChunkRetriever",
+      "owner": "graphblocks.rag"
+    },
+    {
+      "name": "InMemoryConversationStore",
+      "owner": "graphblocks.conversation"
+    },
+    {
+      "name": "InMemoryIngestionManifestStore",
+      "owner": "graphblocks.ingestion"
+    },
+    {
+      "name": "InMemoryKnowledgeIndex",
+      "owner": "graphblocks.rag"
+    },
+    {
+      "name": "InMemoryLeasePool",
+      "owner": "graphblocks.leases"
+    },
+    {
+      "name": "InMemoryReviewerCredentialProvider",
+      "owner": "graphblocks.review"
+    },
+    {
+      "name": "InMemoryRunStore",
+      "owner": "graphblocks.run_store"
+    },
+    {
+      "name": "InMemoryUsageLedger",
+      "owner": "graphblocks.usage"
+    },
+    {
+      "name": "InMemoryWorkspaceStore",
+      "owner": "graphblocks.workspace"
+    },
+    {
+      "name": "InProcessRuntime",
+      "owner": "graphblocks.runtime"
+    },
+    {
+      "name": "IndexRecordRef",
+      "owner": "graphblocks.ingestion"
+    },
+    {
+      "name": "IngestionDeletePolicy",
+      "owner": "graphblocks.ingestion"
+    },
+    {
+      "name": "IngestionError",
+      "owner": "graphblocks.ingestion"
+    },
+    {
+      "name": "IngestionManifest",
+      "owner": "graphblocks.ingestion"
+    },
+    {
+      "name": "IngestionStatus",
+      "owner": "graphblocks.ingestion"
+    },
+    {
+      "name": "InputDependency",
+      "owner": "graphblocks.outcome"
+    },
+    {
+      "name": "InvalidBlobKeyError",
+      "owner": "graphblocks.blob_store"
+    },
+    {
+      "name": "JournalKind",
+      "owner": "graphblocks.runtime"
+    },
+    {
+      "name": "JournalRecord",
+      "owner": "graphblocks.runtime"
+    },
+    {
+      "name": "JournalStateError",
+      "owner": "graphblocks.runtime"
+    },
+    {
+      "name": "JsonSchema",
+      "owner": "graphblocks.tools"
+    },
+    {
+      "name": "JsonSchemaNode",
+      "owner": "graphblocks.tools"
+    },
+    {
+      "name": "JsonSchemaRef",
+      "owner": "graphblocks.tools"
+    },
+    {
+      "name": "JsonSchemaType",
+      "owner": "graphblocks.tools"
+    },
+    {
+      "name": "KnowledgeBinding",
+      "owner": "graphblocks.deployment"
+    },
+    {
+      "name": "KnowledgeDeleteMode",
+      "owner": "graphblocks.rag"
+    },
+    {
+      "name": "KnowledgeIndexCapabilities",
+      "owner": "graphblocks.rag"
+    },
+    {
+      "name": "KnowledgeIndexError",
+      "owner": "graphblocks.rag"
+    },
+    {
+      "name": "KnowledgeIndexHealth",
+      "owner": "graphblocks.rag"
+    },
+    {
+      "name": "KnowledgeIndexRecord",
+      "owner": "graphblocks.rag"
+    },
+    {
+      "name": "KnowledgeItemRef",
+      "owner": "graphblocks.rag"
+    },
+    {
+      "name": "KnowledgePublishResult",
+      "owner": "graphblocks.rag"
+    },
+    {
+      "name": "KnowledgeRecordStatus",
+      "owner": "graphblocks.rag"
+    },
+    {
+      "name": "KnowledgeWriteReport",
+      "owner": "graphblocks.rag"
+    },
+    {
+      "name": "Lease",
+      "owner": "graphblocks.leases"
+    },
+    {
+      "name": "LeaseUnavailableError",
+      "owner": "graphblocks.leases"
+    },
+    {
+      "name": "ListPage",
+      "owner": "graphblocks.blob_store"
+    },
+    {
+      "name": "LocalBlobStore",
+      "owner": "graphblocks.blob_store"
+    },
+    {
+      "name": "LocalExecutionJournal",
+      "owner": "graphblocks.runtime"
+    },
+    {
+      "name": "LocalJournalKind",
+      "owner": "graphblocks.runtime"
+    },
+    {
+      "name": "LocalJournalRecord",
+      "owner": "graphblocks.runtime"
+    },
+    {
+      "name": "LocalRunResult",
+      "owner": "graphblocks.runtime"
+    },
+    {
+      "name": "LocalRuntime",
+      "owner": "graphblocks.runtime"
+    },
+    {
+      "name": "LocalTerminalJournalKind",
+      "owner": "graphblocks.runtime"
+    },
+    {
+      "name": "McpToolImplementation",
+      "owner": "graphblocks.tools"
+    },
+    {
+      "name": "Message",
+      "owner": "graphblocks.conversation"
+    },
+    {
+      "name": "MessageNotFoundError",
+      "owner": "graphblocks.conversation"
+    },
+    {
+      "name": "MetricObservation",
+      "owner": "graphblocks.evaluation"
+    },
+    {
+      "name": "MissingExhaustionBoundaryError",
+      "owner": "graphblocks.exhaustion"
+    },
+    {
+      "name": "ModelPool",
+      "owner": "graphblocks.orchestration"
+    },
+    {
+      "name": "ModelPoolMismatchError",
+      "owner": "graphblocks.orchestration"
+    },
+    {
+      "name": "ModelProfile",
+      "owner": "graphblocks.orchestration"
+    },
+    {
+      "name": "ModelSelectionError",
+      "owner": "graphblocks.orchestration"
+    },
+    {
+      "name": "ModelSelectionRequest",
+      "owner": "graphblocks.orchestration"
+    },
+    {
+      "name": "ModelSensitivityAboveCeilingError",
+      "owner": "graphblocks.orchestration"
+    },
+    {
+      "name": "ModelToolNotAllowedError",
+      "owner": "graphblocks.orchestration"
+    },
+    {
+      "name": "ModelVisibleToolRef",
+      "owner": "graphblocks.evaluation"
+    },
+    {
+      "name": "NativeCompilerUnavailableError",
+      "owner": "graphblocks.compiler"
+    },
+    {
+      "name": "NoEligibleModelError",
+      "owner": "graphblocks.orchestration"
+    },
+    {
+      "name": "OpenApiToolImplementation",
+      "owner": "graphblocks.tools"
+    },
+    {
+      "name": "Outcome",
+      "owner": "graphblocks.outcome"
+    },
+    {
+      "name": "OutputCutoff",
+      "owner": "graphblocks.output_policy"
+    },
+    {
+      "name": "OutputDeliveryGate",
+      "owner": "graphblocks.output_policy"
+    },
+    {
+      "name": "OutputDeliveryPolicy",
+      "owner": "graphblocks.output_policy"
+    },
+    {
+      "name": "OutputDeliveryPolicyError",
+      "owner": "graphblocks.output_policy"
+    },
+    {
+      "name": "OutputDisposition",
+      "owner": "graphblocks.output_policy"
+    },
+    {
+      "name": "OutputDurableResult",
+      "owner": "graphblocks.output_policy"
+    },
+    {
+      "name": "OutputGateError",
+      "owner": "graphblocks.output_policy"
+    },
+    {
+      "name": "OutputGateUpdate",
+      "owner": "graphblocks.output_policy"
+    },
+    {
+      "name": "OutputPolicyDecision",
+      "owner": "graphblocks.output_policy"
+    },
+    {
+      "name": "OutputRequirednessPredicate",
+      "owner": "graphblocks.plugins"
+    },
+    {
+      "name": "PackageLock",
+      "owner": "graphblocks.packages"
+    },
+    {
+      "name": "PackageLockEntry",
+      "owner": "graphblocks.packages"
+    },
+    {
+      "name": "PackageManifestAuditPolicy",
+      "owner": "graphblocks.packages"
+    },
+    {
+      "name": "ParsedDocument",
+      "owner": "graphblocks.documents"
+    },
+    {
+      "name": "ParserCandidateParseResult",
+      "owner": "graphblocks.document_parsers"
+    },
+    {
+      "name": "ParserDescriptor",
+      "owner": "graphblocks.document_parsers"
+    },
+    {
+      "name": "ParserSelectionLock",
+      "owner": "graphblocks.document_parsers"
+    },
+    {
+      "name": "PartialOutputPolicy",
+      "owner": "graphblocks.exhaustion"
+    },
+    {
+      "name": "PendingToolCallsDisposition",
+      "owner": "graphblocks.output_policy"
+    },
+    {
+      "name": "PhysicalExecutionPlan",
+      "owner": "graphblocks.deployment"
+    },
+    {
+      "name": "PlacementAmbiguousError",
+      "owner": "graphblocks.deployment"
+    },
+    {
+      "name": "PlacementError",
+      "owner": "graphblocks.deployment"
+    },
+    {
+      "name": "PlacementNoCompatibleTargetError",
+      "owner": "graphblocks.deployment"
+    },
+    {
+      "name": "PlacementRule",
+      "owner": "graphblocks.deployment"
+    },
+    {
+      "name": "PlacementSelector",
+      "owner": "graphblocks.deployment"
+    },
+    {
+      "name": "PlacementUnknownTargetError",
+      "owner": "graphblocks.deployment"
+    },
+    {
+      "name": "Plan",
+      "owner": "graphblocks.compiler"
+    },
+    {
+      "name": "PluginManifest",
+      "owner": "graphblocks.plugins"
+    },
+    {
+      "name": "PluginRegistry",
+      "owner": "graphblocks.plugins"
+    },
+    {
+      "name": "PolicyBundle",
+      "owner": "graphblocks.policy"
+    },
+    {
+      "name": "PolicyDecision",
+      "owner": "graphblocks.policy"
+    },
+    {
+      "name": "PolicyEffect",
+      "owner": "graphblocks.policy"
+    },
+    {
+      "name": "PolicyEnforcementRecord",
+      "owner": "graphblocks.policy"
+    },
+    {
+      "name": "PolicyEnforcementResult",
+      "owner": "graphblocks.policy"
+    },
+    {
+      "name": "PolicyEnforcementStatus",
+      "owner": "graphblocks.policy"
+    },
+    {
+      "name": "PolicyEnforcer",
+      "owner": "graphblocks.policy"
+    },
+    {
+      "name": "PolicyFailMode",
+      "owner": "graphblocks.policy"
+    },
+    {
+      "name": "PolicyObligation",
+      "owner": "graphblocks.policy"
+    },
+    {
+      "name": "PolicyProfile",
+      "owner": "graphblocks.policy"
+    },
+    {
+      "name": "PolicyRequest",
+      "owner": "graphblocks.policy"
+    },
+    {
+      "name": "PolicyRule",
+      "owner": "graphblocks.policy"
+    },
+    {
+      "name": "PolicySnapshot",
+      "owner": "graphblocks.policy"
+    },
+    {
+      "name": "PolicyTestCase",
+      "owner": "graphblocks.policy"
+    },
+    {
+      "name": "PolicyTestExpectation",
+      "owner": "graphblocks.policy"
+    },
+    {
+      "name": "PolicyTestReport",
+      "owner": "graphblocks.policy"
+    },
+    {
+      "name": "PolicyTestResult",
+      "owner": "graphblocks.policy"
+    },
+    {
+      "name": "PolicyUnavailableError",
+      "owner": "graphblocks.policy"
+    },
+    {
+      "name": "PortDescriptor",
+      "owner": "graphblocks.plugins"
+    },
+    {
+      "name": "PortRef",
+      "owner": "graphblocks.outcome"
+    },
+    {
+      "name": "PrincipalRef",
+      "owner": "graphblocks.policy"
+    },
+    {
+      "name": "ProcessorRef",
+      "owner": "graphblocks.ingestion"
+    },
+    {
+      "name": "PromptLock",
+      "owner": "graphblocks.deployment"
+    },
+    {
+      "name": "ProviderCancellation",
+      "owner": "graphblocks.output_policy"
+    },
+    {
+      "name": "PutOptions",
+      "owner": "graphblocks.blob_store"
+    },
+    {
+      "name": "QueryPlan",
+      "owner": "graphblocks.rag"
+    },
+    {
+      "name": "RESOURCE_SCHEMA_PATHS",
+      "owner": "graphblocks.schema"
+    },
+    {
+      "name": "RagResultBundle",
+      "owner": "graphblocks.rag"
+    },
+    {
+      "name": "RagResultPayload",
+      "owner": "graphblocks.rag"
+    },
+    {
+      "name": "RankedHit",
+      "owner": "graphblocks.rag"
+    },
+    {
+      "name": "Readiness",
+      "owner": "graphblocks.outcome"
+    },
+    {
+      "name": "ReadinessTracker",
+      "owner": "graphblocks.outcome"
+    },
+    {
+      "name": "RecoveryObjective",
+      "owner": "graphblocks.deployment"
+    },
+    {
+      "name": "RegenerateRequest",
+      "owner": "graphblocks.conversation"
+    },
+    {
+      "name": "ReleaseBundle",
+      "owner": "graphblocks.deployment"
+    },
+    {
+      "name": "ReleaseLockRef",
+      "owner": "graphblocks.deployment"
+    },
+    {
+      "name": "RemoteEdgePayload",
+      "owner": "graphblocks.worker"
+    },
+    {
+      "name": "RemotePayloadError",
+      "owner": "graphblocks.worker"
+    },
+    {
+      "name": "RemotePayloadInlineJsonEncodingError",
+      "owner": "graphblocks.worker"
+    },
+    {
+      "name": "RemotePayloadInvalidArtifactRefError",
+      "owner": "graphblocks.worker"
+    },
+    {
+      "name": "RemotePayloadInvalidLimitError",
+      "owner": "graphblocks.worker"
+    },
+    {
+      "name": "RemotePayloadInvalidModeError",
+      "owner": "graphblocks.worker"
+    },
+    {
+      "name": "RemotePayloadLimits",
+      "owner": "graphblocks.worker"
+    },
+    {
+      "name": "RemotePayloadOversizedInlineError",
+      "owner": "graphblocks.worker"
+    },
+    {
+      "name": "RemoteToolImplementation",
+      "owner": "graphblocks.tools"
+    },
+    {
+      "name": "RerankResult",
+      "owner": "graphblocks.rag"
+    },
+    {
+      "name": "ReservationPurpose",
+      "owner": "graphblocks.budget"
+    },
+    {
+      "name": "ReservationStatus",
+      "owner": "graphblocks.budget"
+    },
+    {
+      "name": "ResolvedInput",
+      "owner": "graphblocks.outcome"
+    },
+    {
+      "name": "ResolvedPlacement",
+      "owner": "graphblocks.deployment"
+    },
+    {
+      "name": "ResolvedTool",
+      "owner": "graphblocks.tools"
+    },
+    {
+      "name": "ResourceRef",
+      "owner": "graphblocks.policy"
+    },
+    {
+      "name": "ResourceSchemaViolation",
+      "owner": "graphblocks.schema"
+    },
+    {
+      "name": "ResourceSlotDescriptor",
+      "owner": "graphblocks.plugins"
+    },
+    {
+      "name": "ResourceSnapshotRef",
+      "owner": "graphblocks.evaluation"
+    },
+    {
+      "name": "ResourceValidationError",
+      "owner": "graphblocks.schema"
+    },
+    {
+      "name": "ResultBundle",
+      "owner": "graphblocks.evaluation"
+    },
+    {
+      "name": "RetrievalResult",
+      "owner": "graphblocks.rag"
+    },
+    {
+      "name": "ReviewCredentialMissingError",
+      "owner": "graphblocks.review"
+    },
+    {
+      "name": "ReviewRecord",
+      "owner": "graphblocks.evaluation"
+    },
+    {
+      "name": "ReviewRequest",
+      "owner": "graphblocks.review"
+    },
+    {
+      "name": "ReviewScopeNotRequestedError",
+      "owner": "graphblocks.review"
+    },
+    {
+      "name": "ReviewSubjectChangedError",
+      "owner": "graphblocks.review"
+    },
+    {
+      "name": "ReviewWorkflow",
+      "owner": "graphblocks.review"
+    },
+    {
+      "name": "ReviewWorkflowError",
+      "owner": "graphblocks.review"
+    },
+    {
+      "name": "ReviewerCredential",
+      "owner": "graphblocks.review"
+    },
+    {
+      "name": "ReviewerCredentialProvider",
+      "owner": "graphblocks.review"
+    },
+    {
+      "name": "RevisionDecision",
+      "owner": "graphblocks.deployment"
+    },
+    {
+      "name": "RolloutAnalysisResult",
+      "owner": "graphblocks.deployment"
+    },
+    {
+      "name": "RolloutDecision",
+      "owner": "graphblocks.deployment"
+    },
+    {
+      "name": "RolloutError",
+      "owner": "graphblocks.deployment"
+    },
+    {
+      "name": "RolloutPlan",
+      "owner": "graphblocks.deployment"
+    },
+    {
+      "name": "RolloutState",
+      "owner": "graphblocks.deployment"
+    },
+    {
+      "name": "RolloutStep",
+      "owner": "graphblocks.deployment"
+    },
+    {
+      "name": "RolloutStepKind",
+      "owner": "graphblocks.deployment"
+    },
+    {
+      "name": "RuleEffect",
+      "owner": "graphblocks.policy"
+    },
+    {
+      "name": "RunDeploymentProvenance",
+      "owner": "graphblocks.run_store"
+    },
+    {
+      "name": "RunInvocationMode",
+      "owner": "graphblocks.run_store"
+    },
+    {
+      "name": "RunOwnershipLease",
+      "owner": "graphblocks.worker"
+    },
+    {
+      "name": "RunProvenance",
+      "owner": "graphblocks.evaluation"
+    },
+    {
+      "name": "RunRecord",
+      "owner": "graphblocks.run_store"
+    },
+    {
+      "name": "RunResult",
+      "owner": "graphblocks.runtime"
+    },
+    {
+      "name": "RunTerminalStateError",
+      "owner": "graphblocks.run_store"
+    },
+    {
+      "name": "RuntimeCheckpoint",
+      "owner": "graphblocks.runtime"
+    },
+    {
+      "name": "RuntimeRegistry",
+      "owner": "graphblocks.runtime"
+    },
+    {
+      "name": "S3CompatibleBlobStore",
+      "owner": "graphblocks.blob_store"
+    },
+    {
+      "name": "SQLiteBudgetLedger",
+      "owner": "graphblocks.budget"
+    },
+    {
+      "name": "SQLiteExecutionJournal",
+      "owner": "graphblocks.runtime"
+    },
+    {
+      "name": "SQLiteRunStore",
+      "owner": "graphblocks.run_store"
+    },
+    {
+      "name": "SQLiteUsageLedger",
+      "owner": "graphblocks.usage"
+    },
+    {
+      "name": "STANDARD_APPLICATION_EVENT_KINDS",
+      "owner": "graphblocks.application_event"
+    },
+    {
+      "name": "SchemaId",
+      "owner": "graphblocks.schema"
+    },
+    {
+      "name": "SchemaIdError",
+      "owner": "graphblocks.schema"
+    },
+    {
+      "name": "SchemaManifest",
+      "owner": "graphblocks.schema"
+    },
+    {
+      "name": "SchemaManifestEntry",
+      "owner": "graphblocks.schema"
+    },
+    {
+      "name": "SchemaManifestError",
+      "owner": "graphblocks.schema"
+    },
+    {
+      "name": "SearchHit",
+      "owner": "graphblocks.rag"
+    },
+    {
+      "name": "SearchRequest",
+      "owner": "graphblocks.rag"
+    },
+    {
+      "name": "ServerAsyncCallbackResumeAdmissionHook",
+      "owner": "graphblocks.server"
+    },
+    {
+      "name": "ServerAsyncCallbackSubmission",
+      "owner": "graphblocks.server"
+    },
+    {
+      "name": "ServerAuthDecision",
+      "owner": "graphblocks.server"
+    },
+    {
+      "name": "ServerAuthHook",
+      "owner": "graphblocks.server"
+    },
+    {
+      "name": "ServerAuthRequest",
+      "owner": "graphblocks.server"
+    },
+    {
+      "name": "ServerCallbackDeliveryHook",
+      "owner": "graphblocks.server"
+    },
+    {
+      "name": "ServerCallbackDeliveryResult",
+      "owner": "graphblocks.server"
+    },
+    {
+      "name": "ServerCallbackRegistration",
+      "owner": "graphblocks.server"
+    },
+    {
+      "name": "ServerEndpoint",
+      "owner": "graphblocks.server"
+    },
+    {
+      "name": "ServerEventSubscription",
+      "owner": "graphblocks.server"
+    },
+    {
+      "name": "ServerHealth",
+      "owner": "graphblocks.server"
+    },
+    {
+      "name": "ServerHealthStatus",
+      "owner": "graphblocks.server"
+    },
+    {
+      "name": "ServerProtocolVersionMismatchError",
+      "owner": "graphblocks.server"
+    },
+    {
+      "name": "ServerRequest",
+      "owner": "graphblocks.server"
+    },
+    {
+      "name": "ServerRequestHead",
+      "owner": "graphblocks.server"
+    },
+    {
+      "name": "ServerResponse",
+      "owner": "graphblocks.server"
+    },
+    {
+      "name": "ServerRouteManifest",
+      "owner": "graphblocks.server"
+    },
+    {
+      "name": "ServerRouteMatch",
+      "owner": "graphblocks.server"
+    },
+    {
+      "name": "ServerRouteNotFoundError",
+      "owner": "graphblocks.server"
+    },
+    {
+      "name": "ServerTransport",
+      "owner": "graphblocks.server"
+    },
+    {
+      "name": "Severity",
+      "owner": "graphblocks.diagnostics"
+    },
+    {
+      "name": "SloMeasurement",
+      "owner": "graphblocks.evaluation"
+    },
+    {
+      "name": "SloObjective",
+      "owner": "graphblocks.evaluation"
+    },
+    {
+      "name": "SloReport",
+      "owner": "graphblocks.evaluation"
+    },
+    {
+      "name": "SourceAsset",
+      "owner": "graphblocks.documents"
+    },
+    {
+      "name": "SourceLocation",
+      "owner": "graphblocks.documents"
+    },
+    {
+      "name": "SourceRef",
+      "owner": "graphblocks.documents"
+    },
+    {
+      "name": "StateConflictError",
+      "owner": "graphblocks.run_store"
+    },
+    {
+      "name": "StaticBearerAuthHook",
+      "owner": "graphblocks.server"
+    },
+    {
+      "name": "StaticPolicyEvaluator",
+      "owner": "graphblocks.policy"
+    },
+    {
+      "name": "SupplyChainLock",
+      "owner": "graphblocks.deployment"
+    },
+    {
+      "name": "TERMINAL_ADMISSION_TICKET_STATES",
+      "owner": "graphblocks.admission"
+    },
+    {
+      "name": "TOOL_APPLICATION_EVENT_KINDS",
+      "owner": "graphblocks.application_event"
+    },
+    {
+      "name": "TaskContextAccess",
+      "owner": "graphblocks.orchestration"
+    },
+    {
+      "name": "TaskPlan",
+      "owner": "graphblocks.orchestration"
+    },
+    {
+      "name": "TaskPlanContextAccessError",
+      "owner": "graphblocks.orchestration"
+    },
+    {
+      "name": "TaskPlanCycleError",
+      "owner": "graphblocks.orchestration"
+    },
+    {
+      "name": "TaskPlanDependencyError",
+      "owner": "graphblocks.orchestration"
+    },
+    {
+      "name": "TaskPlanDuplicateStepError",
+      "owner": "graphblocks.orchestration"
+    },
+    {
+      "name": "TaskPlanError",
+      "owner": "graphblocks.orchestration"
+    },
+    {
+      "name": "TaskPlanIdentityError",
+      "owner": "graphblocks.orchestration"
+    },
+    {
+      "name": "TaskPlanLimitError",
+      "owner": "graphblocks.orchestration"
+    },
+    {
+      "name": "TaskPlanLimits",
+      "owner": "graphblocks.orchestration"
+    },
+    {
+      "name": "TaskPlanPatch",
+      "owner": "graphblocks.orchestration"
+    },
+    {
+      "name": "TaskPlanPatchMismatchError",
+      "owner": "graphblocks.orchestration"
+    },
+    {
+      "name": "TaskStep",
+      "owner": "graphblocks.orchestration"
+    },
+    {
+      "name": "TaskStepNotFoundError",
+      "owner": "graphblocks.orchestration"
+    },
+    {
+      "name": "TerminalReason",
+      "owner": "graphblocks.output_policy"
+    },
+    {
+      "name": "ToolAdmissionError",
+      "owner": "graphblocks.tools"
+    },
+    {
+      "name": "ToolApproval",
+      "owner": "graphblocks.tools"
+    },
+    {
+      "name": "ToolApprovalError",
+      "owner": "graphblocks.tools"
+    },
+    {
+      "name": "ToolApprovalRecord",
+      "owner": "graphblocks.tools"
+    },
+    {
+      "name": "ToolApprovalRequest",
+      "owner": "graphblocks.tools"
+    },
+    {
+      "name": "ToolApprovalStatus",
+      "owner": "graphblocks.tools"
+    },
+    {
+      "name": "ToolBinding",
+      "owner": "graphblocks.tools"
+    },
+    {
+      "name": "ToolCall",
+      "owner": "graphblocks.tools"
+    },
+    {
+      "name": "ToolCallDraft",
+      "owner": "graphblocks.tools"
+    },
+    {
+      "name": "ToolCallDraftStatus",
+      "owner": "graphblocks.tools"
+    },
+    {
+      "name": "ToolCallError",
+      "owner": "graphblocks.tools"
+    },
+    {
+      "name": "ToolCallStatus",
+      "owner": "graphblocks.tools"
+    },
+    {
+      "name": "ToolCancellation",
+      "owner": "graphblocks.tools"
+    },
+    {
+      "name": "ToolCatalog",
+      "owner": "graphblocks.tools"
+    },
+    {
+      "name": "ToolDefinition",
+      "owner": "graphblocks.tools"
+    },
+    {
+      "name": "ToolEffect",
+      "owner": "graphblocks.tools"
+    },
+    {
+      "name": "ToolEffectOutcome",
+      "owner": "graphblocks.tools"
+    },
+    {
+      "name": "ToolExecutionCancellationPolicy",
+      "owner": "graphblocks.tools"
+    },
+    {
+      "name": "ToolExecutionFailurePolicy",
+      "owner": "graphblocks.tools"
+    },
+    {
+      "name": "ToolExecutionPlan",
+      "owner": "graphblocks.tools"
+    },
+    {
+      "name": "ToolExecutionPlanError",
+      "owner": "graphblocks.tools"
+    },
+    {
+      "name": "ToolExecutionState",
+      "owner": "graphblocks.tools"
+    },
+    {
+      "name": "ToolFailurePolicy",
+      "owner": "graphblocks.agent"
+    },
+    {
+      "name": "ToolIdempotency",
+      "owner": "graphblocks.tools"
+    },
+    {
+      "name": "ToolImplementation",
+      "owner": "graphblocks.tools"
+    },
+    {
+      "name": "ToolPlanCall",
+      "owner": "graphblocks.tools"
+    },
+    {
+      "name": "ToolResolutionError",
+      "owner": "graphblocks.tools"
+    },
+    {
+      "name": "ToolResolutionScope",
+      "owner": "graphblocks.tools"
+    },
+    {
+      "name": "ToolResult",
+      "owner": "graphblocks.tools"
+    },
+    {
+      "name": "ToolResultEvent",
+      "owner": "graphblocks.tools"
+    },
+    {
+      "name": "ToolResultEventKind",
+      "owner": "graphblocks.tools"
+    },
+    {
+      "name": "ToolResultMode",
+      "owner": "graphblocks.tools"
+    },
+    {
+      "name": "ToolResultStatus",
+      "owner": "graphblocks.tools"
+    },
+    {
+      "name": "ToolResultStreamError",
+      "owner": "graphblocks.tools"
+    },
+    {
+      "name": "ToolResultStreamState",
+      "owner": "graphblocks.tools"
+    },
+    {
+      "name": "ToolResultValidationError",
+      "owner": "graphblocks.tools"
+    },
+    {
+      "name": "ToolSchemaRegistry",
+      "owner": "graphblocks.tools"
+    },
+    {
+      "name": "ToolSchemaRegistryError",
+      "owner": "graphblocks.tools"
+    },
+    {
+      "name": "ToolSchemaValidationError",
+      "owner": "graphblocks.tools"
+    },
+    {
+      "name": "TrialResult",
+      "owner": "graphblocks.evaluation"
+    },
+    {
+      "name": "Turn",
+      "owner": "graphblocks.conversation"
+    },
+    {
+      "name": "TurnConflictError",
+      "owner": "graphblocks.conversation"
+    },
+    {
+      "name": "TurnNotFoundError",
+      "owner": "graphblocks.conversation"
+    },
+    {
+      "name": "TypedValue",
+      "owner": "graphblocks.schema"
+    },
+    {
+      "name": "TypedValueRef",
+      "owner": "graphblocks.evaluation"
+    },
+    {
+      "name": "UpgradePolicy",
+      "owner": "graphblocks.deployment"
+    },
+    {
+      "name": "UsageAmount",
+      "owner": "graphblocks.budget"
+    },
+    {
+      "name": "UsageConfidence",
+      "owner": "graphblocks.usage"
+    },
+    {
+      "name": "UsageLedgerError",
+      "owner": "graphblocks.usage"
+    },
+    {
+      "name": "UsageRecord",
+      "owner": "graphblocks.usage"
+    },
+    {
+      "name": "UsageRecordConflictError",
+      "owner": "graphblocks.usage"
+    },
+    {
+      "name": "UsageRecordNotFoundError",
+      "owner": "graphblocks.usage"
+    },
+    {
+      "name": "UsageSource",
+      "owner": "graphblocks.usage"
+    },
+    {
+      "name": "VALID_APPROVAL_STATUSES",
+      "owner": "graphblocks.approval"
+    },
+    {
+      "name": "VALID_ASYNC_OPERATION_RESULT_STATUSES",
+      "owner": "graphblocks.async_operation"
+    },
+    {
+      "name": "VALID_BUDGET_STATUSES",
+      "owner": "graphblocks.budget"
+    },
+    {
+      "name": "VALID_COMPLETION_RESERVE_PURPOSES",
+      "owner": "graphblocks.budget"
+    },
+    {
+      "name": "VALID_COMPLETION_RESERVE_STATUSES",
+      "owner": "graphblocks.budget"
+    },
+    {
+      "name": "VALID_CONTEXT_ACCESS_MODES",
+      "owner": "graphblocks.orchestration"
+    },
+    {
+      "name": "VALID_DELIVERY_MODES",
+      "owner": "graphblocks.output_policy"
+    },
+    {
+      "name": "VALID_DRAFT_DISPOSITIONS",
+      "owner": "graphblocks.output_policy"
+    },
+    {
+      "name": "VALID_ENFORCEMENT_POINTS",
+      "owner": "graphblocks.policy"
+    },
+    {
+      "name": "VALID_ENFORCEMENT_STATUSES",
+      "owner": "graphblocks.policy"
+    },
+    {
+      "name": "VALID_FLUSH_BOUNDARIES",
+      "owner": "graphblocks.output_policy"
+    },
+    {
+      "name": "VALID_OUTPUT_DISPOSITIONS",
+      "owner": "graphblocks.output_policy"
+    },
+    {
+      "name": "VALID_OUTPUT_DURABLE_RESULTS",
+      "owner": "graphblocks.output_policy"
+    },
+    {
+      "name": "VALID_PENDING_TOOL_CALLS_DISPOSITIONS",
+      "owner": "graphblocks.output_policy"
+    },
+    {
+      "name": "VALID_POLICY_EFFECTS",
+      "owner": "graphblocks.policy"
+    },
+    {
+      "name": "VALID_POLICY_FAIL_MODES",
+      "owner": "graphblocks.policy"
+    },
+    {
+      "name": "VALID_PROVIDER_CANCELLATIONS",
+      "owner": "graphblocks.output_policy"
+    },
+    {
+      "name": "VALID_RESERVATION_PURPOSES",
+      "owner": "graphblocks.budget"
+    },
+    {
+      "name": "VALID_RESERVATION_STATUSES",
+      "owner": "graphblocks.budget"
+    },
+    {
+      "name": "VALID_RULE_EFFECTS",
+      "owner": "graphblocks.policy"
+    },
+    {
+      "name": "VALID_TERMINAL_REASONS",
+      "owner": "graphblocks.output_policy"
+    },
+    {
+      "name": "VALID_TOOL_APPROVALS",
+      "owner": "graphblocks.tools"
+    },
+    {
+      "name": "VALID_TOOL_APPROVAL_STATUSES",
+      "owner": "graphblocks.tools"
+    },
+    {
+      "name": "VALID_TOOL_CALL_DRAFT_STATUSES",
+      "owner": "graphblocks.tools"
+    },
+    {
+      "name": "VALID_TOOL_CALL_STATUSES",
+      "owner": "graphblocks.tools"
+    },
+    {
+      "name": "VALID_TOOL_CANCELLATIONS",
+      "owner": "graphblocks.tools"
+    },
+    {
+      "name": "VALID_TOOL_EFFECTS",
+      "owner": "graphblocks.tools"
+    },
+    {
+      "name": "VALID_TOOL_EFFECT_OUTCOMES",
+      "owner": "graphblocks.tools"
+    },
+    {
+      "name": "VALID_TOOL_EXECUTION_CANCELLATION_POLICIES",
+      "owner": "graphblocks.tools"
+    },
+    {
+      "name": "VALID_TOOL_EXECUTION_FAILURE_POLICIES",
+      "owner": "graphblocks.tools"
+    },
+    {
+      "name": "VALID_TOOL_FAILURE_POLICIES",
+      "owner": "graphblocks.agent"
+    },
+    {
+      "name": "VALID_TOOL_IDEMPOTENCIES",
+      "owner": "graphblocks.tools"
+    },
+    {
+      "name": "VALID_TOOL_RESULT_EVENT_KINDS",
+      "owner": "graphblocks.tools"
+    },
+    {
+      "name": "VALID_TOOL_RESULT_MODES",
+      "owner": "graphblocks.tools"
+    },
+    {
+      "name": "VALID_TOOL_RESULT_STATUSES",
+      "owner": "graphblocks.tools"
+    },
+    {
+      "name": "VALID_USAGE_CONFIDENCES",
+      "owner": "graphblocks.usage"
+    },
+    {
+      "name": "VALID_USAGE_SOURCES",
+      "owner": "graphblocks.usage"
+    },
+    {
+      "name": "VALID_VIOLATION_ACTIONS",
+      "owner": "graphblocks.output_policy"
+    },
+    {
+      "name": "VALID_WORKER_PROTOCOL_MESSAGE_KINDS",
+      "owner": "graphblocks.worker"
+    },
+    {
+      "name": "VALID_WORKER_STATES",
+      "owner": "graphblocks.worker"
+    },
+    {
+      "name": "ViolationAction",
+      "owner": "graphblocks.output_policy"
+    },
+    {
+      "name": "WORKER_PROTOCOL_VERSION",
+      "owner": "graphblocks.worker"
+    },
+    {
+      "name": "WheelBuildTarget",
+      "owner": "graphblocks.packages"
+    },
+    {
+      "name": "WheelMatrix",
+      "owner": "graphblocks.packages"
+    },
+    {
+      "name": "WorkerAdmissionDecision",
+      "owner": "graphblocks.worker"
+    },
+    {
+      "name": "WorkerAdmissionPolicy",
+      "owner": "graphblocks.worker"
+    },
+    {
+      "name": "WorkerAdvertisement",
+      "owner": "graphblocks.worker"
+    },
+    {
+      "name": "WorkerDrainDecision",
+      "owner": "graphblocks.worker"
+    },
+    {
+      "name": "WorkerDrainDisposition",
+      "owner": "graphblocks.worker"
+    },
+    {
+      "name": "WorkerDrainPlan",
+      "owner": "graphblocks.worker"
+    },
+    {
+      "name": "WorkerDrainPolicy",
+      "owner": "graphblocks.worker"
+    },
+    {
+      "name": "WorkerDrainTask",
+      "owner": "graphblocks.worker"
+    },
+    {
+      "name": "WorkerDrainWorkloadKind",
+      "owner": "graphblocks.worker"
+    },
+    {
+      "name": "WorkerEmptyImageDigestError",
+      "owner": "graphblocks.worker"
+    },
+    {
+      "name": "WorkerEmptyPackageLockHashError",
+      "owner": "graphblocks.worker"
+    },
+    {
+      "name": "WorkerEmptySupportedBlocksError",
+      "owner": "graphblocks.worker"
+    },
+    {
+      "name": "WorkerEmptyTargetIdError",
+      "owner": "graphblocks.worker"
+    },
+    {
+      "name": "WorkerEmptyWorkerIdError",
+      "owner": "graphblocks.worker"
+    },
+    {
+      "name": "WorkerIncompatiblePackageLockError",
+      "owner": "graphblocks.worker"
+    },
+    {
+      "name": "WorkerIncompatibleVersionError",
+      "owner": "graphblocks.worker"
+    },
+    {
+      "name": "WorkerInvocationContext",
+      "owner": "graphblocks.worker"
+    },
+    {
+      "name": "WorkerInvokeRequest",
+      "owner": "graphblocks.worker"
+    },
+    {
+      "name": "WorkerInvokeResult",
+      "owner": "graphblocks.worker"
+    },
+    {
+      "name": "WorkerMismatchedInvocationIdError",
+      "owner": "graphblocks.worker"
+    },
+    {
+      "name": "WorkerMismatchedNodeAttemptError",
+      "owner": "graphblocks.worker"
+    },
+    {
+      "name": "WorkerMissingRequiredBlockError",
+      "owner": "graphblocks.worker"
+    },
+    {
+      "name": "WorkerNoEligibleWorkerError",
+      "owner": "graphblocks.worker"
+    },
+    {
+      "name": "WorkerPool",
+      "owner": "graphblocks.orchestration"
+    },
+    {
+      "name": "WorkerProfile",
+      "owner": "graphblocks.orchestration"
+    },
+    {
+      "name": "WorkerProtocolError",
+      "owner": "graphblocks.worker"
+    },
+    {
+      "name": "WorkerProtocolMessage",
+      "owner": "graphblocks.worker"
+    },
+    {
+      "name": "WorkerProtocolMessageKind",
+      "owner": "graphblocks.worker"
+    },
+    {
+      "name": "WorkerResultError",
+      "owner": "graphblocks.worker"
+    },
+    {
+      "name": "WorkerSelectionError",
+      "owner": "graphblocks.worker"
+    },
+    {
+      "name": "WorkerStaleLeaseEpochError",
+      "owner": "graphblocks.worker"
+    },
+    {
+      "name": "WorkerState",
+      "owner": "graphblocks.worker"
+    },
+    {
+      "name": "WorkloadKind",
+      "owner": "graphblocks.deployment"
+    },
+    {
+      "name": "WorkspaceCommit",
+      "owner": "graphblocks.workspace"
+    },
+    {
+      "name": "WorkspaceError",
+      "owner": "graphblocks.workspace"
+    },
+    {
+      "name": "WorkspaceMutationDecision",
+      "owner": "graphblocks.workspace"
+    },
+    {
+      "name": "WorkspaceMutationDeniedError",
+      "owner": "graphblocks.workspace"
+    },
+    {
+      "name": "WorkspaceMutationPolicy",
+      "owner": "graphblocks.workspace"
+    },
+    {
+      "name": "WorkspaceNotFoundError",
+      "owner": "graphblocks.workspace"
+    },
+    {
+      "name": "WorkspaceSnapshot",
+      "owner": "graphblocks.workspace"
+    },
+    {
+      "name": "WorkspaceSnapshotConflictError",
+      "owner": "graphblocks.workspace"
+    },
+    {
+      "name": "admit_tool_call",
+      "owner": "graphblocks.tools"
+    },
+    {
+      "name": "admit_worker",
+      "owner": "graphblocks.worker"
+    },
+    {
+      "name": "admit_worker_with_policy",
+      "owner": "graphblocks.worker"
+    },
+    {
+      "name": "audit_package_manifests",
+      "owner": "graphblocks.packages"
+    },
+    {
+      "name": "authorize_search_hits",
+      "owner": "graphblocks.rag"
+    },
+    {
+      "name": "build_abstention_answer",
+      "owner": "graphblocks.rag"
+    },
+    {
+      "name": "build_answer_from_model_response",
+      "owner": "graphblocks.rag"
+    },
+    {
+      "name": "build_before_tool_or_effect_policy_request",
+      "owner": "graphblocks.tools"
+    },
+    {
+      "name": "build_context_pack",
+      "owner": "graphblocks.rag"
+    },
+    {
+      "name": "build_package_lock",
+      "owner": "graphblocks.packages"
+    },
+    {
+      "name": "build_wheel_matrix",
+      "owner": "graphblocks.packages"
+    },
+    {
+      "name": "canonical_dumps",
+      "owner": "graphblocks.canonical"
+    },
+    {
+      "name": "canonical_hash",
+      "owner": "graphblocks.canonical"
+    },
+    {
+      "name": "canonical_loads",
+      "owner": "graphblocks.canonical"
+    },
+    {
+      "name": "chunk_document_by_lines",
+      "owner": "graphblocks.documents"
+    },
+    {
+      "name": "compile_graph",
+      "owner": "graphblocks.compiler"
+    },
+    {
+      "name": "compile_graph_native",
+      "owner": "graphblocks.compiler"
+    },
+    {
+      "name": "compose_documents",
+      "owner": "graphblocks.composition"
+    },
+    {
+      "name": "core_stdlib_registry",
+      "owner": "graphblocks.runtime"
+    },
+    {
+      "name": "create_local_text_revision",
+      "owner": "graphblocks.documents"
+    },
+    {
+      "name": "default_server_route_manifest",
+      "owner": "graphblocks.server"
+    },
+    {
+      "name": "discover_plugins",
+      "owner": "graphblocks.plugins"
+    },
+    {
+      "name": "doctor_package_catalog",
+      "owner": "graphblocks.packages"
+    },
+    {
+      "name": "evaluate_context_metrics",
+      "owner": "graphblocks.rag"
+    },
+    {
+      "name": "evaluate_gate",
+      "owner": "graphblocks.evaluation"
+    },
+    {
+      "name": "evaluate_rag_answer_metrics",
+      "owner": "graphblocks.rag"
+    },
+    {
+      "name": "evaluate_retrieval_metrics",
+      "owner": "graphblocks.rag"
+    },
+    {
+      "name": "evaluate_worker_admission",
+      "owner": "graphblocks.worker"
+    },
+    {
+      "name": "federated_retrieve",
+      "owner": "graphblocks.rag"
+    },
+    {
+      "name": "fuse_search_hits",
+      "owner": "graphblocks.rag"
+    },
+    {
+      "name": "knowledge_item_from_chunk",
+      "owner": "graphblocks.rag"
+    },
+    {
+      "name": "load_composed_documents",
+      "owner": "graphblocks.loader"
+    },
+    {
+      "name": "load_documents",
+      "owner": "graphblocks.loader"
+    },
+    {
+      "name": "load_package_catalog",
+      "owner": "graphblocks.packages"
+    },
+    {
+      "name": "load_plugin_manifest",
+      "owner": "graphblocks.plugins"
+    },
+    {
+      "name": "load_resource_schema",
+      "owner": "graphblocks.schema"
+    },
+    {
+      "name": "migrate_document",
+      "owner": "graphblocks.migration"
+    },
+    {
+      "name": "normalize_graph",
+      "owner": "graphblocks.canonical"
+    },
+    {
+      "name": "package_rows",
+      "owner": "graphblocks.packages"
+    },
+    {
+      "name": "parse_plain_text_document",
+      "owner": "graphblocks.documents"
+    },
+    {
+      "name": "plain_text_parser_descriptor",
+      "owner": "graphblocks.document_parsers"
+    },
+    {
+      "name": "render_context_pack",
+      "owner": "graphblocks.rag"
+    },
+    {
+      "name": "rerank_search_hits",
+      "owner": "graphblocks.rag"
+    },
+    {
+      "name": "resolve_citation_source_trace",
+      "owner": "graphblocks.rag"
+    },
+    {
+      "name": "resolve_policy_snapshot",
+      "owner": "graphblocks.policy"
+    },
+    {
+      "name": "resource_schema_errors",
+      "owner": "graphblocks.schema"
+    },
+    {
+      "name": "run_policy_tests",
+      "owner": "graphblocks.policy"
+    },
+    {
+      "name": "select_worker_for_block",
+      "owner": "graphblocks.worker"
+    },
+    {
+      "name": "stdlib_registry",
+      "owner": "graphblocks.runtime"
+    },
+    {
+      "name": "unavailable_policy_decision",
+      "owner": "graphblocks.policy"
+    },
+    {
+      "name": "validate_answer_citation_authorization",
+      "owner": "graphblocks.rag"
+    },
+    {
+      "name": "validate_answer_citations",
+      "owner": "graphblocks.rag"
+    },
+    {
+      "name": "validate_answer_grounding",
+      "owner": "graphblocks.rag"
+    },
+    {
+      "name": "validate_exhaustion_policy",
+      "owner": "graphblocks.exhaustion"
+    },
+    {
+      "name": "validate_plugin_manifest",
+      "owner": "graphblocks.plugins"
+    },
+    {
+      "name": "validate_remote_payload",
+      "owner": "graphblocks.worker"
+    },
+    {
+      "name": "validate_resource",
+      "owner": "graphblocks.schema"
+    },
+    {
+      "name": "validate_tool_result_for_model",
+      "owner": "graphblocks.tools"
+    },
+    {
+      "name": "validate_worker_result",
+      "owner": "graphblocks.worker"
+    }
+  ],
+  "contract": "historical-package-root-runtime-aliases",
+  "snapshotVersion": 1,
+  "targetRelease": "1.0"
+}

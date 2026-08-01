@@ -77,6 +77,14 @@ portable component and binding identities. Component entries do not correspond
 to separately published Python wheels. The Python release surface consists of
 `graphblocks`, `graphblocks-runtime`, and `graphblocks-testing`.
 
+The `graphblocks` package root exposes only the reviewed C0/C1 facade through
+`__all__` and cold-process discovery. Preview capabilities must be imported
+from their defining leaf namespace, such as `graphblocks.rag` or
+`graphblocks.voice`. Historical package-root names remain lazy runtime aliases
+for transition compatibility, but they are neither stable nor root-typed. The
+exact dependency, tier, alias, and cold-import budgets are recorded in
+[`compatibility/python-package-boundaries.yaml`](compatibility/python-package-boundaries.yaml).
+
 The repository also builds `graphblocks-native`, a Python-free Rust executable
 for `validate`, `plan`, and `run`. It accepts JSON or YAML on stdin, can select a
 named `Graph` from a multi-document YAML stream, and executes the native stdlib

@@ -1021,9 +1021,48 @@ def test_wheelhouse_gate_rejects_invalid_installed_schema_manifest(
 def test_wheelhouse_gate_uses_pep503_distribution_identity(monkeypatch, tmp_path) -> None:
     module = _load_wheelhouse_module()
     expected_schema = SchemaManifest.from_directory(module.ROOT / "schemas").manifest_payload()
-    root_version = module.tomllib.loads(
+    root_project = module.tomllib.loads(
         (module.ROOT / "pyproject.toml").read_text(encoding="utf-8")
-    )["project"]["version"]
+    )["project"]
+    root_version = root_project["version"]
+    package_boundary = module.yaml.safe_load(
+        (module.ROOT / "compatibility" / "python-package-boundaries.yaml").read_text(
+            encoding="utf-8"
+        )
+    )
+    stable_surface = module.yaml.safe_load(
+        (module.ROOT / package_boundary["rootFacade"]["stableSurface"]).read_text(
+            encoding="utf-8"
+        )
+    )
+    expected_root_exports: list[str] = []
+    for entry in stable_surface["symbols"]:
+        root_export = entry["path"].split(".", 2)[1]
+        if root_export not in expected_root_exports:
+            expected_root_exports.append(root_export)
+    metadata_requirements = list(root_project["dependencies"])
+    for extra, requirements in root_project["optional-dependencies"].items():
+        metadata_requirements.extend(
+            f"{requirement}; extra == '{extra}'" for requirement in requirements
+        )
+    root_import_budget = package_boundary["coldImportBudgets"]["graphblocks"]
+    canonical_import_budget = package_boundary["coldImportBudgets"][
+        "graphblocks.canonical"
+    ]
+    base_probe_payload = {
+        "canonicalModules": canonical_import_budget["allowedGraphblocksModules"],
+        "distributionVersion": root_version,
+        "graphblocksDistributions": ["graphblocks"],
+        "requirements": sorted(
+            str(module.Requirement(requirement))
+            for requirement in metadata_requirements
+        ),
+        "rootAll": expected_root_exports,
+        "rootAttributes": root_import_budget["maxRootAttributes"],
+        "rootModules": root_import_budget["allowedGraphblocksModules"],
+        "rootPublicNames": sorted(expected_root_exports),
+        "stableResolved": expected_root_exports,
+    }
     runtime_version = module.tomllib.loads(
         (module.ROOT / "packages" / "graphblocks-runtime" / "pyproject.toml").read_text(
             encoding="utf-8"
@@ -1088,6 +1127,12 @@ def test_wheelhouse_gate_uses_pep503_distribution_identity(monkeypatch, tmp_path
             )
         if command[-4:] == ["-m", "graphblocks", "schemas", "manifest"]:
             return subprocess.CompletedProcess(command, 0, stdout=json.dumps(expected_schema))
+        if command[-2:] == ["-c", module.BASE_GRAPHBLOCKS_INSTALL_PROBE]:
+            return subprocess.CompletedProcess(
+                command,
+                0,
+                stdout=json.dumps(base_probe_payload),
+            )
         if command[-3:] == ["pip", "list", "--format=json"]:
             return subprocess.CompletedProcess(
                 command,

@@ -65,9 +65,28 @@ def _root_export_owners(package_init: Path) -> dict[str, str]:
         filename=str(package_init),
     )
     owners: dict[str, str] = {}
+    owner_imports = [
+        node for node in tree.body if isinstance(node, ast.ImportFrom)
+    ]
     for node in tree.body:
-        if not isinstance(node, ast.ImportFrom):
+        if not isinstance(node, ast.If):
             continue
+        is_type_checking = (
+            isinstance(node.test, ast.Name)
+            and node.test.id in {"TYPE_CHECKING", "_TYPE_CHECKING"}
+        ) or (
+            isinstance(node.test, ast.Attribute)
+            and isinstance(node.test.value, ast.Name)
+            and node.test.value.id == "typing"
+            and node.test.attr == "TYPE_CHECKING"
+        )
+        if is_type_checking:
+            owner_imports.extend(
+                statement
+                for statement in node.body
+                if isinstance(statement, ast.ImportFrom)
+            )
+    for node in owner_imports:
         if node.level != 1 or not node.module:
             continue
         module = f"graphblocks.{node.module}"

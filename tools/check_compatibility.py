@@ -25,6 +25,9 @@ ROOT = Path(__file__).parents[1]
 COMPATIBILITY_ROOT = ROOT / "compatibility"
 PYTHON_SURFACE_PATH = COMPATIBILITY_ROOT / "stable-python-surface.yaml"
 PYTHON_SNAPSHOT_PATH = COMPATIBILITY_ROOT / "stable-python-api.json"
+ROOT_COMPATIBILITY_SNAPSHOT_PATH = (
+    COMPATIBILITY_ROOT / "python-root-compatibility.json"
+)
 CLI_CASES_PATH = COMPATIBILITY_ROOT / "stable-cli-cases.yaml"
 CLI_SNAPSHOT_PATH = COMPATIBILITY_ROOT / "stable-cli-contracts.json"
 TESTING_SURFACE_PATH = COMPATIBILITY_ROOT / "stable-testing-surface.yaml"
@@ -90,6 +93,20 @@ def _resolve_import_path(path: str, *, package: str) -> object:
         except AttributeError as error:
             raise ValueError(f"stable API path does not resolve: {path!r}") from error
     return value
+
+
+def build_root_compatibility_snapshot() -> dict[str, object]:
+    from graphblocks._root_compat import _ROOT_COMPAT_EXPORTS
+
+    return {
+        "snapshotVersion": 1,
+        "targetRelease": "1.0",
+        "contract": "historical-package-root-runtime-aliases",
+        "aliases": [
+            {"name": name, "owner": _ROOT_COMPAT_EXPORTS[name]}
+            for name in sorted(_ROOT_COMPAT_EXPORTS)
+        ],
+    }
 
 
 def _callable_kind(value: object) -> str:
@@ -675,11 +692,17 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         api_snapshot = build_python_snapshot()
+        root_compatibility_snapshot = build_root_compatibility_snapshot()
         cli_snapshot = build_cli_snapshot()
         testing_api_snapshot = build_testing_snapshot()
         testing_cli_snapshot = build_testing_cli_snapshot()
         results = [
             _check_or_update(PYTHON_SNAPSHOT_PATH, api_snapshot, update=args.update),
+            _check_or_update(
+                ROOT_COMPATIBILITY_SNAPSHOT_PATH,
+                root_compatibility_snapshot,
+                update=args.update,
+            ),
             _check_or_update(CLI_SNAPSHOT_PATH, cli_snapshot, update=args.update),
             _check_or_update(
                 TESTING_SNAPSHOT_PATH,

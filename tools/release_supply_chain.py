@@ -135,7 +135,9 @@ PINNED_RELEASE_TOOLS = {
     "rustc": PINNED_RUSTC_VERSION,
 }
 FIRST_PARTY_RUNTIME_DEPENDENCIES = {
-    "graphblocks": frozenset({"jsonschema", "packaging", "pyyaml"}),
+    "graphblocks": frozenset(
+        {"jsonschema", "packaging", "pyyaml", "referencing"}
+    ),
     "graphblocks-runtime": frozenset(),
     "graphblocks-testing": frozenset({"graphblocks", "packaging"}),
 }

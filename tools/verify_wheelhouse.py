@@ -23,6 +23,7 @@ from tempfile import TemporaryDirectory
 import tomllib
 import venv
 
+from packaging.requirements import InvalidRequirement, Requirement
 from packaging.utils import canonicalize_name, parse_sdist_filename, parse_wheel_filename
 import yaml
 
@@ -64,6 +65,136 @@ WINDOWS_RESERVED_PATH_NAMES = {
     *(f"com{index}" for index in range(1, 10)),
     *(f"lpt{index}" for index in range(1, 10)),
 }
+BASE_GRAPHBLOCKS_INSTALL_PROBE = (
+    "import importlib, json, sys; "
+    "from importlib.metadata import distributions, requires, version; "
+    "from packaging.requirements import Requirement; "
+    "from packaging.utils import canonicalize_name; "
+    "import graphblocks; "
+    "root_modules = sorted(name for name in sys.modules "
+    "if name == 'graphblocks' or name.startswith('graphblocks.')); "
+    "root_public_names = sorted(name for name in dir(graphblocks) "
+    "if not name.startswith('_')); "
+    "root_attributes = len(vars(graphblocks)); "
+    "importlib.import_module('graphblocks.canonical'); "
+    "canonical_modules = sorted(name for name in sys.modules "
+    "if name == 'graphblocks' or name.startswith('graphblocks.')); "
+    "stable_resolved = [name for name in graphblocks.__all__ "
+    "if hasattr(graphblocks, name)]; "
+    "graphblocks_distributions = sorted({canonicalize_name("
+    "str(distribution.metadata['Name'])) for distribution in "
+    "distributions() if canonicalize_name("
+    "str(distribution.metadata['Name'])).startswith('graphblocks')}); "
+    "print(json.dumps({"
+    "'canonicalModules': canonical_modules, "
+    "'distributionVersion': version('graphblocks'), "
+    "'graphblocksDistributions': graphblocks_distributions, "
+    "'requirements': sorted(str(Requirement(requirement)) "
+    "for requirement in (requires('graphblocks') or ())), "
+    "'rootAll': list(graphblocks.__all__), "
+    "'rootAttributes': root_attributes, "
+    "'rootModules': root_modules, "
+    "'rootPublicNames': root_public_names, "
+    "'stableResolved': stable_resolved"
+    "}, sort_keys=True))"
+)
+
+
+def validate_base_graphblocks_install(
+    payload: object,
+    *,
+    expected_version: str,
+    expected_requirements: Sequence[str],
+    expected_root_exports: Sequence[str],
+    expected_root_modules: Sequence[str],
+    expected_canonical_modules: Sequence[str],
+    max_root_attributes: int,
+) -> dict[str, object]:
+    """Validate the isolated base-wheel dependency and import boundary."""
+
+    required_fields = {
+        "canonicalModules",
+        "distributionVersion",
+        "graphblocksDistributions",
+        "requirements",
+        "rootAll",
+        "rootAttributes",
+        "rootModules",
+        "rootPublicNames",
+        "stableResolved",
+    }
+    if not isinstance(payload, dict) or set(payload) != required_fields:
+        raise RuntimeError("base graphblocks install probe has an invalid envelope")
+    observed_requirements = payload["requirements"]
+    if not isinstance(observed_requirements, list) or not all(
+        isinstance(requirement, str) and requirement
+        for requirement in observed_requirements
+    ):
+        raise RuntimeError(
+            "base graphblocks install requirements must be exact PEP 508 strings"
+        )
+    try:
+        expected_requirement_objects = {
+            Requirement(requirement) for requirement in expected_requirements
+        }
+        observed_requirement_objects = {
+            Requirement(requirement) for requirement in observed_requirements
+        }
+    except InvalidRequirement as error:
+        raise RuntimeError(
+            "base graphblocks install metadata contains an invalid requirement"
+        ) from error
+    if (
+        len(observed_requirement_objects) != len(observed_requirements)
+        or observed_requirement_objects != expected_requirement_objects
+    ):
+        raise RuntimeError(
+            "base graphblocks install metadata requirements mismatch: "
+            f"expected {sorted(map(str, expected_requirement_objects))!r}, "
+            f"observed {sorted(map(str, observed_requirement_objects))!r}"
+        )
+    expected_ordered_exports = list(expected_root_exports)
+    checks = {
+        "distribution version": (
+            payload["distributionVersion"],
+            expected_version,
+        ),
+        "first-party distributions": (
+            payload["graphblocksDistributions"],
+            ["graphblocks"],
+        ),
+        "root __all__": (payload["rootAll"], expected_ordered_exports),
+        "root public discovery": (
+            payload["rootPublicNames"],
+            sorted(expected_ordered_exports),
+        ),
+        "root modules": (payload["rootModules"], list(expected_root_modules)),
+        "canonical modules": (
+            payload["canonicalModules"],
+            list(expected_canonical_modules),
+        ),
+        "stable symbol resolution": (
+            payload["stableResolved"],
+            expected_ordered_exports,
+        ),
+    }
+    for label, (observed, expected) in checks.items():
+        if observed != expected:
+            raise RuntimeError(
+                f"base graphblocks install {label} mismatch: "
+                f"expected {expected!r}, observed {observed!r}"
+            )
+    root_attributes = payload["rootAttributes"]
+    if (
+        not isinstance(root_attributes, int)
+        or isinstance(root_attributes, bool)
+        or root_attributes > max_root_attributes
+    ):
+        raise RuntimeError(
+            "base graphblocks install root attribute budget exceeded: "
+            f"maximum {max_root_attributes}, observed {root_attributes!r}"
+        )
+    return dict(payload)
 
 
 def _is_nonportable_windows_path_part(part: str) -> bool:
@@ -1437,6 +1568,17 @@ def main(argv: list[str] | None = None) -> int:
         raise RuntimeError(
             f"expected {len(manifests)} first-party sdist artifacts, found {len(built_sdists)}"
         )
+    base_graphblocks_wheels = tuple(
+        path
+        for path in built_wheels
+        if _artifact_identity(path)[:2]
+        == ("graphblocks", expected_distributions["graphblocks"])
+    )
+    if len(base_graphblocks_wheels) != 1:
+        raise RuntimeError(
+            "first-party wheelhouse must contain exactly one base graphblocks artifact"
+        )
+    base_graphblocks_wheel = base_graphblocks_wheels[0]
     native_compiler_wheels = tuple(
         path
         for path in built_wheels
@@ -1743,6 +1885,146 @@ def main(argv: list[str] | None = None) -> int:
                 evidence_root / "platform.json",
                 json.dumps(platform_evidence, indent=2, sort_keys=True) + "\n",
             )
+
+    package_boundary = yaml.safe_load(
+        (ROOT / "compatibility" / "python-package-boundaries.yaml").read_text(
+            encoding="utf-8"
+        )
+    )
+    if not isinstance(package_boundary, Mapping):
+        raise ValueError("Python package boundary must contain a mapping")
+    boundary_dependencies = package_boundary.get("dependencies")
+    if not isinstance(boundary_dependencies, Mapping):
+        raise ValueError("Python package boundary must define dependencies")
+    expected_base_requirements = boundary_dependencies.get("base")
+    if not isinstance(expected_base_requirements, list) or not all(
+        isinstance(requirement, str) and requirement
+        for requirement in expected_base_requirements
+    ):
+        raise ValueError("Python package boundary base dependencies are invalid")
+    root_project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))[
+        "project"
+    ]
+    if root_project.get("dependencies") != expected_base_requirements:
+        raise RuntimeError(
+            "graphblocks project dependencies do not match the package boundary"
+        )
+    expected_metadata_requirements = list(expected_base_requirements)
+    optional_dependencies = root_project.get("optional-dependencies")
+    if not isinstance(optional_dependencies, Mapping):
+        raise ValueError("graphblocks project optional dependencies are invalid")
+    for extra, requirements in optional_dependencies.items():
+        if not isinstance(extra, str) or not extra or not isinstance(requirements, list):
+            raise ValueError("graphblocks project optional dependency group is invalid")
+        for requirement in requirements:
+            if not isinstance(requirement, str) or not requirement:
+                raise ValueError(
+                    "graphblocks project optional dependency requirement is invalid"
+                )
+            expected_metadata_requirements.append(
+                f"{requirement}; extra == '{extra}'"
+            )
+    root_facade = package_boundary.get("rootFacade")
+    if not isinstance(root_facade, Mapping):
+        raise ValueError("Python package boundary must define the root facade")
+    stable_surface_path = root_facade.get("stableSurface")
+    if not isinstance(stable_surface_path, str) or not stable_surface_path:
+        raise ValueError("Python package boundary stable surface path is invalid")
+    stable_surface = yaml.safe_load(
+        (ROOT / stable_surface_path).read_text(encoding="utf-8")
+    )
+    if not isinstance(stable_surface, Mapping) or not isinstance(
+        stable_surface.get("symbols"), list
+    ):
+        raise ValueError("stable Python surface is invalid")
+    expected_root_exports: list[str] = []
+    for entry in stable_surface["symbols"]:
+        if not isinstance(entry, Mapping) or not isinstance(entry.get("path"), str):
+            raise ValueError("stable Python surface contains an invalid symbol")
+        symbol_parts = entry["path"].split(".", 2)
+        if len(symbol_parts) < 2 or symbol_parts[0] != "graphblocks":
+            raise ValueError("stable Python surface contains an invalid symbol path")
+        root_export = symbol_parts[1]
+        if root_export not in expected_root_exports:
+            expected_root_exports.append(root_export)
+    cold_import_budgets = package_boundary.get("coldImportBudgets")
+    if not isinstance(cold_import_budgets, Mapping):
+        raise ValueError("Python package boundary must define cold import budgets")
+    root_import_budget = cold_import_budgets.get("graphblocks")
+    canonical_import_budget = cold_import_budgets.get("graphblocks.canonical")
+    if not isinstance(root_import_budget, Mapping) or not isinstance(
+        canonical_import_budget, Mapping
+    ):
+        raise ValueError("Python package boundary import budgets are invalid")
+    expected_root_modules = root_import_budget.get("allowedGraphblocksModules")
+    expected_canonical_modules = canonical_import_budget.get(
+        "allowedGraphblocksModules"
+    )
+    max_root_attributes = root_import_budget.get("maxRootAttributes")
+    if (
+        not isinstance(expected_root_modules, list)
+        or not all(isinstance(module, str) and module for module in expected_root_modules)
+        or not isinstance(expected_canonical_modules, list)
+        or not all(
+            isinstance(module, str) and module for module in expected_canonical_modules
+        )
+        or not isinstance(max_root_attributes, int)
+        or isinstance(max_root_attributes, bool)
+    ):
+        raise ValueError("Python package boundary installed import contract is invalid")
+
+    with TemporaryDirectory(prefix="graphblocks-base-install-") as base_install_root:
+        venv.EnvBuilder(with_pip=True).create(base_install_root)
+        base_python = Path(base_install_root) / (
+            "Scripts/python.exe" if os.name == "nt" else "bin/python"
+        )
+        base_environment = dict(os.environ)
+        base_environment.pop("PYTHONHOME", None)
+        base_environment.pop("PYTHONPATH", None)
+        subprocess.run(
+            [
+                str(base_python),
+                "-m",
+                "pip",
+                "install",
+                "--no-index",
+                "--find-links",
+                str(dependency_wheelhouse),
+                str(base_graphblocks_wheel),
+            ],
+            check=True,
+            cwd=base_install_root,
+            env=base_environment,
+        )
+        subprocess.run(
+            [str(base_python), "-m", "pip", "check"],
+            check=True,
+            cwd=base_install_root,
+            env=base_environment,
+        )
+        base_probe = subprocess.run(
+            [str(base_python), "-c", BASE_GRAPHBLOCKS_INSTALL_PROBE],
+            check=True,
+            cwd=base_install_root,
+            env=base_environment,
+            capture_output=True,
+            text=True,
+        )
+        try:
+            base_payload = json.loads(base_probe.stdout)
+        except json.JSONDecodeError as error:
+            raise RuntimeError(
+                "base graphblocks install probe did not return valid JSON"
+            ) from error
+        validate_base_graphblocks_install(
+            base_payload,
+            expected_version=expected_distributions["graphblocks"],
+            expected_requirements=expected_metadata_requirements,
+            expected_root_exports=expected_root_exports,
+            expected_root_modules=expected_root_modules,
+            expected_canonical_modules=expected_canonical_modules,
+            max_root_attributes=max_root_attributes,
+        )
 
     print(
         f"verified {len(manifests)} first-party wheels built from "

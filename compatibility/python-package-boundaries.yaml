@@ -1,0 +1,100 @@
+boundaryVersion: 1
+targetRelease: '1.0'
+artifact: graphblocks
+containsPreviewModules: true
+
+rootFacade:
+  stableSurface: compatibility/stable-python-surface.yaml
+  discoverableTier: stable-candidate
+  wildcardTier: stable-candidate
+  lazyExports:
+    source: src/graphblocks/_root_compat.py
+    snapshot: compatibility/python-root-compatibility.json
+    expectedCount: 606
+    mode: lazy
+    stableSymbolsIncluded: true
+  previewCompatibility:
+    coldDiscoverable: false
+    typedAsStable: false
+    explicitNamespaces: defining-leaf-modules
+    guidance: import-preview-from-defining-leaf-module
+
+moduleTiers:
+  stableSymbolOwnerModules:
+    - graphblocks.canonical
+    - graphblocks.compiler
+    - graphblocks.diagnostics
+    - graphblocks.migration
+    - graphblocks.plugins
+    - graphblocks.runtime
+    - graphblocks.schema
+  unlistedPublicModuleTier: preview
+  moduleOwnershipDoesNotPromoteWholeModule: true
+  internalModulePrefix: graphblocks._
+  integrationsTier: preview
+
+dependencies:
+  base:
+    - jsonschema>=4.23,<5
+    - packaging>=24.0
+    - PyYAML>=6.0
+    - referencing>=0.35,<1
+  optionalFeatureExtras:
+    runtime:
+      - graphblocks-runtime>=0.1,<0.2
+    pdf:
+      - pypdf>=4.0
+  developmentExtras:
+    - test
+
+coldImportProtocol:
+  interpreter: supported-cpython-3.11-and-3.12
+  platforms: [ubuntu-latest, windows-latest]
+  processIsolation: fresh-interpreter-per-observation
+  warmupRuns: 0
+  measuredRuns: 3
+  evaluation: every-observation-must-pass
+  elapsedClock: time.perf_counter
+  rssMeasurement:
+    linux: proc-self-statm-current-rss
+    windows: GetProcessMemoryInfo-working-set
+    macos: getrusage-maximum-rss
+    unixFallback: getrusage-maximum-rss
+  probeDependenciesLoadedBeforeBaseline: true
+  varianceAllowance: included-in-absolute-ceilings
+
+coldImportBudgets:
+  graphblocks:
+    maxElapsedSeconds: 1.0
+    maxRssIncreaseBytes: 8388608
+    maxLoadedModuleIncrease: 20
+    maxGraphblocksModules: 4
+    maxRootAttributes: 24
+    allowedGraphblocksModules:
+      - graphblocks
+      - graphblocks._lazy_exports
+      - graphblocks._root_compat
+      - graphblocks._version
+  graphblocks.canonical:
+    maxElapsedSeconds: 1.0
+    maxRssIncreaseBytes: 16777216
+    maxLoadedModuleIncrease: 40
+    maxGraphblocksModules: 6
+    allowedGraphblocksModules:
+      - graphblocks
+      - graphblocks._lazy_exports
+      - graphblocks._root_compat
+      - graphblocks._version
+      - graphblocks.canonical
+
+stableFirstAccessBudgets:
+  graphblocks.compile_graph:
+    maxElapsedSeconds: 5.0
+    maxRssIncreaseBytes: 100663296
+    maxLoadedModuleIncrease: 340
+    maxGraphblocksModules: 20
+  graphblocks.LocalRuntime:
+    maxElapsedSeconds: 5.0
+    maxRssIncreaseBytes: 100663296
+    maxLoadedModuleIncrease: 340
+    maxGraphblocksModules: 26
