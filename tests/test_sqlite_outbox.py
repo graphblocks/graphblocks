@@ -84,7 +84,7 @@ def _admission() -> AcceptedRunAdmission:
 
 
 def _seed_completion_effect(path) -> str:
-    repository = SQLiteAcceptedRunRepository(path)
+    repository = SQLiteAcceptedRunRepository(path, clock=lambda: 2_500)
     repository.accept_run(_admission())
     claim = repository.claim_run(
         AcceptedRunClaimRequest(
