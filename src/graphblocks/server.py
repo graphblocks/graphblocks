@@ -2569,6 +2569,7 @@ class ServerCallbackDeliveryResult:
     attempt: int
     idempotency_key: str
     status: str
+    state_version: int = field(default=1, kw_only=True)
     status_code: int | None = None
     delivered_at: str | None = None
     last_error: str | None = None
@@ -2612,6 +2613,19 @@ class ServerCallbackDeliveryResult:
         if self.attempt > MAX_RUN_CURSOR_SEQUENCE:
             raise ValueError(
                 "server callback delivery result attempt must be at most "
+                f"{MAX_RUN_CURSOR_SEQUENCE}"
+            )
+        if (
+            isinstance(self.state_version, bool)
+            or not isinstance(self.state_version, int)
+            or self.state_version < 1
+        ):
+            raise ValueError(
+                "server callback delivery result state_version must be a positive integer"
+            )
+        if self.state_version > MAX_RUN_CURSOR_SEQUENCE:
+            raise ValueError(
+                "server callback delivery result state_version must be at most "
                 f"{MAX_RUN_CURSOR_SEQUENCE}"
             )
         object.__setattr__(
@@ -2698,6 +2712,7 @@ class ServerCallbackDeliveryResult:
             "attempt": self.attempt,
             "idempotencyKey": self.idempotency_key,
             "status": self.status,
+            "stateVersion": self.state_version,
         }
         if self.status_code is not None:
             payload["statusCode"] = self.status_code
@@ -7347,15 +7362,109 @@ class GraphBlocksServerApp:
                                         "error": "callback delivery hook returned a mismatched event",
                                     },
                                 )
-                            delivered.append(delivery_result)
-                            completed_event_ids.add(delivery_result.event_id)
+                            if delivery_result.state_version != 1:
+                                return ServerResponse.json(
+                                    502,
+                                    {
+                                        "ok": False,
+                                        "subscriptionId": registration.subscription_id,
+                                        "error": (
+                                            "callback delivery hook returned a non-initial "
+                                            "state version"
+                                        ),
+                                    },
+                                )
                             with self._callback_registration_condition:
+                                current_deliveries = list(
+                                    self._callback_delivery_results_by_subscription_id.get(
+                                        registration.subscription_id,
+                                        (),
+                                    )
+                                )
+                                current_event_result = next(
+                                    (
+                                        current
+                                        for current in current_deliveries
+                                        if current.event_id == delivery_result.event_id
+                                    ),
+                                    None,
+                                )
+                                if current_event_result is not None:
+                                    if (
+                                        current_event_result.delivery_id
+                                        != delivery_result.delivery_id
+                                        or current_event_result.run_id != delivery_result.run_id
+                                        or current_event_result.sequence
+                                        != delivery_result.sequence
+                                        or current_event_result.cursor != delivery_result.cursor
+                                        or current_event_result.idempotency_key
+                                        != delivery_result.idempotency_key
+                                    ):
+                                        return ServerResponse.json(
+                                            502,
+                                            {
+                                                "ok": False,
+                                                "subscriptionId": (
+                                                    registration.subscription_id
+                                                ),
+                                                "error": (
+                                                    "callback delivery hook completion "
+                                                    "conflicts with retained event identity"
+                                                ),
+                                            },
+                                        )
+                                    if (
+                                        current_event_result != delivery_result
+                                        and current_event_result.state_version
+                                        <= delivery_result.state_version
+                                    ):
+                                        return ServerResponse.json(
+                                            502,
+                                            {
+                                                "ok": False,
+                                                "subscriptionId": (
+                                                    registration.subscription_id
+                                                ),
+                                                "error": (
+                                                    "callback delivery hook completion "
+                                                    "conflicts with retained event state"
+                                                ),
+                                            },
+                                        )
+                                elif any(
+                                    current.delivery_id == delivery_result.delivery_id
+                                    or current.idempotency_key
+                                    == delivery_result.idempotency_key
+                                    for current in current_deliveries
+                                ):
+                                    return ServerResponse.json(
+                                        502,
+                                        {
+                                            "ok": False,
+                                            "subscriptionId": registration.subscription_id,
+                                            "error": (
+                                                "callback delivery hook completion reuses a "
+                                                "retained delivery identity"
+                                            ),
+                                        },
+                                    )
+                                else:
+                                    current_deliveries.append(delivery_result)
                                 self._callback_delivery_results_by_subscription_id[
                                     registration.subscription_id
-                                ] = tuple(delivered)
-                        delivery_results = tuple(delivered)
+                                ] = tuple(current_deliveries)
+                                delivered = current_deliveries
+                            completed_event_ids.add(delivery_result.event_id)
                         with self._callback_registration_condition:
-                            self._incomplete_callback_registration_ids.discard(registration.subscription_id)
+                            delivery_results = (
+                                self._callback_delivery_results_by_subscription_id.get(
+                                    registration.subscription_id,
+                                    (),
+                                )
+                            )
+                            self._incomplete_callback_registration_ids.discard(
+                                registration.subscription_id
+                            )
                     finally:
                         with self._callback_registration_condition:
                             self._pending_callback_registration_ids.discard(registration.subscription_id)
@@ -9953,12 +10062,17 @@ class GraphBlocksServerApp:
                     delivery,
                     attempt=delivery.attempt + 1,
                     status="pending",
+                    state_version=delivery.state_version + 1,
                     status_code=None,
                     delivered_at=None,
                     last_error=None,
                 )
             else:
-                updated_delivery = replace(delivery, status="dead_lettered")
+                updated_delivery = replace(
+                    delivery,
+                    status="dead_lettered",
+                    state_version=delivery.state_version + 1,
+                )
             record = _freeze_json_value(
                 "callback delivery control record",
                 "record",

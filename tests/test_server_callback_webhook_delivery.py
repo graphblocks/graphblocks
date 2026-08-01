@@ -201,6 +201,7 @@ def test_server_registration_delivers_replayed_event_with_resolved_hmac_secret()
             "attempt": 1,
             "idempotencyKey": "callback-sub-delivery-1:event%2Fsucceeded%5F1",
             "status": "delivered",
+            "stateVersion": 1,
             "statusCode": 202,
             "deliveredAt": "2026-07-10T01:00:00Z",
         }
@@ -307,6 +308,306 @@ def test_server_registration_claim_does_not_hold_lock_during_webhook_delivery() 
     assert delivery_hook.calls == 1
 
 
+@pytest.mark.parametrize(
+    ("operation", "expected_status", "expected_attempt"),
+    (
+        ("redrive", "pending", 2),
+        ("dead-letter", "dead_lettered", 1),
+    ),
+)
+def test_server_registration_replay_preserves_concurrent_delivery_control(
+    operation: str,
+    expected_status: str,
+    expected_attempt: int,
+) -> None:
+    class BlockingSecondDelivery:
+        def __init__(self) -> None:
+            self.entered = Event()
+            self.release = Event()
+
+        def deliver(self, registration, event) -> ServerCallbackDeliveryResult:
+            self.entered.set()
+            assert self.release.wait(timeout=2)
+            metadata = event["metadata"]
+            return ServerCallbackDeliveryResult(
+                delivery_id="delivery-event-succeeded-1",
+                subscription_id=registration.subscription_id,
+                event_id=metadata["eventId"],
+                run_id=metadata["runId"],
+                sequence=metadata["sequence"],
+                cursor=metadata["cursor"],
+                attempt=1,
+                idempotency_key=(
+                    f"{registration.subscription_id}:{metadata['eventId']}"
+                ),
+                status="delivered",
+                status_code=202,
+                delivered_at="2026-07-10T01:00:02Z",
+            )
+
+    app = _app_with_terminal_event(
+        RecordingSecretResolver({}),
+        RecordingWebhookTransport(),
+    )
+    delivery_hook = BlockingSecondDelivery()
+    app.callback_delivery_hook = delivery_hook
+    subscription_id = "callback-sub-delivery-1"
+    controlled_delivery_id = "delivery-event-started-1"
+    app._callback_delivery_results_by_subscription_id[subscription_id] = (
+        ServerCallbackDeliveryResult(
+            delivery_id=controlled_delivery_id,
+            subscription_id=subscription_id,
+            event_id="event-started-1",
+            run_id="run-delivery-1",
+            sequence=1,
+            cursor="run-delivery-1:1",
+            attempt=1,
+            idempotency_key=f"{subscription_id}:event-started-1",
+            status="failed",
+            last_error="receiver unavailable",
+        ),
+    )
+    registration_request = _register_request(
+        "secret://callbacks/ide-relay",
+        event_types=("RunStarted", "RunSucceeded"),
+        replay_from_cursor="run-delivery-1:0",
+    )
+    control_request = ServerRequest(
+        method="POST",
+        path=f"/callbacks/deliveries/{controlled_delivery_id}/{operation}",
+        headers={"Authorization": "Bearer token-1"},
+        query={},
+        cookies={},
+        body=json.dumps({"reason": "receiver state changed"}).encode("utf-8"),
+        requested_at="2026-07-10T01:00:01Z",
+    )
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        registration_future = executor.submit(app.handle, registration_request)
+        assert delivery_hook.entered.wait(timeout=2)
+        control_response = app.handle(control_request)
+        delivery_hook.release.set()
+        registration_response = registration_future.result(timeout=2)
+
+    assert control_response.status_code == 202
+    assert registration_response.status_code == 201
+    retained = app.callback_delivery_results(subscription_id)
+    assert [result["eventId"] for result in retained] == [
+        "event-started-1",
+        "event/succeeded_1",
+    ]
+    assert retained[0]["status"] == expected_status
+    assert retained[0]["attempt"] == expected_attempt
+    assert retained[0]["stateVersion"] == 2
+    response_deliveries = json.loads(registration_response.body)["deliveries"]
+    assert response_deliveries == list(retained)
+
+
+@pytest.mark.parametrize(
+    (
+        "retained_status",
+        "retained_state_version",
+        "expected_status_code",
+        "expected_error",
+    ),
+    (
+        ("delivered", 1, 201, None),
+        ("failed", 2, 201, None),
+        (
+            "failed",
+            1,
+            502,
+            "callback delivery hook completion conflicts with retained event state",
+        ),
+    ),
+)
+def test_server_registration_reconciles_duplicate_hook_completion_by_state_version(
+    retained_status: str,
+    retained_state_version: int,
+    expected_status_code: int,
+    expected_error: str | None,
+) -> None:
+    class BlockingDuplicateDelivery:
+        def __init__(self) -> None:
+            self.entered = Event()
+            self.release = Event()
+
+        def deliver(self, registration, event) -> ServerCallbackDeliveryResult:
+            self.entered.set()
+            assert self.release.wait(timeout=2)
+            metadata = event["metadata"]
+            return ServerCallbackDeliveryResult(
+                delivery_id="delivery-event-succeeded-1",
+                subscription_id=registration.subscription_id,
+                event_id=metadata["eventId"],
+                run_id=metadata["runId"],
+                sequence=metadata["sequence"],
+                cursor=metadata["cursor"],
+                attempt=1,
+                idempotency_key=(
+                    f"{registration.subscription_id}:{metadata['eventId']}"
+                ),
+                status="delivered",
+                status_code=202,
+                delivered_at="2026-07-10T01:00:02Z",
+            )
+
+    app = _app_with_terminal_event(
+        RecordingSecretResolver({}),
+        RecordingWebhookTransport(),
+    )
+    delivery_hook = BlockingDuplicateDelivery()
+    app.callback_delivery_hook = delivery_hook
+    subscription_id = "callback-sub-delivery-1"
+    request = _register_request("secret://callbacks/ide-relay")
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        registration_future = executor.submit(app.handle, request)
+        assert delivery_hook.entered.wait(timeout=2)
+        retained_completion = ServerCallbackDeliveryResult(
+            delivery_id="delivery-event-succeeded-1",
+            subscription_id=subscription_id,
+            event_id="event/succeeded_1",
+            run_id="run-delivery-1",
+            sequence=2,
+            cursor="run-delivery-1:2",
+            attempt=1,
+            idempotency_key=f"{subscription_id}:event/succeeded_1",
+            status=retained_status,
+            state_version=retained_state_version,
+            status_code=202 if retained_status == "delivered" else None,
+            delivered_at=(
+                "2026-07-10T01:00:02Z"
+                if retained_status == "delivered"
+                else None
+            ),
+            last_error=(
+                "concurrent delivery failed" if retained_status == "failed" else None
+            ),
+        )
+        with app._callback_registration_condition:
+            app._callback_delivery_results_by_subscription_id[subscription_id] = (
+                retained_completion,
+            )
+        delivery_hook.release.set()
+        response = registration_future.result(timeout=2)
+
+    assert response.status_code == expected_status_code
+    assert app.callback_delivery_results(subscription_id) == (
+        retained_completion.protocol_value(),
+    )
+    response_payload = json.loads(response.body)
+    if expected_error is None:
+        assert response_payload["deliveries"] == [
+            retained_completion.protocol_value()
+        ]
+    else:
+        assert response_payload["error"] == expected_error
+
+
+def test_server_registration_retry_recovers_after_hook_identity_conflict() -> None:
+    class ConflictingDeliveryOnce:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def deliver(self, registration, event) -> ServerCallbackDeliveryResult:
+            self.calls += 1
+            metadata = event["metadata"]
+            return ServerCallbackDeliveryResult(
+                delivery_id=(
+                    "delivery-event-started-1"
+                    if self.calls == 1
+                    else "delivery-event-succeeded-1"
+                ),
+                subscription_id=registration.subscription_id,
+                event_id=metadata["eventId"],
+                run_id=metadata["runId"],
+                sequence=metadata["sequence"],
+                cursor=metadata["cursor"],
+                attempt=1,
+                idempotency_key=f"{registration.subscription_id}:{metadata['eventId']}",
+                status="delivered",
+                status_code=202,
+                delivered_at="2026-07-10T01:00:02Z",
+            )
+
+    app = _app_with_terminal_event(
+        RecordingSecretResolver({}),
+        RecordingWebhookTransport(),
+    )
+    delivery_hook = ConflictingDeliveryOnce()
+    app.callback_delivery_hook = delivery_hook
+    subscription_id = "callback-sub-delivery-1"
+    app._callback_delivery_results_by_subscription_id[subscription_id] = (
+        ServerCallbackDeliveryResult(
+            delivery_id="delivery-event-started-1",
+            subscription_id=subscription_id,
+            event_id="event-started-1",
+            run_id="run-delivery-1",
+            sequence=1,
+            cursor="run-delivery-1:1",
+            attempt=1,
+            idempotency_key=f"{subscription_id}:event-started-1",
+            status="failed",
+            last_error="receiver unavailable",
+        ),
+    )
+    request = _register_request(
+        "secret://callbacks/ide-relay",
+        event_types=("RunStarted", "RunSucceeded"),
+        replay_from_cursor="run-delivery-1:0",
+    )
+
+    conflict = app.handle(request)
+    retried = app.handle(request)
+
+    assert conflict.status_code == 502
+    assert json.loads(conflict.body)["error"] == (
+        "callback delivery hook completion reuses a retained delivery identity"
+    )
+    assert retried.status_code == 200
+    assert delivery_hook.calls == 2
+    assert [
+        result["eventId"] for result in app.callback_delivery_results(subscription_id)
+    ] == ["event-started-1", "event/succeeded_1"]
+
+
+def test_server_registration_rejects_non_initial_hook_state_version() -> None:
+    class NonInitialDelivery:
+        def deliver(self, registration, event) -> ServerCallbackDeliveryResult:
+            metadata = event["metadata"]
+            return ServerCallbackDeliveryResult(
+                delivery_id="delivery-event-succeeded-1",
+                subscription_id=registration.subscription_id,
+                event_id=metadata["eventId"],
+                run_id=metadata["runId"],
+                sequence=metadata["sequence"],
+                cursor=metadata["cursor"],
+                attempt=1,
+                idempotency_key=(
+                    f"{registration.subscription_id}:{metadata['eventId']}"
+                ),
+                status="delivered",
+                state_version=2,
+                status_code=202,
+                delivered_at="2026-07-10T01:00:02Z",
+            )
+
+    app = _app_with_terminal_event(
+        RecordingSecretResolver({}),
+        RecordingWebhookTransport(),
+    )
+    app.callback_delivery_hook = NonInitialDelivery()
+
+    response = app.handle(_register_request("secret://callbacks/ide-relay"))
+
+    assert response.status_code == 502
+    assert json.loads(response.body)["error"] == (
+        "callback delivery hook returned a non-initial state version"
+    )
+    assert app.callback_delivery_results("callback-sub-delivery-1") == ()
+
+
 def test_server_registration_rejects_webhook_hostname_resolving_to_private_address() -> None:
     resolver = RecordingSecretResolver({"secret://callbacks/ide-relay": b"registered-secret-value"})
     transport = RecordingWebhookTransport()
@@ -375,6 +676,7 @@ def test_server_registration_records_missing_secret_without_calling_transport() 
             "attempt": 1,
             "idempotencyKey": "callback-sub-delivery-1:event%2Fsucceeded%5F1",
             "status": "failed",
+            "stateVersion": 1,
             "lastError": "secret_resolution_failed",
         }
     ]

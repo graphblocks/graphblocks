@@ -2082,7 +2082,7 @@ def test_server_callback_delivery_result_bounds_timestamp_and_counters() -> None
             delivered_at="2026-07-29T00:00:00Z" + ("0" * 128),
         )
 
-    for field_name in ("sequence", "attempt"):
+    for field_name in ("sequence", "attempt", "state_version"):
         fields: dict[str, object] = {
             "delivery_id": "delivery-1",
             "subscription_id": "subscription-1",
@@ -2091,6 +2091,7 @@ def test_server_callback_delivery_result_bounds_timestamp_and_counters() -> None
             "sequence": 1,
             "cursor": "run-1:1",
             "attempt": 1,
+            "state_version": 1,
             "idempotency_key": "subscription-1:event-1",
             "status": "pending",
         }
@@ -2103,6 +2104,47 @@ def test_server_callback_delivery_result_bounds_timestamp_and_counters() -> None
             ),
         ):
             ServerCallbackDeliveryResult(**fields)  # type: ignore[arg-type]
+
+    for invalid_state_version in (False, 0, -1):
+        with pytest.raises(
+            ValueError,
+            match=(
+                "server callback delivery result state_version must be a "
+                "positive integer"
+            ),
+        ):
+            ServerCallbackDeliveryResult(
+                delivery_id="delivery-1",
+                subscription_id="subscription-1",
+                event_id="event-1",
+                run_id="run-1",
+                sequence=1,
+                cursor="run-1:1",
+                attempt=1,
+                idempotency_key="subscription-1:event-1",
+                status="pending",
+                state_version=invalid_state_version,  # type: ignore[arg-type]
+            )
+
+
+def test_server_callback_delivery_result_preserves_existing_positional_signature() -> None:
+    result = ServerCallbackDeliveryResult(
+        "delivery-1",
+        "subscription-1",
+        "event-1",
+        "run-1",
+        1,
+        "run-1:1",
+        1,
+        "subscription-1:event-1",
+        "delivered",
+        202,
+        "2026-07-29T00:00:00Z",
+        None,
+    )
+
+    assert result.state_version == 1
+    assert result.status_code == 202
 
 
 def test_application_protocol_capabilities_negotiate_intersection() -> None:
@@ -18328,6 +18370,7 @@ def test_server_app_records_callback_delivery_redrive_and_dead_letter_projection
             "attempt": 2,
             "idempotencyKey": f"{subscription_id}:event-del-1",
             "status": "pending",
+            "stateVersion": 3,
         },
     )
     with pytest.raises(TypeError):
