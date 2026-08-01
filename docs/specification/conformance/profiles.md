@@ -44,6 +44,14 @@ claim cannot outrank any of those required profiles.
 Authority inheritance follows the exact role maps of `extends` ancestors; it
 does not flatten an active Python reference interpreter and a blocked Rust
 scheduler target into one active Rust authority.
+The same release matrix owns the executable `tckClaimValidation` projection.
+It is included in the installed `graphblocks` wheel and read by
+`graphblocks-tck run-all`; no caller-supplied language map can relabel retained
+suite evidence. The installed report and platform evidence bind the complete
+matrix digest, exact resolved suite claims, and executor-issued execution
+claims. A suite cannot inherit a Rust or differential label from the matrix
+unless the runner's closed executor contract independently reports the same
+implementation, language, reference implementation, and comparison mode.
 
 `GB-C0-SCHEMA` and `GB-C1-LOCAL-RUNTIME` are the complete 1.0 core release
 track. A new core profile is eligible only when its semantics are required for

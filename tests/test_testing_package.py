@@ -651,6 +651,46 @@ def test_compiler_tck_never_falls_back_when_native_compiler_is_unavailable(
         ).run_cases((case,))
 
 
+def test_normative_compiler_tck_rejects_reference_oracle_drift(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(
+        str(ROOT / "packages" / "graphblocks-testing" / "src")
+    )
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+    case = graphblocks_testing.TckCase.compiler(
+        case_id="compiler/differential-required",
+        graph={
+            "apiVersion": "graphblocks.ai/v1",
+            "kind": "Graph",
+            "metadata": {"name": "differential-required"},
+            "spec": {"nodes": {}},
+        },
+        expected_hash="sha256:" + "0" * 64,
+    )
+    reference_plan = graphblocks_testing.compile_graph(
+        case.graph,
+        block_catalog=graphblocks_testing.BlockCatalog.from_blocks(
+            case.block_catalog
+        ),
+        allow_unknown_blocks=case.allow_unknown_blocks,
+    )
+
+    monkeypatch.setattr(
+        graphblocks_testing,
+        "_compile_graph_normative",
+        lambda *_args, **_kwargs: dataclasses.replace(
+            reference_plan,
+            graph_hash="sha256:" + "f" * 64,
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="differs from the Python reference"):
+        graphblocks_testing._NormativeCompilerTckRunner(
+            graphblocks_testing.stdlib_registry(),
+            implementation="graphblocks-runtime",
+            implementation_version="0.1.0",
+        ).run_cases((case,))
+
+
 def test_native_compiler_wheel_artifact_binds_installed_binding(
     tmp_path,
     monkeypatch,
@@ -9666,16 +9706,49 @@ def test_testing_package_cli_emits_observed_release_tck_identity(
     )
     assert payload["schema_manifest_digest"].startswith("sha256:")
     assert payload["profile_catalog_digest"].startswith("sha256:")
+    authority_document = yaml.safe_load(
+        (ROOT / "docs" / "project" / "stable-release-matrix.yaml").read_text(
+            encoding="utf-8"
+        )
+    )
+    authority_claim = payload["authority_claim"]
+    assert authority_claim["matrix_digest"] == graphblocks_testing.canonical_hash(
+        authority_document
+    )
+    assert authority_claim["target_normative_authority"] == "rust"
+    assert authority_claim["implicit_reference_fallback"] is False
     for manifest in manifests:
         evidence = payload["reports"][manifest.suite_id]["evidence"]
         assert evidence["case_ids_digest"] == graphblocks_testing.canonical_hash(
             {"case_ids": list(manifest.case_ids)}
         )
         assert evidence["suite_manifest_digest"] == manifest.content_digest()
+        assert evidence["authority_claim"] == authority_claim["suite_claims"][
+            manifest.suite_id
+        ]
+        assert evidence["execution_claim"] == {
+            field: evidence["authority_claim"][field]
+            for field in (
+                "executor_id",
+                "implementation",
+                "language",
+                "comparison",
+                "reference_implementation",
+            )
+        }
     compiler_report = payload["reports"]["compiler"]
     assert compiler_report["evidence"]["implementation"] == "graphblocks-runtime"
     assert compiler_report["evidence"]["implementation_version"] == "0.1.0"
     assert compiler_report["evidence"]["implementation_artifact"] == compiler_artifact
+    assert compiler_report["evidence"]["authority_claim"]["comparison"] == (
+        "exact-native-reference"
+    )
+    assert compiler_report["evidence"]["execution_claim"]["executor_id"] == (
+        "rust-compiler-exact-differential"
+    )
+    assert compiler_report["evidence"]["reference_implementation_version"] == (
+        "1.0.0rc1"
+    )
     assert len(native_calls) == len(compiler_report["results"])
     assert payload["contentDigest"] == graphblocks_testing.canonical_hash(
         {key: value for key, value in payload.items() if key != "contentDigest"}

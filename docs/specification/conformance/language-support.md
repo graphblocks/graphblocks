@@ -5,8 +5,8 @@ release compatibility promise.
 
 | Contract area | Python | Rust |
 | --- | --- | --- |
-| Schema and canonical authoring utilities | Implemented facade and deterministic reference oracle | Selected normative target; not yet the active public facade, so standalone routing remains transition-blocked |
-| Graph compiler and canonical Plan identity | `compile_graph` is a fail-closed native facade; `compile_graph_reference` is the explicit differential oracle and ordinary compiler-TCK runner | Normative compiler, exposed through `graphblocks-runtime` and exercised by the installed release compiler TCK with exact differential coverage |
+| Schema and canonical authoring utilities | Implemented facade and deterministic reference oracle; schema TCK evidence is explicitly labeled `referenceOracle` | Selected normative target; not yet the active public facade, so standalone routing remains transition-blocked |
+| Graph compiler and canonical Plan identity | `compile_graph` is a fail-closed native facade; `compile_graph_reference` is the explicit oracle executed beside every installed compiler-TCK case | Normative compiler, exposed through the exact `graphblocks-runtime` wheel and accepted only when its complete Plan contract matches the Python oracle |
 | Cross-file YAML composition authoring | Implemented; materializes an expanded Graph | Does not resolve authoring sources; consumes expanded Graph YAML |
 | Typed code graph authoring | Implemented and mypy-tested for the stdlib RAG vertical slice; catalog-backed and materializes a portable Graph | Implemented and trybuild-tested for the stdlib RAG vertical slice; catalog-backed and materializes a portable Graph |
 | Local runtime, cancellation, tools, budget core | Implemented reference interpreter | Implemented target core; normative scheduler promotion remains blocked on protocol and durability evidence |
@@ -28,6 +28,13 @@ cases.
 Authority is phase-scoped. It does not promote every Rust API or every surface
 of the native wheel. The accepted transition and its remaining release blockers
 are defined by [ADR-0001](../decisions/0001-rust-normative-authority.md).
+The stable release matrix is packaged with `graphblocks`; installed TCK runs
+read its closed suite claim projection directly and retain the matrix digest,
+language, implementation identity, profile role, comparison mode, and the
+runner-issued executor proof. Rust compiler evidence is
+`exact-native-reference`; current C0 schema and C1 runtime evidence remains
+explicitly `reference-only`, so it cannot promote the blocked Rust
+standalone-schema or scheduler targets.
 
 Composition is outside the runtime language boundary. A Python-authored graph
 may be materialized with `graphblocks compose` and then compiled or run by Rust

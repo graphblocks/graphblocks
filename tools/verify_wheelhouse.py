@@ -28,6 +28,7 @@ from packaging.utils import canonicalize_name, parse_sdist_filename, parse_wheel
 import yaml
 
 from graphblocks.canonical import canonical_dumps, canonical_hash
+from graphblocks.conformance import ConformanceAuthorityMatrix
 from graphblocks.loader import load_documents
 from graphblocks.packages import build_wheel_matrix, load_package_catalog
 from graphblocks.schema import SchemaManifest
@@ -627,6 +628,68 @@ def _tck_expectations(
         raise RuntimeError(
             "bundled stable TCK suite set does not exactly cover C0/C1 profiles"
         )
+    authority_matrix_path = root / "docs" / "project" / "stable-release-matrix.yaml"
+    try:
+        authority_documents = load_documents(authority_matrix_path)
+    except (OSError, TypeError, ValueError) as error:
+        raise RuntimeError("checked-in conformance authority matrix is invalid") from error
+    if len(authority_documents) != 1 or not isinstance(
+        authority_documents[0], Mapping
+    ):
+        raise RuntimeError(
+            "checked-in conformance authority matrix must contain one document"
+        )
+    try:
+        authority_matrix = ConformanceAuthorityMatrix.from_document(
+            authority_documents[0]
+        )
+        observed_execution_claims = {
+            suite: {
+                "executor_id": (
+                    "rust-compiler-exact-differential"
+                    if suite == "compiler"
+                    else "python-reference"
+                ),
+                "implementation": expectation["implementation"],
+                "language": "rust" if suite == "compiler" else "python",
+                "comparison": (
+                    "exact-native-reference"
+                    if suite == "compiler"
+                    else "reference-only"
+                ),
+                "reference_implementation": "graphblocks-python",
+            }
+            for suite, expectation in suites.items()
+        }
+        authority_claim = authority_matrix.validate_tck_claims(
+            claimed_profiles=STABLE_CONFORMANCE_PROFILES,
+            declared_suites_by_profile={
+                profile_id: tuple(profiles[profile_id].get("tck", ()))
+                for profile_id in STABLE_CONFORMANCE_PROFILES
+            },
+            observed_execution_claims=observed_execution_claims,
+        )
+    except (KeyError, TypeError, ValueError) as error:
+        raise RuntimeError(
+            "checked-in conformance authority TCK claims are invalid"
+        ) from error
+    raw_suite_authority_claims = authority_claim.get("suite_claims")
+    if not isinstance(raw_suite_authority_claims, Mapping) or set(
+        raw_suite_authority_claims
+    ) != set(suites):
+        raise RuntimeError(
+            "checked-in conformance authority claims do not cover stable TCK suites"
+        )
+    for suite, expectation in suites.items():
+        suite_authority_claim = raw_suite_authority_claims[suite]
+        if not isinstance(suite_authority_claim, Mapping):
+            raise RuntimeError(
+                f"checked-in TCK suite {suite!r} authority claim is invalid"
+            )
+        expectation["authority_claim"] = dict(suite_authority_claim)
+        expectation["execution_claim"] = dict(observed_execution_claims[suite])
+        if suite_authority_claim.get("comparison") == "exact-native-reference":
+            expectation["reference_implementation_version"] = implementation_version
     for suite in sorted(required_suites):
         bundled_suite_root = tck_root / suite
         source_suite_root = source_tck_root / suite
@@ -681,6 +744,7 @@ def _tck_expectations(
     return {
         "manifest_digest": canonical_hash({"suites": contracts}),
         "claimed_profiles": STABLE_CONFORMANCE_PROFILES,
+        "authority_claim": authority_claim,
         "profile_catalog_digest": canonical_hash(profile_catalog),
         "schema_manifest_digest": schema_manifest_digest,
         "suites": suites,
@@ -739,6 +803,19 @@ def _require_release_evidence(
                 expected_tck.get("claimed_profiles", ())
             ):
                 raise RuntimeError("installed TCK evidence does not claim exact stable profiles")
+            expected_authority_claim = expected_tck.get("authority_claim")
+            observed_authority_claim = payload.get("authority_claim")
+            if expected_authority_claim is not None:
+                if not isinstance(expected_authority_claim, Mapping) or (
+                    observed_authority_claim != expected_authority_claim
+                ):
+                    raise RuntimeError(
+                        "installed TCK evidence does not match the authority matrix claim"
+                    )
+                _require_canonical_sha256(
+                    expected_authority_claim.get("matrix_digest"),
+                    owner="installed TCK authority matrix digest",
+                )
             for field, label in (
                 ("schema_manifest_digest", "schema manifest"),
                 ("profile_catalog_digest", "conformance profile catalog"),
@@ -792,13 +869,22 @@ def _require_release_evidence(
                         f"installed TCK evidence contains unexpected suite {suite!r}"
                     )
                 observed_case_ids = tuple(result.get("case_id") for result in results)
-                for field in (
+                expected_evidence_fields = [
                     "case_ids_digest",
                     "suite_manifest_digest",
                     "fixture_digest",
                     "implementation",
                     "implementation_version",
-                ):
+                ]
+                if "authority_claim" in expectation:
+                    expected_evidence_fields.append("authority_claim")
+                if "execution_claim" in expectation:
+                    expected_evidence_fields.append("execution_claim")
+                if "reference_implementation_version" in expectation:
+                    expected_evidence_fields.append(
+                        "reference_implementation_version"
+                    )
+                for field in expected_evidence_fields:
                     if evidence.get(field) != expectation.get(field):
                         raise RuntimeError(
                             f"installed TCK suite {suite!r} {field!r} does not match checked-in expectations"
@@ -1875,6 +1961,9 @@ def main(argv: list[str] | None = None) -> int:
                     "conformanceProfileCatalogDigest": evidence_expectations["TCK"][
                         "profile_catalog_digest"
                     ],
+                    "authorityMatrixDigest": evidence_expectations["TCK"][
+                        "authority_claim"
+                    ]["matrix_digest"],
                     "schemaManifestDigest": evidence_expectations["TCK"][
                         "schema_manifest_digest"
                     ],

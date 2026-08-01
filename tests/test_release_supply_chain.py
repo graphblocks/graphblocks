@@ -99,16 +99,25 @@ def _release_evidence(
     tck_expectations = expectations["TCK"]
     reports: dict[str, object] = {}
     for suite, expectation in tck_expectations["suites"].items():
+        evidence = {
+            "fixture_digest": expectation["fixture_digest"],
+            "implementation": expectation["implementation"],
+            "implementation_version": expectation["implementation_version"],
+            "suite": suite,
+            "case_ids_digest": expectation["case_ids_digest"],
+            "suite_manifest_digest": expectation["suite_manifest_digest"],
+        }
+        if "authority_claim" in expectation:
+            evidence["authority_claim"] = expectation["authority_claim"]
+        if "execution_claim" in expectation:
+            evidence["execution_claim"] = expectation["execution_claim"]
+        if "reference_implementation_version" in expectation:
+            evidence["reference_implementation_version"] = expectation[
+                "reference_implementation_version"
+            ]
         reports[suite] = {
             "ok": True,
-            "evidence": {
-                "fixture_digest": expectation["fixture_digest"],
-                "implementation": expectation["implementation"],
-                "implementation_version": expectation["implementation_version"],
-                "suite": suite,
-                "case_ids_digest": expectation["case_ids_digest"],
-                "suite_manifest_digest": expectation["suite_manifest_digest"],
-            },
+            "evidence": evidence,
             "results": [
                 {"case_id": case_id, "status": "passed"}
                 for case_id in expectation["case_ids"]
@@ -120,6 +129,7 @@ def _release_evidence(
             "ok": True,
             "suite_manifest_digest": tck_expectations["manifest_digest"],
             "claimed_profiles": list(tck_expectations["claimed_profiles"]),
+            "authority_claim": tck_expectations["authority_claim"],
             "profile_catalog_digest": tck_expectations["profile_catalog_digest"],
             "schema_manifest_digest": tck_expectations["schema_manifest_digest"],
             "reports": reports,
@@ -378,6 +388,9 @@ def _write_platform_input(
                 ),
                 "conformanceProfileCatalogDigest": expectations["TCK"][
                     "profile_catalog_digest"
+                ],
+                "authorityMatrixDigest": expectations["TCK"]["authority_claim"][
+                    "matrix_digest"
                 ],
                 "schemaManifestDigest": expectations["TCK"]["schema_manifest_digest"],
             },

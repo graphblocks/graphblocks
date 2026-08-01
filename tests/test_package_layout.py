@@ -220,7 +220,10 @@ def test_graphblocks_artifact_owns_consolidated_namespace_and_cli() -> None:
         "src/graphblocks"
     ]
     assert pyproject["tool"]["hatch"]["build"]["targets"]["wheel"]["force-include"] == {
-        "schemas": "graphblocks/schemas"
+        "schemas": "graphblocks/schemas",
+        "docs/project/stable-release-matrix.yaml": (
+            "graphblocks/data/stable-release-matrix.yaml"
+        ),
     }
     assert all(
         not dependency.startswith("graphblocks-")

@@ -333,6 +333,21 @@ version, and required-capability contracts before native invocation, and the
 installed-wheel gate compares that contract with distribution metadata. During
 the transition, Python/Rust differential tests gate every normative phase.
 
+`GB-ARCH-020` now has executable decision evidence without introducing a
+second authority source. The accepted stable release matrix is included
+verbatim in the base wheel. Its closed `tckClaimValidation` projection assigns
+every C0/C1 suite exactly one closed executor, declaring profile, and authority
+role. Executor definitions bind implementation, language, reference
+implementation, comparison mode, and allowed suites. Each runner emits its own
+execution claim; installed TCK execution reads the packaged matrix and rejects
+missing, extra, relabeled, or executor-mismatched suites before binding the
+matrix digest, resolved authority claim, and executor proof into `tck.json` and
+platform evidence. The compiler executor is `exact-native-reference`: each case
+runs the selected Rust wheel and Python oracle and compares the complete Plan
+contract before the Rust result is accepted. Schema and C1 runtime claims remain
+`reference-only`, preserving the explicit transition blockers for standalone
+Rust schema/canonical routing and the production scheduler.
+
 The reusable `graphblocks-control-plane` library boundary is extracted:
 `graphblocks-python` and the `graphblocks-control` binary now depend on that
 library, so the binding no longer depends on an executable package.

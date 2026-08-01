@@ -53,12 +53,76 @@ authorityTransition:
     - control-plane-library-extraction
     - supported-installed-native-compiler-tck-and-artifact-evidence
     - runtime-protocol-capability-handshake
+    - packaged-authority-matrix-and-installed-language-claim-validation
   remainingPhases:
     - standalone-canonical-and-schema-facade-authority
     - production-scheduler-and-durable-authority
   targetMilestone: phase-2-before-1.0
   blocksTargetRelease: true
   requiredGate: REL-NORMATIVE-AUTHORITY
+  tckClaimValidation:
+    profileCatalog: src/graphblocks/data/conformance-profiles.yaml
+    claimedProfiles: [GB-C0-SCHEMA, GB-C1-LOCAL-RUNTIME]
+    exactSuiteCoverageRequired: true
+    exactImplementationIdentityRequired: true
+    executors:
+      python-reference:
+        implementation: graphblocks-python
+        language: python
+        comparison: reference-only
+        referenceImplementation: graphblocks-python
+        allowedSuites:
+          - application-events
+          - retry
+          - runtime
+          - schema
+          - sequence
+          - tool-execution
+          - tool-lifecycle
+          - tool-result
+      rust-compiler-exact-differential:
+        implementation: graphblocks-runtime
+        language: rust
+        comparison: exact-native-reference
+        referenceImplementation: graphblocks-python
+        allowedSuites: [compiler]
+    suiteClaims:
+      application-events:
+        executor: python-reference
+        profile: GB-C1-LOCAL-RUNTIME
+        authorityRole: activeReferenceInterpreter
+      compiler:
+        executor: rust-compiler-exact-differential
+        profile: GB-C0-SCHEMA
+        authorityRole: activeCompiler
+      retry:
+        executor: python-reference
+        profile: GB-C1-LOCAL-RUNTIME
+        authorityRole: activeReferenceInterpreter
+      runtime:
+        executor: python-reference
+        profile: GB-C1-LOCAL-RUNTIME
+        authorityRole: activeReferenceInterpreter
+      schema:
+        executor: python-reference
+        profile: GB-C0-SCHEMA
+        authorityRole: referenceOracle
+      sequence:
+        executor: python-reference
+        profile: GB-C1-LOCAL-RUNTIME
+        authorityRole: activeReferenceInterpreter
+      tool-execution:
+        executor: python-reference
+        profile: GB-C1-LOCAL-RUNTIME
+        authorityRole: activeReferenceInterpreter
+      tool-lifecycle:
+        executor: python-reference
+        profile: GB-C1-LOCAL-RUNTIME
+        authorityRole: activeReferenceInterpreter
+      tool-result:
+        executor: python-reference
+        profile: GB-C1-LOCAL-RUNTIME
+        authorityRole: activeReferenceInterpreter
 tierDefinitions:
   stable: Compatibility promise after every applicable release gate passes.
   preview: Shipped for evaluation; documented breaking changes may occur in a minor release.

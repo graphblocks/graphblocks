@@ -2814,6 +2814,29 @@ def _native_compiler_wheel_record(
     return matches[0]
 
 
+def _stable_conformance_contracts(
+    tck_expectations: Mapping[str, object],
+) -> dict[str, object]:
+    authority_claim = tck_expectations.get("authority_claim")
+    authority_matrix_digest = (
+        authority_claim.get("matrix_digest")
+        if isinstance(authority_claim, Mapping)
+        else None
+    )
+    if not isinstance(authority_matrix_digest, str):
+        raise ReleaseBundleError(
+            "stable TCK expectations have no authority matrix digest"
+        )
+    return {
+        "claimedProfiles": list(tck_expectations.get("claimed_profiles", ())),
+        "conformanceProfileCatalogDigest": tck_expectations.get(
+            "profile_catalog_digest"
+        ),
+        "authorityMatrixDigest": authority_matrix_digest,
+        "schemaManifestDigest": tck_expectations.get("schema_manifest_digest"),
+    }
+
+
 def _platform_input(
     path: Path,
     *,
@@ -2929,13 +2952,9 @@ def _platform_input(
     }:
         raise ReleaseBundleError("platform identity evidence does not bind conformance evidence")
     tck_expectations = expectations.get("TCK")
-    if not isinstance(tck_expectations, Mapping) or platform_payload.get("contracts") != {
-        "claimedProfiles": list(tck_expectations.get("claimed_profiles", ())),
-        "conformanceProfileCatalogDigest": tck_expectations.get(
-            "profile_catalog_digest"
-        ),
-        "schemaManifestDigest": tck_expectations.get("schema_manifest_digest"),
-    }:
+    if not isinstance(tck_expectations, Mapping) or platform_payload.get(
+        "contracts"
+    ) != _stable_conformance_contracts(tck_expectations):
         raise ReleaseBundleError(
             "platform identity evidence does not bind stable conformance contracts"
         )
@@ -3920,13 +3939,7 @@ def _verify_platform_evidence(
         tck_expectations = expectations.get("TCK")
         if not isinstance(tck_expectations, Mapping) or platform_payload.get(
             "contracts"
-        ) != {
-            "claimedProfiles": list(tck_expectations.get("claimed_profiles", ())),
-            "conformanceProfileCatalogDigest": tck_expectations.get(
-                "profile_catalog_digest"
-            ),
-            "schemaManifestDigest": tck_expectations.get("schema_manifest_digest"),
-        }:
+        ) != _stable_conformance_contracts(tck_expectations):
             raise ReleaseBundleError(
                 "retained platform evidence does not bind stable conformance contracts"
             )

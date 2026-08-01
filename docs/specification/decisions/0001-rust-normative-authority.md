@@ -81,8 +81,10 @@ Rust implementation crates remain internal APIs unless separately promoted.
    implemented.
 2. Preserve exact Python/Rust compiler parity for shared cases, including full
    diagnostic tuples, resource limits, malformed schemas, and canonical
-   numeric boundaries. Compiler TCK differential coverage is implemented and
-   remains a required gate.
+   numeric boundaries. Compiler TCK differential coverage is implemented in
+   both source and installed-artifact execution: the retained installed report
+   runs the selected native wheel and Python reference oracle for every shared
+   compiler case before accepting the normative result.
 3. Complete standalone canonical/schema authority routing, binding protocol and
    capability negotiation, supported native wheels, and installed-artifact
    evidence.
@@ -107,6 +109,10 @@ plane as stable.
   reference fallback.
 - Installed-wheel tests must execute the same native compiler artifact that is
   named in release evidence.
+- Installed TCK execution must read the packaged stable release authority
+  matrix, validate each runner-issued executor proof against the exact suite
+  implementation/language/profile-role/comparison claim, and bind the matrix
+  digest plus resolved claims into retained evidence.
 - C0/C1 reports must identify the phase-scoped implementation roles rather than
   use the ambiguous implementation name `python-reference` for the whole
   profile.

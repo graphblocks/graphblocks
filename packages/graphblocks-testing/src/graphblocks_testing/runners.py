@@ -211,6 +211,11 @@ from .reports import TckReport, TckResult
 
 @dataclass(frozen=True, slots=True)
 class TckRunner:
+    authority_executor_id = "python-reference"
+    authority_language = "python"
+    authority_comparison = "reference-only"
+    authority_reference_implementation = "graphblocks-python"
+
     registry: RuntimeRegistry
     profile: str = "local"
     evidence_dir: Path | None = None
@@ -8922,6 +8927,10 @@ class TckRunner:
 
 class _NormativeCompilerTckRunner(TckRunner):
     __slots__ = ()
+    authority_executor_id = "rust-compiler-exact-differential"
+    authority_language = "rust"
+    authority_comparison = "exact-native-reference"
+    authority_reference_implementation = "graphblocks-python"
 
     def _compile_compiler_graph(
         self,
@@ -8934,8 +8943,19 @@ class _NormativeCompilerTckRunner(TckRunner):
             "_compile_graph_normative",
             _compile_graph_normative,
         )
-        return normative_compile(
+        normative_plan = normative_compile(
             document,
             block_catalog=block_catalog,
             allow_unknown_blocks=allow_unknown_blocks,
         )
+        reference_compile = facade_dependency("compile_graph", compile_graph)
+        reference_plan = reference_compile(
+            document,
+            block_catalog=block_catalog,
+            allow_unknown_blocks=allow_unknown_blocks,
+        )
+        if normative_plan.to_dict() != reference_plan.to_dict():
+            raise RuntimeError(
+                "normative compiler result differs from the Python reference oracle"
+            )
+        return normative_plan

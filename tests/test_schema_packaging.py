@@ -15,7 +15,10 @@ def test_wheel_places_schemas_inside_graphblocks_package() -> None:
     pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
 
     assert pyproject["tool"]["hatch"]["build"]["targets"]["wheel"]["force-include"] == {
-        "schemas": "graphblocks/schemas"
+        "schemas": "graphblocks/schemas",
+        "docs/project/stable-release-matrix.yaml": (
+            "graphblocks/data/stable-release-matrix.yaml"
+        ),
     }
 
 

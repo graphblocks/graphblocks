@@ -268,6 +268,7 @@ def test_release_tck_expectations_validate_observed_suite_identity(
     expected = {
         "manifest_digest": expected_digest,
         "claimed_profiles": ("GB-C0-SCHEMA",),
+        "authority_claim": {"matrix_digest": expected_digest},
         "profile_catalog_digest": expected_digest,
         "schema_manifest_digest": expected_digest,
         "suites": {
@@ -280,6 +281,13 @@ def test_release_tck_expectations_validate_observed_suite_identity(
                 "implementation": "graphblocks-python",
                 "implementation_version": "1.0.0rc1",
                 "suite_manifest_digest": expected_digest,
+                "execution_claim": {
+                    "executor_id": "python-reference",
+                    "implementation": "graphblocks-python",
+                    "language": "python",
+                    "comparison": "reference-only",
+                    "reference_implementation": "graphblocks-python",
+                },
             }
         },
     }
@@ -292,6 +300,7 @@ def test_release_tck_expectations_validate_observed_suite_identity(
                 "ok": True,
                 "suite_manifest_digest": expected_digest,
                 "claimed_profiles": ["GB-C0-SCHEMA"],
+                "authority_claim": {"matrix_digest": expected_digest},
                 "profile_catalog_digest": expected_digest,
                 "schema_manifest_digest": expected_digest,
                 "reports": {
@@ -304,6 +313,9 @@ def test_release_tck_expectations_validate_observed_suite_identity(
                             "fixture_digest": fixture_digest,
                             "implementation": "graphblocks-python",
                             "implementation_version": "1.0.0rc1",
+                            "execution_claim": expected["suites"]["schema"][
+                                "execution_claim"
+                            ],
                             "suite": "schema",
                             "suite_manifest_digest": expected_digest,
                         },
@@ -321,6 +333,27 @@ def test_release_tck_expectations_validate_observed_suite_identity(
         kind="TCK",
         expected_tck=expected,
     ) == valid
+
+    missing_authority = dict(valid)
+    missing_authority.pop("authority_claim")
+    with pytest.raises(RuntimeError, match="authority matrix claim"):
+        module._require_release_evidence(
+            missing_authority,
+            kind="TCK",
+            expected_tck=expected,
+        )
+
+    wrong_execution = observed_payload(expected_digest)
+    wrong_execution["reports"]["schema"]["evidence"]["execution_claim"] = {
+        **expected["suites"]["schema"]["execution_claim"],
+        "comparison": "exact-native-reference",
+    }
+    with pytest.raises(RuntimeError, match="execution_claim"):
+        module._require_release_evidence(
+            wrong_execution,
+            kind="TCK",
+            expected_tck=expected,
+        )
 
     with pytest.raises(RuntimeError, match="fixture_digest"):
         module._require_release_evidence(
@@ -621,6 +654,10 @@ def test_stable_tck_expectations_bind_bundled_c0_c1_profiles_and_contract_digest
     }
     assert str(expectations["schema_manifest_digest"]).startswith("sha256:")
     assert str(expectations["profile_catalog_digest"]).startswith("sha256:")
+    authority_claim = expectations["authority_claim"]
+    assert str(authority_claim["matrix_digest"]).startswith("sha256:")
+    assert authority_claim["target_normative_authority"] == "rust"
+    assert authority_claim["implicit_reference_fallback"] is False
     assert expectations["suites"]["compiler"]["implementation"] == (
         "graphblocks-runtime"
     )
@@ -630,6 +667,22 @@ def test_stable_tck_expectations_bind_bundled_c0_c1_profiles_and_contract_digest
     assert expectations["suites"]["compiler"][
         "implementation_artifact_distribution"
     ] == "graphblocks-runtime"
+    assert expectations["suites"]["compiler"]["authority_claim"] == (
+        authority_claim["suite_claims"]["compiler"]
+    )
+    assert expectations["suites"]["compiler"]["authority_claim"][
+        "comparison"
+    ] == "exact-native-reference"
+    assert expectations["suites"]["compiler"]["execution_claim"] == {
+        "executor_id": "rust-compiler-exact-differential",
+        "implementation": "graphblocks-runtime",
+        "language": "rust",
+        "comparison": "exact-native-reference",
+        "reference_implementation": "graphblocks-python",
+    }
+    assert expectations["suites"]["compiler"][
+        "reference_implementation_version"
+    ] == "1.0.0rc1"
     assert {
         expectation["implementation"]
         for suite, expectation in expectations["suites"].items()

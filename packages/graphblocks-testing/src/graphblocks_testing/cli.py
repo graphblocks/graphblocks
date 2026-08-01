@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import argparse
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 import importlib
 from importlib import resources
@@ -27,6 +27,8 @@ from graphblocks.canonical import (
     canonical_dumps,
     canonical_hash,
 )
+from graphblocks._version import __version__ as GRAPHBLOCKS_VERSION
+from graphblocks.conformance import ConformanceAuthorityMatrix
 from graphblocks.loader import load_documents
 from graphblocks.schema import (
     SchemaManifest,
@@ -592,6 +594,7 @@ def main(argv: list[str] | None = None) -> int:
                 print(payload["error"])
             return 1
         reports: dict[str, dict[str, object]] = {}
+        observed_execution_claims: dict[str, dict[str, str]] = {}
         ok = True
         for manifest in manifests:
             evidence_dir = (
@@ -632,6 +635,15 @@ def main(argv: list[str] | None = None) -> int:
             evidence["suite_manifest_digest"] = manifest.content_digest()
             if manifest.suite_id == "compiler" and compiler_artifact is not None:
                 evidence["implementation_artifact"] = dict(compiler_artifact)
+            observed_execution_claims[manifest.suite_id] = {
+                "executor_id": runner.authority_executor_id,
+                "implementation": report.implementation,
+                "language": runner.authority_language,
+                "comparison": runner.authority_comparison,
+                "reference_implementation": (
+                    runner.authority_reference_implementation
+                ),
+            }
             report_contract["evidence"] = evidence
             reports[manifest.suite_id] = report_contract
             ok = ok and report.ok
@@ -650,6 +662,62 @@ def main(argv: list[str] | None = None) -> int:
                 raise ValueError(
                     "installed conformance profile catalog must contain one document"
                 )
+            profile_set = ConformanceProfileSet.from_document(profile_documents[0])
+            authority_resource = resources.files("graphblocks").joinpath(
+                "data", "stable-release-matrix.yaml"
+            )
+            if authority_resource.is_file():
+                with resources.as_file(authority_resource) as authority_path:
+                    authority_documents = load_documents(authority_path)
+            else:
+                checkout_authority_path = (
+                    Path(__file__).resolve().parents[4]
+                    / "docs"
+                    / "project"
+                    / "stable-release-matrix.yaml"
+                )
+                authority_documents = load_documents(checkout_authority_path)
+            if len(authority_documents) != 1 or not isinstance(
+                authority_documents[0], Mapping
+            ):
+                raise ValueError(
+                    "installed conformance authority matrix must contain one document"
+                )
+            authority_matrix = ConformanceAuthorityMatrix.from_document(
+                authority_documents[0]
+            )
+            authority_claim = authority_matrix.validate_tck_claims(
+                claimed_profiles=_STABLE_RELEASE_PROFILES,
+                declared_suites_by_profile={
+                    profile_id: profile_set.by_id(profile_id).tck_suites
+                    for profile_id in _STABLE_RELEASE_PROFILES
+                },
+                observed_execution_claims=observed_execution_claims,
+            )
+            suite_authority_claims = authority_claim.get("suite_claims")
+            if not isinstance(suite_authority_claims, Mapping) or set(
+                suite_authority_claims
+            ) != set(reports):
+                raise ValueError(
+                    "installed conformance authority claims do not cover TCK reports"
+                )
+            reference_implementation_version = GRAPHBLOCKS_VERSION
+            for suite_id, report in reports.items():
+                evidence = report.get("evidence")
+                suite_authority_claim = suite_authority_claims.get(suite_id)
+                if not isinstance(evidence, dict) or not isinstance(
+                    suite_authority_claim, Mapping
+                ):
+                    raise ValueError(
+                        "installed TCK report cannot bind its authority claim"
+                    )
+                evidence["authority_claim"] = dict(suite_authority_claim)
+                execution_claim = observed_execution_claims[suite_id]
+                evidence["execution_claim"] = dict(execution_claim)
+                if execution_claim["comparison"] == "exact-native-reference":
+                    evidence["reference_implementation_version"] = (
+                        reference_implementation_version
+                    )
             schema_resource = resources.files("graphblocks").joinpath("schemas")
             if schema_resource.is_dir():
                 with resources.as_file(schema_resource) as schema_root:
@@ -671,6 +739,7 @@ def main(argv: list[str] | None = None) -> int:
                         }
                     ),
                     "claimed_profiles": list(_STABLE_RELEASE_PROFILES),
+                    "authority_claim": authority_claim,
                     "profile_catalog_digest": canonical_hash(profile_documents[0]),
                     "schema_manifest_digest": schema_manifest_digest,
                 }
