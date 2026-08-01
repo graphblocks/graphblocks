@@ -17,13 +17,13 @@ STABLE_EMITTERS = {
     ROOT / "src" / "graphblocks" / "plugins.py": {"Diagnostic"},
     ROOT / "src" / "graphblocks" / "schema.py": {"ResourceSchemaViolation"},
 }
-TESTING_PACKAGE_PATH = (
+TESTING_MODELS_PATH = (
     ROOT
     / "packages"
     / "graphblocks-testing"
     / "src"
     / "graphblocks_testing"
-    / "__init__.py"
+    / "models.py"
 )
 
 
@@ -136,7 +136,7 @@ def test_stable_tck_suites_emit_registered_numeric_diagnostics() -> None:
     registry = yaml.safe_load(REGISTRY_PATH.read_text(encoding="utf-8"))
     pattern = re.compile(registry["codePattern"])
     registered = {entry["code"]: entry for entry in registry["codes"]}
-    tree = ast.parse(TESTING_PACKAGE_PATH.read_text(encoding="utf-8"))
+    tree = ast.parse(TESTING_MODELS_PATH.read_text(encoding="utf-8"))
     assignment = next(
         node
         for node in tree.body
