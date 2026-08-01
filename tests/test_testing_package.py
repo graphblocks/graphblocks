@@ -19,6 +19,9 @@ import yaml
 
 
 ROOT = Path(__file__).parents[1]
+TEST_NATIVE_EXTENSION_NAME = (
+    "_native.abi3.pyd" if sys.platform == "win32" else "_native.abi3.so"
+)
 
 
 def test_tck_report_requires_nonempty_identified_native_evidence(monkeypatch) -> None:
@@ -812,10 +815,13 @@ def test_native_compiler_wheel_artifact_binds_installed_binding(
     package_bytes = b"# installed runtime package\n"
     native_bytes = b"installed native extension"
     (runtime_root / "__init__.py").write_bytes(package_bytes)
-    (runtime_root / "_native.abi3.so").write_bytes(native_bytes)
+    (runtime_root / TEST_NATIVE_EXTENSION_NAME).write_bytes(native_bytes)
     with zipfile.ZipFile(wheel, "w") as archive:
         archive.writestr("graphblocks_runtime/__init__.py", package_bytes)
-        archive.writestr("graphblocks_runtime/_native.abi3.so", native_bytes)
+        archive.writestr(
+            f"graphblocks_runtime/{TEST_NATIVE_EXTENSION_NAME}",
+            native_bytes,
+        )
     wheel_bytes = wheel.read_bytes()
     monkeypatch.setattr(
         graphblocks_testing,
@@ -840,7 +846,9 @@ def test_native_compiler_wheel_artifact_binds_installed_binding(
     monkeypatch.setitem(
         sys.modules,
         "graphblocks_runtime._native",
-        SimpleNamespace(__file__=str(runtime_root / "_native.abi3.so")),
+        SimpleNamespace(
+            __file__=str(runtime_root / TEST_NATIVE_EXTENSION_NAME)
+        ),
     )
 
     artifact = graphblocks_testing._native_compiler_wheel_artifact(wheel)
@@ -874,11 +882,13 @@ def test_native_compiler_wheel_artifact_rejects_uninstalled_payload(
     runtime_root = tmp_path / "installed" / "graphblocks_runtime"
     runtime_root.mkdir(parents=True)
     (runtime_root / "__init__.py").write_bytes(b"# selected wheel\n")
-    (runtime_root / "_native.abi3.so").write_bytes(b"substituted native extension")
+    (runtime_root / TEST_NATIVE_EXTENSION_NAME).write_bytes(
+        b"substituted native extension"
+    )
     with zipfile.ZipFile(wheel, "w") as archive:
         archive.writestr("graphblocks_runtime/__init__.py", b"# selected wheel\n")
         archive.writestr(
-            "graphblocks_runtime/_native.abi3.so",
+            f"graphblocks_runtime/{TEST_NATIVE_EXTENSION_NAME}",
             b"selected native extension",
         )
     monkeypatch.setattr(
@@ -930,7 +940,10 @@ def test_native_compiler_wheel_artifact_rejects_bytecode_cache(
     wheel = tmp_path / "graphblocks_runtime-0.1.0-cp311-abi3-linux_x86_64.whl"
     with zipfile.ZipFile(wheel, "w") as archive:
         archive.writestr("graphblocks_runtime/__init__.py", b"# runtime\n")
-        archive.writestr("graphblocks_runtime/_native.abi3.so", b"native")
+        archive.writestr(
+            f"graphblocks_runtime/{TEST_NATIVE_EXTENSION_NAME}",
+            b"native",
+        )
         archive.writestr(
             "graphblocks_runtime/__pycache__/__init__.cpython-311.pyc",
             b"cache",
@@ -958,7 +971,10 @@ def test_native_compiler_wheel_artifact_rejects_unexpected_install_payload(
     wheel = tmp_path / "graphblocks_runtime-0.1.0-cp311-abi3-linux_x86_64.whl"
     with zipfile.ZipFile(wheel, "w") as archive:
         archive.writestr("graphblocks_runtime/__init__.py", b"# runtime\n")
-        archive.writestr("graphblocks_runtime/_native.abi3.so", b"native")
+        archive.writestr(
+            f"graphblocks_runtime/{TEST_NATIVE_EXTENSION_NAME}",
+            b"native",
+        )
         archive.writestr("sitecustomize.py", b"raise RuntimeError('unexpected')\n")
     monkeypatch.setattr(
         graphblocks_testing,
