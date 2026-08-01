@@ -40,11 +40,19 @@ workspace commits, release/canary/rollback, provider-authoritative voice
 behavior, and telemetry outage correctness. CI evidence, rather than this page,
 records whether they pass for a revision.
 
-Many integrations are still lightweight contracts, built-ins, and test doubles
-rather than production-ready external adapters. Optional extras add concrete
+Every currently catalogued external integration is classified as
+`contract-only`; scripted providers, repository fakes, and acceptance harness
+adapters are `test-double`. There are no `real-adapter` claims. The
+[release matrix](stable-release-matrix.yaml) records authentication, supported
+service or SDK versions, retry/failure ownership, real-service evidence, and
+the promotion gate for every entry. A real adapter additionally requires
+revision/run-bound test output and an integration-workflow Sigstore
+attestation for every claimed authentication/version pair, consumed by final
+promotion. Optional extras add concrete
 dependencies such as the native binding, `pypdf`, or pytest; they do not change
-the three-distribution release boundary. The native extra is optional for
-authoring/reference use but required by the public normative compiler.
+an integration's maturity or the three-distribution release boundary. The
+native extra is optional for authoring/reference use but required by the public
+normative compiler.
 
 Python-only advanced reference contracts are listed in
 [language support](../specification/conformance/language-support.md).

@@ -121,15 +121,22 @@ No external-provider or infrastructure integration is stable in the first
 release. Stable C0/C1 behavior uses provider-neutral contracts and deterministic
 local implementations.
 
-| Tier | Components |
-| --- | --- |
-| Preview | `graphblocks-pdf`, `graphblocks-qdrant`, `graphblocks-mcp`, `graphblocks-openapi`, `graphblocks-openai`, `graphblocks-haystack`, `graphblocks-policy-opa`, `graphblocks-policy-cedar`, `graphblocks-budget-postgres`, `graphblocks-usage-postgres`, `graphblocks-kubernetes`, `graphblocks-terraform`, `graphblocks-oci`, `graphblocks-gitops`, `graphblocks-otel`, `graphblocks-langfuse`, `graphblocks-prometheus`, `graphblocks-dashboards`, `graphblocks-webrtc`, `graphblocks-websocket-media`, `graphblocks-openai-realtime`, `graphblocks-silero-vad`, `graphblocks-kafka`, `graphblocks-nats`, `graphblocks-sqs`, and `graphblocks-pubsub`. |
-| Internal | `graphblocks-scripted`, repository fakes, acceptance harness adapters, and any adapter that has contract/unit evidence only and is not named in an installed-artifact integration matrix. |
+| Tier | Implementation maturity | Components |
+| --- | --- | --- |
+| Preview | Contract-only | `graphblocks-pdf`, `graphblocks-qdrant`, `graphblocks-mcp`, `graphblocks-openapi`, `graphblocks-openai`, `graphblocks-haystack`, `graphblocks-policy-opa`, `graphblocks-policy-cedar`, `graphblocks-budget-postgres`, `graphblocks-usage-postgres`, `graphblocks-kubernetes`, `graphblocks-terraform`, `graphblocks-oci`, `graphblocks-gitops`, `graphblocks-otel`, `graphblocks-langfuse`, `graphblocks-prometheus`, `graphblocks-dashboards`, `graphblocks-webrtc`, `graphblocks-websocket-media`, `graphblocks-openai-realtime`, `graphblocks-silero-vad`, `graphblocks-kafka`, `graphblocks-nats`, `graphblocks-sqs`, and `graphblocks-pubsub`. |
+| Internal | Test-double | `graphblocks-scripted`, repository fakes, and acceptance harness adapters. |
 
 Preview means that the adapter contract may be exercised and documented. It
 does not mean that a real external service, SDK version range, authentication
 mode, retry policy, or failure model is supported. Each integration is promoted
 separately after real-service tests and an explicit dependency/platform matrix.
+The machine-readable
+[release matrix](stable-release-matrix.yaml) enforces those fields and currently
+contains no `real-adapter` entry. Promotion evidence must bind the exact test,
+workflow job, commit, workflow run, uploaded artifact, and attestation.
+Signed results must cover the Cartesian product of every claimed authentication
+mode and service or SDK version; a successful sample from only part of the
+declared support matrix cannot authorize promotion.
 
 ## Deep-audit gate
 
@@ -278,6 +285,12 @@ closed contract must bind all of the following:
   including a lowercase SHA-256 digest and a sorted closed change list;
 - at least three distinct, successful, complete attestations covering the
   exact supported operating-system/Python matrix and the same candidate;
+- one successful signed run for every `real-adapter` evidence recipe, binding
+  the candidate commit, concrete Actions run attempt, test and workflow,
+  authentication, service or SDK version, retry/failure model, result digest,
+  and uploaded report, with the runs collectively covering every declared
+  authentication/version pair; this list is empty while no real adapter is
+  claimed;
 - a completed, non-future soak of at least 14 days in at least two distinct
   applications explicitly attested as non-trivial, each of whose signed report
   intervals covers the declared soak period;
@@ -289,22 +302,24 @@ closed contract must bind all of the following:
 - an authorized real staging rehearsal in which publish, rollback, yank, and
   restore each succeeded.
 
-Every candidate, run, application, review, audit inventory, stable-scope defect
-audit, ref-protection, and rehearsal report must be referenced by a canonical
-lowercase SHA-256 digest and an adjacent Sigstore bundle. The record must give
-the exact safe relative paths, file hashes, signature hashes, certificate
-identities, and issuer. Before 1.0 promotion, the assembler must resolve regular
-non-symlink files, reject unreferenced or substituted reports, verify every
-signature, and validate each report's content against the corresponding
-promotion claim. Matrix attestations must use
+Every candidate, matrix run, integration run, application, review, audit
+inventory, stable-scope defect audit, ref-protection, and rehearsal report must
+be referenced by a canonical lowercase SHA-256 digest and an adjacent Sigstore
+bundle. The record must give the exact safe relative paths, file hashes,
+signature hashes, certificate identities, and issuer. Before 1.0 promotion,
+the assembler must resolve regular non-symlink files, reject unreferenced or
+substituted reports, verify every signature, and validate each report's content
+against the corresponding promotion claim. Matrix attestations must use
 the `graphblocks/graphblocks` CI workflow identity at the candidate tag; the
 deterministic candidate-manifest report and later operator reports use the
-dedicated promotion-report workflow identity at that same tag. Identities
-selected by the evidence are never accepted as signature authorities. Each
-matrix report binds the canonical GitHub Actions run/attempt URL that produced
-it. The signed API/security payloads bind the distinct reviewer principals
-reported by their trusted workflow, and the signed rehearsal payload binds its
-authorizer. The assembler validates the complete record
+dedicated promotion-report workflow identity at that same tag. A real-service
+report must instead be signed by the exact integration workflow named by its
+catalogued recipe at that candidate tag. Identities selected only by the
+evidence are never accepted as signature authorities. Each matrix and
+integration report binds the canonical GitHub Actions run/attempt URL that
+produced it. The signed API/security payloads bind the distinct reviewer
+principals reported by their trusted workflow, and the signed rehearsal payload
+binds its authorizer. The assembler validates the complete record
 against the clean, full-history final checkout. Only
 release documentation, the two Python package manifests, the public version
 constant, and the two version-bearing testing compatibility snapshots may
@@ -312,6 +327,10 @@ differ from the candidate. Non-documentation files must be exact
 `1.0.0rc.N`-to-`1.0.0` replacements, apart from the optional packaging
 classifier promotion to Production/Stable; implementation, schema, TCK, and
 normative-specification changes require a new RC and soak.
+The `integrationPromotionPolicy` and `integrations` sections are the exception
+inside release documentation: they must be structurally identical in the
+candidate and final commits, so the final release cannot add or widen an
+adapter claim after its signed runs were collected.
 
 The promotion record binds the exact final ref and version without embedding
 the final commit or tree. This avoids an impossible self-reference when the

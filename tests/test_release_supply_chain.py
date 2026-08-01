@@ -72,6 +72,18 @@ def _trust_test_source(
         "digest": PROMOTION_SOURCE_DIFF["digest"],
         "changes": [dict(change) for change in PROMOTION_SOURCE_DIFF["changes"]],
     }
+    original_promotion_git_blob = module._promotion_git_blob
+    integration_matrix_path = "docs/project/stable-release-matrix.yaml"
+    integration_matrix_bytes = (
+        Path(__file__).parents[1] / integration_matrix_path
+    ).read_bytes()
+    module._promotion_git_blob = (
+        lambda commit, path: (
+            integration_matrix_bytes
+            if path == integration_matrix_path
+            else original_promotion_git_blob(commit, path)
+        )
+    )
     module._first_party_versions = lambda: {
         "graphblocks": stable_version,
         "graphblocks-runtime": "0.1.0",
@@ -398,7 +410,10 @@ def _inputs(
 
 def _promotion_payload_and_files(
     module: ModuleType,
+    *,
+    integration_reports: list[dict[str, object]] | None = None,
 ) -> tuple[dict[str, object], dict[str, bytes]]:
+    integration_reports = integration_reports or []
     promotion_workflow_identity = (
         f"https://github.com/{module.SIGSTORE_REPOSITORY}/"
         f"{module.PROMOTION_SIGSTORE_WORKFLOW}@{RELEASE_REF}"
@@ -442,6 +457,8 @@ def _promotion_payload_and_files(
     ]
     for index, run in enumerate(matrix_runs, start=1):
         reports[f"matrix-run-{index}"] = dict(run)
+    for index, report in enumerate(integration_reports, start=1):
+        reports[f"integration-run-{index}"] = dict(report)
     applications = [
         {
             "applicationId": "application-one",
@@ -513,7 +530,12 @@ def _promotion_payload_and_files(
         certificate_identity = (
             ci_workflow_identity
             if set(report) == module.MATRIX_PROMOTION_REPORT_KEYS
-            else promotion_workflow_identity
+            else (
+                f"https://github.com/{module.SIGSTORE_REPOSITORY}/"
+                f"{report['workflow']}@{RELEASE_REF}"
+                if set(report) == module.INTEGRATION_PROMOTION_REPORT_KEYS
+                else promotion_workflow_identity
+            )
         )
         report_artifacts.append(
             {
@@ -553,6 +575,13 @@ def _promotion_payload_and_files(
                 "attestationDigest": report_digests[f"matrix-run-{index}"],
             }
             for index, run in enumerate(matrix_runs, start=1)
+        ],
+        "integrationRuns": [
+            {
+                **report,
+                "reportDigest": report_digests[f"integration-run-{index}"],
+            }
+            for index, report in enumerate(integration_reports, start=1)
         ],
         "soak": {
             "startedAt": "2026-06-01T00:00:00Z",
@@ -612,7 +641,14 @@ def _write_promotion_payload(
     path: Path,
     payload: dict[str, object],
 ) -> Path:
-    _baseline, report_files = _promotion_payload_and_files(module)
+    integration_reports = [
+        {key: value for key, value in run.items() if key != "reportDigest"}
+        for run in payload.get("integrationRuns", [])
+    ]
+    _baseline, report_files = _promotion_payload_and_files(
+        module,
+        integration_reports=integration_reports,
+    )
     for relative_path, data in report_files.items():
         target = path.parent / relative_path
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -982,6 +1018,221 @@ def test_final_release_binds_promotion_evidence_and_requires_signature(
     )
     with pytest.raises(module.ReleaseBundleError, match="unsupported format or readiness"):
         module.verify_release_bundle(bundle_dir=bundle)
+
+
+def test_final_promotion_consumes_signed_concrete_real_service_runs(
+    tmp_path: Path,
+) -> None:
+    module = _load_module()
+    _trust_test_source(module)
+    integration_id = "graphblocks-qdrant"
+    workflow = ".github/workflows/real-services.yml"
+    run_id = (
+        "https://github.com/graphblocks/graphblocks/actions/runs/123456/attempts/2"
+    )
+    result = {
+        "formatVersion": 1,
+        "integrationId": integration_id,
+        "ok": True,
+        "authentication": "api-key",
+        "serviceOrSdkVersion": "1.2.3",
+        "retryAndFailureModel": "bounded-exponential-retry",
+        "checks": [
+            "connectivity",
+            "authentication",
+            "version",
+            "retry",
+            "failure",
+        ],
+    }
+    integration_report = {
+        "integrationId": integration_id,
+        "status": "success",
+        "complete": True,
+        "candidateRef": RELEASE_REF,
+        "candidateCommit": CANDIDATE_COMMIT,
+        "test": "tests/integration/test_qdrant_real_service.py",
+        "workflow": workflow,
+        "workflowJob": "qdrant",
+        "testStep": "exercise-qdrant-real-service",
+        "runId": run_id,
+        "artifactName": (
+            f"{integration_id}-{CANDIDATE_COMMIT}-123456-2"
+        ),
+        "result": result,
+        "resultDigest": "sha256:"
+        + module._sha256_bytes(module._canonical_json_bytes(result)),
+    }
+    payload, _report_files = _promotion_payload_and_files(
+        module,
+        integration_reports=[integration_report],
+    )
+    promotion_root = tmp_path / "with-integration"
+    promotion_root.mkdir()
+    promotion_path = _write_promotion_payload(
+        module,
+        promotion_root / "promotion.json",
+        payload,
+    )
+    snapshot = module._snapshot_regular_file(
+        promotion_path,
+        owner="test promotion evidence",
+    )
+    integration_matrix = {
+        "integrations": [
+            {
+                "id": integration_id,
+                "implementationMaturity": "real-adapter",
+                "supportedAuthentication": ["api-key"],
+                "supportedServiceOrSdkVersions": ["1.2.3"],
+                "retryAndFailureModel": "bounded-exponential-retry",
+                "realServiceEvidence": [
+                    {
+                        "test": "tests/integration/test_qdrant_real_service.py",
+                        "workflow": workflow,
+                        "workflowJob": "qdrant",
+                        "testStep": "exercise-qdrant-real-service",
+                        "artifactName": (
+                            f"{integration_id}-${{{{ github.sha }}}}-"
+                            "${{ github.run_id }}-${{ github.run_attempt }}"
+                        ),
+                    }
+                ],
+            }
+        ]
+    }
+    signature_calls: list[dict[str, object]] = []
+    module._verify_promotion_report_signature = (
+        lambda **arguments: signature_calls.append(arguments)
+        or PROMOTION_INTEGRATED_AT
+    )
+    candidate_matrix_reads: list[tuple[str, str]] = []
+    module._promotion_git_blob = (
+        lambda commit, path: candidate_matrix_reads.append((commit, path))
+        or yaml.safe_dump(integration_matrix).encode("utf-8")
+    )
+
+    validated, _content_digest, _snapshots = module._validate_promotion_evidence(
+        snapshot,
+        git_commit=COMMIT,
+        git_tree=TREE,
+        release_ref="refs/tags/v1.0.0",
+        release_version="1.0.0",
+        verify_source_diff=True,
+    )
+
+    assert validated["integrationRuns"] == payload["integrationRuns"]
+    assert candidate_matrix_reads == [
+        (CANDIDATE_COMMIT, "docs/project/stable-release-matrix.yaml"),
+        (COMMIT, "docs/project/stable-release-matrix.yaml"),
+    ]
+    integration_identity = (
+        f"https://github.com/{module.SIGSTORE_REPOSITORY}/"
+        f"{workflow}@{RELEASE_REF}"
+    )
+    assert any(
+        call["certificate_identity"] == integration_identity
+        and call["expected_certificate_identity"] == integration_identity
+        for call in signature_calls
+    )
+
+    changed_final_matrix = json.loads(json.dumps(integration_matrix))
+    changed_final_matrix["integrations"][0]["supportedAuthentication"].append(
+        "oauth2"
+    )
+    module._promotion_git_blob = (
+        lambda commit, _path: yaml.safe_dump(
+            integration_matrix
+            if commit == CANDIDATE_COMMIT
+            else changed_final_matrix
+        ).encode("utf-8")
+    )
+    with pytest.raises(module.ReleaseBundleError, match="claims changed"):
+        module._validate_promotion_evidence(
+            snapshot,
+            git_commit=COMMIT,
+            git_tree=TREE,
+            release_ref="refs/tags/v1.0.0",
+            release_version="1.0.0",
+            verify_source_diff=True,
+        )
+
+    unsupported_matrix = json.loads(json.dumps(integration_matrix))
+    unsupported_matrix["integrations"][0]["supportedAuthentication"] = ["oauth2"]
+    with pytest.raises(module.ReleaseBundleError, match="outside its support matrix"):
+        module._validate_promotion_evidence(
+            snapshot,
+            git_commit=COMMIT,
+            git_tree=TREE,
+            release_ref="refs/tags/v1.0.0",
+            release_version="1.0.0",
+            verify_source_diff=True,
+            integration_matrix=unsupported_matrix,
+        )
+
+    partial_coverage_matrix = json.loads(json.dumps(integration_matrix))
+    partial_coverage_matrix["integrations"][0]["supportedAuthentication"].append(
+        "oauth2"
+    )
+    with pytest.raises(module.ReleaseBundleError, match="declared support matrix"):
+        module._validate_promotion_evidence(
+            snapshot,
+            git_commit=COMMIT,
+            git_tree=TREE,
+            release_ref="refs/tags/v1.0.0",
+            release_version="1.0.0",
+            verify_source_diff=True,
+            integration_matrix=partial_coverage_matrix,
+        )
+
+    mismatched_digest_report = json.loads(json.dumps(integration_report))
+    mismatched_digest_report["resultDigest"] = "sha256:" + "7" * 64
+    mismatched_payload, _mismatched_files = _promotion_payload_and_files(
+        module,
+        integration_reports=[mismatched_digest_report],
+    )
+    mismatched_root = tmp_path / "mismatched-integration-digest"
+    mismatched_root.mkdir()
+    mismatched_path = _write_promotion_payload(
+        module,
+        mismatched_root / "promotion.json",
+        mismatched_payload,
+    )
+    mismatched_snapshot = module._snapshot_regular_file(
+        mismatched_path,
+        owner="test promotion evidence",
+    )
+    with pytest.raises(module.ReleaseBundleError, match="digest does not match"):
+        module._validate_promotion_evidence(
+            mismatched_snapshot,
+            git_commit=COMMIT,
+            git_tree=TREE,
+            release_ref="refs/tags/v1.0.0",
+            release_version="1.0.0",
+            verify_source_diff=True,
+            integration_matrix=integration_matrix,
+        )
+
+    missing_root = tmp_path / "missing-integration"
+    missing_root.mkdir()
+    missing_path = _write_promotion_evidence(
+        module,
+        missing_root / "promotion.json",
+    )
+    missing_snapshot = module._snapshot_regular_file(
+        missing_path,
+        owner="test promotion evidence",
+    )
+    with pytest.raises(module.ReleaseBundleError, match="do not cover"):
+        module._validate_promotion_evidence(
+            missing_snapshot,
+            git_commit=COMMIT,
+            git_tree=TREE,
+            release_ref="refs/tags/v1.0.0",
+            release_version="1.0.0",
+            verify_source_diff=True,
+            integration_matrix=integration_matrix,
+        )
 
 
 @pytest.mark.parametrize(
@@ -1406,6 +1657,109 @@ def test_candidate_ci_freezes_one_canonical_matrix_run_attestation(
         ],
     }
     assert frozen.data == module._canonical_json_bytes(expected)
+
+
+def test_candidate_ci_freezes_concrete_real_service_integration_evidence(
+    tmp_path: Path,
+) -> None:
+    module = _load_module()
+    integration_id = "graphblocks-qdrant"
+    run_id = (
+        "https://github.com/graphblocks/graphblocks/actions/runs/123456/attempts/2"
+    )
+    result = {
+        "formatVersion": 1,
+        "integrationId": integration_id,
+        "ok": True,
+        "authentication": "api-key",
+        "serviceOrSdkVersion": "1.2.3",
+        "retryAndFailureModel": "bounded-exponential-retry",
+        "checks": [
+            "connectivity",
+            "authentication",
+            "version",
+            "retry",
+            "failure",
+        ],
+    }
+    result_path = tmp_path / "qdrant-result.json"
+    result_path.write_bytes(module._canonical_json_bytes(result))
+    output_path = tmp_path / "qdrant-report.json"
+    artifact_name = (
+        f"{integration_id}-{CANDIDATE_COMMIT}-123456-2"
+    )
+
+    frozen = module.freeze_integration_report(
+        input_path=result_path,
+        output_path=output_path,
+        integration_id=integration_id,
+        test="tests/integration/test_qdrant_real_service.py",
+        workflow=".github/workflows/real-services.yml",
+        workflow_job="qdrant",
+        test_step="exercise-qdrant-real-service",
+        run_id=run_id,
+        artifact_name=artifact_name,
+        candidate_ref=RELEASE_REF,
+        candidate_commit=CANDIDATE_COMMIT,
+    )
+
+    assert json.loads(frozen.data) == {
+        "integrationId": integration_id,
+        "status": "success",
+        "complete": True,
+        "candidateRef": RELEASE_REF,
+        "candidateCommit": CANDIDATE_COMMIT,
+        "test": "tests/integration/test_qdrant_real_service.py",
+        "workflow": ".github/workflows/real-services.yml",
+        "workflowJob": "qdrant",
+        "testStep": "exercise-qdrant-real-service",
+        "runId": run_id,
+        "artifactName": artifact_name,
+        "result": result,
+        "resultDigest": "sha256:"
+        + module._sha256_bytes(module._canonical_json_bytes(result)),
+    }
+    assert frozen.path == output_path
+
+
+def test_candidate_ci_rejects_incomplete_real_service_integration_evidence(
+    tmp_path: Path,
+) -> None:
+    module = _load_module()
+    result_path = tmp_path / "qdrant-result.json"
+    result_path.write_bytes(
+        module._canonical_json_bytes(
+            {
+                "formatVersion": 1,
+                "integrationId": "graphblocks-qdrant",
+                "ok": True,
+                "authentication": "api-key",
+                "serviceOrSdkVersion": "1.2.3",
+                "retryAndFailureModel": "bounded-exponential-retry",
+                "checks": ["connectivity"],
+            }
+        )
+    )
+
+    with pytest.raises(module.ReleaseBundleError, match="must prove"):
+        module.freeze_integration_report(
+            input_path=result_path,
+            output_path=tmp_path / "qdrant-report.json",
+            integration_id="graphblocks-qdrant",
+            test="tests/integration/test_qdrant_real_service.py",
+            workflow=".github/workflows/real-services.yml",
+            workflow_job="qdrant",
+            test_step="exercise-qdrant-real-service",
+            run_id=(
+                "https://github.com/graphblocks/graphblocks/actions/runs/"
+                "123456/attempts/2"
+            ),
+            artifact_name=(
+                f"graphblocks-qdrant-{CANDIDATE_COMMIT}-123456-2"
+            ),
+            candidate_ref=RELEASE_REF,
+            candidate_commit=CANDIDATE_COMMIT,
+        )
 
 
 def test_candidate_ci_rejects_a_noncanonical_matrix_run_identity(tmp_path: Path) -> None:

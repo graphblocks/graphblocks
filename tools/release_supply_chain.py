@@ -17,6 +17,7 @@ from typing import NamedTuple
 
 from packaging.requirements import InvalidRequirement, Requirement
 from packaging.utils import canonicalize_name, parse_sdist_filename, parse_wheel_filename
+import yaml
 
 from graphblocks.canonical import canonical_dumps, canonical_hash
 
@@ -94,9 +95,33 @@ MATRIX_PROMOTION_REPORT_KEYS = {
     "candidateManifestDigest",
     "supportedMatrix",
 }
+INTEGRATION_RESULT_KEYS = {
+    "formatVersion",
+    "integrationId",
+    "ok",
+    "authentication",
+    "serviceOrSdkVersion",
+    "retryAndFailureModel",
+    "checks",
+}
+INTEGRATION_PROMOTION_REPORT_KEYS = {
+    "integrationId",
+    "status",
+    "complete",
+    "candidateRef",
+    "candidateCommit",
+    "test",
+    "workflow",
+    "workflowJob",
+    "testStep",
+    "runId",
+    "artifactName",
+    "result",
+    "resultDigest",
+}
 CI_RUN_ATTEMPT_ID = re.compile(
     rf"https://github\.com/{re.escape(SIGSTORE_REPOSITORY)}/actions/runs/"
-    r"[1-9][0-9]*/attempts/[1-9][0-9]*"
+    r"(?P<run_id>[1-9][0-9]*)/attempts/(?P<attempt>[1-9][0-9]*)"
 )
 RUNTIME_WHEEL_INTERPRETER = "cp311"
 SUPPORTED_NATIVE_WHEEL_COUNT = len(
@@ -300,6 +325,80 @@ def _require_ci_run_attempt_id(value: object, *, owner: str) -> str:
             f"{owner} must be a canonical graphblocks/graphblocks CI run-attempt identity"
         )
     return value
+
+
+def _require_prefixed_repository_path(
+    value: object,
+    *,
+    prefix: str,
+    owner: str,
+) -> str:
+    if not isinstance(value, str) or not value or "\\" in value:
+        raise ReleaseBundleError(f"{owner} must be a normalized repository path")
+    relative = PurePosixPath(value)
+    if (
+        relative.is_absolute()
+        or relative.as_posix() != value
+        or any(part in {"", ".", ".."} for part in relative.parts)
+        or not value.startswith(prefix)
+    ):
+        raise ReleaseBundleError(f"{owner} must be a normalized repository path")
+    return value
+
+
+def _expected_integration_artifact_name(
+    integration_id: str,
+    candidate_commit: str,
+    run_id: str,
+) -> str:
+    match = CI_RUN_ATTEMPT_ID.fullmatch(run_id)
+    if match is None:
+        raise ReleaseBundleError("integration run id is not canonical")
+    return (
+        f"{integration_id}-{candidate_commit}-"
+        f"{match.group('run_id')}-{match.group('attempt')}"
+    )
+
+
+def _validate_integration_result(
+    value: object,
+    *,
+    integration_id: str,
+    owner: str,
+) -> dict[str, object]:
+    result = _require_exact_keys(value, INTEGRATION_RESULT_KEYS, owner=owner)
+    if (
+        result.get("formatVersion") != 1
+        or result.get("integrationId") != integration_id
+        or result.get("ok") is not True
+    ):
+        raise ReleaseBundleError(
+            f"{owner} is not a successful result for {integration_id}"
+        )
+    for field in (
+        "authentication",
+        "serviceOrSdkVersion",
+        "retryAndFailureModel",
+    ):
+        _require_nonempty_string(result.get(field), owner=f"{owner} {field}")
+    checks = result.get("checks")
+    required_checks = {
+        "connectivity",
+        "authentication",
+        "version",
+        "retry",
+        "failure",
+    }
+    if (
+        not isinstance(checks, list)
+        or not all(isinstance(check, str) for check in checks)
+        or len(checks) != len(set(checks))
+        or set(checks) != required_checks
+    ):
+        raise ReleaseBundleError(
+            f"{owner} must prove connectivity, authentication, version, retry, and failure"
+        )
+    return dict(result)
 
 
 def _parse_utc_timestamp(value: object, *, owner: str) -> datetime:
@@ -822,11 +921,24 @@ def _promotion_report_artifacts(
         certificate_oidc_issuer = _require_nonempty_string(
             record.get("certificateOidcIssuer"), owner=f"{owner} certificate issuer"
         )
-        trusted_workflow = (
-            SIGSTORE_WORKFLOW
-            if set(report_payload) == MATRIX_PROMOTION_REPORT_KEYS
-            else PROMOTION_SIGSTORE_WORKFLOW
-        )
+        if set(report_payload) == MATRIX_PROMOTION_REPORT_KEYS:
+            trusted_workflow = SIGSTORE_WORKFLOW
+        elif set(report_payload) == INTEGRATION_PROMOTION_REPORT_KEYS:
+            trusted_workflow = _require_prefixed_repository_path(
+                report_payload.get("workflow"),
+                prefix=".github/workflows/",
+                owner=f"{owner} integration workflow",
+            )
+            workflow_path = PurePosixPath(trusted_workflow)
+            if (
+                len(workflow_path.parts) != 3
+                or workflow_path.suffix not in {".yml", ".yaml"}
+            ):
+                raise ReleaseBundleError(
+                    f"{owner} integration workflow path is invalid"
+                )
+        else:
+            trusted_workflow = PROMOTION_SIGSTORE_WORKFLOW
         candidate_workflow_identity = (
             f"https://github.com/{SIGSTORE_REPOSITORY}/"
             f"{trusted_workflow}@"
@@ -938,6 +1050,119 @@ def freeze_candidate_matrix_report(
         payload,
         output_dir=output_dir,
         owner="frozen candidate matrix report",
+    )
+
+
+def freeze_integration_report(
+    *,
+    input_path: Path,
+    output_path: Path,
+    integration_id: str,
+    test: str,
+    workflow: str,
+    workflow_job: str,
+    test_step: str,
+    run_id: str,
+    artifact_name: str,
+    candidate_ref: str,
+    candidate_commit: str,
+) -> FileSnapshot:
+    """Freeze a successful real-service result for signed promotion evidence."""
+
+    if (
+        re.fullmatch(r"graphblocks-[a-z0-9]+(?:-[a-z0-9]+)*", integration_id)
+        is None
+    ):
+        raise ReleaseBundleError("integration report id is invalid")
+    if RELEASE_CANDIDATE_REF.fullmatch(candidate_ref) is None:
+        raise ReleaseBundleError(
+            "integration reports must be frozen from a canonical release-candidate ref"
+        )
+    if GIT_COMMIT.fullmatch(candidate_commit) is None:
+        raise ReleaseBundleError("integration report candidate commit is invalid")
+    canonical_run_id = _require_ci_run_attempt_id(
+        run_id,
+        owner="integration report run id",
+    )
+    canonical_test = _require_prefixed_repository_path(
+        test,
+        prefix="tests/",
+        owner="integration report test",
+    )
+    canonical_workflow = _require_prefixed_repository_path(
+        workflow,
+        prefix=".github/workflows/",
+        owner="integration report workflow",
+    )
+    if (
+        PurePosixPath(canonical_workflow).suffix not in {".yml", ".yaml"}
+        or len(PurePosixPath(canonical_workflow).parts) != 3
+    ):
+        raise ReleaseBundleError("integration report workflow path is invalid")
+    for field_name, field_value in (
+        ("workflow job", workflow_job),
+        ("test step", test_step),
+    ):
+        if (
+            not isinstance(field_value, str)
+            or re.fullmatch(r"[A-Za-z0-9_-]+", field_value) is None
+        ):
+            raise ReleaseBundleError(f"integration report {field_name} is invalid")
+    expected_artifact_name = _expected_integration_artifact_name(
+        integration_id,
+        candidate_commit,
+        canonical_run_id,
+    )
+    if artifact_name != expected_artifact_name:
+        raise ReleaseBundleError(
+            "integration report artifact name does not bind its candidate and run"
+        )
+
+    result_snapshot = _snapshot_regular_file(
+        input_path,
+        owner="integration real-service result",
+    )
+    result = _validate_integration_result(
+        _json_from_snapshot(
+            result_snapshot,
+            owner="integration real-service result",
+        ),
+        integration_id=integration_id,
+        owner="integration real-service result",
+    )
+    payload: dict[str, object] = {
+        "integrationId": integration_id,
+        "status": "success",
+        "complete": True,
+        "candidateRef": candidate_ref,
+        "candidateCommit": candidate_commit,
+        "test": canonical_test,
+        "workflow": canonical_workflow,
+        "workflowJob": workflow_job,
+        "testStep": test_step,
+        "runId": canonical_run_id,
+        "artifactName": artifact_name,
+        "result": result,
+        "resultDigest": "sha256:"
+        + _sha256_bytes(_canonical_json_bytes(result)),
+    }
+
+    if output_path.is_symlink() or output_path.exists():
+        raise ReleaseBundleError("frozen integration report output must not already exist")
+    try:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        if output_path.parent.is_symlink() or not output_path.parent.is_dir():
+            raise ReleaseBundleError(
+                "frozen integration report output parent is unsafe"
+            )
+        _write_json(output_path, payload)
+    except OSError as error:
+        raise ReleaseBundleError(
+            "frozen integration report could not be written"
+        ) from error
+    return _snapshot_regular_file(
+        output_path,
+        owner="frozen integration report",
     )
 
 
@@ -1109,6 +1334,7 @@ def _validate_promotion_evidence(
     release_version: str,
     verify_source_diff: bool,
     cosign: str | Sequence[str] = "cosign",
+    integration_matrix: Mapping[str, object] | None = None,
 ) -> tuple[dict[str, object], str, tuple[FileSnapshot, ...]]:
     owner = "stable promotion evidence"
     payload = _json_from_snapshot(snapshot, owner=owner)
@@ -1124,6 +1350,7 @@ def _validate_promotion_evidence(
             "candidate",
             "upgradeGate",
             "supportedMatrixRuns",
+            "integrationRuns",
             "soak",
             "reviews",
             "stableScope",
@@ -1216,6 +1443,317 @@ def _validate_promotion_evidence(
             "stable promotion candidate manifest does not bind the prior candidate"
         )
     used_report_digests = {candidate_manifest_digest}
+
+    if integration_matrix is None:
+        integration_matrix_path = "docs/project/stable-release-matrix.yaml"
+        loaded_matrices: list[Mapping[str, object]] = []
+        for revision, revision_name in (
+            (candidate_commit, "candidate"),
+            (git_commit, "final"),
+        ):
+            try:
+                loaded_matrix = yaml.safe_load(
+                    _promotion_git_blob(
+                        revision,
+                        integration_matrix_path,
+                    ).decode("utf-8")
+                )
+            except (UnicodeError, yaml.YAMLError) as error:
+                raise ReleaseBundleError(
+                    f"stable promotion {revision_name} integration matrix "
+                    "could not be loaded"
+                ) from error
+            if not isinstance(loaded_matrix, Mapping):
+                raise ReleaseBundleError(
+                    "stable promotion integration matrix has an invalid shape"
+                )
+            loaded_matrices.append(loaded_matrix)
+        candidate_integration_matrix, final_integration_matrix = loaded_matrices
+        integration_claim_fields = (
+            "integrationPromotionPolicy",
+            "integrations",
+        )
+        if any(
+            candidate_integration_matrix.get(field)
+            != final_integration_matrix.get(field)
+            for field in integration_claim_fields
+        ):
+            raise ReleaseBundleError(
+                "stable promotion integration claims changed after the candidate"
+            )
+        integration_matrix = candidate_integration_matrix
+
+    if not isinstance(integration_matrix, Mapping):
+        raise ReleaseBundleError(
+            "stable promotion integration matrix has an invalid shape"
+        )
+    raw_integration_entries = integration_matrix.get("integrations")
+    if not isinstance(raw_integration_entries, list):
+        raise ReleaseBundleError(
+            "stable promotion integration matrix has no integration records"
+        )
+    expected_integration_runs: dict[
+        tuple[str, str, str, str, str],
+        tuple[Mapping[str, object], Mapping[str, object]],
+    ] = {}
+    expected_support_pairs: dict[str, set[tuple[str, str]]] = {}
+    for raw_entry in raw_integration_entries:
+        if not isinstance(raw_entry, Mapping):
+            raise ReleaseBundleError(
+                "stable promotion integration matrix contains a malformed record"
+            )
+        if raw_entry.get("implementationMaturity") != "real-adapter":
+            continue
+        integration_id = _require_nonempty_string(
+            raw_entry.get("id"),
+            owner="stable promotion real-adapter id",
+        )
+        if integration_id in expected_support_pairs:
+            raise ReleaseBundleError(
+                "stable promotion integration matrix has duplicate real adapters"
+            )
+        raw_supported_authentication = raw_entry.get("supportedAuthentication")
+        raw_supported_versions = raw_entry.get("supportedServiceOrSdkVersions")
+        if (
+            not isinstance(raw_supported_authentication, list)
+            or not raw_supported_authentication
+            or not isinstance(raw_supported_versions, list)
+            or not raw_supported_versions
+        ):
+            raise ReleaseBundleError(
+                f"stable promotion real adapter {integration_id} has an empty support matrix"
+            )
+        supported_authentication = {
+            _require_nonempty_string(
+                authentication,
+                owner=f"stable promotion {integration_id} authentication",
+            )
+            for authentication in raw_supported_authentication
+        }
+        supported_versions = {
+            _require_nonempty_string(
+                version,
+                owner=f"stable promotion {integration_id} service or SDK version",
+            )
+            for version in raw_supported_versions
+        }
+        if (
+            len(supported_authentication) != len(raw_supported_authentication)
+            or len(supported_versions) != len(raw_supported_versions)
+        ):
+            raise ReleaseBundleError(
+                f"stable promotion real adapter {integration_id} has duplicate support claims"
+            )
+        expected_support_pairs[integration_id] = {
+            (authentication, version)
+            for authentication in supported_authentication
+            for version in supported_versions
+        }
+        recipes = raw_entry.get("realServiceEvidence")
+        if not isinstance(recipes, list) or not recipes:
+            raise ReleaseBundleError(
+                f"stable promotion real adapter {integration_id} has no evidence recipe"
+            )
+        for raw_recipe in recipes:
+            if not isinstance(raw_recipe, Mapping):
+                raise ReleaseBundleError(
+                    f"stable promotion real adapter {integration_id} has a malformed recipe"
+                )
+            test_path = _require_prefixed_repository_path(
+                raw_recipe.get("test"),
+                prefix="tests/",
+                owner=f"stable promotion {integration_id} recipe test",
+            )
+            workflow_path = _require_prefixed_repository_path(
+                raw_recipe.get("workflow"),
+                prefix=".github/workflows/",
+                owner=f"stable promotion {integration_id} recipe workflow",
+            )
+            workflow_job = _require_nonempty_string(
+                raw_recipe.get("workflowJob"),
+                owner=f"stable promotion {integration_id} recipe workflow job",
+            )
+            test_step = _require_nonempty_string(
+                raw_recipe.get("testStep"),
+                owner=f"stable promotion {integration_id} recipe test step",
+            )
+            recipe_key = (
+                integration_id,
+                test_path,
+                workflow_path,
+                workflow_job,
+                test_step,
+            )
+            if recipe_key in expected_integration_runs:
+                raise ReleaseBundleError(
+                    "stable promotion integration matrix has duplicate evidence recipes"
+                )
+            expected_integration_runs[recipe_key] = (raw_entry, raw_recipe)
+
+    integration_runs = payload.get("integrationRuns")
+    if (
+        not isinstance(integration_runs, list)
+        or len(integration_runs) != len(expected_integration_runs)
+    ):
+        raise ReleaseBundleError(
+            "stable promotion integration runs do not cover every real-adapter recipe"
+        )
+    observed_integration_runs: set[tuple[str, str, str, str, str]] = set()
+    observed_support_pairs: dict[str, set[tuple[str, str]]] = {
+        integration_id: set() for integration_id in expected_support_pairs
+    }
+    integration_run_ids: set[str] = set()
+    for index, raw_run in enumerate(integration_runs):
+        owner = f"stable promotion integration run {index}"
+        run = _require_exact_keys(
+            raw_run,
+            INTEGRATION_PROMOTION_REPORT_KEYS | {"reportDigest"},
+            owner=owner,
+        )
+        integration_id = _require_nonempty_string(
+            run.get("integrationId"),
+            owner=f"{owner} integration id",
+        )
+        test_path = _require_prefixed_repository_path(
+            run.get("test"),
+            prefix="tests/",
+            owner=f"{owner} test",
+        )
+        workflow_path = _require_prefixed_repository_path(
+            run.get("workflow"),
+            prefix=".github/workflows/",
+            owner=f"{owner} workflow",
+        )
+        workflow_job = _require_nonempty_string(
+            run.get("workflowJob"),
+            owner=f"{owner} workflow job",
+        )
+        test_step = _require_nonempty_string(
+            run.get("testStep"),
+            owner=f"{owner} test step",
+        )
+        recipe_key = (
+            integration_id,
+            test_path,
+            workflow_path,
+            workflow_job,
+            test_step,
+        )
+        expected_record = expected_integration_runs.get(recipe_key)
+        if expected_record is None or recipe_key in observed_integration_runs:
+            raise ReleaseBundleError(
+                "stable promotion integration run is unknown or duplicated"
+            )
+        integration_entry, evidence_recipe = expected_record
+
+        run_id = _require_ci_run_attempt_id(
+            run.get("runId"),
+            owner=f"{owner} id",
+        )
+        if run_id in integration_run_ids:
+            raise ReleaseBundleError(
+                "stable promotion integration run ids must be distinct"
+            )
+        integration_run_ids.add(run_id)
+        expected_artifact_name = _expected_integration_artifact_name(
+            integration_id,
+            candidate_commit,
+            run_id,
+        )
+        artifact_template = _require_nonempty_string(
+            evidence_recipe.get("artifactName"),
+            owner=f"{owner} artifact template",
+        )
+        run_match = CI_RUN_ATTEMPT_ID.fullmatch(run_id)
+        if run_match is None:
+            raise ReleaseBundleError("stable promotion integration run id is invalid")
+        resolved_artifact_template = (
+            artifact_template.replace("${{ github.sha }}", candidate_commit)
+            .replace("${{ github.run_id }}", run_match.group("run_id"))
+            .replace("${{ github.run_attempt }}", run_match.group("attempt"))
+        )
+        if (
+            run.get("status") != "success"
+            or run.get("complete") is not True
+            or run.get("candidateRef") != candidate_ref
+            or run.get("candidateCommit") != candidate_commit
+            or run.get("artifactName") != expected_artifact_name
+            or resolved_artifact_template != expected_artifact_name
+        ):
+            raise ReleaseBundleError(
+                "stable promotion integration run is incomplete or not candidate-bound"
+            )
+
+        result = _validate_integration_result(
+            run.get("result"),
+            integration_id=integration_id,
+            owner=f"{owner} result",
+        )
+        result_digest = _require_prefixed_sha256(
+            run.get("resultDigest"),
+            owner=f"{owner} result digest",
+        )
+        if result_digest != "sha256:" + _sha256_bytes(
+            _canonical_json_bytes(result)
+        ):
+            raise ReleaseBundleError(
+                "stable promotion integration result digest does not match its result"
+            )
+        supported_authentication = integration_entry.get(
+            "supportedAuthentication"
+        )
+        supported_versions = integration_entry.get(
+            "supportedServiceOrSdkVersions"
+        )
+        result_authentication = _require_nonempty_string(
+            result.get("authentication"),
+            owner=f"{owner} result authentication",
+        )
+        result_version = _require_nonempty_string(
+            result.get("serviceOrSdkVersion"),
+            owner=f"{owner} result service or SDK version",
+        )
+        result_retry_model = _require_nonempty_string(
+            result.get("retryAndFailureModel"),
+            owner=f"{owner} result retry and failure model",
+        )
+        if (
+            not isinstance(supported_authentication, list)
+            or result_authentication not in supported_authentication
+            or not isinstance(supported_versions, list)
+            or result_version not in supported_versions
+            or result_retry_model != integration_entry.get("retryAndFailureModel")
+        ):
+            raise ReleaseBundleError(
+                "stable promotion integration result is outside its support matrix"
+            )
+        observed_support_pairs[integration_id].add(
+            (result_authentication, result_version)
+        )
+
+        report_digest = _require_prefixed_sha256(
+            run.get("reportDigest"),
+            owner=f"{owner} signed report digest",
+        )
+        if _promotion_report(
+            reports,
+            report_digest,
+            owner=owner,
+        ) != {key: value for key, value in run.items() if key != "reportDigest"}:
+            raise ReleaseBundleError(
+                "stable promotion integration report does not bind its run"
+            )
+        used_report_digests.add(report_digest)
+        observed_integration_runs.add(recipe_key)
+
+    if observed_integration_runs != set(expected_integration_runs):
+        raise ReleaseBundleError(
+            "stable promotion integration runs do not cover every real-adapter recipe"
+        )
+    if observed_support_pairs != expected_support_pairs:
+        raise ReleaseBundleError(
+            "stable promotion integration runs do not cover the declared support matrix"
+        )
 
     matrix_runs = payload.get("supportedMatrixRuns")
     if not isinstance(matrix_runs, list) or len(matrix_runs) < 3:
@@ -3879,6 +4417,18 @@ def main(argv: list[str] | None = None) -> int:
     freeze_matrix_report.add_argument("--candidate-ref", required=True)
     freeze_matrix_report.add_argument("--candidate-commit", required=True)
     freeze_matrix_report.add_argument("--run-id", required=True)
+    freeze_integration = subparsers.add_parser("freeze-integration-report")
+    freeze_integration.add_argument("--input", type=Path, required=True)
+    freeze_integration.add_argument("--output", type=Path, required=True)
+    freeze_integration.add_argument("--integration-id", required=True)
+    freeze_integration.add_argument("--test", required=True)
+    freeze_integration.add_argument("--workflow", required=True)
+    freeze_integration.add_argument("--workflow-job", required=True)
+    freeze_integration.add_argument("--test-step", required=True)
+    freeze_integration.add_argument("--run-id", required=True)
+    freeze_integration.add_argument("--artifact-name", required=True)
+    freeze_integration.add_argument("--candidate-ref", required=True)
+    freeze_integration.add_argument("--candidate-commit", required=True)
     freeze_report = subparsers.add_parser("freeze-promotion-report")
     freeze_report.add_argument("--input", type=Path, required=True)
     freeze_report.add_argument("--output-dir", type=Path, required=True)
@@ -3920,6 +4470,24 @@ def main(argv: list[str] | None = None) -> int:
         )
         print(
             "froze candidate matrix report "
+            f"sha256:{frozen_report.sha256} in {frozen_report.path}"
+        )
+    elif args.command == "freeze-integration-report":
+        frozen_report = freeze_integration_report(
+            input_path=args.input.resolve(),
+            output_path=args.output.resolve(),
+            integration_id=args.integration_id,
+            test=args.test,
+            workflow=args.workflow,
+            workflow_job=args.workflow_job,
+            test_step=args.test_step,
+            run_id=args.run_id,
+            artifact_name=args.artifact_name,
+            candidate_ref=args.candidate_ref,
+            candidate_commit=args.candidate_commit,
+        )
+        print(
+            "froze integration report "
             f"sha256:{frozen_report.sha256} in {frozen_report.path}"
         )
     elif args.command == "freeze-promotion-report":

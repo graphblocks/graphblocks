@@ -19,6 +19,11 @@ preparing the first 1.0 release candidate.
 
 ### Changed
 
+- Classified every shipped integration as contract-only or test-double and
+  added a machine-enforced promotion gate for authentication, supported
+  versions, their complete Cartesian support matrix, retry/failure ownership,
+  and revision/run-bound real-service evidence signed by the referenced
+  integration workflow.
 - Replaced the stable local journal's frozen-but-mutating dataclass contract
   with an explicitly mutable, thread-safe writer and immutable point-in-time
   snapshots while preserving its `(run_id)` constructor and C1 event surface.

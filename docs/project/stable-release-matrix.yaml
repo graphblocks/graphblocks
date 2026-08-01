@@ -281,7 +281,13 @@ wireVersions:
     qualifier: experimental
 
 integrationPromotionPolicy:
-  readiness: maturity-schema-missing
+  readiness: candidate-enforced
+  componentCatalog: src/graphblocks/data/package-catalog.yaml
+  recordsAuthority: integrations
+  promotionGate: REL-INTEGRATION-PROMOTION
+  syntheticTestDoubles:
+    - repository-fakes
+    - acceptance-harness-adapters
   requiredFields:
     - implementationMaturity
     - supportedAuthentication
@@ -290,37 +296,172 @@ integrationPromotionPolicy:
     - retryAndFailureModel
     - promotionGate
   allowedMaturity: [contract-only, test-double, real-adapter]
+  allowedAuthentication:
+    - none
+    - api-key
+    - basic
+    - bearer
+    - oauth2
+    - mtls
+    - ambient-cloud-identity
+    - transport-supplied
+  supportCoverage: authentication-version-cartesian-product
+  realServiceEvidenceSchema:
+    kind: signed-workflow-recipe
+    requiredFields:
+      - test
+      - workflow
+      - workflowJob
+      - testStep
+      - reportStep
+      - attestationStep
+      - artifactName
+      - resultPath
+      - reportPath
+      - signaturePath
+    pathsMustExist: true
+    testPathPrefix: tests/
+    workflowPathPrefix: .github/workflows/
+    artifactPathPrefix: .artifacts/real-service/
+    artifactNameBindings:
+      - '${{ github.sha }}'
+      - '${{ github.run_id }}'
+      - '${{ github.run_attempt }}'
+    testCommandPrefix: [python, -m, pytest]
+    testEvidenceOption: --real-service-evidence
+    reportCommandPrefix:
+      - python
+      - tools/release_supply_chain.py
+      - freeze-integration-report
+    attestationCommandPrefix: [cosign, sign-blob, --yes]
+    uploadAction: actions/upload-artifact@
+    actionsMustUseCommitSha: true
+    criticalStepsMustBeContiguous: true
+    promotionReport:
+      releaseEvidenceField: integrationRuns
+      reportReferenceField: reportDigest
+      requiredFields:
+        - integrationId
+        - status
+        - complete
+        - candidateRef
+        - candidateCommit
+        - test
+        - workflow
+        - workflowJob
+        - testStep
+        - runId
+        - artifactName
+        - result
+        - resultDigest
+      candidateRevisionBound: true
+      candidateFinalClaimEquality: true
+      signedByReferencedWorkflow: true
+      signatureBundleRequired: true
+  templates:
+    contractOnly: &integration-contract-only
+      implementationMaturity: contract-only
+      supportedAuthentication: []
+      supportedServiceOrSdkVersions: []
+      realServiceEvidence: []
+      retryAndFailureModel: caller-owned
+      promotionGate: REL-INTEGRATION-PROMOTION
+    testDouble: &integration-test-double
+      implementationMaturity: test-double
+      supportedAuthentication: []
+      supportedServiceOrSdkVersions: []
+      realServiceEvidence: []
+      retryAndFailureModel: deterministic-test-only
+      promotionGate: REL-INTEGRATION-PROMOTION
 
 integrations:
-  - {id: graphblocks-pdf, tier: preview}
-  - {id: graphblocks-qdrant, tier: preview}
-  - {id: graphblocks-mcp, tier: preview}
-  - {id: graphblocks-openapi, tier: preview}
-  - {id: graphblocks-openai, tier: preview}
-  - {id: graphblocks-haystack, tier: preview}
-  - {id: graphblocks-policy-opa, tier: preview}
-  - {id: graphblocks-policy-cedar, tier: preview}
-  - {id: graphblocks-budget-postgres, tier: preview}
-  - {id: graphblocks-usage-postgres, tier: preview}
-  - {id: graphblocks-kubernetes, tier: preview}
-  - {id: graphblocks-terraform, tier: preview}
-  - {id: graphblocks-oci, tier: preview}
-  - {id: graphblocks-gitops, tier: preview}
-  - {id: graphblocks-otel, tier: preview}
-  - {id: graphblocks-langfuse, tier: preview}
-  - {id: graphblocks-prometheus, tier: preview}
-  - {id: graphblocks-dashboards, tier: preview}
-  - {id: graphblocks-webrtc, tier: preview}
-  - {id: graphblocks-websocket-media, tier: preview}
-  - {id: graphblocks-openai-realtime, tier: preview}
-  - {id: graphblocks-silero-vad, tier: preview}
-  - {id: graphblocks-kafka, tier: preview}
-  - {id: graphblocks-nats, tier: preview}
-  - {id: graphblocks-sqs, tier: preview}
-  - {id: graphblocks-pubsub, tier: preview}
-  - {id: graphblocks-scripted, tier: internal}
-  - {id: repository-fakes, tier: internal}
-  - {id: acceptance-harness-adapters, tier: internal}
+  - <<: *integration-contract-only
+    id: graphblocks-pdf
+    tier: preview
+  - <<: *integration-contract-only
+    id: graphblocks-qdrant
+    tier: preview
+  - <<: *integration-contract-only
+    id: graphblocks-mcp
+    tier: preview
+  - <<: *integration-contract-only
+    id: graphblocks-openapi
+    tier: preview
+  - <<: *integration-contract-only
+    id: graphblocks-openai
+    tier: preview
+  - <<: *integration-contract-only
+    id: graphblocks-haystack
+    tier: preview
+  - <<: *integration-contract-only
+    id: graphblocks-policy-opa
+    tier: preview
+  - <<: *integration-contract-only
+    id: graphblocks-policy-cedar
+    tier: preview
+  - <<: *integration-contract-only
+    id: graphblocks-budget-postgres
+    tier: preview
+  - <<: *integration-contract-only
+    id: graphblocks-usage-postgres
+    tier: preview
+  - <<: *integration-contract-only
+    id: graphblocks-kubernetes
+    tier: preview
+  - <<: *integration-contract-only
+    id: graphblocks-terraform
+    tier: preview
+  - <<: *integration-contract-only
+    id: graphblocks-oci
+    tier: preview
+  - <<: *integration-contract-only
+    id: graphblocks-gitops
+    tier: preview
+  - <<: *integration-contract-only
+    id: graphblocks-otel
+    tier: preview
+  - <<: *integration-contract-only
+    id: graphblocks-langfuse
+    tier: preview
+  - <<: *integration-contract-only
+    id: graphblocks-prometheus
+    tier: preview
+  - <<: *integration-contract-only
+    id: graphblocks-dashboards
+    tier: preview
+  - <<: *integration-contract-only
+    id: graphblocks-webrtc
+    tier: preview
+  - <<: *integration-contract-only
+    id: graphblocks-websocket-media
+    tier: preview
+  - <<: *integration-contract-only
+    id: graphblocks-openai-realtime
+    tier: preview
+  - <<: *integration-contract-only
+    id: graphblocks-silero-vad
+    tier: preview
+  - <<: *integration-contract-only
+    id: graphblocks-kafka
+    tier: preview
+  - <<: *integration-contract-only
+    id: graphblocks-nats
+    tier: preview
+  - <<: *integration-contract-only
+    id: graphblocks-sqs
+    tier: preview
+  - <<: *integration-contract-only
+    id: graphblocks-pubsub
+    tier: preview
+  - <<: *integration-test-double
+    id: graphblocks-scripted
+    tier: internal
+  - <<: *integration-test-double
+    id: repository-fakes
+    tier: internal
+  - <<: *integration-test-double
+    id: acceptance-harness-adapters
+    tier: internal
 
 releaseGates:
   - id: REL-API-SNAPSHOT
@@ -367,6 +508,15 @@ releaseGates:
       - docs/project/stable-requirements.yaml
       - tests/test_stable_traceability.py
   - {id: REL-RUNTIME-CORRECTNESS, description: C1 lifecycle cancellation journal bounded-flow and tool gates pass.}
+  - id: REL-INTEGRATION-PROMOTION
+    description: Integration maturity, authentication, version, failure-model, and candidate-bound signed real-service runs are verified before promotion.
+    readiness: candidate-enforced
+    evidence:
+      - src/graphblocks/data/package-catalog.yaml
+      - docs/project/stable-release-matrix.yaml
+      - tools/release_supply_chain.py
+      - tests/test_documentation_integrity.py
+      - tests/test_release_supply_chain.py
   - id: REL-INSTALLED-TCK
     description: Digest-bound TCK and acceptance evidence comes from installed release artifacts.
     readiness: candidate-enforced

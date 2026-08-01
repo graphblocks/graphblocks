@@ -1,15 +1,222 @@
 from __future__ import annotations
 
 from collections import Counter
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import re
+import shlex
 import tomllib
 
+import pytest
 import yaml
 
 
 ROOT = Path(__file__).parents[1]
 MARKDOWN_LINK = re.compile(r"(?<!!)\[[^]]+\]\(([^)]+)\)")
+
+
+def _validate_real_service_evidence(
+    repository_root: Path,
+    integration_id: str,
+    evidence: object,
+    schema: dict[str, object],
+) -> None:
+    assert isinstance(evidence, dict)
+    required_fields = schema["requiredFields"]
+    assert isinstance(required_fields, list)
+    assert set(evidence) == set(required_fields)
+
+    resolved_root = repository_root.resolve()
+    resolved_paths: dict[str, Path] = {}
+    for field, prefix_field in (
+        ("test", "testPathPrefix"),
+        ("workflow", "workflowPathPrefix"),
+    ):
+        value = evidence[field]
+        prefix = schema[prefix_field]
+        assert isinstance(value, str) and value
+        assert isinstance(prefix, str) and prefix
+        relative_path = PurePosixPath(value)
+        assert not relative_path.is_absolute()
+        assert "\\" not in value
+        assert ".." not in relative_path.parts
+        assert relative_path.as_posix() == value
+        assert value.startswith(prefix)
+        resolved_path = (repository_root / relative_path).resolve()
+        assert resolved_path.is_relative_to(resolved_root)
+        assert resolved_path.is_file()
+        resolved_paths[field] = resolved_path
+
+    artifact_prefix = schema["artifactPathPrefix"]
+    assert isinstance(artifact_prefix, str) and artifact_prefix
+    generated_paths: dict[str, str] = {}
+    for field in ("resultPath", "reportPath", "signaturePath"):
+        value = evidence[field]
+        assert isinstance(value, str) and value
+        relative_path = PurePosixPath(value)
+        assert not relative_path.is_absolute()
+        assert "\\" not in value
+        assert ".." not in relative_path.parts
+        assert relative_path.as_posix() == value
+        assert value.startswith(artifact_prefix)
+        assert (repository_root / relative_path).resolve().is_relative_to(
+            resolved_root
+        )
+        generated_paths[field] = value
+    assert len(set(generated_paths.values())) == len(generated_paths)
+    assert generated_paths["resultPath"].endswith(".json")
+    assert generated_paths["reportPath"].endswith(".json")
+    assert generated_paths["signaturePath"].endswith(".sigstore.json")
+
+    artifact_name = evidence["artifactName"]
+    artifact_name_bindings = schema["artifactNameBindings"]
+    assert isinstance(artifact_name, str) and integration_id in artifact_name
+    assert isinstance(artifact_name_bindings, list)
+    assert all(
+        isinstance(binding, str) and binding in artifact_name
+        for binding in artifact_name_bindings
+    )
+
+    workflow = yaml.safe_load(resolved_paths["workflow"].read_text(encoding="utf-8"))
+    assert isinstance(workflow, dict)
+    jobs = workflow.get("jobs")
+    assert isinstance(jobs, dict)
+    workflow_job = evidence["workflowJob"]
+    assert isinstance(workflow_job, str) and workflow_job
+    job = jobs.get(workflow_job)
+    assert isinstance(job, dict)
+    assert "if" not in job
+    assert "continue-on-error" not in job
+    steps = job.get("steps")
+    assert isinstance(steps, list)
+    assert all(isinstance(step, dict) for step in steps)
+    step_ids = [
+        step["id"]
+        for step in steps
+        if isinstance(step.get("id"), str)
+    ]
+    assert len(step_ids) == len(set(step_ids))
+
+    test_path = evidence["test"]
+    test_step_id = evidence["testStep"]
+    assert isinstance(test_step_id, str) and test_step_id
+    test_steps = [
+        (index, step)
+        for index, step in enumerate(steps)
+        if step.get("id") == test_step_id
+    ]
+    assert len(test_steps) == 1
+    test_index, test_step = test_steps[0]
+    assert "if" not in test_step
+    assert "continue-on-error" not in test_step
+    test_run = test_step.get("run")
+    assert isinstance(test_run, str)
+    test_tokens = shlex.split(test_run)
+    test_command_prefix = schema["testCommandPrefix"]
+    assert isinstance(test_command_prefix, list)
+    test_evidence_option = schema["testEvidenceOption"]
+    assert isinstance(test_evidence_option, str)
+    assert test_tokens == [
+        *test_command_prefix,
+        test_path,
+        test_evidence_option,
+        generated_paths["resultPath"],
+    ]
+
+    report_step_id = evidence["reportStep"]
+    assert isinstance(report_step_id, str) and report_step_id
+    report_steps = [
+        (index, step)
+        for index, step in enumerate(steps)
+        if step.get("id") == report_step_id
+    ]
+    assert len(report_steps) == 1
+    report_index, report_step = report_steps[0]
+    assert "if" not in report_step
+    assert "continue-on-error" not in report_step
+    report_run = report_step.get("run")
+    assert isinstance(report_run, str)
+    report_tokens = shlex.split(report_run)
+    report_command_prefix = schema["reportCommandPrefix"]
+    assert isinstance(report_command_prefix, list)
+    assert report_tokens[: len(report_command_prefix)] == report_command_prefix
+    expected_report_arguments = (
+        ("--input", generated_paths["resultPath"]),
+        ("--output", generated_paths["reportPath"]),
+        ("--integration-id", integration_id),
+        ("--test", test_path),
+        ("--workflow", evidence["workflow"]),
+        ("--workflow-job", workflow_job),
+        ("--test-step", test_step_id),
+        (
+            "--run-id",
+            "https://github.com/graphblocks/graphblocks/actions/runs/"
+            "${{ github.run_id }}/attempts/${{ github.run_attempt }}",
+        ),
+        ("--artifact-name", artifact_name),
+        ("--candidate-ref", "${{ github.ref }}"),
+        ("--candidate-commit", "${{ github.sha }}"),
+    )
+    expected_report_tokens = list(report_command_prefix)
+    for option, expected_value in expected_report_arguments:
+        expected_report_tokens.extend((option, expected_value))
+    assert report_tokens == expected_report_tokens
+
+    attestation_step_id = evidence["attestationStep"]
+    assert isinstance(attestation_step_id, str) and attestation_step_id
+    attestation_steps = [
+        (index, step)
+        for index, step in enumerate(steps)
+        if step.get("id") == attestation_step_id
+    ]
+    assert len(attestation_steps) == 1
+    attestation_index, attestation_step = attestation_steps[0]
+    assert "if" not in attestation_step
+    assert "continue-on-error" not in attestation_step
+    attestation_run = attestation_step.get("run")
+    assert isinstance(attestation_run, str)
+    attestation_tokens = shlex.split(attestation_run)
+    attestation_prefix = schema["attestationCommandPrefix"]
+    assert isinstance(attestation_prefix, list)
+    assert attestation_tokens == [
+        *attestation_prefix,
+        "--bundle",
+        generated_paths["signaturePath"],
+        generated_paths["reportPath"],
+    ]
+
+    upload_action = schema["uploadAction"]
+    assert isinstance(upload_action, str) and upload_action.endswith("@")
+    upload_steps = [
+        (index, step)
+        for index, step in enumerate(steps)
+        if isinstance(step.get("uses"), str) and step["uses"].startswith(upload_action)
+    ]
+    assert len(upload_steps) == 1
+    upload_index, upload_step = upload_steps[0]
+    assert "if" not in upload_step
+    assert "continue-on-error" not in upload_step
+    upload_uses = upload_step["uses"]
+    assert isinstance(upload_uses, str)
+    assert re.fullmatch(
+        rf"{re.escape(upload_action)}[0-9a-f]{{40}}",
+        upload_uses,
+    )
+    upload_parameters = upload_step.get("with")
+    assert isinstance(upload_parameters, dict)
+    assert upload_parameters.get("name") == artifact_name
+    upload_paths = upload_parameters.get("path")
+    assert isinstance(upload_paths, str)
+    assert {
+        line.strip() for line in upload_paths.splitlines() if line.strip()
+    } == {
+        generated_paths["reportPath"],
+        generated_paths["signaturePath"],
+    }
+    assert upload_parameters.get("if-no-files-found") == "error"
+    assert schema["actionsMustUseCommitSha"] is True
+    assert report_index == test_index + 1
+    assert attestation_index == report_index + 1
+    assert upload_index == attestation_index + 1
 
 
 def test_documented_rust_toolchain_is_pinned_to_workspace_minimum() -> None:
@@ -233,6 +440,251 @@ def test_python_binding_depends_on_control_plane_library_not_daemon() -> None:
     assert "graphblocksd" not in dependencies
 
 
+def test_real_adapter_evidence_binds_test_workflow_revision_and_run(
+    tmp_path: Path,
+) -> None:
+    test_path = tmp_path / "tests" / "integration" / "test_qdrant_real_service.py"
+    test_path.parent.mkdir(parents=True)
+    test_path.write_text("def test_real_service():\n    pass\n", encoding="utf-8")
+    workflow_path = tmp_path / ".github" / "workflows" / "real-services.yml"
+    workflow_path.parent.mkdir(parents=True)
+    valid_workflow = """\
+jobs:
+  qdrant:
+    steps:
+      - id: exercise-qdrant-real-service
+        name: Exercise the real service and write evidence
+        run: >-
+          python -m pytest tests/integration/test_qdrant_real_service.py
+          --real-service-evidence
+          .artifacts/real-service/graphblocks-qdrant-result.json
+      - id: freeze-qdrant-report
+        run: >-
+          python tools/release_supply_chain.py freeze-integration-report
+          --input .artifacts/real-service/graphblocks-qdrant-result.json
+          --output .artifacts/real-service/graphblocks-qdrant-report.json
+          --integration-id graphblocks-qdrant
+          --test tests/integration/test_qdrant_real_service.py
+          --workflow .github/workflows/real-services.yml
+          --workflow-job qdrant
+          --test-step exercise-qdrant-real-service
+          --run-id "https://github.com/graphblocks/graphblocks/actions/runs/${{ github.run_id }}/attempts/${{ github.run_attempt }}"
+          --artifact-name "graphblocks-qdrant-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}"
+          --candidate-ref "${{ github.ref }}"
+          --candidate-commit "${{ github.sha }}"
+      - id: attest-qdrant-result
+        run: >-
+          cosign sign-blob --yes
+          --bundle .artifacts/real-service/graphblocks-qdrant-report.sigstore.json
+          .artifacts/real-service/graphblocks-qdrant-report.json
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        with:
+          name: graphblocks-qdrant-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            .artifacts/real-service/graphblocks-qdrant-report.json
+            .artifacts/real-service/graphblocks-qdrant-report.sigstore.json
+          if-no-files-found: error
+"""
+    workflow_path.write_text(valid_workflow, encoding="utf-8")
+    schema: dict[str, object] = {
+        "requiredFields": [
+            "test",
+            "workflow",
+            "workflowJob",
+            "testStep",
+            "reportStep",
+            "attestationStep",
+            "artifactName",
+            "resultPath",
+            "reportPath",
+            "signaturePath",
+        ],
+        "pathsMustExist": True,
+        "testPathPrefix": "tests/",
+        "workflowPathPrefix": ".github/workflows/",
+        "artifactPathPrefix": ".artifacts/real-service/",
+        "artifactNameBindings": [
+            "${{ github.sha }}",
+            "${{ github.run_id }}",
+            "${{ github.run_attempt }}",
+        ],
+        "testCommandPrefix": ["python", "-m", "pytest"],
+        "testEvidenceOption": "--real-service-evidence",
+        "reportCommandPrefix": [
+            "python",
+            "tools/release_supply_chain.py",
+            "freeze-integration-report",
+        ],
+        "attestationCommandPrefix": ["cosign", "sign-blob", "--yes"],
+        "uploadAction": "actions/upload-artifact@",
+        "actionsMustUseCommitSha": True,
+    }
+    evidence = {
+        "test": "tests/integration/test_qdrant_real_service.py",
+        "workflow": ".github/workflows/real-services.yml",
+        "workflowJob": "qdrant",
+        "testStep": "exercise-qdrant-real-service",
+        "reportStep": "freeze-qdrant-report",
+        "attestationStep": "attest-qdrant-result",
+        "artifactName": (
+            "graphblocks-qdrant-${{ github.sha }}-${{ github.run_id }}-"
+            "${{ github.run_attempt }}"
+        ),
+        "resultPath": ".artifacts/real-service/graphblocks-qdrant-result.json",
+        "reportPath": ".artifacts/real-service/graphblocks-qdrant-report.json",
+        "signaturePath": (
+            ".artifacts/real-service/graphblocks-qdrant-report.sigstore.json"
+        ),
+    }
+
+    _validate_real_service_evidence(
+        tmp_path,
+        "graphblocks-qdrant",
+        evidence,
+        schema,
+    )
+
+    with pytest.raises(AssertionError):
+        _validate_real_service_evidence(
+            tmp_path,
+            "graphblocks-qdrant",
+            {**evidence, "test": "/etc/passwd"},
+            schema,
+        )
+    with pytest.raises(AssertionError):
+        _validate_real_service_evidence(
+            tmp_path,
+            "graphblocks-qdrant",
+            {
+                **evidence,
+                "artifactName": (
+                    "graphblocks-qdrant-${{ github.sha }}-"
+                    "${{ github.run_id }}"
+                ),
+            },
+            schema,
+        )
+    with pytest.raises(AssertionError):
+        _validate_real_service_evidence(
+            tmp_path,
+            "graphblocks-qdrant",
+            {**evidence, "workflowJob": "unrelated"},
+            schema,
+        )
+    with pytest.raises(AssertionError):
+        _validate_real_service_evidence(
+            tmp_path,
+            "graphblocks-qdrant",
+            {**evidence, "attestationStep": "missing"},
+            schema,
+        )
+
+    workflow_path.write_text(
+        valid_workflow.replace(
+            "python -m pytest tests/integration/test_qdrant_real_service.py",
+            (
+                "echo tests/integration/test_qdrant_real_service.py "
+                ".artifacts/real-service/graphblocks-qdrant-result.json"
+            ),
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(AssertionError):
+        _validate_real_service_evidence(
+            tmp_path,
+            "graphblocks-qdrant",
+            evidence,
+            schema,
+        )
+
+    workflow_path.write_text(
+        valid_workflow.replace(
+            "id: exercise-qdrant-real-service",
+            "id: exercise-qdrant-real-service\n        if: false",
+            1,
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(AssertionError):
+        _validate_real_service_evidence(
+            tmp_path,
+            "graphblocks-qdrant",
+            evidence,
+            schema,
+        )
+
+    workflow_path.write_text(
+        valid_workflow.replace(
+            '          --candidate-commit "${{ github.sha }}"',
+            (
+                '          --candidate-commit "${{ github.sha }}"\n'
+                '          python -c "open('
+                "'.artifacts/real-service/graphblocks-qdrant-report.json', "
+                "'w').write('{}')\""
+            ),
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(AssertionError):
+        _validate_real_service_evidence(
+            tmp_path,
+            "graphblocks-qdrant",
+            evidence,
+            schema,
+        )
+
+    workflow_path.write_text(
+        valid_workflow.replace(
+            "      - id: attest-qdrant-result",
+            (
+                "      - id: overwrite-qdrant-report\n"
+                "        run: echo '{}' > "
+                ".artifacts/real-service/graphblocks-qdrant-report.json\n"
+                "      - id: attest-qdrant-result"
+            ),
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(AssertionError):
+        _validate_real_service_evidence(
+            tmp_path,
+            "graphblocks-qdrant",
+            evidence,
+            schema,
+        )
+
+    workflow_path.write_text(
+        valid_workflow.replace(
+            '"${{ github.sha }}"',
+            '"${{ github.sha }}$(printf forged)"',
+            1,
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(AssertionError):
+        _validate_real_service_evidence(
+            tmp_path,
+            "graphblocks-qdrant",
+            evidence,
+            schema,
+        )
+
+    workflow_path.write_text(
+        valid_workflow.replace(
+            "tests/integration/test_qdrant_real_service.py",
+            "tests/integration/test_unrelated.py",
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(AssertionError):
+        _validate_real_service_evidence(
+            tmp_path,
+            "graphblocks-qdrant",
+            evidence,
+            schema,
+        )
+
+
 def test_stable_release_matrix_is_complete_and_machine_readable() -> None:
     matrix = yaml.safe_load((ROOT / "docs" / "project" / "stable-release-matrix.yaml").read_text())
     assert matrix["matrixVersion"] == 1
@@ -284,13 +736,187 @@ def test_stable_release_matrix_is_complete_and_machine_readable() -> None:
     catalog = yaml.safe_load(
         (ROOT / "src" / "graphblocks" / "data" / "package-catalog.yaml").read_text()
     )
-    catalog_integrations = {
+    catalog_component_names = {entry["name"] for entry in catalog["components"]}
+    integration_namespace_components = {
         entry["name"]
         for entry in catalog["components"]
-        if entry["stability"] in {"integration", "adapter"}
+        if isinstance(entry["import"], str)
+        and entry["import"].startswith("graphblocks.integrations.")
     }
-    matrix_integrations = {entry["id"] for entry in matrix["integrations"]}
-    assert catalog_integrations <= matrix_integrations
+    maturity_managed_components = catalog["integrationRules"][
+        "maturityManagedComponents"
+    ]
+    assert len(maturity_managed_components) == len(set(maturity_managed_components))
+    maturity_managed_component_ids = set(maturity_managed_components)
+    assert maturity_managed_component_ids <= catalog_component_names
+    assert integration_namespace_components <= maturity_managed_component_ids
+    assert "graphblocks-dashboards" in maturity_managed_component_ids
+
+    integration_entries = matrix["integrations"]
+    matrix_integrations = {entry["id"] for entry in integration_entries}
+
+    promotion = matrix["integrationPromotionPolicy"]
+    assert promotion["readiness"] == "candidate-enforced"
+    assert promotion["componentCatalog"] == "src/graphblocks/data/package-catalog.yaml"
+    assert (ROOT / promotion["componentCatalog"]).is_file()
+    assert promotion["recordsAuthority"] == "integrations"
+    assert promotion["promotionGate"] == "REL-INTEGRATION-PROMOTION"
+    synthetic_test_doubles = promotion["syntheticTestDoubles"]
+    assert synthetic_test_doubles == [
+        "repository-fakes",
+        "acceptance-harness-adapters",
+    ]
+    assert not set(synthetic_test_doubles) & catalog_component_names
+    assert matrix_integrations == (
+        maturity_managed_component_ids | set(synthetic_test_doubles)
+    )
+    required_integration_fields = {
+        "implementationMaturity",
+        "supportedAuthentication",
+        "supportedServiceOrSdkVersions",
+        "realServiceEvidence",
+        "retryAndFailureModel",
+        "promotionGate",
+    }
+    assert set(promotion["requiredFields"]) == required_integration_fields
+    allowed_maturity = {"contract-only", "test-double", "real-adapter"}
+    assert set(promotion["allowedMaturity"]) == allowed_maturity
+    allowed_authentication = {
+        "none",
+        "api-key",
+        "basic",
+        "bearer",
+        "oauth2",
+        "mtls",
+        "ambient-cloud-identity",
+        "transport-supplied",
+    }
+    assert set(promotion["allowedAuthentication"]) == allowed_authentication
+    assert promotion["supportCoverage"] == (
+        "authentication-version-cartesian-product"
+    )
+    evidence_schema = promotion["realServiceEvidenceSchema"]
+    assert isinstance(evidence_schema, dict)
+    assert evidence_schema["kind"] == "signed-workflow-recipe"
+    evidence_fields = {
+        "test",
+        "workflow",
+        "workflowJob",
+        "testStep",
+        "reportStep",
+        "attestationStep",
+        "artifactName",
+        "resultPath",
+        "reportPath",
+        "signaturePath",
+    }
+    assert set(evidence_schema["requiredFields"]) == evidence_fields
+    assert evidence_schema["pathsMustExist"] is True
+    assert evidence_schema["testPathPrefix"] == "tests/"
+    assert evidence_schema["workflowPathPrefix"] == ".github/workflows/"
+    assert evidence_schema["artifactPathPrefix"] == ".artifacts/real-service/"
+    assert evidence_schema["artifactNameBindings"] == [
+        "${{ github.sha }}",
+        "${{ github.run_id }}",
+        "${{ github.run_attempt }}",
+    ]
+    assert evidence_schema["testCommandPrefix"] == ["python", "-m", "pytest"]
+    assert evidence_schema["testEvidenceOption"] == "--real-service-evidence"
+    assert evidence_schema["reportCommandPrefix"] == [
+        "python",
+        "tools/release_supply_chain.py",
+        "freeze-integration-report",
+    ]
+    assert evidence_schema["attestationCommandPrefix"] == [
+        "cosign",
+        "sign-blob",
+        "--yes",
+    ]
+    assert evidence_schema["uploadAction"] == "actions/upload-artifact@"
+    assert evidence_schema["actionsMustUseCommitSha"] is True
+    assert evidence_schema["criticalStepsMustBeContiguous"] is True
+    promotion_report_schema = evidence_schema["promotionReport"]
+    assert promotion_report_schema["releaseEvidenceField"] == "integrationRuns"
+    assert promotion_report_schema["reportReferenceField"] == "reportDigest"
+    assert set(promotion_report_schema["requiredFields"]) == {
+        "integrationId",
+        "status",
+        "complete",
+        "candidateRef",
+        "candidateCommit",
+        "test",
+        "workflow",
+        "workflowJob",
+        "testStep",
+        "runId",
+        "artifactName",
+        "result",
+        "resultDigest",
+    }
+    assert promotion_report_schema["candidateRevisionBound"] is True
+    assert promotion_report_schema["candidateFinalClaimEquality"] is True
+    assert promotion_report_schema["signedByReferencedWorkflow"] is True
+    assert promotion_report_schema["signatureBundleRequired"] is True
+
+    for entry in integration_entries:
+        assert required_integration_fields <= entry.keys(), entry["id"]
+        maturity = entry["implementationMaturity"]
+        assert maturity in allowed_maturity
+        for field in (
+            "supportedAuthentication",
+            "supportedServiceOrSdkVersions",
+        ):
+            values = entry[field]
+            assert isinstance(values, list), (entry["id"], field)
+            assert all(isinstance(value, str) and value for value in values)
+        assert set(entry["supportedAuthentication"]) <= allowed_authentication
+        real_service_evidence = entry["realServiceEvidence"]
+        assert isinstance(real_service_evidence, list), entry["id"]
+        for evidence in real_service_evidence:
+            _validate_real_service_evidence(
+                ROOT,
+                entry["id"],
+                evidence,
+                evidence_schema,
+            )
+        assert (
+            isinstance(entry["retryAndFailureModel"], str)
+            and entry["retryAndFailureModel"]
+        )
+        assert entry["promotionGate"] == promotion["promotionGate"]
+        if maturity == "test-double":
+            assert entry["tier"] == "internal"
+            assert entry["realServiceEvidence"] == []
+        elif maturity == "contract-only":
+            assert entry["tier"] != "stable"
+            assert entry["realServiceEvidence"] == []
+        else:
+            assert entry["supportedAuthentication"]
+            assert entry["supportedServiceOrSdkVersions"]
+            assert real_service_evidence
+            assert len(real_service_evidence) >= (
+                len(entry["supportedAuthentication"])
+                * len(entry["supportedServiceOrSdkVersions"])
+            )
+            assert entry["retryAndFailureModel"] not in {
+                "caller-owned",
+                "deterministic-test-only",
+            }
+        if entry["tier"] == "stable":
+            assert maturity == "real-adapter"
+
+    real_adapter_ids = {
+        entry["id"]
+        for entry in integration_entries
+        if entry["implementationMaturity"] == "real-adapter"
+    }
+    assert real_adapter_ids == set()
+    status = (ROOT / "docs" / "project" / "status.md").read_text(encoding="utf-8")
+    first_stable = (ROOT / "docs" / "project" / "first-stable-release.md").read_text(
+        encoding="utf-8"
+    )
+    assert "There are no `real-adapter` claims." in status
+    assert "contains no `real-adapter` entry." in first_stable
 
     gate_ids = [entry["id"] for entry in matrix["releaseGates"]]
     assert len(gate_ids) == len(set(gate_ids))
@@ -305,6 +931,7 @@ def test_stable_release_matrix_is_complete_and_machine_readable() -> None:
         for entry in matrix["releaseGates"]
         for gate in entry.get("companionGates", [])
     )
+    referenced_gates.update(entry["promotionGate"] for entry in integration_entries)
     referenced_gates.update(matrix["globalRequiredGates"])
     assert referenced_gates == set(gate_ids)
 

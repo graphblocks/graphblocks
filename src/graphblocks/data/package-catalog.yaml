@@ -982,6 +982,34 @@ integrationRules:
   sharedGraphblocksNamespace: true
   discovery: Python entry points plus static graphblocks-plugin.json
   eagerProviderImport: false
+  maturityManagedComponents:
+  - graphblocks-pdf
+  - graphblocks-qdrant
+  - graphblocks-mcp
+  - graphblocks-openapi
+  - graphblocks-openai
+  - graphblocks-haystack
+  - graphblocks-policy-opa
+  - graphblocks-policy-cedar
+  - graphblocks-budget-postgres
+  - graphblocks-usage-postgres
+  - graphblocks-kubernetes
+  - graphblocks-terraform
+  - graphblocks-oci
+  - graphblocks-gitops
+  - graphblocks-otel
+  - graphblocks-langfuse
+  - graphblocks-prometheus
+  - graphblocks-dashboards
+  - graphblocks-webrtc
+  - graphblocks-websocket-media
+  - graphblocks-openai-realtime
+  - graphblocks-silero-vad
+  - graphblocks-kafka
+  - graphblocks-nats
+  - graphblocks-sqs
+  - graphblocks-pubsub
+  - graphblocks-scripted
   mustNotDependOn:
   - unrelated integrations
   policyDiscovery: entry points plus signed PolicyBundle manifest
