@@ -547,10 +547,10 @@ retried send. Changing any request, identity, provider, adapter, correlation,
 origin authority, lease, fence, checkpoint, or creation field creates an
 identity conflict rather than a retry.
 
-The core contracts and their state machine perform no provider I/O, claiming,
-or scheduling. The preview SQLite v8 origin-transfer repository provides the
-first persistence slice in a provider-specific `provider_effects` projection
-and authoritative `provider_effect_events` journal. It shares the accepted-run
+The core contracts and their state machine perform no provider I/O or
+scheduling. The preview SQLite v8 origin-transfer repository provides the first
+persistence slice in a provider-specific `provider_effects` projection and
+authoritative `provider_effect_events` journal. It shares the accepted-run
 database so one `BEGIN IMMEDIATE` transaction can resolve the tenant-scoped run,
 recheck owner, state version, checkpoint, lease generation, fence, and
 repository-time expiry, and atomically persist the exact intent, capability
@@ -561,23 +561,63 @@ stored wire record and digest MUST pass its closed decoder and canonical
 identity check when read. Tenant, run, and owner scope MUST be part of every
 external lookup even when two runs use the same effect identifier.
 
+SQLite v9 adds the durable pre-send claim slice. A claim request is scoped by
+tenant and owner principal, while the repository assigns time, a deployment
+claim-authority digest, a bounded half-open lease of at most 60 seconds, an
+exactly advancing generation and fencing token, and a newly issued send-attempt
+identifier that is unique among active pre-send claims. Repository claim calls
+replay an existing unexpired claim for that owner before selecting more work;
+multiple active claims for the same owner and scope MUST fail closed. Replay
+returns the exact active claim for restart or response-loss recovery only after
+a second repository-time expiry check. Otherwise only `pending` or expired
+`claimed` rows are eligible. Reclaiming an expired claim MUST advance both
+counters and install a new claim and attempt identifier in the same
+`BEGIN IMMEDIATE` transaction as the state version and authoritative
+`send_claimed` or `send_claim_reclaimed` event. The event embeds the complete
+closed claim record as well as its canonical digest, so replacement of the
+projection does not erase the historical authority record. Each pre-send claim
+or release transition MUST validate the exact projection tail and reject events
+above its watermark with bounded indexed lookups rather than rescanning the
+whole journal. Paged journal reads MUST validate contiguous sequence and state,
+plus time, generation, fence, reclaim-expiry, and release binding within the
+returned bounded page and its predecessor when one is required.
+
+An exact active claim MAY be released before provider I/O, including after its
+lease expires, because release removes authority rather than granting it. The
+release competes with reclaim under the same SQLite write lock; if reclaim wins,
+the old claim is stale. A successful release atomically returns the projection
+to `pending`, retains the generation and fence, clears all active claim fields,
+and stores a closed release receipt, including the released generation and
+fence, plus a `send_claim_released` event. Repeating the exact release after
+commit MUST return the stored result without issuing a new transition or
+consulting repository time. A prior release MUST become stale once a new claim
+is installed. `send_started` and every later provider-effect state MUST NOT be
+automatically selected or returned to `pending` by this pre-send claim
+repository.
+
+SQLite v9 does not implement core admission verification or one-shot claim
+consumption into `send_started`; those boundaries remain subsequent work.
+
 Existing operation-dispatch rows MUST NOT be migrated or reinterpreted as
 provider-effect intents because they do not contain this authority or evidence.
 SQLite v8 creates empty provider-specific tables and does not backfill the
-generic outbox. Operators upgrading the preview database MUST prevent
+generic outbox. The v9 migration accepts only v8 `pending` rows; it MUST fail
+closed rather than invent claim authority for any later state that v8 could not
+represent exactly. Operators upgrading the preview database MUST prevent
 mixed-version writers and retain the normal pre-migration backup. A production
-profile still requires durable provider-effect claim, attempt, receipt, and
-evidence storage, real adapter capability and verifier-registry authorities,
-ambiguous-send reconciliation, kill/restart/fencing tests, and provider-side
-idempotency or status/cancellation evidence. Repository snapshots, transfers,
-claim fields, and verifier authorities MUST come from trusted service
-dependencies and MUST NOT be accepted from request data. Claim admission,
-one-shot consumption, repository-time assignment, receipt creation, and active
-attempt installation MUST be one repository transaction with the corresponding
-state change. Every closed record loaded from persistence MUST pass its exact
-decoder again at the admission, send, or evidence boundary; an in-memory type
-check alone is not rehydration evidence. The origin-transfer repository alone
-establishes neither safe delivery nor an exactly-once claim.
+profile still requires atomic claim consumption into a durable send-attempt
+record, receipt and evidence storage, real adapter capability and
+verifier-registry authorities, ambiguous-send reconciliation,
+kill/restart/fencing tests, and provider-side idempotency or
+status/cancellation evidence. Repository snapshots, transfers, claim fields,
+and verifier authorities MUST come from trusted service dependencies and MUST
+NOT be accepted from request data. Claim consumption, receipt creation, and
+active attempt installation MUST be one repository transaction with the
+corresponding state change. Every closed record loaded from persistence MUST
+pass its exact decoder again at the admission, send, or evidence boundary; an
+in-memory type check alone is not rehydration evidence. Durable origin transfer
+and pre-send claiming alone establish neither safe provider delivery nor an
+exactly-once provider effect.
 
 The preview executor supplies the killable-process, structural result
 validation, and live-revalidation hook of the stronger timeout contract. It

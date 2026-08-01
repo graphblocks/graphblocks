@@ -83,8 +83,25 @@ preparing the first 1.0 release candidate.
   idempotency reuse, stale authority, cross-tenant or cross-owner lookup, and
   corrupted stored wire identities fail closed. The migration creates empty
   `provider_effects` and `provider_effect_events` tables and never reinterprets
-  generic operation outbox rows. Claim, send-attempt, receipt, evidence,
-  adapter I/O, and reconciliation persistence remain subsequent preview work.
+  generic operation outbox rows. Pre-send claim persistence is added below;
+  send-attempt consumption, receipt, evidence, adapter I/O, and reconciliation
+  persistence remain subsequent preview work.
+- Added durable provider-effect pre-send claiming in accepted-run SQLite schema
+  v9. Claim selection is tenant-and-owner scoped, uses repository time and a
+  bounded half-open lease, advances generation and fencing tokens exactly, and
+  reclaims only expired `claimed` work while never auto-selecting
+  `send_started`. Active same-owner claims and committed pre-send releases replay
+  exactly after response loss. A release is serialized against reclaim, safely
+  removes authority even after expiry, and records a closed pre-send release
+  record. Canonical claim and release records are embedded in the authoritative
+  event journal, active send-attempt identifiers are unique among active claims,
+  stale authority fails closed, and every projection transition is committed
+  atomically with its event. Indexed point and range lookups keep
+  projection-tail validation bounded, while paged journal reads validate local
+  sequence, state, generation, fence, reclaim-expiry, and release binding.
+  Durable claim consumption into `send_started`, core admission verification,
+  provider I/O, receipts, evidence, and reconciliation remain subsequent
+  preview work.
 - Added a bounded CommonMark and GitHub-heading integrity checker, a closed
   generated-documentation registry with content-bound results, and an always-run
   fast documentation workflow plus named stable release gate.

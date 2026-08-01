@@ -63,7 +63,7 @@ from .server_storage import (
 
 
 SQLITE_ACCEPTED_RUN_APPLICATION_ID = 0x47424152
-SQLITE_ACCEPTED_RUN_SCHEMA_VERSION = 8
+SQLITE_ACCEPTED_RUN_SCHEMA_VERSION = 9
 _SQLITE_ACCEPTED_RUN_SCHEMA_NAME = "graphblocks.accepted-runs.sqlite"
 _SQLITE_ACCEPTED_RUN_INITIAL_SCHEMA_VERSION = 1
 _MAX_BUSY_TIMEOUT_MS = 60_000
@@ -599,6 +599,113 @@ _SCHEMA_V8_MIGRATION_STATEMENTS = (
     """,
 )
 
+_SCHEMA_V9_MIGRATION_STATEMENTS = (
+    """
+    ALTER TABLE provider_effects
+    ADD COLUMN claim_json TEXT
+      CHECK ((state = 'claimed') = (claim_json IS NOT NULL))
+    """,
+    """
+    ALTER TABLE provider_effects
+    ADD COLUMN claim_digest TEXT
+      CHECK ((state = 'claimed') = (claim_digest IS NOT NULL))
+    """,
+    """
+    ALTER TABLE provider_effects
+    ADD COLUMN claim_authority_digest TEXT
+      CHECK ((state = 'claimed') = (claim_authority_digest IS NOT NULL))
+    """,
+    """
+    ALTER TABLE provider_effects
+    ADD COLUMN claim_owner_id TEXT
+      CHECK ((state = 'claimed') = (claim_owner_id IS NOT NULL))
+    """,
+    """
+    ALTER TABLE provider_effects
+    ADD COLUMN claim_generation INTEGER NOT NULL DEFAULT 0
+      CHECK (claim_generation >= 0)
+      CHECK (state <> 'claimed' OR claim_generation > 0)
+    """,
+    """
+    ALTER TABLE provider_effects
+    ADD COLUMN claim_fencing_token INTEGER NOT NULL DEFAULT 0
+      CHECK (claim_fencing_token >= 0)
+      CHECK (state <> 'claimed' OR claim_fencing_token > 0)
+    """,
+    """
+    ALTER TABLE provider_effects
+    ADD COLUMN claim_started_at_unix_ms INTEGER
+      CHECK ((state = 'claimed') = (claim_started_at_unix_ms IS NOT NULL))
+      CHECK (
+        claim_started_at_unix_ms IS NULL
+        OR claim_started_at_unix_ms >= created_at_unix_ms
+      )
+    """,
+    """
+    ALTER TABLE provider_effects
+    ADD COLUMN claim_expires_at_unix_ms INTEGER
+      CHECK ((state = 'claimed') = (claim_expires_at_unix_ms IS NOT NULL))
+      CHECK (
+        claim_expires_at_unix_ms IS NULL
+        OR claim_expires_at_unix_ms > claim_started_at_unix_ms
+      )
+    """,
+    """
+    ALTER TABLE provider_effects
+    ADD COLUMN admitted_at_unix_ms INTEGER
+      CHECK ((state = 'claimed') = (admitted_at_unix_ms IS NOT NULL))
+      CHECK (
+        admitted_at_unix_ms IS NULL
+        OR (
+          admitted_at_unix_ms >= claim_started_at_unix_ms
+          AND admitted_at_unix_ms < claim_expires_at_unix_ms
+        )
+      )
+    """,
+    """
+    ALTER TABLE provider_effects
+    ADD COLUMN send_attempt_id TEXT
+      CHECK ((state = 'claimed') = (send_attempt_id IS NOT NULL))
+    """,
+    """
+    ALTER TABLE provider_effects
+    ADD COLUMN previous_send_attempt_digest TEXT
+    """,
+    """
+    ALTER TABLE provider_effects
+    ADD COLUMN last_pre_send_release_json TEXT
+      CHECK (state <> 'claimed' OR last_pre_send_release_json IS NULL)
+    """,
+    """
+    ALTER TABLE provider_effects
+    ADD COLUMN last_pre_send_release_digest TEXT
+      CHECK (
+        (last_pre_send_release_digest IS NULL)
+        = (last_pre_send_release_json IS NULL)
+      )
+      CHECK (state <> 'claimed' OR last_pre_send_release_digest IS NULL)
+    """,
+    """
+    DROP INDEX provider_effects_claimable
+    """,
+    """
+    CREATE INDEX provider_effects_claimable
+    ON provider_effects (
+      state,
+      claim_expires_at_unix_ms,
+      updated_at_unix_ms,
+      created_at_unix_ms,
+      run_internal_id,
+      effect_id
+    )
+    """,
+    """
+    CREATE UNIQUE INDEX provider_effects_active_send_attempt
+    ON provider_effects (send_attempt_id)
+    WHERE send_attempt_id IS NOT NULL
+    """,
+)
+
 _REQUIRED_COLUMNS_V1 = {
     "accepted_run_storage_metadata": frozenset({"key", "value"}),
     "accepted_runs": frozenset(
@@ -751,7 +858,7 @@ _REQUIRED_COLUMNS_V7 = {
         )
     ),
 }
-_REQUIRED_COLUMNS = {
+_REQUIRED_COLUMNS_V8 = {
     **_REQUIRED_COLUMNS_V7,
     "provider_effects": frozenset(
         {
@@ -785,6 +892,29 @@ _REQUIRED_COLUMNS = {
             "payload_digest",
             "created_at_unix_ms",
         }
+    ),
+}
+_REQUIRED_COLUMNS = {
+    **_REQUIRED_COLUMNS_V8,
+    "provider_effects": (
+        _REQUIRED_COLUMNS_V8["provider_effects"]
+        | frozenset(
+            {
+                "claim_json",
+                "claim_digest",
+                "claim_authority_digest",
+                "claim_owner_id",
+                "claim_generation",
+                "claim_fencing_token",
+                "claim_started_at_unix_ms",
+                "claim_expires_at_unix_ms",
+                "admitted_at_unix_ms",
+                "send_attempt_id",
+                "previous_send_attempt_digest",
+                "last_pre_send_release_json",
+                "last_pre_send_release_digest",
+            }
+        )
     ),
 }
 
@@ -1203,6 +1333,7 @@ class SQLiteAcceptedRunDatabase:
                     5,
                     6,
                     7,
+                    8,
                 }:
                     self._migrate_to_current(connection)
                 else:
@@ -1274,6 +1405,8 @@ class SQLiteAcceptedRunDatabase:
                     connection.execute(statement)
                 for statement in _SCHEMA_V8_MIGRATION_STATEMENTS:
                     connection.execute(statement)
+                for statement in _SCHEMA_V9_MIGRATION_STATEMENTS:
+                    connection.execute(statement)
                 connection.executemany(
                     """
                     INSERT INTO accepted_run_storage_metadata (key, value)
@@ -1321,6 +1454,7 @@ class SQLiteAcceptedRunDatabase:
                 5,
                 6,
                 7,
+                8,
             }:
                 raise SQLiteAcceptedRunSchemaVersionError(
                     "unsupported accepted-run SQLite schema version "
@@ -1538,6 +1672,41 @@ class SQLiteAcceptedRunDatabase:
                         "accepted-run SQLite schema metadata version changed "
                         "during v8 migration"
                     )
+                connection.execute("PRAGMA user_version = 8")
+                user_version = 8
+            if user_version == 8:
+                self._validate_schema_version(
+                    connection,
+                    schema_version=8,
+                    required_columns=_REQUIRED_COLUMNS_V8,
+                )
+                unsupported_provider_state = connection.execute(
+                    """
+                    SELECT effect_id
+                    FROM provider_effects
+                    WHERE state <> 'pending'
+                    LIMIT 1
+                    """
+                ).fetchone()
+                if unsupported_provider_state is not None:
+                    raise SQLiteAcceptedRunSchemaMismatchError(
+                        "accepted-run SQLite v8 provider effect has no recoverable "
+                        "pre-send claim metadata"
+                    )
+                for statement in _SCHEMA_V9_MIGRATION_STATEMENTS:
+                    connection.execute(statement)
+                updated = connection.execute(
+                    """
+                    UPDATE accepted_run_storage_metadata
+                    SET value = '9'
+                    WHERE key = 'schema_version' AND value = '8'
+                    """
+                )
+                if updated.rowcount != 1:
+                    raise SQLiteAcceptedRunSchemaMismatchError(
+                        "accepted-run SQLite schema metadata version changed "
+                        "during v9 migration"
+                    )
                 connection.execute(
                     f"PRAGMA user_version = {SQLITE_ACCEPTED_RUN_SCHEMA_VERSION}"
                 )
@@ -1627,6 +1796,57 @@ class SQLiteAcceptedRunDatabase:
             if invalid_effect_claim is not None:
                 raise SQLiteAcceptedRunCorruptionError(
                     "accepted-run SQLite effect claim or replay identity is invalid"
+                )
+        if schema_version >= 9:
+            invalid_provider_claim = connection.execute(
+                """
+                SELECT effect_id
+                FROM provider_effects
+                WHERE (
+                  state = 'claimed'
+                  AND (
+                    claim_json IS NULL
+                    OR claim_digest IS NULL
+                    OR claim_authority_digest IS NULL
+                    OR claim_owner_id IS NULL
+                    OR claim_generation <= 0
+                    OR claim_fencing_token <= 0
+                    OR claim_started_at_unix_ms IS NULL
+                    OR claim_expires_at_unix_ms IS NULL
+                    OR admitted_at_unix_ms IS NULL
+                    OR send_attempt_id IS NULL
+                    OR claim_started_at_unix_ms < created_at_unix_ms
+                    OR claim_started_at_unix_ms >= claim_expires_at_unix_ms
+                    OR admitted_at_unix_ms < claim_started_at_unix_ms
+                    OR admitted_at_unix_ms >= claim_expires_at_unix_ms
+                    OR last_pre_send_release_json IS NOT NULL
+                    OR last_pre_send_release_digest IS NOT NULL
+                  )
+                )
+                OR (
+                  state <> 'claimed'
+                  AND (
+                    claim_json IS NOT NULL
+                    OR claim_digest IS NOT NULL
+                    OR claim_authority_digest IS NOT NULL
+                    OR claim_owner_id IS NOT NULL
+                    OR claim_started_at_unix_ms IS NOT NULL
+                    OR claim_expires_at_unix_ms IS NOT NULL
+                    OR admitted_at_unix_ms IS NOT NULL
+                    OR send_attempt_id IS NOT NULL
+                    OR previous_send_attempt_digest IS NOT NULL
+                  )
+                )
+                OR (
+                  (last_pre_send_release_json IS NULL)
+                  <> (last_pre_send_release_digest IS NULL)
+                )
+                LIMIT 1
+                """
+            ).fetchone()
+            if invalid_provider_claim is not None:
+                raise SQLiteAcceptedRunCorruptionError(
+                    "accepted-run SQLite provider-effect claim or release is invalid"
                 )
         foreign_key_failures = connection.execute("PRAGMA foreign_key_check").fetchall()
         if foreign_key_failures:

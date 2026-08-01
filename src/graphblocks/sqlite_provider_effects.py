@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+import secrets
 import sqlite3
 
 from .canonical import canonical_dumps, canonical_hash, canonical_loads
@@ -13,6 +14,7 @@ from .provider_effects import (
     ProviderEffectIntent,
     ProviderEffectOriginTransfer,
     ProviderEffectState,
+    ProviderEffectStateConflictError,
     ProviderRunAuthoritySnapshot,
     _matches_exact_closed_value,
     _revalidate_provider_capability_snapshot,
@@ -35,11 +37,481 @@ from .sqlite_server_storage import (
 
 
 PROVIDER_EFFECT_EVENT_FORMAT_VERSION = "graphblocks.provider-effect-event.v1"
+PROVIDER_EFFECT_CLAIM_FORMAT_VERSION = "graphblocks.provider-effect-claim.v1"
+PROVIDER_EFFECT_CLAIM_RELEASE_FORMAT_VERSION = (
+    "graphblocks.provider-effect-claim-release.v1"
+)
 MAX_PROVIDER_EFFECT_EVENT_PAGE_SIZE = 1_000
+MAX_PROVIDER_EFFECT_CLAIM_LEASE_DURATION_MS = 60_000
+_PROVIDER_EFFECT_CLAIM_FIELDS = frozenset(
+    {
+        "admittedAtUnixMs",
+        "claimAuthorityDigest",
+        "claimExpiresAtUnixMs",
+        "claimFencingToken",
+        "claimGeneration",
+        "claimOwnerId",
+        "claimStartedAtUnixMs",
+        "effectId",
+        "formatVersion",
+        "intentDigest",
+        "ownerPrincipalId",
+        "previousSendAttemptDigest",
+        "runId",
+        "sendAttemptId",
+        "tenantId",
+    }
+)
+_PROVIDER_EFFECT_CLAIM_RELEASE_FIELDS = frozenset(
+    {
+        "claimDigest",
+        "claimFencingToken",
+        "claimGeneration",
+        "effectId",
+        "formatVersion",
+        "ownerPrincipalId",
+        "releasedAtUnixMs",
+        "resultingEventSequence",
+        "resultingStateVersion",
+        "runId",
+        "tenantId",
+    }
+)
 
 
 class SQLiteProviderEffectCorruptionError(SQLiteAcceptedRunCorruptionError):
     """Raised when persisted provider-effect identity is not exact or coherent."""
+
+
+class StaleProviderEffectClaimError(ProviderEffectStateConflictError):
+    """Raised when a pre-send claim is no longer repository-authoritative."""
+
+
+def _require_exact_string(owner: str, field_name: str, value: object) -> str:
+    if type(value) is not str or not value or value != value.strip():
+        raise ProviderEffectContractError(
+            f"{owner} {field_name} must be an exact non-empty string"
+        )
+    try:
+        value.encode("utf-8")
+    except UnicodeEncodeError as error:
+        raise ProviderEffectContractError(
+            f"{owner} {field_name} must contain Unicode scalar values"
+        ) from error
+    return value
+
+
+def _require_digest(owner: str, field_name: str, value: object) -> str:
+    digest = _require_exact_string(owner, field_name, value)
+    if (
+        len(digest) != 71
+        or not digest.startswith("sha256:")
+        or any(character not in "0123456789abcdef" for character in digest[7:])
+    ):
+        raise ProviderEffectContractError(
+            f"{owner} {field_name} must be a canonical sha256 digest"
+        )
+    return digest
+
+
+def _require_optional_digest(
+    owner: str,
+    field_name: str,
+    value: object,
+) -> str | None:
+    if value is None:
+        return None
+    return _require_digest(owner, field_name, value)
+
+
+def _require_sqlite_integer(
+    owner: str,
+    field_name: str,
+    value: object,
+    *,
+    positive: bool = False,
+) -> int:
+    if (
+        type(value) is not int
+        or value < (1 if positive else 0)
+        or value > _MAX_SQLITE_INTEGER
+    ):
+        qualifier = "positive " if positive else "non-negative "
+        raise ProviderEffectContractError(
+            f"{owner} {field_name} must be a {qualifier}SQLite integer"
+        )
+    return value
+
+
+def _new_provider_send_attempt_id() -> str:
+    return f"provider-send-{secrets.token_hex(16)}"
+
+
+@dataclass(frozen=True, slots=True)
+class ProviderEffectClaimRequest:
+    tenant_id: str
+    owner_principal_id: str
+    claim_owner_id: str
+    lease_duration_ms: int
+
+    def __post_init__(self) -> None:
+        owner = "provider effect claim request"
+        for field_name in ("tenant_id", "owner_principal_id", "claim_owner_id"):
+            object.__setattr__(
+                self,
+                field_name,
+                _require_exact_string(owner, field_name, getattr(self, field_name)),
+            )
+        lease_duration_ms = _require_sqlite_integer(
+            owner,
+            "lease_duration_ms",
+            self.lease_duration_ms,
+            positive=True,
+        )
+        if lease_duration_ms > MAX_PROVIDER_EFFECT_CLAIM_LEASE_DURATION_MS:
+            raise ProviderEffectContractError(
+                "provider effect claim lease exceeds the repository policy maximum"
+            )
+        object.__setattr__(self, "lease_duration_ms", lease_duration_ms)
+
+
+@dataclass(frozen=True, slots=True)
+class ProviderEffectClaim:
+    effect_id: str
+    intent_digest: str
+    tenant_id: str
+    run_id: str
+    owner_principal_id: str
+    claim_authority_digest: str
+    claim_owner_id: str
+    claim_generation: int
+    claim_fencing_token: int
+    claim_started_at_unix_ms: int
+    claim_expires_at_unix_ms: int
+    admitted_at_unix_ms: int
+    send_attempt_id: str
+    previous_send_attempt_digest: str | None = None
+    format_version: str = PROVIDER_EFFECT_CLAIM_FORMAT_VERSION
+
+    def __post_init__(self) -> None:
+        owner = "provider effect claim"
+        for field_name in (
+            "effect_id",
+            "tenant_id",
+            "run_id",
+            "owner_principal_id",
+            "claim_owner_id",
+            "send_attempt_id",
+        ):
+            object.__setattr__(
+                self,
+                field_name,
+                _require_exact_string(owner, field_name, getattr(self, field_name)),
+            )
+        for field_name in ("intent_digest", "claim_authority_digest"):
+            object.__setattr__(
+                self,
+                field_name,
+                _require_digest(owner, field_name, getattr(self, field_name)),
+            )
+        object.__setattr__(
+            self,
+            "previous_send_attempt_digest",
+            _require_optional_digest(
+                owner,
+                "previous_send_attempt_digest",
+                self.previous_send_attempt_digest,
+            ),
+        )
+        for field_name in ("claim_generation", "claim_fencing_token"):
+            object.__setattr__(
+                self,
+                field_name,
+                _require_sqlite_integer(
+                    owner,
+                    field_name,
+                    getattr(self, field_name),
+                    positive=True,
+                ),
+            )
+        for field_name in (
+            "claim_started_at_unix_ms",
+            "claim_expires_at_unix_ms",
+            "admitted_at_unix_ms",
+        ):
+            object.__setattr__(
+                self,
+                field_name,
+                _require_sqlite_integer(owner, field_name, getattr(self, field_name)),
+            )
+        if not (
+            self.claim_started_at_unix_ms
+            <= self.admitted_at_unix_ms
+            < self.claim_expires_at_unix_ms
+        ):
+            raise ProviderEffectContractError(
+                "provider effect admission must occur in the half-open claim interval"
+            )
+        format_version = _require_exact_string(
+            owner,
+            "format_version",
+            self.format_version,
+        )
+        object.__setattr__(self, "format_version", format_version)
+        if format_version != PROVIDER_EFFECT_CLAIM_FORMAT_VERSION:
+            raise ProviderEffectContractError(
+                "provider effect claim format_version is not supported"
+            )
+
+    @property
+    def digest(self) -> str:
+        return canonical_hash(self.to_wire())
+
+    def to_wire(self) -> dict[str, object]:
+        return {
+            "admittedAtUnixMs": self.admitted_at_unix_ms,
+            "claimAuthorityDigest": self.claim_authority_digest,
+            "claimExpiresAtUnixMs": self.claim_expires_at_unix_ms,
+            "claimFencingToken": self.claim_fencing_token,
+            "claimGeneration": self.claim_generation,
+            "claimOwnerId": self.claim_owner_id,
+            "claimStartedAtUnixMs": self.claim_started_at_unix_ms,
+            "effectId": self.effect_id,
+            "formatVersion": self.format_version,
+            "intentDigest": self.intent_digest,
+            "ownerPrincipalId": self.owner_principal_id,
+            "previousSendAttemptDigest": self.previous_send_attempt_digest,
+            "runId": self.run_id,
+            "sendAttemptId": self.send_attempt_id,
+            "tenantId": self.tenant_id,
+        }
+
+    @classmethod
+    def from_wire(cls, value: object) -> ProviderEffectClaim:
+        owner = "provider effect claim"
+        if type(value) is not dict or set(value) != _PROVIDER_EFFECT_CLAIM_FIELDS:
+            raise ProviderEffectContractError(
+                "provider effect claim must contain the closed fields"
+            )
+        return cls(
+            effect_id=_require_exact_string(owner, "effectId", value["effectId"]),
+            intent_digest=_require_digest(
+                owner,
+                "intentDigest",
+                value["intentDigest"],
+            ),
+            tenant_id=_require_exact_string(owner, "tenantId", value["tenantId"]),
+            run_id=_require_exact_string(owner, "runId", value["runId"]),
+            owner_principal_id=_require_exact_string(
+                owner,
+                "ownerPrincipalId",
+                value["ownerPrincipalId"],
+            ),
+            claim_authority_digest=_require_digest(
+                owner,
+                "claimAuthorityDigest",
+                value["claimAuthorityDigest"],
+            ),
+            claim_owner_id=_require_exact_string(
+                owner,
+                "claimOwnerId",
+                value["claimOwnerId"],
+            ),
+            claim_generation=_require_sqlite_integer(
+                owner,
+                "claimGeneration",
+                value["claimGeneration"],
+                positive=True,
+            ),
+            claim_fencing_token=_require_sqlite_integer(
+                owner,
+                "claimFencingToken",
+                value["claimFencingToken"],
+                positive=True,
+            ),
+            claim_started_at_unix_ms=_require_sqlite_integer(
+                owner,
+                "claimStartedAtUnixMs",
+                value["claimStartedAtUnixMs"],
+            ),
+            claim_expires_at_unix_ms=_require_sqlite_integer(
+                owner,
+                "claimExpiresAtUnixMs",
+                value["claimExpiresAtUnixMs"],
+            ),
+            admitted_at_unix_ms=_require_sqlite_integer(
+                owner,
+                "admittedAtUnixMs",
+                value["admittedAtUnixMs"],
+            ),
+            send_attempt_id=_require_exact_string(
+                owner,
+                "sendAttemptId",
+                value["sendAttemptId"],
+            ),
+            previous_send_attempt_digest=_require_optional_digest(
+                owner,
+                "previousSendAttemptDigest",
+                value["previousSendAttemptDigest"],
+            ),
+            format_version=_require_exact_string(
+                owner,
+                "formatVersion",
+                value["formatVersion"],
+            ),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class ProviderEffectClaimRelease:
+    effect_id: str
+    tenant_id: str
+    run_id: str
+    owner_principal_id: str
+    claim_digest: str
+    claim_generation: int
+    claim_fencing_token: int
+    released_at_unix_ms: int
+    resulting_state_version: int
+    resulting_event_sequence: int
+    format_version: str = PROVIDER_EFFECT_CLAIM_RELEASE_FORMAT_VERSION
+
+    def __post_init__(self) -> None:
+        owner = "provider effect claim release"
+        for field_name in (
+            "effect_id",
+            "tenant_id",
+            "run_id",
+            "owner_principal_id",
+        ):
+            object.__setattr__(
+                self,
+                field_name,
+                _require_exact_string(owner, field_name, getattr(self, field_name)),
+            )
+        object.__setattr__(
+            self,
+            "claim_digest",
+            _require_digest(owner, "claim_digest", self.claim_digest),
+        )
+        for field_name in (
+            "claim_generation",
+            "claim_fencing_token",
+            "resulting_state_version",
+            "resulting_event_sequence",
+        ):
+            object.__setattr__(
+                self,
+                field_name,
+                _require_sqlite_integer(
+                    owner,
+                    field_name,
+                    getattr(self, field_name),
+                    positive=True,
+                ),
+            )
+        object.__setattr__(
+            self,
+            "released_at_unix_ms",
+            _require_sqlite_integer(
+                owner,
+                "released_at_unix_ms",
+                self.released_at_unix_ms,
+            ),
+        )
+        if self.resulting_state_version != self.resulting_event_sequence:
+            raise ProviderEffectContractError(
+                "provider effect release version must match its event sequence"
+            )
+        format_version = _require_exact_string(
+            owner,
+            "format_version",
+            self.format_version,
+        )
+        object.__setattr__(self, "format_version", format_version)
+        if format_version != PROVIDER_EFFECT_CLAIM_RELEASE_FORMAT_VERSION:
+            raise ProviderEffectContractError(
+                "provider effect claim release format_version is not supported"
+            )
+
+    @property
+    def digest(self) -> str:
+        return canonical_hash(self.to_wire())
+
+    def to_wire(self) -> dict[str, object]:
+        return {
+            "claimDigest": self.claim_digest,
+            "claimFencingToken": self.claim_fencing_token,
+            "claimGeneration": self.claim_generation,
+            "effectId": self.effect_id,
+            "formatVersion": self.format_version,
+            "ownerPrincipalId": self.owner_principal_id,
+            "releasedAtUnixMs": self.released_at_unix_ms,
+            "resultingEventSequence": self.resulting_event_sequence,
+            "resultingStateVersion": self.resulting_state_version,
+            "runId": self.run_id,
+            "tenantId": self.tenant_id,
+        }
+
+    @classmethod
+    def from_wire(cls, value: object) -> ProviderEffectClaimRelease:
+        owner = "provider effect claim release"
+        if (
+            type(value) is not dict
+            or set(value) != _PROVIDER_EFFECT_CLAIM_RELEASE_FIELDS
+        ):
+            raise ProviderEffectContractError(
+                "provider effect claim release must contain the closed fields"
+            )
+        return cls(
+            effect_id=_require_exact_string(owner, "effectId", value["effectId"]),
+            tenant_id=_require_exact_string(owner, "tenantId", value["tenantId"]),
+            run_id=_require_exact_string(owner, "runId", value["runId"]),
+            owner_principal_id=_require_exact_string(
+                owner,
+                "ownerPrincipalId",
+                value["ownerPrincipalId"],
+            ),
+            claim_digest=_require_digest(
+                owner,
+                "claimDigest",
+                value["claimDigest"],
+            ),
+            claim_generation=_require_sqlite_integer(
+                owner,
+                "claimGeneration",
+                value["claimGeneration"],
+                positive=True,
+            ),
+            claim_fencing_token=_require_sqlite_integer(
+                owner,
+                "claimFencingToken",
+                value["claimFencingToken"],
+                positive=True,
+            ),
+            released_at_unix_ms=_require_sqlite_integer(
+                owner,
+                "releasedAtUnixMs",
+                value["releasedAtUnixMs"],
+            ),
+            resulting_state_version=_require_sqlite_integer(
+                owner,
+                "resultingStateVersion",
+                value["resultingStateVersion"],
+                positive=True,
+            ),
+            resulting_event_sequence=_require_sqlite_integer(
+                owner,
+                "resultingEventSequence",
+                value["resultingEventSequence"],
+                positive=True,
+            ),
+            format_version=_require_exact_string(
+                owner,
+                "formatVersion",
+                value["formatVersion"],
+            ),
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -55,6 +527,10 @@ class StoredProviderEffect:
     event_high_watermark: int
     created_at_unix_ms: int
     updated_at_unix_ms: int
+    claim_generation: int = 0
+    claim_fencing_token: int = 0
+    claim: ProviderEffectClaim | None = None
+    last_pre_send_release: ProviderEffectClaimRelease | None = None
 
     def __post_init__(self) -> None:
         owner = "stored provider effect"
@@ -105,6 +581,56 @@ class StoredProviderEffect:
             raise ProviderEffectContractError(
                 f"{owner} update time must not predate creation"
             )
+        for field_name in ("claim_generation", "claim_fencing_token"):
+            value = getattr(self, field_name)
+            if type(value) is not int or value < 0 or value > _MAX_SQLITE_INTEGER:
+                raise ProviderEffectContractError(
+                    f"{owner} {field_name} must be a non-negative SQLite integer"
+                )
+        if (self.state is ProviderEffectState.CLAIMED) != (self.claim is not None):
+            raise ProviderEffectContractError(
+                f"{owner} active claim presence must match claimed state"
+            )
+        if self.claim is not None:
+            if type(self.claim) is not ProviderEffectClaim:
+                raise ProviderEffectContractError(
+                    f"{owner} claim must be ProviderEffectClaim or None"
+                )
+            if (
+                self.claim.effect_id != self.intent.effect_id
+                or self.claim.intent_digest != self.intent.digest
+                or self.claim.tenant_id != self.tenant_id
+                or self.claim.run_id != self.run_id
+                or self.claim.owner_principal_id != self.owner_principal_id
+                or self.claim.claim_generation != self.claim_generation
+                or self.claim.claim_fencing_token != self.claim_fencing_token
+            ):
+                raise ProviderEffectContractError(
+                    f"{owner} active claim does not match its projection"
+                )
+        if self.last_pre_send_release is not None:
+            if type(self.last_pre_send_release) is not ProviderEffectClaimRelease:
+                raise ProviderEffectContractError(
+                    f"{owner} last_pre_send_release must be an exact release"
+                )
+            if (
+                self.state is not ProviderEffectState.PENDING
+                or self.last_pre_send_release.effect_id != self.intent.effect_id
+                or self.last_pre_send_release.tenant_id != self.tenant_id
+                or self.last_pre_send_release.run_id != self.run_id
+                or self.last_pre_send_release.owner_principal_id
+                != self.owner_principal_id
+                or self.last_pre_send_release.claim_generation != self.claim_generation
+                or self.last_pre_send_release.claim_fencing_token
+                != self.claim_fencing_token
+                or self.last_pre_send_release.resulting_state_version
+                != self.state_version
+                or self.last_pre_send_release.resulting_event_sequence
+                != self.event_high_watermark
+            ):
+                raise ProviderEffectContractError(
+                    f"{owner} last pre-send release does not match its projection"
+                )
         if (
             self.intent.tenant_id != self.tenant_id
             or self.intent.run_id != self.run_id
@@ -125,6 +651,30 @@ class StoredProviderEffect:
             self.intent,
             self.origin_transfer,
         )
+
+
+@dataclass(frozen=True, slots=True)
+class ProviderEffectWorkItem:
+    effect: StoredProviderEffect
+    claim: ProviderEffectClaim
+
+    def __post_init__(self) -> None:
+        if type(self.effect) is not StoredProviderEffect:
+            raise ProviderEffectContractError(
+                "provider effect work item effect must be StoredProviderEffect"
+            )
+        if type(self.claim) is not ProviderEffectClaim:
+            raise ProviderEffectContractError(
+                "provider effect work item claim must be ProviderEffectClaim"
+            )
+        if self.effect.state is not ProviderEffectState.CLAIMED:
+            raise ProviderEffectContractError(
+                "provider effect work item must contain a claimed effect"
+            )
+        if self.effect.claim != self.claim:
+            raise ProviderEffectContractError(
+                "provider effect work item claim must match its projection"
+            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -184,24 +734,113 @@ class StoredProviderEffectEvent:
                 f"{owner} payload identity must be canonical and exact"
             )
         if (
-            self.kind != "origin_transferred"
-            or self.from_state is not None
-            or self.to_state is not ProviderEffectState.PENDING
-            or set(payload)
-            != {
-                "capabilitySnapshotDigest",
-                "effectId",
-                "formatVersion",
-                "intentDigest",
-                "originTransferDigest",
-                "state",
-            }
-            or payload["effectId"] != self.effect_id
-            or payload["formatVersion"] != PROVIDER_EFFECT_EVENT_FORMAT_VERSION
-            or payload["state"] != ProviderEffectState.PENDING.value
+            payload.get("effectId") != self.effect_id
+            or payload.get("formatVersion") != PROVIDER_EFFECT_EVENT_FORMAT_VERSION
         ):
             raise ProviderEffectContractError(
-                f"{owner} origin-transfer event is not closed and exact"
+                f"{owner} common identity is not closed and exact"
+            )
+        if self.kind == "origin_transferred":
+            if (
+                self.from_state is not None
+                or self.to_state is not ProviderEffectState.PENDING
+                or set(payload)
+                != {
+                    "capabilitySnapshotDigest",
+                    "effectId",
+                    "formatVersion",
+                    "intentDigest",
+                    "originTransferDigest",
+                    "state",
+                }
+                or payload["state"] != ProviderEffectState.PENDING.value
+            ):
+                raise ProviderEffectContractError(
+                    f"{owner} origin-transfer event is not closed and exact"
+                )
+            _require_digest(owner, "intentDigest", payload["intentDigest"])
+            _require_digest(
+                owner,
+                "capabilitySnapshotDigest",
+                payload["capabilitySnapshotDigest"],
+            )
+            _require_digest(
+                owner,
+                "originTransferDigest",
+                payload["originTransferDigest"],
+            )
+        elif self.kind in {"send_claimed", "send_claim_reclaimed"}:
+            expected_from_state = (
+                ProviderEffectState.PENDING
+                if self.kind == "send_claimed"
+                else ProviderEffectState.CLAIMED
+            )
+            if (
+                self.from_state is not expected_from_state
+                or self.to_state is not ProviderEffectState.CLAIMED
+                or set(payload)
+                != {
+                    "claim",
+                    "claimDigest",
+                    "effectId",
+                    "formatVersion",
+                    "intentDigest",
+                    "state",
+                }
+                or payload["state"] != ProviderEffectState.CLAIMED.value
+            ):
+                raise ProviderEffectContractError(
+                    f"{owner} claim event is not closed and exact"
+                )
+            claim = ProviderEffectClaim.from_wire(payload["claim"])
+            if (
+                claim.effect_id != self.effect_id
+                or claim.digest
+                != _require_digest(owner, "claimDigest", payload["claimDigest"])
+                or claim.intent_digest
+                != _require_digest(owner, "intentDigest", payload["intentDigest"])
+                or claim.admitted_at_unix_ms != self.created_at_unix_ms
+            ):
+                raise ProviderEffectContractError(
+                    f"{owner} claim event identity is not exact"
+                )
+        elif self.kind == "send_claim_released":
+            if (
+                self.from_state is not ProviderEffectState.CLAIMED
+                or self.to_state is not ProviderEffectState.PENDING
+                or set(payload)
+                != {
+                    "effectId",
+                    "formatVersion",
+                    "intentDigest",
+                    "release",
+                    "releaseDigest",
+                    "state",
+                }
+                or payload["state"] != ProviderEffectState.PENDING.value
+            ):
+                raise ProviderEffectContractError(
+                    f"{owner} claim-release event is not closed and exact"
+                )
+            release = ProviderEffectClaimRelease.from_wire(payload["release"])
+            if (
+                release.effect_id != self.effect_id
+                or release.digest
+                != _require_digest(
+                    owner,
+                    "releaseDigest",
+                    payload["releaseDigest"],
+                )
+                or release.released_at_unix_ms != self.created_at_unix_ms
+                or release.resulting_event_sequence != self.sequence
+            ):
+                raise ProviderEffectContractError(
+                    f"{owner} claim-release event identity is not exact"
+                )
+            _require_digest(owner, "intentDigest", payload["intentDigest"])
+        else:
+            raise ProviderEffectContractError(
+                f"{owner} kind is not supported by this repository version"
             )
         if (
             type(self.created_at_unix_ms) is not int
@@ -244,38 +883,57 @@ class SQLiteProviderEffectRepository:
         path: str | Path,
         *,
         origin_authority_digest: str,
+        claim_authority_digest: str,
         busy_timeout_ms: int = 5_000,
         failpoint: Callable[[str], None] | None = None,
         clock: Callable[[], int] = accepted_run_system_clock,
+        attempt_id_factory: Callable[[], str] = _new_provider_send_attempt_id,
     ) -> None:
-        if (
-            type(origin_authority_digest) is not str
-            or len(origin_authority_digest) != 71
-            or not origin_authority_digest.startswith("sha256:")
-            or any(
-                character not in "0123456789abcdef"
-                for character in origin_authority_digest[7:]
-            )
+        for field_name, value in (
+            ("origin_authority_digest", origin_authority_digest),
+            ("claim_authority_digest", claim_authority_digest),
         ):
-            raise ValueError(
-                "provider-effect SQLite origin_authority_digest must be a canonical "
-                "sha256 digest"
-            )
+            try:
+                _require_digest("provider-effect SQLite repository", field_name, value)
+            except ProviderEffectContractError as error:
+                raise ValueError(
+                    f"provider-effect SQLite {field_name} must be a canonical "
+                    "sha256 digest"
+                ) from error
         if failpoint is not None and not callable(failpoint):
             raise TypeError("provider-effect SQLite failpoint must be callable")
         if not callable(clock):
             raise TypeError("provider-effect SQLite clock must be callable")
+        if not callable(attempt_id_factory):
+            raise TypeError(
+                "provider-effect SQLite attempt_id_factory must be callable"
+            )
         self.authority_digest = origin_authority_digest
+        self.origin_authority_digest = origin_authority_digest
+        self.claim_authority_digest = claim_authority_digest
         self._database = SQLiteAcceptedRunDatabase(
             path,
             busy_timeout_ms=busy_timeout_ms,
         )
         self._failpoint = failpoint
         self._clock = clock
+        self._attempt_id_factory = attempt_id_factory
 
     def _hit_failpoint(self, name: str) -> None:
         if self._failpoint is not None:
             self._failpoint(name)
+
+    def _transaction_now_unix_ms(self) -> int:
+        now_unix_ms = self._clock()
+        if (
+            type(now_unix_ms) is not int
+            or now_unix_ms < 0
+            or now_unix_ms > _MAX_SQLITE_INTEGER
+        ):
+            raise ValueError(
+                "provider-effect SQLite clock must return a non-negative SQLite integer"
+            )
+        return now_unix_ms
 
     def _record_from_row(self, row: sqlite3.Row) -> StoredProviderEffect:
         try:
@@ -315,6 +973,66 @@ class SQLiteProviderEffectRepository:
                 or origin_transfer.digest != transfer_digest
             ):
                 raise ValueError("provider-effect record digest does not match JSON")
+
+            claim_json = row["claim_json"]
+            claim_digest = row["claim_digest"]
+            if (claim_json is None) != (claim_digest is None):
+                raise ValueError("provider-effect claim identity is incomplete")
+            claim: ProviderEffectClaim | None = None
+            if claim_json is not None:
+                if type(claim_json) is not str or type(claim_digest) is not str:
+                    raise ValueError("provider-effect claim identity is not text")
+                claim_wire = canonical_loads(claim_json)
+                if canonical_dumps(claim_wire) != claim_json:
+                    raise ValueError("provider-effect claim JSON is not canonical")
+                claim = ProviderEffectClaim.from_wire(claim_wire)
+                if claim.digest != claim_digest:
+                    raise ValueError("provider-effect claim digest does not match JSON")
+                if (
+                    row["claim_authority_digest"] != claim.claim_authority_digest
+                    or row["claim_owner_id"] != claim.claim_owner_id
+                    or row["claim_generation"] != claim.claim_generation
+                    or row["claim_fencing_token"] != claim.claim_fencing_token
+                    or row["claim_started_at_unix_ms"] != claim.claim_started_at_unix_ms
+                    or row["claim_expires_at_unix_ms"] != claim.claim_expires_at_unix_ms
+                    or row["admitted_at_unix_ms"] != claim.admitted_at_unix_ms
+                    or row["send_attempt_id"] != claim.send_attempt_id
+                    or row["previous_send_attempt_digest"]
+                    != claim.previous_send_attempt_digest
+                ):
+                    raise ValueError(
+                        "provider-effect claim projection does not match its wire value"
+                    )
+            elif any(
+                row[field_name] is not None
+                for field_name in (
+                    "claim_authority_digest",
+                    "claim_owner_id",
+                    "claim_started_at_unix_ms",
+                    "claim_expires_at_unix_ms",
+                    "admitted_at_unix_ms",
+                    "send_attempt_id",
+                    "previous_send_attempt_digest",
+                )
+            ):
+                raise ValueError("provider-effect inactive claim fields are not empty")
+
+            release_json = row["last_pre_send_release_json"]
+            release_digest = row["last_pre_send_release_digest"]
+            if (release_json is None) != (release_digest is None):
+                raise ValueError("provider-effect release identity is incomplete")
+            release: ProviderEffectClaimRelease | None = None
+            if release_json is not None:
+                if type(release_json) is not str or type(release_digest) is not str:
+                    raise ValueError("provider-effect release identity is not text")
+                release_wire = canonical_loads(release_json)
+                if canonical_dumps(release_wire) != release_json:
+                    raise ValueError("provider-effect release JSON is not canonical")
+                release = ProviderEffectClaimRelease.from_wire(release_wire)
+                if release.digest != release_digest:
+                    raise ValueError(
+                        "provider-effect release digest does not match JSON"
+                    )
             for field_name in (
                 "tenant_id",
                 "external_run_id",
@@ -332,6 +1050,8 @@ class SQLiteProviderEffectRepository:
                 "event_high_watermark",
                 "created_at_unix_ms",
                 "updated_at_unix_ms",
+                "claim_generation",
+                "claim_fencing_token",
             ):
                 if type(row[field_name]) is not int:
                     raise ValueError(f"provider-effect {field_name} is not an integer")
@@ -356,6 +1076,10 @@ class SQLiteProviderEffectRepository:
                 event_high_watermark=row["event_high_watermark"],
                 created_at_unix_ms=row["created_at_unix_ms"],
                 updated_at_unix_ms=row["updated_at_unix_ms"],
+                claim_generation=row["claim_generation"],
+                claim_fencing_token=row["claim_fencing_token"],
+                claim=claim,
+                last_pre_send_release=release,
             )
         except (KeyError, TypeError, ValueError) as error:
             raise SQLiteProviderEffectCorruptionError(
@@ -400,34 +1124,58 @@ class SQLiteProviderEffectRepository:
                 "provider-effect SQLite event is invalid"
             ) from error
 
-    def _assert_event_chain(
+    @staticmethod
+    def _event_payload_for_record(
+        event: StoredProviderEffectEvent,
+        record: StoredProviderEffect,
+    ) -> dict[str, object]:
+        try:
+            payload = canonical_loads(event.payload_json)
+            if (
+                type(payload) is not dict
+                or payload["intentDigest"] != record.intent.digest
+            ):
+                raise ValueError("provider-effect event intent identity is invalid")
+            if event.kind == "origin_transferred":
+                if (
+                    event.sequence != 1
+                    or payload["capabilitySnapshotDigest"] != record.capability.digest
+                    or payload["originTransferDigest"] != record.origin_transfer.digest
+                ):
+                    raise ValueError("provider-effect origin event identity is invalid")
+            elif event.kind in {"send_claimed", "send_claim_reclaimed"}:
+                claim = ProviderEffectClaim.from_wire(payload["claim"])
+                if (
+                    claim.tenant_id != record.tenant_id
+                    or claim.run_id != record.run_id
+                    or claim.owner_principal_id != record.owner_principal_id
+                    or claim.effect_id != record.intent.effect_id
+                    or claim.intent_digest != record.intent.digest
+                ):
+                    raise ValueError("provider-effect claim event scope is invalid")
+            elif event.kind == "send_claim_released":
+                release = ProviderEffectClaimRelease.from_wire(payload["release"])
+                if (
+                    release.tenant_id != record.tenant_id
+                    or release.run_id != record.run_id
+                    or release.owner_principal_id != record.owner_principal_id
+                    or release.effect_id != record.intent.effect_id
+                ):
+                    raise ValueError("provider-effect release event scope is invalid")
+            return payload
+        except (KeyError, TypeError, ValueError) as error:
+            raise SQLiteProviderEffectCorruptionError(
+                "provider-effect SQLite event does not match its effect identity"
+            ) from error
+
+    def _assert_projection_tail(
         self,
         connection: sqlite3.Connection,
         *,
         run_internal_id: str,
         record: StoredProviderEffect,
     ) -> None:
-        aggregate = connection.execute(
-            """
-            SELECT count(*) AS event_count,
-                   min(sequence) AS minimum_sequence,
-                   max(sequence) AS maximum_sequence
-            FROM provider_effect_events
-            WHERE run_internal_id = ? AND effect_id = ?
-            """,
-            (run_internal_id, record.intent.effect_id),
-        ).fetchone()
-        if (
-            aggregate is None
-            or type(aggregate["event_count"]) is not int
-            or aggregate["event_count"] != record.event_high_watermark
-            or aggregate["minimum_sequence"] != 1
-            or aggregate["maximum_sequence"] != record.event_high_watermark
-        ):
-            raise SQLiteProviderEffectCorruptionError(
-                "provider-effect SQLite event chain is not contiguous"
-            )
-        last_row = connection.execute(
+        row = connection.execute(
             """
             SELECT *
             FROM provider_effect_events
@@ -441,23 +1189,82 @@ class SQLiteProviderEffectRepository:
                 record.event_high_watermark,
             ),
         ).fetchone()
-        if last_row is None:
+        if row is None:
             raise SQLiteProviderEffectCorruptionError(
-                "provider-effect SQLite event chain has no authoritative tail"
+                "provider-effect SQLite projection has no authoritative event tail"
             )
-        last_event = self._event_from_row(last_row)
-        payload = canonical_loads(last_event.payload_json)
-        if (
-            last_event.to_state is not record.state
-            or last_event.created_at_unix_ms > record.updated_at_unix_ms
-            or type(payload) is not dict
-            or payload["intentDigest"] != record.intent.digest
-            or payload["capabilitySnapshotDigest"] != record.capability.digest
-            or payload["originTransferDigest"] != record.origin_transfer.digest
-        ):
+        future_event = connection.execute(
+            """
+            SELECT 1
+            FROM provider_effect_events
+            WHERE run_internal_id = ?
+              AND effect_id = ?
+              AND sequence > ?
+            LIMIT 1
+            """,
+            (
+                run_internal_id,
+                record.intent.effect_id,
+                record.event_high_watermark,
+            ),
+        ).fetchone()
+        if future_event is not None:
+            raise SQLiteProviderEffectCorruptionError(
+                "provider-effect SQLite journal exceeds its projection watermark"
+            )
+        event = self._event_from_row(row)
+        payload = self._event_payload_for_record(event, record)
+        try:
+            if (
+                event.sequence != record.event_high_watermark
+                or event.to_state is not record.state
+                or event.created_at_unix_ms != record.updated_at_unix_ms
+            ):
+                raise ValueError("provider-effect event tail identity is invalid")
+            if event.kind == "origin_transferred":
+                if (
+                    record.state is not ProviderEffectState.PENDING
+                    or record.event_high_watermark != 1
+                    or record.claim_generation != 0
+                    or record.claim_fencing_token != 0
+                    or record.claim is not None
+                    or record.last_pre_send_release is not None
+                ):
+                    raise ValueError("provider-effect origin tail is invalid")
+            elif event.kind in {"send_claimed", "send_claim_reclaimed"}:
+                claim = ProviderEffectClaim.from_wire(payload["claim"])
+                if (
+                    record.state is not ProviderEffectState.CLAIMED
+                    or record.claim != claim
+                    or record.last_pre_send_release is not None
+                    or claim.tenant_id != record.tenant_id
+                    or claim.run_id != record.run_id
+                    or claim.owner_principal_id != record.owner_principal_id
+                    or claim.effect_id != record.intent.effect_id
+                    or claim.intent_digest != record.intent.digest
+                    or claim.claim_generation != record.claim_generation
+                    or claim.claim_fencing_token != record.claim_fencing_token
+                ):
+                    raise ValueError("provider-effect claim tail is invalid")
+            elif event.kind == "send_claim_released":
+                release = ProviderEffectClaimRelease.from_wire(payload["release"])
+                if (
+                    record.state is not ProviderEffectState.PENDING
+                    or record.claim is not None
+                    or record.last_pre_send_release != release
+                    or release.tenant_id != record.tenant_id
+                    or release.run_id != record.run_id
+                    or release.owner_principal_id != record.owner_principal_id
+                    or release.effect_id != record.intent.effect_id
+                    or release.claim_generation != record.claim_generation
+                    or release.claim_fencing_token != record.claim_fencing_token
+                    or release.resulting_state_version != record.state_version
+                ):
+                    raise ValueError("provider-effect release tail is invalid")
+        except (KeyError, TypeError, ValueError) as error:
             raise SQLiteProviderEffectCorruptionError(
                 "provider-effect SQLite event tail does not match its projection"
-            )
+            ) from error
 
     def persist_transferred_effect(
         self,
@@ -522,7 +1329,7 @@ class SQLiteProviderEffectRepository:
                     raise SQLiteProviderEffectCorruptionError(
                         "provider-effect SQLite run identity is not text"
                     )
-                self._assert_event_chain(
+                self._assert_projection_tail(
                     connection,
                     run_internal_id=existing["run_internal_id"],
                     record=stored,
@@ -750,6 +1557,583 @@ class SQLiteProviderEffectRepository:
         self._hit_failpoint("persist_transferred_effect.after_commit")
         return stored
 
+    def claim_next_effect(
+        self,
+        request: ProviderEffectClaimRequest,
+    ) -> ProviderEffectWorkItem | None:
+        """Claim one pending or expired pre-send effect for an exact owner scope."""
+
+        if type(request) is not ProviderEffectClaimRequest:
+            raise TypeError(
+                "provider-effect SQLite claim request must be "
+                "ProviderEffectClaimRequest"
+            )
+        request = ProviderEffectClaimRequest(
+            tenant_id=request.tenant_id,
+            owner_principal_id=request.owner_principal_id,
+            claim_owner_id=request.claim_owner_id,
+            lease_duration_ms=request.lease_duration_ms,
+        )
+
+        def transition(
+            connection: sqlite3.Connection,
+        ) -> ProviderEffectWorkItem | None:
+            transaction_now = self._transaction_now_unix_ms()
+            replay_rows = connection.execute(
+                """
+                SELECT provider_effects.*,
+                       accepted_runs.tenant_id,
+                       accepted_runs.external_run_id,
+                       accepted_runs.owner_principal_id
+                FROM provider_effects
+                JOIN accepted_runs
+                  ON accepted_runs.internal_id = provider_effects.run_internal_id
+                WHERE accepted_runs.tenant_id = ?
+                  AND accepted_runs.owner_principal_id = ?
+                  AND provider_effects.state = 'claimed'
+                  AND provider_effects.claim_owner_id = ?
+                  AND provider_effects.claim_expires_at_unix_ms > ?
+                ORDER BY provider_effects.updated_at_unix_ms,
+                         provider_effects.created_at_unix_ms,
+                         provider_effects.run_internal_id,
+                         provider_effects.effect_id
+                LIMIT 2
+                """,
+                (
+                    request.tenant_id,
+                    request.owner_principal_id,
+                    request.claim_owner_id,
+                    transaction_now,
+                ),
+            ).fetchall()
+            if len(replay_rows) > 1:
+                raise SQLiteProviderEffectCorruptionError(
+                    "provider-effect claim owner has multiple active claims in one "
+                    "scope"
+                )
+            replay_row = replay_rows[0] if replay_rows else None
+            if replay_row is not None:
+                replayed = self._record_from_row(replay_row)
+                if type(replay_row["run_internal_id"]) is not str:
+                    raise SQLiteProviderEffectCorruptionError(
+                        "provider-effect SQLite run identity is not text"
+                    )
+                self._assert_projection_tail(
+                    connection,
+                    run_internal_id=replay_row["run_internal_id"],
+                    record=replayed,
+                )
+                if (
+                    replayed.origin_transfer.repository_authority_digest
+                    != self.origin_authority_digest
+                    or replayed.claim is None
+                    or replayed.claim.claim_authority_digest
+                    != self.claim_authority_digest
+                ):
+                    raise ProviderEffectContractError(
+                        "provider-effect active claim uses another repository authority"
+                    )
+                if (
+                    transaction_now < replayed.updated_at_unix_ms
+                    or transaction_now < replayed.claim.claim_started_at_unix_ms
+                    or transaction_now < replayed.claim.admitted_at_unix_ms
+                ):
+                    raise ValueError(
+                        "provider-effect SQLite clock moved behind the active claim"
+                    )
+                replay_commit_now = self._transaction_now_unix_ms()
+                if replay_commit_now < transaction_now:
+                    raise ValueError(
+                        "provider-effect SQLite clock must remain monotonic within "
+                        "the claim replay transaction"
+                    )
+                if replay_commit_now < replayed.claim.claim_expires_at_unix_ms:
+                    return ProviderEffectWorkItem(
+                        effect=replayed,
+                        claim=replayed.claim,
+                    )
+                transaction_now = replay_commit_now
+
+            row = connection.execute(
+                """
+                SELECT provider_effects.*,
+                       accepted_runs.tenant_id,
+                       accepted_runs.external_run_id,
+                       accepted_runs.owner_principal_id
+                FROM provider_effects
+                JOIN accepted_runs
+                  ON accepted_runs.internal_id = provider_effects.run_internal_id
+                WHERE accepted_runs.tenant_id = ?
+                  AND accepted_runs.owner_principal_id = ?
+                  AND (
+                    provider_effects.state = 'pending'
+                    OR (
+                      provider_effects.state = 'claimed'
+                      AND provider_effects.claim_expires_at_unix_ms <= ?
+                    )
+                  )
+                ORDER BY provider_effects.updated_at_unix_ms,
+                         provider_effects.created_at_unix_ms,
+                         provider_effects.run_internal_id,
+                         provider_effects.effect_id
+                LIMIT 1
+                """,
+                (
+                    request.tenant_id,
+                    request.owner_principal_id,
+                    transaction_now,
+                ),
+            ).fetchone()
+            if row is None:
+                return None
+            record = self._record_from_row(row)
+            run_internal_id = row["run_internal_id"]
+            if type(run_internal_id) is not str:
+                raise SQLiteProviderEffectCorruptionError(
+                    "provider-effect SQLite run identity is not text"
+                )
+            self._assert_projection_tail(
+                connection,
+                run_internal_id=run_internal_id,
+                record=record,
+            )
+            if (
+                record.origin_transfer.repository_authority_digest
+                != self.origin_authority_digest
+            ):
+                raise ProviderEffectContractError(
+                    "provider-effect pending work uses another origin authority"
+                )
+            if record.updated_at_unix_ms > transaction_now:
+                raise ValueError(
+                    "provider-effect SQLite clock moved behind the projection"
+                )
+            old_claim_digest: str | None = None
+            event_kind = "send_claimed"
+            if record.state is ProviderEffectState.CLAIMED:
+                if record.claim is None:
+                    raise SQLiteProviderEffectCorruptionError(
+                        "provider-effect claimed projection has no active claim"
+                    )
+                if record.claim.claim_authority_digest != self.claim_authority_digest:
+                    raise ProviderEffectContractError(
+                        "provider-effect expired claim uses another claim authority"
+                    )
+                if record.claim.claim_expires_at_unix_ms > transaction_now:
+                    raise ProviderEffectStateConflictError(
+                        "provider-effect claim is not expired"
+                    )
+                old_claim_digest = record.claim.digest
+                event_kind = "send_claim_reclaimed"
+            elif record.state is not ProviderEffectState.PENDING:
+                raise ProviderEffectStateConflictError(
+                    "provider-effect state is not pre-send claimable"
+                )
+            if (
+                record.claim_generation >= _MAX_SQLITE_INTEGER
+                or record.claim_fencing_token >= _MAX_SQLITE_INTEGER
+                or record.state_version >= _MAX_SQLITE_INTEGER
+            ):
+                raise ProviderEffectStateConflictError(
+                    "provider-effect claim authority counter is exhausted"
+                )
+            claim_expires_at = transaction_now + request.lease_duration_ms
+            if claim_expires_at > _MAX_SQLITE_INTEGER:
+                raise ValueError(
+                    "provider-effect SQLite claim expiry exceeds its integer range"
+                )
+            send_attempt_id = _require_exact_string(
+                "provider-effect SQLite repository",
+                "send_attempt_id",
+                self._attempt_id_factory(),
+            )
+            conflicting_attempt = connection.execute(
+                """
+                SELECT effect_id
+                FROM provider_effects
+                WHERE send_attempt_id = ?
+                LIMIT 1
+                """,
+                (send_attempt_id,),
+            ).fetchone()
+            if conflicting_attempt is not None:
+                raise ProviderEffectIdentityConflictError(
+                    "provider-effect send attempt identity is already active"
+                )
+            claim = ProviderEffectClaim(
+                effect_id=record.intent.effect_id,
+                intent_digest=record.intent.digest,
+                tenant_id=record.tenant_id,
+                run_id=record.run_id,
+                owner_principal_id=record.owner_principal_id,
+                claim_authority_digest=self.claim_authority_digest,
+                claim_owner_id=request.claim_owner_id,
+                claim_generation=record.claim_generation + 1,
+                claim_fencing_token=record.claim_fencing_token + 1,
+                claim_started_at_unix_ms=transaction_now,
+                claim_expires_at_unix_ms=claim_expires_at,
+                admitted_at_unix_ms=transaction_now,
+                send_attempt_id=send_attempt_id,
+                previous_send_attempt_digest=(
+                    None
+                    if record.claim is None
+                    else record.claim.previous_send_attempt_digest
+                ),
+            )
+            next_version = record.state_version + 1
+            claim_json = canonical_dumps(claim.to_wire())
+            updated = connection.execute(
+                """
+                UPDATE provider_effects
+                SET state = 'claimed',
+                    state_version = ?,
+                    event_high_watermark = ?,
+                    updated_at_unix_ms = ?,
+                    claim_json = ?,
+                    claim_digest = ?,
+                    claim_authority_digest = ?,
+                    claim_owner_id = ?,
+                    claim_generation = ?,
+                    claim_fencing_token = ?,
+                    claim_started_at_unix_ms = ?,
+                    claim_expires_at_unix_ms = ?,
+                    admitted_at_unix_ms = ?,
+                    send_attempt_id = ?,
+                    previous_send_attempt_digest = ?,
+                    last_pre_send_release_json = NULL,
+                    last_pre_send_release_digest = NULL
+                WHERE run_internal_id = ?
+                  AND effect_id = ?
+                  AND state = ?
+                  AND state_version = ?
+                  AND event_high_watermark = ?
+                  AND claim_generation = ?
+                  AND claim_fencing_token = ?
+                  AND claim_digest IS ?
+                """,
+                (
+                    next_version,
+                    next_version,
+                    transaction_now,
+                    claim_json,
+                    claim.digest,
+                    claim.claim_authority_digest,
+                    claim.claim_owner_id,
+                    claim.claim_generation,
+                    claim.claim_fencing_token,
+                    claim.claim_started_at_unix_ms,
+                    claim.claim_expires_at_unix_ms,
+                    claim.admitted_at_unix_ms,
+                    claim.send_attempt_id,
+                    claim.previous_send_attempt_digest,
+                    run_internal_id,
+                    record.intent.effect_id,
+                    record.state.value,
+                    record.state_version,
+                    record.event_high_watermark,
+                    record.claim_generation,
+                    record.claim_fencing_token,
+                    old_claim_digest,
+                ),
+            )
+            if updated.rowcount != 1:
+                raise ProviderEffectStateConflictError(
+                    "provider-effect claim projection changed concurrently"
+                )
+            self._hit_failpoint("claim_next_effect.after_effect_update")
+            event_payload = {
+                "claim": claim.to_wire(),
+                "claimDigest": claim.digest,
+                "effectId": record.intent.effect_id,
+                "formatVersion": PROVIDER_EFFECT_EVENT_FORMAT_VERSION,
+                "intentDigest": record.intent.digest,
+                "state": ProviderEffectState.CLAIMED.value,
+            }
+            event_json = canonical_dumps(event_payload)
+            connection.execute(
+                """
+                INSERT INTO provider_effect_events (
+                  run_internal_id,
+                  effect_id,
+                  sequence,
+                  kind,
+                  from_state,
+                  to_state,
+                  payload_json,
+                  payload_digest,
+                  created_at_unix_ms
+                )
+                VALUES (?, ?, ?, ?, ?, 'claimed', ?, ?, ?)
+                """,
+                (
+                    run_internal_id,
+                    record.intent.effect_id,
+                    next_version,
+                    event_kind,
+                    record.state.value,
+                    event_json,
+                    canonical_hash(event_payload),
+                    transaction_now,
+                ),
+            )
+            self._hit_failpoint("claim_next_effect.after_event_insert")
+            claimed = StoredProviderEffect(
+                tenant_id=record.tenant_id,
+                run_id=record.run_id,
+                owner_principal_id=record.owner_principal_id,
+                intent=record.intent,
+                capability=record.capability,
+                origin_transfer=record.origin_transfer,
+                state=ProviderEffectState.CLAIMED,
+                state_version=next_version,
+                event_high_watermark=next_version,
+                created_at_unix_ms=record.created_at_unix_ms,
+                updated_at_unix_ms=transaction_now,
+                claim_generation=claim.claim_generation,
+                claim_fencing_token=claim.claim_fencing_token,
+                claim=claim,
+            )
+            self._assert_projection_tail(
+                connection,
+                run_internal_id=run_internal_id,
+                record=claimed,
+            )
+            commit_now = self._transaction_now_unix_ms()
+            if commit_now < transaction_now:
+                raise ValueError(
+                    "provider-effect SQLite clock must remain monotonic within the "
+                    "claim transaction"
+                )
+            if commit_now >= claim.claim_expires_at_unix_ms:
+                raise ProviderEffectStateConflictError(
+                    "provider-effect claim expired before commit"
+                )
+            return ProviderEffectWorkItem(effect=claimed, claim=claim)
+
+        work_item = self._database._run_immediate(transition)
+        self._hit_failpoint("claim_next_effect.after_commit")
+        return work_item
+
+    def release_claim_before_send(
+        self,
+        claim: ProviderEffectClaim,
+    ) -> StoredProviderEffect:
+        """Release one exact claim before provider I/O can begin."""
+
+        if type(claim) is not ProviderEffectClaim:
+            raise TypeError(
+                "provider-effect SQLite release claim must be ProviderEffectClaim"
+            )
+        decoded_claim = ProviderEffectClaim.from_wire(claim.to_wire())
+        if not _matches_exact_closed_value(claim, decoded_claim):
+            raise ProviderEffectContractError(
+                "provider-effect SQLite release claim is not exact"
+            )
+        claim = decoded_claim
+        if claim.claim_authority_digest != self.claim_authority_digest:
+            raise StaleProviderEffectClaimError(
+                "provider-effect claim belongs to another claim authority"
+            )
+
+        def transition(connection: sqlite3.Connection) -> StoredProviderEffect:
+            row = connection.execute(
+                """
+                SELECT provider_effects.*,
+                       accepted_runs.tenant_id,
+                       accepted_runs.external_run_id,
+                       accepted_runs.owner_principal_id
+                FROM provider_effects
+                JOIN accepted_runs
+                  ON accepted_runs.internal_id = provider_effects.run_internal_id
+                WHERE accepted_runs.tenant_id = ?
+                  AND accepted_runs.external_run_id = ?
+                  AND accepted_runs.owner_principal_id = ?
+                  AND provider_effects.effect_id = ?
+                """,
+                (
+                    claim.tenant_id,
+                    claim.run_id,
+                    claim.owner_principal_id,
+                    claim.effect_id,
+                ),
+            ).fetchone()
+            if row is None:
+                raise StaleProviderEffectClaimError(
+                    "provider-effect claim no longer resolves to its scoped effect"
+                )
+            record = self._record_from_row(row)
+            run_internal_id = row["run_internal_id"]
+            if type(run_internal_id) is not str:
+                raise SQLiteProviderEffectCorruptionError(
+                    "provider-effect SQLite run identity is not text"
+                )
+            self._assert_projection_tail(
+                connection,
+                run_internal_id=run_internal_id,
+                record=record,
+            )
+            if (
+                record.origin_transfer.repository_authority_digest
+                != self.origin_authority_digest
+            ):
+                raise ProviderEffectContractError(
+                    "provider-effect release uses another origin authority"
+                )
+            if (
+                record.state is ProviderEffectState.PENDING
+                and record.last_pre_send_release is not None
+                and record.last_pre_send_release.claim_digest == claim.digest
+            ):
+                return record
+            if (
+                record.state is not ProviderEffectState.CLAIMED
+                or record.claim is None
+                or record.claim != claim
+                or record.claim.digest != claim.digest
+            ):
+                raise StaleProviderEffectClaimError(
+                    "provider-effect claim is stale or no longer pre-send"
+                )
+            if record.state_version >= _MAX_SQLITE_INTEGER:
+                raise ProviderEffectStateConflictError(
+                    "provider-effect state version is exhausted"
+                )
+            transaction_now = self._transaction_now_unix_ms()
+            if (
+                transaction_now < record.updated_at_unix_ms
+                or transaction_now < claim.claim_started_at_unix_ms
+            ):
+                raise ValueError(
+                    "provider-effect SQLite clock moved behind the active claim"
+                )
+            next_version = record.state_version + 1
+            release = ProviderEffectClaimRelease(
+                effect_id=record.intent.effect_id,
+                tenant_id=record.tenant_id,
+                run_id=record.run_id,
+                owner_principal_id=record.owner_principal_id,
+                claim_digest=claim.digest,
+                claim_generation=claim.claim_generation,
+                claim_fencing_token=claim.claim_fencing_token,
+                released_at_unix_ms=transaction_now,
+                resulting_state_version=next_version,
+                resulting_event_sequence=next_version,
+            )
+            release_json = canonical_dumps(release.to_wire())
+            updated = connection.execute(
+                """
+                UPDATE provider_effects
+                SET state = 'pending',
+                    state_version = ?,
+                    event_high_watermark = ?,
+                    updated_at_unix_ms = ?,
+                    claim_json = NULL,
+                    claim_digest = NULL,
+                    claim_authority_digest = NULL,
+                    claim_owner_id = NULL,
+                    claim_started_at_unix_ms = NULL,
+                    claim_expires_at_unix_ms = NULL,
+                    admitted_at_unix_ms = NULL,
+                    send_attempt_id = NULL,
+                    previous_send_attempt_digest = NULL,
+                    last_pre_send_release_json = ?,
+                    last_pre_send_release_digest = ?
+                WHERE run_internal_id = ?
+                  AND effect_id = ?
+                  AND state = 'claimed'
+                  AND state_version = ?
+                  AND event_high_watermark = ?
+                  AND claim_generation = ?
+                  AND claim_fencing_token = ?
+                  AND claim_digest = ?
+                """,
+                (
+                    next_version,
+                    next_version,
+                    transaction_now,
+                    release_json,
+                    release.digest,
+                    run_internal_id,
+                    record.intent.effect_id,
+                    record.state_version,
+                    record.event_high_watermark,
+                    claim.claim_generation,
+                    claim.claim_fencing_token,
+                    claim.digest,
+                ),
+            )
+            if updated.rowcount != 1:
+                raise StaleProviderEffectClaimError(
+                    "provider-effect claim changed before release"
+                )
+            self._hit_failpoint("release_claim_before_send.after_effect_update")
+            event_payload = {
+                "effectId": record.intent.effect_id,
+                "formatVersion": PROVIDER_EFFECT_EVENT_FORMAT_VERSION,
+                "intentDigest": record.intent.digest,
+                "release": release.to_wire(),
+                "releaseDigest": release.digest,
+                "state": ProviderEffectState.PENDING.value,
+            }
+            event_json = canonical_dumps(event_payload)
+            connection.execute(
+                """
+                INSERT INTO provider_effect_events (
+                  run_internal_id,
+                  effect_id,
+                  sequence,
+                  kind,
+                  from_state,
+                  to_state,
+                  payload_json,
+                  payload_digest,
+                  created_at_unix_ms
+                )
+                VALUES (?, ?, ?, 'send_claim_released', 'claimed', 'pending', ?, ?, ?)
+                """,
+                (
+                    run_internal_id,
+                    record.intent.effect_id,
+                    next_version,
+                    event_json,
+                    canonical_hash(event_payload),
+                    transaction_now,
+                ),
+            )
+            self._hit_failpoint("release_claim_before_send.after_event_insert")
+            released = StoredProviderEffect(
+                tenant_id=record.tenant_id,
+                run_id=record.run_id,
+                owner_principal_id=record.owner_principal_id,
+                intent=record.intent,
+                capability=record.capability,
+                origin_transfer=record.origin_transfer,
+                state=ProviderEffectState.PENDING,
+                state_version=next_version,
+                event_high_watermark=next_version,
+                created_at_unix_ms=record.created_at_unix_ms,
+                updated_at_unix_ms=transaction_now,
+                claim_generation=record.claim_generation,
+                claim_fencing_token=record.claim_fencing_token,
+                last_pre_send_release=release,
+            )
+            self._assert_projection_tail(
+                connection,
+                run_internal_id=run_internal_id,
+                record=released,
+            )
+            commit_now = self._transaction_now_unix_ms()
+            if commit_now < transaction_now:
+                raise ValueError(
+                    "provider-effect SQLite clock must remain monotonic within the "
+                    "release transaction"
+                )
+            return released
+
+        released = self._database._run_immediate(transition)
+        self._hit_failpoint("release_claim_before_send.after_commit")
+        return released
+
     def get_effect(
         self,
         *,
@@ -793,7 +2177,7 @@ class SQLiteProviderEffectRepository:
                 raise SQLiteProviderEffectCorruptionError(
                     "provider-effect SQLite run identity is not text"
                 )
-            self._assert_event_chain(
+            self._assert_projection_tail(
                 connection,
                 run_internal_id=row["run_internal_id"],
                 record=record,
@@ -907,7 +2291,7 @@ class SQLiteProviderEffectRepository:
                 raise SQLiteProviderEffectCorruptionError(
                     "provider-effect SQLite run identity is not text"
                 )
-            self._assert_event_chain(
+            self._assert_projection_tail(
                 connection,
                 run_internal_id=effect_row["run_internal_id"],
                 record=record,
@@ -923,6 +2307,7 @@ class SQLiteProviderEffectRepository:
                   AND accepted_runs.owner_principal_id = ?
                   AND provider_effect_events.effect_id = ?
                   AND provider_effect_events.sequence > ?
+                  AND provider_effect_events.sequence <= ?
                 ORDER BY provider_effect_events.sequence
                 LIMIT ?
                 """,
@@ -932,11 +2317,110 @@ class SQLiteProviderEffectRepository:
                     owner_principal_id,
                     effect_id,
                     after_sequence,
+                    record.event_high_watermark,
                     limit + 1,
                 ),
             ).fetchall()
             has_more = len(rows) > limit
-            event_tuple = tuple(self._event_from_row(row) for row in rows[:limit])
+            decoded_events = tuple(self._event_from_row(row) for row in rows)
+            if not decoded_events and after_sequence < record.event_high_watermark:
+                raise SQLiteProviderEffectCorruptionError(
+                    "provider-effect SQLite event page has a missing suffix"
+                )
+            previous_event: StoredProviderEffectEvent | None = None
+            previous_claim: ProviderEffectClaim | None = None
+            previous_generation = 0
+            previous_fencing_token = 0
+            if decoded_events and after_sequence > 0:
+                previous_row = connection.execute(
+                    """
+                    SELECT *
+                    FROM provider_effect_events
+                    WHERE run_internal_id = ?
+                      AND effect_id = ?
+                      AND sequence = ?
+                    """,
+                    (
+                        effect_row["run_internal_id"],
+                        record.intent.effect_id,
+                        after_sequence,
+                    ),
+                ).fetchone()
+                if previous_row is None:
+                    raise SQLiteProviderEffectCorruptionError(
+                        "provider-effect SQLite event page cursor has no predecessor"
+                    )
+                previous_event = self._event_from_row(previous_row)
+                previous_payload = self._event_payload_for_record(
+                    previous_event,
+                    record,
+                )
+                if previous_event.kind in {"send_claimed", "send_claim_reclaimed"}:
+                    previous_claim = ProviderEffectClaim.from_wire(
+                        previous_payload["claim"]
+                    )
+                    previous_generation = previous_claim.claim_generation
+                    previous_fencing_token = previous_claim.claim_fencing_token
+                elif previous_event.kind == "send_claim_released":
+                    previous_release = ProviderEffectClaimRelease.from_wire(
+                        previous_payload["release"]
+                    )
+                    previous_generation = previous_release.claim_generation
+                    previous_fencing_token = previous_release.claim_fencing_token
+            for offset, event in enumerate(decoded_events, start=1):
+                payload = self._event_payload_for_record(event, record)
+                if (
+                    event.sequence != after_sequence + offset
+                    or event.from_state
+                    is not (None if previous_event is None else previous_event.to_state)
+                    or (
+                        previous_event is not None
+                        and event.created_at_unix_ms < previous_event.created_at_unix_ms
+                    )
+                ):
+                    raise SQLiteProviderEffectCorruptionError(
+                        "provider-effect SQLite event page is not contiguous"
+                    )
+                if event.kind == "origin_transferred":
+                    if previous_event is not None:
+                        raise SQLiteProviderEffectCorruptionError(
+                            "provider-effect SQLite origin event is not first"
+                        )
+                elif event.kind in {"send_claimed", "send_claim_reclaimed"}:
+                    claim = ProviderEffectClaim.from_wire(payload["claim"])
+                    if (
+                        claim.claim_generation != previous_generation + 1
+                        or claim.claim_fencing_token != previous_fencing_token + 1
+                        or (
+                            event.kind == "send_claim_reclaimed"
+                            and (
+                                previous_claim is None
+                                or previous_claim.claim_expires_at_unix_ms
+                                > claim.claim_started_at_unix_ms
+                            )
+                        )
+                    ):
+                        raise SQLiteProviderEffectCorruptionError(
+                            "provider-effect SQLite event claim authority is not "
+                            "contiguous"
+                        )
+                    previous_claim = claim
+                    previous_generation = claim.claim_generation
+                    previous_fencing_token = claim.claim_fencing_token
+                elif event.kind == "send_claim_released":
+                    release = ProviderEffectClaimRelease.from_wire(payload["release"])
+                    if (
+                        previous_claim is None
+                        or release.claim_digest != previous_claim.digest
+                        or release.claim_generation != previous_generation
+                        or release.claim_fencing_token != previous_fencing_token
+                    ):
+                        raise SQLiteProviderEffectCorruptionError(
+                            "provider-effect SQLite release authority is not contiguous"
+                        )
+                    previous_claim = None
+                previous_event = event
+            event_tuple = decoded_events[:limit]
             return StoredProviderEffectEventPage(
                 events=event_tuple,
                 next_after_sequence=(
@@ -948,10 +2432,18 @@ class SQLiteProviderEffectRepository:
 
 
 __all__ = [
+    "MAX_PROVIDER_EFFECT_CLAIM_LEASE_DURATION_MS",
     "MAX_PROVIDER_EFFECT_EVENT_PAGE_SIZE",
+    "PROVIDER_EFFECT_CLAIM_FORMAT_VERSION",
+    "PROVIDER_EFFECT_CLAIM_RELEASE_FORMAT_VERSION",
     "PROVIDER_EFFECT_EVENT_FORMAT_VERSION",
+    "ProviderEffectClaim",
+    "ProviderEffectClaimRelease",
+    "ProviderEffectClaimRequest",
+    "ProviderEffectWorkItem",
     "SQLiteProviderEffectCorruptionError",
     "SQLiteProviderEffectRepository",
+    "StaleProviderEffectClaimError",
     "StoredProviderEffect",
     "StoredProviderEffectEvent",
     "StoredProviderEffectEventPage",
