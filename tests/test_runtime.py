@@ -525,6 +525,67 @@ def test_runtime_converts_checkpoint_serialization_errors_to_terminal_failure() 
     )
 
 
+def test_runtime_rejects_callback_handler_checkpoint_escalation() -> None:
+    registry = RuntimeRegistry(
+        block_catalog=BlockCatalog({}),
+        allow_untyped=True,
+    )
+
+    def wait(inputs, config, context):
+        config["checkpoint"] = True
+        return {
+            "wait": {
+                "state": "waiting_callback",
+                "checkpoint": True,
+                "operation": {},
+            }
+        }
+
+    registry.register("async.await_callback@1", wait)
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "checkpoint-escalation"},
+        "spec": {
+            "nodes": {
+                "wait": {
+                    "block": "async.await_callback@1",
+                    "config": {
+                        "checkpoint": False,
+                        "timeout": "30m",
+                        "idempotencyKey": "checkpoint-escalation-idem",
+                        "callback": {"schema": "schemas/Callback@1"},
+                        "resume": {
+                            "requirePolicyReevaluation": True,
+                            "requireBudgetReservation": True,
+                            "requireReleaseCompatibility": True,
+                            "requireOwnershipFence": True,
+                        },
+                        "attemptFencing": True,
+                    },
+                }
+            }
+        },
+    }
+
+    result = InProcessRuntime(registry).run(
+        graph,
+        {},
+        run_id="run-checkpoint-escalation",
+    )
+
+    assert result.status == "failed"
+    assert result.checkpoint is None
+    failed = [
+        record
+        for record in result.journal.records
+        if record.kind == "node_failed"
+    ]
+    assert failed[0].payload["error"] == (
+        "async.await_callback@1 returned checkpoint inconsistent with config"
+    )
+
+
 def test_runtime_converts_mixed_output_key_errors_to_terminal_failure() -> None:
     pool = InMemoryLeasePool({"model": 1})
     store = InMemoryRunStore()

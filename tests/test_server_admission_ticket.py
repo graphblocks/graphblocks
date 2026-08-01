@@ -79,6 +79,7 @@ def test_ticketed_server_returns_cursor_zero_and_promotes_fifo() -> None:
     )
     app = GraphBlocksServerApp(
         allow_unauthenticated_dev=True,
+        allow_process_local_accepted_runs_dev=True,
         admission_ticket_queue=queue,
         admission_clock=lambda: clock[0],
     )
@@ -149,6 +150,59 @@ def test_ticketed_server_returns_cursor_zero_and_promotes_fifo() -> None:
     assert queue.get("interactive-ticket-000002").state == "completed"
 
 
+def test_ticketed_server_replay_respects_disabled_process_local_mode() -> None:
+    queue = AdmissionTicketQueue(
+        "replay-gate",
+        max_concurrent=1,
+        rate_limit=10,
+        window_ms=1_000,
+        max_pending=10,
+        ticket_ttl_ms=60_000,
+    )
+    app = GraphBlocksServerApp(
+        allow_unauthenticated_dev=True,
+        allow_process_local_accepted_runs_dev=True,
+        admission_ticket_queue=queue,
+        admission_clock=lambda: 0,
+    )
+    run_id = "run-ticket-replay-gate-1"
+    first = _submit(app, run_id)
+    ticket_id = first["admissionTicket"]["ticketId"]
+    assert isinstance(ticket_id, str)
+    events_before = app._events_by_run_id[run_id]
+    pending_before = app.pending_accepted_run_ids()
+    ticket_before = queue.get(ticket_id).contract()
+
+    app.allow_process_local_accepted_runs_dev = False
+    replay = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs",
+            headers={},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "graph": _graph(),
+                    "inputs": {"message": {"text": run_id}},
+                    "runId": run_id,
+                    "requestId": f"request-{run_id}",
+                    "responseMode": "accepted",
+                    "occurredAt": "2026-07-10T00:00:00Z",
+                }
+            ).encode(),
+        )
+    )
+
+    assert replay.status_code == 503
+    assert json.loads(replay.body)["reasonCode"] == (
+        "server.durable_accepted_run_required"
+    )
+    assert app._events_by_run_id[run_id] == events_before
+    assert app.pending_accepted_run_ids() == pending_before
+    assert queue.get(ticket_id).contract() == ticket_before
+
+
 def test_ticketed_server_reserves_run_id_before_concurrent_compilation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -177,6 +231,7 @@ def test_ticketed_server_reserves_run_id_before_concurrent_compilation(
     )
     app = GraphBlocksServerApp(
         allow_unauthenticated_dev=True,
+        allow_process_local_accepted_runs_dev=True,
         admission_ticket_queue=queue,
         admission_clock=lambda: 0,
     )
@@ -263,6 +318,7 @@ def test_ticketed_server_releases_compile_reservation_when_queue_is_full(
     )
     app = GraphBlocksServerApp(
         allow_unauthenticated_dev=True,
+        allow_process_local_accepted_runs_dev=True,
         admission_ticket_queue=queue,
         admission_clock=lambda: 0,
     )
@@ -325,6 +381,7 @@ def test_ticketed_server_scopes_replay_subject_by_tenant(
             }
         ),
         allow_unsafe_multi_tenant_dev=True,
+        allow_process_local_accepted_runs_dev=True,
         admission_ticket_queue=queue,
         admission_clock=lambda: 0,
     )
@@ -428,6 +485,7 @@ def test_executor_never_runs_more_blocks_than_ticket_capacity() -> None:
     with ThreadPoolExecutor(max_workers=2) as executor:
         app = GraphBlocksServerApp(
             allow_unauthenticated_dev=True,
+            allow_process_local_accepted_runs_dev=True,
             registry=registry,
             accepted_run_executor=executor,
             admission_ticket_queue=queue,
@@ -464,6 +522,7 @@ def test_cancelling_queued_ticket_never_executes_it() -> None:
     )
     app = GraphBlocksServerApp(
         allow_unauthenticated_dev=True,
+        allow_process_local_accepted_runs_dev=True,
         admission_ticket_queue=queue,
         admission_clock=lambda: 0,
     )
@@ -502,6 +561,7 @@ def test_maintenance_expires_queued_run_without_starting_it() -> None:
     )
     app = GraphBlocksServerApp(
         allow_unauthenticated_dev=True,
+        allow_process_local_accepted_runs_dev=True,
         admission_ticket_queue=queue,
         admission_clock=lambda: clock[0],
     )

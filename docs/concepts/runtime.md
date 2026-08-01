@@ -39,6 +39,10 @@ identity fences, journal-before-resume ordering, and renewed policy, budget,
 release, and ownership admission. `GraphBlocksServerApp` defines a
 framework-neutral request/response contract rather than binding a network
 socket. Its checkpoint continuation is process-local and is not restart-durable.
+Accepted and background requests, plus synchronous graphs whose
+`async.await_callback@1` node enables checkpointing, therefore fail closed by
+default. Only explicit local development may set
+`allow_process_local_accepted_runs_dev=True`.
 The separate preview `DurableAcceptedRunServerApp` stores accepted runs,
 cursor events, callback continuation, cancellation, expiration, and
 pause/resume controls, fencing state, and completion effects through a durable

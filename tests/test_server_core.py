@@ -213,6 +213,62 @@ def _server_capacity_graph() -> dict[str, object]:
     }
 
 
+def _server_callback_wait_graph(
+    run_id: str,
+    *,
+    checkpoint: bool = True,
+) -> dict[str, object]:
+    idempotency_key = f"operation-idempotency-{run_id}"
+    callback_schema = "schemas/CICallback@1"
+    resume = {
+        "requirePolicyReevaluation": True,
+        "requireBudgetReservation": True,
+        "requireReleaseCompatibility": True,
+        "requireOwnershipFence": True,
+    }
+    return {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "server-sync-callback-wait"},
+        "spec": {
+            "nodes": {
+                "start": {
+                    "block": "async.start_operation@1",
+                    "config": {
+                        "operationId": f"operation-{run_id}",
+                        "runId": run_id,
+                        "nodeId": "start",
+                        "attemptId": "attempt-1",
+                        "kind": "ci_job",
+                        "providerOperationId": f"provider-{run_id}",
+                        "resumeTokenHash": "sha256:" + "a" * 64,
+                        "idempotencyKey": idempotency_key,
+                        "expectedSchema": callback_schema,
+                        "createdAtUnixMs": 1_750_000_000_000,
+                        "submittedAtUnixMs": 1_750_000_001_000,
+                        "timeoutMs": 100_000,
+                        "resume": resume,
+                        "attemptFencing": True,
+                    },
+                },
+                "wait": {
+                    "block": "async.await_callback@1",
+                    "inputs": {"operation": "start.operation"},
+                    "config": {
+                        "checkpoint": checkpoint,
+                        "onTimeout": "fail",
+                        "timeoutMs": 100_000,
+                        "idempotencyKey": idempotency_key,
+                        "callback": {"schema": callback_schema},
+                        "resume": resume,
+                        "attemptFencing": True,
+                    },
+                },
+            }
+        },
+    }
+
+
 def _invoke_capacity_run(
     app: GraphBlocksServerApp,
     *,
@@ -2579,6 +2635,7 @@ def test_server_app_rejects_cross_tenant_run_controls_atomically() -> None:
         ),
         allow_unsafe_multi_tenant_dev=True,
         defer_accepted_runs=True,
+        allow_process_local_accepted_runs_dev=True,
     )
     graph = {
         "apiVersion": "graphblocks.ai/v1alpha3",
@@ -3500,8 +3557,207 @@ def test_server_app_accepts_request_json_at_the_nesting_limit() -> None:
     }
 
 
+@pytest.mark.parametrize("response_mode", ("accepted", "background"))
+def test_server_app_rejects_process_local_accepted_runs_by_default(
+    response_mode: str,
+) -> None:
+    app = GraphBlocksServerApp(
+        auth_hook=StaticBearerAuthHook(
+            {"token-1": PrincipalRef("user-1")}
+        )
+    )
+
+    response = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "graph": {},
+                    "runId": "run-volatile-rejected-1",
+                    "responseMode": response_mode,
+                }
+            ).encode("utf-8"),
+        )
+    )
+
+    assert response.status_code == 503
+    assert json.loads(response.body.decode("utf-8")) == {
+        "ok": False,
+        "reasonCode": "server.durable_accepted_run_required",
+        "error": (
+            "restart-durable run continuation requires "
+            "DurableAcceptedRunServerApp; set "
+            "allow_process_local_accepted_runs_dev=True only for process-local "
+            "development"
+        ),
+    }
+    assert app.pending_accepted_run_ids() == ()
+    assert app._events_by_run_id == {}
+    assert app._run_authorization_by_run_id == {}
+    assert app._accepted_run_reservations_by_run_id == {}
+    assert app._accepted_run_executions_by_run_id == {}
+    assert app._accepted_run_results_by_run_id == {}
+    assert app._admission_ticket_ids_by_run_id == {}
+
+
+def test_server_app_rejects_sync_callback_continuation_by_default() -> None:
+    run_id = "run-sync-callback-rejected-1"
+    app = GraphBlocksServerApp(
+        auth_hook=StaticBearerAuthHook(
+            {"token-1": PrincipalRef("user-1")}
+        )
+    )
+
+    response = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "graph": _server_callback_wait_graph(run_id),
+                    "runId": run_id,
+                    "responseMode": "sync",
+                }
+            ).encode("utf-8"),
+        )
+    )
+
+    assert response.status_code == 503
+    assert json.loads(response.body.decode("utf-8"))["reasonCode"] == (
+        "server.durable_accepted_run_required"
+    )
+    assert app.pending_accepted_run_ids() == ()
+    assert app._events_by_run_id == {}
+    assert app._run_authorization_by_run_id == {}
+    assert app._accepted_run_reservations_by_run_id == {}
+    assert app._accepted_run_executions_by_run_id == {}
+    assert app._accepted_run_results_by_run_id == {}
+    assert app._admission_ticket_ids_by_run_id == {}
+
+
+def test_server_app_allows_sync_callback_continuation_in_explicit_dev_mode() -> None:
+    run_id = "run-sync-callback-dev-1"
+    app = GraphBlocksServerApp(
+        auth_hook=StaticBearerAuthHook(
+            {"token-1": PrincipalRef("user-1")}
+        ),
+        allow_process_local_accepted_runs_dev=True,
+    )
+
+    response = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "graph": _server_callback_wait_graph(run_id),
+                    "runId": run_id,
+                    "responseMode": "sync",
+                }
+            ).encode("utf-8"),
+        )
+    )
+
+    assert response.status_code == 200
+    assert json.loads(response.body.decode("utf-8"))["status"] == (
+        "waiting_callback"
+    )
+    assert app.pending_accepted_run_ids() == (run_id,)
+
+
+def test_server_app_allows_sync_non_checkpoint_callback_by_default() -> None:
+    run_id = "run-sync-callback-no-checkpoint-1"
+    app = GraphBlocksServerApp(
+        auth_hook=StaticBearerAuthHook(
+            {"token-1": PrincipalRef("user-1")}
+        )
+    )
+
+    response = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "graph": _server_callback_wait_graph(
+                        run_id,
+                        checkpoint=False,
+                    ),
+                    "runId": run_id,
+                    "responseMode": "sync",
+                }
+            ).encode("utf-8"),
+        )
+    )
+
+    assert response.status_code == 200
+    assert json.loads(response.body.decode("utf-8"))["status"] == "succeeded"
+    assert app.pending_accepted_run_ids() == ()
+
+
+def test_server_app_fails_callback_handler_checkpoint_escalation() -> None:
+    run_id = "run-sync-callback-escalation-1"
+    app = GraphBlocksServerApp(
+        auth_hook=StaticBearerAuthHook(
+            {"token-1": PrincipalRef("user-1")}
+        )
+    )
+    original_wait = app.registry.resolve("async.await_callback@1")
+
+    def escalate_checkpoint(inputs, config, context):
+        config["checkpoint"] = True
+        return original_wait(inputs, config, context)
+
+    app.registry.replace(
+        "async.await_callback@1",
+        escalate_checkpoint,
+    )
+
+    response = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "graph": _server_callback_wait_graph(
+                        run_id,
+                        checkpoint=False,
+                    ),
+                    "runId": run_id,
+                    "responseMode": "sync",
+                }
+            ).encode("utf-8"),
+        )
+    )
+
+    assert response.status_code == 200
+    assert json.loads(response.body.decode("utf-8"))["status"] == "failed"
+    assert app.pending_accepted_run_ids() == ()
+
+
 def test_server_app_accepted_invoke_returns_replayable_run_handle() -> None:
-    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+    app = GraphBlocksServerApp(
+        auth_hook=StaticBearerAuthHook(
+            {"token-1": PrincipalRef("user-1")}
+        ),
+        allow_process_local_accepted_runs_dev=True,
+    )
     graph = {
         "apiVersion": "graphblocks.ai/v1alpha3",
         "kind": "Graph",
@@ -3576,6 +3832,7 @@ def test_server_app_deferred_accepted_run_outlives_detach_and_replays_completion
     app = GraphBlocksServerApp(
         auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}),
         defer_accepted_runs=True,
+        allow_process_local_accepted_runs_dev=True,
     )
     graph = {
         "apiVersion": "graphblocks.ai/v1alpha3",
@@ -3715,6 +3972,7 @@ def test_server_app_fails_closed_without_retaining_oversized_run_results() -> No
     app = GraphBlocksServerApp(
         allow_unauthenticated_dev=True,
         defer_accepted_runs=True,
+        allow_process_local_accepted_runs_dev=True,
         max_accepted_run_runtime_state_bytes=1,
     )
 
@@ -3760,6 +4018,7 @@ def test_server_app_accepts_run_result_at_retained_byte_limit() -> None:
     app = GraphBlocksServerApp(
         allow_unauthenticated_dev=True,
         defer_accepted_runs=True,
+        allow_process_local_accepted_runs_dev=True,
         max_accepted_run_runtime_state_bytes=result_limit,
     )
 
@@ -3792,6 +4051,7 @@ def test_server_app_fails_closed_without_retaining_oversized_checkpoints() -> No
     app = GraphBlocksServerApp(
         allow_unauthenticated_dev=True,
         defer_accepted_runs=True,
+        allow_process_local_accepted_runs_dev=True,
         max_accepted_run_runtime_state_bytes=1,
     )
     accepted = _invoke_capacity_run(
@@ -3860,6 +4120,7 @@ def test_server_app_counts_waiting_checkpoint_state_once() -> None:
     app = GraphBlocksServerApp(
         allow_unauthenticated_dev=True,
         defer_accepted_runs=True,
+        allow_process_local_accepted_runs_dev=True,
         max_accepted_run_runtime_state_bytes=checkpoint_limit,
     )
     accepted = _invoke_capacity_run(
@@ -3900,6 +4161,7 @@ def test_server_app_does_not_retain_oversized_waiting_journal() -> None:
     app = GraphBlocksServerApp(
         allow_unauthenticated_dev=True,
         defer_accepted_runs=True,
+        allow_process_local_accepted_runs_dev=True,
         max_accepted_run_runtime_state_bytes=512,
     )
     accepted = _invoke_capacity_run(
@@ -3958,6 +4220,7 @@ def test_server_app_executor_advances_accepted_run_after_client_detach() -> None
             allow_unauthenticated_dev=True,
             registry=registry,
             defer_accepted_runs=True,
+            allow_process_local_accepted_runs_dev=True,
             accepted_run_executor=executor,
         )
         accepted = app.handle(
@@ -4160,6 +4423,7 @@ def test_server_app_executor_resumes_authenticated_callback_checkpoint_once() ->
             auth_hook=auth_hook,
             require_async_callback_authentication=True,
             defer_accepted_runs=True,
+            allow_process_local_accepted_runs_dev=True,
             accepted_run_executor=executor,
             async_callback_resume_admission_hook=AllowResume(),
         )
@@ -4333,6 +4597,7 @@ def test_server_app_rejects_callback_before_wait_checkpoint_is_published() -> No
         ),
         require_async_callback_authentication=True,
         defer_accepted_runs=True,
+        allow_process_local_accepted_runs_dev=True,
     )
     accepted = app.handle(
         ServerRequest(
@@ -4437,6 +4702,7 @@ def test_server_app_requires_receipt_for_manual_resume_and_preserves_rejected_di
         ),
         require_async_callback_authentication=True,
         defer_accepted_runs=True,
+        allow_process_local_accepted_runs_dev=True,
         async_callback_resume_admission_hook=AllowResume(),
     )
     graph = {
@@ -4763,6 +5029,7 @@ def test_server_app_clears_callback_receipt_before_sequential_wait() -> None:
         ),
         require_async_callback_authentication=True,
         defer_accepted_runs=True,
+        allow_process_local_accepted_runs_dev=True,
         async_callback_resume_admission_hook=AllowResume(),
     )
     accepted = app.handle(
@@ -4923,6 +5190,7 @@ def test_server_app_executor_rejection_does_not_leave_ghost_run() -> None:
     app = GraphBlocksServerApp(
         allow_unauthenticated_dev=True,
         defer_accepted_runs=True,
+        allow_process_local_accepted_runs_dev=True,
         accepted_run_executor=RejectingExecutor(),
     )
 
@@ -4972,6 +5240,7 @@ def test_server_app_executor_rejection_never_exposes_provisional_run() -> None:
     app = GraphBlocksServerApp(
         allow_unauthenticated_dev=True,
         defer_accepted_runs=True,
+        allow_process_local_accepted_runs_dev=True,
         accepted_run_executor=BlockingRejector(),
     )
     request = ServerRequest(
@@ -5038,6 +5307,7 @@ def test_server_app_rejects_inline_executor_without_deadlocking_admission() -> N
     app = GraphBlocksServerApp(
         allow_unauthenticated_dev=True,
         defer_accepted_runs=True,
+        allow_process_local_accepted_runs_dev=True,
         accepted_run_executor=InlineExecutor(),
     )
     finished = Event()
@@ -5092,6 +5362,7 @@ def test_server_app_executor_resubmits_pending_run_after_resume() -> None:
         app = GraphBlocksServerApp(
             allow_unauthenticated_dev=True,
             defer_accepted_runs=True,
+            allow_process_local_accepted_runs_dev=True,
             accepted_run_executor=executor,
         )
         app.handle(
@@ -5155,7 +5426,11 @@ def test_server_app_executor_resubmits_pending_run_after_resume() -> None:
 
 
 def test_server_app_deferred_accepted_completion_is_idempotent() -> None:
-    app = GraphBlocksServerApp(allow_unauthenticated_dev=True, defer_accepted_runs=True)
+    app = GraphBlocksServerApp(
+        allow_unauthenticated_dev=True,
+        defer_accepted_runs=True,
+        allow_process_local_accepted_runs_dev=True,
+    )
     graph = {
         "apiVersion": "graphblocks.ai/v1alpha3",
         "kind": "Graph",
@@ -5206,7 +5481,11 @@ def test_server_app_terminal_control_stops_deferred_run_before_execution(
     terminal_state: str,
 ) -> None:
     run_id = f"run-deferred-{operation}-1"
-    app = GraphBlocksServerApp(allow_unauthenticated_dev=True, defer_accepted_runs=True)
+    app = GraphBlocksServerApp(
+        allow_unauthenticated_dev=True,
+        defer_accepted_runs=True,
+        allow_process_local_accepted_runs_dev=True,
+    )
     app.handle(
         ServerRequest(
             method="POST",
@@ -5334,6 +5613,7 @@ def test_server_app_deferred_advance_is_fenced_against_concurrent_execution() ->
         allow_unauthenticated_dev=True,
         registry=registry,
         defer_accepted_runs=True,
+        allow_process_local_accepted_runs_dev=True,
     )
     app.handle(
         ServerRequest(
@@ -5389,7 +5669,11 @@ def test_server_app_deferred_advance_is_fenced_against_concurrent_execution() ->
 
 
 def test_server_app_deferred_completion_uses_monotonic_cursor_and_stable_result() -> None:
-    app = GraphBlocksServerApp(allow_unauthenticated_dev=True, defer_accepted_runs=True)
+    app = GraphBlocksServerApp(
+        allow_unauthenticated_dev=True,
+        defer_accepted_runs=True,
+        allow_process_local_accepted_runs_dev=True,
+    )
     app.handle(
         ServerRequest(
             method="POST",
@@ -5488,6 +5772,7 @@ def test_server_app_serializes_callback_and_terminal_event_append() -> None:
         allow_unauthenticated_dev=True,
         registry=registry,
         defer_accepted_runs=True,
+        allow_process_local_accepted_runs_dev=True,
     )
     app.handle(
         ServerRequest(
@@ -5582,6 +5867,7 @@ def test_server_app_rechecks_terminal_state_before_accepting_callback() -> None:
     app = SnapshotBlockingServerApp(
         allow_unauthenticated_dev=True,
         defer_accepted_runs=True,
+        allow_process_local_accepted_runs_dev=True,
     )
     app.handle(
         ServerRequest(
@@ -5645,7 +5931,11 @@ def test_server_app_rechecks_terminal_state_before_accepting_callback() -> None:
 
 
 def test_server_app_deferred_advance_waits_for_resume_after_pause() -> None:
-    app = GraphBlocksServerApp(allow_unauthenticated_dev=True, defer_accepted_runs=True)
+    app = GraphBlocksServerApp(
+        allow_unauthenticated_dev=True,
+        defer_accepted_runs=True,
+        allow_process_local_accepted_runs_dev=True,
+    )
     app.handle(
         ServerRequest(
             method="POST",
@@ -5734,7 +6024,10 @@ def test_server_app_records_runtime_exception_as_terminal_failure(
     expected_status_code: int,
 ) -> None:
     run_id = f"run-runtime-exception-{response_mode}"
-    app = GraphBlocksServerApp(allow_unauthenticated_dev=True)
+    app = GraphBlocksServerApp(
+        allow_unauthenticated_dev=True,
+        allow_process_local_accepted_runs_dev=True,
+    )
     response = app.handle(
         ServerRequest(
             method="POST",
@@ -5796,6 +6089,7 @@ def test_server_app_records_non_json_runtime_output_without_reexecution() -> Non
         allow_unauthenticated_dev=True,
         registry=registry,
         defer_accepted_runs=True,
+        allow_process_local_accepted_runs_dev=True,
     )
     app.handle(
         ServerRequest(
@@ -5863,6 +6157,7 @@ def test_server_app_cancel_during_deferred_execution_remains_authoritative() -> 
         allow_unauthenticated_dev=True,
         registry=registry,
         defer_accepted_runs=True,
+        allow_process_local_accepted_runs_dev=True,
     )
     app.handle(
         ServerRequest(
@@ -5942,6 +6237,7 @@ def test_server_app_cancel_wakes_duplicate_advance_before_worker_exits() -> None
         allow_unauthenticated_dev=True,
         registry=registry,
         defer_accepted_runs=True,
+        allow_process_local_accepted_runs_dev=True,
     )
     app.handle(
         ServerRequest(
@@ -6008,7 +6304,11 @@ def test_server_app_cancel_wakes_duplicate_advance_before_worker_exits() -> None
 
 
 def test_server_app_terminal_control_rejects_timestamp_before_deferred_run_start() -> None:
-    app = GraphBlocksServerApp(allow_unauthenticated_dev=True, defer_accepted_runs=True)
+    app = GraphBlocksServerApp(
+        allow_unauthenticated_dev=True,
+        defer_accepted_runs=True,
+        allow_process_local_accepted_runs_dev=True,
+    )
     app.handle(
         ServerRequest(
             method="POST",
@@ -6054,7 +6354,11 @@ def test_server_app_terminal_control_rejects_timestamp_before_deferred_run_start
 
 
 def test_server_app_deferred_accepted_run_rejects_completion_before_start() -> None:
-    app = GraphBlocksServerApp(allow_unauthenticated_dev=True, defer_accepted_runs=True)
+    app = GraphBlocksServerApp(
+        allow_unauthenticated_dev=True,
+        defer_accepted_runs=True,
+        allow_process_local_accepted_runs_dev=True,
+    )
     app.handle(
         ServerRequest(
             method="POST",
@@ -6095,8 +6399,24 @@ def test_server_app_validates_deferred_accepted_runs_flag() -> None:
         GraphBlocksServerApp(allow_unauthenticated_dev=True, defer_accepted_runs="yes")  # type: ignore[arg-type]
 
 
+def test_server_app_validates_process_local_accepted_runs_dev_flag() -> None:
+    with pytest.raises(
+        ValueError,
+        match="server allow_process_local_accepted_runs_dev must be a boolean",
+    ):
+        GraphBlocksServerApp(
+            allow_unauthenticated_dev=True,
+            allow_process_local_accepted_runs_dev="yes",  # type: ignore[arg-type]
+        )
+
+
 def test_server_app_accepted_invoke_encodes_run_handle_route_links() -> None:
-    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+    app = GraphBlocksServerApp(
+        auth_hook=StaticBearerAuthHook(
+            {"token-1": PrincipalRef("user-1")}
+        ),
+        allow_process_local_accepted_runs_dev=True,
+    )
     graph = {
         "apiVersion": "graphblocks.ai/v1alpha3",
         "kind": "Graph",
@@ -6165,7 +6485,12 @@ def test_server_app_rejects_invoke_graph_whitespace_wrapped_metadata(
     field_value: object,
     expected_error: str,
 ) -> None:
-    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+    app = GraphBlocksServerApp(
+        auth_hook=StaticBearerAuthHook(
+            {"token-1": PrincipalRef("user-1")}
+        ),
+        allow_process_local_accepted_runs_dev=True,
+    )
     graph = {
         "apiVersion": "graphblocks.ai/v1alpha3",
         "kind": "Graph",
@@ -6297,6 +6622,7 @@ def test_server_app_applies_in_memory_run_capacity_before_new_admission(
     app = GraphBlocksServerApp(
         allow_unauthenticated_dev=True,
         defer_accepted_runs=True,
+        allow_process_local_accepted_runs_dev=True,
         max_in_memory_runs=1,
     )
     first = _invoke_capacity_run(
@@ -6367,6 +6693,7 @@ def test_server_app_reserves_run_id_before_concurrent_graph_compilation(
     app = GraphBlocksServerApp(
         allow_unauthenticated_dev=True,
         defer_accepted_runs=True,
+        allow_process_local_accepted_runs_dev=True,
     )
     run_id = f"run-compile-reservation-{response_mode}"
 
@@ -6445,6 +6772,7 @@ def test_server_app_hides_compile_reservation_from_other_owner(
             }
         ),
         defer_accepted_runs=True,
+        allow_process_local_accepted_runs_dev=True,
     )
 
     with ThreadPoolExecutor(max_workers=1) as request_executor:
@@ -6506,6 +6834,7 @@ def test_server_app_rejects_stale_worker_after_compile_reservation_retry(
     app = GraphBlocksServerApp(
         allow_unauthenticated_dev=True,
         defer_accepted_runs=True,
+        allow_process_local_accepted_runs_dev=True,
         accepted_run_executor=executor,
     )
     original_record_authorization = (
@@ -6610,6 +6939,7 @@ def test_server_app_counts_compile_reservation_against_capacity(
         ),
         allow_unauthenticated_dev=not tenant_scoped,
         defer_accepted_runs=True,
+        allow_process_local_accepted_runs_dev=True,
         max_in_memory_runs=2 if tenant_scoped else 1,
         max_in_memory_runs_per_tenant=1,
     )
@@ -6662,6 +6992,7 @@ def test_server_app_releases_compile_reservation_after_failure(
     app = GraphBlocksServerApp(
         allow_unauthenticated_dev=True,
         defer_accepted_runs=True,
+        allow_process_local_accepted_runs_dev=True,
         max_in_memory_runs=1,
     )
 
@@ -6698,6 +7029,7 @@ def test_server_app_isolates_in_memory_run_capacity_by_tenant(
         ),
         allow_unsafe_multi_tenant_dev=True,
         defer_accepted_runs=True,
+        allow_process_local_accepted_runs_dev=True,
         max_in_memory_runs=3,
         max_in_memory_runs_per_tenant=1,
     )
@@ -6779,6 +7111,7 @@ def test_server_app_counts_inflight_executor_reservation_against_tenant_quota() 
             }
         ),
         defer_accepted_runs=True,
+        allow_process_local_accepted_runs_dev=True,
         accepted_run_executor=BlockingAcceptedExecutor(),
         max_in_memory_runs=2,
         max_in_memory_runs_per_tenant=1,
@@ -6830,6 +7163,7 @@ def test_server_app_releases_tenant_reservation_after_executor_failure() -> None
             }
         ),
         defer_accepted_runs=True,
+        allow_process_local_accepted_runs_dev=True,
         accepted_run_executor=FailingAcceptedExecutor(),
         max_in_memory_runs=1,
         max_in_memory_runs_per_tenant=1,
@@ -6862,6 +7196,7 @@ def test_server_app_deletes_only_owner_visible_terminal_runs_and_reclaims_capaci
             }
         ),
         allow_unsafe_multi_tenant_dev=True,
+        allow_process_local_accepted_runs_dev=True,
         max_in_memory_runs=1,
         max_in_memory_runs_per_tenant=1,
         max_retired_run_tombstones=2,
@@ -6963,6 +7298,7 @@ def test_server_app_rejects_deletion_while_run_is_non_terminal() -> None:
             }
         ),
         defer_accepted_runs=True,
+        allow_process_local_accepted_runs_dev=True,
     )
     accepted = _invoke_capacity_run(
         app,
@@ -6995,6 +7331,7 @@ def test_server_app_terminal_deletion_cleans_run_scoped_state_and_bounds_tombsto
     principal = PrincipalRef("alice", tenant_id="tenant-a")
     app = GraphBlocksServerApp(
         auth_hook=StaticBearerAuthHook({"alice-token": principal}),
+        allow_process_local_accepted_runs_dev=True,
         max_retired_run_tombstones=1,
     )
     first_run_id = "run-delete-cleanup-1"
@@ -14015,7 +14352,12 @@ def test_server_app_rejects_impossible_ordered_event_subscription_delivery() -> 
 
 
 def test_server_app_subscribes_from_accepted_run_initial_cursor() -> None:
-    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+    app = GraphBlocksServerApp(
+        auth_hook=StaticBearerAuthHook(
+            {"token-1": PrincipalRef("user-1")}
+        ),
+        allow_process_local_accepted_runs_dev=True,
+    )
     graph = {
         "apiVersion": "graphblocks.ai/v1alpha3",
         "kind": "Graph",
@@ -17350,7 +17692,12 @@ def test_server_app_rejects_callback_revoke_from_same_principal_different_tenant
 
 
 def test_server_app_registers_callback_projection_from_accepted_run_initial_cursor() -> None:
-    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+    app = GraphBlocksServerApp(
+        auth_hook=StaticBearerAuthHook(
+            {"token-1": PrincipalRef("user-1")}
+        ),
+        allow_process_local_accepted_runs_dev=True,
+    )
     graph = {
         "apiVersion": "graphblocks.ai/v1alpha3",
         "kind": "Graph",

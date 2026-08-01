@@ -153,6 +153,15 @@ DEFAULT_MAX_EVENT_ACK_HISTORY_BYTES_PER_SUBSCRIPTION = 1024 * 1024
 DEFAULT_MAX_CALLBACK_OPERATION_HISTORIES = 4_096
 DEFAULT_MAX_CALLBACK_SUBMISSION_HISTORY_BYTES = 64 * 1024 * 1024
 DEFAULT_MAX_ASYNC_CALLBACK_REJECTION_HISTORY_BYTES = 4 * 1024 * 1024
+_DURABLE_ACCEPTED_RUN_REQUIRED_REASON_CODE = (
+    "server.durable_accepted_run_required"
+)
+_DURABLE_ACCEPTED_RUN_REQUIRED_ERROR = (
+    "restart-durable run continuation requires "
+    "DurableAcceptedRunServerApp; set "
+    "allow_process_local_accepted_runs_dev=True only for process-local "
+    "development"
+)
 DEFAULT_MAX_OPTIONAL_CALLBACK_DIAGNOSTIC_EVENTS_PER_RUN = 256
 DEFAULT_MAX_OPTIONAL_CALLBACK_DIAGNOSTIC_HISTORY_BYTES_PER_RUN = 1024 * 1024
 DEFAULT_MAX_CALLBACK_REGISTRATIONS = 4_096
@@ -3443,6 +3452,7 @@ class GraphBlocksServerApp:
     max_async_callback_rejection_history_bytes: int = (
         DEFAULT_MAX_ASYNC_CALLBACK_REJECTION_HISTORY_BYTES
     )
+    allow_process_local_accepted_runs_dev: bool = False
     _effective_reference_tenant_id: str | None = field(
         default=None,
         init=False,
@@ -3762,6 +3772,14 @@ class GraphBlocksServerApp:
             raise ValueError("server anti_enumerate_async_callbacks must be a boolean")
         if not isinstance(self.defer_accepted_runs, bool):
             raise ValueError("server defer_accepted_runs must be a boolean")
+        if not isinstance(
+            self.allow_process_local_accepted_runs_dev,
+            bool,
+        ):
+            raise ValueError(
+                "server allow_process_local_accepted_runs_dev must be a "
+                "boolean"
+            )
         if self.admission_ticket_queue is not None and not isinstance(
             self.admission_ticket_queue,
             AdmissionTicketQueue,
@@ -4914,6 +4932,20 @@ class GraphBlocksServerApp:
                     if auth_decision.principal is not None
                     else None
                 )
+                if (
+                    response_mode in {"accepted", "background"}
+                    and not self.allow_process_local_accepted_runs_dev
+                ):
+                    return ServerResponse.json(
+                        503,
+                        {
+                            "ok": False,
+                            "reasonCode": (
+                                _DURABLE_ACCEPTED_RUN_REQUIRED_REASON_CODE
+                            ),
+                            "error": _DURABLE_ACCEPTED_RUN_REQUIRED_ERROR,
+                        },
+                    )
                 if run_id in self._events_by_run_id:
                     if not self._principal_can_access_run(
                         run_id,
@@ -5219,6 +5251,48 @@ class GraphBlocksServerApp:
                             f"{item.code} {item.path}: {item.message}"
                             for item in plan_errors
                         )
+                    )
+                normalized_spec = plan.normalized.get("spec")
+                normalized_nodes = (
+                    normalized_spec.get("nodes")
+                    if isinstance(normalized_spec, Mapping)
+                    else None
+                )
+                requires_durable_sync_continuation = False
+                if (
+                    response_mode == "sync"
+                    and not self.allow_process_local_accepted_runs_dev
+                    and isinstance(normalized_nodes, Mapping)
+                ):
+                    for node in normalized_nodes.values():
+                        if (
+                            not isinstance(node, Mapping)
+                            or node.get("block")
+                            != "async.await_callback@1"
+                        ):
+                            continue
+                        callback_wait_config = node.get("config")
+                        if (
+                            isinstance(callback_wait_config, Mapping)
+                            and callback_wait_config.get(
+                                "checkpoint",
+                                True,
+                            )
+                            is False
+                        ):
+                            continue
+                        requires_durable_sync_continuation = True
+                        break
+                if requires_durable_sync_continuation:
+                    return ServerResponse.json(
+                        503,
+                        {
+                            "ok": False,
+                            "reasonCode": (
+                                _DURABLE_ACCEPTED_RUN_REQUIRED_REASON_CODE
+                            ),
+                            "error": _DURABLE_ACCEPTED_RUN_REQUIRED_ERROR,
+                        },
                     )
                 frozen_start_event: Mapping[str, object] | None = None
                 if not ticketed_admission:

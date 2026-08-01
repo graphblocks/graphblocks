@@ -230,7 +230,14 @@ machine-readable errors.
 If no executor is available, a valid receipt remains recorded and the run may
 project a paused callback-delivery state for explicit retry. The process-local
 `GraphBlocksServerApp` retains checkpoints and executors in process; this
-continuation does not survive process restart. The preview
+continuation does not survive process restart. Consequently, its accepted and
+background modes, and synchronous graphs whose `async.await_callback@1` node
+has checkpointing enabled, are disabled unless local development explicitly
+sets `allow_process_local_accepted_runs_dev=True`; the default response is
+`503` with `server.durable_accepted_run_required`. After rejection, no new run,
+event, checkpoint, or admission-ticket state associated with that invocation
+remains. Runtime implementations reject callback-handler output whose
+checkpoint decision disagrees with the graph configuration. The preview
 `DurableAcceptedRunServerApp` instead delegates accepted runs, events,
 checkpoints, callback inbox/outbox state, and idempotent cancellation,
 expiration, pause, and resume controls to `AcceptedRunRepository`; its SQLite

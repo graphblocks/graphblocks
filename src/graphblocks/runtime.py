@@ -2178,6 +2178,13 @@ class InProcessRuntime:
                         str(effect) for effect in effects
                     }:
                         max_attempts = 1
+                configured_callback_checkpoint: object = True
+                if block_id == "async.await_callback@1":
+                    callback_wait_config = node.get("config", {})
+                    if isinstance(callback_wait_config, Mapping):
+                        configured_callback_checkpoint = (
+                            callback_wait_config.get("checkpoint", True)
+                        )
                 result: dict[str, Any] | None = None
                 for attempt in range(1, max_attempts + 1):
                     started_payload: dict[str, Any] = {
@@ -2270,6 +2277,17 @@ class InProcessRuntime:
                                 raise TypeError(
                                     f"{block_id} omitted required output(s): "
                                     + ", ".join(missing_outputs)
+                                )
+                        if block_id == "async.await_callback@1":
+                            wait_descriptor = attempt_result.get("wait")
+                            if (
+                                isinstance(wait_descriptor, Mapping)
+                                and wait_descriptor.get("checkpoint")
+                                is not configured_callback_checkpoint
+                            ):
+                                raise TypeError(
+                                    "async.await_callback@1 returned checkpoint "
+                                    "inconsistent with config"
                                 )
                         result = attempt_result
                         break

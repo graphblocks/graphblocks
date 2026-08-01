@@ -246,8 +246,16 @@ execution. Process restart between admission, waiting, callback acceptance,
 resume, and terminal publication MUST preserve each observable transition.
 The process-local accepted-run mode in `GraphBlocksServerApp` is a bounded
 development/reference mode and MUST NOT be described as restart durable or as
-a multi-tenant run authority. It has one fixed `reference_tenant_id`; a
-single-tenant `StaticBearerAuthHook` may establish that value at construction,
+a multi-tenant run authority. It is disabled by default: `accepted` and
+`background` requests, plus synchronous graphs whose
+`async.await_callback@1` node has checkpointing enabled, return `503` with
+`server.durable_accepted_run_required`. After rejection, no new run, event,
+checkpoint, or admission-ticket state associated with that invocation remains.
+Reference-only tests and local development must opt in with
+`allow_process_local_accepted_runs_dev=True`; deployed services that accept
+resumable runs use `DurableAcceptedRunServerApp`. The reference app has one
+fixed `reference_tenant_id`; a single-tenant `StaticBearerAuthHook` may
+establish that value at construction,
 while custom authentication MUST configure it explicitly. A principal from
 another tenant is rejected before resource resolution or authorization. The
 effective boundary is fixed at construction and later configuration-field

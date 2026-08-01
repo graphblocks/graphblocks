@@ -3349,6 +3349,7 @@ def _exercise_coding_agent_background_callback(
         ),
         require_async_callback_authentication=True,
         defer_accepted_runs=True,
+        allow_process_local_accepted_runs_dev=True,
         async_callback_resume_admission_hook=TrustedResumeAdmission(),
     )
     accepted = app.handle(
