@@ -759,7 +759,46 @@ def _require_release_evidence(
     expected_acceptance: Mapping[str, object] | None = None,
     expected_compiler_artifact: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
-    if not isinstance(payload, dict) or payload.get("ok") is not True:
+    if not isinstance(payload, dict):
+        raise RuntimeError(f"installed {kind} evidence did not pass")
+    if payload.get("ok") is not True:
+        if kind == "TCK":
+            failure_labels: list[str] = []
+            failures_omitted = False
+            reports = payload.get("reports")
+            if isinstance(reports, Mapping):
+                for suite, report in reports.items():
+                    if not isinstance(suite, str) or not isinstance(report, Mapping):
+                        continue
+                    results = report.get("results")
+                    if not isinstance(results, list):
+                        continue
+                    for result in results:
+                        if not isinstance(result, Mapping) or result.get("status") == "passed":
+                            continue
+                        if len(failure_labels) == 20:
+                            failures_omitted = True
+                            break
+                        case_id = result.get("case_id")
+                        safe_suite = (
+                            re.sub(r"[^\x20-\x7e]", "?", suite)[:64]
+                            or "<invalid-suite>"
+                        )
+                        safe_case_id = (
+                            re.sub(r"[^\x20-\x7e]", "?", case_id)[:128]
+                            if isinstance(case_id, str) and case_id
+                            else "<invalid-case>"
+                        )
+                        failure_labels.append(f"{safe_suite}/{safe_case_id}")
+                    if failures_omitted:
+                        break
+            if failure_labels:
+                suffix = "; additional failures omitted" if failures_omitted else ""
+                raise RuntimeError(
+                    "installed TCK evidence did not pass; failing cases: "
+                    + "; ".join(failure_labels)
+                    + suffix
+                )
         raise RuntimeError(f"installed {kind} evidence did not pass")
     if kind == "TCK":
         reports = payload.get("reports")
@@ -1040,7 +1079,7 @@ def _run_json_command(
 ) -> dict[str, object]:
     completed = subprocess.run(
         command,
-        check=True,
+        check=False,
         cwd=cwd,
         env=env,
         capture_output=True,
@@ -1049,14 +1088,36 @@ def _run_json_command(
     try:
         payload = json.loads(completed.stdout, parse_float=Decimal)
     except json.JSONDecodeError as error:
+        if completed.returncode != 0:
+            raw_detail = (
+                completed.stderr
+                if isinstance(completed.stderr, str) and completed.stderr.strip()
+                else completed.stdout
+            )
+            detail = re.sub(
+                r"[^\x20-\x7e]",
+                "?",
+                " ".join(raw_detail[:2_000].split()),
+            )[:500]
+            detail_suffix = f": {detail}" if detail else ""
+            raise RuntimeError(
+                f"installed {kind} command exited with status "
+                f"{completed.returncode} without valid JSON{detail_suffix}"
+            ) from error
         raise RuntimeError(f"installed {kind} evidence is not valid JSON") from error
-    return _require_release_evidence(
+    validated = _require_release_evidence(
         payload,
         kind=kind,
         expected_tck=expected_tck,
         expected_acceptance=expected_acceptance,
         expected_compiler_artifact=expected_compiler_artifact,
     )
+    if completed.returncode != 0:
+        raise RuntimeError(
+            f"installed {kind} command exited with status {completed.returncode} "
+            "despite passing evidence"
+        )
+    return validated
 
 
 def release_evidence_expectations(root: Path = ROOT) -> dict[str, object]:

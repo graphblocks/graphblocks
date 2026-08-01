@@ -33,6 +33,26 @@ def _with_content_digest(module: ModuleType, payload: dict[str, object]) -> dict
     return payload
 
 
+def _patch_json_process(
+    monkeypatch: pytest.MonkeyPatch,
+    module: ModuleType,
+    *,
+    returncode: int,
+    stdout: str,
+    stderr: str = "",
+) -> None:
+    def run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        assert kwargs["check"] is False
+        return subprocess.CompletedProcess(
+            command,
+            returncode,
+            stdout=stdout,
+            stderr=stderr,
+        )
+
+    monkeypatch.setattr(module.subprocess, "run", run)
+
+
 def _write_mock_sdist(module: ModuleType, *, source_root: Path, output_root: Path) -> Path:
     project_bytes = (source_root / "pyproject.toml").read_bytes()
     project = module.tomllib.loads(project_bytes.decode("utf-8"))["project"]
@@ -369,14 +389,11 @@ def test_release_tck_expectations_validate_observed_suite_identity(
     conflicting["contentDigest"] = module.canonical_hash(
         {key: value for key, value in conflicting.items() if key != "contentDigest"}
     )
-    monkeypatch.setattr(
-        module.subprocess,
-        "run",
-        lambda command, **kwargs: subprocess.CompletedProcess(
-            command,
-            0,
-            stdout=module.canonical_dumps(conflicting),
-        ),
+    _patch_json_process(
+        monkeypatch,
+        module,
+        returncode=0,
+        stdout=module.canonical_dumps(conflicting),
     )
 
     with pytest.raises(RuntimeError, match="case_ids_digest"):
@@ -386,6 +403,124 @@ def test_release_tck_expectations_validate_observed_suite_identity(
             env={},
             kind="TCK",
             expected_tck=expected,
+        )
+
+
+def test_run_json_command_reports_bounded_failed_tck_cases(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    module = _load_wheelhouse_module()
+    payload = {
+        "ok": False,
+        "reports": {
+            "compiler": {
+                "ok": False,
+                "results": [
+                    {
+                        "case_id": (
+                            "\x1b[31mwindows\ncase-00"
+                            if index == 0
+                            else f"windows-case-{index:02d}"
+                        ),
+                        "status": "failed",
+                    }
+                    for index in range(22)
+                ],
+            }
+        },
+    }
+
+    _patch_json_process(
+        monkeypatch,
+        module,
+        returncode=1,
+        stdout=module.canonical_dumps(payload),
+    )
+
+    with pytest.raises(RuntimeError) as captured:
+        module._run_json_command(
+            ["graphblocks-tck", "run-all"],
+            cwd=tmp_path,
+            env={},
+            kind="TCK",
+        )
+
+    message = str(captured.value)
+    assert "compiler/?[31mwindows?case-00" in message
+    assert "compiler/windows-case-19" in message
+    assert "windows-case-20" not in message
+    assert "\x1b" not in message
+    assert "\n" not in message
+    assert message.endswith("additional failures omitted")
+
+
+def test_run_json_command_bounds_non_json_failure_message(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    module = _load_wheelhouse_module()
+    _patch_json_process(
+        monkeypatch,
+        module,
+        returncode=7,
+        stdout="",
+        stderr="\x1b[31mchild\nfailure\x00 " + ("detail " * 200) + "unbounded-tail",
+    )
+
+    with pytest.raises(RuntimeError) as captured:
+        module._run_json_command(
+            ["graphblocks-tck", "run-all"],
+            cwd=tmp_path,
+            env={},
+            kind="TCK",
+        )
+
+    message = str(captured.value)
+    assert "exited with status 7 without valid JSON" in message
+    assert "?[31mchild failure?" in message
+    assert "\x1b" not in message
+    assert "\n" not in message
+    assert "unbounded-tail" not in message
+    assert len(message) < 600
+
+
+def test_run_json_command_rejects_nonzero_exit_with_passing_evidence(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    module = _load_wheelhouse_module()
+    payload = _with_content_digest(
+        module,
+        {
+            "ok": True,
+            "reports": {
+                "schema": {
+                    "ok": True,
+                    "evidence": {
+                        "fixture_digest": "sha256:" + "a" * 64,
+                        "implementation": "graphblocks-python",
+                        "implementation_version": "0.1.0",
+                        "suite": "schema",
+                    },
+                    "results": [{"case_id": "schema-1", "status": "passed"}],
+                }
+            },
+        },
+    )
+    _patch_json_process(
+        monkeypatch,
+        module,
+        returncode=9,
+        stdout=module.canonical_dumps(payload),
+    )
+
+    with pytest.raises(RuntimeError, match="status 9 despite passing evidence"):
+        module._run_json_command(
+            ["graphblocks-tck", "run-all"],
+            cwd=tmp_path,
+            env={},
+            kind="TCK",
         )
 
 
@@ -548,14 +683,11 @@ def test_installed_tck_evidence_preserves_arbitrary_precision_json_numbers(
     }
     payload["contentDigest"] = module.canonical_hash(payload)
     stdout = module.canonical_dumps(payload)
-    monkeypatch.setattr(
-        module.subprocess,
-        "run",
-        lambda command, **kwargs: subprocess.CompletedProcess(
-            command,
-            0,
-            stdout=stdout,
-        ),
+    _patch_json_process(
+        monkeypatch,
+        module,
+        returncode=0,
+        stdout=stdout,
     )
 
     observed = module._run_json_command(
