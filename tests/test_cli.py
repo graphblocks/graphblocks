@@ -618,7 +618,9 @@ def test_lock_cli_emits_graph_hash_and_default_package_closure(tmp_path, capsys)
     assert payload["graph"]["graphHash"].startswith("sha256:")
     assert payload["graph"]["schemaVersion"] == "graphblocks.ai/v1"
     assert payload["packageLockHash"].startswith("sha256:")
-    assert payload["packageCatalogVersion"] == 6
+    assert payload["packageCatalogVersion"] == cli_module.load_package_catalog()[
+        "catalogVersion"
+    ]
     assert payload["artifacts"] == ["graphblocks"]
     assert "graphblocks-core" in {package["name"] for package in payload["packages"]}
 
