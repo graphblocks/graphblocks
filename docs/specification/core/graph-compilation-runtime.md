@@ -639,9 +639,13 @@ attempt and receipt as if they conveyed fresh send authority. If the local
 commit succeeds but its response is lost, a tenant-, run-, owner-, and
 effect-scoped observation API MAY exact-decode the persisted active attempt and
 receipt. The effect remains conservatively in `send_started`; the observation
-does not prove provider I/O occurred and MUST NOT authorize replay. This slice
-does not invoke an adapter, quarantine an ambiguous provider outcome, persist
-reconciliation evidence, settle an active attempt, or enable durable retry.
+does not prove provider I/O occurred and MUST NOT authorize replay. The
+structurally distinct claim authority MAY exact-verify that this same persisted
+attempt and receipt remain active, including after restart, so the core can
+authenticate reconciliation evidence without trusting caller state. This read
+does not persist evidence or change state. This slice does not invoke an
+adapter, quarantine an ambiguous provider outcome, persist reconciliation
+evidence, settle an active attempt, or enable durable retry.
 
 Existing operation-dispatch rows MUST NOT be migrated or reinterpreted as
 provider-effect intents because they do not contain this authority or evidence.

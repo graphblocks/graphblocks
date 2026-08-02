@@ -110,11 +110,14 @@ preparing the first 1.0 release candidate.
   registry prevents attempt identifiers from being reused after release,
   reclaim, or consumption. The opaque admission is never persisted, consumed
   admissions cannot be replayed as fresh send authority, and scoped restart
-  recovery exposes only the exact persisted attempt and receipt. Failpoints,
-  half-open expiry, concurrent release/consume, immutable identity reuse,
-  canonical corruption, and v9 migration rollback are covered. This local
-  authority boundary performs no provider I/O and does not establish
-  exactly-once delivery, outcome evidence, reconciliation, or durable retry.
+  recovery exposes only the exact persisted attempt and receipt. The claim
+  authority can also exact-verify that those records remain the repository's
+  active send for core evidence authentication, without persisting evidence or
+  changing state. Failpoints, half-open expiry, concurrent release/consume,
+  immutable identity reuse, canonical corruption, and v9 migration rollback are
+  covered. This local authority boundary performs no provider I/O and does not
+  establish exactly-once delivery, outcome evidence, reconciliation, or durable
+  retry.
 - Added a bounded CommonMark and GitHub-heading integrity checker, a closed
   generated-documentation registry with content-bound results, and an always-run
   fast documentation workflow plus named stable release gate.

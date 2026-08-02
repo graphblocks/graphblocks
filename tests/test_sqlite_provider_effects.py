@@ -23,11 +23,14 @@ from graphblocks.provider_effects import (
     ProviderEffectKind,
     ProviderEffectSendAttempt,
     ProviderEffectState,
+    ProviderReconciliationEvidence,
     ProviderReconciliationMethod,
+    ProviderReconciliationOutcome,
     ProviderRunAuthoritySnapshot,
     ProviderStatusLookup,
     admit_provider_effect_intent,
     begin_provider_effect_send,
+    validate_provider_reconciliation_evidence,
 )
 from graphblocks.server_storage import (
     AcceptedRunAdmission,
@@ -80,6 +83,23 @@ class _ReconciliationVerifier:
     verifier_id = "payments.receipt-verifier"
     verifier_release_digest = _VERIFIER_RELEASE_DIGEST
     verification_authority_digest = _VERIFICATION_AUTHORITY_DIGEST
+
+    @staticmethod
+    def verify(
+        *,
+        intent: ProviderEffectIntent,
+        capability: ProviderCapabilitySnapshot,
+        send_attempt: ProviderEffectSendAttempt,
+        evidence: ProviderReconciliationEvidence,
+    ) -> bool:
+        expected = {
+            "adapterReleaseDigest": capability.adapter_release_digest,
+            "effectId": intent.effect_id,
+            "method": evidence.method.value,
+            "outcome": evidence.outcome.value,
+            "sendAttemptDigest": send_attempt.digest,
+        }
+        return evidence.provider_evidence_json == canonical_dumps(expected)
 
 
 class _VerifierAuthority:
@@ -343,6 +363,39 @@ def _provider_admission(
         claim_expires_at_unix_ms=claim.claim_expires_at_unix_ms,
         admitted_at_unix_ms=claim.admitted_at_unix_ms,
         previous_send_attempt=work_item.effect.latest_send_attempt,
+    )
+
+
+def _provider_evidence(
+    work_item: ProviderEffectWorkItem,
+    send_attempt: ProviderEffectSendAttempt,
+    *,
+    outcome: ProviderReconciliationOutcome = ProviderReconciliationOutcome.COMMITTED,
+) -> ProviderReconciliationEvidence:
+    capability = work_item.effect.capability
+    provider_evidence = {
+        "adapterReleaseDigest": capability.adapter_release_digest,
+        "effectId": work_item.effect.intent.effect_id,
+        "method": ProviderReconciliationMethod.STATUS_LOOKUP.value,
+        "outcome": outcome.value,
+        "sendAttemptDigest": send_attempt.digest,
+    }
+    return ProviderReconciliationEvidence(
+        effect_id=work_item.effect.intent.effect_id,
+        intent_digest=work_item.effect.intent.digest,
+        capability_snapshot_digest=capability.digest,
+        send_attempt_digest=send_attempt.digest,
+        method=ProviderReconciliationMethod.STATUS_LOOKUP,
+        outcome=outcome,
+        provider_evidence_json=canonical_dumps(provider_evidence),
+        provider_evidence_digest=canonical_hash(provider_evidence),
+        verifier_id=capability.reconciliation_verifier_id,
+        verifier_release_digest=capability.reconciliation_verifier_release_digest,
+        verification_authority_digest=(
+            capability.reconciliation_verification_authority_digest
+        ),
+        observed_at_unix_ms=2_300,
+        provider_correlation_id=work_item.effect.intent.provider_correlation_id,
     )
 
 
@@ -1941,6 +1994,61 @@ def test_sqlite_provider_effect_consumes_claim_into_durable_send_start(
         _repository(path, clock=lambda: 9_000).release_claim_before_send(
             work_item.claim
         )
+
+
+def test_sqlite_provider_effect_verifies_current_active_send_for_evidence(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "provider-effect-verify-active-send.sqlite3"
+    work_item, _, claim_authority, admission = _claim_and_admit(path)
+    _, send_attempt, admission_receipt = begin_provider_effect_send(
+        work_item.effect.state,
+        work_item.effect.intent,
+        work_item.effect.capability,
+        admission,
+        claim_authority,
+    )
+    evidence = _provider_evidence(work_item, send_attempt)
+
+    assert claim_authority.verify_active_send(
+        current=ProviderEffectState.SEND_STARTED,
+        admission_receipt=admission_receipt,
+        send_attempt=send_attempt,
+    )
+    validate_provider_reconciliation_evidence(
+        ProviderEffectState.SEND_STARTED,
+        work_item.effect.intent,
+        work_item.effect.capability,
+        admission_receipt,
+        send_attempt,
+        evidence,
+        claim_authority,
+        _VERIFIER_AUTHORITY,
+    )
+    reopened_authority = _repository(path, clock=lambda: 9_000).send_claim_authority
+    assert reopened_authority.verify_active_send(
+        current=ProviderEffectState.SEND_STARTED,
+        admission_receipt=admission_receipt,
+        send_attempt=send_attempt,
+    )
+    assert not reopened_authority.verify_active_send(
+        current=ProviderEffectState.RECONCILING,
+        admission_receipt=admission_receipt,
+        send_attempt=send_attempt,
+    )
+    assert not reopened_authority.verify_active_send(
+        current=ProviderEffectState.SEND_STARTED,
+        admission_receipt=admission_receipt,
+        send_attempt=replace(send_attempt, attempt_id="another-attempt"),
+    )
+    assert not _repository(
+        path,
+        claim_authority_digest="sha256:" + ("1" * 64),
+    ).send_claim_authority.verify_active_send(
+        current=ProviderEffectState.SEND_STARTED,
+        admission_receipt=admission_receipt,
+        send_attempt=send_attempt,
+    )
 
 
 def test_sqlite_provider_effect_claim_authority_verifies_exact_live_claim(

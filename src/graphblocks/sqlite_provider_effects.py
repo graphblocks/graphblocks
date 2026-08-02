@@ -3334,6 +3334,95 @@ class SQLiteProviderEffectRepository:
         self._hit_failpoint("claim_send.after_commit")
         return claimed_send
 
+    def _verify_active_send(
+        self,
+        *,
+        current: ProviderEffectState,
+        admission_receipt: ProviderEffectAdmissionReceipt,
+        send_attempt: ProviderEffectSendAttempt,
+    ) -> bool:
+        if (
+            type(current) is not ProviderEffectState
+            or current
+            not in {
+                ProviderEffectState.SEND_STARTED,
+                ProviderEffectState.RECONCILING,
+            }
+            or type(admission_receipt) is not ProviderEffectAdmissionReceipt
+            or type(send_attempt) is not ProviderEffectSendAttempt
+        ):
+            return False
+        try:
+            decoded_receipt = _revalidate_provider_effect_admission_receipt(
+                admission_receipt
+            )
+            decoded_attempt = _revalidate_provider_effect_send_attempt(send_attempt)
+        except (TypeError, ValueError):
+            return False
+        if (
+            not _matches_exact_closed_value(admission_receipt, decoded_receipt)
+            or not _matches_exact_closed_value(send_attempt, decoded_attempt)
+            or decoded_receipt.claim_authority_digest != self.claim_authority_digest
+            or decoded_attempt.claim_authority_digest != self.claim_authority_digest
+            or decoded_receipt.send_attempt_digest != decoded_attempt.digest
+        ):
+            return False
+
+        def read(connection: sqlite3.Connection) -> bool:
+            rows = connection.execute(
+                """
+                SELECT provider_effects.*,
+                       accepted_runs.tenant_id,
+                       accepted_runs.external_run_id,
+                       accepted_runs.owner_principal_id
+                FROM provider_effect_send_attempts
+                JOIN provider_effects
+                  ON provider_effects.run_internal_id =
+                       provider_effect_send_attempts.run_internal_id
+                 AND provider_effects.effect_id =
+                       provider_effect_send_attempts.effect_id
+                JOIN accepted_runs
+                  ON accepted_runs.internal_id = provider_effects.run_internal_id
+                WHERE provider_effect_send_attempts.send_attempt_digest = ?
+                  AND provider_effect_send_attempts.admission_receipt_digest = ?
+                  AND provider_effects.active_send_attempt_digest =
+                      provider_effect_send_attempts.send_attempt_digest
+                  AND provider_effects.active_admission_receipt_digest =
+                      provider_effect_send_attempts.admission_receipt_digest
+                LIMIT 2
+                """,
+                (decoded_attempt.digest, decoded_receipt.digest),
+            ).fetchall()
+            if not rows:
+                return False
+            if len(rows) != 1:
+                raise SQLiteProviderEffectCorruptionError(
+                    "provider-effect active send identity is not unique"
+                )
+            row = rows[0]
+            record = self._record_from_row(connection, row)
+            run_internal_id = row["run_internal_id"]
+            if type(run_internal_id) is not str:
+                raise SQLiteProviderEffectCorruptionError(
+                    "provider-effect SQLite run identity is not text"
+                )
+            self._assert_projection_tail(
+                connection,
+                run_internal_id=run_internal_id,
+                record=record,
+            )
+            return bool(
+                record.state is current
+                and record.active_send_attempt == decoded_attempt
+                and record.active_admission_receipt == decoded_receipt
+                and record.latest_send_attempt == decoded_attempt
+                and record.latest_admission_receipt == decoded_receipt
+                and record.origin_transfer.repository_authority_digest
+                == self.origin_authority_digest
+            )
+
+        return self._database._run_read(read)
+
     def verify_transferred_origin(
         self,
         *,
@@ -3666,8 +3755,11 @@ class SQLiteProviderEffectClaimAuthority:
         admission_receipt: ProviderEffectAdmissionReceipt,
         send_attempt: ProviderEffectSendAttempt,
     ) -> bool:
-        del current, admission_receipt, send_attempt
-        return False
+        return self._repository._verify_active_send(
+            current=current,
+            admission_receipt=admission_receipt,
+            send_attempt=send_attempt,
+        )
 
     def settle_active_send(
         self,
