@@ -6,6 +6,7 @@ from dataclasses import replace
 from pathlib import Path
 import secrets
 import sqlite3
+from threading import Barrier
 
 import pytest
 
@@ -18,6 +19,7 @@ from graphblocks.provider_effects import (
     ProviderEffectAdmissionError,
     ProviderEffectAdmissionReceipt,
     ProviderEffectContractError,
+    ProviderEffectEvidenceError,
     ProviderEffectIdentityConflictError,
     ProviderEffectIntent,
     ProviderEffectKind,
@@ -29,6 +31,7 @@ from graphblocks.provider_effects import (
     ProviderRunAuthoritySnapshot,
     ProviderStatusLookup,
     admit_provider_effect_intent,
+    apply_provider_reconciliation_evidence,
     begin_provider_effect_send,
     validate_provider_reconciliation_evidence,
 )
@@ -2049,6 +2052,322 @@ def test_sqlite_provider_effect_verifies_current_active_send_for_evidence(
         admission_receipt=admission_receipt,
         send_attempt=send_attempt,
     )
+
+
+def test_sqlite_provider_effect_atomically_settles_committed_evidence(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "provider-effect-settle-committed.sqlite3"
+    work_item, _, claim_authority, admission = _claim_and_admit(path)
+    _, send_attempt, admission_receipt = begin_provider_effect_send(
+        work_item.effect.state,
+        work_item.effect.intent,
+        work_item.effect.capability,
+        admission,
+        claim_authority,
+    )
+    evidence = _provider_evidence(work_item, send_attempt)
+    settlement_authority = _repository(
+        path,
+        clock=lambda: 2_400,
+    ).send_claim_authority
+
+    next_state = apply_provider_reconciliation_evidence(
+        ProviderEffectState.SEND_STARTED,
+        work_item.effect.intent,
+        work_item.effect.capability,
+        admission_receipt,
+        send_attempt,
+        evidence,
+        settlement_authority,
+        _VERIFIER_AUTHORITY,
+    )
+
+    reopened = _repository(path, clock=lambda: 9_000)
+    stored = reopened.get_effect(
+        tenant_id="tenant-1",
+        run_id="run-1",
+        owner_principal_id="principal-1",
+        effect_id="effect-1",
+    )
+    assert next_state is ProviderEffectState.CONFIRMED_COMMITTED
+    assert stored is not None
+    assert stored.state is ProviderEffectState.CONFIRMED_COMMITTED
+    assert stored.latest_send_attempt == send_attempt
+    assert stored.latest_admission_receipt == admission_receipt
+    assert stored.active_send_attempt is None
+    assert stored.active_admission_receipt is None
+    events = reopened.read_events(
+        tenant_id="tenant-1",
+        run_id="run-1",
+        owner_principal_id="principal-1",
+        effect_id="effect-1",
+        after_sequence=0,
+        limit=10,
+    ).events
+    assert events[-1].kind == "reconciliation_evidence_applied"
+    assert events[-1].to_state is ProviderEffectState.CONFIRMED_COMMITTED
+    assert canonical_loads(events[-1].payload_json)["evidence"] == evidence.to_wire()
+    connection = sqlite3.connect(path)
+    try:
+        row = connection.execute(
+            """
+            SELECT evidence_json, send_attempt_digest, admission_receipt_digest,
+                   from_state, to_state, installed_state_version,
+                   installed_event_sequence
+            FROM provider_effect_reconciliation_evidence
+            """
+        ).fetchone()
+    finally:
+        connection.close()
+    assert row == (
+        canonical_dumps(evidence.to_wire()),
+        send_attempt.digest,
+        admission_receipt.digest,
+        "send_started",
+        "confirmed_committed",
+        4,
+        4,
+    )
+
+
+def test_sqlite_provider_effect_quarantines_unknown_evidence_with_active_send(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "provider-effect-settle-unknown.sqlite3"
+    work_item, _, claim_authority, admission = _claim_and_admit(path)
+    _, send_attempt, admission_receipt = begin_provider_effect_send(
+        work_item.effect.state,
+        work_item.effect.intent,
+        work_item.effect.capability,
+        admission,
+        claim_authority,
+    )
+    evidence = _provider_evidence(
+        work_item,
+        send_attempt,
+        outcome=ProviderReconciliationOutcome.UNKNOWN,
+    )
+    settlement_repository = _repository(path, clock=lambda: 2_400)
+
+    next_state = apply_provider_reconciliation_evidence(
+        ProviderEffectState.SEND_STARTED,
+        work_item.effect.intent,
+        work_item.effect.capability,
+        admission_receipt,
+        send_attempt,
+        evidence,
+        settlement_repository.send_claim_authority,
+        _VERIFIER_AUTHORITY,
+    )
+
+    stored = settlement_repository.get_effect(
+        tenant_id="tenant-1",
+        run_id="run-1",
+        owner_principal_id="principal-1",
+        effect_id="effect-1",
+    )
+    assert next_state is ProviderEffectState.QUARANTINED_UNKNOWN
+    assert stored is not None
+    assert stored.state is ProviderEffectState.QUARANTINED_UNKNOWN
+    assert stored.active_send_attempt == send_attempt
+    assert stored.active_admission_receipt == admission_receipt
+
+
+@pytest.mark.parametrize(
+    "failpoint_name",
+    (
+        "settle_active_send.after_evidence_insert",
+        "settle_active_send.after_effect_update",
+        "settle_active_send.after_event_insert",
+    ),
+)
+def test_sqlite_provider_effect_rolls_back_interrupted_evidence_settlement(
+    tmp_path: Path,
+    failpoint_name: str,
+) -> None:
+    path = tmp_path / f"provider-effect-settle-rollback-{failpoint_name}.sqlite3"
+    work_item, _, claim_authority, admission = _claim_and_admit(path)
+    _, send_attempt, admission_receipt = begin_provider_effect_send(
+        work_item.effect.state,
+        work_item.effect.intent,
+        work_item.effect.capability,
+        admission,
+        claim_authority,
+    )
+    evidence = _provider_evidence(work_item, send_attempt)
+
+    def failpoint(name: str) -> None:
+        if name == failpoint_name:
+            raise RuntimeError("simulated settlement interruption")
+
+    interrupted = _repository(
+        path,
+        clock=lambda: 2_400,
+        failpoint=failpoint,
+    ).send_claim_authority
+    with pytest.raises(
+        ProviderEffectEvidenceError,
+        match="settlement transaction failed",
+    ):
+        apply_provider_reconciliation_evidence(
+            ProviderEffectState.SEND_STARTED,
+            work_item.effect.intent,
+            work_item.effect.capability,
+            admission_receipt,
+            send_attempt,
+            evidence,
+            interrupted,
+            _VERIFIER_AUTHORITY,
+        )
+
+    reopened = _repository(path, clock=lambda: 9_000)
+    stored = reopened.get_effect(
+        tenant_id="tenant-1",
+        run_id="run-1",
+        owner_principal_id="principal-1",
+        effect_id="effect-1",
+    )
+    assert stored is not None
+    assert stored.state is ProviderEffectState.SEND_STARTED
+    assert stored.active_send_attempt == send_attempt
+    assert (
+        reopened._database._run_read(
+            lambda connection: int(
+                connection.execute(
+                    "SELECT count(*) FROM provider_effect_reconciliation_evidence"
+                ).fetchone()[0]
+            )
+        )
+        == 0
+    )
+
+
+def test_sqlite_provider_effect_replays_settlement_after_commit_response_loss(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "provider-effect-settle-response-loss.sqlite3"
+    work_item, _, claim_authority, admission = _claim_and_admit(path)
+    _, send_attempt, admission_receipt = begin_provider_effect_send(
+        work_item.effect.state,
+        work_item.effect.intent,
+        work_item.effect.capability,
+        admission,
+        claim_authority,
+    )
+    evidence = _provider_evidence(work_item, send_attempt)
+
+    def failpoint(name: str) -> None:
+        if name == "settle_active_send.after_commit":
+            raise RuntimeError("simulated response loss")
+
+    interrupted = _repository(
+        path,
+        clock=lambda: 2_400,
+        failpoint=failpoint,
+    ).send_claim_authority
+    with pytest.raises(ProviderEffectEvidenceError):
+        apply_provider_reconciliation_evidence(
+            ProviderEffectState.SEND_STARTED,
+            work_item.effect.intent,
+            work_item.effect.capability,
+            admission_receipt,
+            send_attempt,
+            evidence,
+            interrupted,
+            _VERIFIER_AUTHORITY,
+        )
+
+    reopened_authority = _repository(
+        path,
+        clock=lambda: 9_000,
+    ).send_claim_authority
+    assert reopened_authority.settle_active_send(
+        current=ProviderEffectState.SEND_STARTED,
+        next_state=ProviderEffectState.CONFIRMED_COMMITTED,
+        admission_receipt=admission_receipt,
+        send_attempt=send_attempt,
+        evidence=evidence,
+    )
+    connection = sqlite3.connect(path)
+    try:
+        evidence_count = int(
+            connection.execute(
+                "SELECT count(*) FROM provider_effect_reconciliation_evidence"
+            ).fetchone()[0]
+        )
+    finally:
+        connection.close()
+    assert evidence_count == 1
+
+
+def test_sqlite_provider_effect_serializes_competing_evidence_settlements(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "provider-effect-settle-concurrent.sqlite3"
+    work_item, _, claim_authority, admission = _claim_and_admit(path)
+    _, send_attempt, admission_receipt = begin_provider_effect_send(
+        work_item.effect.state,
+        work_item.effect.intent,
+        work_item.effect.capability,
+        admission,
+        claim_authority,
+    )
+    committed = _provider_evidence(work_item, send_attempt)
+    unknown = _provider_evidence(
+        work_item,
+        send_attempt,
+        outcome=ProviderReconciliationOutcome.UNKNOWN,
+    )
+    starting = Barrier(2)
+
+    def settle(
+        item: tuple[ProviderReconciliationEvidence, ProviderEffectState],
+    ) -> bool:
+        evidence, next_state = item
+        authority = _repository(path, clock=lambda: 2_400).send_claim_authority
+        starting.wait()
+        return authority.settle_active_send(
+            current=ProviderEffectState.SEND_STARTED,
+            next_state=next_state,
+            admission_receipt=admission_receipt,
+            send_attempt=send_attempt,
+            evidence=evidence,
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = tuple(
+            executor.map(
+                settle,
+                (
+                    (committed, ProviderEffectState.CONFIRMED_COMMITTED),
+                    (unknown, ProviderEffectState.QUARANTINED_UNKNOWN),
+                ),
+            )
+        )
+
+    stored = _repository(path, clock=lambda: 9_000).get_effect(
+        tenant_id="tenant-1",
+        run_id="run-1",
+        owner_principal_id="principal-1",
+        effect_id="effect-1",
+    )
+    assert sorted(results) == [False, True]
+    assert stored is not None
+    assert stored.state in {
+        ProviderEffectState.CONFIRMED_COMMITTED,
+        ProviderEffectState.QUARANTINED_UNKNOWN,
+    }
+    connection = sqlite3.connect(path)
+    try:
+        evidence_count = int(
+            connection.execute(
+                "SELECT count(*) FROM provider_effect_reconciliation_evidence"
+            ).fetchone()[0]
+        )
+    finally:
+        connection.close()
+    assert evidence_count == 1
 
 
 def test_sqlite_provider_effect_claim_authority_verifies_exact_live_claim(

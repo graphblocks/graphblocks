@@ -29,6 +29,7 @@ from graphblocks.sqlite_server_storage import (
     _SCHEMA_V7_MIGRATION_STATEMENTS,
     _SCHEMA_V8_MIGRATION_STATEMENTS,
     _SCHEMA_V9_MIGRATION_STATEMENTS,
+    _SCHEMA_V10_MIGRATION_STATEMENTS,
     _MAX_SQLITE_INTEGER,
     SQLiteAcceptedRunBusyError,
     SQLiteAcceptedRunCorruptionError,
@@ -48,6 +49,7 @@ _EXPECTED_TABLES = frozenset(
         "provider_effect_events",
         "provider_effect_send_claim_issuances",
         "provider_effect_send_attempts",
+        "provider_effect_reconciliation_evidence",
         "provider_effects",
         "run_checkpoints",
         "run_controls",
@@ -381,6 +383,26 @@ def _upgrade_version_eight_database_to_version_nine(path: Path) -> None:
         connection.close()
 
 
+def _upgrade_version_nine_database_to_version_ten(path: Path) -> None:
+    connection = sqlite3.connect(path, isolation_level=None)
+    try:
+        connection.execute("PRAGMA foreign_keys = ON")
+        connection.execute("BEGIN IMMEDIATE")
+        for statement in _SCHEMA_V10_MIGRATION_STATEMENTS:
+            connection.execute(statement)
+        connection.execute(
+            """
+            UPDATE accepted_run_storage_metadata
+            SET value = '10'
+            WHERE key = 'schema_version' AND value = '9'
+            """
+        )
+        connection.execute("PRAGMA user_version = 10")
+        connection.commit()
+    finally:
+        connection.close()
+
+
 def test_sqlite_accepted_run_database_initializes_dedicated_schema(
     tmp_path,
 ) -> None:
@@ -398,7 +420,7 @@ def test_sqlite_accepted_run_database_initializes_dedicated_schema(
     assert schema.synchronous == 2
     assert schema.busy_timeout_ms == 250
     assert schema.tables == _EXPECTED_TABLES
-    assert SQLITE_ACCEPTED_RUN_SCHEMA_VERSION == 10
+    assert SQLITE_ACCEPTED_RUN_SCHEMA_VERSION == 11
 
 
 def test_sqlite_accepted_run_database_migrates_v7_provider_effect_schema(
@@ -410,7 +432,7 @@ def test_sqlite_accepted_run_database_migrates_v7_provider_effect_schema(
 
     database = SQLiteAcceptedRunDatabase(path)
 
-    assert database.schema_info().schema_version == 10
+    assert database.schema_info().schema_version == 11
     assert database._run_read(
         lambda connection: frozenset(
             str(row["name"])
@@ -464,7 +486,7 @@ def test_sqlite_accepted_run_database_migrates_v8_provider_claim_schema(
         )
     )
 
-    assert database.schema_info().schema_version == 10
+    assert database.schema_info().schema_version == 11
     assert {
         "claim_json",
         "claim_digest",
@@ -525,7 +547,7 @@ def test_sqlite_accepted_run_database_migrates_v9_provider_send_schema(
         )
     )
 
-    assert database.schema_info().schema_version == 10
+    assert database.schema_info().schema_version == 11
     assert {
         "latest_send_attempt_digest",
         "latest_admission_receipt_digest",
@@ -552,6 +574,41 @@ def test_sqlite_accepted_run_database_migrates_v9_provider_send_schema(
         "installed_state_version",
         "installed_event_sequence",
     } <= claim_issuance_columns
+
+
+def test_sqlite_accepted_run_database_migrates_v10_reconciliation_schema(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "accepted-runs-v10.sqlite3"
+    _initialize_version_six_claimed_effect(path)
+    _upgrade_version_six_database_to_version_seven(path)
+    _upgrade_version_seven_database_to_version_eight(path)
+    _upgrade_version_eight_database_to_version_nine(path)
+    _upgrade_version_nine_database_to_version_ten(path)
+
+    database = SQLiteAcceptedRunDatabase(path)
+    evidence_columns = database._run_read(
+        lambda connection: frozenset(
+            str(row["name"])
+            for row in connection.execute(
+                'PRAGMA table_info("provider_effect_reconciliation_evidence")'
+            ).fetchall()
+        )
+    )
+
+    assert database.schema_info().schema_version == 11
+    assert {
+        "evidence_digest",
+        "evidence_json",
+        "send_attempt_digest",
+        "admission_receipt_digest",
+        "from_state",
+        "to_state",
+        "observed_at_unix_ms",
+        "settled_at_unix_ms",
+        "installed_state_version",
+        "installed_event_sequence",
+    } <= evidence_columns
 
 
 def test_sqlite_accepted_run_database_preserves_v9_active_provider_claim(
@@ -637,7 +694,7 @@ def test_sqlite_accepted_run_database_preserves_v9_active_provider_claim(
 
     database = SQLiteAcceptedRunDatabase(path)
 
-    assert database.schema_info().schema_version == 10
+    assert database.schema_info().schema_version == 11
     assert database._run_read(
         lambda connection: tuple(
             connection.execute(
@@ -847,8 +904,8 @@ def test_sqlite_accepted_run_database_migrates_v1_to_current_schema(
         )
     )
 
-    assert schema.user_version == 10
-    assert schema.schema_version == 10
+    assert schema.user_version == 11
+    assert schema.schema_version == 11
     assert "available_at_unix_ms" in effect_columns
     assert "cancelled_at_unix_ms" in effect_columns
     assert "claim_started_at_unix_ms" in effect_columns
@@ -888,7 +945,7 @@ def test_sqlite_accepted_run_database_migrates_v2_invocation_metadata(
 
     database = SQLiteAcceptedRunDatabase(path)
 
-    assert database.schema_info().schema_version == 10
+    assert database.schema_info().schema_version == 11
     assert database._run_read(
         lambda connection: str(
             connection.execute(
@@ -909,7 +966,7 @@ def test_sqlite_accepted_run_database_migrates_v3_control_schema(
 
     database = SQLiteAcceptedRunDatabase(path)
 
-    assert database.schema_info().schema_version == 10
+    assert database.schema_info().schema_version == 11
     assert database._run_read(
         lambda connection: frozenset(
             str(row["name"])
@@ -945,7 +1002,7 @@ def test_sqlite_accepted_run_database_migrates_v4_pause_schema(
 
     database = SQLiteAcceptedRunDatabase(path)
 
-    assert database.schema_info().schema_version == 10
+    assert database.schema_info().schema_version == 11
     assert database._run_read(
         lambda connection: frozenset(
             str(row["name"])
@@ -1046,7 +1103,7 @@ def test_sqlite_accepted_run_database_invalidates_v5_effect_claims(
 
     database = SQLiteAcceptedRunDatabase(path)
 
-    assert database.schema_info().schema_version == 10
+    assert database.schema_info().schema_version == 11
     assert database._run_read(
         lambda connection: tuple(
             connection.execute(
@@ -1161,7 +1218,7 @@ def test_sqlite_accepted_run_database_invalidates_v6_effect_claims(
 
     database = SQLiteAcceptedRunDatabase(path)
 
-    assert database.schema_info().schema_version == 10
+    assert database.schema_info().schema_version == 11
     assert database._run_read(
         lambda connection: tuple(
             connection.execute(
@@ -1381,7 +1438,7 @@ def test_sqlite_accepted_run_database_serializes_concurrent_v6_migration(
         infos = tuple(executor.map(migrate, range(2)))
 
     assert infos == (infos[0], infos[0])
-    assert infos[0].schema_version == 10
+    assert infos[0].schema_version == 11
 
 
 def test_sqlite_accepted_run_database_serializes_concurrent_v1_migration(
@@ -1402,7 +1459,7 @@ def test_sqlite_accepted_run_database_serializes_concurrent_v1_migration(
         infos = tuple(executor.map(migrate, range(2)))
 
     assert infos == (infos[0], infos[0])
-    assert infos[0].schema_version == 10
+    assert infos[0].schema_version == 11
 
 
 def test_sqlite_accepted_run_database_reopens_without_recreating_schema(

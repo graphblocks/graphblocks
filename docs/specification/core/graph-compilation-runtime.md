@@ -643,9 +643,33 @@ does not prove provider I/O occurred and MUST NOT authorize replay. The
 structurally distinct claim authority MAY exact-verify that this same persisted
 attempt and receipt remain active, including after restart, so the core can
 authenticate reconciliation evidence without trusting caller state. This read
-does not persist evidence or change state. This slice does not invoke an
-adapter, quarantine an ambiguous provider outcome, persist reconciliation
-evidence, settle an active attempt, or enable durable retry.
+does not persist evidence or change state. This v10 slice does not invoke an
+adapter, quarantine an ambiguous provider outcome, or enable durable retry.
+
+SQLite v11 adds append-only reconciliation evidence and atomic active-send
+settlement. After the core has exact-decoded the evidence, rechecked the active
+attempt, and authenticated the capability-bound verifier, settlement MUST
+repeat the exact receipt, attempt, evidence, method, observation time, verifier
+tuple, and correlation bindings under one `BEGIN IMMEDIATE` transaction. It
+MUST append the canonical evidence to
+`provider_effect_reconciliation_evidence`, compare-and-swap the current state,
+version, journal watermark, and active/latest attempt identities, then append a
+closed `reconciliation_evidence_applied` event at the same version. Confirmed
+commit, non-commit, or cancellation clears active send authority while
+retaining the latest immutable attempt history. An unknown result advances to
+`quarantined_unknown` and retains the exact active attempt and receipt for a
+future explicit reconciliation transition.
+
+Every projection-tail read MUST cross-check the evidence row, event, canonical
+evidence digest, attempt and receipt digests, from/to states, observation and
+settlement times, and installed state/event versions. Failure before commit
+rolls back all three writes. An exact repeated settlement call MAY return the
+already committed result after response loss, but this recovery does not make
+the higher-level evidence API accept a now-terminal attempt as active. The v11
+repository does not run the deployment verifier itself; that authentication is
+the preceding core boundary. It also does not perform adapter I/O, schedule
+reconciliation, implement the quarantine-to-reconciling command, or enable
+durable retry.
 
 Existing operation-dispatch rows MUST NOT be migrated or reinterpreted as
 provider-effect intents because they do not contain this authority or evidence.
@@ -657,8 +681,9 @@ rows whose send history is still empty, and backfills an issuance row for each
 exact active v9 claim. It MUST fail closed rather than invent an attempt or
 receipt for `send_started` or later state. Operators upgrading the preview
 database MUST prevent mixed-version writers and retain the normal pre-migration
-backup. A production profile still requires evidence storage,
-real adapter capability and verifier-registry authorities, adapter I/O,
+backup. The v11 migration creates an empty evidence ledger and does not invent
+outcomes for existing active sends. A production profile still requires real
+adapter capability and verifier-registry authorities, adapter I/O,
 ambiguous-send reconciliation, kill/restart/fencing tests, and provider-side
 idempotency or status/cancellation evidence. Repository snapshots, transfers,
 claim fields, and verifier authorities MUST come from trusted service

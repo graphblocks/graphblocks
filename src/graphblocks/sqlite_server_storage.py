@@ -63,7 +63,7 @@ from .server_storage import (
 
 
 SQLITE_ACCEPTED_RUN_APPLICATION_ID = 0x47424152
-SQLITE_ACCEPTED_RUN_SCHEMA_VERSION = 10
+SQLITE_ACCEPTED_RUN_SCHEMA_VERSION = 11
 _SQLITE_ACCEPTED_RUN_SCHEMA_NAME = "graphblocks.accepted-runs.sqlite"
 _SQLITE_ACCEPTED_RUN_INITIAL_SCHEMA_VERSION = 1
 _MAX_BUSY_TIMEOUT_MS = 60_000
@@ -899,6 +899,57 @@ _SCHEMA_V10_MIGRATION_STATEMENTS = (
     """,
 )
 
+_SCHEMA_V11_MIGRATION_STATEMENTS = (
+    """
+    CREATE TABLE provider_effect_reconciliation_evidence (
+      run_internal_id TEXT NOT NULL,
+      effect_id TEXT NOT NULL,
+      evidence_digest TEXT NOT NULL,
+      evidence_json TEXT NOT NULL,
+      send_attempt_digest TEXT NOT NULL,
+      admission_receipt_digest TEXT NOT NULL,
+      from_state TEXT NOT NULL CHECK (
+        from_state IN ('send_started', 'reconciling')
+      ),
+      to_state TEXT NOT NULL CHECK (
+        to_state IN (
+          'quarantined_unknown',
+          'confirmed_committed',
+          'confirmed_not_committed',
+          'confirmed_cancelled'
+        )
+      ),
+      observed_at_unix_ms INTEGER NOT NULL CHECK (observed_at_unix_ms >= 0),
+      settled_at_unix_ms INTEGER NOT NULL CHECK (settled_at_unix_ms >= 0),
+      installed_state_version INTEGER NOT NULL CHECK (
+        installed_state_version > 0
+      ),
+      installed_event_sequence INTEGER NOT NULL CHECK (
+        installed_event_sequence = installed_state_version
+      ),
+      PRIMARY KEY (run_internal_id, effect_id, evidence_digest),
+      UNIQUE (evidence_digest),
+      UNIQUE (run_internal_id, effect_id, installed_state_version),
+      FOREIGN KEY (run_internal_id, effect_id)
+        REFERENCES provider_effects (run_internal_id, effect_id)
+        ON DELETE RESTRICT,
+      CHECK (length(effect_id) > 0),
+      CHECK (length(evidence_digest) > 0),
+      CHECK (length(send_attempt_digest) > 0),
+      CHECK (length(admission_receipt_digest) > 0)
+    )
+    """,
+    """
+    CREATE INDEX provider_effect_reconciliation_evidence_attempt
+    ON provider_effect_reconciliation_evidence (
+      run_internal_id,
+      effect_id,
+      send_attempt_digest,
+      installed_state_version
+    )
+    """,
+)
+
 _REQUIRED_COLUMNS_V1 = {
     "accepted_run_storage_metadata": frozenset({"key", "value"}),
     "accepted_runs": frozenset(
@@ -1110,7 +1161,7 @@ _REQUIRED_COLUMNS_V9 = {
         )
     ),
 }
-_REQUIRED_COLUMNS = {
+_REQUIRED_COLUMNS_V10 = {
     **_REQUIRED_COLUMNS_V9,
     "provider_effects": (
         _REQUIRED_COLUMNS_V9["provider_effects"]
@@ -1156,6 +1207,25 @@ _REQUIRED_COLUMNS = {
             "claim_fencing_token",
             "started_at_unix_ms",
             "consumed_at_unix_ms",
+            "installed_state_version",
+            "installed_event_sequence",
+        }
+    ),
+}
+_REQUIRED_COLUMNS = {
+    **_REQUIRED_COLUMNS_V10,
+    "provider_effect_reconciliation_evidence": frozenset(
+        {
+            "run_internal_id",
+            "effect_id",
+            "evidence_digest",
+            "evidence_json",
+            "send_attempt_digest",
+            "admission_receipt_digest",
+            "from_state",
+            "to_state",
+            "observed_at_unix_ms",
+            "settled_at_unix_ms",
             "installed_state_version",
             "installed_event_sequence",
         }
@@ -1579,6 +1649,7 @@ class SQLiteAcceptedRunDatabase:
                     7,
                     8,
                     9,
+                    10,
                 }:
                     self._migrate_to_current(connection)
                 else:
@@ -1654,6 +1725,8 @@ class SQLiteAcceptedRunDatabase:
                     connection.execute(statement)
                 for statement in _SCHEMA_V10_MIGRATION_STATEMENTS:
                     connection.execute(statement)
+                for statement in _SCHEMA_V11_MIGRATION_STATEMENTS:
+                    connection.execute(statement)
                 connection.executemany(
                     """
                     INSERT INTO accepted_run_storage_metadata (key, value)
@@ -1703,6 +1776,7 @@ class SQLiteAcceptedRunDatabase:
                 7,
                 8,
                 9,
+                10,
             }:
                 raise SQLiteAcceptedRunSchemaVersionError(
                     "unsupported accepted-run SQLite schema version "
@@ -1990,6 +2064,28 @@ class SQLiteAcceptedRunDatabase:
                     raise SQLiteAcceptedRunSchemaMismatchError(
                         "accepted-run SQLite schema metadata version changed "
                         "during v10 migration"
+                    )
+                connection.execute("PRAGMA user_version = 10")
+                user_version = 10
+            if user_version == 10:
+                self._validate_schema_version(
+                    connection,
+                    schema_version=10,
+                    required_columns=_REQUIRED_COLUMNS_V10,
+                )
+                for statement in _SCHEMA_V11_MIGRATION_STATEMENTS:
+                    connection.execute(statement)
+                updated = connection.execute(
+                    """
+                    UPDATE accepted_run_storage_metadata
+                    SET value = '11'
+                    WHERE key = 'schema_version' AND value = '10'
+                    """
+                )
+                if updated.rowcount != 1:
+                    raise SQLiteAcceptedRunSchemaMismatchError(
+                        "accepted-run SQLite schema metadata version changed "
+                        "during v11 migration"
                     )
                 connection.execute(
                     f"PRAGMA user_version = {SQLITE_ACCEPTED_RUN_SCHEMA_VERSION}"
@@ -2300,6 +2396,29 @@ class SQLiteAcceptedRunDatabase:
             if orphaned_provider_attempt is not None:
                 raise SQLiteAcceptedRunCorruptionError(
                     "accepted-run SQLite provider-effect attempt is orphaned"
+                )
+        if schema_version >= 11:
+            invalid_provider_evidence = connection.execute(
+                """
+                SELECT provider_effect_reconciliation_evidence.evidence_digest
+                FROM provider_effect_reconciliation_evidence
+                LEFT JOIN provider_effect_send_attempts
+                  ON provider_effect_send_attempts.run_internal_id =
+                       provider_effect_reconciliation_evidence.run_internal_id
+                 AND provider_effect_send_attempts.effect_id =
+                       provider_effect_reconciliation_evidence.effect_id
+                 AND provider_effect_send_attempts.send_attempt_digest =
+                       provider_effect_reconciliation_evidence.send_attempt_digest
+                 AND provider_effect_send_attempts.admission_receipt_digest =
+                       provider_effect_reconciliation_evidence.
+                         admission_receipt_digest
+                WHERE provider_effect_send_attempts.attempt_id IS NULL
+                LIMIT 1
+                """
+            ).fetchone()
+            if invalid_provider_evidence is not None:
+                raise SQLiteAcceptedRunCorruptionError(
+                    "accepted-run SQLite provider-effect evidence has no send attempt"
                 )
         foreign_key_failures = connection.execute("PRAGMA foreign_key_check").fetchall()
         if foreign_key_failures:

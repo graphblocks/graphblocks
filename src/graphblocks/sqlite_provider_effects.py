@@ -8,6 +8,7 @@ import sqlite3
 
 from .canonical import canonical_dumps, canonical_hash, canonical_loads
 from .provider_effects import (
+    ProviderCancellation,
     ProviderCapabilitySnapshot,
     ProviderEffectAdmission,
     ProviderEffectAdmissionReceipt,
@@ -19,7 +20,10 @@ from .provider_effects import (
     ProviderEffectState,
     ProviderEffectStateConflictError,
     ProviderReconciliationEvidence,
+    ProviderReconciliationMethod,
+    ProviderReconciliationOutcome,
     ProviderRunAuthoritySnapshot,
+    ProviderStatusLookup,
     _applicable_reconciliation_methods,
     _matches_exact_closed_value,
     _revalidate_provider_capability_snapshot,
@@ -58,6 +62,33 @@ _ACTIVE_PROVIDER_EFFECT_SEND_STATES = frozenset(
         ProviderEffectState.MANUAL_REVIEW_UNKNOWN,
     }
 )
+
+
+def _reconciliation_settlement_state(
+    current: ProviderEffectState,
+    outcome: ProviderReconciliationOutcome,
+) -> ProviderEffectState | None:
+    if current not in {
+        ProviderEffectState.SEND_STARTED,
+        ProviderEffectState.RECONCILING,
+    }:
+        return None
+    return {
+        ProviderReconciliationOutcome.COMMITTED: (
+            ProviderEffectState.CONFIRMED_COMMITTED
+        ),
+        ProviderReconciliationOutcome.NOT_COMMITTED: (
+            ProviderEffectState.CONFIRMED_NOT_COMMITTED
+        ),
+        ProviderReconciliationOutcome.CANCELLED_CONFIRMED: (
+            ProviderEffectState.CONFIRMED_CANCELLED
+        ),
+        ProviderReconciliationOutcome.UNKNOWN: (
+            ProviderEffectState.QUARANTINED_UNKNOWN
+        ),
+    }[outcome]
+
+
 _PROVIDER_EFFECT_CLAIM_FIELDS = frozenset(
     {
         "admittedAtUnixMs",
@@ -1031,6 +1062,51 @@ class StoredProviderEffectEvent:
                 "consumedClaimDigest",
                 payload["consumedClaimDigest"],
             )
+        elif self.kind == "reconciliation_evidence_applied":
+            if set(payload) != {
+                "admissionReceiptDigest",
+                "effectId",
+                "evidence",
+                "evidenceDigest",
+                "formatVersion",
+                "intentDigest",
+                "sendAttemptDigest",
+                "state",
+            }:
+                raise ProviderEffectContractError(
+                    f"{owner} reconciliation event is not closed and exact"
+                )
+            evidence = ProviderReconciliationEvidence.from_wire(payload["evidence"])
+            expected_state = (
+                None
+                if self.from_state is None
+                else _reconciliation_settlement_state(
+                    self.from_state,
+                    evidence.outcome,
+                )
+            )
+            if (
+                expected_state is None
+                or self.to_state is not expected_state
+                or payload["state"] != expected_state.value
+                or evidence.effect_id != self.effect_id
+                or evidence.digest
+                != _require_digest(owner, "evidenceDigest", payload["evidenceDigest"])
+                or evidence.send_attempt_digest
+                != _require_digest(
+                    owner,
+                    "sendAttemptDigest",
+                    payload["sendAttemptDigest"],
+                )
+            ):
+                raise ProviderEffectContractError(
+                    f"{owner} reconciliation event identity is not exact"
+                )
+            _require_digest(
+                owner,
+                "admissionReceiptDigest",
+                payload["admissionReceiptDigest"],
+            )
         else:
             raise ProviderEffectContractError(
                 f"{owner} kind is not supported by this repository version"
@@ -1612,6 +1688,21 @@ class SQLiteProviderEffectRepository:
                     raise ValueError(
                         "provider-effect send-started event scope is invalid"
                     )
+            elif event.kind == "reconciliation_evidence_applied":
+                evidence = ProviderReconciliationEvidence.from_wire(payload["evidence"])
+                if (
+                    evidence.effect_id != record.intent.effect_id
+                    or evidence.intent_digest != record.intent.digest
+                    or evidence.capability_snapshot_digest != record.capability.digest
+                    or record.latest_send_attempt is None
+                    or record.latest_admission_receipt is None
+                    or evidence.send_attempt_digest != record.latest_send_attempt.digest
+                    or payload["admissionReceiptDigest"]
+                    != record.latest_admission_receipt.digest
+                ):
+                    raise ValueError(
+                        "provider-effect reconciliation event scope is invalid"
+                    )
             return payload
         except (KeyError, TypeError, ValueError) as error:
             raise SQLiteProviderEffectCorruptionError(
@@ -1801,6 +1892,74 @@ class SQLiteProviderEffectRepository:
                     >= consumed_claim.claim_expires_at_unix_ms
                 ):
                     raise ValueError("provider-effect send-started tail is invalid")
+            elif event.kind == "reconciliation_evidence_applied":
+                evidence = ProviderReconciliationEvidence.from_wire(payload["evidence"])
+                evidence_row = connection.execute(
+                    """
+                    SELECT *
+                    FROM provider_effect_reconciliation_evidence
+                    WHERE run_internal_id = ?
+                      AND effect_id = ?
+                      AND evidence_digest = ?
+                    """,
+                    (run_internal_id, record.intent.effect_id, evidence.digest),
+                ).fetchone()
+                reconciliation_from_state = event.from_state
+                expected_state = (
+                    None
+                    if reconciliation_from_state is None
+                    else _reconciliation_settlement_state(
+                        reconciliation_from_state,
+                        evidence.outcome,
+                    )
+                )
+                terminal = expected_state in {
+                    ProviderEffectState.CONFIRMED_COMMITTED,
+                    ProviderEffectState.CONFIRMED_NOT_COMMITTED,
+                    ProviderEffectState.CONFIRMED_CANCELLED,
+                }
+                if (
+                    expected_state is None
+                    or record.state is not expected_state
+                    or record.claim is not None
+                    or record.last_pre_send_release is not None
+                    or record.latest_send_attempt is None
+                    or record.latest_admission_receipt is None
+                    or evidence.send_attempt_digest != record.latest_send_attempt.digest
+                    or payload["admissionReceiptDigest"]
+                    != record.latest_admission_receipt.digest
+                    or (
+                        terminal
+                        and (
+                            record.active_send_attempt is not None
+                            or record.active_admission_receipt is not None
+                        )
+                    )
+                    or (
+                        not terminal
+                        and (
+                            record.active_send_attempt != record.latest_send_attempt
+                            or record.active_admission_receipt
+                            != record.latest_admission_receipt
+                        )
+                    )
+                    or evidence_row is None
+                    or evidence_row["evidence_json"]
+                    != canonical_dumps(evidence.to_wire())
+                    or evidence_row["send_attempt_digest"]
+                    != record.latest_send_attempt.digest
+                    or evidence_row["admission_receipt_digest"]
+                    != record.latest_admission_receipt.digest
+                    or reconciliation_from_state is None
+                    or evidence_row["from_state"] != reconciliation_from_state.value
+                    or evidence_row["to_state"] != expected_state.value
+                    or evidence_row["observed_at_unix_ms"]
+                    != evidence.observed_at_unix_ms
+                    or evidence_row["settled_at_unix_ms"] != record.updated_at_unix_ms
+                    or evidence_row["installed_state_version"] != record.state_version
+                    or evidence_row["installed_event_sequence"] != event.sequence
+                ):
+                    raise ValueError("provider-effect reconciliation tail is invalid")
         except (KeyError, TypeError, ValueError) as error:
             raise SQLiteProviderEffectCorruptionError(
                 "provider-effect SQLite event tail does not match its projection"
@@ -3423,6 +3582,387 @@ class SQLiteProviderEffectRepository:
 
         return self._database._run_read(read)
 
+    def _settle_active_send(
+        self,
+        *,
+        current: ProviderEffectState,
+        next_state: ProviderEffectState,
+        admission_receipt: ProviderEffectAdmissionReceipt,
+        send_attempt: ProviderEffectSendAttempt,
+        evidence: ProviderReconciliationEvidence,
+    ) -> bool:
+        if (
+            type(current) is not ProviderEffectState
+            or type(next_state) is not ProviderEffectState
+            or type(admission_receipt) is not ProviderEffectAdmissionReceipt
+            or type(send_attempt) is not ProviderEffectSendAttempt
+            or type(evidence) is not ProviderReconciliationEvidence
+        ):
+            return False
+        try:
+            decoded_receipt = _revalidate_provider_effect_admission_receipt(
+                admission_receipt
+            )
+            decoded_attempt = _revalidate_provider_effect_send_attempt(send_attempt)
+            decoded_evidence = ProviderReconciliationEvidence.from_wire(
+                evidence.to_wire()
+            )
+        except (TypeError, ValueError):
+            return False
+        expected_state = _reconciliation_settlement_state(
+            current,
+            decoded_evidence.outcome,
+        )
+        if (
+            not _matches_exact_closed_value(admission_receipt, decoded_receipt)
+            or not _matches_exact_closed_value(send_attempt, decoded_attempt)
+            or not _matches_exact_closed_value(evidence, decoded_evidence)
+            or expected_state is None
+            or next_state is not expected_state
+            or decoded_receipt.claim_authority_digest != self.claim_authority_digest
+            or decoded_attempt.claim_authority_digest != self.claim_authority_digest
+            or decoded_receipt.send_attempt_digest != decoded_attempt.digest
+            or decoded_evidence.effect_id != decoded_attempt.effect_id
+            or decoded_evidence.intent_digest != decoded_attempt.intent_digest
+            or decoded_evidence.capability_snapshot_digest
+            != decoded_attempt.capability_snapshot_digest
+            or decoded_evidence.send_attempt_digest != decoded_attempt.digest
+            or decoded_evidence.method not in decoded_receipt.applicable_methods
+            or decoded_evidence.observed_at_unix_ms < decoded_attempt.started_at_unix_ms
+            or decoded_evidence.observed_at_unix_ms > _MAX_SQLITE_INTEGER
+        ):
+            return False
+
+        evidence_json = canonical_dumps(decoded_evidence.to_wire())
+        terminal = expected_state in {
+            ProviderEffectState.CONFIRMED_COMMITTED,
+            ProviderEffectState.CONFIRMED_NOT_COMMITTED,
+            ProviderEffectState.CONFIRMED_CANCELLED,
+        }
+
+        def transition(connection: sqlite3.Connection) -> bool:
+            replay = connection.execute(
+                """
+                SELECT provider_effects.*,
+                       accepted_runs.tenant_id,
+                       accepted_runs.external_run_id,
+                       accepted_runs.owner_principal_id,
+                       provider_effect_reconciliation_evidence.evidence_json
+                         AS reconciliation_evidence_json,
+                       provider_effect_reconciliation_evidence.send_attempt_digest
+                         AS reconciliation_send_attempt_digest,
+                       provider_effect_reconciliation_evidence.
+                         admission_receipt_digest
+                         AS reconciliation_admission_receipt_digest,
+                       provider_effect_reconciliation_evidence.from_state
+                         AS reconciliation_from_state,
+                       provider_effect_reconciliation_evidence.to_state
+                         AS reconciliation_to_state,
+                       provider_effect_reconciliation_evidence.observed_at_unix_ms
+                         AS reconciliation_observed_at_unix_ms,
+                       provider_effect_reconciliation_evidence.
+                         installed_state_version
+                         AS reconciliation_state_version,
+                       provider_effect_reconciliation_evidence.
+                         installed_event_sequence
+                         AS reconciliation_event_sequence
+                FROM provider_effect_reconciliation_evidence
+                JOIN provider_effects
+                  ON provider_effects.run_internal_id =
+                       provider_effect_reconciliation_evidence.run_internal_id
+                 AND provider_effects.effect_id =
+                       provider_effect_reconciliation_evidence.effect_id
+                JOIN accepted_runs
+                  ON accepted_runs.internal_id = provider_effects.run_internal_id
+                WHERE provider_effect_reconciliation_evidence.evidence_digest = ?
+                LIMIT 2
+                """,
+                (decoded_evidence.digest,),
+            ).fetchall()
+            if replay:
+                if len(replay) != 1:
+                    raise SQLiteProviderEffectCorruptionError(
+                        "provider-effect reconciliation evidence is not unique"
+                    )
+                row = replay[0]
+                record = self._record_from_row(connection, row)
+                run_internal_id = row["run_internal_id"]
+                if type(run_internal_id) is not str:
+                    raise SQLiteProviderEffectCorruptionError(
+                        "provider-effect SQLite run identity is not text"
+                    )
+                self._assert_projection_tail(
+                    connection,
+                    run_internal_id=run_internal_id,
+                    record=record,
+                )
+                active_attempt = None if terminal else decoded_attempt.digest
+                active_receipt = None if terminal else decoded_receipt.digest
+                if (
+                    record.intent.effect_id != decoded_evidence.effect_id
+                    or row["reconciliation_evidence_json"] != evidence_json
+                    or row["reconciliation_send_attempt_digest"]
+                    != decoded_attempt.digest
+                    or row["reconciliation_admission_receipt_digest"]
+                    != decoded_receipt.digest
+                    or row["reconciliation_from_state"] != current.value
+                    or row["reconciliation_to_state"] != expected_state.value
+                    or row["reconciliation_observed_at_unix_ms"]
+                    != decoded_evidence.observed_at_unix_ms
+                ):
+                    raise SQLiteProviderEffectCorruptionError(
+                        "provider-effect reconciliation replay changed identity"
+                    )
+                return bool(
+                    record.state is expected_state
+                    and record.state_version == row["reconciliation_state_version"]
+                    and record.event_high_watermark
+                    == row["reconciliation_event_sequence"]
+                    and record.latest_send_attempt == decoded_attempt
+                    and record.latest_admission_receipt == decoded_receipt
+                    and row["active_send_attempt_digest"] == active_attempt
+                    and row["active_admission_receipt_digest"] == active_receipt
+                )
+
+            rows = connection.execute(
+                """
+                SELECT provider_effects.*,
+                       accepted_runs.tenant_id,
+                       accepted_runs.external_run_id,
+                       accepted_runs.owner_principal_id
+                FROM provider_effect_send_attempts
+                JOIN provider_effects
+                  ON provider_effects.run_internal_id =
+                       provider_effect_send_attempts.run_internal_id
+                 AND provider_effects.effect_id =
+                       provider_effect_send_attempts.effect_id
+                JOIN accepted_runs
+                  ON accepted_runs.internal_id = provider_effects.run_internal_id
+                WHERE provider_effect_send_attempts.send_attempt_digest = ?
+                  AND provider_effect_send_attempts.admission_receipt_digest = ?
+                  AND provider_effects.active_send_attempt_digest =
+                      provider_effect_send_attempts.send_attempt_digest
+                  AND provider_effects.active_admission_receipt_digest =
+                      provider_effect_send_attempts.admission_receipt_digest
+                LIMIT 2
+                """,
+                (decoded_attempt.digest, decoded_receipt.digest),
+            ).fetchall()
+            if not rows:
+                return False
+            if len(rows) != 1:
+                raise SQLiteProviderEffectCorruptionError(
+                    "provider-effect active send identity is not unique"
+                )
+            row = rows[0]
+            record = self._record_from_row(connection, row)
+            run_internal_id = row["run_internal_id"]
+            if type(run_internal_id) is not str:
+                raise SQLiteProviderEffectCorruptionError(
+                    "provider-effect SQLite run identity is not text"
+                )
+            self._assert_projection_tail(
+                connection,
+                run_internal_id=run_internal_id,
+                record=record,
+            )
+            correlation_required = (
+                decoded_evidence.method is ProviderReconciliationMethod.STATUS_LOOKUP
+                and record.capability.status_lookup
+                is ProviderStatusLookup.DEFINITIVE_BY_PREBOUND_CORRELATION_ID
+            ) or (
+                decoded_evidence.method
+                is ProviderReconciliationMethod.CONFIRMED_CANCELLATION
+                and record.capability.cancellation
+                is ProviderCancellation.CONFIRMED_BY_PREBOUND_CORRELATION_ID
+            )
+            if (
+                record.state is not current
+                or record.active_send_attempt != decoded_attempt
+                or record.active_admission_receipt != decoded_receipt
+                or record.latest_send_attempt != decoded_attempt
+                or record.latest_admission_receipt != decoded_receipt
+                or record.origin_transfer.repository_authority_digest
+                != self.origin_authority_digest
+                or decoded_evidence.effect_id != record.intent.effect_id
+                or decoded_evidence.intent_digest != record.intent.digest
+                or decoded_evidence.capability_snapshot_digest
+                != record.capability.digest
+                or decoded_evidence.verifier_id
+                != record.capability.reconciliation_verifier_id
+                or decoded_evidence.verifier_release_digest
+                != record.capability.reconciliation_verifier_release_digest
+                or decoded_evidence.verification_authority_digest
+                != record.capability.reconciliation_verification_authority_digest
+                or (
+                    record.intent.provider_correlation_id is not None
+                    and decoded_evidence.provider_correlation_id is not None
+                    and decoded_evidence.provider_correlation_id
+                    != record.intent.provider_correlation_id
+                )
+                or (
+                    correlation_required
+                    and decoded_evidence.provider_correlation_id
+                    != record.intent.provider_correlation_id
+                )
+            ):
+                return False
+            settled_at = self._transaction_now_unix_ms()
+            if settled_at < max(
+                record.updated_at_unix_ms,
+                decoded_evidence.observed_at_unix_ms,
+            ):
+                raise ValueError(
+                    "provider-effect SQLite clock moved behind reconciliation evidence"
+                )
+            if record.state_version >= _MAX_SQLITE_INTEGER:
+                raise ProviderEffectStateConflictError(
+                    "provider-effect state version is exhausted"
+                )
+            next_version = record.state_version + 1
+            connection.execute(
+                """
+                INSERT INTO provider_effect_reconciliation_evidence (
+                  run_internal_id,
+                  effect_id,
+                  evidence_digest,
+                  evidence_json,
+                  send_attempt_digest,
+                  admission_receipt_digest,
+                  from_state,
+                  to_state,
+                  observed_at_unix_ms,
+                  settled_at_unix_ms,
+                  installed_state_version,
+                  installed_event_sequence
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    run_internal_id,
+                    record.intent.effect_id,
+                    decoded_evidence.digest,
+                    evidence_json,
+                    decoded_attempt.digest,
+                    decoded_receipt.digest,
+                    current.value,
+                    expected_state.value,
+                    decoded_evidence.observed_at_unix_ms,
+                    settled_at,
+                    next_version,
+                    next_version,
+                ),
+            )
+            self._hit_failpoint("settle_active_send.after_evidence_insert")
+            updated = connection.execute(
+                """
+                UPDATE provider_effects
+                SET state = ?,
+                    state_version = ?,
+                    event_high_watermark = ?,
+                    updated_at_unix_ms = ?,
+                    active_send_attempt_digest = ?,
+                    active_admission_receipt_digest = ?
+                WHERE run_internal_id = ?
+                  AND effect_id = ?
+                  AND state = ?
+                  AND state_version = ?
+                  AND event_high_watermark = ?
+                  AND latest_send_attempt_digest = ?
+                  AND latest_admission_receipt_digest = ?
+                  AND active_send_attempt_digest = ?
+                  AND active_admission_receipt_digest = ?
+                """,
+                (
+                    expected_state.value,
+                    next_version,
+                    next_version,
+                    settled_at,
+                    None if terminal else decoded_attempt.digest,
+                    None if terminal else decoded_receipt.digest,
+                    run_internal_id,
+                    record.intent.effect_id,
+                    current.value,
+                    record.state_version,
+                    record.event_high_watermark,
+                    decoded_attempt.digest,
+                    decoded_receipt.digest,
+                    decoded_attempt.digest,
+                    decoded_receipt.digest,
+                ),
+            )
+            if updated.rowcount != 1:
+                raise ProviderEffectStateConflictError(
+                    "provider-effect active send changed during settlement"
+                )
+            self._hit_failpoint("settle_active_send.after_effect_update")
+            event_payload = {
+                "admissionReceiptDigest": decoded_receipt.digest,
+                "effectId": record.intent.effect_id,
+                "evidence": decoded_evidence.to_wire(),
+                "evidenceDigest": decoded_evidence.digest,
+                "formatVersion": PROVIDER_EFFECT_EVENT_FORMAT_VERSION,
+                "intentDigest": record.intent.digest,
+                "sendAttemptDigest": decoded_attempt.digest,
+                "state": expected_state.value,
+            }
+            connection.execute(
+                """
+                INSERT INTO provider_effect_events (
+                  run_internal_id,
+                  effect_id,
+                  sequence,
+                  kind,
+                  from_state,
+                  to_state,
+                  payload_json,
+                  payload_digest,
+                  created_at_unix_ms
+                )
+                VALUES (?, ?, ?, 'reconciliation_evidence_applied', ?, ?, ?, ?, ?)
+                """,
+                (
+                    run_internal_id,
+                    record.intent.effect_id,
+                    next_version,
+                    current.value,
+                    expected_state.value,
+                    canonical_dumps(event_payload),
+                    canonical_hash(event_payload),
+                    settled_at,
+                ),
+            )
+            self._hit_failpoint("settle_active_send.after_event_insert")
+            settled = StoredProviderEffect(
+                tenant_id=record.tenant_id,
+                run_id=record.run_id,
+                owner_principal_id=record.owner_principal_id,
+                intent=record.intent,
+                capability=record.capability,
+                origin_transfer=record.origin_transfer,
+                state=expected_state,
+                state_version=next_version,
+                event_high_watermark=next_version,
+                created_at_unix_ms=record.created_at_unix_ms,
+                updated_at_unix_ms=settled_at,
+                claim_generation=record.claim_generation,
+                claim_fencing_token=record.claim_fencing_token,
+                latest_send_attempt=decoded_attempt,
+                latest_admission_receipt=decoded_receipt,
+                active_send_attempt=None if terminal else decoded_attempt,
+                active_admission_receipt=None if terminal else decoded_receipt,
+            )
+            self._assert_projection_tail(
+                connection,
+                run_internal_id=run_internal_id,
+                record=settled,
+            )
+            return True
+
+        settled = self._database._run_immediate(transition)
+        self._hit_failpoint("settle_active_send.after_commit")
+        return settled
+
     def verify_transferred_origin(
         self,
         *,
@@ -3687,6 +4227,27 @@ class SQLiteProviderEffectRepository:
                             "contiguous"
                         )
                     previous_claim = None
+                elif event.kind == "reconciliation_evidence_applied":
+                    evidence = ProviderReconciliationEvidence.from_wire(
+                        payload["evidence"]
+                    )
+                    expected_state = (
+                        None
+                        if event.from_state is None
+                        else _reconciliation_settlement_state(
+                            event.from_state,
+                            evidence.outcome,
+                        )
+                    )
+                    if (
+                        expected_state is None
+                        or event.to_state is not expected_state
+                        or evidence.send_attempt_digest != payload["sendAttemptDigest"]
+                    ):
+                        raise SQLiteProviderEffectCorruptionError(
+                            "provider-effect SQLite reconciliation authority is "
+                            "not contiguous"
+                        )
                 previous_event = event
             event_tuple = decoded_events[:limit]
             return StoredProviderEffectEventPage(
@@ -3770,8 +4331,13 @@ class SQLiteProviderEffectClaimAuthority:
         send_attempt: ProviderEffectSendAttempt,
         evidence: ProviderReconciliationEvidence,
     ) -> bool:
-        del current, next_state, admission_receipt, send_attempt, evidence
-        return False
+        return self._repository._settle_active_send(
+            current=current,
+            next_state=next_state,
+            admission_receipt=admission_receipt,
+            send_attempt=send_attempt,
+            evidence=evidence,
+        )
 
 
 __all__ = [

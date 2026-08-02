@@ -118,6 +118,17 @@ preparing the first 1.0 release candidate.
   covered. This local authority boundary performs no provider I/O and does not
   establish exactly-once delivery, outcome evidence, reconciliation, or durable
   retry.
+- Added atomic provider-effect evidence settlement in accepted-run SQLite
+  schema v11. Exact canonical reconciliation evidence is append-only and bound
+  to the current persisted attempt and admission receipt. Settlement rechecks
+  the active projection under the SQLite write lock, advances state and journal
+  sequence together, clears active send authority for confirmed terminal
+  outcomes, and retains it for quarantined unknown outcomes. Projection-tail
+  reads cross-check the evidence row, event, attempt, receipt, state, and
+  installed versions; interrupted writes roll back, while an exact settlement
+  call can recover a committed result after response loss. This boundary does
+  not invoke or authenticate provider I/O itself, schedule reconciliation, or
+  establish exactly-once delivery or durable retry.
 - Added a bounded CommonMark and GitHub-heading integrity checker, a closed
   generated-documentation registry with content-bound results, and an always-run
   fast documentation workflow plus named stable release gate.
