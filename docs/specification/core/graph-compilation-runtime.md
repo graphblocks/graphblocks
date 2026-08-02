@@ -671,6 +671,27 @@ the preceding core boundary. It also does not perform adapter I/O, schedule
 reconciliation, implement the quarantine-to-reconciling command, or enable
 durable retry.
 
+SQLite v12 adds the explicit quarantine/reconciliation/manual-review control
+boundary. A control MUST bind tenant, run, owner principal, effect, a stable
+control identifier, one of `begin_reconciliation`, `escalate_manual_review`, or
+`resume_reconciliation`, and the exact expected state version. The repository
+MUST resolve the effect through the complete tenant and owner scope, verify its
+projection tail and active attempt/receipt, and apply the closed state-machine
+transition with a compare-and-swap on state, version, journal watermark, and
+active send digests. The control row, projection update, and closed
+`reconciliation_control_applied` event MUST share one `BEGIN IMMEDIATE`
+transaction and one installed state/event version. These transitions retain
+the active send identity; they never authorize a second send.
+
+An exact control replay MAY return the installed result while it remains the
+current projection, including after response loss. Reusing its control identity
+with changed scope, transition, or expected version MUST conflict, and a replay
+superseded by a later transition MUST be reported as stale rather than
+reconstructing current authority from history. The v12 migration creates an
+empty control ledger and does not infer controls for existing quarantined
+sends. This repository boundary does not authenticate operator policy, schedule
+reconciliation workers, invoke provider verification, or implement a retry.
+
 Existing operation-dispatch rows MUST NOT be migrated or reinterpreted as
 provider-effect intents because they do not contain this authority or evidence.
 SQLite v8 creates empty provider-specific tables and does not backfill the
@@ -682,7 +703,8 @@ exact active v9 claim. It MUST fail closed rather than invent an attempt or
 receipt for `send_started` or later state. Operators upgrading the preview
 database MUST prevent mixed-version writers and retain the normal pre-migration
 backup. The v11 migration creates an empty evidence ledger and does not invent
-outcomes for existing active sends. A production profile still requires real
+outcomes for existing active sends. The v12 migration likewise creates an empty
+control ledger. A production profile still requires real
 adapter capability and verifier-registry authorities, adapter I/O,
 ambiguous-send reconciliation, kill/restart/fencing tests, and provider-side
 idempotency or status/cancellation evidence. Repository snapshots, transfers,

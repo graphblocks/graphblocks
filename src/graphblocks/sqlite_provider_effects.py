@@ -19,6 +19,7 @@ from .provider_effects import (
     ProviderEffectSendAttempt,
     ProviderEffectState,
     ProviderEffectStateConflictError,
+    ProviderEffectTransition,
     ProviderReconciliationEvidence,
     ProviderReconciliationMethod,
     ProviderReconciliationOutcome,
@@ -32,6 +33,7 @@ from .provider_effects import (
     _revalidate_provider_effect_send_attempt,
     _validate_intent_capability_binding,
     _validate_intent_origin_transfer_binding,
+    transition_provider_effect_state,
 )
 from .server_storage import (
     AcceptedRunClaim,
@@ -51,6 +53,9 @@ PROVIDER_EFFECT_EVENT_FORMAT_VERSION = "graphblocks.provider-effect-event.v1"
 PROVIDER_EFFECT_CLAIM_FORMAT_VERSION = "graphblocks.provider-effect-claim.v1"
 PROVIDER_EFFECT_CLAIM_RELEASE_FORMAT_VERSION = (
     "graphblocks.provider-effect-claim-release.v1"
+)
+PROVIDER_EFFECT_RECONCILIATION_CONTROL_FORMAT_VERSION = (
+    "graphblocks.provider-effect-reconciliation-control.v1"
 )
 MAX_PROVIDER_EFFECT_EVENT_PAGE_SIZE = 1_000
 MAX_PROVIDER_EFFECT_CLAIM_LEASE_DURATION_MS = 60_000
@@ -121,6 +126,18 @@ _PROVIDER_EFFECT_CLAIM_RELEASE_FIELDS = frozenset(
         "resultingStateVersion",
         "runId",
         "tenantId",
+    }
+)
+_PROVIDER_EFFECT_RECONCILIATION_CONTROL_FIELDS = frozenset(
+    {
+        "controlId",
+        "effectId",
+        "expectedStateVersion",
+        "formatVersion",
+        "ownerPrincipalId",
+        "runId",
+        "tenantId",
+        "transition",
     }
 )
 
@@ -219,6 +236,123 @@ class ProviderEffectClaimRequest:
                 "provider effect claim lease exceeds the repository policy maximum"
             )
         object.__setattr__(self, "lease_duration_ms", lease_duration_ms)
+
+
+@dataclass(frozen=True, slots=True)
+class ProviderEffectReconciliationControl:
+    tenant_id: str
+    run_id: str
+    owner_principal_id: str
+    effect_id: str
+    control_id: str
+    transition: ProviderEffectTransition
+    expected_state_version: int
+    format_version: str = PROVIDER_EFFECT_RECONCILIATION_CONTROL_FORMAT_VERSION
+
+    def __post_init__(self) -> None:
+        owner = "provider effect reconciliation control"
+        for field_name in (
+            "tenant_id",
+            "run_id",
+            "owner_principal_id",
+            "effect_id",
+            "control_id",
+        ):
+            object.__setattr__(
+                self,
+                field_name,
+                _require_exact_string(owner, field_name, getattr(self, field_name)),
+            )
+        if type(
+            self.transition
+        ) is not ProviderEffectTransition or self.transition not in {
+            ProviderEffectTransition.BEGIN_RECONCILIATION,
+            ProviderEffectTransition.ESCALATE_MANUAL_REVIEW,
+            ProviderEffectTransition.RESUME_RECONCILIATION,
+        }:
+            raise ProviderEffectContractError(
+                f"{owner} transition is not an operator control transition"
+            )
+        object.__setattr__(
+            self,
+            "expected_state_version",
+            _require_sqlite_integer(
+                owner,
+                "expected_state_version",
+                self.expected_state_version,
+                positive=True,
+            ),
+        )
+        format_version = _require_exact_string(
+            owner,
+            "format_version",
+            self.format_version,
+        )
+        if format_version != PROVIDER_EFFECT_RECONCILIATION_CONTROL_FORMAT_VERSION:
+            raise ProviderEffectContractError(
+                f"{owner} format_version is not supported"
+            )
+        object.__setattr__(self, "format_version", format_version)
+
+    @property
+    def digest(self) -> str:
+        return canonical_hash(self.to_wire())
+
+    def to_wire(self) -> dict[str, object]:
+        return {
+            "controlId": self.control_id,
+            "effectId": self.effect_id,
+            "expectedStateVersion": self.expected_state_version,
+            "formatVersion": self.format_version,
+            "ownerPrincipalId": self.owner_principal_id,
+            "runId": self.run_id,
+            "tenantId": self.tenant_id,
+            "transition": self.transition.value,
+        }
+
+    @classmethod
+    def from_wire(cls, value: object) -> ProviderEffectReconciliationControl:
+        owner = "provider effect reconciliation control"
+        if (
+            type(value) is not dict
+            or set(value) != _PROVIDER_EFFECT_RECONCILIATION_CONTROL_FIELDS
+        ):
+            raise ProviderEffectContractError(f"{owner} must contain the closed fields")
+        try:
+            transition = ProviderEffectTransition(
+                _require_exact_string(owner, "transition", value["transition"])
+            )
+        except ValueError as error:
+            raise ProviderEffectContractError(
+                f"{owner} transition is not supported"
+            ) from error
+        return cls(
+            tenant_id=_require_exact_string(owner, "tenantId", value["tenantId"]),
+            run_id=_require_exact_string(owner, "runId", value["runId"]),
+            owner_principal_id=_require_exact_string(
+                owner,
+                "ownerPrincipalId",
+                value["ownerPrincipalId"],
+            ),
+            effect_id=_require_exact_string(owner, "effectId", value["effectId"]),
+            control_id=_require_exact_string(
+                owner,
+                "controlId",
+                value["controlId"],
+            ),
+            transition=transition,
+            expected_state_version=_require_sqlite_integer(
+                owner,
+                "expectedStateVersion",
+                value["expectedStateVersion"],
+                positive=True,
+            ),
+            format_version=_require_exact_string(
+                owner,
+                "formatVersion",
+                value["formatVersion"],
+            ),
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -1107,6 +1241,47 @@ class StoredProviderEffectEvent:
                 "admissionReceiptDigest",
                 payload["admissionReceiptDigest"],
             )
+        elif self.kind == "reconciliation_control_applied":
+            if set(payload) != {
+                "admissionReceiptDigest",
+                "control",
+                "controlDigest",
+                "effectId",
+                "formatVersion",
+                "intentDigest",
+                "sendAttemptDigest",
+                "state",
+            }:
+                raise ProviderEffectContractError(
+                    f"{owner} reconciliation control event is not closed and exact"
+                )
+            control = ProviderEffectReconciliationControl.from_wire(payload["control"])
+            expected_state = (
+                None
+                if self.from_state is None
+                else transition_provider_effect_state(
+                    self.from_state,
+                    control.transition,
+                )
+            )
+            if (
+                expected_state is None
+                or self.to_state is not expected_state
+                or payload["state"] != expected_state.value
+                or control.effect_id != self.effect_id
+                or control.expected_state_version + 1 != self.sequence
+                or control.digest
+                != _require_digest(owner, "controlDigest", payload["controlDigest"])
+            ):
+                raise ProviderEffectContractError(
+                    f"{owner} reconciliation control identity is not exact"
+                )
+            for field_name in (
+                "admissionReceiptDigest",
+                "intentDigest",
+                "sendAttemptDigest",
+            ):
+                _require_digest(owner, field_name, payload[field_name])
         else:
             raise ProviderEffectContractError(
                 f"{owner} kind is not supported by this repository version"
@@ -1703,6 +1878,24 @@ class SQLiteProviderEffectRepository:
                     raise ValueError(
                         "provider-effect reconciliation event scope is invalid"
                     )
+            elif event.kind == "reconciliation_control_applied":
+                control = ProviderEffectReconciliationControl.from_wire(
+                    payload["control"]
+                )
+                if (
+                    control.tenant_id != record.tenant_id
+                    or control.run_id != record.run_id
+                    or control.owner_principal_id != record.owner_principal_id
+                    or control.effect_id != record.intent.effect_id
+                    or record.latest_send_attempt is None
+                    or record.latest_admission_receipt is None
+                    or payload["sendAttemptDigest"] != record.latest_send_attempt.digest
+                    or payload["admissionReceiptDigest"]
+                    != record.latest_admission_receipt.digest
+                ):
+                    raise ValueError(
+                        "provider-effect reconciliation control scope is invalid"
+                    )
             return payload
         except (KeyError, TypeError, ValueError) as error:
             raise SQLiteProviderEffectCorruptionError(
@@ -1960,6 +2153,52 @@ class SQLiteProviderEffectRepository:
                     or evidence_row["installed_event_sequence"] != event.sequence
                 ):
                     raise ValueError("provider-effect reconciliation tail is invalid")
+            elif event.kind == "reconciliation_control_applied":
+                control = ProviderEffectReconciliationControl.from_wire(
+                    payload["control"]
+                )
+                control_row = connection.execute(
+                    """
+                    SELECT *
+                    FROM provider_effect_reconciliation_controls
+                    WHERE run_internal_id = ?
+                      AND effect_id = ?
+                      AND control_id = ?
+                    """,
+                    (run_internal_id, record.intent.effect_id, control.control_id),
+                ).fetchone()
+                control_from_state = event.from_state
+                expected_state = (
+                    None
+                    if control_from_state is None
+                    else transition_provider_effect_state(
+                        control_from_state,
+                        control.transition,
+                    )
+                )
+                if (
+                    expected_state is None
+                    or record.state is not expected_state
+                    or record.active_send_attempt is None
+                    or record.active_admission_receipt is None
+                    or payload["sendAttemptDigest"] != record.active_send_attempt.digest
+                    or payload["admissionReceiptDigest"]
+                    != record.active_admission_receipt.digest
+                    or control_row is None
+                    or control_row["request_digest"] != control.digest
+                    or control_row["transition"] != control.transition.value
+                    or control_from_state is None
+                    or control_row["from_state"] != control_from_state.value
+                    or control_row["to_state"] != expected_state.value
+                    or control_row["requested_state_version"]
+                    != control.expected_state_version
+                    or control_row["applied_at_unix_ms"] != record.updated_at_unix_ms
+                    or control_row["installed_state_version"] != record.state_version
+                    or control_row["installed_event_sequence"] != event.sequence
+                ):
+                    raise ValueError(
+                        "provider-effect reconciliation control tail is invalid"
+                    )
         except (KeyError, TypeError, ValueError) as error:
             raise SQLiteProviderEffectCorruptionError(
                 "provider-effect SQLite event tail does not match its projection"
@@ -3963,6 +4202,240 @@ class SQLiteProviderEffectRepository:
         self._hit_failpoint("settle_active_send.after_commit")
         return settled
 
+    def apply_reconciliation_control(
+        self,
+        control: ProviderEffectReconciliationControl,
+    ) -> StoredProviderEffect:
+        """Atomically apply one idempotent operator transition to an active send."""
+
+        if type(control) is not ProviderEffectReconciliationControl:
+            raise TypeError("provider-effect reconciliation control must be exact")
+        control = ProviderEffectReconciliationControl.from_wire(control.to_wire())
+
+        def transition(connection: sqlite3.Connection) -> StoredProviderEffect:
+            row = connection.execute(
+                """
+                SELECT provider_effects.*,
+                       accepted_runs.tenant_id,
+                       accepted_runs.external_run_id,
+                       accepted_runs.owner_principal_id
+                FROM provider_effects
+                JOIN accepted_runs
+                  ON accepted_runs.internal_id = provider_effects.run_internal_id
+                WHERE accepted_runs.tenant_id = ?
+                  AND accepted_runs.external_run_id = ?
+                  AND accepted_runs.owner_principal_id = ?
+                  AND provider_effects.effect_id = ?
+                """,
+                (
+                    control.tenant_id,
+                    control.run_id,
+                    control.owner_principal_id,
+                    control.effect_id,
+                ),
+            ).fetchone()
+            if row is None:
+                raise ProviderEffectStateConflictError(
+                    "provider-effect reconciliation target is not available"
+                )
+            record = self._record_from_row(connection, row)
+            run_internal_id = row["run_internal_id"]
+            if type(run_internal_id) is not str:
+                raise SQLiteProviderEffectCorruptionError(
+                    "provider-effect SQLite run identity is not text"
+                )
+            self._assert_projection_tail(
+                connection,
+                run_internal_id=run_internal_id,
+                record=record,
+            )
+            replay = connection.execute(
+                """
+                SELECT *
+                FROM provider_effect_reconciliation_controls
+                WHERE run_internal_id = ?
+                  AND effect_id = ?
+                  AND control_id = ?
+                """,
+                (run_internal_id, control.effect_id, control.control_id),
+            ).fetchone()
+            if replay is not None:
+                if (
+                    replay["request_digest"] != control.digest
+                    or replay["transition"] != control.transition.value
+                    or replay["requested_state_version"]
+                    != control.expected_state_version
+                ):
+                    raise ProviderEffectIdentityConflictError(
+                        "provider-effect reconciliation control identity was reused"
+                    )
+                if (
+                    record.state_version != replay["installed_state_version"]
+                    or record.event_high_watermark != replay["installed_event_sequence"]
+                    or record.state.value != replay["to_state"]
+                ):
+                    raise ProviderEffectStateConflictError(
+                        "provider-effect reconciliation control replay was superseded"
+                    )
+                return record
+            if record.state_version != control.expected_state_version:
+                raise ProviderEffectStateConflictError(
+                    "provider-effect reconciliation control state version is stale"
+                )
+            if (
+                record.active_send_attempt is None
+                or record.active_admission_receipt is None
+            ):
+                raise ProviderEffectStateConflictError(
+                    "provider-effect reconciliation control requires an active send"
+                )
+            next_state = transition_provider_effect_state(
+                record.state,
+                control.transition,
+            )
+            if record.state_version >= _MAX_SQLITE_INTEGER:
+                raise ProviderEffectStateConflictError(
+                    "provider-effect state version is exhausted"
+                )
+            applied_at = self._transaction_now_unix_ms()
+            if applied_at < record.updated_at_unix_ms:
+                raise ValueError(
+                    "provider-effect SQLite clock moved behind the projection"
+                )
+            next_version = record.state_version + 1
+            connection.execute(
+                """
+                INSERT INTO provider_effect_reconciliation_controls (
+                  run_internal_id,
+                  effect_id,
+                  control_id,
+                  request_digest,
+                  transition,
+                  from_state,
+                  to_state,
+                  requested_state_version,
+                  applied_at_unix_ms,
+                  installed_state_version,
+                  installed_event_sequence
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    run_internal_id,
+                    record.intent.effect_id,
+                    control.control_id,
+                    control.digest,
+                    control.transition.value,
+                    record.state.value,
+                    next_state.value,
+                    control.expected_state_version,
+                    applied_at,
+                    next_version,
+                    next_version,
+                ),
+            )
+            self._hit_failpoint("apply_reconciliation_control.after_control_insert")
+            updated = connection.execute(
+                """
+                UPDATE provider_effects
+                SET state = ?,
+                    state_version = ?,
+                    event_high_watermark = ?,
+                    updated_at_unix_ms = ?
+                WHERE run_internal_id = ?
+                  AND effect_id = ?
+                  AND state = ?
+                  AND state_version = ?
+                  AND event_high_watermark = ?
+                  AND active_send_attempt_digest = ?
+                  AND active_admission_receipt_digest = ?
+                """,
+                (
+                    next_state.value,
+                    next_version,
+                    next_version,
+                    applied_at,
+                    run_internal_id,
+                    record.intent.effect_id,
+                    record.state.value,
+                    record.state_version,
+                    record.event_high_watermark,
+                    record.active_send_attempt.digest,
+                    record.active_admission_receipt.digest,
+                ),
+            )
+            if updated.rowcount != 1:
+                raise ProviderEffectStateConflictError(
+                    "provider-effect reconciliation projection changed concurrently"
+                )
+            self._hit_failpoint("apply_reconciliation_control.after_effect_update")
+            event_payload = {
+                "admissionReceiptDigest": record.active_admission_receipt.digest,
+                "control": control.to_wire(),
+                "controlDigest": control.digest,
+                "effectId": record.intent.effect_id,
+                "formatVersion": PROVIDER_EFFECT_EVENT_FORMAT_VERSION,
+                "intentDigest": record.intent.digest,
+                "sendAttemptDigest": record.active_send_attempt.digest,
+                "state": next_state.value,
+            }
+            connection.execute(
+                """
+                INSERT INTO provider_effect_events (
+                  run_internal_id,
+                  effect_id,
+                  sequence,
+                  kind,
+                  from_state,
+                  to_state,
+                  payload_json,
+                  payload_digest,
+                  created_at_unix_ms
+                )
+                VALUES (?, ?, ?, 'reconciliation_control_applied', ?, ?, ?, ?, ?)
+                """,
+                (
+                    run_internal_id,
+                    record.intent.effect_id,
+                    next_version,
+                    record.state.value,
+                    next_state.value,
+                    canonical_dumps(event_payload),
+                    canonical_hash(event_payload),
+                    applied_at,
+                ),
+            )
+            self._hit_failpoint("apply_reconciliation_control.after_event_insert")
+            controlled = StoredProviderEffect(
+                tenant_id=record.tenant_id,
+                run_id=record.run_id,
+                owner_principal_id=record.owner_principal_id,
+                intent=record.intent,
+                capability=record.capability,
+                origin_transfer=record.origin_transfer,
+                state=next_state,
+                state_version=next_version,
+                event_high_watermark=next_version,
+                created_at_unix_ms=record.created_at_unix_ms,
+                updated_at_unix_ms=applied_at,
+                claim_generation=record.claim_generation,
+                claim_fencing_token=record.claim_fencing_token,
+                latest_send_attempt=record.latest_send_attempt,
+                latest_admission_receipt=record.latest_admission_receipt,
+                active_send_attempt=record.active_send_attempt,
+                active_admission_receipt=record.active_admission_receipt,
+            )
+            self._assert_projection_tail(
+                connection,
+                run_internal_id=run_internal_id,
+                record=controlled,
+            )
+            return controlled
+
+        controlled = self._database._run_immediate(transition)
+        self._hit_failpoint("apply_reconciliation_control.after_commit")
+        return controlled
+
     def verify_transferred_origin(
         self,
         *,
@@ -4248,6 +4721,27 @@ class SQLiteProviderEffectRepository:
                             "provider-effect SQLite reconciliation authority is "
                             "not contiguous"
                         )
+                elif event.kind == "reconciliation_control_applied":
+                    control = ProviderEffectReconciliationControl.from_wire(
+                        payload["control"]
+                    )
+                    expected_state = (
+                        None
+                        if event.from_state is None
+                        else transition_provider_effect_state(
+                            event.from_state,
+                            control.transition,
+                        )
+                    )
+                    if (
+                        expected_state is None
+                        or event.to_state is not expected_state
+                        or control.expected_state_version + 1 != event.sequence
+                    ):
+                        raise SQLiteProviderEffectCorruptionError(
+                            "provider-effect SQLite reconciliation control is "
+                            "not contiguous"
+                        )
                 previous_event = event
             event_tuple = decoded_events[:limit]
             return StoredProviderEffectEventPage(
@@ -4346,9 +4840,11 @@ __all__ = [
     "PROVIDER_EFFECT_CLAIM_FORMAT_VERSION",
     "PROVIDER_EFFECT_CLAIM_RELEASE_FORMAT_VERSION",
     "PROVIDER_EFFECT_EVENT_FORMAT_VERSION",
+    "PROVIDER_EFFECT_RECONCILIATION_CONTROL_FORMAT_VERSION",
     "ProviderEffectClaim",
     "ProviderEffectClaimRelease",
     "ProviderEffectClaimRequest",
+    "ProviderEffectReconciliationControl",
     "ProviderEffectWorkItem",
     "SQLiteProviderEffectClaimAuthority",
     "SQLiteProviderEffectCorruptionError",

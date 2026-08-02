@@ -25,6 +25,8 @@ from graphblocks.provider_effects import (
     ProviderEffectKind,
     ProviderEffectSendAttempt,
     ProviderEffectState,
+    ProviderEffectStateConflictError,
+    ProviderEffectTransition,
     ProviderReconciliationEvidence,
     ProviderReconciliationMethod,
     ProviderReconciliationOutcome,
@@ -51,6 +53,7 @@ from graphblocks.sqlite_provider_effects import (
     ProviderEffectClaim,
     ProviderEffectClaimRelease,
     ProviderEffectClaimRequest,
+    ProviderEffectReconciliationControl,
     ProviderEffectWorkItem,
     SQLiteProviderEffectClaimAuthority,
     SQLiteProviderEffectCorruptionError,
@@ -428,6 +431,42 @@ def _claim_and_admit(
         claim_authority=claim_authority,
     )
     return work_item, repository, claim_authority, admission
+
+
+def _quarantine_unknown_effect(
+    path: Path,
+) -> tuple[
+    ProviderEffectWorkItem,
+    ProviderEffectSendAttempt,
+    ProviderEffectAdmissionReceipt,
+]:
+    work_item, _, claim_authority, admission = _claim_and_admit(path)
+    _, send_attempt, admission_receipt = begin_provider_effect_send(
+        work_item.effect.state,
+        work_item.effect.intent,
+        work_item.effect.capability,
+        admission,
+        claim_authority,
+    )
+    evidence = _provider_evidence(
+        work_item,
+        send_attempt,
+        outcome=ProviderReconciliationOutcome.UNKNOWN,
+    )
+    assert (
+        apply_provider_reconciliation_evidence(
+            ProviderEffectState.SEND_STARTED,
+            work_item.effect.intent,
+            work_item.effect.capability,
+            admission_receipt,
+            send_attempt,
+            evidence,
+            _repository(path, clock=lambda: 2_400).send_claim_authority,
+            _VERIFIER_AUTHORITY,
+        )
+        is ProviderEffectState.QUARANTINED_UNKNOWN
+    )
+    return work_item, send_attempt, admission_receipt
 
 
 def test_sqlite_provider_effect_persists_exact_origin_transfer_and_event(
@@ -2368,6 +2407,248 @@ def test_sqlite_provider_effect_serializes_competing_evidence_settlements(
     finally:
         connection.close()
     assert evidence_count == 1
+
+
+def test_sqlite_provider_effect_durably_reconciles_quarantined_send(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "provider-effect-reconciliation-control.sqlite3"
+    work_item, send_attempt, admission_receipt = _quarantine_unknown_effect(path)
+    control = ProviderEffectReconciliationControl(
+        tenant_id="tenant-1",
+        run_id="run-1",
+        owner_principal_id="principal-1",
+        effect_id="effect-1",
+        control_id="reconcile-1",
+        transition=ProviderEffectTransition.BEGIN_RECONCILIATION,
+        expected_state_version=4,
+    )
+
+    def lose_response(name: str) -> None:
+        if name == "apply_reconciliation_control.after_commit":
+            raise RuntimeError("simulated control response loss")
+
+    with pytest.raises(RuntimeError, match="control response loss"):
+        _repository(
+            path,
+            clock=lambda: 2_500,
+            failpoint=lose_response,
+        ).apply_reconciliation_control(control)
+    repository = _repository(path, clock=lambda: 9_000)
+    reconciling = repository.apply_reconciliation_control(control)
+    replayed = repository.apply_reconciliation_control(control)
+
+    assert reconciling.state is ProviderEffectState.RECONCILING
+    assert reconciling.state_version == 5
+    assert reconciling.active_send_attempt == send_attempt
+    assert reconciling.active_admission_receipt == admission_receipt
+    assert replayed == reconciling
+    with pytest.raises(
+        ProviderEffectIdentityConflictError,
+        match="control identity was reused",
+    ):
+        repository.apply_reconciliation_control(
+            replace(
+                control,
+                transition=ProviderEffectTransition.ESCALATE_MANUAL_REVIEW,
+            )
+        )
+    committed = _provider_evidence(work_item, send_attempt)
+    next_state = apply_provider_reconciliation_evidence(
+        ProviderEffectState.RECONCILING,
+        work_item.effect.intent,
+        work_item.effect.capability,
+        admission_receipt,
+        send_attempt,
+        committed,
+        _repository(path, clock=lambda: 2_600).send_claim_authority,
+        _VERIFIER_AUTHORITY,
+    )
+    restored = _repository(path, clock=lambda: 9_000).get_effect(
+        tenant_id="tenant-1",
+        run_id="run-1",
+        owner_principal_id="principal-1",
+        effect_id="effect-1",
+    )
+    assert next_state is ProviderEffectState.CONFIRMED_COMMITTED
+    assert restored is not None
+    assert restored.state is ProviderEffectState.CONFIRMED_COMMITTED
+    assert restored.state_version == 6
+    assert restored.active_send_attempt is None
+    events = repository.read_events(
+        tenant_id="tenant-1",
+        run_id="run-1",
+        owner_principal_id="principal-1",
+        effect_id="effect-1",
+        after_sequence=0,
+        limit=10,
+    ).events
+    assert tuple(event.kind for event in events[-3:]) == (
+        "reconciliation_evidence_applied",
+        "reconciliation_control_applied",
+        "reconciliation_evidence_applied",
+    )
+
+
+def test_sqlite_provider_effect_persists_manual_review_control_cycle(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "provider-effect-manual-review-control.sqlite3"
+    _, send_attempt, admission_receipt = _quarantine_unknown_effect(path)
+    escalated = _repository(path, clock=lambda: 2_500).apply_reconciliation_control(
+        ProviderEffectReconciliationControl(
+            tenant_id="tenant-1",
+            run_id="run-1",
+            owner_principal_id="principal-1",
+            effect_id="effect-1",
+            control_id="manual-review-1",
+            transition=ProviderEffectTransition.ESCALATE_MANUAL_REVIEW,
+            expected_state_version=4,
+        )
+    )
+    resumed = _repository(path, clock=lambda: 2_600).apply_reconciliation_control(
+        ProviderEffectReconciliationControl(
+            tenant_id="tenant-1",
+            run_id="run-1",
+            owner_principal_id="principal-1",
+            effect_id="effect-1",
+            control_id="resume-reconciliation-1",
+            transition=ProviderEffectTransition.RESUME_RECONCILIATION,
+            expected_state_version=5,
+        )
+    )
+
+    assert escalated.state is ProviderEffectState.MANUAL_REVIEW_UNKNOWN
+    assert escalated.active_send_attempt == send_attempt
+    assert resumed.state is ProviderEffectState.RECONCILING
+    assert resumed.state_version == 6
+    assert resumed.active_send_attempt == send_attempt
+    assert resumed.active_admission_receipt == admission_receipt
+
+
+@pytest.mark.parametrize(
+    "failpoint_name",
+    (
+        "apply_reconciliation_control.after_control_insert",
+        "apply_reconciliation_control.after_effect_update",
+        "apply_reconciliation_control.after_event_insert",
+    ),
+)
+def test_sqlite_provider_effect_rolls_back_interrupted_reconciliation_control(
+    tmp_path: Path,
+    failpoint_name: str,
+) -> None:
+    path = tmp_path / f"provider-effect-control-rollback-{failpoint_name}.sqlite3"
+    _, send_attempt, _ = _quarantine_unknown_effect(path)
+    control = ProviderEffectReconciliationControl(
+        tenant_id="tenant-1",
+        run_id="run-1",
+        owner_principal_id="principal-1",
+        effect_id="effect-1",
+        control_id="reconcile-rollback-1",
+        transition=ProviderEffectTransition.BEGIN_RECONCILIATION,
+        expected_state_version=4,
+    )
+
+    def failpoint(name: str) -> None:
+        if name == failpoint_name:
+            raise RuntimeError("simulated reconciliation-control interruption")
+
+    with pytest.raises(RuntimeError, match="simulated reconciliation-control"):
+        _repository(
+            path,
+            clock=lambda: 2_500,
+            failpoint=failpoint,
+        ).apply_reconciliation_control(control)
+
+    restored = _repository(path, clock=lambda: 9_000).get_effect(
+        tenant_id="tenant-1",
+        run_id="run-1",
+        owner_principal_id="principal-1",
+        effect_id="effect-1",
+    )
+    assert restored is not None
+    assert restored.state is ProviderEffectState.QUARANTINED_UNKNOWN
+    assert restored.state_version == 4
+    assert restored.active_send_attempt == send_attempt
+    connection = sqlite3.connect(path)
+    try:
+        control_count = int(
+            connection.execute(
+                "SELECT count(*) FROM provider_effect_reconciliation_controls"
+            ).fetchone()[0]
+        )
+    finally:
+        connection.close()
+    assert control_count == 0
+
+
+def test_sqlite_provider_effect_rejects_stale_or_cross_owner_control(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "provider-effect-control-scope.sqlite3"
+    _quarantine_unknown_effect(path)
+    stale = ProviderEffectReconciliationControl(
+        tenant_id="tenant-1",
+        run_id="run-1",
+        owner_principal_id="principal-1",
+        effect_id="effect-1",
+        control_id="stale-control",
+        transition=ProviderEffectTransition.BEGIN_RECONCILIATION,
+        expected_state_version=3,
+    )
+    wrong_owner = replace(
+        stale,
+        owner_principal_id="another-principal",
+        control_id="cross-owner-control",
+        expected_state_version=4,
+    )
+    repository = _repository(path, clock=lambda: 2_500)
+
+    with pytest.raises(ProviderEffectStateConflictError, match="version is stale"):
+        repository.apply_reconciliation_control(stale)
+    with pytest.raises(ProviderEffectStateConflictError, match="not available"):
+        repository.apply_reconciliation_control(wrong_owner)
+
+
+def test_sqlite_provider_effect_rejects_corrupted_reconciliation_control(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "provider-effect-control-corruption.sqlite3"
+    _quarantine_unknown_effect(path)
+    _repository(path, clock=lambda: 2_500).apply_reconciliation_control(
+        ProviderEffectReconciliationControl(
+            tenant_id="tenant-1",
+            run_id="run-1",
+            owner_principal_id="principal-1",
+            effect_id="effect-1",
+            control_id="corrupt-control",
+            transition=ProviderEffectTransition.BEGIN_RECONCILIATION,
+            expected_state_version=4,
+        )
+    )
+    connection = sqlite3.connect(path, isolation_level=None)
+    try:
+        connection.execute("BEGIN IMMEDIATE")
+        connection.execute(
+            """
+            UPDATE provider_effect_reconciliation_controls
+            SET request_digest = ?
+            WHERE control_id = 'corrupt-control'
+            """,
+            ("sha256:" + ("f" * 64),),
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+    with pytest.raises(SQLiteProviderEffectCorruptionError):
+        _repository(path, clock=lambda: 9_000).get_effect(
+            tenant_id="tenant-1",
+            run_id="run-1",
+            owner_principal_id="principal-1",
+            effect_id="effect-1",
+        )
 
 
 def test_sqlite_provider_effect_claim_authority_verifies_exact_live_claim(

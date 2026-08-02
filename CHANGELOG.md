@@ -129,6 +129,15 @@ preparing the first 1.0 release candidate.
   call can recover a committed result after response loss. This boundary does
   not invoke or authenticate provider I/O itself, schedule reconciliation, or
   establish exactly-once delivery or durable retry.
+- Added idempotent provider-effect reconciliation controls in accepted-run
+  SQLite schema v12. Tenant-, run-, owner-, and effect-scoped control records
+  bind a caller control identity, exact expected state version, and one closed
+  quarantine/reconciliation/manual-review transition. Each control is committed
+  with the projection CAS and authoritative event, retains the active attempt
+  and receipt, replays exactly after response loss while still current, and
+  rejects stale versions or changed control identities. This provides durable
+  operator state control but does not schedule workers, authenticate operator
+  policy, call providers, or implement retry.
 - Added a bounded CommonMark and GitHub-heading integrity checker, a closed
   generated-documentation registry with content-bound results, and an always-run
   fast documentation workflow plus named stable release gate.
