@@ -63,7 +63,7 @@ from .server_storage import (
 
 
 SQLITE_ACCEPTED_RUN_APPLICATION_ID = 0x47424152
-SQLITE_ACCEPTED_RUN_SCHEMA_VERSION = 12
+SQLITE_ACCEPTED_RUN_SCHEMA_VERSION = 13
 _SQLITE_ACCEPTED_RUN_SCHEMA_NAME = "graphblocks.accepted-runs.sqlite"
 _SQLITE_ACCEPTED_RUN_INITIAL_SCHEMA_VERSION = 1
 _MAX_BUSY_TIMEOUT_MS = 60_000
@@ -992,6 +992,44 @@ _SCHEMA_V12_MIGRATION_STATEMENTS = (
     """,
 )
 
+_SCHEMA_V13_MIGRATION_STATEMENTS = (
+    """
+    CREATE TABLE provider_effect_retry_commands (
+      run_internal_id TEXT NOT NULL,
+      effect_id TEXT NOT NULL,
+      retry_id TEXT NOT NULL,
+      command_digest TEXT NOT NULL,
+      command_json TEXT NOT NULL,
+      intent_digest TEXT NOT NULL,
+      previous_send_attempt_digest TEXT NOT NULL,
+      from_state TEXT NOT NULL CHECK (
+        from_state IN ('confirmed_not_committed', 'confirmed_cancelled')
+      ),
+      to_state TEXT NOT NULL CHECK (to_state = 'pending'),
+      requested_state_version INTEGER NOT NULL CHECK (
+        requested_state_version > 0
+      ),
+      applied_at_unix_ms INTEGER NOT NULL CHECK (applied_at_unix_ms >= 0),
+      installed_state_version INTEGER NOT NULL CHECK (
+        installed_state_version = requested_state_version + 1
+      ),
+      installed_event_sequence INTEGER NOT NULL CHECK (
+        installed_event_sequence = installed_state_version
+      ),
+      PRIMARY KEY (run_internal_id, effect_id, retry_id),
+      UNIQUE (run_internal_id, effect_id, installed_state_version),
+      FOREIGN KEY (run_internal_id, effect_id)
+        REFERENCES provider_effects (run_internal_id, effect_id)
+        ON DELETE RESTRICT,
+      CHECK (length(effect_id) > 0),
+      CHECK (length(retry_id) > 0),
+      CHECK (length(command_digest) > 0),
+      CHECK (length(intent_digest) > 0),
+      CHECK (length(previous_send_attempt_digest) > 0)
+    )
+    """,
+)
+
 _REQUIRED_COLUMNS_V1 = {
     "accepted_run_storage_metadata": frozenset({"key", "value"}),
     "accepted_runs": frozenset(
@@ -1273,7 +1311,7 @@ _REQUIRED_COLUMNS_V11 = {
         }
     ),
 }
-_REQUIRED_COLUMNS = {
+_REQUIRED_COLUMNS_V12 = {
     **_REQUIRED_COLUMNS_V11,
     "provider_effect_reconciliation_controls": frozenset(
         {
@@ -1282,6 +1320,26 @@ _REQUIRED_COLUMNS = {
             "control_id",
             "request_digest",
             "transition",
+            "from_state",
+            "to_state",
+            "requested_state_version",
+            "applied_at_unix_ms",
+            "installed_state_version",
+            "installed_event_sequence",
+        }
+    ),
+}
+_REQUIRED_COLUMNS = {
+    **_REQUIRED_COLUMNS_V12,
+    "provider_effect_retry_commands": frozenset(
+        {
+            "run_internal_id",
+            "effect_id",
+            "retry_id",
+            "command_digest",
+            "command_json",
+            "intent_digest",
+            "previous_send_attempt_digest",
             "from_state",
             "to_state",
             "requested_state_version",
@@ -1711,6 +1769,7 @@ class SQLiteAcceptedRunDatabase:
                     9,
                     10,
                     11,
+                    12,
                 }:
                     self._migrate_to_current(connection)
                 else:
@@ -1790,6 +1849,8 @@ class SQLiteAcceptedRunDatabase:
                     connection.execute(statement)
                 for statement in _SCHEMA_V12_MIGRATION_STATEMENTS:
                     connection.execute(statement)
+                for statement in _SCHEMA_V13_MIGRATION_STATEMENTS:
+                    connection.execute(statement)
                 connection.executemany(
                     """
                     INSERT INTO accepted_run_storage_metadata (key, value)
@@ -1841,6 +1902,7 @@ class SQLiteAcceptedRunDatabase:
                 9,
                 10,
                 11,
+                12,
             }:
                 raise SQLiteAcceptedRunSchemaVersionError(
                     "unsupported accepted-run SQLite schema version "
@@ -2174,6 +2236,30 @@ class SQLiteAcceptedRunDatabase:
                     raise SQLiteAcceptedRunSchemaMismatchError(
                         "accepted-run SQLite schema metadata version changed "
                         "during v12 migration"
+                    )
+                connection.execute(
+                    "PRAGMA user_version = 12"
+                )
+                user_version = 12
+            if user_version == 12:
+                self._validate_schema_version(
+                    connection,
+                    schema_version=12,
+                    required_columns=_REQUIRED_COLUMNS_V12,
+                )
+                for statement in _SCHEMA_V13_MIGRATION_STATEMENTS:
+                    connection.execute(statement)
+                updated = connection.execute(
+                    """
+                    UPDATE accepted_run_storage_metadata
+                    SET value = '13'
+                    WHERE key = 'schema_version' AND value = '12'
+                    """
+                )
+                if updated.rowcount != 1:
+                    raise SQLiteAcceptedRunSchemaMismatchError(
+                        "accepted-run SQLite schema metadata version changed "
+                        "during v13 migration"
                     )
                 connection.execute(
                     f"PRAGMA user_version = {SQLITE_ACCEPTED_RUN_SCHEMA_VERSION}"
@@ -2541,6 +2627,45 @@ class SQLiteAcceptedRunDatabase:
             if invalid_provider_control is not None:
                 raise SQLiteAcceptedRunCorruptionError(
                     "accepted-run SQLite provider-effect control is not journaled"
+                )
+        if schema_version >= 13:
+            invalid_provider_retry = connection.execute(
+                """
+                SELECT provider_effect_retry_commands.retry_id
+                FROM provider_effect_retry_commands
+                JOIN provider_effects
+                  ON provider_effects.run_internal_id =
+                       provider_effect_retry_commands.run_internal_id
+                 AND provider_effects.effect_id =
+                       provider_effect_retry_commands.effect_id
+                LEFT JOIN provider_effect_events
+                  ON provider_effect_events.run_internal_id =
+                       provider_effect_retry_commands.run_internal_id
+                 AND provider_effect_events.effect_id =
+                       provider_effect_retry_commands.effect_id
+                 AND provider_effect_events.sequence =
+                       provider_effect_retry_commands.installed_event_sequence
+                 AND provider_effect_events.kind = 'retry_same_intent_applied'
+                 AND provider_effect_events.from_state =
+                       provider_effect_retry_commands.from_state
+                 AND provider_effect_events.to_state = 'pending'
+                LEFT JOIN provider_effect_send_attempts
+                  ON provider_effect_send_attempts.run_internal_id =
+                       provider_effect_retry_commands.run_internal_id
+                 AND provider_effect_send_attempts.effect_id =
+                       provider_effect_retry_commands.effect_id
+                 AND provider_effect_send_attempts.send_attempt_digest =
+                       provider_effect_retry_commands.previous_send_attempt_digest
+                WHERE provider_effect_events.sequence IS NULL
+                   OR provider_effect_send_attempts.attempt_id IS NULL
+                   OR provider_effect_retry_commands.installed_state_version >
+                        provider_effects.state_version
+                LIMIT 1
+                """
+            ).fetchone()
+            if invalid_provider_retry is not None:
+                raise SQLiteAcceptedRunCorruptionError(
+                    "accepted-run SQLite provider-effect retry is not journaled"
                 )
         foreign_key_failures = connection.execute("PRAGMA foreign_key_check").fetchall()
         if foreign_key_failures:

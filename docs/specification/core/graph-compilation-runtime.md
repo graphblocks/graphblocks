@@ -692,6 +692,25 @@ empty control ledger and does not infer controls for existing quarantined
 sends. This repository boundary does not authenticate operator policy, schedule
 reconciliation workers, invoke provider verification, or implement a retry.
 
+SQLite v13 adds the confirmed-safe same-intent retry boundary. A retry command
+MUST bind tenant, run, owner principal, effect, a stable retry identifier, the
+complete immutable intent digest, and the exact expected state version. The
+repository MUST exact-decode the supplied intent and compare it with the stored
+intent before changing state. Only `confirmed_not_committed` and
+`confirmed_cancelled` are eligible; committed or unknown outcomes MUST NOT
+return to the send queue. The settled attempt and receipt remain immutable
+history, while active send authority remains absent.
+
+The canonical retry command, projection compare-and-swap, and closed
+`retry_same_intent_applied` event MUST commit in one `BEGIN IMMEDIATE`
+transaction and share one installed state/event version. Exact replay MAY
+return the current pending result after response loss. Changed command identity
+or intent MUST conflict, and a replay superseded by a later claim MUST be stale.
+The next claim MUST retain the previous attempt digest and strictly advance the
+claim generation, fencing token, and attempt identifier before another send can
+begin. The v13 migration creates an empty retry ledger and does not infer retry
+authority from existing terminal rows.
+
 Existing operation-dispatch rows MUST NOT be migrated or reinterpreted as
 provider-effect intents because they do not contain this authority or evidence.
 SQLite v8 creates empty provider-specific tables and does not backfill the
@@ -704,7 +723,8 @@ receipt for `send_started` or later state. Operators upgrading the preview
 database MUST prevent mixed-version writers and retain the normal pre-migration
 backup. The v11 migration creates an empty evidence ledger and does not invent
 outcomes for existing active sends. The v12 migration likewise creates an empty
-control ledger. A production profile still requires real
+control ledger, and v13 creates an empty retry ledger. A production profile
+still requires real
 adapter capability and verifier-registry authorities, adapter I/O,
 ambiguous-send reconciliation, kill/restart/fencing tests, and provider-side
 idempotency or status/cancellation evidence. Repository snapshots, transfers,

@@ -33,6 +33,7 @@ from .provider_effects import (
     _revalidate_provider_effect_send_attempt,
     _validate_intent_capability_binding,
     _validate_intent_origin_transfer_binding,
+    retry_same_provider_effect_intent,
     transition_provider_effect_state,
 )
 from .server_storage import (
@@ -56,6 +57,9 @@ PROVIDER_EFFECT_CLAIM_RELEASE_FORMAT_VERSION = (
 )
 PROVIDER_EFFECT_RECONCILIATION_CONTROL_FORMAT_VERSION = (
     "graphblocks.provider-effect-reconciliation-control.v1"
+)
+PROVIDER_EFFECT_RETRY_COMMAND_FORMAT_VERSION = (
+    "graphblocks.provider-effect-retry-command.v1"
 )
 MAX_PROVIDER_EFFECT_EVENT_PAGE_SIZE = 1_000
 MAX_PROVIDER_EFFECT_CLAIM_LEASE_DURATION_MS = 60_000
@@ -138,6 +142,18 @@ _PROVIDER_EFFECT_RECONCILIATION_CONTROL_FIELDS = frozenset(
         "runId",
         "tenantId",
         "transition",
+    }
+)
+_PROVIDER_EFFECT_RETRY_COMMAND_FIELDS = frozenset(
+    {
+        "effectId",
+        "expectedStateVersion",
+        "formatVersion",
+        "intentDigest",
+        "ownerPrincipalId",
+        "retryId",
+        "runId",
+        "tenantId",
     }
 )
 
@@ -341,6 +357,110 @@ class ProviderEffectReconciliationControl:
                 value["controlId"],
             ),
             transition=transition,
+            expected_state_version=_require_sqlite_integer(
+                owner,
+                "expectedStateVersion",
+                value["expectedStateVersion"],
+                positive=True,
+            ),
+            format_version=_require_exact_string(
+                owner,
+                "formatVersion",
+                value["formatVersion"],
+            ),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class ProviderEffectRetryCommand:
+    tenant_id: str
+    run_id: str
+    owner_principal_id: str
+    effect_id: str
+    retry_id: str
+    intent_digest: str
+    expected_state_version: int
+    format_version: str = PROVIDER_EFFECT_RETRY_COMMAND_FORMAT_VERSION
+
+    def __post_init__(self) -> None:
+        owner = "provider effect retry command"
+        for field_name in (
+            "tenant_id",
+            "run_id",
+            "owner_principal_id",
+            "effect_id",
+            "retry_id",
+        ):
+            object.__setattr__(
+                self,
+                field_name,
+                _require_exact_string(owner, field_name, getattr(self, field_name)),
+            )
+        object.__setattr__(
+            self,
+            "intent_digest",
+            _require_digest(owner, "intent_digest", self.intent_digest),
+        )
+        object.__setattr__(
+            self,
+            "expected_state_version",
+            _require_sqlite_integer(
+                owner,
+                "expected_state_version",
+                self.expected_state_version,
+                positive=True,
+            ),
+        )
+        format_version = _require_exact_string(
+            owner,
+            "format_version",
+            self.format_version,
+        )
+        if format_version != PROVIDER_EFFECT_RETRY_COMMAND_FORMAT_VERSION:
+            raise ProviderEffectContractError(
+                f"{owner} format_version is not supported"
+            )
+        object.__setattr__(self, "format_version", format_version)
+
+    @property
+    def digest(self) -> str:
+        return canonical_hash(self.to_wire())
+
+    def to_wire(self) -> dict[str, object]:
+        return {
+            "effectId": self.effect_id,
+            "expectedStateVersion": self.expected_state_version,
+            "formatVersion": self.format_version,
+            "intentDigest": self.intent_digest,
+            "ownerPrincipalId": self.owner_principal_id,
+            "retryId": self.retry_id,
+            "runId": self.run_id,
+            "tenantId": self.tenant_id,
+        }
+
+    @classmethod
+    def from_wire(cls, value: object) -> ProviderEffectRetryCommand:
+        owner = "provider effect retry command"
+        if (
+            type(value) is not dict
+            or set(value) != _PROVIDER_EFFECT_RETRY_COMMAND_FIELDS
+        ):
+            raise ProviderEffectContractError(f"{owner} must contain the closed fields")
+        return cls(
+            tenant_id=_require_exact_string(owner, "tenantId", value["tenantId"]),
+            run_id=_require_exact_string(owner, "runId", value["runId"]),
+            owner_principal_id=_require_exact_string(
+                owner,
+                "ownerPrincipalId",
+                value["ownerPrincipalId"],
+            ),
+            effect_id=_require_exact_string(owner, "effectId", value["effectId"]),
+            retry_id=_require_exact_string(owner, "retryId", value["retryId"]),
+            intent_digest=_require_digest(
+                owner,
+                "intentDigest",
+                value["intentDigest"],
+            ),
             expected_state_version=_require_sqlite_integer(
                 owner,
                 "expectedStateVersion",
@@ -1282,6 +1402,47 @@ class StoredProviderEffectEvent:
                 "sendAttemptDigest",
             ):
                 _require_digest(owner, field_name, payload[field_name])
+        elif self.kind == "retry_same_intent_applied":
+            if set(payload) != {
+                "effectId",
+                "formatVersion",
+                "intentDigest",
+                "previousSendAttemptDigest",
+                "retryCommand",
+                "retryCommandDigest",
+                "state",
+            }:
+                raise ProviderEffectContractError(
+                    f"{owner} retry event is not closed and exact"
+                )
+            command = ProviderEffectRetryCommand.from_wire(payload["retryCommand"])
+            if (
+                self.from_state
+                not in {
+                    ProviderEffectState.CONFIRMED_NOT_COMMITTED,
+                    ProviderEffectState.CONFIRMED_CANCELLED,
+                }
+                or self.to_state is not ProviderEffectState.PENDING
+                or payload["state"] != ProviderEffectState.PENDING.value
+                or command.effect_id != self.effect_id
+                or command.expected_state_version + 1 != self.sequence
+                or command.intent_digest
+                != _require_digest(owner, "intentDigest", payload["intentDigest"])
+                or command.digest
+                != _require_digest(
+                    owner,
+                    "retryCommandDigest",
+                    payload["retryCommandDigest"],
+                )
+            ):
+                raise ProviderEffectContractError(
+                    f"{owner} retry event identity is not exact"
+                )
+            _require_digest(
+                owner,
+                "previousSendAttemptDigest",
+                payload["previousSendAttemptDigest"],
+            )
         else:
             raise ProviderEffectContractError(
                 f"{owner} kind is not supported by this repository version"
@@ -1869,15 +2030,15 @@ class SQLiteProviderEffectRepository:
                     evidence.effect_id != record.intent.effect_id
                     or evidence.intent_digest != record.intent.digest
                     or evidence.capability_snapshot_digest != record.capability.digest
-                    or record.latest_send_attempt is None
-                    or record.latest_admission_receipt is None
-                    or evidence.send_attempt_digest != record.latest_send_attempt.digest
-                    or payload["admissionReceiptDigest"]
-                    != record.latest_admission_receipt.digest
                 ):
                     raise ValueError(
                         "provider-effect reconciliation event scope is invalid"
                     )
+                _require_digest(
+                    "provider-effect reconciliation event",
+                    "admissionReceiptDigest",
+                    payload["admissionReceiptDigest"],
+                )
             elif event.kind == "reconciliation_control_applied":
                 control = ProviderEffectReconciliationControl.from_wire(
                     payload["control"]
@@ -1887,15 +2048,34 @@ class SQLiteProviderEffectRepository:
                     or control.run_id != record.run_id
                     or control.owner_principal_id != record.owner_principal_id
                     or control.effect_id != record.intent.effect_id
-                    or record.latest_send_attempt is None
-                    or record.latest_admission_receipt is None
-                    or payload["sendAttemptDigest"] != record.latest_send_attempt.digest
-                    or payload["admissionReceiptDigest"]
-                    != record.latest_admission_receipt.digest
                 ):
                     raise ValueError(
                         "provider-effect reconciliation control scope is invalid"
                     )
+                for field_name in (
+                    "sendAttemptDigest",
+                    "admissionReceiptDigest",
+                ):
+                    _require_digest(
+                        "provider-effect reconciliation control event",
+                        field_name,
+                        payload[field_name],
+                    )
+            elif event.kind == "retry_same_intent_applied":
+                command = ProviderEffectRetryCommand.from_wire(payload["retryCommand"])
+                if (
+                    command.tenant_id != record.tenant_id
+                    or command.run_id != record.run_id
+                    or command.owner_principal_id != record.owner_principal_id
+                    or command.effect_id != record.intent.effect_id
+                    or command.intent_digest != record.intent.digest
+                ):
+                    raise ValueError("provider-effect retry event scope is invalid")
+                _require_digest(
+                    "provider-effect retry event",
+                    "previousSendAttemptDigest",
+                    payload["previousSendAttemptDigest"],
+                )
             return payload
         except (KeyError, TypeError, ValueError) as error:
             raise SQLiteProviderEffectCorruptionError(
@@ -2199,6 +2379,43 @@ class SQLiteProviderEffectRepository:
                     raise ValueError(
                         "provider-effect reconciliation control tail is invalid"
                     )
+            elif event.kind == "retry_same_intent_applied":
+                command = ProviderEffectRetryCommand.from_wire(payload["retryCommand"])
+                retry_row = connection.execute(
+                    """
+                    SELECT *
+                    FROM provider_effect_retry_commands
+                    WHERE run_internal_id = ?
+                      AND effect_id = ?
+                      AND retry_id = ?
+                    """,
+                    (run_internal_id, record.intent.effect_id, command.retry_id),
+                ).fetchone()
+                if (
+                    record.state is not ProviderEffectState.PENDING
+                    or record.claim is not None
+                    or record.last_pre_send_release is not None
+                    or record.active_send_attempt is not None
+                    or record.active_admission_receipt is not None
+                    or record.latest_send_attempt is None
+                    or payload["previousSendAttemptDigest"]
+                    != record.latest_send_attempt.digest
+                    or retry_row is None
+                    or retry_row["command_digest"] != command.digest
+                    or retry_row["command_json"] != canonical_dumps(command.to_wire())
+                    or retry_row["intent_digest"] != record.intent.digest
+                    or retry_row["previous_send_attempt_digest"]
+                    != record.latest_send_attempt.digest
+                    or event.from_state is None
+                    or retry_row["from_state"] != event.from_state.value
+                    or retry_row["to_state"] != ProviderEffectState.PENDING.value
+                    or retry_row["requested_state_version"]
+                    != command.expected_state_version
+                    or retry_row["applied_at_unix_ms"] != record.updated_at_unix_ms
+                    or retry_row["installed_state_version"] != record.state_version
+                    or retry_row["installed_event_sequence"] != event.sequence
+                ):
+                    raise ValueError("provider-effect retry tail is invalid")
         except (KeyError, TypeError, ValueError) as error:
             raise SQLiteProviderEffectCorruptionError(
                 "provider-effect SQLite event tail does not match its projection"
@@ -4436,6 +4653,259 @@ class SQLiteProviderEffectRepository:
         self._hit_failpoint("apply_reconciliation_control.after_commit")
         return controlled
 
+    def retry_confirmed_effect(
+        self,
+        command: ProviderEffectRetryCommand,
+        requested_intent: ProviderEffectIntent,
+    ) -> StoredProviderEffect:
+        """Return a confirmed-safe effect to pending without changing its intent."""
+
+        if type(command) is not ProviderEffectRetryCommand:
+            raise TypeError("provider-effect retry command must be exact")
+        if type(requested_intent) is not ProviderEffectIntent:
+            raise TypeError("provider-effect retry intent must be exact")
+        command = ProviderEffectRetryCommand.from_wire(command.to_wire())
+        requested_intent = _revalidate_provider_effect_intent(requested_intent)
+        if (
+            command.tenant_id != requested_intent.tenant_id
+            or command.run_id != requested_intent.run_id
+            or command.owner_principal_id != requested_intent.owner_principal_id
+            or command.effect_id != requested_intent.effect_id
+            or command.intent_digest != requested_intent.digest
+        ):
+            raise ProviderEffectIdentityConflictError(
+                "provider-effect retry command does not match its intent"
+            )
+
+        def transition(connection: sqlite3.Connection) -> StoredProviderEffect:
+            row = connection.execute(
+                """
+                SELECT provider_effects.*,
+                       accepted_runs.tenant_id,
+                       accepted_runs.external_run_id,
+                       accepted_runs.owner_principal_id
+                FROM provider_effects
+                JOIN accepted_runs
+                  ON accepted_runs.internal_id = provider_effects.run_internal_id
+                WHERE accepted_runs.tenant_id = ?
+                  AND accepted_runs.external_run_id = ?
+                  AND accepted_runs.owner_principal_id = ?
+                  AND provider_effects.effect_id = ?
+                """,
+                (
+                    command.tenant_id,
+                    command.run_id,
+                    command.owner_principal_id,
+                    command.effect_id,
+                ),
+            ).fetchone()
+            if row is None:
+                raise ProviderEffectStateConflictError(
+                    "provider-effect retry target is not available"
+                )
+            record = self._record_from_row(connection, row)
+            run_internal_id = row["run_internal_id"]
+            if type(run_internal_id) is not str:
+                raise SQLiteProviderEffectCorruptionError(
+                    "provider-effect SQLite run identity is not text"
+                )
+            self._assert_projection_tail(
+                connection,
+                run_internal_id=run_internal_id,
+                record=record,
+            )
+            replay = connection.execute(
+                """
+                SELECT *
+                FROM provider_effect_retry_commands
+                WHERE run_internal_id = ?
+                  AND effect_id = ?
+                  AND retry_id = ?
+                """,
+                (run_internal_id, command.effect_id, command.retry_id),
+            ).fetchone()
+            if replay is not None:
+                if (
+                    replay["command_digest"] != command.digest
+                    or replay["command_json"] != canonical_dumps(command.to_wire())
+                    or replay["intent_digest"] != requested_intent.digest
+                    or replay["requested_state_version"]
+                    != command.expected_state_version
+                ):
+                    raise ProviderEffectIdentityConflictError(
+                        "provider-effect retry identity was reused"
+                    )
+                if (
+                    record.state is not ProviderEffectState.PENDING
+                    or record.state_version != replay["installed_state_version"]
+                    or record.event_high_watermark != replay["installed_event_sequence"]
+                ):
+                    raise ProviderEffectStateConflictError(
+                        "provider-effect retry replay was superseded"
+                    )
+                return record
+            if record.state_version != command.expected_state_version:
+                raise ProviderEffectStateConflictError(
+                    "provider-effect retry state version is stale"
+                )
+            if (
+                record.latest_send_attempt is None
+                or record.latest_admission_receipt is None
+                or record.active_send_attempt is not None
+                or record.active_admission_receipt is not None
+            ):
+                raise ProviderEffectStateConflictError(
+                    "provider-effect retry requires a settled send attempt"
+                )
+            next_state = retry_same_provider_effect_intent(
+                record.state,
+                record.intent,
+                requested_intent,
+            )
+            if record.state_version >= _MAX_SQLITE_INTEGER:
+                raise ProviderEffectStateConflictError(
+                    "provider-effect state version is exhausted"
+                )
+            applied_at = self._transaction_now_unix_ms()
+            if applied_at < record.updated_at_unix_ms:
+                raise ValueError(
+                    "provider-effect SQLite clock moved behind the projection"
+                )
+            next_version = record.state_version + 1
+            command_json = canonical_dumps(command.to_wire())
+            connection.execute(
+                """
+                INSERT INTO provider_effect_retry_commands (
+                  run_internal_id,
+                  effect_id,
+                  retry_id,
+                  command_digest,
+                  command_json,
+                  intent_digest,
+                  previous_send_attempt_digest,
+                  from_state,
+                  to_state,
+                  requested_state_version,
+                  applied_at_unix_ms,
+                  installed_state_version,
+                  installed_event_sequence
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)
+                """,
+                (
+                    run_internal_id,
+                    record.intent.effect_id,
+                    command.retry_id,
+                    command.digest,
+                    command_json,
+                    record.intent.digest,
+                    record.latest_send_attempt.digest,
+                    record.state.value,
+                    command.expected_state_version,
+                    applied_at,
+                    next_version,
+                    next_version,
+                ),
+            )
+            self._hit_failpoint("retry_confirmed_effect.after_command_insert")
+            updated = connection.execute(
+                """
+                UPDATE provider_effects
+                SET state = 'pending',
+                    state_version = ?,
+                    event_high_watermark = ?,
+                    updated_at_unix_ms = ?
+                WHERE run_internal_id = ?
+                  AND effect_id = ?
+                  AND state = ?
+                  AND state_version = ?
+                  AND event_high_watermark = ?
+                  AND latest_send_attempt_digest = ?
+                  AND latest_admission_receipt_digest = ?
+                  AND active_send_attempt_digest IS NULL
+                  AND active_admission_receipt_digest IS NULL
+                """,
+                (
+                    next_version,
+                    next_version,
+                    applied_at,
+                    run_internal_id,
+                    record.intent.effect_id,
+                    record.state.value,
+                    record.state_version,
+                    record.event_high_watermark,
+                    record.latest_send_attempt.digest,
+                    record.latest_admission_receipt.digest,
+                ),
+            )
+            if updated.rowcount != 1:
+                raise ProviderEffectStateConflictError(
+                    "provider-effect retry projection changed concurrently"
+                )
+            self._hit_failpoint("retry_confirmed_effect.after_effect_update")
+            event_payload = {
+                "effectId": record.intent.effect_id,
+                "formatVersion": PROVIDER_EFFECT_EVENT_FORMAT_VERSION,
+                "intentDigest": record.intent.digest,
+                "previousSendAttemptDigest": record.latest_send_attempt.digest,
+                "retryCommand": command.to_wire(),
+                "retryCommandDigest": command.digest,
+                "state": next_state.value,
+            }
+            connection.execute(
+                """
+                INSERT INTO provider_effect_events (
+                  run_internal_id,
+                  effect_id,
+                  sequence,
+                  kind,
+                  from_state,
+                  to_state,
+                  payload_json,
+                  payload_digest,
+                  created_at_unix_ms
+                )
+                VALUES (?, ?, ?, 'retry_same_intent_applied', ?, 'pending', ?, ?, ?)
+                """,
+                (
+                    run_internal_id,
+                    record.intent.effect_id,
+                    next_version,
+                    record.state.value,
+                    canonical_dumps(event_payload),
+                    canonical_hash(event_payload),
+                    applied_at,
+                ),
+            )
+            self._hit_failpoint("retry_confirmed_effect.after_event_insert")
+            retried = StoredProviderEffect(
+                tenant_id=record.tenant_id,
+                run_id=record.run_id,
+                owner_principal_id=record.owner_principal_id,
+                intent=record.intent,
+                capability=record.capability,
+                origin_transfer=record.origin_transfer,
+                state=next_state,
+                state_version=next_version,
+                event_high_watermark=next_version,
+                created_at_unix_ms=record.created_at_unix_ms,
+                updated_at_unix_ms=applied_at,
+                claim_generation=record.claim_generation,
+                claim_fencing_token=record.claim_fencing_token,
+                latest_send_attempt=record.latest_send_attempt,
+                latest_admission_receipt=record.latest_admission_receipt,
+            )
+            self._assert_projection_tail(
+                connection,
+                run_internal_id=run_internal_id,
+                record=retried,
+            )
+            return retried
+
+        retried = self._database._run_immediate(transition)
+        self._hit_failpoint("retry_confirmed_effect.after_commit")
+        return retried
+
     def verify_transferred_origin(
         self,
         *,
@@ -4742,6 +5212,22 @@ class SQLiteProviderEffectRepository:
                             "provider-effect SQLite reconciliation control is "
                             "not contiguous"
                         )
+                elif event.kind == "retry_same_intent_applied":
+                    command = ProviderEffectRetryCommand.from_wire(
+                        payload["retryCommand"]
+                    )
+                    if (
+                        event.from_state
+                        not in {
+                            ProviderEffectState.CONFIRMED_NOT_COMMITTED,
+                            ProviderEffectState.CONFIRMED_CANCELLED,
+                        }
+                        or event.to_state is not ProviderEffectState.PENDING
+                        or command.expected_state_version + 1 != event.sequence
+                    ):
+                        raise SQLiteProviderEffectCorruptionError(
+                            "provider-effect SQLite retry authority is not contiguous"
+                        )
                 previous_event = event
             event_tuple = decoded_events[:limit]
             return StoredProviderEffectEventPage(
@@ -4841,10 +5327,12 @@ __all__ = [
     "PROVIDER_EFFECT_CLAIM_RELEASE_FORMAT_VERSION",
     "PROVIDER_EFFECT_EVENT_FORMAT_VERSION",
     "PROVIDER_EFFECT_RECONCILIATION_CONTROL_FORMAT_VERSION",
+    "PROVIDER_EFFECT_RETRY_COMMAND_FORMAT_VERSION",
     "ProviderEffectClaim",
     "ProviderEffectClaimRelease",
     "ProviderEffectClaimRequest",
     "ProviderEffectReconciliationControl",
+    "ProviderEffectRetryCommand",
     "ProviderEffectWorkItem",
     "SQLiteProviderEffectClaimAuthority",
     "SQLiteProviderEffectCorruptionError",

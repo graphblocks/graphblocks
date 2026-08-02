@@ -54,6 +54,7 @@ from graphblocks.sqlite_provider_effects import (
     ProviderEffectClaimRelease,
     ProviderEffectClaimRequest,
     ProviderEffectReconciliationControl,
+    ProviderEffectRetryCommand,
     ProviderEffectWorkItem,
     SQLiteProviderEffectClaimAuthority,
     SQLiteProviderEffectCorruptionError,
@@ -465,6 +466,42 @@ def _quarantine_unknown_effect(
             _VERIFIER_AUTHORITY,
         )
         is ProviderEffectState.QUARANTINED_UNKNOWN
+    )
+    return work_item, send_attempt, admission_receipt
+
+
+def _confirm_not_committed_effect(
+    path: Path,
+) -> tuple[
+    ProviderEffectWorkItem,
+    ProviderEffectSendAttempt,
+    ProviderEffectAdmissionReceipt,
+]:
+    work_item, _, claim_authority, admission = _claim_and_admit(path)
+    _, send_attempt, admission_receipt = begin_provider_effect_send(
+        work_item.effect.state,
+        work_item.effect.intent,
+        work_item.effect.capability,
+        admission,
+        claim_authority,
+    )
+    evidence = _provider_evidence(
+        work_item,
+        send_attempt,
+        outcome=ProviderReconciliationOutcome.NOT_COMMITTED,
+    )
+    assert (
+        apply_provider_reconciliation_evidence(
+            ProviderEffectState.SEND_STARTED,
+            work_item.effect.intent,
+            work_item.effect.capability,
+            admission_receipt,
+            send_attempt,
+            evidence,
+            _repository(path, clock=lambda: 2_400).send_claim_authority,
+            _VERIFIER_AUTHORITY,
+        )
+        is ProviderEffectState.CONFIRMED_NOT_COMMITTED
     )
     return work_item, send_attempt, admission_receipt
 
@@ -2648,6 +2685,282 @@ def test_sqlite_provider_effect_rejects_corrupted_reconciliation_control(
             run_id="run-1",
             owner_principal_id="principal-1",
             effect_id="effect-1",
+        )
+
+
+def test_sqlite_provider_effect_retries_exact_confirmed_safe_intent(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "provider-effect-safe-retry.sqlite3"
+    work_item, previous_attempt, _ = _confirm_not_committed_effect(path)
+    command = ProviderEffectRetryCommand(
+        tenant_id="tenant-1",
+        run_id="run-1",
+        owner_principal_id="principal-1",
+        effect_id="effect-1",
+        retry_id="safe-retry-1",
+        intent_digest=work_item.effect.intent.digest,
+        expected_state_version=4,
+    )
+
+    def lose_response(name: str) -> None:
+        if name == "retry_confirmed_effect.after_commit":
+            raise RuntimeError("simulated retry response loss")
+
+    with pytest.raises(RuntimeError, match="retry response loss"):
+        _repository(
+            path,
+            clock=lambda: 2_500,
+            failpoint=lose_response,
+        ).retry_confirmed_effect(command, work_item.effect.intent)
+    repository = _repository(path, clock=lambda: 2_600)
+    retried = repository.retry_confirmed_effect(command, work_item.effect.intent)
+    assert retried.state is ProviderEffectState.PENDING
+    assert retried.state_version == 5
+    assert retried.intent == work_item.effect.intent
+    assert retried.latest_send_attempt == previous_attempt
+    assert retried.active_send_attempt is None
+
+    next_work = _repository(
+        path,
+        clock=lambda: 2_600,
+        attempt_id_factory=lambda: "provider-send-attempt-2",
+    ).claim_next_effect(_claim_request())
+    assert next_work is not None
+    assert next_work.claim.claim_generation == 2
+    assert next_work.claim.claim_fencing_token == 2
+    assert next_work.claim.previous_send_attempt_digest == previous_attempt.digest
+    assert next_work.claim.send_attempt_id != previous_attempt.attempt_id
+    send_repository = _repository(path, clock=lambda: 2_650)
+    admission = _provider_admission(
+        send_repository,
+        next_work,
+        claim_authority=send_repository.send_claim_authority,
+    )
+    next_state, next_attempt, receipt = begin_provider_effect_send(
+        next_work.effect.state,
+        next_work.effect.intent,
+        next_work.effect.capability,
+        admission,
+        send_repository.send_claim_authority,
+        previous_send_attempt=previous_attempt,
+    )
+    assert next_state is ProviderEffectState.SEND_STARTED
+    assert next_attempt.attempt_id == "provider-send-attempt-2"
+    assert next_attempt.claim_generation == 2
+    assert next_attempt.claim_fencing_token == 2
+    assert receipt.previous_send_attempt_digest == previous_attempt.digest
+    restored = _repository(path, clock=lambda: 9_000).get_effect(
+        tenant_id="tenant-1",
+        run_id="run-1",
+        owner_principal_id="principal-1",
+        effect_id="effect-1",
+    )
+    assert restored is not None
+    assert restored.state is ProviderEffectState.SEND_STARTED
+    assert restored.state_version == 7
+    assert restored.latest_send_attempt == next_attempt
+    events = (
+        _repository(path, clock=lambda: 9_000)
+        .read_events(
+            tenant_id="tenant-1",
+            run_id="run-1",
+            owner_principal_id="principal-1",
+            effect_id="effect-1",
+            after_sequence=0,
+            limit=10,
+        )
+        .events
+    )
+    assert tuple(event.kind for event in events) == (
+        "origin_transferred",
+        "send_claimed",
+        "send_started",
+        "reconciliation_evidence_applied",
+        "retry_same_intent_applied",
+        "send_claimed",
+        "send_started",
+    )
+
+
+@pytest.mark.parametrize(
+    "failpoint_name",
+    (
+        "retry_confirmed_effect.after_command_insert",
+        "retry_confirmed_effect.after_effect_update",
+        "retry_confirmed_effect.after_event_insert",
+    ),
+)
+def test_sqlite_provider_effect_rolls_back_interrupted_safe_retry(
+    tmp_path: Path,
+    failpoint_name: str,
+) -> None:
+    path = tmp_path / f"provider-effect-retry-rollback-{failpoint_name}.sqlite3"
+    work_item, previous_attempt, _ = _confirm_not_committed_effect(path)
+    command = ProviderEffectRetryCommand(
+        tenant_id="tenant-1",
+        run_id="run-1",
+        owner_principal_id="principal-1",
+        effect_id="effect-1",
+        retry_id="safe-retry-rollback",
+        intent_digest=work_item.effect.intent.digest,
+        expected_state_version=4,
+    )
+
+    def failpoint(name: str) -> None:
+        if name == failpoint_name:
+            raise RuntimeError("simulated safe-retry interruption")
+
+    with pytest.raises(RuntimeError, match="safe-retry interruption"):
+        _repository(
+            path,
+            clock=lambda: 2_500,
+            failpoint=failpoint,
+        ).retry_confirmed_effect(command, work_item.effect.intent)
+    restored = _repository(path, clock=lambda: 9_000).get_effect(
+        tenant_id="tenant-1",
+        run_id="run-1",
+        owner_principal_id="principal-1",
+        effect_id="effect-1",
+    )
+    assert restored is not None
+    assert restored.state is ProviderEffectState.CONFIRMED_NOT_COMMITTED
+    assert restored.state_version == 4
+    assert restored.latest_send_attempt == previous_attempt
+    connection = sqlite3.connect(path)
+    try:
+        retry_count = int(
+            connection.execute(
+                "SELECT count(*) FROM provider_effect_retry_commands"
+            ).fetchone()[0]
+        )
+    finally:
+        connection.close()
+    assert retry_count == 0
+
+
+def test_sqlite_provider_effect_rejects_changed_or_stale_safe_retry(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "provider-effect-retry-identity.sqlite3"
+    work_item, _, _ = _confirm_not_committed_effect(path)
+    command = ProviderEffectRetryCommand(
+        tenant_id="tenant-1",
+        run_id="run-1",
+        owner_principal_id="principal-1",
+        effect_id="effect-1",
+        retry_id="safe-retry-identity",
+        intent_digest=work_item.effect.intent.digest,
+        expected_state_version=4,
+    )
+    changed_request = {"amount": 999}
+    changed_intent = replace(
+        work_item.effect.intent,
+        request_json=canonical_dumps(changed_request),
+        request_digest=canonical_hash(changed_request),
+    )
+    repository = _repository(path, clock=lambda: 2_500)
+
+    with pytest.raises(ProviderEffectIdentityConflictError):
+        repository.retry_confirmed_effect(command, changed_intent)
+    with pytest.raises(ProviderEffectStateConflictError, match="version is stale"):
+        repository.retry_confirmed_effect(
+            replace(command, retry_id="stale-retry", expected_state_version=3),
+            work_item.effect.intent,
+        )
+
+
+def test_sqlite_provider_effect_serializes_competing_safe_retries(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "provider-effect-retry-concurrent.sqlite3"
+    work_item, _, _ = _confirm_not_committed_effect(path)
+    starting = Barrier(2)
+
+    def retry(retry_id: str) -> bool:
+        command = ProviderEffectRetryCommand(
+            tenant_id="tenant-1",
+            run_id="run-1",
+            owner_principal_id="principal-1",
+            effect_id="effect-1",
+            retry_id=retry_id,
+            intent_digest=work_item.effect.intent.digest,
+            expected_state_version=4,
+        )
+        starting.wait()
+        try:
+            _repository(path, clock=lambda: 2_500).retry_confirmed_effect(
+                command,
+                work_item.effect.intent,
+            )
+        except ProviderEffectStateConflictError:
+            return False
+        return True
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = tuple(executor.map(retry, ("retry-a", "retry-b")))
+
+    restored = _repository(path, clock=lambda: 9_000).get_effect(
+        tenant_id="tenant-1",
+        run_id="run-1",
+        owner_principal_id="principal-1",
+        effect_id="effect-1",
+    )
+    assert sorted(results) == [False, True]
+    assert restored is not None
+    assert restored.state is ProviderEffectState.PENDING
+    connection = sqlite3.connect(path)
+    try:
+        retry_count = int(
+            connection.execute(
+                "SELECT count(*) FROM provider_effect_retry_commands"
+            ).fetchone()[0]
+        )
+    finally:
+        connection.close()
+    assert retry_count == 1
+
+
+def test_sqlite_provider_effect_never_retries_confirmed_commit(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "provider-effect-no-committed-retry.sqlite3"
+    work_item, _, claim_authority, admission = _claim_and_admit(path)
+    _, send_attempt, admission_receipt = begin_provider_effect_send(
+        work_item.effect.state,
+        work_item.effect.intent,
+        work_item.effect.capability,
+        admission,
+        claim_authority,
+    )
+    evidence = _provider_evidence(work_item, send_attempt)
+    assert (
+        apply_provider_reconciliation_evidence(
+            ProviderEffectState.SEND_STARTED,
+            work_item.effect.intent,
+            work_item.effect.capability,
+            admission_receipt,
+            send_attempt,
+            evidence,
+            _repository(path, clock=lambda: 2_400).send_claim_authority,
+            _VERIFIER_AUTHORITY,
+        )
+        is ProviderEffectState.CONFIRMED_COMMITTED
+    )
+    command = ProviderEffectRetryCommand(
+        tenant_id="tenant-1",
+        run_id="run-1",
+        owner_principal_id="principal-1",
+        effect_id="effect-1",
+        retry_id="forbidden-committed-retry",
+        intent_digest=work_item.effect.intent.digest,
+        expected_state_version=4,
+    )
+
+    with pytest.raises(ProviderEffectStateConflictError):
+        _repository(path, clock=lambda: 2_500).retry_confirmed_effect(
+            command,
+            work_item.effect.intent,
         )
 
 

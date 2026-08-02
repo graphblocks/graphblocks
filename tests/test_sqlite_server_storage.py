@@ -31,6 +31,7 @@ from graphblocks.sqlite_server_storage import (
     _SCHEMA_V9_MIGRATION_STATEMENTS,
     _SCHEMA_V10_MIGRATION_STATEMENTS,
     _SCHEMA_V11_MIGRATION_STATEMENTS,
+    _SCHEMA_V12_MIGRATION_STATEMENTS,
     _MAX_SQLITE_INTEGER,
     SQLiteAcceptedRunBusyError,
     SQLiteAcceptedRunCorruptionError,
@@ -52,6 +53,7 @@ _EXPECTED_TABLES = frozenset(
         "provider_effect_send_attempts",
         "provider_effect_reconciliation_evidence",
         "provider_effect_reconciliation_controls",
+        "provider_effect_retry_commands",
         "provider_effects",
         "run_checkpoints",
         "run_controls",
@@ -425,6 +427,26 @@ def _upgrade_version_ten_database_to_version_eleven(path: Path) -> None:
         connection.close()
 
 
+def _upgrade_version_eleven_database_to_version_twelve(path: Path) -> None:
+    connection = sqlite3.connect(path, isolation_level=None)
+    try:
+        connection.execute("PRAGMA foreign_keys = ON")
+        connection.execute("BEGIN IMMEDIATE")
+        for statement in _SCHEMA_V12_MIGRATION_STATEMENTS:
+            connection.execute(statement)
+        connection.execute(
+            """
+            UPDATE accepted_run_storage_metadata
+            SET value = '12'
+            WHERE key = 'schema_version' AND value = '11'
+            """
+        )
+        connection.execute("PRAGMA user_version = 12")
+        connection.commit()
+    finally:
+        connection.close()
+
+
 def test_sqlite_accepted_run_database_initializes_dedicated_schema(
     tmp_path,
 ) -> None:
@@ -442,7 +464,7 @@ def test_sqlite_accepted_run_database_initializes_dedicated_schema(
     assert schema.synchronous == 2
     assert schema.busy_timeout_ms == 250
     assert schema.tables == _EXPECTED_TABLES
-    assert SQLITE_ACCEPTED_RUN_SCHEMA_VERSION == 12
+    assert SQLITE_ACCEPTED_RUN_SCHEMA_VERSION == 13
 
 
 def test_sqlite_accepted_run_database_migrates_v7_provider_effect_schema(
@@ -454,7 +476,7 @@ def test_sqlite_accepted_run_database_migrates_v7_provider_effect_schema(
 
     database = SQLiteAcceptedRunDatabase(path)
 
-    assert database.schema_info().schema_version == 12
+    assert database.schema_info().schema_version == 13
     assert database._run_read(
         lambda connection: frozenset(
             str(row["name"])
@@ -508,7 +530,7 @@ def test_sqlite_accepted_run_database_migrates_v8_provider_claim_schema(
         )
     )
 
-    assert database.schema_info().schema_version == 12
+    assert database.schema_info().schema_version == 13
     assert {
         "claim_json",
         "claim_digest",
@@ -569,7 +591,7 @@ def test_sqlite_accepted_run_database_migrates_v9_provider_send_schema(
         )
     )
 
-    assert database.schema_info().schema_version == 12
+    assert database.schema_info().schema_version == 13
     assert {
         "latest_send_attempt_digest",
         "latest_admission_receipt_digest",
@@ -618,7 +640,7 @@ def test_sqlite_accepted_run_database_migrates_v10_reconciliation_schema(
         )
     )
 
-    assert database.schema_info().schema_version == 12
+    assert database.schema_info().schema_version == 13
     assert {
         "evidence_digest",
         "evidence_json",
@@ -654,7 +676,7 @@ def test_sqlite_accepted_run_database_migrates_v11_control_schema(
         )
     )
 
-    assert database.schema_info().schema_version == 12
+    assert database.schema_info().schema_version == 13
     assert {
         "control_id",
         "request_digest",
@@ -666,6 +688,44 @@ def test_sqlite_accepted_run_database_migrates_v11_control_schema(
         "installed_state_version",
         "installed_event_sequence",
     } <= control_columns
+
+
+def test_sqlite_accepted_run_database_migrates_v12_retry_schema(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "accepted-runs-v12.sqlite3"
+    _initialize_version_six_claimed_effect(path)
+    _upgrade_version_six_database_to_version_seven(path)
+    _upgrade_version_seven_database_to_version_eight(path)
+    _upgrade_version_eight_database_to_version_nine(path)
+    _upgrade_version_nine_database_to_version_ten(path)
+    _upgrade_version_ten_database_to_version_eleven(path)
+    _upgrade_version_eleven_database_to_version_twelve(path)
+
+    database = SQLiteAcceptedRunDatabase(path)
+    retry_columns = database._run_read(
+        lambda connection: frozenset(
+            str(row["name"])
+            for row in connection.execute(
+                'PRAGMA table_info("provider_effect_retry_commands")'
+            ).fetchall()
+        )
+    )
+
+    assert database.schema_info().schema_version == 13
+    assert {
+        "retry_id",
+        "command_digest",
+        "command_json",
+        "intent_digest",
+        "previous_send_attempt_digest",
+        "from_state",
+        "to_state",
+        "requested_state_version",
+        "applied_at_unix_ms",
+        "installed_state_version",
+        "installed_event_sequence",
+    } <= retry_columns
 
 
 def test_sqlite_accepted_run_database_preserves_v9_active_provider_claim(
@@ -751,7 +811,7 @@ def test_sqlite_accepted_run_database_preserves_v9_active_provider_claim(
 
     database = SQLiteAcceptedRunDatabase(path)
 
-    assert database.schema_info().schema_version == 12
+    assert database.schema_info().schema_version == 13
     assert database._run_read(
         lambda connection: tuple(
             connection.execute(
@@ -961,8 +1021,8 @@ def test_sqlite_accepted_run_database_migrates_v1_to_current_schema(
         )
     )
 
-    assert schema.user_version == 12
-    assert schema.schema_version == 12
+    assert schema.user_version == 13
+    assert schema.schema_version == 13
     assert "available_at_unix_ms" in effect_columns
     assert "cancelled_at_unix_ms" in effect_columns
     assert "claim_started_at_unix_ms" in effect_columns
@@ -1002,7 +1062,7 @@ def test_sqlite_accepted_run_database_migrates_v2_invocation_metadata(
 
     database = SQLiteAcceptedRunDatabase(path)
 
-    assert database.schema_info().schema_version == 12
+    assert database.schema_info().schema_version == 13
     assert database._run_read(
         lambda connection: str(
             connection.execute(
@@ -1023,7 +1083,7 @@ def test_sqlite_accepted_run_database_migrates_v3_control_schema(
 
     database = SQLiteAcceptedRunDatabase(path)
 
-    assert database.schema_info().schema_version == 12
+    assert database.schema_info().schema_version == 13
     assert database._run_read(
         lambda connection: frozenset(
             str(row["name"])
@@ -1059,7 +1119,7 @@ def test_sqlite_accepted_run_database_migrates_v4_pause_schema(
 
     database = SQLiteAcceptedRunDatabase(path)
 
-    assert database.schema_info().schema_version == 12
+    assert database.schema_info().schema_version == 13
     assert database._run_read(
         lambda connection: frozenset(
             str(row["name"])
@@ -1160,7 +1220,7 @@ def test_sqlite_accepted_run_database_invalidates_v5_effect_claims(
 
     database = SQLiteAcceptedRunDatabase(path)
 
-    assert database.schema_info().schema_version == 12
+    assert database.schema_info().schema_version == 13
     assert database._run_read(
         lambda connection: tuple(
             connection.execute(
@@ -1275,7 +1335,7 @@ def test_sqlite_accepted_run_database_invalidates_v6_effect_claims(
 
     database = SQLiteAcceptedRunDatabase(path)
 
-    assert database.schema_info().schema_version == 12
+    assert database.schema_info().schema_version == 13
     assert database._run_read(
         lambda connection: tuple(
             connection.execute(
@@ -1495,7 +1555,7 @@ def test_sqlite_accepted_run_database_serializes_concurrent_v6_migration(
         infos = tuple(executor.map(migrate, range(2)))
 
     assert infos == (infos[0], infos[0])
-    assert infos[0].schema_version == 12
+    assert infos[0].schema_version == 13
 
 
 def test_sqlite_accepted_run_database_serializes_concurrent_v1_migration(
@@ -1516,7 +1576,7 @@ def test_sqlite_accepted_run_database_serializes_concurrent_v1_migration(
         infos = tuple(executor.map(migrate, range(2)))
 
     assert infos == (infos[0], infos[0])
-    assert infos[0].schema_version == 12
+    assert infos[0].schema_version == 13
 
 
 def test_sqlite_accepted_run_database_reopens_without_recreating_schema(

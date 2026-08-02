@@ -138,6 +138,15 @@ preparing the first 1.0 release candidate.
   rejects stale versions or changed control identities. This provides durable
   operator state control but does not schedule workers, authenticate operator
   policy, call providers, or implement retry.
+- Added confirmed-safe same-intent retry in accepted-run SQLite schema v13.
+  A tenant- and owner-scoped retry command binds its idempotency identity,
+  immutable intent digest, exact expected state version, and previous settled
+  attempt. Only confirmed non-commit or confirmed cancellation can return to
+  `pending`; the command, projection CAS, and authoritative event commit
+  together and replay exactly after response loss while still current. The next
+  claim must retain the prior attempt digest while advancing generation, fence,
+  and attempt identity. Interrupted retries roll back without exposing pending
+  work. This boundary does not retry a provider call by itself.
 - Added a bounded CommonMark and GitHub-heading integrity checker, a closed
   generated-documentation registry with content-bound results, and an always-run
   fast documentation workflow plus named stable release gate.
