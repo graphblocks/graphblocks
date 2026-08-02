@@ -63,7 +63,7 @@ from .server_storage import (
 
 
 SQLITE_ACCEPTED_RUN_APPLICATION_ID = 0x47424152
-SQLITE_ACCEPTED_RUN_SCHEMA_VERSION = 9
+SQLITE_ACCEPTED_RUN_SCHEMA_VERSION = 10
 _SQLITE_ACCEPTED_RUN_SCHEMA_NAME = "graphblocks.accepted-runs.sqlite"
 _SQLITE_ACCEPTED_RUN_INITIAL_SCHEMA_VERSION = 1
 _MAX_BUSY_TIMEOUT_MS = 60_000
@@ -706,6 +706,199 @@ _SCHEMA_V9_MIGRATION_STATEMENTS = (
     """,
 )
 
+_SCHEMA_V10_MIGRATION_STATEMENTS = (
+    """
+    ALTER TABLE provider_effects
+    ADD COLUMN latest_send_attempt_digest TEXT
+    """,
+    """
+    ALTER TABLE provider_effects
+    ADD COLUMN latest_admission_receipt_digest TEXT
+      CHECK (
+        (latest_send_attempt_digest IS NULL)
+        = (latest_admission_receipt_digest IS NULL)
+      )
+    """,
+    """
+    ALTER TABLE provider_effects
+    ADD COLUMN active_send_attempt_digest TEXT
+      CHECK (
+        active_send_attempt_digest IS NULL
+        OR active_send_attempt_digest = latest_send_attempt_digest
+      )
+    """,
+    """
+    ALTER TABLE provider_effects
+    ADD COLUMN active_admission_receipt_digest TEXT
+      CHECK (
+        (active_send_attempt_digest IS NULL)
+        = (active_admission_receipt_digest IS NULL)
+      )
+      CHECK (
+        active_admission_receipt_digest IS NULL
+        OR active_admission_receipt_digest = latest_admission_receipt_digest
+      )
+      CHECK (
+        (
+          state IN (
+            'send_started',
+            'quarantined_unknown',
+            'reconciling',
+            'manual_review_unknown'
+          )
+        ) = (active_send_attempt_digest IS NOT NULL)
+    )
+    """,
+    """
+    CREATE TABLE provider_effect_send_claim_issuances (
+      run_internal_id TEXT NOT NULL,
+      effect_id TEXT NOT NULL,
+      claim_digest TEXT NOT NULL,
+      claim_json TEXT NOT NULL,
+      attempt_id TEXT NOT NULL,
+      claim_owner_id TEXT NOT NULL,
+      claim_generation INTEGER NOT NULL CHECK (claim_generation > 0),
+      claim_fencing_token INTEGER NOT NULL CHECK (claim_fencing_token > 0),
+      issued_at_unix_ms INTEGER NOT NULL CHECK (issued_at_unix_ms >= 0),
+      claim_expires_at_unix_ms INTEGER NOT NULL CHECK (
+        claim_expires_at_unix_ms > issued_at_unix_ms
+      ),
+      installed_state_version INTEGER NOT NULL CHECK (
+        installed_state_version > 0
+      ),
+      installed_event_sequence INTEGER NOT NULL CHECK (
+        installed_event_sequence = installed_state_version
+      ),
+      PRIMARY KEY (run_internal_id, effect_id, claim_digest),
+      UNIQUE (claim_digest),
+      UNIQUE (attempt_id),
+      UNIQUE (run_internal_id, effect_id, attempt_id, claim_digest),
+      UNIQUE (run_internal_id, effect_id, claim_generation),
+      UNIQUE (run_internal_id, effect_id, claim_fencing_token),
+      UNIQUE (run_internal_id, effect_id, installed_state_version),
+      FOREIGN KEY (run_internal_id, effect_id)
+        REFERENCES provider_effects (run_internal_id, effect_id)
+        ON DELETE RESTRICT,
+      CHECK (length(effect_id) > 0),
+      CHECK (length(claim_digest) > 0),
+      CHECK (length(attempt_id) > 0),
+      CHECK (length(claim_owner_id) > 0)
+    )
+    """,
+    """
+    INSERT INTO provider_effect_send_claim_issuances (
+      run_internal_id,
+      effect_id,
+      claim_digest,
+      claim_json,
+      attempt_id,
+      claim_owner_id,
+      claim_generation,
+      claim_fencing_token,
+      issued_at_unix_ms,
+      claim_expires_at_unix_ms,
+      installed_state_version,
+      installed_event_sequence
+    )
+    SELECT run_internal_id,
+           effect_id,
+           claim_digest,
+           claim_json,
+           send_attempt_id,
+           claim_owner_id,
+           claim_generation,
+           claim_fencing_token,
+           claim_started_at_unix_ms,
+           claim_expires_at_unix_ms,
+           state_version,
+           event_high_watermark
+    FROM provider_effects
+    WHERE state = 'claimed'
+    """,
+    """
+    CREATE TABLE provider_effect_send_attempts (
+      run_internal_id TEXT NOT NULL,
+      effect_id TEXT NOT NULL,
+      attempt_id TEXT NOT NULL,
+      admission_digest TEXT NOT NULL,
+      consumed_claim_digest TEXT NOT NULL,
+      send_attempt_json TEXT NOT NULL,
+      send_attempt_digest TEXT NOT NULL,
+      admission_receipt_json TEXT NOT NULL,
+      admission_receipt_digest TEXT NOT NULL,
+      previous_send_attempt_digest TEXT,
+      claim_owner_id TEXT NOT NULL,
+      claim_generation INTEGER NOT NULL CHECK (claim_generation > 0),
+      claim_fencing_token INTEGER NOT NULL CHECK (claim_fencing_token > 0),
+      started_at_unix_ms INTEGER NOT NULL CHECK (started_at_unix_ms >= 0),
+      consumed_at_unix_ms INTEGER NOT NULL CHECK (
+        consumed_at_unix_ms >= started_at_unix_ms
+      ),
+      installed_state_version INTEGER NOT NULL CHECK (
+        installed_state_version > 0
+      ),
+      installed_event_sequence INTEGER NOT NULL CHECK (
+        installed_event_sequence = installed_state_version
+      ),
+      PRIMARY KEY (run_internal_id, effect_id, attempt_id),
+      UNIQUE (attempt_id),
+      UNIQUE (admission_digest),
+      UNIQUE (consumed_claim_digest),
+      UNIQUE (send_attempt_digest),
+      UNIQUE (admission_receipt_digest),
+      UNIQUE (run_internal_id, effect_id, claim_generation),
+      UNIQUE (run_internal_id, effect_id, claim_fencing_token),
+      UNIQUE (run_internal_id, effect_id, installed_state_version),
+      FOREIGN KEY (run_internal_id, effect_id)
+        REFERENCES provider_effects (run_internal_id, effect_id)
+        ON DELETE RESTRICT,
+      FOREIGN KEY (
+        run_internal_id,
+        effect_id,
+        attempt_id,
+        consumed_claim_digest
+      ) REFERENCES provider_effect_send_claim_issuances (
+        run_internal_id,
+        effect_id,
+        attempt_id,
+        claim_digest
+      ) ON DELETE RESTRICT,
+      CHECK (length(effect_id) > 0),
+      CHECK (length(attempt_id) > 0),
+      CHECK (length(admission_digest) > 0),
+      CHECK (length(consumed_claim_digest) > 0),
+      CHECK (length(send_attempt_digest) > 0),
+      CHECK (length(admission_receipt_digest) > 0),
+      CHECK (length(claim_owner_id) > 0)
+    )
+    """,
+    """
+    CREATE INDEX provider_effect_send_attempts_effect_history
+    ON provider_effect_send_attempts (
+      run_internal_id,
+      effect_id,
+      claim_generation,
+      claim_fencing_token
+    )
+    """,
+    """
+    CREATE INDEX provider_effect_send_attempts_effect_fence_tail
+    ON provider_effect_send_attempts (
+      run_internal_id,
+      effect_id,
+      claim_fencing_token
+    )
+    """,
+    """
+    CREATE INDEX provider_effect_send_attempts_effect_version_tail
+    ON provider_effect_send_attempts (
+      run_internal_id,
+      effect_id,
+      installed_state_version
+    )
+    """,
+)
+
 _REQUIRED_COLUMNS_V1 = {
     "accepted_run_storage_metadata": frozenset({"key", "value"}),
     "accepted_runs": frozenset(
@@ -894,7 +1087,7 @@ _REQUIRED_COLUMNS_V8 = {
         }
     ),
 }
-_REQUIRED_COLUMNS = {
+_REQUIRED_COLUMNS_V9 = {
     **_REQUIRED_COLUMNS_V8,
     "provider_effects": (
         _REQUIRED_COLUMNS_V8["provider_effects"]
@@ -915,6 +1108,57 @@ _REQUIRED_COLUMNS = {
                 "last_pre_send_release_digest",
             }
         )
+    ),
+}
+_REQUIRED_COLUMNS = {
+    **_REQUIRED_COLUMNS_V9,
+    "provider_effects": (
+        _REQUIRED_COLUMNS_V9["provider_effects"]
+        | frozenset(
+            {
+                "latest_send_attempt_digest",
+                "latest_admission_receipt_digest",
+                "active_send_attempt_digest",
+                "active_admission_receipt_digest",
+            }
+        )
+    ),
+    "provider_effect_send_claim_issuances": frozenset(
+        {
+            "run_internal_id",
+            "effect_id",
+            "claim_digest",
+            "claim_json",
+            "attempt_id",
+            "claim_owner_id",
+            "claim_generation",
+            "claim_fencing_token",
+            "issued_at_unix_ms",
+            "claim_expires_at_unix_ms",
+            "installed_state_version",
+            "installed_event_sequence",
+        }
+    ),
+    "provider_effect_send_attempts": frozenset(
+        {
+            "run_internal_id",
+            "effect_id",
+            "attempt_id",
+            "admission_digest",
+            "consumed_claim_digest",
+            "send_attempt_json",
+            "send_attempt_digest",
+            "admission_receipt_json",
+            "admission_receipt_digest",
+            "previous_send_attempt_digest",
+            "claim_owner_id",
+            "claim_generation",
+            "claim_fencing_token",
+            "started_at_unix_ms",
+            "consumed_at_unix_ms",
+            "installed_state_version",
+            "installed_event_sequence",
+        }
     ),
 }
 
@@ -1334,6 +1578,7 @@ class SQLiteAcceptedRunDatabase:
                     6,
                     7,
                     8,
+                    9,
                 }:
                     self._migrate_to_current(connection)
                 else:
@@ -1407,6 +1652,8 @@ class SQLiteAcceptedRunDatabase:
                     connection.execute(statement)
                 for statement in _SCHEMA_V9_MIGRATION_STATEMENTS:
                     connection.execute(statement)
+                for statement in _SCHEMA_V10_MIGRATION_STATEMENTS:
+                    connection.execute(statement)
                 connection.executemany(
                     """
                     INSERT INTO accepted_run_storage_metadata (key, value)
@@ -1455,6 +1702,7 @@ class SQLiteAcceptedRunDatabase:
                 6,
                 7,
                 8,
+                9,
             }:
                 raise SQLiteAcceptedRunSchemaVersionError(
                     "unsupported accepted-run SQLite schema version "
@@ -1707,6 +1955,42 @@ class SQLiteAcceptedRunDatabase:
                         "accepted-run SQLite schema metadata version changed "
                         "during v9 migration"
                     )
+                connection.execute("PRAGMA user_version = 9")
+                user_version = 9
+            if user_version == 9:
+                self._validate_schema_version(
+                    connection,
+                    schema_version=9,
+                    required_columns=_REQUIRED_COLUMNS_V9,
+                )
+                unsupported_provider_state = connection.execute(
+                    """
+                    SELECT effect_id
+                    FROM provider_effects
+                    WHERE state NOT IN ('pending', 'claimed')
+                       OR previous_send_attempt_digest IS NOT NULL
+                    LIMIT 1
+                    """
+                ).fetchone()
+                if unsupported_provider_state is not None:
+                    raise SQLiteAcceptedRunSchemaMismatchError(
+                        "accepted-run SQLite v9 provider effect has no recoverable "
+                        "send attempt and admission receipt"
+                    )
+                for statement in _SCHEMA_V10_MIGRATION_STATEMENTS:
+                    connection.execute(statement)
+                updated = connection.execute(
+                    """
+                    UPDATE accepted_run_storage_metadata
+                    SET value = '10'
+                    WHERE key = 'schema_version' AND value = '9'
+                    """
+                )
+                if updated.rowcount != 1:
+                    raise SQLiteAcceptedRunSchemaMismatchError(
+                        "accepted-run SQLite schema metadata version changed "
+                        "during v10 migration"
+                    )
                 connection.execute(
                     f"PRAGMA user_version = {SQLITE_ACCEPTED_RUN_SCHEMA_VERSION}"
                 )
@@ -1847,6 +2131,175 @@ class SQLiteAcceptedRunDatabase:
             if invalid_provider_claim is not None:
                 raise SQLiteAcceptedRunCorruptionError(
                     "accepted-run SQLite provider-effect claim or release is invalid"
+                )
+        if schema_version >= 10:
+            invalid_provider_attempt_projection = connection.execute(
+                """
+                SELECT effect_id
+                FROM provider_effects
+                WHERE (
+                  (latest_send_attempt_digest IS NULL)
+                  <> (latest_admission_receipt_digest IS NULL)
+                )
+                OR (
+                  (active_send_attempt_digest IS NULL)
+                  <> (active_admission_receipt_digest IS NULL)
+                )
+                OR (
+                  active_send_attempt_digest IS NOT NULL
+                  AND active_send_attempt_digest <> latest_send_attempt_digest
+                )
+                OR (
+                  active_admission_receipt_digest IS NOT NULL
+                  AND active_admission_receipt_digest <>
+                      latest_admission_receipt_digest
+                )
+                OR (
+                  state IN (
+                    'send_started',
+                    'quarantined_unknown',
+                    'reconciling',
+                    'manual_review_unknown'
+                  )
+                ) <> (active_send_attempt_digest IS NOT NULL)
+                OR (
+                  state = 'claimed'
+                  AND NOT EXISTS (
+                    SELECT 1
+                    FROM provider_effect_send_claim_issuances
+                    WHERE provider_effect_send_claim_issuances.run_internal_id =
+                          provider_effects.run_internal_id
+                      AND provider_effect_send_claim_issuances.effect_id =
+                          provider_effects.effect_id
+                      AND provider_effect_send_claim_issuances.claim_digest =
+                          provider_effects.claim_digest
+                      AND provider_effect_send_claim_issuances.claim_json =
+                          provider_effects.claim_json
+                      AND provider_effect_send_claim_issuances.attempt_id =
+                          provider_effects.send_attempt_id
+                      AND provider_effect_send_claim_issuances.claim_owner_id =
+                          provider_effects.claim_owner_id
+                      AND provider_effect_send_claim_issuances.claim_generation =
+                          provider_effects.claim_generation
+                      AND provider_effect_send_claim_issuances.claim_fencing_token =
+                          provider_effects.claim_fencing_token
+                      AND provider_effect_send_claim_issuances.issued_at_unix_ms =
+                          provider_effects.claim_started_at_unix_ms
+                      AND provider_effect_send_claim_issuances.
+                            claim_expires_at_unix_ms =
+                          provider_effects.claim_expires_at_unix_ms
+                      AND provider_effect_send_claim_issuances.
+                            installed_state_version = provider_effects.state_version
+                      AND provider_effect_send_claim_issuances.
+                            installed_event_sequence =
+                          provider_effects.event_high_watermark
+                  )
+                )
+                OR (
+                  latest_send_attempt_digest IS NULL
+                  AND EXISTS (
+                    SELECT 1
+                    FROM provider_effect_send_attempts
+                    WHERE provider_effect_send_attempts.run_internal_id =
+                          provider_effects.run_internal_id
+                      AND provider_effect_send_attempts.effect_id =
+                          provider_effects.effect_id
+                  )
+                )
+                OR (
+                  latest_send_attempt_digest IS NOT NULL
+                  AND NOT EXISTS (
+                    SELECT 1
+                    FROM provider_effect_send_attempts
+                    WHERE provider_effect_send_attempts.run_internal_id =
+                          provider_effects.run_internal_id
+                      AND provider_effect_send_attempts.effect_id =
+                          provider_effects.effect_id
+                      AND provider_effect_send_attempts.send_attempt_digest =
+                          provider_effects.latest_send_attempt_digest
+                      AND provider_effect_send_attempts.admission_receipt_digest =
+                          provider_effects.latest_admission_receipt_digest
+                  )
+                )
+                OR (
+                  latest_send_attempt_digest IS NOT NULL
+                  AND latest_send_attempt_digest IS NOT (
+                    SELECT send_attempt_digest
+                    FROM provider_effect_send_attempts
+                    WHERE provider_effect_send_attempts.run_internal_id =
+                          provider_effects.run_internal_id
+                      AND provider_effect_send_attempts.effect_id =
+                          provider_effects.effect_id
+                    ORDER BY installed_state_version DESC
+                    LIMIT 1
+                  )
+                )
+                OR (
+                  latest_send_attempt_digest IS NOT NULL
+                  AND latest_send_attempt_digest IS NOT (
+                    SELECT send_attempt_digest
+                    FROM provider_effect_send_attempts
+                    WHERE provider_effect_send_attempts.run_internal_id =
+                          provider_effects.run_internal_id
+                      AND provider_effect_send_attempts.effect_id =
+                          provider_effects.effect_id
+                    ORDER BY claim_generation DESC
+                    LIMIT 1
+                  )
+                )
+                OR (
+                  latest_send_attempt_digest IS NOT NULL
+                  AND latest_send_attempt_digest IS NOT (
+                    SELECT send_attempt_digest
+                    FROM provider_effect_send_attempts
+                    WHERE provider_effect_send_attempts.run_internal_id =
+                          provider_effects.run_internal_id
+                      AND provider_effect_send_attempts.effect_id =
+                          provider_effects.effect_id
+                    ORDER BY claim_fencing_token DESC
+                    LIMIT 1
+                  )
+                )
+                LIMIT 1
+                """
+            ).fetchone()
+            if invalid_provider_attempt_projection is not None:
+                raise SQLiteAcceptedRunCorruptionError(
+                    "accepted-run SQLite provider-effect attempt projection is invalid"
+                )
+            orphaned_provider_claim_issuance = connection.execute(
+                """
+                SELECT provider_effect_send_claim_issuances.claim_digest
+                FROM provider_effect_send_claim_issuances
+                LEFT JOIN provider_effects
+                  ON provider_effects.run_internal_id =
+                       provider_effect_send_claim_issuances.run_internal_id
+                 AND provider_effects.effect_id =
+                       provider_effect_send_claim_issuances.effect_id
+                WHERE provider_effects.effect_id IS NULL
+                LIMIT 1
+                """
+            ).fetchone()
+            if orphaned_provider_claim_issuance is not None:
+                raise SQLiteAcceptedRunCorruptionError(
+                    "accepted-run SQLite provider-effect claim issuance is orphaned"
+                )
+            orphaned_provider_attempt = connection.execute(
+                """
+                SELECT provider_effect_send_attempts.attempt_id
+                FROM provider_effect_send_attempts
+                LEFT JOIN provider_effects
+                  ON provider_effects.run_internal_id =
+                       provider_effect_send_attempts.run_internal_id
+                 AND provider_effects.effect_id =
+                       provider_effect_send_attempts.effect_id
+                WHERE provider_effects.effect_id IS NULL
+                LIMIT 1
+                """
+            ).fetchone()
+            if orphaned_provider_attempt is not None:
+                raise SQLiteAcceptedRunCorruptionError(
+                    "accepted-run SQLite provider-effect attempt is orphaned"
                 )
         foreign_key_failures = connection.execute("PRAGMA foreign_key_check").fetchall()
         if foreign_key_failures:

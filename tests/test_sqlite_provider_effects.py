@@ -14,13 +14,20 @@ from graphblocks.provider_effects import (
     ProviderCancellation,
     ProviderCapabilitySnapshot,
     ProviderDeduplication,
+    ProviderEffectAdmission,
+    ProviderEffectAdmissionError,
+    ProviderEffectAdmissionReceipt,
     ProviderEffectContractError,
     ProviderEffectIdentityConflictError,
     ProviderEffectIntent,
     ProviderEffectKind,
+    ProviderEffectSendAttempt,
     ProviderEffectState,
+    ProviderReconciliationMethod,
     ProviderRunAuthoritySnapshot,
     ProviderStatusLookup,
+    admit_provider_effect_intent,
+    begin_provider_effect_send,
 )
 from graphblocks.server_storage import (
     AcceptedRunAdmission,
@@ -39,13 +46,18 @@ from graphblocks.sqlite_provider_effects import (
     ProviderEffectClaimRelease,
     ProviderEffectClaimRequest,
     ProviderEffectWorkItem,
+    SQLiteProviderEffectClaimAuthority,
     SQLiteProviderEffectCorruptionError,
     SQLiteProviderEffectRepository,
     StaleProviderEffectClaimError,
     StoredProviderEffect,
+    StoredProviderEffectActiveSend,
     StoredProviderEffectEvent,
 )
-from graphblocks.sqlite_server_storage import SQLiteAcceptedRunRepository
+from graphblocks.sqlite_server_storage import (
+    SQLiteAcceptedRunCorruptionError,
+    SQLiteAcceptedRunRepository,
+)
 
 
 _ADAPTER_RELEASE_DIGEST = "sha256:" + ("a" * 64)
@@ -54,6 +66,37 @@ _CLAIM_AUTHORITY_DIGEST = "sha256:" + ("0" * 64)
 _CAPABILITY_AUTHORITY_DIGEST = "sha256:" + ("c" * 64)
 _VERIFIER_RELEASE_DIGEST = "sha256:" + ("d" * 64)
 _VERIFICATION_AUTHORITY_DIGEST = "sha256:" + ("e" * 64)
+
+
+class _CapabilityAuthority:
+    authority_digest = _CAPABILITY_AUTHORITY_DIGEST
+
+    @staticmethod
+    def verify(capability: ProviderCapabilitySnapshot) -> bool:
+        return capability == _capability()
+
+
+class _ReconciliationVerifier:
+    verifier_id = "payments.receipt-verifier"
+    verifier_release_digest = _VERIFIER_RELEASE_DIGEST
+    verification_authority_digest = _VERIFICATION_AUTHORITY_DIGEST
+
+
+class _VerifierAuthority:
+    authority_digest = _VERIFICATION_AUTHORITY_DIGEST
+
+    @staticmethod
+    def resolve(
+        *,
+        capability: ProviderCapabilitySnapshot,
+    ) -> _ReconciliationVerifier | None:
+        if capability == _capability():
+            return _ReconciliationVerifier()
+        return None
+
+
+_CAPABILITY_AUTHORITY = _CapabilityAuthority()
+_VERIFIER_AUTHORITY = _VerifierAuthority()
 
 
 def _admission(
@@ -275,6 +318,60 @@ def _claim_request(
         claim_owner_id=claim_owner_id,
         lease_duration_ms=lease_duration_ms,
     )
+
+
+def _provider_admission(
+    repository: SQLiteProviderEffectRepository,
+    work_item: ProviderEffectWorkItem,
+    *,
+    claim_authority: SQLiteProviderEffectClaimAuthority | None = None,
+) -> ProviderEffectAdmission:
+    claim = work_item.claim
+    authority = claim_authority or repository.send_claim_authority
+    return admit_provider_effect_intent(
+        work_item.effect.intent,
+        work_item.effect.capability,
+        work_item.effect.origin_transfer,
+        capability_authority=_CAPABILITY_AUTHORITY,
+        verifier_authority=_VERIFIER_AUTHORITY,
+        origin_authority_verifier=repository,
+        claim_authority=authority,
+        send_attempt_id=claim.send_attempt_id,
+        claim_owner_id=claim.claim_owner_id,
+        claim_generation=claim.claim_generation,
+        claim_fencing_token=claim.claim_fencing_token,
+        claim_expires_at_unix_ms=claim.claim_expires_at_unix_ms,
+        admitted_at_unix_ms=claim.admitted_at_unix_ms,
+        previous_send_attempt=work_item.effect.latest_send_attempt,
+    )
+
+
+def _claim_and_admit(
+    path: Path,
+    *,
+    clock: Callable[[], int] = lambda: 2_250,
+    failpoint: Callable[[str], None] | None = None,
+) -> tuple[
+    ProviderEffectWorkItem,
+    SQLiteProviderEffectRepository,
+    SQLiteProviderEffectClaimAuthority,
+    ProviderEffectAdmission,
+]:
+    _persist_pending_effect(path)
+    work_item = _repository(
+        path,
+        clock=lambda: 2_200,
+        attempt_id_factory=lambda: "provider-send-attempt-1",
+    ).claim_next_effect(_claim_request())
+    assert work_item is not None
+    repository = _repository(path, clock=clock, failpoint=failpoint)
+    claim_authority = repository.send_claim_authority
+    admission = _provider_admission(
+        repository,
+        work_item,
+        claim_authority=claim_authority,
+    )
+    return work_item, repository, claim_authority, admission
 
 
 def test_sqlite_provider_effect_persists_exact_origin_transfer_and_event(
@@ -1205,7 +1302,7 @@ def test_sqlite_provider_effect_rejects_duplicate_active_send_attempt_identity(
 
     with pytest.raises(
         ProviderEffectIdentityConflictError,
-        match="send attempt identity is already active",
+        match="send attempt identity is already issued",
     ):
         _repository(
             path,
@@ -1244,6 +1341,7 @@ def test_sqlite_provider_effect_rejects_duplicate_active_claim_owner(
     )
     assert first is not None
     assert second is not None
+    reader = _repository(path, clock=lambda: 2_250)
     connection = sqlite3.connect(path, isolation_level=None)
     try:
         connection.execute("BEGIN IMMEDIATE")
@@ -1262,9 +1360,7 @@ def test_sqlite_provider_effect_rejects_duplicate_active_claim_owner(
         SQLiteProviderEffectCorruptionError,
         match="multiple active claims",
     ):
-        _repository(path, clock=lambda: 2_250).claim_next_effect(
-            _claim_request(claim_owner_id="provider-worker-1")
-        )
+        reader.claim_next_effect(_claim_request(claim_owner_id="provider-worker-1"))
 
 
 def test_sqlite_provider_effect_release_is_durable_replayable_and_fenced(
@@ -1332,6 +1428,7 @@ def test_sqlite_provider_effect_release_is_durable_replayable_and_fenced(
 @pytest.mark.parametrize(
     "failpoint_name",
     (
+        "claim_next_effect.after_issuance_insert",
         "claim_next_effect.after_effect_update",
         "claim_next_effect.after_event_insert",
     ),
@@ -1363,6 +1460,18 @@ def test_sqlite_provider_effect_rolls_back_claim_transaction(
     assert restored is not None
     assert restored.state is ProviderEffectState.PENDING
     assert restored.state_version == 1
+    connection = sqlite3.connect(path)
+    try:
+        assert (
+            int(
+                connection.execute(
+                    "SELECT count(*) FROM provider_effect_send_claim_issuances"
+                ).fetchone()[0]
+            )
+            == 0
+        )
+    finally:
+        connection.close()
 
 
 def test_sqlite_provider_effect_rolls_back_claim_expired_before_commit(
@@ -1496,14 +1605,14 @@ def test_sqlite_provider_effect_never_auto_claims_send_started(
     tmp_path: Path,
 ) -> None:
     path = tmp_path / "provider-effect-send-started.sqlite3"
-    _persist_pending_effect(path)
-    connection = sqlite3.connect(path, isolation_level=None)
-    try:
-        connection.execute("BEGIN IMMEDIATE")
-        connection.execute("UPDATE provider_effects SET state = 'send_started'")
-        connection.commit()
-    finally:
-        connection.close()
+    work_item, _, claim_authority, admission = _claim_and_admit(path)
+    begin_provider_effect_send(
+        work_item.effect.state,
+        work_item.effect.intent,
+        work_item.effect.capability,
+        admission,
+        claim_authority,
+    )
 
     assert (
         _repository(path, clock=lambda: 9_000).claim_next_effect(_claim_request())
@@ -1529,6 +1638,7 @@ def test_sqlite_provider_effect_fails_closed_on_claim_projection_corruption(
         _claim_request()
     )
     assert work_item is not None
+    reader = _repository(path, clock=lambda: 2_250)
     connection = sqlite3.connect(path, isolation_level=None)
     try:
         connection.execute("BEGIN IMMEDIATE")
@@ -1541,7 +1651,7 @@ def test_sqlite_provider_effect_fails_closed_on_claim_projection_corruption(
         connection.close()
 
     with pytest.raises(SQLiteProviderEffectCorruptionError):
-        _repository(path, clock=lambda: 2_250).get_effect(
+        reader.get_effect(
             tenant_id="tenant-1",
             run_id="run-1",
             owner_principal_id="principal-1",
@@ -1679,3 +1789,839 @@ def test_sqlite_provider_effect_hot_transitions_decode_only_event_tail(
     decoded_event_count = 0
     _repository(path, clock=lambda: 2_501).release_claim_before_send(work_item.claim)
     assert decoded_event_count == 2
+
+
+def test_sqlite_provider_effect_consumes_claim_into_durable_send_start(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "provider-effect-send-start.sqlite3"
+    work_item, repository, claim_authority, admission = _claim_and_admit(path)
+
+    next_state, send_attempt, admission_receipt = begin_provider_effect_send(
+        work_item.effect.state,
+        work_item.effect.intent,
+        work_item.effect.capability,
+        admission,
+        claim_authority,
+        previous_send_attempt=work_item.effect.latest_send_attempt,
+    )
+
+    assert next_state is ProviderEffectState.SEND_STARTED
+    assert type(send_attempt) is ProviderEffectSendAttempt
+    assert type(admission_receipt) is ProviderEffectAdmissionReceipt
+    assert send_attempt.attempt_id == work_item.claim.send_attempt_id
+    assert send_attempt.claim_generation == work_item.claim.claim_generation
+    assert send_attempt.claim_fencing_token == work_item.claim.claim_fencing_token
+    assert send_attempt.started_at_unix_ms == 2_250
+    assert admission_receipt.send_attempt_digest == send_attempt.digest
+    assert admission_receipt.consumed_at_unix_ms == 2_250
+
+    restored = _repository(path, clock=lambda: 9_000).get_effect(
+        tenant_id="tenant-1",
+        run_id="run-1",
+        owner_principal_id="principal-1",
+        effect_id="effect-1",
+    )
+    assert restored is not None
+    assert restored.state is ProviderEffectState.SEND_STARTED
+    assert restored.claim is None
+    assert restored.claim_generation == work_item.claim.claim_generation
+    assert restored.claim_fencing_token == work_item.claim.claim_fencing_token
+    assert restored.latest_send_attempt == send_attempt
+    assert restored.latest_admission_receipt == admission_receipt
+    assert restored.active_send_attempt == send_attempt
+    assert restored.active_admission_receipt == admission_receipt
+
+    active = _repository(path, clock=lambda: 9_000).get_active_send(
+        tenant_id="tenant-1",
+        run_id="run-1",
+        owner_principal_id="principal-1",
+        effect_id="effect-1",
+    )
+    assert type(active) is StoredProviderEffectActiveSend
+    assert active.consumed_claim_digest == work_item.claim.digest
+    assert active.send_attempt == send_attempt
+    assert active.admission_receipt == admission_receipt
+    assert active.installed_state_version == active.installed_event_sequence == 3
+    assert (
+        _repository(path, clock=lambda: 9_000).get_active_send(
+            tenant_id="tenant-2",
+            run_id="run-1",
+            owner_principal_id="principal-1",
+            effect_id="effect-1",
+        )
+        is None
+    )
+    assert (
+        _repository(path, clock=lambda: 9_000).get_active_send(
+            tenant_id="tenant-1",
+            run_id="run-1",
+            owner_principal_id="principal-2",
+            effect_id="effect-1",
+        )
+        is None
+    )
+
+    events = repository.read_events(
+        tenant_id="tenant-1",
+        run_id="run-1",
+        owner_principal_id="principal-1",
+        effect_id="effect-1",
+        after_sequence=0,
+        limit=10,
+    ).events
+    assert tuple(event.kind for event in events) == (
+        "origin_transferred",
+        "send_claimed",
+        "send_started",
+    )
+    payload = canonical_loads(events[-1].payload_json)
+    assert payload == {
+        "admissionReceipt": admission_receipt.to_wire(),
+        "admissionReceiptDigest": admission_receipt.digest,
+        "consumedClaimDigest": work_item.claim.digest,
+        "effectId": "effect-1",
+        "formatVersion": PROVIDER_EFFECT_EVENT_FORMAT_VERSION,
+        "intentDigest": work_item.effect.intent.digest,
+        "sendAttempt": send_attempt.to_wire(),
+        "sendAttemptDigest": send_attempt.digest,
+        "state": "send_started",
+    }
+    first_page = repository.read_events(
+        tenant_id="tenant-1",
+        run_id="run-1",
+        owner_principal_id="principal-1",
+        effect_id="effect-1",
+        after_sequence=0,
+        limit=1,
+    )
+    second_page = repository.read_events(
+        tenant_id="tenant-1",
+        run_id="run-1",
+        owner_principal_id="principal-1",
+        effect_id="effect-1",
+        after_sequence=first_page.next_after_sequence or 0,
+        limit=1,
+    )
+    third_page = repository.read_events(
+        tenant_id="tenant-1",
+        run_id="run-1",
+        owner_principal_id="principal-1",
+        effect_id="effect-1",
+        after_sequence=second_page.next_after_sequence or 0,
+        limit=1,
+    )
+    assert first_page.next_after_sequence == 1
+    assert second_page.next_after_sequence == 2
+    assert third_page.next_after_sequence is None
+    assert third_page.events[0].kind == "send_started"
+
+    connection = sqlite3.connect(path)
+    try:
+        attempt_columns = frozenset(
+            str(row[1])
+            for row in connection.execute(
+                'PRAGMA table_info("provider_effect_send_attempts")'
+            ).fetchall()
+        )
+        attempt_count = int(
+            connection.execute(
+                "SELECT count(*) FROM provider_effect_send_attempts"
+            ).fetchone()[0]
+        )
+    finally:
+        connection.close()
+    assert "admission_json" not in attempt_columns
+    assert attempt_count == 1
+    assert (
+        _repository(path, clock=lambda: 9_000).claim_next_effect(_claim_request())
+        is None
+    )
+    with pytest.raises(StaleProviderEffectClaimError):
+        _repository(path, clock=lambda: 9_000).release_claim_before_send(
+            work_item.claim
+        )
+
+
+def test_sqlite_provider_effect_claim_authority_verifies_exact_live_claim(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "provider-effect-verify-claim.sqlite3"
+    _persist_pending_effect(path)
+    work_item = _repository(
+        path,
+        clock=lambda: 2_200,
+        attempt_id_factory=lambda: "provider-send-attempt-1",
+    ).claim_next_effect(_claim_request())
+    assert work_item is not None
+    repository = _repository(path, clock=lambda: 2_250)
+    authority = repository.send_claim_authority
+    claim = work_item.claim
+    exact = {
+        "intent": work_item.effect.intent,
+        "previous_send_attempt": None,
+        "send_attempt_id": claim.send_attempt_id,
+        "claim_owner_id": claim.claim_owner_id,
+        "claim_generation": claim.claim_generation,
+        "claim_fencing_token": claim.claim_fencing_token,
+        "claim_expires_at_unix_ms": claim.claim_expires_at_unix_ms,
+        "admitted_at_unix_ms": claim.admitted_at_unix_ms,
+    }
+
+    assert repository.authority_digest == _ORIGIN_AUTHORITY_DIGEST
+    assert authority.authority_digest == _CLAIM_AUTHORITY_DIGEST
+    assert authority.verify_claim(**exact)
+    for field_name, changed_value in (
+        ("send_attempt_id", "other-attempt"),
+        ("claim_owner_id", "other-worker"),
+        ("claim_generation", claim.claim_generation + 1),
+        ("claim_fencing_token", claim.claim_fencing_token + 1),
+        ("claim_expires_at_unix_ms", claim.claim_expires_at_unix_ms + 1),
+        ("admitted_at_unix_ms", claim.admitted_at_unix_ms + 1),
+    ):
+        assert not authority.verify_claim(**{**exact, field_name: changed_value})
+
+    unrelated_attempt = ProviderEffectSendAttempt(
+        effect_id=work_item.effect.intent.effect_id,
+        intent_digest=work_item.effect.intent.digest,
+        capability_snapshot_digest=work_item.effect.capability.digest,
+        admission_digest=_ORIGIN_AUTHORITY_DIGEST,
+        claim_authority_digest=_CLAIM_AUTHORITY_DIGEST,
+        attempt_id="unrelated-attempt",
+        claim_owner_id="unrelated-worker",
+        claim_generation=1,
+        claim_fencing_token=1,
+        started_at_unix_ms=2_100,
+    )
+    assert not authority.verify_claim(
+        **{**exact, "previous_send_attempt": unrelated_attempt}
+    )
+    assert not _repository(path, clock=lambda: 2_300).send_claim_authority.verify_claim(
+        **exact
+    )
+
+    _repository(path, clock=lambda: 2_250).release_claim_before_send(claim)
+    assert not authority.verify_claim(**exact)
+
+
+def test_sqlite_provider_effect_rejects_tampered_admission_recovery_methods(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "provider-effect-admission-method-tamper.sqlite3"
+    work_item, _, claim_authority, admission = _claim_and_admit(path)
+    object.__setattr__(
+        admission,
+        "applicable_methods",
+        admission.applicable_methods
+        | frozenset({ProviderReconciliationMethod.CONFIRMED_CANCELLATION}),
+    )
+
+    with pytest.raises(
+        ProviderEffectAdmissionError,
+        match="stale or already consumed",
+    ):
+        begin_provider_effect_send(
+            work_item.effect.state,
+            work_item.effect.intent,
+            work_item.effect.capability,
+            admission,
+            claim_authority,
+        )
+
+    restored = _repository(path, clock=lambda: 2_250).get_effect(
+        tenant_id="tenant-1",
+        run_id="run-1",
+        owner_principal_id="principal-1",
+        effect_id="effect-1",
+    )
+    assert restored == work_item.effect
+
+
+@pytest.mark.parametrize(
+    "failpoint_name",
+    (
+        "claim_send.after_attempt_insert",
+        "claim_send.after_effect_update",
+        "claim_send.after_event_insert",
+    ),
+)
+def test_sqlite_provider_effect_send_entry_rolls_back_before_commit(
+    tmp_path: Path,
+    failpoint_name: str,
+) -> None:
+    path = tmp_path / f"provider-effect-send-{failpoint_name}.sqlite3"
+
+    def inject(name: str) -> None:
+        if name == failpoint_name:
+            raise RuntimeError(f"injected {name}")
+
+    work_item, _, claim_authority, admission = _claim_and_admit(
+        path,
+        failpoint=inject,
+    )
+
+    with pytest.raises(ProviderEffectAdmissionError, match="consumption failed"):
+        begin_provider_effect_send(
+            work_item.effect.state,
+            work_item.effect.intent,
+            work_item.effect.capability,
+            admission,
+            claim_authority,
+        )
+
+    restored = _repository(path, clock=lambda: 2_250).get_effect(
+        tenant_id="tenant-1",
+        run_id="run-1",
+        owner_principal_id="principal-1",
+        effect_id="effect-1",
+    )
+    assert restored == work_item.effect
+    connection = sqlite3.connect(path)
+    try:
+        attempt_count = int(
+            connection.execute(
+                "SELECT count(*) FROM provider_effect_send_attempts"
+            ).fetchone()[0]
+        )
+        event_count = int(
+            connection.execute(
+                "SELECT count(*) FROM provider_effect_events"
+            ).fetchone()[0]
+        )
+    finally:
+        connection.close()
+    assert attempt_count == 0
+    assert event_count == 2
+
+
+def test_sqlite_provider_effect_send_entry_rolls_back_at_half_open_expiry(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "provider-effect-send-expired-before-commit.sqlite3"
+    times = iter((2_250, 2_250, 2_250, 2_250, 2_300))
+    work_item, _, claim_authority, admission = _claim_and_admit(
+        path,
+        clock=lambda: next(times),
+    )
+
+    with pytest.raises(ProviderEffectAdmissionError, match="consumption failed"):
+        begin_provider_effect_send(
+            work_item.effect.state,
+            work_item.effect.intent,
+            work_item.effect.capability,
+            admission,
+            claim_authority,
+        )
+
+    restored = _repository(path, clock=lambda: 2_299).get_effect(
+        tenant_id="tenant-1",
+        run_id="run-1",
+        owner_principal_id="principal-1",
+        effect_id="effect-1",
+    )
+    assert restored == work_item.effect
+
+
+def test_sqlite_provider_effect_send_commit_response_loss_is_not_reconsumed(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "provider-effect-send-response-loss.sqlite3"
+
+    def inject(name: str) -> None:
+        if name == "claim_send.after_commit":
+            raise RuntimeError("send-entry response lost after commit")
+
+    work_item, _, claim_authority, admission = _claim_and_admit(
+        path,
+        failpoint=inject,
+    )
+    with pytest.raises(
+        ProviderEffectAdmissionError,
+        match="consumption failed",
+    ):
+        begin_provider_effect_send(
+            work_item.effect.state,
+            work_item.effect.intent,
+            work_item.effect.capability,
+            admission,
+            claim_authority,
+        )
+
+    reopened = _repository(path, clock=lambda: 9_000)
+    active = reopened.get_active_send(
+        tenant_id="tenant-1",
+        run_id="run-1",
+        owner_principal_id="principal-1",
+        effect_id="effect-1",
+    )
+    assert active is not None
+    assert active.effect.state is ProviderEffectState.SEND_STARTED
+    assert (
+        reopened.send_claim_authority.claim_send(
+            admission=admission,
+            intent=work_item.effect.intent,
+        )
+        is None
+    )
+    with pytest.raises(
+        ProviderEffectAdmissionError,
+        match="stale or already consumed",
+    ):
+        begin_provider_effect_send(
+            work_item.effect.state,
+            work_item.effect.intent,
+            work_item.effect.capability,
+            admission,
+            reopened.send_claim_authority,
+        )
+
+
+def test_sqlite_provider_effect_concurrent_send_entry_has_one_winner(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "provider-effect-concurrent-send-entry.sqlite3"
+    work_item, _, _, admission = _claim_and_admit(path)
+
+    def consume(_: int):
+        authority = _repository(path, clock=lambda: 2_250).send_claim_authority
+        try:
+            return begin_provider_effect_send(
+                work_item.effect.state,
+                work_item.effect.intent,
+                work_item.effect.capability,
+                admission,
+                authority,
+            )
+        except ProviderEffectAdmissionError:
+            return None
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = tuple(executor.map(consume, (1, 2)))
+
+    assert len(tuple(result for result in results if result is not None)) == 1
+    active = _repository(path, clock=lambda: 9_000).get_active_send(
+        tenant_id="tenant-1",
+        run_id="run-1",
+        owner_principal_id="principal-1",
+        effect_id="effect-1",
+    )
+    assert active is not None
+    connection = sqlite3.connect(path)
+    try:
+        assert (
+            int(
+                connection.execute(
+                    "SELECT count(*) FROM provider_effect_send_attempts"
+                ).fetchone()[0]
+            )
+            == 1
+        )
+    finally:
+        connection.close()
+
+
+def test_sqlite_provider_effect_release_and_send_entry_have_one_winner(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "provider-effect-release-send-race.sqlite3"
+    work_item, _, _, admission = _claim_and_admit(path)
+
+    def consume() -> str:
+        try:
+            begin_provider_effect_send(
+                work_item.effect.state,
+                work_item.effect.intent,
+                work_item.effect.capability,
+                admission,
+                _repository(path, clock=lambda: 2_250).send_claim_authority,
+            )
+            return "send_started"
+        except ProviderEffectAdmissionError:
+            return "send_stale"
+
+    def release() -> str:
+        try:
+            _repository(path, clock=lambda: 2_250).release_claim_before_send(
+                work_item.claim
+            )
+            return "released"
+        except StaleProviderEffectClaimError:
+            return "release_stale"
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        consume_future = executor.submit(consume)
+        release_future = executor.submit(release)
+        outcomes = {consume_future.result(), release_future.result()}
+
+    assert outcomes in (
+        {"send_started", "release_stale"},
+        {"send_stale", "released"},
+    )
+    restored = _repository(path, clock=lambda: 9_000).get_effect(
+        tenant_id="tenant-1",
+        run_id="run-1",
+        owner_principal_id="principal-1",
+        effect_id="effect-1",
+    )
+    assert restored is not None
+    if restored.state is ProviderEffectState.SEND_STARTED:
+        assert restored.active_send_attempt is not None
+    else:
+        assert restored.state is ProviderEffectState.PENDING
+        assert restored.active_send_attempt is None
+
+
+def test_sqlite_provider_effect_never_reuses_consumed_attempt_identity(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "provider-effect-consumed-attempt-identity.sqlite3"
+    _persist_pending_effect(path)
+    _persist_pending_effect(
+        path,
+        run_id="run-2",
+        effect_id="effect-2",
+        idempotency_key="tenant-1:run-2:capture-1",
+    )
+    first = _repository(
+        path,
+        clock=lambda: 2_200,
+        attempt_id_factory=lambda: "provider-send-attempt-shared",
+    ).claim_next_effect(_claim_request())
+    assert first is not None
+    first_repository = _repository(path, clock=lambda: 2_250)
+    first_authority = first_repository.send_claim_authority
+    first_admission = _provider_admission(
+        first_repository,
+        first,
+        claim_authority=first_authority,
+    )
+    begin_provider_effect_send(
+        first.effect.state,
+        first.effect.intent,
+        first.effect.capability,
+        first_admission,
+        first_authority,
+    )
+
+    with pytest.raises(
+        ProviderEffectIdentityConflictError,
+        match="send attempt identity is already issued",
+    ):
+        _repository(
+            path,
+            clock=lambda: 2_260,
+            attempt_id_factory=lambda: "provider-send-attempt-shared",
+        ).claim_next_effect(_claim_request(claim_owner_id="provider-worker-2"))
+
+
+def test_sqlite_provider_effect_never_reuses_released_attempt_identity(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "provider-effect-released-attempt-identity.sqlite3"
+    _persist_pending_effect(path)
+    first = _repository(
+        path,
+        clock=lambda: 2_200,
+        attempt_id_factory=lambda: "provider-send-attempt-once",
+    ).claim_next_effect(_claim_request())
+    assert first is not None
+    _repository(path, clock=lambda: 2_250).release_claim_before_send(first.claim)
+
+    with pytest.raises(
+        ProviderEffectIdentityConflictError,
+        match="send attempt identity is already issued",
+    ):
+        _repository(
+            path,
+            clock=lambda: 2_300,
+            attempt_id_factory=lambda: "provider-send-attempt-once",
+        ).claim_next_effect(_claim_request(claim_owner_id="provider-worker-2"))
+
+    connection = sqlite3.connect(path)
+    try:
+        assert (
+            int(
+                connection.execute(
+                    "SELECT count(*) FROM provider_effect_send_claim_issuances"
+                ).fetchone()[0]
+            )
+            == 1
+        )
+    finally:
+        connection.close()
+
+
+def test_sqlite_provider_effect_rejects_corrupted_send_attempt_record(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "provider-effect-corrupt-send-attempt.sqlite3"
+    work_item, _, claim_authority, admission = _claim_and_admit(path)
+    begin_provider_effect_send(
+        work_item.effect.state,
+        work_item.effect.intent,
+        work_item.effect.capability,
+        admission,
+        claim_authority,
+    )
+    connection = sqlite3.connect(path, isolation_level=None)
+    try:
+        connection.execute("BEGIN IMMEDIATE")
+        connection.execute(
+            "UPDATE provider_effect_send_attempts SET send_attempt_json = '{}'"
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+    with pytest.raises(SQLiteProviderEffectCorruptionError):
+        _repository(path, clock=lambda: 9_000).get_effect(
+            tenant_id="tenant-1",
+            run_id="run-1",
+            owner_principal_id="principal-1",
+            effect_id="effect-1",
+        )
+
+
+def test_sqlite_provider_effect_rejects_send_started_event_claim_substitution(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "provider-effect-corrupt-send-event.sqlite3"
+    work_item, _, claim_authority, admission = _claim_and_admit(path)
+    begin_provider_effect_send(
+        work_item.effect.state,
+        work_item.effect.intent,
+        work_item.effect.capability,
+        admission,
+        claim_authority,
+    )
+    connection = sqlite3.connect(path, isolation_level=None)
+    try:
+        connection.execute("BEGIN IMMEDIATE")
+        event_row = connection.execute(
+            """
+            SELECT payload_json
+            FROM provider_effect_events
+            WHERE kind = 'send_started'
+            """
+        ).fetchone()
+        assert event_row is not None
+        payload = canonical_loads(str(event_row[0]))
+        assert type(payload) is dict
+        substituted_claim = replace(
+            work_item.claim,
+            claim_started_at_unix_ms=work_item.claim.claim_started_at_unix_ms - 1,
+        )
+        substituted_claim_digest = substituted_claim.digest
+        payload["consumedClaimDigest"] = substituted_claim_digest
+        connection.execute(
+            """
+            UPDATE provider_effect_events
+            SET payload_json = ?, payload_digest = ?
+            WHERE kind = 'send_started'
+            """,
+            (canonical_dumps(payload), canonical_hash(payload)),
+        )
+        connection.execute(
+            """
+            UPDATE provider_effect_send_attempts
+            SET consumed_claim_digest = ?
+            """,
+            (substituted_claim_digest,),
+        )
+        connection.execute(
+            """
+            UPDATE provider_effect_send_claim_issuances
+            SET claim_digest = ?, claim_json = ?, issued_at_unix_ms = ?
+            WHERE attempt_id = ?
+            """,
+            (
+                substituted_claim_digest,
+                canonical_dumps(substituted_claim.to_wire()),
+                substituted_claim.claim_started_at_unix_ms,
+                substituted_claim.send_attempt_id,
+            ),
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+    with pytest.raises(SQLiteProviderEffectCorruptionError):
+        _repository(path, clock=lambda: 9_000).get_active_send(
+            tenant_id="tenant-1",
+            run_id="run-1",
+            owner_principal_id="principal-1",
+            effect_id="effect-1",
+        )
+
+
+def test_sqlite_provider_effect_rejects_unprojected_future_send_attempt(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "provider-effect-unprojected-future-attempt.sqlite3"
+    work_item, repository, claim_authority, admission = _claim_and_admit(path)
+    _, current_attempt, _ = begin_provider_effect_send(
+        work_item.effect.state,
+        work_item.effect.intent,
+        work_item.effect.capability,
+        admission,
+        claim_authority,
+    )
+    future_claim = replace(
+        work_item.claim,
+        claim_generation=2,
+        claim_fencing_token=2,
+        claim_started_at_unix_ms=2_400,
+        claim_expires_at_unix_ms=3_400,
+        admitted_at_unix_ms=2_400,
+        send_attempt_id="provider-send-attempt-future",
+        previous_send_attempt_digest=current_attempt.digest,
+    )
+    future_admission_wire = {
+        "admittedAtUnixMs": future_claim.admitted_at_unix_ms,
+        "applicableMethods": sorted(
+            method.value for method in admission.applicable_methods
+        ),
+        "capabilityAuthorityDigest": admission.capability_authority_digest,
+        "capabilitySnapshotDigest": admission.capability_snapshot_digest,
+        "claimAuthorityDigest": future_claim.claim_authority_digest,
+        "claimExpiresAtUnixMs": future_claim.claim_expires_at_unix_ms,
+        "claimFencingToken": future_claim.claim_fencing_token,
+        "claimGeneration": future_claim.claim_generation,
+        "claimOwnerId": future_claim.claim_owner_id,
+        "intentDigest": future_claim.intent_digest,
+        "originAuthorityVerifierDigest": (admission.origin_authority_verifier_digest),
+        "originTransferDigest": admission.origin_transfer_digest,
+        "previousSendAttemptDigest": future_claim.previous_send_attempt_digest,
+        "sendAttemptId": future_claim.send_attempt_id,
+    }
+    future_admission_digest = canonical_hash(future_admission_wire)
+    future_attempt = ProviderEffectSendAttempt(
+        effect_id=future_claim.effect_id,
+        intent_digest=future_claim.intent_digest,
+        capability_snapshot_digest=admission.capability_snapshot_digest,
+        admission_digest=future_admission_digest,
+        claim_authority_digest=future_claim.claim_authority_digest,
+        attempt_id=future_claim.send_attempt_id,
+        claim_owner_id=future_claim.claim_owner_id,
+        claim_generation=future_claim.claim_generation,
+        claim_fencing_token=future_claim.claim_fencing_token,
+        started_at_unix_ms=2_400,
+    )
+    future_receipt = ProviderEffectAdmissionReceipt(
+        effect_id=future_claim.effect_id,
+        admission_digest=future_admission_digest,
+        send_attempt_digest=future_attempt.digest,
+        intent_digest=future_claim.intent_digest,
+        capability_snapshot_digest=admission.capability_snapshot_digest,
+        capability_authority_digest=admission.capability_authority_digest,
+        origin_transfer_digest=admission.origin_transfer_digest,
+        origin_authority_verifier_digest=(admission.origin_authority_verifier_digest),
+        claim_authority_digest=future_claim.claim_authority_digest,
+        send_attempt_id=future_claim.send_attempt_id,
+        claim_owner_id=future_claim.claim_owner_id,
+        claim_generation=future_claim.claim_generation,
+        claim_fencing_token=future_claim.claim_fencing_token,
+        claim_expires_at_unix_ms=future_claim.claim_expires_at_unix_ms,
+        applicable_methods=admission.applicable_methods,
+        admitted_at_unix_ms=future_claim.admitted_at_unix_ms,
+        previous_send_attempt_digest=future_claim.previous_send_attempt_digest,
+        send_started_at_unix_ms=2_400,
+        consumed_at_unix_ms=2_400,
+    )
+
+    connection = sqlite3.connect(path, isolation_level=None)
+    try:
+        connection.execute("PRAGMA foreign_keys = ON")
+        connection.execute("BEGIN IMMEDIATE")
+        run_internal_id = str(
+            connection.execute(
+                "SELECT run_internal_id FROM provider_effects WHERE effect_id = ?",
+                (future_claim.effect_id,),
+            ).fetchone()[0]
+        )
+        connection.execute(
+            """
+            INSERT INTO provider_effect_send_claim_issuances (
+              run_internal_id,
+              effect_id,
+              claim_digest,
+              claim_json,
+              attempt_id,
+              claim_owner_id,
+              claim_generation,
+              claim_fencing_token,
+              issued_at_unix_ms,
+              claim_expires_at_unix_ms,
+              installed_state_version,
+              installed_event_sequence
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 4, 4)
+            """,
+            (
+                run_internal_id,
+                future_claim.effect_id,
+                future_claim.digest,
+                canonical_dumps(future_claim.to_wire()),
+                future_claim.send_attempt_id,
+                future_claim.claim_owner_id,
+                future_claim.claim_generation,
+                future_claim.claim_fencing_token,
+                future_claim.claim_started_at_unix_ms,
+                future_claim.claim_expires_at_unix_ms,
+            ),
+        )
+        connection.execute(
+            """
+            INSERT INTO provider_effect_send_attempts (
+              run_internal_id,
+              effect_id,
+              attempt_id,
+              admission_digest,
+              consumed_claim_digest,
+              send_attempt_json,
+              send_attempt_digest,
+              admission_receipt_json,
+              admission_receipt_digest,
+              previous_send_attempt_digest,
+              claim_owner_id,
+              claim_generation,
+              claim_fencing_token,
+              started_at_unix_ms,
+              consumed_at_unix_ms,
+              installed_state_version,
+              installed_event_sequence
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 5, 5)
+            """,
+            (
+                run_internal_id,
+                future_claim.effect_id,
+                future_attempt.attempt_id,
+                future_admission_digest,
+                future_claim.digest,
+                canonical_dumps(future_attempt.to_wire()),
+                future_attempt.digest,
+                canonical_dumps(future_receipt.to_wire()),
+                future_receipt.digest,
+                future_claim.previous_send_attempt_digest,
+                future_claim.claim_owner_id,
+                future_claim.claim_generation,
+                future_claim.claim_fencing_token,
+                future_attempt.started_at_unix_ms,
+                future_receipt.consumed_at_unix_ms,
+            ),
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+    with pytest.raises(SQLiteProviderEffectCorruptionError):
+        repository.get_effect(
+            tenant_id="tenant-1",
+            run_id="run-1",
+            owner_principal_id="principal-1",
+            effect_id="effect-1",
+        )
+    with pytest.raises(
+        SQLiteAcceptedRunCorruptionError,
+        match="attempt projection is invalid",
+    ):
+        _repository(path, clock=lambda: 9_000)

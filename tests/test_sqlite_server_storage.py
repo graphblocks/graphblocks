@@ -7,7 +7,7 @@ from threading import Barrier
 
 import pytest
 
-from graphblocks.canonical import canonical_hash
+from graphblocks.canonical import canonical_dumps, canonical_hash
 from graphblocks.run_store import SQLiteRunStore
 from graphblocks.server_storage import (
     AcceptedRunEffectDeliveryAck,
@@ -28,6 +28,7 @@ from graphblocks.sqlite_server_storage import (
     _SCHEMA_V6_MIGRATION_STATEMENTS,
     _SCHEMA_V7_MIGRATION_STATEMENTS,
     _SCHEMA_V8_MIGRATION_STATEMENTS,
+    _SCHEMA_V9_MIGRATION_STATEMENTS,
     _MAX_SQLITE_INTEGER,
     SQLiteAcceptedRunBusyError,
     SQLiteAcceptedRunCorruptionError,
@@ -45,6 +46,8 @@ _EXPECTED_TABLES = frozenset(
         "callback_inbox",
         "effect_outbox",
         "provider_effect_events",
+        "provider_effect_send_claim_issuances",
+        "provider_effect_send_attempts",
         "provider_effects",
         "run_checkpoints",
         "run_controls",
@@ -358,6 +361,26 @@ def _upgrade_version_seven_database_to_version_eight(path: Path) -> None:
         connection.close()
 
 
+def _upgrade_version_eight_database_to_version_nine(path: Path) -> None:
+    connection = sqlite3.connect(path, isolation_level=None)
+    try:
+        connection.execute("PRAGMA foreign_keys = ON")
+        connection.execute("BEGIN IMMEDIATE")
+        for statement in _SCHEMA_V9_MIGRATION_STATEMENTS:
+            connection.execute(statement)
+        connection.execute(
+            """
+            UPDATE accepted_run_storage_metadata
+            SET value = '9'
+            WHERE key = 'schema_version' AND value = '8'
+            """
+        )
+        connection.execute("PRAGMA user_version = 9")
+        connection.commit()
+    finally:
+        connection.close()
+
+
 def test_sqlite_accepted_run_database_initializes_dedicated_schema(
     tmp_path,
 ) -> None:
@@ -375,7 +398,7 @@ def test_sqlite_accepted_run_database_initializes_dedicated_schema(
     assert schema.synchronous == 2
     assert schema.busy_timeout_ms == 250
     assert schema.tables == _EXPECTED_TABLES
-    assert SQLITE_ACCEPTED_RUN_SCHEMA_VERSION == 9
+    assert SQLITE_ACCEPTED_RUN_SCHEMA_VERSION == 10
 
 
 def test_sqlite_accepted_run_database_migrates_v7_provider_effect_schema(
@@ -387,7 +410,7 @@ def test_sqlite_accepted_run_database_migrates_v7_provider_effect_schema(
 
     database = SQLiteAcceptedRunDatabase(path)
 
-    assert database.schema_info().schema_version == 9
+    assert database.schema_info().schema_version == 10
     assert database._run_read(
         lambda connection: frozenset(
             str(row["name"])
@@ -441,7 +464,7 @@ def test_sqlite_accepted_run_database_migrates_v8_provider_claim_schema(
         )
     )
 
-    assert database.schema_info().schema_version == 9
+    assert database.schema_info().schema_version == 10
     assert {
         "claim_json",
         "claim_digest",
@@ -465,6 +488,278 @@ def test_sqlite_accepted_run_database_migrates_v8_provider_claim_schema(
             ).fetchall()
         )
     )
+
+
+def test_sqlite_accepted_run_database_migrates_v9_provider_send_schema(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "accepted-runs-v9.sqlite3"
+    _initialize_version_six_claimed_effect(path)
+    _upgrade_version_six_database_to_version_seven(path)
+    _upgrade_version_seven_database_to_version_eight(path)
+    _upgrade_version_eight_database_to_version_nine(path)
+
+    database = SQLiteAcceptedRunDatabase(path)
+    provider_effect_columns = database._run_read(
+        lambda connection: frozenset(
+            str(row["name"])
+            for row in connection.execute(
+                'PRAGMA table_info("provider_effects")'
+            ).fetchall()
+        )
+    )
+    send_attempt_columns = database._run_read(
+        lambda connection: frozenset(
+            str(row["name"])
+            for row in connection.execute(
+                'PRAGMA table_info("provider_effect_send_attempts")'
+            ).fetchall()
+        )
+    )
+    claim_issuance_columns = database._run_read(
+        lambda connection: frozenset(
+            str(row["name"])
+            for row in connection.execute(
+                'PRAGMA table_info("provider_effect_send_claim_issuances")'
+            ).fetchall()
+        )
+    )
+
+    assert database.schema_info().schema_version == 10
+    assert {
+        "latest_send_attempt_digest",
+        "latest_admission_receipt_digest",
+        "active_send_attempt_digest",
+        "active_admission_receipt_digest",
+    } <= provider_effect_columns
+    assert {
+        "attempt_id",
+        "admission_digest",
+        "consumed_claim_digest",
+        "send_attempt_json",
+        "send_attempt_digest",
+        "admission_receipt_json",
+        "admission_receipt_digest",
+        "installed_state_version",
+        "installed_event_sequence",
+    } <= send_attempt_columns
+    assert {
+        "claim_digest",
+        "claim_json",
+        "attempt_id",
+        "claim_generation",
+        "claim_fencing_token",
+        "installed_state_version",
+        "installed_event_sequence",
+    } <= claim_issuance_columns
+
+
+def test_sqlite_accepted_run_database_preserves_v9_active_provider_claim(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "accepted-runs-v9-claimed-provider.sqlite3"
+    _initialize_version_six_claimed_effect(path)
+    _upgrade_version_six_database_to_version_seven(path)
+    _upgrade_version_seven_database_to_version_eight(path)
+    _upgrade_version_eight_database_to_version_nine(path)
+    intent_digest = "sha256:" + ("1" * 64)
+    claim_wire = {
+        "admittedAtUnixMs": 2_000,
+        "claimAuthorityDigest": "sha256:" + ("4" * 64),
+        "claimExpiresAtUnixMs": 2_100,
+        "claimFencingToken": 1,
+        "claimGeneration": 1,
+        "claimOwnerId": "provider-worker-1",
+        "claimStartedAtUnixMs": 2_000,
+        "effectId": "provider-effect-1",
+        "formatVersion": "graphblocks.provider-effect-claim.v1",
+        "intentDigest": intent_digest,
+        "ownerPrincipalId": "principal-1",
+        "previousSendAttemptDigest": None,
+        "runId": "run-1",
+        "sendAttemptId": "provider-send-attempt-1",
+        "tenantId": "tenant-1",
+    }
+    connection = sqlite3.connect(path, isolation_level=None)
+    try:
+        connection.execute("PRAGMA foreign_keys = ON")
+        connection.execute("BEGIN IMMEDIATE")
+        connection.execute(
+            """
+            INSERT INTO provider_effects (
+              run_internal_id,
+              effect_id,
+              idempotency_key,
+              provider_target,
+              provider_operation,
+              intent_json,
+              intent_digest,
+              capability_snapshot_json,
+              capability_snapshot_digest,
+              origin_transfer_json,
+              origin_transfer_digest,
+              state,
+              state_version,
+              event_high_watermark,
+              created_at_unix_ms,
+              updated_at_unix_ms,
+              claim_json,
+              claim_digest,
+              claim_authority_digest,
+              claim_owner_id,
+              claim_generation,
+              claim_fencing_token,
+              claim_started_at_unix_ms,
+              claim_expires_at_unix_ms,
+              admitted_at_unix_ms,
+              send_attempt_id
+            )
+            VALUES (
+              'internal-1', 'provider-effect-1', 'provider-key-1',
+              'payments.primary', 'capture', '{}', ?, '{}', ?, '{}', ?,
+              'claimed', 1, 1, 2000, 2000, ?, ?, ?,
+              'provider-worker-1', 1, 1, 2000, 2100, 2000,
+              'provider-send-attempt-1'
+            )
+            """,
+            (
+                intent_digest,
+                "sha256:" + ("2" * 64),
+                "sha256:" + ("3" * 64),
+                canonical_dumps(claim_wire),
+                canonical_hash(claim_wire),
+                claim_wire["claimAuthorityDigest"],
+            ),
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+    database = SQLiteAcceptedRunDatabase(path)
+
+    assert database.schema_info().schema_version == 10
+    assert database._run_read(
+        lambda connection: tuple(
+            connection.execute(
+                """
+                SELECT state,
+                       claim_json,
+                       claim_digest,
+                       claim_generation,
+                       claim_fencing_token,
+                       latest_send_attempt_digest,
+                       active_send_attempt_digest
+                FROM provider_effects
+                WHERE effect_id = 'provider-effect-1'
+                """
+            ).fetchone()
+        )
+    ) == (
+        "claimed",
+        canonical_dumps(claim_wire),
+        canonical_hash(claim_wire),
+        1,
+        1,
+        None,
+        None,
+    )
+    assert database._run_read(
+        lambda connection: tuple(
+            connection.execute(
+                """
+                SELECT claim_digest,
+                       claim_json,
+                       attempt_id,
+                       claim_generation,
+                       claim_fencing_token,
+                       installed_state_version,
+                       installed_event_sequence
+                FROM provider_effect_send_claim_issuances
+                WHERE effect_id = 'provider-effect-1'
+                """
+            ).fetchone()
+        )
+    ) == (
+        canonical_hash(claim_wire),
+        canonical_dumps(claim_wire),
+        "provider-send-attempt-1",
+        1,
+        1,
+        1,
+        1,
+    )
+
+
+def test_sqlite_accepted_run_database_rejects_unrecoverable_v9_provider_send(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "accepted-runs-v9-send-started.sqlite3"
+    _initialize_version_six_claimed_effect(path)
+    _upgrade_version_six_database_to_version_seven(path)
+    _upgrade_version_seven_database_to_version_eight(path)
+    _upgrade_version_eight_database_to_version_nine(path)
+    connection = sqlite3.connect(path, isolation_level=None)
+    try:
+        connection.execute("PRAGMA foreign_keys = ON")
+        connection.execute("BEGIN IMMEDIATE")
+        connection.execute(
+            """
+            INSERT INTO provider_effects (
+              run_internal_id,
+              effect_id,
+              idempotency_key,
+              provider_target,
+              provider_operation,
+              intent_json,
+              intent_digest,
+              capability_snapshot_json,
+              capability_snapshot_digest,
+              origin_transfer_json,
+              origin_transfer_digest,
+              state,
+              state_version,
+              event_high_watermark,
+              created_at_unix_ms,
+              updated_at_unix_ms
+            )
+            VALUES (
+              'internal-1', 'provider-effect-1', 'provider-key-1',
+              'payments.primary', 'capture', '{}', ?, '{}', ?, '{}', ?,
+              'send_started', 1, 1, 2000, 2000
+            )
+            """,
+            (
+                "sha256:" + ("1" * 64),
+                "sha256:" + ("2" * 64),
+                "sha256:" + ("3" * 64),
+            ),
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+    with pytest.raises(
+        SQLiteAcceptedRunSchemaMismatchError,
+        match="no recoverable send attempt and admission receipt",
+    ):
+        SQLiteAcceptedRunDatabase(path)
+
+    connection = sqlite3.connect(path)
+    try:
+        assert int(connection.execute("PRAGMA user_version").fetchone()[0]) == 9
+        tables = frozenset(
+            str(row[0])
+            for row in connection.execute(
+                """
+                SELECT name
+                FROM sqlite_schema
+                WHERE type = 'table' AND name NOT LIKE 'sqlite_%'
+                """
+            ).fetchall()
+        )
+    finally:
+        connection.close()
+    assert "provider_effect_send_attempts" not in tables
 
 
 def test_sqlite_accepted_run_database_rejects_unrecoverable_v8_provider_claim(
@@ -552,8 +847,8 @@ def test_sqlite_accepted_run_database_migrates_v1_to_current_schema(
         )
     )
 
-    assert schema.user_version == 9
-    assert schema.schema_version == 9
+    assert schema.user_version == 10
+    assert schema.schema_version == 10
     assert "available_at_unix_ms" in effect_columns
     assert "cancelled_at_unix_ms" in effect_columns
     assert "claim_started_at_unix_ms" in effect_columns
@@ -593,7 +888,7 @@ def test_sqlite_accepted_run_database_migrates_v2_invocation_metadata(
 
     database = SQLiteAcceptedRunDatabase(path)
 
-    assert database.schema_info().schema_version == 9
+    assert database.schema_info().schema_version == 10
     assert database._run_read(
         lambda connection: str(
             connection.execute(
@@ -614,7 +909,7 @@ def test_sqlite_accepted_run_database_migrates_v3_control_schema(
 
     database = SQLiteAcceptedRunDatabase(path)
 
-    assert database.schema_info().schema_version == 9
+    assert database.schema_info().schema_version == 10
     assert database._run_read(
         lambda connection: frozenset(
             str(row["name"])
@@ -650,7 +945,7 @@ def test_sqlite_accepted_run_database_migrates_v4_pause_schema(
 
     database = SQLiteAcceptedRunDatabase(path)
 
-    assert database.schema_info().schema_version == 9
+    assert database.schema_info().schema_version == 10
     assert database._run_read(
         lambda connection: frozenset(
             str(row["name"])
@@ -751,7 +1046,7 @@ def test_sqlite_accepted_run_database_invalidates_v5_effect_claims(
 
     database = SQLiteAcceptedRunDatabase(path)
 
-    assert database.schema_info().schema_version == 9
+    assert database.schema_info().schema_version == 10
     assert database._run_read(
         lambda connection: tuple(
             connection.execute(
@@ -866,7 +1161,7 @@ def test_sqlite_accepted_run_database_invalidates_v6_effect_claims(
 
     database = SQLiteAcceptedRunDatabase(path)
 
-    assert database.schema_info().schema_version == 9
+    assert database.schema_info().schema_version == 10
     assert database._run_read(
         lambda connection: tuple(
             connection.execute(
@@ -1086,7 +1381,7 @@ def test_sqlite_accepted_run_database_serializes_concurrent_v6_migration(
         infos = tuple(executor.map(migrate, range(2)))
 
     assert infos == (infos[0], infos[0])
-    assert infos[0].schema_version == 9
+    assert infos[0].schema_version == 10
 
 
 def test_sqlite_accepted_run_database_serializes_concurrent_v1_migration(
@@ -1107,7 +1402,7 @@ def test_sqlite_accepted_run_database_serializes_concurrent_v1_migration(
         infos = tuple(executor.map(migrate, range(2)))
 
     assert infos == (infos[0], infos[0])
-    assert infos[0].schema_version == 9
+    assert infos[0].schema_version == 10
 
 
 def test_sqlite_accepted_run_database_reopens_without_recreating_schema(
@@ -1172,12 +1467,29 @@ def test_sqlite_accepted_run_schema_fences_checkpoint_effect_relationships(
     provider_event_references = database._run_read(
         lambda connection: referenced_tables(connection, "provider_effect_events")
     )
+    provider_attempt_references = database._run_read(
+        lambda connection: referenced_tables(
+            connection,
+            "provider_effect_send_attempts",
+        )
+    )
+    provider_claim_issuance_references = database._run_read(
+        lambda connection: referenced_tables(
+            connection,
+            "provider_effect_send_claim_issuances",
+        )
+    )
 
     assert "run_checkpoints" in accepted_run_references
     assert "effect_outbox" in checkpoint_references
     assert "run_checkpoints" in effect_references
     assert provider_effect_references == {"accepted_runs"}
     assert provider_event_references == {"provider_effects"}
+    assert provider_claim_issuance_references == {"provider_effects"}
+    assert provider_attempt_references == {
+        "provider_effect_send_claim_issuances",
+        "provider_effects",
+    }
 
 
 def test_sqlite_accepted_run_database_rejects_legacy_run_store_file(

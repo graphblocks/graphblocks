@@ -596,27 +596,75 @@ automatically selected or returned to `pending` by this pre-send claim
 repository.
 
 SQLite v9 does not implement core admission verification or one-shot claim
-consumption into `send_started`; those boundaries remain subsequent work.
+consumption into `send_started`; SQLite v10 provides those repository
+boundaries as described below.
+
+SQLite v10 adds current-claim verification and one-shot local send-entry
+authority consumption. The origin-transfer repository and send-claim authority
+MUST remain structurally distinct: the former exposes the origin repository
+digest, while the latter exposes the deployment claim-authority digest.
+Admission verification reads the tenant-, run-, owner-, and effect-scoped
+projection, exact-decodes the current claim and latest attempt, validates the
+projection tail, and checks repository time twice against the half-open claim
+interval. This read does not consume authority. Send entry MUST repeat the
+complete intent, capability, origin transfer, claim owner, generation, fence,
+expiry, admitted time, attempt identifier, and previous-attempt checks under a
+single `BEGIN IMMEDIATE` transaction.
+
+Each successful claim allocation MUST append its exact canonical claim and
+attempt identifier to `provider_effect_send_claim_issuances` in the same
+transaction as the claim projection and journal event. Issuance rows remain
+append-only after release, expiry, reclaim, or consumption, so an attempt
+identifier can never be issued again merely because the active projection was
+cleared. The claim projection, issuance row, generation, fence, installed state
+version, and event sequence MUST agree exactly.
+
+Successful consumption appends exact canonical
+`graphblocks.provider-effect-send-attempt.v1` and
+`graphblocks.provider-effect-admission-receipt.v1` records to
+`provider_effect_send_attempts`, advances the projection from `claimed` to
+`send_started`, clears the active pre-send claim fields while retaining its
+generation and fence, installs active and latest attempt/receipt digests, and
+appends a closed `send_started` event. The event binds the consumed claim
+digest, complete attempt and receipt records and their digests, intent, state,
+state version, sequence, and repository consumption time. Attempt identifiers,
+consumed-claim digests, admission digests, attempt digests, and receipt digests
+MUST be one-shot identities. The opaque `ProviderEffectAdmission` MUST NOT be
+serialized or stored; only its digest and the non-authoritative receipt fields
+are durable. Repository start, consumption, and final pre-commit times MUST be
+monotonic and strictly before claim expiry or the entire transition rolls back.
+
+Repeating an already consumed admission MUST fail rather than return the stored
+attempt and receipt as if they conveyed fresh send authority. If the local
+commit succeeds but its response is lost, a tenant-, run-, owner-, and
+effect-scoped observation API MAY exact-decode the persisted active attempt and
+receipt. The effect remains conservatively in `send_started`; the observation
+does not prove provider I/O occurred and MUST NOT authorize replay. This slice
+does not invoke an adapter, quarantine an ambiguous provider outcome, persist
+reconciliation evidence, settle an active attempt, or enable durable retry.
 
 Existing operation-dispatch rows MUST NOT be migrated or reinterpreted as
 provider-effect intents because they do not contain this authority or evidence.
 SQLite v8 creates empty provider-specific tables and does not backfill the
 generic outbox. The v9 migration accepts only v8 `pending` rows; it MUST fail
 closed rather than invent claim authority for any later state that v8 could not
-represent exactly. Operators upgrading the preview database MUST prevent
-mixed-version writers and retain the normal pre-migration backup. A production
-profile still requires atomic claim consumption into a durable send-attempt
-record, receipt and evidence storage, real adapter capability and
-verifier-registry authorities, ambiguous-send reconciliation,
-kill/restart/fencing tests, and provider-side idempotency or
-status/cancellation evidence. Repository snapshots, transfers, claim fields,
-and verifier authorities MUST come from trusted service dependencies and MUST
-NOT be accepted from request data. Claim consumption, receipt creation, and
-active attempt installation MUST be one repository transaction with the
-corresponding state change. Every closed record loaded from persistence MUST
-pass its exact decoder again at the admission, send, or evidence boundary; an
-in-memory type check alone is not rehydration evidence. Durable origin transfer
-and pre-send claiming alone establish neither safe provider delivery nor an
+represent exactly. The v10 migration preserves only v9 `pending` and `claimed`
+rows whose send history is still empty, and backfills an issuance row for each
+exact active v9 claim. It MUST fail closed rather than invent an attempt or
+receipt for `send_started` or later state. Operators upgrading the preview
+database MUST prevent mixed-version writers and retain the normal pre-migration
+backup. A production profile still requires evidence storage,
+real adapter capability and verifier-registry authorities, adapter I/O,
+ambiguous-send reconciliation, kill/restart/fencing tests, and provider-side
+idempotency or status/cancellation evidence. Repository snapshots, transfers,
+claim fields, and verifier authorities MUST come from trusted service
+dependencies and MUST NOT be accepted from request data. Claim consumption,
+receipt creation, active attempt installation, and its journal event MUST be
+one repository transaction with the corresponding state change. Every closed
+record loaded from persistence MUST pass its exact decoder again at the
+admission, send, or evidence boundary; an in-memory type check alone is not
+rehydration evidence. Durable origin transfer, pre-send claiming, and local
+send-entry consumption alone establish neither safe provider delivery nor an
 exactly-once provider effect.
 
 The preview executor supplies the killable-process, structural result

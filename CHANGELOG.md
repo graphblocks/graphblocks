@@ -102,6 +102,19 @@ preparing the first 1.0 release candidate.
   Durable claim consumption into `send_started`, core admission verification,
   provider I/O, receipts, evidence, and reconciliation remain subsequent
   preview work.
+- Added one-shot provider-effect send-entry consumption in accepted-run SQLite
+  schema v10. A structurally distinct claim-authority facade exact-verifies the
+  current scoped claim, then atomically installs a repository-timed closed send
+  attempt and admission receipt, advances the projection to `send_started`, and
+  appends their consumed-claim-bound event. An append-only claim-issuance
+  registry prevents attempt identifiers from being reused after release,
+  reclaim, or consumption. The opaque admission is never persisted, consumed
+  admissions cannot be replayed as fresh send authority, and scoped restart
+  recovery exposes only the exact persisted attempt and receipt. Failpoints,
+  half-open expiry, concurrent release/consume, immutable identity reuse,
+  canonical corruption, and v9 migration rollback are covered. This local
+  authority boundary performs no provider I/O and does not establish
+  exactly-once delivery, outcome evidence, reconciliation, or durable retry.
 - Added a bounded CommonMark and GitHub-heading integrity checker, a closed
   generated-documentation registry with content-bound results, and an always-run
   fast documentation workflow plus named stable release gate.
