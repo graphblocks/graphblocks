@@ -25,12 +25,80 @@ from graphblocks.canonical import (
 )
 from graphblocks.compiler import compile_graph_reference
 from graphblocks.diagnostics import Diagnostic, DiagnosticSet
+from graphblocks.loader import InputBudget
 from graphblocks.plugins import PluginRegistry
 from graphblocks.runtime import SQLiteExecutionJournal
 from graphblocks.run_store import SQLiteRunStore
 
 RELEASE_DIGEST = "sha256:" + ("1" * 64)
 SIGNATURE_DIGEST = "sha256:" + ("3" * 64)
+
+
+def test_document_directory_loader_enforces_file_count_budget(tmp_path: Path) -> None:
+    directory = tmp_path / "documents"
+    directory.mkdir()
+    for index in range(3):
+        (directory / f"{index}.yaml").write_text(
+            f"value: {index}\n",
+            encoding="utf-8",
+        )
+
+    with pytest.raises(
+        ValueError,
+        match="document directory exceeds maximum file count 2",
+    ):
+        cli_module._documents_from_path(
+            directory,
+            budget=InputBudget(max_files=2),
+        )
+
+
+def test_document_directory_loader_enforces_total_byte_budget(tmp_path: Path) -> None:
+    directory = tmp_path / "documents"
+    directory.mkdir()
+    (directory / "first.yaml").write_text("value: first\n", encoding="utf-8")
+    (directory / "second.yaml").write_text("value: second\n", encoding="utf-8")
+
+    with pytest.raises(
+        ValueError,
+        match="document directory exceeds maximum total byte count 20",
+    ):
+        cli_module._documents_from_path(
+            directory,
+            budget=InputBudget(max_input_bytes=20, max_total_bytes=20),
+        )
+
+
+@pytest.mark.parametrize("loop", (False, True))
+def test_document_directory_loader_rejects_symlink_escape_or_loop(
+    tmp_path: Path,
+    loop: bool,
+) -> None:
+    directory = tmp_path / "documents"
+    directory.mkdir()
+    target = directory if loop else tmp_path / "outside.yaml"
+    if not loop:
+        target.write_text("value: outside\n", encoding="utf-8")
+    link = directory / ("loop" if loop else "linked.yaml")
+    try:
+        link.symlink_to(target, target_is_directory=loop)
+    except OSError:
+        pytest.skip("symbolic links are unavailable in this environment")
+
+    with pytest.raises(ValueError, match="must not be symbolic links"):
+        cli_module._documents_from_path(directory)
+
+
+def test_document_directory_loader_ignores_mixed_extensions_within_root(
+    tmp_path: Path,
+) -> None:
+    directory = tmp_path / "documents"
+    directory.mkdir()
+    (directory / "graph.yaml").write_text("value: accepted\n", encoding="utf-8")
+    (directory / "ignored.json").write_text("not valid YAML: [", encoding="utf-8")
+    (directory / "nested").mkdir()
+
+    assert cli_module._documents_from_path(directory) == [{"value": "accepted"}]
 
 
 def test_cli_parser_registry_covers_all_commands_and_subcommands() -> None:

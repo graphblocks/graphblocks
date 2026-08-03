@@ -35,7 +35,12 @@ from .deployment import (
     SupplyChainLock,
 )
 from .diagnostics import Diagnostic
-from .loader import load_composed_documents, load_documents
+from .loader import (
+    DEFAULT_INPUT_BUDGET,
+    InputBudget,
+    load_composed_documents,
+    load_documents,
+)
 from .migration import LEGACY_GRAPH_API_VERSIONS, MigrationError, migrate_document
 from .packages import (
     PackageManifestAuditPolicy,
@@ -182,12 +187,53 @@ def _exact_list_field(
     return tuple(value)
 
 
-def _documents_from_path(path: Path) -> list[dict[str, object]]:
+def _documents_from_path(
+    path: Path,
+    *,
+    budget: InputBudget = DEFAULT_INPUT_BUDGET,
+) -> list[dict[str, object]]:
+    if not isinstance(budget, InputBudget):
+        raise TypeError("document directory budget must be an InputBudget")
     if not path.is_dir():
-        return load_documents(path)
+        return load_documents(path, budget=budget)
+    if path.is_symlink():
+        raise ValueError(f"{path}: document directory must not be a symbolic link")
+    root = path.resolve(strict=True)
+    candidates: list[Path] = []
+    total_bytes = 0
+    for entry_index, candidate in enumerate(path.iterdir(), start=1):
+        if entry_index > budget.max_files:
+            raise ValueError(
+                f"{path}: document directory exceeds maximum file count "
+                f"{budget.max_files}"
+            )
+        if candidate.is_symlink():
+            raise ValueError(
+                f"{candidate}: document directory entries must not be symbolic links"
+            )
+        resolved = candidate.resolve(strict=True)
+        if not resolved.is_relative_to(root):
+            raise ValueError(f"{candidate}: document path escapes directory root")
+        if candidate.suffix.lower() not in {".yaml", ".yml"}:
+            continue
+        if not candidate.is_file():
+            raise ValueError(f"{candidate}: expected a regular YAML file")
+        file_bytes = candidate.stat(follow_symlinks=False).st_size
+        total_bytes += file_bytes
+        if total_bytes > budget.max_total_bytes:
+            raise ValueError(
+                f"{path}: document directory exceeds maximum total byte count "
+                f"{budget.max_total_bytes}"
+            )
+        candidates.append(candidate)
     documents: list[dict[str, object]] = []
-    for candidate in sorted([*path.glob("*.yaml"), *path.glob("*.yml")]):
-        documents.extend(load_documents(candidate))
+    for candidate in sorted(candidates):
+        documents.extend(load_documents(candidate, budget=budget))
+        if len(documents) > budget.max_documents:
+            raise ValueError(
+                f"{path}: document directory exceeds maximum document count "
+                f"{budget.max_documents}"
+            )
     return documents
 
 
