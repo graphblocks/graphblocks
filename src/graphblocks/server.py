@@ -1983,7 +1983,7 @@ class ServerAsyncCallbackRejection:
 
 
 class _BoundedAsyncCallbackRejectionHistory(
-    dict[str, tuple[ServerAsyncCallbackRejection, ...]]
+    dict[str, list[ServerAsyncCallbackRejection]]
 ):
     """Keep diagnostic callback receipts useful without accepting unbounded input."""
 
@@ -2015,7 +2015,8 @@ class _BoundedAsyncCallbackRejectionHistory(
     @staticmethod
     def _history_size_bytes(
         operation_id: str,
-        rejections: tuple[ServerAsyncCallbackRejection, ...],
+        rejections: list[ServerAsyncCallbackRejection]
+        | tuple[ServerAsyncCallbackRejection, ...],
     ) -> int:
         return _canonical_json_size_bytes(
             {
@@ -2030,38 +2031,43 @@ class _BoundedAsyncCallbackRejectionHistory(
     def _newest_fitting_history(
         self,
         operation_id: str,
-        rejections: tuple[ServerAsyncCallbackRejection, ...],
+        rejections: list[ServerAsyncCallbackRejection]
+        | tuple[ServerAsyncCallbackRejection, ...],
     ) -> tuple[
-        tuple[ServerAsyncCallbackRejection, ...],
+        list[ServerAsyncCallbackRejection],
         int,
     ] | None:
         if len(operation_id) > self._max_retained_bytes:
             return None
-        retained_rejections: tuple[
-            ServerAsyncCallbackRejection,
-            ...,
-        ] = ()
-        retained_bytes = 0
-        for rejection in reversed(
+        if len(rejections) <= self._MAX_REJECTIONS_PER_OPERATION:
+            retained_bytes = self._history_size_bytes(
+                operation_id,
+                rejections,
+            )
+            if retained_bytes <= self._max_retained_bytes:
+                return (
+                    rejections
+                    if type(rejections) is list
+                    else list(rejections),
+                    retained_bytes,
+                )
+        bounded_rejections = list(
             rejections[-self._MAX_REJECTIONS_PER_OPERATION :]
-        ):
-            candidate = (rejection, *retained_rejections)
+        )
+        for start_index in range(len(bounded_rejections)):
+            candidate = bounded_rejections[start_index:]
             candidate_bytes = self._history_size_bytes(
                 operation_id,
                 candidate,
             )
-            if candidate_bytes > self._max_retained_bytes:
-                break
-            retained_rejections = candidate
-            retained_bytes = candidate_bytes
-        if not retained_rejections:
-            return None
-        return retained_rejections, retained_bytes
+            if candidate_bytes <= self._max_retained_bytes:
+                return candidate, candidate_bytes
+        return None
 
     def _remove_locked(
         self,
         operation_id: str,
-    ) -> tuple[ServerAsyncCallbackRejection, ...]:
+    ) -> list[ServerAsyncCallbackRejection]:
         value = super().pop(operation_id)
         self._retained_bytes -= (
             self._retained_bytes_by_operation_id.pop(operation_id)
@@ -2081,7 +2087,7 @@ class _BoundedAsyncCallbackRejectionHistory(
     def _store_locked(
         self,
         operation_id: str,
-        retained_rejections: tuple[ServerAsyncCallbackRejection, ...],
+        retained_rejections: list[ServerAsyncCallbackRejection],
         retained_bytes: int,
     ) -> None:
         existing_bytes = self._retained_bytes_by_operation_id.get(
@@ -2114,7 +2120,8 @@ class _BoundedAsyncCallbackRejectionHistory(
     def __setitem__(
         self,
         operation_id: str,
-        rejections: tuple[ServerAsyncCallbackRejection, ...],
+        rejections: list[ServerAsyncCallbackRejection]
+        | tuple[ServerAsyncCallbackRejection, ...],
     ) -> None:
         if not rejections:
             self.pop(operation_id, None)
@@ -2136,14 +2143,16 @@ class _BoundedAsyncCallbackRejectionHistory(
     def append(self, rejection: ServerAsyncCallbackRejection) -> None:
         operation_id = rejection.operation_id
         with self._lock:
+            existing = super().get(operation_id)
+            candidate = existing if existing is not None else []
+            candidate.append(rejection)
             fitting_history = self._newest_fitting_history(
                 operation_id,
-                (
-                    *super().get(operation_id, ()),
-                    rejection,
-                ),
+                candidate,
             )
             if fitting_history is None:
+                if existing is not None:
+                    existing.pop()
                 return
             retained_rejections, retained_bytes = fitting_history
             self._store_locked(
@@ -2160,7 +2169,7 @@ class _BoundedAsyncCallbackRejectionHistory(
         self,
         operation_id: str,
         default: object = _MISSING,
-    ) -> tuple[ServerAsyncCallbackRejection, ...] | object:
+    ) -> list[ServerAsyncCallbackRejection] | object:
         with self._lock:
             if operation_id in self:
                 return self._remove_locked(operation_id)
@@ -2177,11 +2186,11 @@ class _BoundedAsyncCallbackRejectionHistory(
     def remove_run(self, run_id: str) -> None:
         with self._lock:
             for operation_id, rejections in tuple(super().items()):
-                retained_rejections = tuple(
+                retained_rejections = [
                     rejection
                     for rejection in rejections
                     if rejection.run_id != run_id
-                )
+                ]
                 if not retained_rejections:
                     self._remove_locked(operation_id)
                     continue
@@ -2204,6 +2213,13 @@ class _BoundedAsyncCallbackRejectionHistory(
                     - existing_bytes
                     + retained_bytes
                 )
+
+    def snapshot(
+        self,
+        operation_id: str,
+    ) -> tuple[ServerAsyncCallbackRejection, ...]:
+        with self._lock:
+            return tuple(super().get(operation_id, []))
 
     @property
     def retained_size_bytes(self) -> int:
@@ -3497,7 +3513,9 @@ class GraphBlocksServerApp:
         init=False,
         repr=False,
     )
-    _callbacks_by_operation_id: dict[str, tuple[ServerAsyncCallbackSubmission, ...]] = field(
+    # Mutation histories use append-friendly lists while public readers return
+    # detached tuple snapshots under the corresponding condition lock.
+    _callbacks_by_operation_id: dict[str, list[ServerAsyncCallbackSubmission]] = field(
         default_factory=dict,
         init=False,
         repr=False,
@@ -3528,17 +3546,32 @@ class GraphBlocksServerApp:
         init=False,
         repr=False,
     )
-    _detachments_by_run_id: dict[str, tuple[dict[str, object], ...]] = field(
+    _detachments_by_run_id: dict[str, list[dict[str, object]]] = field(
         default_factory=dict,
         init=False,
         repr=False,
     )
-    _run_controls_by_run_id: dict[str, tuple[dict[str, object], ...]] = field(
+    _detachment_history_bytes_by_run_id: dict[str, int] = field(
         default_factory=dict,
         init=False,
         repr=False,
     )
-    _subscriptions_by_run_id: dict[str, tuple[ServerEventSubscription, ...]] = field(
+    _run_controls_by_run_id: dict[str, list[dict[str, object]]] = field(
+        default_factory=dict,
+        init=False,
+        repr=False,
+    )
+    _run_control_history_bytes_by_run_id: dict[str, int] = field(
+        default_factory=dict,
+        init=False,
+        repr=False,
+    )
+    _subscriptions_by_run_id: dict[str, list[ServerEventSubscription]] = field(
+        default_factory=dict,
+        init=False,
+        repr=False,
+    )
+    _subscription_history_bytes_by_run_id: dict[str, int] = field(
         default_factory=dict,
         init=False,
         repr=False,
@@ -3548,7 +3581,15 @@ class GraphBlocksServerApp:
         init=False,
         repr=False,
     )
-    _acks_by_subscription: dict[tuple[str, str], tuple[dict[str, object], ...]] = field(
+    _acks_by_subscription: dict[tuple[str, str], list[dict[str, object]]] = field(
+        default_factory=dict,
+        init=False,
+        repr=False,
+    )
+    _event_ack_history_bytes_by_subscription: dict[
+        tuple[str, str],
+        int,
+    ] = field(
         default_factory=dict,
         init=False,
         repr=False,
@@ -3577,7 +3618,7 @@ class GraphBlocksServerApp:
     )
     _callback_delivery_results_by_subscription_id: dict[
         str,
-        tuple[ServerCallbackDeliveryResult, ...],
+        list[ServerCallbackDeliveryResult],
     ] = field(
         default_factory=dict,
         init=False,
@@ -3585,7 +3626,7 @@ class GraphBlocksServerApp:
     )
     _callback_delivery_redrives: dict[
         tuple[str, str],
-        tuple[dict[str, object], ...],
+        list[dict[str, object]],
     ] = field(
         default_factory=dict,
         init=False,
@@ -3593,7 +3634,15 @@ class GraphBlocksServerApp:
     )
     _callback_delivery_dead_letter_moves: dict[
         tuple[str, str],
-        tuple[dict[str, object], ...],
+        list[dict[str, object]],
+    ] = field(
+        default_factory=dict,
+        init=False,
+        repr=False,
+    )
+    _callback_delivery_control_history_bytes: dict[
+        tuple[str, str],
+        int,
     ] = field(
         default_factory=dict,
         init=False,
@@ -4005,9 +4054,17 @@ class GraphBlocksServerApp:
                     )
                     self._run_authorization_by_run_id.pop(run_id, None)
                     self._subscriptions_by_run_id.pop(run_id, None)
+                    self._subscription_history_bytes_by_run_id.pop(
+                        run_id,
+                        None,
+                    )
                     for ack_key in tuple(self._acks_by_subscription):
                         if ack_key[0] == run_id:
                             self._acks_by_subscription.pop(
+                                ack_key,
+                                None,
+                            )
+                            self._event_ack_history_bytes_by_subscription.pop(
                                 ack_key,
                                 None,
                             )
@@ -4035,11 +4092,11 @@ class GraphBlocksServerApp:
                     for subscription_id, deliveries in tuple(
                         self._callback_delivery_results_by_subscription_id.items()
                     ):
-                        retained_deliveries = tuple(
+                        retained_deliveries = [
                             delivery
                             for delivery in deliveries
                             if delivery.run_id != run_id
-                        )
+                        ]
                         for delivery in deliveries:
                             if delivery.run_id == run_id:
                                 removed_delivery_keys.add(
@@ -4082,15 +4139,26 @@ class GraphBlocksServerApp:
                                 control_key,
                                 None,
                             )
+                    for control_key in tuple(
+                        self._callback_delivery_control_history_bytes
+                    ):
+                        if (
+                            control_key in removed_delivery_keys
+                            or control_key[0] in subscription_ids
+                        ):
+                            self._callback_delivery_control_history_bytes.pop(
+                                control_key,
+                                None,
+                            )
 
             for operation_id, submissions in tuple(
                 self._callbacks_by_operation_id.items()
             ):
-                retained_submissions = tuple(
+                retained_submissions = [
                     submission
                     for submission in submissions
                     if submission.run_id != run_id
-                )
+                ]
                 if retained_submissions:
                     self._callbacks_by_operation_id[
                         operation_id
@@ -4110,7 +4178,9 @@ class GraphBlocksServerApp:
             )
 
             self._detachments_by_run_id.pop(run_id, None)
+            self._detachment_history_bytes_by_run_id.pop(run_id, None)
             self._run_controls_by_run_id.pop(run_id, None)
+            self._run_control_history_bytes_by_run_id.pop(run_id, None)
             self._pending_accepted_runs_by_run_id.pop(run_id, None)
             self._admission_ticket_ids_by_run_id.pop(run_id, None)
             self._accepted_run_results_by_run_id.pop(run_id, None)
@@ -7009,10 +7079,10 @@ class GraphBlocksServerApp:
                         )
                     )
                     resumable_execution.callback_receipt = callback_receipt
-                self._callbacks_by_operation_id[submission.operation_id] = (
-                    *existing,
-                    submission,
-                )
+                self._callbacks_by_operation_id.setdefault(
+                    submission.operation_id,
+                    [],
+                ).append(submission)
                 self._callback_submission_history_bytes += (
                     retained_submission_bytes
                 )
@@ -7071,11 +7141,8 @@ class GraphBlocksServerApp:
                         )
                         if capacity_response is not None:
                             return capacity_response
-                        self._run_controls_by_run_id[submission.run_id] = (
-                            *self._run_controls_by_run_id.get(
-                                submission.run_id,
-                                (),
-                            ),
+                        self._record_run_control(
+                            submission.run_id,
                             paused_record,
                         )
                         self._accepted_run_condition.notify_all()
@@ -7112,11 +7179,8 @@ class GraphBlocksServerApp:
                     )
                     if capacity_response is not None:
                         return capacity_response
-                    self._run_controls_by_run_id[submission.run_id] = (
-                        *self._run_controls_by_run_id.get(
-                            submission.run_id,
-                            (),
-                        ),
+                    self._record_run_control(
+                        submission.run_id,
                         paused_record,
                     )
                     self._accepted_run_condition.notify_all()
@@ -7467,12 +7531,16 @@ class GraphBlocksServerApp:
                                     },
                                 )
                             with self._callback_registration_condition:
-                                current_deliveries = list(
-                                    self._callback_delivery_results_by_subscription_id.get(
-                                        registration.subscription_id,
-                                        (),
-                                    )
+                                current_deliveries = self._callback_delivery_results_by_subscription_id.get(
+                                    registration.subscription_id
                                 )
+                                if type(current_deliveries) is not list:
+                                    current_deliveries = list(
+                                        current_deliveries or ()
+                                    )
+                                    self._callback_delivery_results_by_subscription_id[
+                                        registration.subscription_id
+                                    ] = current_deliveries
                                 current_event_result = next(
                                     (
                                         current
@@ -7542,13 +7610,9 @@ class GraphBlocksServerApp:
                                     )
                                 else:
                                     current_deliveries.append(delivery_result)
-                                self._callback_delivery_results_by_subscription_id[
-                                    registration.subscription_id
-                                ] = tuple(current_deliveries)
-                                delivered = current_deliveries
                             completed_event_ids.add(delivery_result.event_id)
                         with self._callback_registration_condition:
-                            delivery_results = (
+                            delivery_results = tuple(
                                 self._callback_delivery_results_by_subscription_id.get(
                                     registration.subscription_id,
                                     (),
@@ -7787,30 +7851,44 @@ class GraphBlocksServerApp:
                                 ),
                             },
                         )
-                    retained_subscription_bytes = 0
-                    for retained_subscription in existing:
-                        retained_value = retained_subscription.response_payload(
-                            [],
-                            f"{run_id}:0",
+                    retained_subscription_bytes = (
+                        self._subscription_history_bytes_by_run_id.get(
+                            run_id
                         )
-                        retained_value["createdAt"] = (
-                            retained_subscription.created_at
-                        )
-                        retained_value["status"] = "revoked"
-                        retained_subscription_bytes += (
-                            _canonical_json_size_bytes(retained_value)
-                        )
+                    )
+                    if retained_subscription_bytes is None:
+                        retained_subscription_bytes = 0
+                        for retained_subscription in existing:
+                            retained_value = (
+                                retained_subscription.response_payload(
+                                    [],
+                                    f"{run_id}:0",
+                                )
+                            )
+                            retained_value["createdAt"] = (
+                                retained_subscription.created_at
+                            )
+                            retained_value["status"] = "revoked"
+                            retained_subscription_bytes += (
+                                _canonical_json_size_bytes(retained_value)
+                            )
+                        self._subscription_history_bytes_by_run_id[
+                            run_id
+                        ] = retained_subscription_bytes
                     candidate_value = subscription.response_payload(
                         [],
                         f"{run_id}:0",
                     )
                     candidate_value["createdAt"] = subscription.created_at
                     candidate_value["status"] = "revoked"
+                    candidate_bytes = _canonical_json_size_bytes(
+                        candidate_value
+                    )
                     if (
                         len(existing) >= self.max_subscriptions_per_run
                         or (
                             retained_subscription_bytes
-                            + _canonical_json_size_bytes(candidate_value)
+                            + candidate_bytes
                             > self.max_subscription_history_bytes_per_run
                         )
                     ):
@@ -7837,7 +7915,13 @@ class GraphBlocksServerApp:
                     replay = self._subscription_replay(subscription, events)
                     if isinstance(replay, ServerResponse):
                         return replay
-                    self._subscriptions_by_run_id[run_id] = (*existing, subscription)
+                    self._subscriptions_by_run_id.setdefault(
+                        run_id,
+                        [],
+                    ).append(subscription)
+                    self._subscription_history_bytes_by_run_id[run_id] = (
+                        retained_subscription_bytes + candidate_bytes
+                    )
                 return ServerResponse.json(
                     201,
                     subscription.response_payload(replay, f"{run_id}:{self._last_event_sequence(events)}"),
@@ -7902,11 +7986,7 @@ class GraphBlocksServerApp:
                                 },
                             )
                         revoked = replace(subscription, status="revoked")
-                        self._subscriptions_by_run_id[run_id] = (
-                            *subscriptions[:index],
-                            revoked,
-                            *subscriptions[index + 1 :],
-                        )
+                        subscriptions[index] = revoked
                         return ServerResponse.json(
                             202,
                             {
@@ -8510,8 +8590,8 @@ class GraphBlocksServerApp:
             ):
                 self._accepted_run_condition.notify_all()
                 return
-            self._run_controls_by_run_id[run_id] = (
-                *self._run_controls_by_run_id.get(run_id, ()),
+            self._record_run_control(
+                run_id,
                 paused_record,
             )
             self._accepted_run_condition.notify_all()
@@ -9197,7 +9277,8 @@ class GraphBlocksServerApp:
 
     def callback_submissions(self, operation_id: str) -> tuple[ServerAsyncCallbackSubmission, ...]:
         operation_id = _validate_exact_non_empty_string("server async callback", "operation_id", operation_id)
-        return self._callbacks_by_operation_id.get(operation_id, ())
+        with self._accepted_run_condition:
+            return tuple(self._callbacks_by_operation_id.get(operation_id, ()))
 
     def async_callback_rejections(self, operation_id: str) -> tuple[dict[str, object], ...]:
         operation_id = _validate_exact_non_empty_string(
@@ -9205,31 +9286,39 @@ class GraphBlocksServerApp:
             "operation_id",
             operation_id,
         )
+        rejections = self._async_callback_rejections_by_operation_id.snapshot(
+            operation_id
+        )
         return tuple(
             rejection.protocol_value()
-            for rejection in self._async_callback_rejections_by_operation_id.get(operation_id, ())
+            for rejection in rejections
         )
 
     def late_async_callbacks(self, operation_id: str) -> tuple[dict[str, object], ...]:
         operation_id = _validate_exact_non_empty_string("server late async callback", "operation_id", operation_id)
+        rejections = self._async_callback_rejections_by_operation_id.snapshot(
+            operation_id
+        )
         return tuple(
             {"kind": "LateExternalCallbackReceived", **rejection.protocol_value()}
-            for rejection in self._async_callback_rejections_by_operation_id.get(operation_id, ())
+            for rejection in rejections
             if rejection.reason == "terminal_run"
         )
 
     def detachments(self, run_id: str) -> tuple[dict[str, object], ...]:
         run_id = _validate_exact_non_empty_string("server detach", "run_id", run_id)
-        return self._detachments_by_run_id.get(run_id, ())
+        with self._accepted_run_condition:
+            return tuple(self._detachments_by_run_id.get(run_id, ()))
 
     def run_controls(self, run_id: str) -> tuple[dict[str, object], ...]:
         run_id = _validate_exact_non_empty_string("server run control", "run_id", run_id)
-        return self._run_controls_by_run_id.get(run_id, ())
+        with self._accepted_run_condition:
+            return tuple(self._run_controls_by_run_id.get(run_id, ()))
 
     def subscriptions(self, run_id: str) -> tuple[ServerEventSubscription, ...]:
         run_id = _validate_exact_non_empty_string("server event subscription", "run_id", run_id)
         with self._subscription_registration_condition:
-            return self._subscriptions_by_run_id.get(run_id, ())
+            return tuple(self._subscriptions_by_run_id.get(run_id, ()))
 
     def event_acks(self, run_id: str, subscription_id: str) -> tuple[dict[str, object], ...]:
         run_id = _validate_exact_non_empty_string("server event ack", "run_id", run_id)
@@ -9239,7 +9328,9 @@ class GraphBlocksServerApp:
             subscription_id,
         )
         with self._subscription_registration_condition:
-            return self._acks_by_subscription.get((run_id, subscription_id), ())
+            return tuple(
+                self._acks_by_subscription.get((run_id, subscription_id), ())
+            )
 
     def callback_registrations(self) -> tuple[ServerCallbackRegistration, ...]:
         with self._callback_registration_condition:
@@ -9482,14 +9573,22 @@ class GraphBlocksServerApp:
         record: Mapping[str, object],
     ) -> ServerResponse | None:
         existing = self._run_controls_by_run_id.get(run_id, ())
-        retained_bytes = sum(
-            _canonical_json_size_bytes(existing_record)
-            for existing_record in existing
+        retained_bytes = self._run_control_history_bytes_by_run_id.get(
+            run_id
         )
+        if retained_bytes is None:
+            retained_bytes = sum(
+                _canonical_json_size_bytes(existing_record)
+                for existing_record in existing
+            )
+            self._run_control_history_bytes_by_run_id[run_id] = (
+                retained_bytes
+            )
+        record_bytes = _canonical_json_size_bytes(record)
         if (
             len(existing) >= self.max_run_controls_per_run
             or (
-                retained_bytes + _canonical_json_size_bytes(record)
+                retained_bytes + record_bytes
                 > self.max_run_control_history_bytes_per_run
             )
         ):
@@ -9513,6 +9612,17 @@ class GraphBlocksServerApp:
                 },
             )
         return None
+
+    def _record_run_control(
+        self,
+        run_id: str,
+        record: Mapping[str, object],
+    ) -> None:
+        self._run_controls_by_run_id.setdefault(run_id, []).append(record)
+        self._run_control_history_bytes_by_run_id[run_id] = (
+            self._run_control_history_bytes_by_run_id.get(run_id, 0)
+            + _canonical_json_size_bytes(record)
+        )
 
     def _run_control_response(
         self,
@@ -9974,7 +10084,7 @@ class GraphBlocksServerApp:
                         ),
                     },
                 )
-        self._run_controls_by_run_id[run_id] = (*existing, record)
+        self._record_run_control(run_id, record)
         self._accepted_run_condition.notify_all()
         self._dispatch_admitted_tickets(promoted_on_control)
         return ServerResponse.json(
@@ -10106,10 +10216,8 @@ class GraphBlocksServerApp:
                 )
             )
             if operation == "redrive_callback_delivery":
-                existing = redrive_history
                 allowed_states = {"failed", "dead_lettered"}
             else:
-                existing = dead_letter_history
                 allowed_states = {"failed"}
             if idempotency_key is not None:
                 operation_histories = (
@@ -10208,20 +10316,33 @@ class GraphBlocksServerApp:
                 "record",
                 record_payload,
             )
-            retained_controls = (
-                *redrive_history,
-                *dead_letter_history,
+            retained_control_count = (
+                len(redrive_history) + len(dead_letter_history)
             )
-            retained_control_bytes = sum(
-                _canonical_json_size_bytes(retained_control)
-                for retained_control in retained_controls
+            retained_control_bytes = (
+                self._callback_delivery_control_history_bytes.get(
+                    control_key
+                )
             )
+            if retained_control_bytes is None:
+                retained_control_bytes = sum(
+                    _canonical_json_size_bytes(retained_control)
+                    for history in (
+                        redrive_history,
+                        dead_letter_history,
+                    )
+                    for retained_control in history
+                )
+                self._callback_delivery_control_history_bytes[
+                    control_key
+                ] = retained_control_bytes
+            record_bytes = _canonical_json_size_bytes(record)
             if (
-                len(retained_controls)
+                retained_control_count
                 >= self.max_callback_delivery_controls_per_delivery
                 or (
                     retained_control_bytes
-                    + _canonical_json_size_bytes(record)
+                    + record_bytes
                     > self.max_callback_delivery_control_history_bytes_per_delivery
                 )
             ):
@@ -10246,15 +10367,28 @@ class GraphBlocksServerApp:
                         ),
                     },
                 )
-            deliveries = list(
-                self._callback_delivery_results_by_subscription_id[subscription_id]
-            )
+            deliveries = self._callback_delivery_results_by_subscription_id[
+                subscription_id
+            ]
+            if type(deliveries) is not list:
+                deliveries = list(deliveries)
+                self._callback_delivery_results_by_subscription_id[
+                    subscription_id
+                ] = deliveries
             deliveries[delivery_index] = updated_delivery
-            self._callback_delivery_results_by_subscription_id[subscription_id] = tuple(deliveries)
             if operation == "redrive_callback_delivery":
-                self._callback_delivery_redrives[control_key] = (*existing, record)
+                self._callback_delivery_redrives.setdefault(
+                    control_key,
+                    [],
+                ).append(record)
             else:
-                self._callback_delivery_dead_letter_moves[control_key] = (*existing, record)
+                self._callback_delivery_dead_letter_moves.setdefault(
+                    control_key,
+                    [],
+                ).append(record)
+            self._callback_delivery_control_history_bytes[control_key] = (
+                retained_control_bytes + record_bytes
+            )
         response_payload: dict[str, object] = {
             "ok": True,
             "deliveryId": delivery_id,
@@ -10523,13 +10657,19 @@ class GraphBlocksServerApp:
                         "duplicate": True,
                     },
                 )
-        retained_bytes = sum(
-            _canonical_json_size_bytes(detached)
-            for detached in existing
+        retained_bytes = self._detachment_history_bytes_by_run_id.get(
+            run_id
         )
+        if retained_bytes is None:
+            retained_bytes = sum(
+                _canonical_json_size_bytes(detached)
+                for detached in existing
+            )
+            self._detachment_history_bytes_by_run_id[run_id] = retained_bytes
+        record_bytes = _canonical_json_size_bytes(record)
         if (
             len(existing) >= self.max_detachments_per_run
-            or retained_bytes + _canonical_json_size_bytes(record)
+            or retained_bytes + record_bytes
             > self.max_detachment_history_bytes_per_run
         ):
             return ServerResponse.json(
@@ -10551,7 +10691,10 @@ class GraphBlocksServerApp:
                     ),
                 },
             )
-        self._detachments_by_run_id[run_id] = (*existing, record)
+        self._detachments_by_run_id.setdefault(run_id, []).append(record)
+        self._detachment_history_bytes_by_run_id[run_id] = (
+            retained_bytes + record_bytes
+        )
         return ServerResponse.json(
             202,
             {
@@ -11081,13 +11224,19 @@ class GraphBlocksServerApp:
                         "acknowledgedAt": ack.get("acknowledgedAt"),
                     },
                 )
-        retained_bytes = sum(
-            _canonical_json_size_bytes(ack)
-            for ack in existing
+        retained_bytes = self._event_ack_history_bytes_by_subscription.get(
+            key
         )
+        if retained_bytes is None:
+            retained_bytes = sum(
+                _canonical_json_size_bytes(ack)
+                for ack in existing
+            )
+            self._event_ack_history_bytes_by_subscription[key] = retained_bytes
+        record_bytes = _canonical_json_size_bytes(record)
         if (
             len(existing) >= self.max_event_acks_per_subscription
-            or retained_bytes + _canonical_json_size_bytes(record)
+            or retained_bytes + record_bytes
             > self.max_event_ack_history_bytes_per_subscription
         ):
             return ServerResponse.json(
@@ -11110,7 +11259,10 @@ class GraphBlocksServerApp:
                     ),
                 },
             )
-        self._acks_by_subscription[key] = (*existing, record)
+        self._acks_by_subscription.setdefault(key, []).append(record)
+        self._event_ack_history_bytes_by_subscription[key] = (
+            retained_bytes + record_bytes
+        )
         return ServerResponse.json(
             202,
             {

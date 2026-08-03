@@ -788,6 +788,84 @@ def test_server_app_rejects_invalid_resource_limits(field_name: str) -> None:
             )
 
 
+def test_server_mutation_histories_do_not_rebuild_tuples_on_append() -> None:
+    history_attributes = {
+        "_acks_by_subscription",
+        "_callback_delivery_dead_letter_moves",
+        "_callback_delivery_redrives",
+        "_callback_delivery_results_by_subscription_id",
+        "_callbacks_by_operation_id",
+        "_detachments_by_run_id",
+        "_run_controls_by_run_id",
+        "_subscriptions_by_run_id",
+    }
+    source = textwrap.dedent(inspect.getsource(GraphBlocksServerApp))
+    tree = ast.parse(source)
+    tuple_rebuilds: list[str] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.Assign, ast.AnnAssign)):
+            continue
+        targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+        for target in targets:
+            if (
+                isinstance(target, ast.Subscript)
+                and isinstance(target.value, ast.Attribute)
+                and isinstance(target.value.value, ast.Name)
+                and target.value.value.id == "self"
+                and target.value.attr in history_attributes
+                and node.value is not None
+                and any(
+                    isinstance(descendant, ast.Starred)
+                    for descendant in ast.walk(node.value)
+                )
+            ):
+                tuple_rebuilds.append(target.value.attr)
+
+    assert tuple_rebuilds == []
+
+
+def test_server_run_control_append_cost_does_not_rescan_history(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = GraphBlocksServerApp(
+        allow_unauthenticated_dev=True,
+        max_run_controls_per_run=512,
+        max_run_control_history_bytes_per_run=1_000_000,
+    )
+    original_size = graphblocks_server._canonical_json_size_bytes
+    size_calls = 0
+
+    def counted_size(value: object) -> int:
+        nonlocal size_calls
+        size_calls += 1
+        return original_size(value)
+
+    monkeypatch.setattr(
+        graphblocks_server,
+        "_canonical_json_size_bytes",
+        counted_size,
+    )
+    run_id = "run-append-cost"
+    retained_history: list[dict[str, object]] | None = None
+    for index in range(256):
+        record = {"index": index, "status": "paused_operator"}
+        assert app._run_control_capacity_response(run_id, record) is None
+        app._record_run_control(run_id, record)
+        if retained_history is None:
+            retained_history = app._run_controls_by_run_id[run_id]
+
+    assert app._run_controls_by_run_id[run_id] is retained_history
+    assert size_calls == 512
+    snapshot = app.run_controls(run_id)
+    assert isinstance(snapshot, tuple)
+    app._record_run_control(
+        run_id,
+        {"index": 256, "status": "paused_operator"},
+    )
+    assert len(snapshot) == 256
+    assert len(app.run_controls(run_id)) == 257
+
+
 def test_server_app_requires_callable_terminal_collection_clock() -> None:
     with pytest.raises(
         ValueError,
@@ -9349,6 +9427,42 @@ def test_server_app_bounds_async_callback_rejection_history() -> None:
     )
 
 
+def test_server_app_appends_callback_rejections_in_place() -> None:
+    operation_id = "op-append-in-place"
+    app = GraphBlocksServerApp(allow_unauthenticated_dev=True)
+    history = app._async_callback_rejections_by_operation_id
+
+    for index in range(2):
+        history.append(
+            ServerAsyncCallbackRejection(
+                operation_id=operation_id,
+                callback_id=f"cb-{index}",
+                idempotency_key=f"idem-{index}",
+                reason="authentication_failed",
+                received_at=f"2026-07-03T00:00:0{index}Z",
+                payload_digest=f"sha256:{index:064x}",
+            )
+        )
+        if index == 0:
+            retained_history = history[operation_id]
+
+    assert history[operation_id] is retained_history
+    snapshot = history.snapshot(operation_id)
+    assert isinstance(snapshot, tuple)
+    history.append(
+        ServerAsyncCallbackRejection(
+            operation_id=operation_id,
+            callback_id="cb-2",
+            idempotency_key="idem-2",
+            reason="authentication_failed",
+            received_at="2026-07-03T00:00:02Z",
+            payload_digest=f"sha256:{2:064x}",
+        )
+    )
+    assert len(snapshot) == 2
+    assert len(history.snapshot(operation_id)) == 3
+
+
 def test_server_app_enforces_async_callback_rejection_byte_budget() -> None:
     probe = GraphBlocksServerApp(allow_unauthenticated_dev=True)
     probe_history = probe._async_callback_rejections_by_operation_id
@@ -9392,7 +9506,7 @@ def test_server_app_enforces_async_callback_rejection_byte_budget() -> None:
     )
     retained_two_histories = history.retained_size_bytes
     removed = history.pop("op-b")
-    assert isinstance(removed, tuple)
+    assert isinstance(removed, list)
     assert history.retained_size_bytes < retained_two_histories
     history["op-b"] = removed
     assert history.retained_size_bytes == retained_two_histories
