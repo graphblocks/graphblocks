@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import ast
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from concurrent.futures import (
     Executor,
     Future,
@@ -13411,6 +13411,69 @@ def test_server_app_treats_repeated_detach_from_same_client_as_idempotent() -> N
             "lastCursor": "run-detach-idempotent-1:2",
         },
     )
+
+
+def test_server_app_serializes_concurrent_detachments_without_lost_records() -> None:
+    class BlockingDetachServerApp(GraphBlocksServerApp):
+        def __init__(self, **kwargs: object) -> None:
+            super().__init__(**kwargs)  # type: ignore[arg-type]
+            self.first_detach_entered = Event()
+            self.release_first_detach = Event()
+
+        def _detach_from_run_response(
+            self,
+            run_id: str,
+            events: tuple[dict[str, object], ...],
+            payload: Mapping[str, object],
+            detached_at: str,
+        ) -> ServerResponse:
+            if payload.get("clientId") == "client-1":
+                self.first_detach_entered.set()
+                assert self.release_first_detach.wait(timeout=2)
+            return super()._detach_from_run_response(
+                run_id,
+                events,
+                payload,
+                detached_at,
+            )
+
+    principal = PrincipalRef("user-1")
+    app = BlockingDetachServerApp(
+        auth_hook=StaticBearerAuthHook({"token-1": principal}),
+    )
+    run_id = "run-detach-concurrent-1"
+    _seed_succeeded_run(app, run_id, principal)
+
+    def request(client_id: str, requested_at: str) -> ServerRequest:
+        return ServerRequest(
+            method="POST",
+            path=f"/runs/{run_id}/detach",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps({"clientId": client_id}).encode("utf-8"),
+            requested_at=requested_at,
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        first = executor.submit(
+            app.handle,
+            request("client-1", "2026-07-03T00:00:01Z"),
+        )
+        assert app.first_detach_entered.wait(timeout=2)
+        second = executor.submit(
+            app.handle,
+            request("client-2", "2026-07-03T00:00:02Z"),
+        )
+        sleep(0.05)
+        assert not second.done()
+        app.release_first_detach.set()
+        responses = (first.result(timeout=2), second.result(timeout=2))
+
+    assert [response.status_code for response in responses] == [202, 202]
+    assert [
+        detached["clientId"] for detached in app.detachments(run_id)
+    ] == ["client-1", "client-2"]
 
 
 def test_server_app_bounds_detachment_history_by_count_and_encoded_bytes() -> None:
