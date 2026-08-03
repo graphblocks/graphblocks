@@ -85,3 +85,9 @@ resolved:
   - id: GB-SEC-008
     fixCommits: [a5eb785d, 7d82a996, 2307cff1, b4e6b7a1]
     regression: [tests/test_server_core.py, tests/test_server_callback_webhook_delivery.py]
+  - id: GB-API-002
+    fixCommits: [1bdbe357]
+    regression: [tests/test_internal_import_boundaries.py]
+  - id: GB-API-003
+    fixCommits: [722e2e0e]
+    regression: [tests/test_internal_import_boundaries.py]

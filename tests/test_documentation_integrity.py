@@ -1580,8 +1580,8 @@ def test_stable_release_matrix_is_complete_and_machine_readable() -> None:
         "authority": "docs/project/audit-issue-status.yaml",
         "inventory": "docs/project/audit-issues.json",
         "checker": "tools/check_audit_inventory.py",
-        "resolved": 27,
-        "openBySeverity": {"P0": 0, "P1": 0, "P2": 64, "P3": 8},
+        "resolved": 29,
+        "openBySeverity": {"P0": 0, "P1": 0, "P2": 62, "P3": 8},
     }
     assert "signed-candidate-and-final-promotion-audit-closure-binding" in (
         audit_gate["implementedEvidence"]
