@@ -52,8 +52,8 @@ def test_audit_inventory_closes_every_release_blocking_finding() -> None:
             "9f98ebde8dc981b0eaee8ed795e04306ac67f707223cfe844e2365561db7eb44"
         ),
         "total": 99,
-        "resolved": 37,
-        "openBySeverity": {"P0": 0, "P1": 0, "P2": 54, "P3": 8},
+        "resolved": 38,
+        "openBySeverity": {"P0": 0, "P1": 0, "P2": 53, "P3": 8},
     }
 
 
@@ -67,8 +67,8 @@ def test_audit_inventory_cli_reports_the_bound_counts() -> None:
     )
 
     assert completed.returncode == 0
-    assert "99 findings, 37 resolved" in completed.stdout
-    assert "'P0': 0, 'P1': 0, 'P2': 54, 'P3': 8" in completed.stdout
+    assert "99 findings, 38 resolved" in completed.stdout
+    assert "'P0': 0, 'P1': 0, 'P2': 53, 'P3': 8" in completed.stdout
     assert completed.stderr == ""
 
 

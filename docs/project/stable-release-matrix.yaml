@@ -84,8 +84,8 @@ deepAudit:
     authority: docs/project/audit-issue-status.yaml
     inventory: docs/project/audit-issues.json
     checker: tools/check_audit_inventory.py
-    resolved: 37
-    openBySeverity: {P0: 0, P1: 0, P2: 54, P3: 8}
+    resolved: 38
+    openBySeverity: {P0: 0, P1: 0, P2: 53, P3: 8}
   exitPolicy:
     securityFreeze: {maxOpenP0: 0}
     stableRelease: {maxOpenP0: 0, maxOpenP1: 0}
@@ -977,6 +977,7 @@ releaseGates:
       - leaf-only-internal-imports-and-zero-python-import-cycles
       - reusable-control-plane-library-and-consolidated-rust-crate-boundaries
       - bounded-server-cli-compiler-stdlib-and-testing-dispatch-boundaries
+      - generated-durable-tck-mirror-with-digest-bound-single-source
     evidence:
       - docs/project/audit-issues.json
       - docs/project/audit-issue-status.yaml
