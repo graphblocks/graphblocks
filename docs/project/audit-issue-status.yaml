@@ -151,3 +151,6 @@ resolved:
   - id: GB-COR-012
     fixCommits: [fc95ca32]
     regression: [tests/test_run_store.py]
+  - id: GB-DOC-006
+    fixCommits: [1dd8c114]
+    regression: [tests/test_compatibility_snapshots.py, tests/test_stable_typing_scope.py]
