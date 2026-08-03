@@ -1571,7 +1571,16 @@ def test_stable_release_matrix_is_complete_and_machine_readable() -> None:
     audit_gate = next(
         entry for entry in matrix["releaseGates"] if entry["id"] == "REL-AUDIT-REMEDIATION"
     )
-    assert audit_gate["readiness"] == "blocked"
+    assert audit_gate["readiness"] == (
+        "code-closure-enforced-external-evidence-blocked"
+    )
+    assert audit["liveStatus"] == {
+        "authority": "docs/project/audit-issue-status.yaml",
+        "inventory": "docs/project/audit-issues.json",
+        "checker": "tools/check_audit_inventory.py",
+        "resolved": 27,
+        "openBySeverity": {"P0": 0, "P1": 0, "P2": 64, "P3": 8},
+    }
     assert audit_gate["exitCriteria"]["maxOpenBySeverity"] == {"P0": 0, "P1": 0}
     assert audit_gate["companionGates"] == [
         "REL-OBJECT-AUTHORIZATION-REVIEW",

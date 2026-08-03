@@ -1,0 +1,1825 @@
+{
+  "project": "graphblocks",
+  "audit_date": "2026-07-27",
+  "audited_source": "/mnt/data/graphblocks-main.zip (extracted to graphblocks-audit/graphblocks-main)",
+  "scope": {
+    "python_production_files": 87,
+    "python_production_loc": 102699,
+    "rust_workspace_crates": 13,
+    "tck_directories": 24,
+    "examples": 14,
+    "python_tests_collected": 3989,
+    "local_test_result": "3980 passed, 9 environment/support failures on unsupported Python 3.13",
+    "local_limitations": [
+      "Python 3.11/3.12 unavailable; local runtime was Python 3.13, outside requires-python.",
+      "cargo/rustc unavailable, so Rust compile/test/clippy were not rerun locally.",
+      "zip contained no .git directory, causing one git-metadata test failure.",
+      "build/mypy release tooling was not installed in the analysis venv, causing related environment failures."
+    ]
+  },
+  "counts": {
+    "total": 99,
+    "by_severity": {
+      "P0": 4,
+      "P1": 23,
+      "P2": 64,
+      "P3": 8
+    },
+    "by_status": {
+      "reproduced": 9,
+      "code-confirmed": 68,
+      "design-risk": 13,
+      "documentation-drift": 5,
+      "recommendation": 4
+    },
+    "by_kind": {
+      "security": 21,
+      "performance": 12,
+      "architecture": 17,
+      "durability": 3,
+      "concurrency": 4,
+      "correctness": 7,
+      "refactor": 1,
+      "api-design": 1,
+      "product": 1,
+      "naming": 2,
+      "documentation": 10,
+      "quality": 8,
+      "platform": 1,
+      "ci": 1,
+      "reproducibility": 1,
+      "release": 1,
+      "testing": 3,
+      "packaging": 2,
+      "lifecycle": 1,
+      "time": 1,
+      "docs": 1
+    }
+  },
+  "issues": [
+    {
+      "id": "GB-POL-001",
+      "severity": "P0",
+      "kind": "security",
+      "status": "reproduced",
+      "confidence": "high",
+      "title": "정책 YAML의 객체가 문자열 목록으로 강제 변환되어 allow 규칙이 되는 fail-open",
+      "summary": "`tuple(mapping_value)`가 mapping의 key 목록을 만들며, 필수 resource id 누락은 `str(None)`으로 `\"None\"`이 된다. 타입이 틀린 문서가 거부되지 않고 의미가 바뀐다.",
+      "locations": [
+        "src/graphblocks/cli.py:111-135",
+        "src/graphblocks/cli.py:2146-2178"
+      ],
+      "evidence": [
+        "reproductions/policy-malformed.yaml",
+        "reproductions/policy-case.yaml",
+        "reproductions/repro_policy_fail_open.out"
+      ],
+      "impact": "정책 작성 실수나 공격자가 의도치 않은 action/resource를 허용하도록 만들 수 있다.",
+      "recommendation": "외부 YAML/JSON은 먼저 closed JSON Schema로 검증하고, exact type decoder를 사용한다. list[str] 외 값과 누락 필드는 coercion 없이 거부한다.",
+      "recommended_test": "actions/resources/selectors에 object, scalar, bool, null, 중복 키, unknown field를 넣은 negative corpus를 추가하고 모두 fail-closed인지 검사한다."
+    },
+    {
+      "id": "GB-SEC-001",
+      "severity": "P0",
+      "kind": "security",
+      "status": "reproduced",
+      "confidence": "high",
+      "title": "다른 tenant의 run 목록·상태·이벤트를 읽을 수 있는 BOLA",
+      "summary": "인증된 principal을 얻은 뒤 run 리소스의 owner/tenant와 비교하지 않는다. list/status/attach는 전역 run 맵을 그대로 조회한다.",
+      "locations": [
+        "src/graphblocks/server.py:937-960",
+        "src/graphblocks/server.py:2464-2493",
+        "src/graphblocks/server.py:2529-2543",
+        "src/graphblocks/server.py:2576-2612",
+        "src/graphblocks/server.py:6265-6352"
+      ],
+      "evidence": [
+        "reproductions/repro_server_authz.py",
+        "reproductions/repro_server_authz.out"
+      ],
+      "impact": "멀티테넌트 배치에서 다른 고객의 실행 메타데이터와 모델 출력·입력·이벤트가 노출될 수 있다.",
+      "recommendation": "RunRecord에 owner principal과 tenant를 영속화하고, 모든 run 조회를 tenant-scoped repository와 객체 수준 authorizer를 거치게 한다. 비인가 리소스는 정책에 따라 404로 은닉한다.",
+      "recommended_test": "Alice/Bob 두 principal과 서로 다른 tenant를 사용해 list/status/attach/events/ws/sse 전체에 deny matrix를 추가한다."
+    },
+    {
+      "id": "GB-SEC-002",
+      "severity": "P0",
+      "kind": "security",
+      "status": "reproduced",
+      "confidence": "high",
+      "title": "다른 tenant의 run을 취소할 수 있는 교차 tenant 쓰기 권한 우회",
+      "summary": "cancel/pause/resume/expire 경로는 run 존재만 확인하고 요청 principal과 run 소유권을 비교하지 않는다.",
+      "locations": [
+        "src/graphblocks/server.py:2544-2567",
+        "src/graphblocks/server.py:5720-6160"
+      ],
+      "evidence": [
+        "reproductions/repro_cross_tenant_control.py",
+        "reproductions/repro_cross_tenant_control.out"
+      ],
+      "impact": "공격자가 다른 고객의 실행을 취소·일시정지·재개·만료시켜 가용성과 데이터 처리 무결성을 훼손할 수 있다.",
+      "recommendation": "조회와 제어를 같은 RunAuthorizationService로 통합하고 action별 권한을 평가한다. run 상태 전이 트랜잭션 안에서 owner/tenant/fence를 다시 검증한다.",
+      "recommended_test": "Bob 토큰으로 Alice의 accepted/running run에 네 가지 control 요청을 보내 모두 404/403인지 확인하고, 경쟁 상태에서도 소유권 검사가 원자적인지 검증한다."
+    },
+    {
+      "id": "GB-SEC-003",
+      "severity": "P0",
+      "kind": "security",
+      "status": "reproduced",
+      "confidence": "high",
+      "title": "`auth_required=True` 라우트가 auth_hook 미설정 시 무인증 허용",
+      "summary": "기본 auth decision이 allow이며 auth_hook이 있을 때만 검사한다. 라우트의 auth_required 값은 애플리케이션이 직접 강제하지 않는다.",
+      "locations": [
+        "src/graphblocks/server.py:694-725",
+        "src/graphblocks/server.py:887-931",
+        "src/graphblocks/server.py:2297-2305",
+        "src/graphblocks/server.py:2464-2493"
+      ],
+      "evidence": [
+        "reproductions/repro_server_authz.out"
+      ],
+      "impact": "보호 라우트라는 선언을 신뢰해 서버 어댑터를 노출하면 전체 API가 공개될 수 있다.",
+      "recommendation": "운영 기본값을 fail-closed로 바꾼다. auth_hook이 없는데 보호 라우트가 있으면 생성 시 오류를 내고, 명시적 `allow_unauthenticated_dev=True`에서만 개발 모드를 허용한다.",
+      "recommended_test": "기본 앱에서 `/health`만 200, `/runs`와 모든 보호 라우트는 401인지 검사한다. 커스텀 public route도 별도로 확인한다."
+    },
+    {
+      "id": "GB-INP-001",
+      "severity": "P1",
+      "kind": "security",
+      "status": "reproduced",
+      "confidence": "high",
+      "title": "MCP 제공 JSON Schema의 정규식으로 ReDoS 가능",
+      "summary": "외부 schema를 Draft202012Validator로 그대로 실행하며 pattern 길이·복잡도·실행 시간 제한이 없다.",
+      "locations": [
+        "src/graphblocks/integrations/mcp.py:72-130"
+      ],
+      "evidence": [
+        "reproductions/repro_mcp_regex_redos.py",
+        "reproductions/repro_mcp_regex_redos.out"
+      ],
+      "impact": "악성 MCP 서버가 catastrophic backtracking 정규식과 입력을 제공해 worker CPU를 장시간 점유할 수 있다.",
+      "recommendation": "untrusted schema profile을 정의해 schema byte/node/depth/pattern 길이를 제한하고, pattern을 거부하거나 RE2 계열 엔진/격리된 deadline 실행을 사용한다.",
+      "recommended_test": "`^(a+)+$` 등 adversarial pattern corpus로 선형 상한 또는 명시적 거부를 검증한다."
+    },
+    {
+      "id": "GB-INP-004",
+      "severity": "P1",
+      "kind": "performance",
+      "status": "reproduced",
+      "confidence": "high",
+      "title": "canonical JSON의 초대형 정수 처리에 입력 자원 예산이 없음",
+      "summary": "Python의 정수 digit limit를 우회해 임의 길이 십진수를 직접 누적하고 다시 변환한다.",
+      "locations": [
+        "src/graphblocks/canonical.py:39-67"
+      ],
+      "evidence": [
+        "reproductions/repro_canonical_bigint_cost.out"
+      ],
+      "impact": "수십만~수백만 자리 정수로 CPU와 메모리를 과다 사용하게 할 수 있다.",
+      "recommendation": "wire token byte/digit cap을 정하고 초과 시 안정 diagnostic으로 거부한다. arbitrary precision이 필요하면 bounded DecimalString 타입으로 분리한다.",
+      "recommended_test": "10k/100k/300k/상한+1 digit 벤치마크와 거부 동작을 CI resource test로 고정한다."
+    },
+    {
+      "id": "GB-INP-005",
+      "severity": "P1",
+      "kind": "performance",
+      "status": "reproduced",
+      "confidence": "high",
+      "title": "Decimal/큰 정수 canonical serialization이 토큰 수에 따라 제곱형으로 악화",
+      "summary": "placeholder를 만든 뒤 각 token마다 전체 encoded 문자열에 `replace`를 수행한다.",
+      "locations": [
+        "src/graphblocks/canonical.py:189-283"
+      ],
+      "evidence": [
+        "reproductions/repro_canonical_decimal_cost.out"
+      ],
+      "impact": "작은 숫자 값이 많이 포함된 정상 문서도 큰 그래프·이벤트에서 급격히 느려질 수 있다.",
+      "recommendation": "문자열 치환을 없애고 단일 패스 streaming/token encoder를 사용한다. 혹은 JSON AST를 순회하며 직접 bytes를 emit한다.",
+      "recommended_test": "Decimal 1k→2k→4k→8k→16k scaling benchmark의 기울기를 회귀 기준으로 둔다."
+    },
+    {
+      "id": "GB-PERF-002",
+      "severity": "P1",
+      "kind": "performance",
+      "status": "reproduced",
+      "confidence": "high",
+      "title": "ExecutionJournal append가 tuple 전체를 매번 복사해 O(n²)",
+      "summary": "frozen dataclass 내부를 object.__setattr__로 바꾸며 `(*records, record)`를 사용한다.",
+      "locations": [
+        "src/graphblocks/runtime.py:255-333",
+        "src/graphblocks/runtime.py:367-414"
+      ],
+      "evidence": [
+        "reproductions/repro_journal_append_cost.out"
+      ],
+      "impact": "event가 많은 run에서 journal append CPU와 allocation이 급증한다.",
+      "recommendation": "내부 mutable list/deque 또는 chunked persistent vector를 사용하고 외부 snapshot만 tuple로 제공한다.",
+      "recommended_test": "1k~64k append scaling과 allocation benchmark를 회귀 게이트로 둔다."
+    },
+    {
+      "id": "GB-SEC-007",
+      "severity": "P1",
+      "kind": "security",
+      "status": "reproduced",
+      "confidence": "high",
+      "title": "존재하지 않는 callback delivery ID의 redrive/dead-letter를 202로 기록",
+      "summary": "delivery control은 원본 delivery, subscription, registration, owner/tenant를 resolve하지 않고 요청 레코드만 추가한다.",
+      "locations": [
+        "src/graphblocks/server.py:3047-3059",
+        "src/graphblocks/server.py:6180-6263"
+      ],
+      "evidence": [
+        "reproductions/repro_nonexistent_delivery_control.out"
+      ],
+      "impact": "운영 감사 로그와 상태가 실제 delivery와 분리되고, 권한 없는 조작·오타·유령 작업을 정상 요청처럼 축적한다.",
+      "recommendation": "DeliveryRepository에서 delivery→subscription→registration→tenant/owner를 원자적으로 조회하고 lifecycle 전이를 검증한다. 미존재는 404, 불가능 전이는 409로 반환한다.",
+      "recommended_test": "미존재 ID, 다른 tenant ID, 이미 성공/취소된 delivery, 중복 redrive/dead-letter 전이를 모두 검증한다."
+    },
+    {
+      "id": "GB-API-001",
+      "severity": "P1",
+      "kind": "architecture",
+      "status": "code-confirmed",
+      "confidence": "high",
+      "title": "top-level Python API가 605개 symbol을 노출해 안정 경계가 흐림",
+      "summary": "문서상 stable API는 49 symbol 중심인데 `graphblocks.__all__`은 605개다.",
+      "locations": [
+        "src/graphblocks/__init__.py:1-1257",
+        "compatibility/stable-python-api.json"
+      ],
+      "evidence": [
+        "results/check-stable-typing.log"
+      ],
+      "impact": "사용자는 root import 가능 항목을 사실상 public API로 인식하고 preview/internal 구현에 종속된다.",
+      "recommendation": "root `__all__`을 stable surface로 제한하고 preview는 `graphblocks.preview.*`, 기능은 `authoring/schema/compiler/runtime/app/governance` namespace로 이동한다.",
+      "recommended_test": "stable snapshot 외 root export 추가를 CI에서 금지하고 preview import에는 명시적 warning/namespace를 요구한다."
+    },
+    {
+      "id": "GB-ARCH-001",
+      "severity": "P1",
+      "kind": "architecture",
+      "status": "code-confirmed",
+      "confidence": "high",
+      "title": "Python과 Rust compiler가 모두 큰 독립 구현으로 존재해 규범적 source of truth가 모호",
+      "summary": "Python compile_graph가 1,794줄이며 Rust compiler도 별도 canonical/compile 경로를 가진다.",
+      "locations": [
+        "src/graphblocks/compiler.py:920-2713",
+        "crates/graphblocks-compiler/"
+      ],
+      "evidence": [],
+      "impact": "진단 순서, normalization, plan hash, edge case가 언어별로 drift할 가능성이 높다.",
+      "recommendation": "Rust compiler를 normative implementation으로 정하고 Python facade는 native binding을 기본 사용한다. Python은 명시적 reference fallback으로 제한한다.",
+      "recommended_test": "생성·mutation 기반 Python/Rust differential property test로 canonical bytes, diagnostics, plan hash를 비교한다."
+    },
+    {
+      "id": "GB-COR-001",
+      "severity": "P1",
+      "kind": "durability",
+      "status": "code-confirmed",
+      "confidence": "high",
+      "title": "accepted run과 서버 상태가 프로세스 재시작 시 소실",
+      "summary": "pending/results/executions/events가 전부 메모리 맵이며 문서도 Python reference continuation이 restart-safe하지 않다고 명시한다.",
+      "locations": [
+        "src/graphblocks/server.py:2315-2415",
+        "docs/specification/operations/applications-async-callbacks.md:201-205",
+        "docs/concepts/runtime.md:34-39"
+      ],
+      "evidence": [],
+      "impact": "프로세스 장애 후 accepted run 상태, callback resume, 제어 기록을 복구할 수 없다.",
+      "recommendation": "RunRepository, EventJournal, WorkQueue, CheckpointStore, CallbackInbox/Outbox를 별도 인터페이스로 만들고 durable 구현을 기본 production profile로 둔다.",
+      "recommended_test": "각 상태 전이 전후 crash failpoint와 재시작 후 exactly-once/deduplicated semantics를 다중 프로세스로 검증한다."
+    },
+    {
+      "id": "GB-COR-002",
+      "severity": "P1",
+      "kind": "durability",
+      "status": "code-confirmed",
+      "confidence": "high",
+      "title": "in-process timeout은 협력적 신호이며 임의 작업을 중단하지 못함",
+      "summary": "명세가 provider/in-process work의 선점 종료나 외부 효과 rollback을 보장하지 않는다고 명시한다.",
+      "locations": [
+        "docs/specification/core/graph-compilation-runtime.md:145-184",
+        "docs/project/first-stable-release.md:74-80"
+      ],
+      "evidence": [],
+      "impact": "blocking tool/provider 호출이 deadline 후에도 CPU·네트워크·외부 효과를 지속할 수 있다.",
+      "recommendation": "production 실행은 격리 worker/process와 hard deadline, provider cancellation, lease/fence, effect outbox/idempotency로 감싼다.",
+      "recommended_test": "무한 루프/무응답 provider/취소 무시 tool을 격리해 deadline 후 worker가 회수되고 stale commit이 거부되는지 검사한다."
+    },
+    {
+      "id": "GB-COR-003",
+      "severity": "P1",
+      "kind": "concurrency",
+      "status": "code-confirmed",
+      "confidence": "high",
+      "title": "SQLite audit outbox의 pending 조회와 publish marking 사이에 atomic claim이 없음",
+      "summary": "publisher가 pending/failed 목록을 읽은 뒤 별도 update하므로 여러 publisher가 같은 레코드를 동시에 발행할 수 있다.",
+      "locations": [
+        "src/graphblocks/audit.py:419-466"
+      ],
+      "evidence": [],
+      "impact": "sink가 멱등하지 않으면 중복 감사 이벤트가 발생하며 attempt/owner 상태가 모호해진다.",
+      "recommendation": "claim token, lease expiration, claim generation을 DB 트랜잭션으로 획득하고 completion 시 fence를 확인한다.",
+      "recommended_test": "두 프로세스가 같은 SQLite DB를 경쟁해 한 claim만 얻고, lease 만료 후에만 takeover되는지 검사한다."
+    },
+    {
+      "id": "GB-INP-002",
+      "severity": "P1",
+      "kind": "security",
+      "status": "code-confirmed",
+      "confidence": "high",
+      "title": "HTTP client가 응답 body를 무제한으로 읽음",
+      "summary": "`response.read()`에 상한이 없고 HTTP error에서도 원문 전체를 보존할 수 있다. timeout도 호출별 socket timeout일 뿐 총 deadline은 아니다.",
+      "locations": [
+        "src/graphblocks/client.py:1080-1151",
+        "src/graphblocks/client.py:2055-2078"
+      ],
+      "evidence": [],
+      "impact": "악성/오작동 서버가 메모리 고갈이나 장시간 스트리밍으로 client를 멈출 수 있다.",
+      "recommendation": "Content-Length 선검사와 chunk 누적 cap, decompressed-byte cap, total deadline/cancellation을 적용하고 오류 body는 절단한다.",
+      "recommended_test": "고정 길이 초과, chunked 무한 스트림, 압축 폭탄, 느린 스트림, oversized error body를 모의 transport로 검증한다."
+    },
+    {
+      "id": "GB-INP-003",
+      "severity": "P1",
+      "kind": "security",
+      "status": "code-confirmed",
+      "confidence": "high",
+      "title": "서버 request body 제한이 없거나 JSON parse 이후에 적용됨",
+      "summary": "공통 parser는 전체 body를 UTF-8 decode·duplicate scan·JSON parse하며 global cap이 없다. callback cap은 canonicalization 뒤 계산된다.",
+      "locations": [
+        "src/graphblocks/server.py:207-260",
+        "src/graphblocks/server.py:963-990",
+        "src/graphblocks/server.py:3088-3104"
+      ],
+      "evidence": [],
+      "impact": "큰 body가 크기 거부 전에 메모리와 CPU를 소비해 DoS가 가능하다.",
+      "recommendation": "어댑터에서 wire-byte cap을 먼저 적용하고 앱에서도 defense-in-depth cap을 확인한다. route별 cap과 413 응답을 둔다.",
+      "recommended_test": "Content-Length와 실제 길이 불일치, chunked 초과, deeply nested/large string/large number body를 parse 전 거부하는지 검사한다."
+    },
+    {
+      "id": "GB-PERF-001",
+      "severity": "P1",
+      "kind": "performance",
+      "status": "code-confirmed",
+      "confidence": "high",
+      "title": "서버의 프로세스 로컬 상태가 retention 없이 무제한 증가",
+      "summary": "events, callbacks, detachments, controls, subscriptions, acks, delivery 결과, accepted runs가 모두 dict/tuple에 계속 남는다.",
+      "locations": [
+        "src/graphblocks/server.py:2315-2415"
+      ],
+      "evidence": [],
+      "impact": "장시간 프로세스에서 메모리 누수와 list/status latency 증가가 발생한다.",
+      "recommendation": "tenant quota, TTL/retention, terminal run compaction, external repository, background GC와 삭제 API를 둔다.",
+      "recommended_test": "백만 run/event synthetic load에서 heap plateau와 조회 latency SLO를 검증한다."
+    },
+    {
+      "id": "GB-PERF-003",
+      "severity": "P1",
+      "kind": "performance",
+      "status": "code-confirmed",
+      "confidence": "high",
+      "title": "SQLite budget backend가 매 mutation마다 ledger 전체 JSON snapshot을 재작성",
+      "summary": "BEGIN IMMEDIATE 후 전체 snapshot load→in-memory mutation→전체 serialize/upsert를 수행한다.",
+      "locations": [
+        "src/graphblocks/budget.py:2283-2322"
+      ],
+      "evidence": [],
+      "impact": "ledger 크기에 비례한 O(total state) write와 global single-writer lock으로 확장성이 급격히 낮다.",
+      "recommendation": "account/reservation/permit/event를 정규화된 행으로 저장하고 version/CAS 및 append-only ledger를 사용한다.",
+      "recommended_test": "ledger 크기별 mutation latency, 다중 account 동시성, crash atomicity를 benchmark한다."
+    },
+    {
+      "id": "GB-QA-008",
+      "severity": "P1",
+      "kind": "security",
+      "status": "code-confirmed",
+      "confidence": "high",
+      "title": "parser/canonical/schema 보안 경계에 fuzz/property gate가 없음",
+      "summary": "중복 키, 깊이, arbitrary number 등 위험한 parser가 많지만 CI에 fuzz corpus 실행이 보이지 않는다.",
+      "locations": [
+        "src/graphblocks/canonical.py",
+        "src/graphblocks/loader.py",
+        "src/graphblocks/schema.py",
+        "crates/graphblocks-schema/",
+        ".github/workflows/ci.yml"
+      ],
+      "evidence": [],
+      "impact": "crash, panic, 비선형 복잡도, Python/Rust 불일치가 예제 기반 테스트 밖에 남는다.",
+      "recommendation": "Hypothesis와 cargo-fuzz/proptest를 도입하고 seed corpus를 PR smoke, 장기 fuzz는 scheduled job으로 실행한다.",
+      "recommended_test": "panic-free, bounded resource, Python/Rust canonical equivalence properties를 정의한다."
+    },
+    {
+      "id": "GB-RUST-001",
+      "severity": "P1",
+      "kind": "correctness",
+      "status": "code-confirmed",
+      "confidence": "high",
+      "title": "Rust 공개 canonical 편의 API가 임의 입력에서 panic 가능",
+      "summary": "fallible API 옆의 `canonical_json`, `canonical_hash`, `TypedValue::from_schema`가 `expect`를 사용한다.",
+      "locations": [
+        "crates/graphblocks-compiler/src/canonical.rs:13-15",
+        "crates/graphblocks-schema/src/lib.rs:614-650",
+        "crates/graphblocks-schema/src/lib.rs:687-695"
+      ],
+      "evidence": [],
+      "impact": "깊거나 잘못된 사용자 입력이 서버/FFI 프로세스 panic으로 이어질 수 있고 Rust/Python 오류 모델이 달라진다.",
+      "recommendation": "공개 infallible API를 제거·deprecated하고 Result를 반환한다. 검증 완료 wrapper type에만 infallible 연산을 허용한다.",
+      "recommended_test": "arbitrary/deep serde_json::Value property test에서 panic이 한 번도 발생하지 않는지 `catch_unwind`/fuzz로 검사한다."
+    },
+    {
+      "id": "GB-SEC-004",
+      "severity": "P1",
+      "kind": "security",
+      "status": "code-confirmed",
+      "confidence": "high",
+      "title": "ServerAuthRequest에 path parameter·resource attribute·body action이 없음",
+      "summary": "authorize 훅은 endpoint, headers, query, cookies, time만 받는다. 실제 run_id/subscription_id/delivery_id와 소유자 정보를 평가할 수 없다.",
+      "locations": [
+        "src/graphblocks/server.py:937-960",
+        "src/graphblocks/server.py:2467-2475"
+      ],
+      "evidence": [],
+      "impact": "사용자 제공 auth hook만으로 객체 수준 권한 검사를 완전하게 구현할 수 없으며, 라우트 내부의 누락이 곧 BOLA로 이어진다.",
+      "recommendation": "Authentication과 Authorization을 분리하고, authorizer에 principal, operation, decoded path params, target resource, tenant, request-body digest를 전달한다.",
+      "recommended_test": "각 route에 필요한 authz context가 빠지면 테스트와 타입 수준에서 실패하도록 route policy table을 둔다."
+    },
+    {
+      "id": "GB-SEC-005",
+      "severity": "P1",
+      "kind": "security",
+      "status": "code-confirmed",
+      "confidence": "high",
+      "title": "인증 실패와 인가 거부를 모두 401로 반환",
+      "summary": "hook의 `allowed=False`는 principal 존재 여부와 무관하게 항상 401이다.",
+      "locations": [
+        "src/graphblocks/server.py:2493-2513"
+      ],
+      "evidence": [],
+      "impact": "클라이언트가 재인증과 권한 부족을 구분할 수 없고, 감사·모니터링에서 원인을 정확히 분류하기 어렵다.",
+      "recommendation": "인증 실패는 401과 WWW-Authenticate, 인증된 principal의 권한 부족은 403을 사용한다. 리소스 은닉 정책이 필요한 경로는 명시적으로 404를 선택한다.",
+      "recommended_test": "무토큰/잘못된 토큰/유효 토큰 권한 부족/리소스 은닉의 상태 코드 및 reason code matrix를 고정한다."
+    },
+    {
+      "id": "GB-SEC-006",
+      "severity": "P1",
+      "kind": "security",
+      "status": "code-confirmed",
+      "confidence": "high",
+      "title": "run ID가 전역 네임스페이스이며 owner/tenant가 run 레코드에 결합되지 않음",
+      "summary": "서버 상태 맵이 bare run_id로만 키잉되고, event/run status 데이터에 권한 주체가 영속화되지 않는다.",
+      "locations": [
+        "src/graphblocks/server.py:2315-2415",
+        "src/graphblocks/server.py:2529-2589"
+      ],
+      "evidence": [],
+      "impact": "tenant 간 ID 충돌, 존재 여부 열거, 소유권 검증 불가능, 복구 시 권한 재구성 실패가 발생한다.",
+      "recommendation": "키를 `(tenant_id, run_id)` 또는 내부 UUID로 바꾸고 외부 ID는 tenant 안에서만 고유하게 한다. owner와 creation auth context를 불변 레코드로 저장한다.",
+      "recommended_test": "동일 run_id를 서로 다른 tenant가 생성할 수 있고 서로 보이지 않는지, 동일 tenant 중복은 409인지 검사한다."
+    },
+    {
+      "id": "GB-SEC-009",
+      "severity": "P1",
+      "kind": "security",
+      "status": "code-confirmed",
+      "confidence": "high",
+      "title": "auth hook 예외가 구조화된 감사 없이 일반 401로 흡수됨",
+      "summary": "모든 예외를 잡아 `auth.hook_error`만 반환하고 correlation/audit hook을 남기지 않는다.",
+      "locations": [
+        "src/graphblocks/server.py:2465-2483"
+      ],
+      "evidence": [],
+      "impact": "권한 시스템 장애와 공격성 입력이 조용히 섞이고 운영자가 원인을 추적하기 어렵다.",
+      "recommendation": "외부 응답은 안정 코드만 유지하되 내부 감사 이벤트에 exception class, route, request id, principal hint를 민감정보 없이 기록한다.",
+      "recommended_test": "auth provider timeout/exception/invalid decision을 주입해 응답과 감사 이벤트가 각각 안정적인지 검사한다."
+    },
+    {
+      "id": "GB-ARCH-002",
+      "severity": "P1",
+      "kind": "architecture",
+      "status": "design-risk",
+      "confidence": "high",
+      "title": "Python broad runtime와 Rust/Tokio runtime의 권위 경계가 불명확",
+      "summary": "현재 배포 surface에서는 pure-Python runtime가 가장 넓은 기능을 갖고 native는 preview다.",
+      "locations": [
+        "README.md:8-33",
+        "docs/project/status.md:1-8",
+        "src/graphblocks/runtime.py",
+        "crates/graphblocks-runtime-core/"
+      ],
+      "evidence": [],
+      "impact": "생산 사용자가 Python reference semantics를 표준으로 고착시키고 Rust parity 작업이 끝없이 늘어날 수 있다.",
+      "recommendation": "계약/컴파일/실행 protocol은 Rust를 권위로 두고 Python runtime는 deterministic reference/TCK oracle로 명확히 한정한다.",
+      "recommended_test": "프로필별 authority matrix와 unsupported divergence를 machine-readable catalog로 고정한다."
+    },
+    {
+      "id": "GB-COR-004",
+      "severity": "P1",
+      "kind": "concurrency",
+      "status": "design-risk",
+      "confidence": "high",
+      "title": "SQLite backend가 장기 공유 connection 하나를 보유해 thread-affinity 문제가 날 수 있음",
+      "summary": "여러 backend가 기본 `sqlite3.connect` connection을 객체에 저장한다. executor/thread 간 공유 정책이 없다.",
+      "locations": [
+        "src/graphblocks/audit.py:323",
+        "src/graphblocks/run_store.py:586",
+        "src/graphblocks/runtime.py:429",
+        "src/graphblocks/budget.py:2078",
+        "src/graphblocks/usage.py:462"
+      ],
+      "evidence": [],
+      "impact": "다른 thread에서 호출하면 ProgrammingError가 나거나, 임의로 check_same_thread를 끄면 동시 transaction 문제가 생긴다.",
+      "recommendation": "thread별/per-operation connection pool 또는 단일 serialized DB actor를 사용하고 WAL, busy_timeout, transaction policy를 명시한다.",
+      "recommended_test": "ThreadPoolExecutor와 다중 프로세스에서 read/write 경쟁, busy timeout, close 중 호출을 검증한다."
+    },
+    {
+      "id": "GB-SEC-008",
+      "severity": "P1",
+      "kind": "security",
+      "status": "design-risk",
+      "confidence": "high",
+      "title": "callback·subscription·ack·delivery 경로의 인가 모델이 일관되지 않음",
+      "summary": "일부 callback registration은 principal+tenant를 비교하지만 run 제어와 delivery 제어는 같은 패턴을 재사용하지 않는다.",
+      "locations": [
+        "src/graphblocks/server.py:659-676",
+        "src/graphblocks/server.py:2800-2890",
+        "src/graphblocks/server.py:6180-6263",
+        "src/graphblocks/server.py:6723-6838"
+      ],
+      "evidence": [],
+      "impact": "새 라우트를 추가할 때 소유권 검사가 누락되기 쉽고, 경로별 보안 의미가 달라진다.",
+      "recommendation": "모든 리소스에 공통 `ResourceOwner`, `Action`, `AuthorizationDecision`을 적용하고 route handler에서 직접 principal 비교를 금지한다.",
+      "recommended_test": "route manifest의 모든 auth_required operation에 owner-resolution/authz test가 있는지 메타 테스트한다."
+    },
+    {
+      "id": "GB-API-002",
+      "severity": "P2",
+      "kind": "architecture",
+      "status": "code-confirmed",
+      "confidence": "high",
+      "title": "내부 모듈이 root `graphblocks`에서 재수입해 결합과 eager import를 유발",
+      "summary": "client와 여러 integration이 `from graphblocks import ...`를 사용한다.",
+      "locations": [
+        "src/graphblocks/client.py:15",
+        "src/graphblocks/integrations/mcp.py:12",
+        "src/graphblocks/integrations/openai.py:12",
+        "src/graphblocks/integrations/openapi.py:8"
+      ],
+      "evidence": [
+        "results/import-graph.txt"
+      ],
+      "impact": "초기화 순서·순환 import·root API 변경 영향이 내부 구현까지 전파된다.",
+      "recommendation": "내부 import는 직접 상대 모듈로 바꾸고 architecture test로 root import를 금지한다.",
+      "recommended_test": "`src/graphblocks/**`의 AST import rule을 CI에서 검사한다."
+    },
+    {
+      "id": "GB-API-003",
+      "severity": "P2",
+      "kind": "architecture",
+      "status": "code-confirmed",
+      "confidence": "high",
+      "title": "Python module import cycle이 존재",
+      "summary": "blob_store/canonical/document_parsers/documents/ingestion/migration/schema 7개 SCC와 budget/exhaustion 2개 SCC가 검출됐다.",
+      "locations": [
+        "src/graphblocks/blob_store.py",
+        "src/graphblocks/canonical.py",
+        "src/graphblocks/document_parsers.py",
+        "src/graphblocks/documents.py",
+        "src/graphblocks/ingestion.py",
+        "src/graphblocks/migration.py",
+        "src/graphblocks/schema.py",
+        "src/graphblocks/budget.py",
+        "src/graphblocks/exhaustion.py"
+      ],
+      "evidence": [
+        "results/import-graph.txt"
+      ],
+      "impact": "초기화 순서 의존, 부분 초기화 오류, 독립 재사용과 테스트가 어려워진다.",
+      "recommendation": "JSON value/identity/validation primitives를 하위 leaf package로 추출하고 domain 간 의존 방향을 단방향으로 만든다.",
+      "recommended_test": "import graph SCC가 0인지 CI에서 검사한다."
+    },
+    {
+      "id": "GB-ARCH-003",
+      "severity": "P2",
+      "kind": "architecture",
+      "status": "code-confirmed",
+      "confidence": "high",
+      "title": "`graphblocks-python`이 daemon/control-plane crate `graphblocksd`에 의존하는 계층 역전",
+      "summary": "PyO3 binding이 graphblocksd의 DaemonConfig/Status/WorkerRegistry를 직접 사용한다.",
+      "locations": [
+        "crates/graphblocks-python/Cargo.toml:15-25",
+        "crates/graphblocks-python/src/lib.rs:109"
+      ],
+      "evidence": [
+        "results/rust-crate-graph.txt"
+      ],
+      "impact": "binding이 CLI/daemon 명명과 구현에 결합되고 재사용 가능한 control-plane library 경계가 사라진다.",
+      "recommendation": "`graphblocks-control-plane` library를 추출하고 graphblocksd binary와 Python binding이 그 library에 의존하게 한다.",
+      "recommended_test": "cargo dependency graph에서 binding→binary/daemon edge를 금지한다."
+    },
+    {
+      "id": "GB-ARCH-004",
+      "severity": "P2",
+      "kind": "architecture",
+      "status": "code-confirmed",
+      "confidence": "high",
+      "title": "Rust workspace가 public boundary가 굳기 전에 지나치게 세분화",
+      "summary": "13개 crate 중 graphblocks-types와 runtime-seq 등 일부는 매우 얇다.",
+      "locations": [
+        "Cargo.toml:1-22",
+        "crates/graphblocks-types/src/lib.rs",
+        "crates/graphblocks-runtime-seq/src/lib.rs"
+      ],
+      "evidence": [],
+      "impact": "버전 조정, publish 순서, feature matrix, compile graph가 복잡해지고 실제 응집도보다 package 경계가 앞선다.",
+      "recommendation": "독립 semver/consumer/compile isolation 근거가 없는 crate는 internal module로 합치고 검증된 경계만 publish한다.",
+      "recommended_test": "각 crate에 독립 소비자·semver 이유·public API budget을 문서화하는 architecture decision check를 둔다."
+    },
+    {
+      "id": "GB-ARCH-005",
+      "severity": "P2",
+      "kind": "architecture",
+      "status": "code-confirmed",
+      "confidence": "high",
+      "title": "server.handle 2,183줄에 routing/auth/parsing/service/state/error mapping이 결합",
+      "summary": "단일 함수의 branch 수가 약 265개다.",
+      "locations": [
+        "src/graphblocks/server.py:2438-4620"
+      ],
+      "evidence": [
+        "results/python-metrics.txt"
+      ],
+      "impact": "권한 검사 누락처럼 cross-cutting concern이 라우트마다 반복되고 변경 영향 범위가 크다.",
+      "recommendation": "router→middleware(auth/body/error)→typed handler→service→repository 층으로 분리하고 operation registry를 사용한다.",
+      "recommended_test": "handler당 독립 unit test와 route/auth policy completeness test를 추가한다."
+    },
+    {
+      "id": "GB-ARCH-006",
+      "severity": "P2",
+      "kind": "architecture",
+      "status": "code-confirmed",
+      "confidence": "high",
+      "title": "CLI `_main` 2,166줄과 29 subparser가 한 함수에 집중",
+      "summary": "parser 정의, decoding, domain call, formatting, exit code가 if chain으로 결합된다.",
+      "locations": [
+        "src/graphblocks/cli.py:138-2303"
+      ],
+      "evidence": [
+        "results/python-metrics.txt"
+      ],
+      "impact": "명령 하나의 변경이 전체 CLI에 영향을 주고 strict decoder를 일관되게 적용하기 어렵다.",
+      "recommendation": "`commands/<name>.py`에 `register(parser)`와 `run(args, deps)`를 두고 공통 codec/output/error layer를 사용한다.",
+      "recommended_test": "모든 command가 registry에 등록되고 help/snapshot/error code를 만족하는 메타 테스트를 둔다."
+    },
+    {
+      "id": "GB-ARCH-007",
+      "severity": "P2",
+      "kind": "architecture",
+      "status": "code-confirmed",
+      "confidence": "high",
+      "title": "Python compiler가 1,794줄 단일 phase 함수",
+      "summary": "decode/migrate/validate/normalize/catalog/typecheck/lower/hash/diagnostics가 한 함수 안에 있다.",
+      "locations": [
+        "src/graphblocks/compiler.py:920-2713"
+      ],
+      "evidence": [
+        "results/python-metrics.txt"
+      ],
+      "impact": "phase 불변식과 diagnostic ownership이 흐리고 부분 재사용·증분 컴파일이 어렵다.",
+      "recommendation": "명시적 phase IR과 pass pipeline으로 나누고 각 pass는 immutable input/output+diagnostics를 반환한다.",
+      "recommended_test": "phase golden fixture와 pass-order invariant test를 추가한다."
+    },
+    {
+      "id": "GB-ARCH-008",
+      "severity": "P2",
+      "kind": "architecture",
+      "status": "code-confirmed",
+      "confidence": "high",
+      "title": "runtime `_stdlib_registry` 1,140줄이 수동 catalog wiring",
+      "summary": "많은 built-in block 등록과 metadata가 코드에 반복된다.",
+      "locations": [
+        "src/graphblocks/runtime.py:2023-3162"
+      ],
+      "evidence": [
+        "results/python-metrics.txt"
+      ],
+      "impact": "schema/catalog/implementation metadata가 drift하고 review가 어렵다.",
+      "recommendation": "machine-readable stdlib manifest에서 registry와 docs/TCK inventory를 생성한다.",
+      "recommended_test": "생성 산출물 clean check와 manifest↔implementation completeness test를 둔다."
+    },
+    {
+      "id": "GB-ARCH-009",
+      "severity": "P2",
+      "kind": "architecture",
+      "status": "code-confirmed",
+      "confidence": "high",
+      "title": "`graphblocks-testing`이 19,903줄 단일 `__init__.py`",
+      "summary": "TCK model, runner, acceptance, reporters, helpers가 package init에 모두 들어 있다.",
+      "locations": [
+        "packages/graphblocks-testing/src/graphblocks_testing/__init__.py:1-19903"
+      ],
+      "evidence": [
+        "results/python-metrics.txt"
+      ],
+      "impact": "import 비용, ownership, merge conflict, test isolation이 나쁘고 public/internal 구분이 어렵다.",
+      "recommendation": "`models/fixtures/runners/profiles/reporters/acceptance` 모듈로 분리하고 `__init__`은 stable exports만 둔다.",
+      "recommended_test": "분리 전후 stable API/CLI snapshot과 fixture output digest가 동일한지 검사한다."
+    },
+    {
+      "id": "GB-ARCH-010",
+      "severity": "P2",
+      "kind": "architecture",
+      "status": "code-confirmed",
+      "confidence": "high",
+      "title": "durable TCK runner 한 함수가 5,234줄·약 987 branch",
+      "summary": "모든 durable case variant가 한 method에 들어 있다.",
+      "locations": [
+        "packages/graphblocks-testing/src/graphblocks_testing/__init__.py:11364-16597"
+      ],
+      "evidence": [
+        "results/python-metrics.txt"
+      ],
+      "impact": "새 case 추가 시 기존 분기와 상호작용하고 실패 위치·coverage가 불투명하다.",
+      "recommendation": "case kind→handler registry와 각 case dataclass decoder로 분리한다.",
+      "recommended_test": "fixture의 모든 kind가 정확히 하나의 handler에 매핑되고 unknown kind는 fail-closed인지 검사한다."
+    },
+    {
+      "id": "GB-ARCH-011",
+      "severity": "P2",
+      "kind": "architecture",
+      "status": "code-confirmed",
+      "confidence": "high",
+      "title": "동일 durable fixture가 Python TCK와 Rust tests에 완전 복제",
+      "summary": "두 JSON 파일이 508,280 bytes와 동일 SHA-256이다.",
+      "locations": [
+        "tck/durable/cases.json",
+        "crates/graphblocks-runtime-durable/tests/fixtures/durable-cases.json"
+      ],
+      "evidence": [],
+      "impact": "한쪽만 수정되면 parity test 자체가 오래된 fixture를 볼 수 있다.",
+      "recommendation": "하나를 canonical source로 하고 build/test 시 생성·복사하거나 Rust test가 repository TCK를 직접 읽게 한다.",
+      "recommended_test": "두 사본을 유지해야 한다면 digest manifest와 generated-file check를 강제한다."
+    },
+    {
+      "id": "GB-ARCH-012",
+      "severity": "P2",
+      "kind": "refactor",
+      "status": "code-confirmed",
+      "confidence": "high",
+      "title": "validation·freeze/thaw·canonical helper가 여러 모듈에 복제",
+      "summary": "42줄 `_freeze_metadata_value`, tool definition helper, canonical dumps, string validators 등이 반복된다.",
+      "locations": [
+        "src/graphblocks/approval.py:86-127",
+        "src/graphblocks/review.py:105-146",
+        "src/graphblocks/client.py:497-513",
+        "src/graphblocks/integrations/mcp.py:280-296",
+        "src/graphblocks/integrations/openapi.py:180-196"
+      ],
+      "evidence": [
+        "results/python-duplicates.txt"
+      ],
+      "impact": "버그 수정과 자원 제한이 일부 경로에만 적용되어 semantics가 갈라진다.",
+      "recommendation": "`_wire.py`, `_validation.py`, `_immutability.py`, `_sqlite.py`처럼 책임이 좁은 shared primitive로 통합한다.",
+      "recommended_test": "동일 corpus를 모든 entry point에 적용하는 parameterized test를 둔다."
+    },
+    {
+      "id": "GB-ARCH-013",
+      "severity": "P2",
+      "kind": "api-design",
+      "status": "code-confirmed",
+      "confidence": "high",
+      "title": "frozen dataclass가 object.__setattr__로 계속 변하는 놀라운 mutability 계약",
+      "summary": "ExecutionJournal은 frozen으로 선언하지만 append가 내부 state를 변경한다.",
+      "locations": [
+        "src/graphblocks/runtime.py:255-333",
+        "src/graphblocks/runtime.py:367-414"
+      ],
+      "evidence": [],
+      "impact": "hashability/immutability에 대한 사용자 기대를 깨고 concurrent read 안전성도 보장하지 않는다.",
+      "recommendation": "mutable journal class와 immutable JournalSnapshot을 분리한다.",
+      "recommended_test": "snapshot이 이후 append에 영향받지 않고 journal은 hashable로 오인되지 않는지 검사한다."
+    },
+    {
+      "id": "GB-ARCH-015",
+      "severity": "P2",
+      "kind": "product",
+      "status": "code-confirmed",
+      "confidence": "high",
+      "title": "integration 이름이 실제 구현 성숙도보다 production-ready로 읽힐 수 있음",
+      "summary": "문서도 많은 integration이 contract/test double이라고 인정한다.",
+      "locations": [
+        "docs/project/status.md:29-32",
+        "docs/project/first-stable-release.md:118-124",
+        "src/graphblocks/integrations/"
+      ],
+      "evidence": [],
+      "impact": "사용자가 MCP/OpenAPI/Kubernetes 등 이름만 보고 실제 네트워크·인증·retry/failure model 지원을 오해할 수 있다.",
+      "recommendation": "contract-only badge/namespace 또는 `*_contracts` 이름을 쓰고, real adapter는 별도 dependency와 integration matrix를 만족한 뒤 승격한다.",
+      "recommended_test": "package catalog에서 maturity, supported auth, SDK version, real-service test evidence가 누락되면 promotion을 막는다."
+    },
+    {
+      "id": "GB-ARCH-016",
+      "severity": "P2",
+      "kind": "naming",
+      "status": "code-confirmed",
+      "confidence": "high",
+      "title": "`graphblocksd`가 daemon이 아니라 one-shot control-plane command",
+      "summary": "README/status가 실제로 listening server가 아니라고 경고한다.",
+      "locations": [
+        "README.md:55-58",
+        "docs/project/status.md:41-46",
+        "crates/graphblocksd/"
+      ],
+      "evidence": [],
+      "impact": "운영자가 장기 실행 daemon, HTTP endpoint, supervisor semantics를 기대할 수 있다.",
+      "recommendation": "현재는 `graphblocks-control`/`graphblocks-workerctl`로 이름을 바꾸거나 다음 milestone에서 실제 daemon lifecycle을 구현한다.",
+      "recommended_test": "CLI/package metadata와 docs에서 capability가 일치하는지 snapshot test한다."
+    },
+    {
+      "id": "GB-ARCH-017",
+      "severity": "P2",
+      "kind": "naming",
+      "status": "code-confirmed",
+      "confidence": "medium",
+      "title": "`graphblocks-operator` Chart metadata가 reconciliation controller라고 주장하나 controller 구현 경계가 불명확",
+      "summary": "package에는 Helm/OCI template 성격이 강하고 실제 reconciler evidence가 보이지 않는다.",
+      "locations": [
+        "packages/graphblocks-operator/Chart.yaml",
+        "packages/graphblocks-operator/"
+      ],
+      "evidence": [],
+      "impact": "Kubernetes operator의 watch/reconcile/status/finalizer 기능을 기대하게 만든다.",
+      "recommendation": "실제 controller 전에는 `graphblocks-deployment-chart`로 부르거나 internal/preview로 명확히 표시한다.",
+      "recommended_test": "operator promotion gate에 envtest/kind reconcile, upgrade, finalizer, leader election evidence를 요구한다."
+    },
+    {
+      "id": "GB-COR-005",
+      "severity": "P2",
+      "kind": "correctness",
+      "status": "code-confirmed",
+      "confidence": "high",
+      "title": "runId/responseId 누락 시 고정 기본값을 사용해 충돌 가능",
+      "summary": "runId는 `run-000001`, responseId는 `response-000001`로 기본화된다.",
+      "locations": [
+        "src/graphblocks/server.py:4161-4170",
+        "src/graphblocks/server.py:4227-4236"
+      ],
+      "evidence": [],
+      "impact": "두 번째 기본 요청이 409가 되거나 서로 다른 호출이 같은 idempotency identity로 오인된다.",
+      "recommendation": "필수 client ID로 만들거나 서버가 UUIDv7/ULID를 생성한다. idempotency key와 resource ID를 분리한다.",
+      "recommended_test": "ID 없는 연속 요청이 각각 고유 run/response를 얻고 idempotency key가 있을 때만 재사용되는지 검사한다."
+    },
+    {
+      "id": "GB-COR-006",
+      "severity": "P2",
+      "kind": "security",
+      "status": "code-confirmed",
+      "confidence": "high",
+      "title": "admission ticket subject가 tenant를 포함하지 않고 principal_id만 사용",
+      "summary": "PrincipalRef에는 tenant가 있지만 ticket owner 구성 시 principal_id만 전달된다.",
+      "locations": [
+        "src/graphblocks/server.py:4195-4203",
+        "src/graphblocks/server.py:4396-4424",
+        "src/graphblocks/policy.py:219-240"
+      ],
+      "evidence": [],
+      "impact": "서로 다른 tenant에서 같은 principal ID를 사용할 때 ticket 충돌·재사용·감사 혼동이 가능하다.",
+      "recommendation": "subject를 `{tenant_id, principal_id}` composite identity로 만들고 ticket signature/digest에도 포함한다.",
+      "recommended_test": "tenant A/B의 동일 principal_id가 서로 ticket을 조회·승격·취소하지 못하는지 검사한다."
+    },
+    {
+      "id": "GB-COR-007",
+      "severity": "P2",
+      "kind": "performance",
+      "status": "code-confirmed",
+      "confidence": "high",
+      "title": "run ID 예약 전에 compile을 수행해 중복 요청이 비싼 작업을 함께 실행",
+      "summary": "초기 존재 확인 후 compile을 하고, 실제 admission reservation은 더 뒤에서 이루어진다.",
+      "locations": [
+        "src/graphblocks/server.py:4183-4315",
+        "src/graphblocks/server.py:4546-4580"
+      ],
+      "evidence": [],
+      "impact": "같은 ID의 동시 요청이 모두 compile 비용을 소비한 뒤 하나만 실패하는 thundering herd가 생긴다.",
+      "recommendation": "cheap validation 후 run ID/idempotency reservation을 먼저 원자적으로 잡고 compile 결과를 해당 reservation에 귀속시킨다.",
+      "recommended_test": "동일 runId 100개 동시 요청에서 compile 호출 횟수가 1인지 검사한다."
+    },
+    {
+      "id": "GB-COR-008",
+      "severity": "P2",
+      "kind": "concurrency",
+      "status": "code-confirmed",
+      "confidence": "high",
+      "title": "detach와 ack의 read-modify-write tuple 갱신이 lock 없이 수행됨",
+      "summary": "기존 tuple을 읽고 새 tuple을 써서 동시 요청이 서로의 기록을 잃을 수 있다.",
+      "locations": [
+        "src/graphblocks/server.py:6392-6408",
+        "src/graphblocks/server.py:6821-6838"
+      ],
+      "evidence": [],
+      "impact": "중복 방지와 감사 기록이 경쟁 상태에서 깨지고 일부 ack/detach가 유실된다.",
+      "recommendation": "repository transaction 또는 per-resource lock에서 uniqueness check와 append를 원자적으로 수행한다.",
+      "recommended_test": "동일/서로 다른 ack를 barrier로 동시에 제출해 기록 수와 idempotency 결과를 검증한다."
+    },
+    {
+      "id": "GB-COR-009",
+      "severity": "P2",
+      "kind": "correctness",
+      "status": "code-confirmed",
+      "confidence": "high",
+      "title": "callback redrive/dead-letter의 idempotency와 상태 전이 규칙이 비대칭",
+      "summary": "redrive는 요청마다 추가될 수 있고 dead-letter는 별도 중복 처리 방식을 사용한다.",
+      "locations": [
+        "src/graphblocks/server.py:6180-6263"
+      ],
+      "evidence": [],
+      "impact": "운영자가 재시도한 요청이 작업 중복인지 idempotent acknowledgement인지 알기 어렵다.",
+      "recommendation": "명시적 operation idempotency key와 delivery state machine을 정의하고 동일 key/same payload는 같은 결과, conflict payload는 409로 한다.",
+      "recommended_test": "같은/다른 idempotency key, terminal state, concurrent requests 조합을 table-driven test한다."
+    },
+    {
+      "id": "GB-COR-011",
+      "severity": "P2",
+      "kind": "correctness",
+      "status": "code-confirmed",
+      "confidence": "high",
+      "title": "assert를 외부 데이터 검증 후속 단계에 사용",
+      "summary": "예: ack metadata가 Mapping이라고 assert한다. Python `-O`에서는 assert가 제거된다.",
+      "locations": [
+        "src/graphblocks/server.py:6765-6769"
+      ],
+      "evidence": [],
+      "impact": "최적화 모드에서 오류 종류와 후속 동작이 바뀌거나 예상치 못한 AttributeError가 발생한다.",
+      "recommendation": "외부/저장 데이터 경계의 assert를 명시적 validation error로 교체하고 내부 불변식 assert만 남긴다.",
+      "recommended_test": "일반 모드와 `python -O`에서 malformed persisted event의 결과가 동일한지 검사한다."
+    },
+    {
+      "id": "GB-COR-012",
+      "severity": "P2",
+      "kind": "durability",
+      "status": "code-confirmed",
+      "confidence": "high",
+      "title": "SQLite run store migration이 schema version 없이 open 시 ad hoc ALTER TABLE 실행",
+      "summary": "컬럼 존재를 확인해 ALTER TABLE을 수행하지만 명시적 migration version과 전용 트랜잭션/rollback 계획이 없다.",
+      "locations": [
+        "src/graphblocks/run_store.py:586-630"
+      ],
+      "evidence": [],
+      "impact": "중간 실패·동시 open·향후 복잡한 migration에서 부분 적용 상태가 생기기 쉽다.",
+      "recommendation": "PRAGMA user_version 또는 migrations table과 순차적 transactional migration runner를 도입한다.",
+      "recommended_test": "각 이전 schema fixture에서 업그레이드, 중간 crash 후 재실행, 동시 open을 검증한다."
+    },
+    {
+      "id": "GB-DOC-006",
+      "severity": "P2",
+      "kind": "documentation",
+      "status": "code-confirmed",
+      "confidence": "high",
+      "title": "stable/preview/import 가능성의 차이가 Python 사용 관례와 충돌",
+      "summary": "문서는 import 가능하다고 stable이 아니라고 설명하지만 root에 모두 재수출된다.",
+      "locations": [
+        "docs/project/first-stable-release.md:28-36",
+        "src/graphblocks/__init__.py"
+      ],
+      "evidence": [],
+      "impact": "문서 경고만으로 accidental dependency를 막기 어렵다.",
+      "recommendation": "패키지/namespace/API 형태 자체가 tier를 표현하도록 바꾸고 preview warning을 선택적으로 적용한다.",
+      "recommended_test": "stable consumer fixture가 preview 없이 동작하고 root에서 preview가 사라졌는지 검사한다."
+    },
+    {
+      "id": "GB-INP-006",
+      "severity": "P2",
+      "kind": "security",
+      "status": "code-confirmed",
+      "confidence": "high",
+      "title": "문서 loader가 전체 YAML stream을 리스트화한 뒤 개별 제한을 검사",
+      "summary": "다중 문서 수·파일 byte·누적 node 제한 없이 모두 로드한다.",
+      "locations": [
+        "src/graphblocks/loader.py:138-171"
+      ],
+      "evidence": [],
+      "impact": "작은 문서 수만 개 또는 대형 파일로 개별 depth/node 제한을 우회해 총 메모리를 소진할 수 있다.",
+      "recommendation": "streaming iterator, max_documents, max_input_bytes, cumulative_nodes를 도입하고 CLI/API 모두 같은 InputBudget을 사용한다.",
+      "recommended_test": "수만 개 빈 YAML 문서와 다수 소형 graph를 넣어 누적 상한에서 중단되는지 검사한다."
+    },
+    {
+      "id": "GB-INP-007",
+      "severity": "P2",
+      "kind": "security",
+      "status": "code-confirmed",
+      "confidence": "high",
+      "title": "디렉터리 로딩에 파일 수·총 byte 예산이 없음",
+      "summary": "CLI가 디렉터리의 문서를 열거해 모두 처리하지만 전체 파일 수와 총 크기 정책이 없다.",
+      "locations": [
+        "src/graphblocks/cli.py:120-126"
+      ],
+      "evidence": [],
+      "impact": "공격자가 많은 소형 파일을 배치해 inode/CPU/메모리 사용을 증폭할 수 있다.",
+      "recommendation": "max_files, max_total_bytes, symlink policy, root containment을 공통 디렉터리 loader 계약으로 만든다.",
+      "recommended_test": "파일 폭탄, symlink loop/escape, mixed extension, total bytes 초과를 검사한다."
+    },
+    {
+      "id": "GB-INP-009",
+      "severity": "P2",
+      "kind": "performance",
+      "status": "code-confirmed",
+      "confidence": "high",
+      "title": "MCP validator를 매 호출마다 새로 생성",
+      "summary": "동일 schema에도 `Draft202012Validator(schema)`를 반복 구성한다.",
+      "locations": [
+        "src/graphblocks/integrations/mcp.py:105-130"
+      ],
+      "evidence": [],
+      "impact": "빈번한 tool call에서 schema 검증 setup 비용과 allocation이 누적된다.",
+      "recommendation": "검증된 canonical schema digest를 key로 bounded LRU validator cache를 사용한다.",
+      "recommended_test": "동일 schema 반복 10k회 benchmark와 cache eviction/collision 테스트를 추가한다."
+    },
+    {
+      "id": "GB-INP-010",
+      "severity": "P2",
+      "kind": "correctness",
+      "status": "code-confirmed",
+      "confidence": "high",
+      "title": "CLI 전반의 `str/int/dict` coercion이 잘못된 문서를 의미 변환",
+      "summary": "정책 외에도 외부 mapping을 Python 생성자로 강제 변환하는 패턴이 있어 bool-as-int, null-to-string, mapping-to-list 문제가 생길 수 있다.",
+      "locations": [
+        "src/graphblocks/cli.py:138-2322"
+      ],
+      "evidence": [],
+      "impact": "입력 오류가 명시적 실패 대신 다른 유효 값으로 변환되어 보안·호환성 계약을 깨뜨린다.",
+      "recommendation": "외부 포맷마다 generated/handwritten typed codec를 두고 exact primitive type과 unknown field를 검사한다.",
+      "recommended_test": "모든 CLI subcommand fixture에 type-confusion negative cases를 자동 생성한다."
+    },
+    {
+      "id": "GB-PERF-004",
+      "severity": "P2",
+      "kind": "performance",
+      "status": "code-confirmed",
+      "confidence": "high",
+      "title": "server의 tuple append 패턴이 여러 상태 컬렉션에서 반복되어 누적 복사",
+      "summary": "callbacks, rejections, controls, acks, detachments 등에 immutable tuple rebuild를 사용한다.",
+      "locations": [
+        "src/graphblocks/server.py:2500-2504",
+        "src/graphblocks/server.py:6392-6408",
+        "src/graphblocks/server.py:6821-6838"
+      ],
+      "evidence": [],
+      "impact": "각 resource의 history가 길어질수록 append가 선형이 되고 전체는 제곱형이 된다.",
+      "recommendation": "append-friendly store/list와 immutable read snapshot을 분리한다.",
+      "recommended_test": "history length별 append latency 및 concurrent mutation benchmark를 추가한다."
+    },
+    {
+      "id": "GB-PERF-005",
+      "severity": "P2",
+      "kind": "performance",
+      "status": "code-confirmed",
+      "confidence": "high",
+      "title": "top-level import가 지나치게 eager하고 무거움",
+      "summary": "`import graphblocks`와 심지어 `import graphblocks.canonical`이 root init을 통해 388개 module, 약 60MB RSS, 1.5초를 사용했다.",
+      "locations": [
+        "src/graphblocks/__init__.py:1-1257"
+      ],
+      "evidence": [
+        "results/import-benchmark-clean.txt"
+      ],
+      "impact": "CLI startup, server cold start, Lambda/function 환경, 단순 schema/canonical 사용이 불필요하게 느리다.",
+      "recommendation": "root는 stable facade만 노출하고 PEP 562 lazy export 또는 명시적 subpackage import를 사용한다. 내부 모듈은 root import를 금지한다.",
+      "recommended_test": "clean interpreter import time/RSS/module count budget을 CI에 둔다."
+    },
+    {
+      "id": "GB-PERF-006",
+      "severity": "P2",
+      "kind": "performance",
+      "status": "code-confirmed",
+      "confidence": "high",
+      "title": "`/runs`가 모든 run을 정렬·상태 계산해 한 번에 반환",
+      "summary": "전역 맵 전체를 sorted하고 payload를 생성한다.",
+      "locations": [
+        "src/graphblocks/server.py:2529-2543"
+      ],
+      "evidence": [],
+      "impact": "run 수가 늘면 O(n log n) CPU와 큰 응답을 매 호출마다 사용한다.",
+      "recommendation": "tenant-scoped cursor pagination, indexed order key, limit 상한, filters를 추가한다.",
+      "recommended_test": "10/10k/1M run에서 페이지 latency와 응답 상한을 검증한다."
+    },
+    {
+      "id": "GB-PERF-007",
+      "severity": "P2",
+      "kind": "performance",
+      "status": "code-confirmed",
+      "confidence": "medium",
+      "title": "MCP discovery schema property가 반복 JSON parse할 가능성",
+      "summary": "discovery 객체가 schema projection을 요청할 때 canonical/JSON 복원을 반복하는 경로가 있다.",
+      "locations": [
+        "src/graphblocks/integrations/mcp.py"
+      ],
+      "evidence": [],
+      "impact": "도구 수가 많고 property를 반복 참조할 때 불필요한 parse 비용이 생긴다.",
+      "recommendation": "생성 시 immutable parsed schema를 보관하거나 cached_property를 사용한다.",
+      "recommended_test": "동일 discovery 객체 반복 접근 benchmark와 immutability test를 둔다."
+    },
+    {
+      "id": "GB-QA-001",
+      "severity": "P2",
+      "kind": "quality",
+      "status": "code-confirmed",
+      "confidence": "high",
+      "title": "mypy strict 범위가 production 3개 파일 수준으로 매우 좁음",
+      "summary": "root config의 files는 typed.py, stdlib_blocks.py, typing fixture에 한정된다.",
+      "locations": [
+        "pyproject.toml:62-73"
+      ],
+      "evidence": [],
+      "impact": "서버·정책·compiler 같은 위험 영역의 type 오류가 CI에서 걸리지 않는다.",
+      "recommendation": "패키지별 strict rollout을 하고 새/수정 파일부터 `disallow_untyped_defs`와 no-new-debt를 적용한다.",
+      "recommended_test": "strict module count와 ignore count를 compatibility snapshot처럼 관리한다."
+    },
+    {
+      "id": "GB-QA-002",
+      "severity": "P2",
+      "kind": "quality",
+      "status": "code-confirmed",
+      "confidence": "high",
+      "title": "176개 `# type: ignore`가 존재",
+      "summary": "정적 조사에서 production Python에 광범위한 ignore가 확인됐다.",
+      "locations": [
+        "src/graphblocks/"
+      ],
+      "evidence": [
+        "results/python-metrics.txt"
+      ],
+      "impact": "실제 타입 불일치와 의도적 bridge가 섞여 refactor 안전성이 낮다.",
+      "recommendation": "ignore에 정확한 error code와 이유를 요구하고 no-new-ignore budget을 둔다.",
+      "recommended_test": "ignore count와 코드 없는 ignore를 CI에서 검사한다."
+    },
+    {
+      "id": "GB-QA-003",
+      "severity": "P2",
+      "kind": "quality",
+      "status": "code-confirmed",
+      "confidence": "high",
+      "title": "87개 broad `except Exception` 경로",
+      "summary": "경계 처리에 필요한 경우도 있지만 오류 분류·취소 전파·관측성 손실 가능성이 있다.",
+      "locations": [
+        "src/graphblocks/"
+      ],
+      "evidence": [
+        "results/python-metrics.txt"
+      ],
+      "impact": "CancelledError/SystemExit 계열이나 programmer bug가 정상 domain error로 흡수될 수 있다.",
+      "recommendation": "각 catch를 boundary policy로 분류하고 예상 exception만 잡으며, 취소/치명 오류는 재전파한다.",
+      "recommended_test": "broad catch inventory와 허용 주석을 CI에서 관리한다."
+    },
+    {
+      "id": "GB-QA-004",
+      "severity": "P2",
+      "kind": "quality",
+      "status": "code-confirmed",
+      "confidence": "high",
+      "title": "외부 경계 포함 92개 assert 사용",
+      "summary": "assert가 단순 테스트가 아니라 production invariant에 쓰인다.",
+      "locations": [
+        "src/graphblocks/"
+      ],
+      "evidence": [
+        "results/python-metrics.txt"
+      ],
+      "impact": "`-O`에서 동작이 달라질 수 있다.",
+      "recommendation": "외부/영속 데이터 경계는 explicit exception, 내부 unreachable invariant만 assert로 제한한다.",
+      "recommended_test": "optimized-mode test shard를 추가한다."
+    },
+    {
+      "id": "GB-QA-005",
+      "severity": "P2",
+      "kind": "quality",
+      "status": "code-confirmed",
+      "confidence": "high",
+      "title": "Ruff/Black 같은 Python lint/format gate가 보이지 않음",
+      "summary": "CI는 mypy/pytest/compatibility를 실행하지만 lint/format 단계가 없다.",
+      "locations": [
+        ".github/workflows/ci.yml",
+        "pyproject.toml"
+      ],
+      "evidence": [],
+      "impact": "미사용 import, 복잡도, dangerous patterns, 일관된 formatting을 자동으로 막지 못한다.",
+      "recommendation": "Ruff format/check를 도입하고 보안/복잡도 규칙은 점진적 baseline으로 관리한다.",
+      "recommended_test": "CI required-gates에 lint job을 포함한다."
+    },
+    {
+      "id": "GB-QA-006",
+      "severity": "P2",
+      "kind": "quality",
+      "status": "code-confirmed",
+      "confidence": "high",
+      "title": "coverage threshold가 없음",
+      "summary": "테스트 수는 많지만 line/branch coverage 목표와 stable-scope delta gate가 보이지 않는다.",
+      "locations": [
+        ".github/workflows/ci.yml",
+        "pyproject.toml"
+      ],
+      "evidence": [],
+      "impact": "대형 monolith의 미실행 branch와 보안 경로 누락을 테스트 개수만으로 알 수 없다.",
+      "recommendation": "전체보다 stable/security-critical module branch coverage와 changed-lines coverage를 먼저 도입한다.",
+      "recommended_test": "server authz/policy/canonical branch coverage 최소치를 required gate로 둔다."
+    },
+    {
+      "id": "GB-QA-007",
+      "severity": "P2",
+      "kind": "security",
+      "status": "code-confirmed",
+      "confidence": "high",
+      "title": "보이는 CI에 dependency vulnerability scan·CodeQL/SAST gate가 없음",
+      "summary": "세 workflow는 build/test/release signing 중심이다.",
+      "locations": [
+        ".github/workflows/ci.yml",
+        ".github/workflows/promotion-reports.yml",
+        ".github/workflows/cut-release-candidate.yml"
+      ],
+      "evidence": [],
+      "impact": "jsonschema/PyYAML/network/Rust dependencies와 보안 민감 코드의 알려진 결함을 자동 탐지하지 못한다.",
+      "recommendation": "pip-audit/OSV-Scanner, cargo-audit/cargo-deny, CodeQL 또는 Semgrep을 tiered gate로 추가한다.",
+      "recommended_test": "허용 exception은 만료일과 근거를 가진 machine-readable allowlist로 관리한다."
+    },
+    {
+      "id": "GB-QA-009",
+      "severity": "P2",
+      "kind": "concurrency",
+      "status": "code-confirmed",
+      "confidence": "high",
+      "title": "Rust concurrency model에 Loom/Miri/sanitizer 계열 검증이 보이지 않음",
+      "summary": "unsafe는 금지되어 있지만 lease/fence/checkpoint/queue 상태 기계는 경쟁 조건 검증이 중요하다.",
+      "locations": [
+        "crates/graphblocks-runtime-core/",
+        "crates/graphblocks-runtime-durable/",
+        ".github/workflows/ci.yml"
+      ],
+      "evidence": [],
+      "impact": "일반 단위 테스트에서 희귀 interleaving과 data race성 논리 오류를 놓칠 수 있다.",
+      "recommendation": "핵심 state machine은 Loom/model test, 정기 Miri, thread sanitizer 가능한 target을 추가한다.",
+      "recommended_test": "claim/renew/complete/takeover interleaving을 축소 모델로 모두 탐색한다."
+    },
+    {
+      "id": "GB-QA-010",
+      "severity": "P2",
+      "kind": "platform",
+      "status": "code-confirmed",
+      "confidence": "high",
+      "title": "지원 CI matrix에 macOS가 없음",
+      "summary": "Python matrix는 Ubuntu/Windows만 보인다.",
+      "locations": [
+        ".github/workflows/ci.yml:13-22"
+      ],
+      "evidence": [],
+      "impact": "path, dylib, keychain/TLS, filesystem semantics, native wheel 문제를 놓칠 수 있다.",
+      "recommendation": "macOS Python 3.11/3.12와 native wheel smoke를 최소 한 조합부터 추가한다.",
+      "recommended_test": "platform-specific schema/package/import/example smoke를 required 또는 nightly로 둔다."
+    },
+    {
+      "id": "GB-QA-012",
+      "severity": "P2",
+      "kind": "ci",
+      "status": "code-confirmed",
+      "confidence": "high",
+      "title": "push/PR가 동일한 무거운 전체 workflow만 사용",
+      "summary": "PR에서도 지원 OS×Python, installed artifact, examples, Rust 전체가 실행된다.",
+      "locations": [
+        ".github/workflows/ci.yml:1-220"
+      ],
+      "evidence": [],
+      "impact": "빠른 피드백이 늦어지고 9분 안팎의 전체 run 전에 단순 lint/type 실패를 알기 어렵다.",
+      "recommendation": "2~3분 quick gate(lint, unit subset, schema, compatibility)와 full required gate를 병렬 분리한다.",
+      "recommended_test": "path filters가 release-critical 검증을 우회하지 않도록 generated dependency map을 사용한다."
+    },
+    {
+      "id": "GB-QA-013",
+      "severity": "P2",
+      "kind": "reproducibility",
+      "status": "code-confirmed",
+      "confidence": "high",
+      "title": "로컬 Python 개발 dependency lock/constraints가 없음",
+      "summary": "CI는 도구 버전을 명시하지만 editable install의 test dependency resolution은 범위 지정이다.",
+      "locations": [
+        "pyproject.toml:35-43",
+        ".github/workflows/ci.yml:42-47"
+      ],
+      "evidence": [],
+      "impact": "개발자 환경과 CI의 transitive dependency가 달라 재현성이 떨어진다.",
+      "recommendation": "uv/pip-tools constraints를 platform-independent dev lock으로 생성하고 CI도 그 lock을 사용한다.",
+      "recommended_test": "lock regeneration diff와 clean install smoke를 자동화한다."
+    },
+    {
+      "id": "GB-QA-014",
+      "severity": "P2",
+      "kind": "release",
+      "status": "code-confirmed",
+      "confidence": "high",
+      "title": "Python 1.0rc1, native/Rust 0.1, reserved 0.0.1의 version train 의미가 불명확",
+      "summary": "서로 다른 artifact가 같은 protocol/schema를 어느 버전까지 지원하는지 package version만으로 알 수 없다.",
+      "locations": [
+        "pyproject.toml:5-10",
+        "packages/graphblocks-runtime/pyproject.toml:5-10",
+        "crates/*/Cargo.toml",
+        "packages/graphblocks-npm/package.json"
+      ],
+      "evidence": [],
+      "impact": "호환 가능한 조합 선택과 bug report 재현이 어렵다.",
+      "recommendation": "package semver와 독립된 wire/compiler/runtime protocol version 및 capability matrix를 publish한다.",
+      "recommended_test": "지원 조합 이외 install/runtime handshake가 명시적으로 실패하는지 검사한다."
+    },
+    {
+      "id": "GB-QA-015",
+      "severity": "P2",
+      "kind": "quality",
+      "status": "code-confirmed",
+      "confidence": "high",
+      "title": "현재 stable typing checker는 49 symbol만 관리하며 broad preview API debt는 별도 통제되지 않음",
+      "summary": "검사는 성공하지만 root export 605와 차이가 매우 크다.",
+      "locations": [
+        "tools/check_stable_typing.py",
+        "compatibility/stable-python-api.json",
+        "src/graphblocks/__init__.py"
+      ],
+      "evidence": [
+        "results/check-stable-typing.log"
+      ],
+      "impact": "preview 코드의 타입 품질이 악화되어도 stable gate가 계속 green일 수 있다.",
+      "recommendation": "stable gate는 유지하되 package별 preview debt budget과 no-regression count를 추가한다.",
+      "recommended_test": "module별 strict/debt count artifact를 CI에 저장한다."
+    },
+    {
+      "id": "GB-QA-016",
+      "severity": "P2",
+      "kind": "testing",
+      "status": "code-confirmed",
+      "confidence": "high",
+      "title": "멀티 principal·멀티 tenant authorization matrix 테스트가 핵심 run API에 없음",
+      "summary": "callback 일부는 owner test가 있으나 list/status/attach/control의 교차 tenant 케이스가 누락되어 실제 BOLA가 남았다.",
+      "locations": [
+        "tests/test_server_core.py",
+        "tests/test_server_callback_webhook_delivery.py"
+      ],
+      "evidence": [],
+      "impact": "기능 테스트 수가 많아도 보안 invariant를 축으로 한 조합 coverage가 빠진다.",
+      "recommendation": "두 principal×두 tenant×owner/non-owner×operation×resource state matrix를 생성하는 공통 test harness를 만든다.",
+      "recommended_test": "새 auth_required route가 matrix에 자동 포함되지 않으면 CI가 실패하게 한다."
+    },
+    {
+      "id": "GB-QA-017",
+      "severity": "P2",
+      "kind": "testing",
+      "status": "code-confirmed",
+      "confidence": "high",
+      "title": "재시작·crash·다중 프로세스 accepted-run 통합 테스트가 production claim에 비해 부족",
+      "summary": "문서도 이 부분을 남은 gate로 분류한다.",
+      "locations": [
+        "docs/project/roadmap.md:14-18",
+        "docs/project/first-stable-release.md:77-80",
+        "tests/"
+      ],
+      "evidence": [],
+      "impact": "메모리 reference path는 잘 테스트되어도 실제 durable correctness를 입증하지 못한다.",
+      "recommendation": "subprocess 기반 deterministic failpoint harness와 SQLite/Postgres deployment-like tests를 만든다.",
+      "recommended_test": "append/checkpoint/outbox/lease 각 atomic boundary 전후 kill -9 후 복구를 검사한다."
+    },
+    {
+      "id": "GB-RUST-002",
+      "severity": "P2",
+      "kind": "quality",
+      "status": "code-confirmed",
+      "confidence": "high",
+      "title": "workspace Clippy가 `expect_used`를 금지하지 않음",
+      "summary": "panic과 unwrap은 deny지만 expect는 허용되어 공개 API panic이 CI를 통과한다.",
+      "locations": [
+        "Cargo.toml:24-29"
+      ],
+      "evidence": [],
+      "impact": "엄격한 panic 정책의 의도와 실제 lint coverage가 어긋난다.",
+      "recommendation": "non-test target에 `expect_used = \"deny\"`, `indexing_slicing` 등 선별 lint를 추가하고 테스트 fixture는 allow 범위를 좁힌다.",
+      "recommended_test": "현재 expect 사용 목록을 baseline으로 만들고 production 증가를 금지한다."
+    },
+    {
+      "id": "GB-SEC-010",
+      "severity": "P2",
+      "kind": "security",
+      "status": "code-confirmed",
+      "confidence": "high",
+      "title": "오류 응답에 내부 예외 문자열이 다수 노출됨",
+      "summary": "validation/compile/store 예외의 `str(error)`를 400/403/409 응답에 직접 포함하는 경로가 많다.",
+      "locations": [
+        "src/graphblocks/server.py:2455-2461",
+        "src/graphblocks/server.py:2535-2541",
+        "src/graphblocks/server.py:4606-4612"
+      ],
+      "evidence": [],
+      "impact": "내부 스키마·경로·provider 오류·구현 세부가 외부에 노출되고 API 오류 계약이 불안정해진다.",
+      "recommendation": "공개 `errorCode`와 안전한 메시지, correlation ID를 반환하고 상세 exception은 서버 로그/감사에만 보관한다.",
+      "recommended_test": "민감 문자열을 포함한 예외를 주입해 응답에 유출되지 않고 로그에는 correlation으로 연결되는지 검사한다."
+    },
+    {
+      "id": "GB-DOC-001",
+      "severity": "P2",
+      "kind": "documentation",
+      "status": "documentation-drift",
+      "confidence": "high",
+      "title": "테스트 개수 문서가 2,700+, 2,625, 실제 collection 3,989로 서로 다름",
+      "summary": "status와 remaining-work의 수치가 현재 suite와 맞지 않는다.",
+      "locations": [
+        "docs/project/status.md:21-23",
+        "docs/project/remaining-work.md:13",
+        "results/pytest-py313.log"
+      ],
+      "evidence": [],
+      "impact": "프로젝트 상태 문서 신뢰도가 낮아지고 수동 갱신 부채가 반복된다.",
+      "recommendation": "테스트 수를 서술형 고정 숫자 대신 CI-generated status artifact로 삽입하거나 범주별 count를 자동 생성한다.",
+      "recommended_test": "docs generated facts check에서 pytest collect count와 일치하는지 검사한다."
+    },
+    {
+      "id": "GB-DOC-002",
+      "severity": "P2",
+      "kind": "documentation",
+      "status": "documentation-drift",
+      "confidence": "high",
+      "title": "roadmap/remaining-work가 Graph와 PluginManifest의 v1 승격을 미완료로 적지만 v1 schema가 이미 존재",
+      "summary": "현재 schema와 first-stable 문서는 stable candidate로 다루는데 roadmap 항목은 과거 상태다.",
+      "locations": [
+        "docs/project/roadmap.md:19-20",
+        "docs/project/remaining-work.md:28-30",
+        "schemas/graphblocks.ai/v1/graph.schema.json",
+        "schemas/graphblocks.ai/v1/plugin-manifest.schema.json"
+      ],
+      "evidence": [],
+      "impact": "무엇이 실제 미완료인지 독자가 알기 어렵다.",
+      "recommendation": "항목을 “v1 schema 생성”이 아니라 independent review/compatibility freeze/promotion evidence 같은 실제 남은 gate로 바꾼다.",
+      "recommended_test": "roadmap machine-readable gate 상태와 파일 존재/compatibility evidence를 연결한다."
+    },
+    {
+      "id": "GB-DOC-003",
+      "severity": "P2",
+      "kind": "documentation",
+      "status": "documentation-drift",
+      "confidence": "high",
+      "title": "RISK_REGISTER의 accumulating window 설명이 현 구현/TCK와 오래된 상태일 가능성",
+      "summary": "risk 문서는 accumulating이 효과를 내지 못한다고 적지만 current Python/Rust/TCK에는 accumulating semantics가 구현된 흔적이 있다.",
+      "locations": [
+        "RISK_REGISTER.md:186-204",
+        "src/graphblocks/durable.py",
+        "crates/graphblocks-runtime-durable/",
+        "tck/durable/cases.json"
+      ],
+      "evidence": [],
+      "impact": "이미 해결된 위험이 open으로 남아 우선순위와 외부 평가를 왜곡한다.",
+      "recommendation": "risk 항목마다 status, owner, evidence digest, resolved version을 두고 TCK case와 링크한다.",
+      "recommended_test": "resolved risk의 evidence file이 없어지거나 digest가 바뀌면 CI에서 재개방한다."
+    },
+    {
+      "id": "GB-DOC-005",
+      "severity": "P2",
+      "kind": "documentation",
+      "status": "documentation-drift",
+      "confidence": "high",
+      "title": "성숙도 표기가 Alpha/Beta/pre-1.0 RC로 혼재",
+      "summary": "SECURITY는 alpha, Python classifier는 Beta, status는 pre-1.0 release-candidate다.",
+      "locations": [
+        "SECURITY.md:5",
+        "pyproject.toml:17",
+        "docs/project/status.md:1-4"
+      ],
+      "evidence": [],
+      "impact": "보안 지원 기대와 API 안정성 해석이 달라진다.",
+      "recommendation": "artifact/profile별 maturity를 하나의 matrix에서 생성하고 SECURITY의 지원 정책도 tier별로 명시한다.",
+      "recommended_test": "metadata/docs maturity consistency check를 추가한다."
+    },
+    {
+      "id": "GB-ARCH-014",
+      "severity": "P2",
+      "kind": "architecture",
+      "status": "design-risk",
+      "confidence": "high",
+      "title": "프로젝트 범위가 core contract와 production platform 전체를 동시에 포괄",
+      "summary": "schema/compiler/runtime/server/worker/deployment/RAG/voice/telemetry/packages/operator/integrations가 한 release train에 있다.",
+      "locations": [
+        "README.md:8-33",
+        "src/graphblocks/",
+        "crates/",
+        "packages/",
+        "deployment/"
+      ],
+      "evidence": [],
+      "impact": "핵심 차별점보다 breadth 유지보수에 자원이 소모되고 1.0의 의미가 모호해진다.",
+      "recommendation": "core는 schema/compiler/canonical/protocol/conformance로 고정하고, app/governance/durable/voice/deployment/observability를 명시적 extension track으로 분리한다.",
+      "recommended_test": "각 profile의 소유 package, authority, compatibility tier, promotion gate를 machine-readable matrix로 관리한다."
+    },
+    {
+      "id": "GB-ARCH-019",
+      "severity": "P2",
+      "kind": "packaging",
+      "status": "design-risk",
+      "confidence": "high",
+      "title": "하나의 Python wheel에 광범위한 preview 모듈이 함께 노출",
+      "summary": "base graphblocks가 server, RAG, voice, deployment, integrations 계약을 모두 포함한다.",
+      "locations": [
+        "README.md:35-48",
+        "pyproject.toml:1-61",
+        "src/graphblocks/"
+      ],
+      "evidence": [],
+      "impact": "import/API surface와 release blast radius가 커지고 stable/preview 경계가 package layout에서 보이지 않는다.",
+      "recommendation": "배포 artifact를 무조건 쪼갤 필요는 없지만 namespace와 lazy import, extras, explicit preview tier로 경계를 강하게 만든다.",
+      "recommended_test": "base install의 import/dependency/API budget을 별도로 검증한다."
+    },
+    {
+      "id": "GB-COR-010",
+      "severity": "P2",
+      "kind": "lifecycle",
+      "status": "design-risk",
+      "confidence": "high",
+      "title": "GraphBlocksServerApp에 명시적 shutdown/drain lifecycle이 없음",
+      "summary": "외부 executor와 background accepted run을 받지만 app-owned close/drain/cancel API가 보이지 않는다.",
+      "locations": [
+        "src/graphblocks/server.py:2297-2415"
+      ],
+      "evidence": [],
+      "impact": "배포 종료 시 새 요청 차단, 진행 중 실행 drain, checkpoint, executor 종료 순서가 호출자마다 달라진다.",
+      "recommendation": "`start/close/drain` lifecycle과 context manager를 제공하고 ownership(외부 executor를 닫는지)을 명시한다.",
+      "recommended_test": "graceful shutdown, timeout forced cancellation, double close, shutdown 중 submit을 검사한다."
+    },
+    {
+      "id": "GB-COR-013",
+      "severity": "P2",
+      "kind": "time",
+      "status": "design-risk",
+      "confidence": "high",
+      "title": "deadline/lease와 감사 timestamp에서 wall clock과 monotonic clock 경계가 불명확",
+      "summary": "기본 clock이 epoch milliseconds이며 프로세스 내 timeout과 영속 lease 계산의 clock semantics가 모듈마다 다를 수 있다.",
+      "locations": [
+        "src/graphblocks/server.py:2308-2312",
+        "src/graphblocks/leases.py",
+        "src/graphblocks/duration.py"
+      ],
+      "evidence": [],
+      "impact": "시계 역행·NTP 조정·서버 간 skew에서 lease와 timeout 판단이 흔들릴 수 있다.",
+      "recommendation": "프로세스 deadline은 monotonic, 영속 lease는 명시적 authority wall clock+skew 정책, 감사에는 wall time을 사용하도록 타입을 분리한다.",
+      "recommended_test": "clock rollback/forward/skew injection으로 lease takeover와 timeout 불변식을 검증한다."
+    },
+    {
+      "id": "GB-COR-014",
+      "severity": "P2",
+      "kind": "correctness",
+      "status": "design-risk",
+      "confidence": "high",
+      "title": "JSON-like MappingProxy/tuple와 타입 annotation의 의미가 일부 불일치",
+      "summary": "frozen dataclass 필드는 dict로 annotation되지만 post-init에서 MappingProxyType으로 교체되는 패턴이 있다.",
+      "locations": [
+        "src/graphblocks/server.py:937-953"
+      ],
+      "evidence": [],
+      "impact": "정적 타입 사용자와 런타임 mutability 계약이 다르고 serializer/extension 코드가 혼동할 수 있다.",
+      "recommendation": "annotation을 `Mapping[str, str]`로 바꾸고 immutable value 타입을 공통화한다.",
+      "recommended_test": "mypy/pyright public API fixture에서 mutation이 타입 단계에서 거부되는지 검사한다."
+    },
+    {
+      "id": "GB-COR-015",
+      "severity": "P2",
+      "kind": "correctness",
+      "status": "design-risk",
+      "confidence": "high",
+      "title": "run/event 응답이 retained event 전체를 한 번에 반환",
+      "summary": "sync invoke와 attach payload에 전체 events/replayed_events가 들어간다.",
+      "locations": [
+        "src/graphblocks/server.py:4593-4604",
+        "src/graphblocks/server.py:6265-6352"
+      ],
+      "evidence": [],
+      "impact": "장기 실행에서 응답 크기·serialization 시간·메모리가 무한히 증가하고 client cap과 충돌한다.",
+      "recommendation": "cursor pagination, maxEvents/maxBytes, summary-only 기본 응답, event stream 사용을 도입한다.",
+      "recommended_test": "수십만 event run에서 response cap과 cursor continuation이 안정적인지 검사한다."
+    },
+    {
+      "id": "GB-INP-008",
+      "severity": "P2",
+      "kind": "architecture",
+      "status": "design-risk",
+      "confidence": "high",
+      "title": "JSON Schema 실행 자원 정책이 integration별로 분산됨",
+      "summary": "MCP, plugin configSchema 등 외부/준신뢰 schema를 평가하지만 bytes/nodes/depth/regex/$ref 정책이 공통화되어 있지 않다.",
+      "locations": [
+        "src/graphblocks/integrations/mcp.py",
+        "src/graphblocks/plugins.py:1143-1530"
+      ],
+      "evidence": [],
+      "impact": "한 경로를 고쳐도 다른 schema entry point에서 같은 ReDoS/메모리 문제가 재발한다.",
+      "recommendation": "`SchemaExecutionPolicy`와 preflight analyzer를 core에 두고 모든 validator 생성 경로를 통과시킨다.",
+      "recommended_test": "entry point 목록을 메타 테스트로 열거하고 모두 동일 악성 schema corpus를 거부하는지 검사한다."
+    },
+    {
+      "id": "GB-PERF-008",
+      "severity": "P2",
+      "kind": "performance",
+      "status": "design-risk",
+      "confidence": "high",
+      "title": "성능 회귀 예산이 CI에 없음",
+      "summary": "테스트는 매우 많지만 import, canonical scaling, journal append, compile, server memory에 대한 threshold gate가 보이지 않는다.",
+      "locations": [
+        ".github/workflows/ci.yml",
+        "tests/"
+      ],
+      "evidence": [],
+      "impact": "기능 테스트가 통과해도 O(n²) 또는 cold-start 회귀가 누적될 수 있다.",
+      "recommendation": "asv/pytest-benchmark 또는 자체 deterministic microbench를 별도 non-flaky gate로 두고 추세와 hard cap을 관리한다.",
+      "recommended_test": "이번 감사의 네 benchmark를 seed fixture로 추가한다."
+    },
+    {
+      "id": "GB-SEC-011",
+      "severity": "P2",
+      "kind": "security",
+      "status": "design-risk",
+      "confidence": "high",
+      "title": "식별자·reason·timestamp 문자열의 길이 및 제어문자 정책이 부족",
+      "summary": "대부분 non-empty/trim만 검사하며 길이, 제어문자, 정규화, 안정 ID 문자 집합 제한이 없다.",
+      "locations": [
+        "src/graphblocks/server.py:124-137",
+        "src/graphblocks/server.py:6361-6383"
+      ],
+      "evidence": [],
+      "impact": "메모리·로그 증폭, 관측성 포맷 오염, backend별 비교/정규화 불일치가 발생할 수 있다.",
+      "recommendation": "ID/reason/free text를 다른 타입으로 나누고 ID에는 길이·ASCII/Unicode 정규화 정책, reason에는 byte cap과 control-char 거부를 둔다.",
+      "recommended_test": "수 MB ID, NUL/CRLF/방향제어 문자, 서로 다른 Unicode 정규형을 입력하는 경계 테스트를 추가한다."
+    },
+    {
+      "id": "GB-SEC-012",
+      "severity": "P2",
+      "kind": "security",
+      "status": "design-risk",
+      "confidence": "high",
+      "title": "서버 어댑터 계약에 헤더·연결·동시성·rate limit 경계가 명시되지 않음",
+      "summary": "framework-neutral ServerRequest는 이미 body bytes를 보유하며, 어댑터가 어느 시점에 요청을 차단해야 하는지 계약이 없다.",
+      "locations": [
+        "src/graphblocks/server.py:963-990",
+        "docs/concepts/architecture.md"
+      ],
+      "evidence": [],
+      "impact": "실제 HTTP 어댑터가 전체 요청을 메모리에 읽은 뒤 앱을 호출하거나 무제한 동시 요청을 허용할 수 있다.",
+      "recommendation": "ServerLimits 계약에 header bytes/count, request body, concurrent requests, per-tenant rate, idle/total deadline을 넣고 어댑터 conformance test를 제공한다.",
+      "recommended_test": "Content-Length/chunked 초과, slow body, header bomb, 동시성 초과를 실제 어댑터 fixture에서 검증한다."
+    },
+    {
+      "id": "GB-ARCH-020",
+      "severity": "P2",
+      "kind": "architecture",
+      "status": "recommendation",
+      "confidence": "high",
+      "title": "권장 목표 아키텍처: Rust normative plane + Python authoring facade + extension profiles",
+      "summary": "현재 강점인 schema/canonical/TCK를 중심으로 권위와 배포 경계를 더 선명하게 만들 필요가 있다.",
+      "locations": [
+        "crates/graphblocks-schema/",
+        "crates/graphblocks-compiler/",
+        "crates/graphblocks-runtime-core/",
+        "src/graphblocks/typed.py",
+        "packages/graphblocks-testing/"
+      ],
+      "evidence": [],
+      "impact": "방향을 정하지 않으면 Python/Rust 중복과 scope expansion이 계속 증가한다.",
+      "recommendation": "Rust가 normalized IR/canonical bytes/plan hash/runtime protocol의 source of truth가 되고 Python은 authoring/schema facade 및 reference oracle이 되도록 ADR을 확정한다.",
+      "recommended_test": "authority matrix를 TCK가 직접 읽어 언어별 claim을 검증하게 한다."
+    },
+    {
+      "id": "GB-ARCH-018",
+      "severity": "P3",
+      "kind": "packaging",
+      "status": "code-confirmed",
+      "confidence": "high",
+      "title": "reserved Rust/npm `graphblocks` 0.0.1 artifact가 정상 제품과 혼동될 수 있음",
+      "summary": "실제 기능 없는 reserved package/crate가 workspace와 package catalog에 존재한다.",
+      "locations": [
+        "crates/graphblocks/Cargo.toml",
+        "packages/graphblocks-npm/package.json"
+      ],
+      "evidence": [],
+      "impact": "사용자가 잘못 설치하거나 검색 결과에서 기능 패키지로 오해할 수 있다.",
+      "recommendation": "README/install 시 명확한 reserved marker와 deprecation/error export를 두고 정상 문서 탐색에서 분리한다.",
+      "recommended_test": "reserved package smoke test가 명확한 안내 메시지만 제공하는지 확인한다."
+    },
+    {
+      "id": "GB-DOC-007",
+      "severity": "P3",
+      "kind": "documentation",
+      "status": "code-confirmed",
+      "confidence": "high",
+      "title": "강한 release/supply-chain 문서와 runtime production readiness의 인상이 불균형",
+      "summary": "SBOM/Sigstore/green SHA promotion은 매우 성숙하지만 server tenant boundary와 durability는 preview/취약하다.",
+      "locations": [
+        "docs/project/first-stable-release.md",
+        ".github/workflows/",
+        "src/graphblocks/server.py"
+      ],
+      "evidence": [],
+      "impact": "사용자가 공급망 성숙도를 런타임 보안·운영 성숙도로 잘못 일반화할 수 있다.",
+      "recommendation": "status page에 공급망, API, runtime security, durability, adapters를 별도 축으로 점수/게이트 표시한다.",
+      "recommended_test": "stable tag gate에 object-authorization review와 adversarial resource testing을 명시적으로 추가한다."
+    },
+    {
+      "id": "GB-QA-011",
+      "severity": "P3",
+      "kind": "docs",
+      "status": "code-confirmed",
+      "confidence": "high",
+      "title": "문서 build/link checker가 보이지 않음",
+      "summary": "문서가 방대하고 authority order가 중요하지만 broken link/stale reference 자동 검사가 보이지 않는다.",
+      "locations": [
+        "docs/",
+        ".github/workflows/ci.yml"
+      ],
+      "evidence": [],
+      "impact": "roadmap/status/스펙 링크와 코드 참조가 쉽게 어긋난다.",
+      "recommendation": "markdown link checker, heading anchor, generated facts consistency checker를 추가한다.",
+      "recommended_test": "docs-only PR에 빠른 docs job을 둔다."
+    },
+    {
+      "id": "GB-QA-018",
+      "severity": "P3",
+      "kind": "testing",
+      "status": "code-confirmed",
+      "confidence": "high",
+      "title": "TCK test 수는 많지만 monolithic runner 때문에 실패 격리와 mutation coverage가 약함",
+      "summary": "fixture case가 거대한 분기 함수로 실행된다.",
+      "locations": [
+        "packages/graphblocks-testing/src/graphblocks_testing/__init__.py"
+      ],
+      "evidence": [],
+      "impact": "특정 branch가 우연히 검증되지 않아도 전체 case 수가 높은 신뢰감을 줄 수 있다.",
+      "recommendation": "case handler별 branch coverage와 mutation testing을 stable compiler/policy/canonical부터 적용한다.",
+      "recommended_test": "surviving mutant를 release evidence에 포함하고 threshold를 점진적으로 높인다."
+    },
+    {
+      "id": "GB-DOC-004",
+      "severity": "P3",
+      "kind": "documentation",
+      "status": "documentation-drift",
+      "confidence": "high",
+      "title": "한국어/중국어 README의 Python 지원 범위가 영어/metadata보다 넓게 읽힘",
+      "summary": "한국어는 Python 3.11 이상이라고 하지만 metadata는 3.11 또는 3.12, `<3.13`이다.",
+      "locations": [
+        "README.ko.md:29",
+        "README.zh-CN.md",
+        "README.md:24-27",
+        "pyproject.toml:10"
+      ],
+      "evidence": [],
+      "impact": "Python 3.13 사용자가 지원된다고 오해할 수 있다.",
+      "recommendation": "지원 버전 문구를 single-source generated snippet으로 세 언어에 반영한다.",
+      "recommended_test": "README version facts와 pyproject requires-python 일치 검사를 둔다."
+    },
+    {
+      "id": "GB-DOC-008",
+      "severity": "P3",
+      "kind": "documentation",
+      "status": "recommendation",
+      "confidence": "high",
+      "title": "“무엇을 하지 않는가”를 더 강하게 선언할 필요",
+      "summary": "Don’t reinvent the wheel을 표방하지만 server/deployment/telemetry/policy까지 자체 계약·reference 구현이 넓다.",
+      "locations": [
+        "README.md:5-20",
+        "docs/concepts/architecture.md"
+      ],
+      "evidence": [],
+      "impact": "경쟁 프레임워크를 대체하는 제품인지 portable contract layer인지 초점이 흔들린다.",
+      "recommendation": "non-goals에 hosted orchestrator, full API gateway, secret manager, generic ETL, full Kubernetes operator 등을 명시하고 adapter seam을 정의한다.",
+      "recommended_test": "새 feature proposal이 core inclusion criteria를 충족하는지 ADR template에서 검사한다."
+    },
+    {
+      "id": "GB-DOC-009",
+      "severity": "P3",
+      "kind": "documentation",
+      "status": "recommendation",
+      "confidence": "high",
+      "title": "capability/profile claim을 package 존재와 분리한 철학은 강점이며 더 자동화할 가치가 있음",
+      "summary": "현재 문서와 TCK는 profile/evidence 기반 지원을 강조한다.",
+      "locations": [
+        "README.md:8-18",
+        "docs/project/first-stable-release.md",
+        "profiles/",
+        "tck/"
+      ],
+      "evidence": [],
+      "impact": "이 철학은 GraphBlocks의 차별점이지만 수동 status 문서 drift가 이를 약화시킨다.",
+      "recommendation": "claim manifest에서 docs table, supported matrix, badge, test selection을 모두 생성한다.",
+      "recommended_test": "artifact에 포함된 claim digest와 실제 TCK report digest를 설치 후 검증한다."
+    },
+    {
+      "id": "GB-DOC-010",
+      "severity": "P3",
+      "kind": "documentation",
+      "status": "recommendation",
+      "confidence": "high",
+      "title": "도메인별 예제는 제품 package가 아니라 패턴 라이브러리로 유지하는 것이 적절",
+      "summary": "authority-backed advisory, RAG, coding agent 등 예제가 다양하다.",
+      "locations": [
+        "examples/"
+      ],
+      "evidence": [],
+      "impact": "법률/연구/코딩 같은 도메인 제품으로 확장하면 core scope와 유지 부담이 급증한다.",
+      "recommendation": "예제는 generic patterns와 threat model을 보여주되 별도 domain guarantees를 약속하지 않는다.",
+      "recommended_test": "예제 metadata에 required profile, mocked/real integration, non-goals를 명시한다."
+    }
+  ]
+}

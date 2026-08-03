@@ -24,7 +24,7 @@ readinessAxes:
       claimBoundary: C0/C1 compatibility candidate only; preview modules and production-operation behavior remain outside this claim.
     - id: runtime-security
       label: Runtime security
-      readiness: remediation-blocked
+      readiness: code-closure-enforced-external-evidence-blocked
       primaryGates: [REL-AUDIT-REMEDIATION, REL-OBJECT-AUTHORIZATION-REVIEW, REL-ADVERSARIAL-RESOURCE-TESTS]
       targetReleaseClaim: release-wide-shipped-code
       blocksTargetRelease: true
@@ -61,7 +61,7 @@ globalRequiredGates:
   - REL-RC-SOAK
 deepAudit:
   auditDate: '2026-07-27'
-  readiness: remediation-blocked
+  readiness: code-closure-enforced-external-evidence-blocked
   plan: docs/project/audit-remediation-plan.md
   coverageMap: docs/project/audit-remediation-map.yaml
   releaseBlockingSeverities: [P0, P1]
@@ -80,6 +80,12 @@ deepAudit:
     bySeverity: {P0: 4, P1: 23, P2: 64, P3: 8}
     reproduced: 9
     codeConfirmed: 68
+  liveStatus:
+    authority: docs/project/audit-issue-status.yaml
+    inventory: docs/project/audit-issues.json
+    checker: tools/check_audit_inventory.py
+    resolved: 27
+    openBySeverity: {P0: 0, P1: 0, P2: 64, P3: 8}
   exitPolicy:
     securityFreeze: {maxOpenP0: 0}
     stableRelease: {maxOpenP0: 0, maxOpenP1: 0}
@@ -958,12 +964,19 @@ releaseGates:
       - three-reviewed-candidate-security-gate-attestations-not-published
   - id: REL-AUDIT-REMEDIATION
     description: Every deep-audit P0 and P1 in a shipped artifact is closed with executable regression and review evidence.
-    readiness: blocked
+    readiness: code-closure-enforced-external-evidence-blocked
     plan: docs/project/audit-remediation-plan.md
     companionGates: [REL-OBJECT-AUTHORIZATION-REVIEW, REL-ADVERSARIAL-RESOURCE-TESTS, REL-MACOS-NATIVE-SMOKE]
     implementedEvidence:
       - hypothesis-cargo-fuzz-and-proptest-pr-smoke-and-scheduled
+      - digest-bound-live-99-finding-inventory
+      - zero-open-p0-p1-with-ancestor-fix-and-regression-bindings
     evidence:
+      - docs/project/audit-issues.json
+      - docs/project/audit-issue-status.yaml
+      - tools/check_audit_inventory.py
+      - tests/test_audit_inventory.py
+      - .github/workflows/ci.yml
       - pyproject.toml
       - tests/test_canonical_properties.py
       - crates/graphblocks-schema/tests/canonical_properties.rs
@@ -1005,10 +1018,7 @@ releaseGates:
         - promotion-evidence-bound-audit-inventory
     blockers:
       - audited-source-commit-tree-or-archive-digest-unavailable
-      - full-issue-inventory-not-repository-bound
       - reproduction-harnesses-and-command-provenance-incomplete
-      - open-p0-p1-count-unavailable-until-inventory-bound
-      - p0-p1-closure-evidence-incomplete
       - promotion-validator-does-not-yet-bind-audit-inventory
   - id: REL-NORMATIVE-AUTHORITY
     description: Rust is the normative Graph compiler and selected target production-runtime authority while Python remains the authoring facade and deterministic reference oracle; this gate tracks the remaining transition.

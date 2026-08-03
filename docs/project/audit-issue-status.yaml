@@ -1,0 +1,87 @@
+statusVersion: 1
+inventory:
+  path: docs/project/audit-issues.json
+  sha256: 9f98ebde8dc981b0eaee8ed795e04306ac67f707223cfe844e2365561db7eb44
+defaultStatus: open
+resolved:
+  - id: GB-POL-001
+    fixCommits: [0959ffd4]
+    regression: [tests/test_cli.py]
+  - id: GB-SEC-001
+    fixCommits: [a5eb785d, 334fd438]
+    regression: [tests/test_server_core.py, tests/test_client_package.py]
+  - id: GB-SEC-002
+    fixCommits: [a5eb785d]
+    regression: [tests/test_server_core.py]
+  - id: GB-SEC-003
+    fixCommits: [819e1ddf]
+    regression: [tests/test_server_core.py, tests/test_server_package.py]
+  - id: GB-INP-001
+    fixCommits: [148d9ccc]
+    regression: [tests/test_mcp_schema_execution.py]
+  - id: GB-INP-004
+    fixCommits: [71e89cbb, 1449c4ea]
+    regression: [tests/test_canonical_integer_limits.py, crates/graphblocks-schema/tests/canonical_json_parse.rs]
+  - id: GB-INP-005
+    fixCommits: [d0e5163b]
+    regression: [tests/test_canonical_numeric_encoding.py]
+  - id: GB-PERF-002
+    fixCommits: [78df4a5e, 92e4188b]
+    regression: [tests/test_journal_store.py, tests/test_runtime.py]
+  - id: GB-SEC-007
+    fixCommits: [656af0d1]
+    regression: [tests/test_server_core.py]
+  - id: GB-API-001
+    fixCommits: [1dd8c114, cca5c6dc]
+    regression: [tests/test_compatibility_snapshots.py, tests/test_stable_typing_scope.py]
+  - id: GB-ARCH-001
+    fixCommits: [a1ccfa38, e94cdba3]
+    regression: [tests/test_compiler_differential.py, tests/test_compiler_tck.py]
+  - id: GB-COR-001
+    fixCommits: [377b3fd4, b060de8a, 74714b26]
+    regression: [tests/test_server_storage_contract.py, tests/test_durable_server.py, tests/test_durable_server_http.py]
+  - id: GB-COR-002
+    fixCommits: [be1146fa, c1d36049, 47037f09]
+    regression: [tests/test_isolated_worker.py]
+  - id: GB-COR-003
+    fixCommits: [4eae9197]
+    regression: [tests/test_audit_package.py]
+  - id: GB-INP-002
+    fixCommits: [be4d7b4f, 56eeb024, e15a0187]
+    regression: [tests/test_client_package.py]
+  - id: GB-INP-003
+    fixCommits: [8abd179c, 425dcb9e]
+    regression: [tests/test_server_core.py]
+  - id: GB-PERF-001
+    fixCommits: [595b554f, 3e556cec, b596f2c8, 32a20ee0]
+    regression: [tests/test_server_core.py]
+  - id: GB-PERF-003
+    fixCommits: [74a04deb]
+    regression: [tests/test_sqlite_budget_normalized.py]
+  - id: GB-QA-008
+    fixCommits: [24c63ac9, 25cff523]
+    regression: [tests/test_canonical_properties.py, tests/test_security_fuzz_workflow.py]
+  - id: GB-RUST-001
+    fixCommits: [85bc26d7, 1aea9a3b]
+    regression: [crates/graphblocks-compiler/tests/canonical.rs, crates/graphblocks-schema/tests/canonical_json_parse.rs]
+  - id: GB-SEC-004
+    fixCommits: [e5dcbf27, 7d82a996]
+    regression: [tests/test_server_core.py]
+  - id: GB-SEC-005
+    fixCommits: [49613d8d]
+    regression: [tests/test_server_core.py]
+  - id: GB-SEC-006
+    fixCommits: [a93560ad, 334fd438, 9e922362, 4c33bb49]
+    regression: [tests/test_admission_ticket.py, tests/test_server_admission_ticket.py, tests/test_sqlite_server_storage_repository.py]
+  - id: GB-SEC-009
+    fixCommits: [5b2ee95d]
+    regression: [tests/test_server_core.py]
+  - id: GB-ARCH-002
+    fixCommits: [e685ee9d, 410750b4, 9f47e571]
+    regression: [tests/test_compiler_differential.py, tests/test_release_supply_chain.py]
+  - id: GB-COR-004
+    fixCommits: [ce3bb132, 2b64c84e, 949a6d44, b6c8ba0f, 6f7943bd]
+    regression: [tests/test_audit_package.py, tests/test_run_store.py, tests/test_runtime.py, tests/test_sqlite_budget_threading.py]
+  - id: GB-SEC-008
+    fixCommits: [a5eb785d, 7d82a996, 2307cff1, b4e6b7a1]
+    regression: [tests/test_server_core.py, tests/test_server_callback_webhook_delivery.py]

@@ -92,7 +92,9 @@ def test_readiness_axes_are_independent_generated_and_release_blocking(
         "Artifact integrity, provenance, signing, and promotion only; this does not "
         "imply runtime security, durability, or adapter readiness."
     )
-    assert by_id["runtime-security"]["readiness"] == "remediation-blocked"
+    assert by_id["runtime-security"]["readiness"] == (
+        "code-closure-enforced-external-evidence-blocked"
+    )
     assert by_id["runtime-security"]["primaryGates"] == [
         "REL-AUDIT-REMEDIATION",
         "REL-OBJECT-AUTHORIZATION-REVIEW",
@@ -160,7 +162,7 @@ def test_readiness_axes_are_independent_generated_and_release_blocking(
     assert checked.returncode == 0, checked.stderr
 
     status = STATUS_PATH.read_text(encoding="utf-8").replace(
-        "`remediation-blocked`",
+        "`code-closure-enforced-external-evidence-blocked`",
         "`ready`",
         1,
     )

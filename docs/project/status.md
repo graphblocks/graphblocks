@@ -7,11 +7,14 @@ transition is implemented, while canonical-facade, scheduler,
 protocol-handshake, and durable execution evidence still block the complete
 authority gate.
 
-The 99-finding deep-audit baseline includes 4 P0 and 23 P1 findings. Closure
-evidence has not yet satisfied the release matrix, so security remediation now
-precedes feature growth and 1.0 remains blocked. In particular, the current
-server must not be represented as a production-ready multi-tenant authority
-boundary. See the [deep audit remediation plan](audit-remediation-plan.md).
+The digest-bound 99-finding deep-audit inventory includes 4 P0 and 23 P1
+findings. The live closure overlay now binds all 27 P0/P1 findings to ancestor
+fix commits and executable regression paths, and the repository checker reports
+zero open P0/P1. Candidate-bound independent review, reconstructed reproduction
+provenance, promotion binding, platform evidence, and soak still block 1.0. The
+preview server therefore must not yet be represented as a production-ready
+multi-tenant authority boundary. See the
+[deep audit remediation plan](audit-remediation-plan.md).
 
 Supply-chain controls, API compatibility, runtime security, durability, and
 external-adapter maturity are independent claims. Strength on one axis does not
@@ -27,7 +30,7 @@ regenerate this page instead of changing the table by hand.
 | --- | --- | --- | --- | --- |
 | Supply chain (`supply-chain`) | `promotion-contract-enforced-external-evidence-absent` | `release-wide-artifact-supply-chain`; blocks target release | `REL-SUPPLY-CHAIN` | Artifact integrity, provenance, signing, and promotion only; this does not imply runtime security, durability, or adapter readiness. |
 | API and portable contract (`api`) | `candidate-contract-review-blocked` | `core-c0-c1-only`; blocks target release | `REL-CORE-PROFILE`, `REL-API-SNAPSHOT`, `REL-WIRE-V1`, `REL-CLOSED-SCHEMA` | C0/C1 compatibility candidate only; preview modules and production-operation behavior remain outside this claim. |
-| Runtime security (`runtime-security`) | `remediation-blocked` | `release-wide-shipped-code`; blocks target release | `REL-AUDIT-REMEDIATION`, `REL-OBJECT-AUTHORIZATION-REVIEW`, `REL-ADVERSARIAL-RESOURCE-TESTS` | The reference server is not a production-ready multi-tenant authority boundary; object authorization and adversarial resource evidence remain mandatory. |
+| Runtime security (`runtime-security`) | `code-closure-enforced-external-evidence-blocked` | `release-wide-shipped-code`; blocks target release | `REL-AUDIT-REMEDIATION`, `REL-OBJECT-AUTHORIZATION-REVIEW`, `REL-ADVERSARIAL-RESOURCE-TESTS` | The reference server is not a production-ready multi-tenant authority boundary; object authorization and adversarial resource evidence remain mandatory. |
 | Durability and recovery (`durability`) | `core-c1-authority-blocked-production-preview` | `core-c1-local-runtime-authority`; blocks target release | `REL-AUDIT-REMEDIATION`, `REL-NORMATIVE-AUTHORITY` | C1 local-runtime durability and scheduler-authority evidence blocks 1.0; C4/X3 production durability remains preview and excluded until restart, crash, lease, fence, and outbox evidence passes. |
 | External adapters (`adapters`) | `contract-only-no-real-adapters` | `excluded-contract-only`; axis excluded; shipped P0/P1 still block | `REL-INTEGRATION-PROMOTION` | Catalogued integrations are contract-only or test doubles; no external service, SDK, authentication mode, or failure model is production-supported. |
 <!-- END GENERATED READINESS AXES -->

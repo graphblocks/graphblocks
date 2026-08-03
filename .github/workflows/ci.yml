@@ -97,6 +97,9 @@ jobs:
         run: |
           set -o pipefail
           python tools/check_compatibility.py 2>&1 | tee dist/ci/compatibility.log
+      - name: Verify deep-audit issue closure
+        if: ${{ matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11' }}
+        run: python tools/check_audit_inventory.py
       - name: Run Python tests
         shell: bash
         run: |

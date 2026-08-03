@@ -28,11 +28,14 @@ code. The original artifacts are now digest-bound in the machine-readable
 | Issue inventory | `9f98ebde8dc981b0eaee8ed795e04306ac67f707223cfe844e2365561db7eb44` |
 | Evidence bundle | `75cf142766d1e8cbf8c89c1157727d8a4ca0e945b15e9157c8977f1c6a02fe06` |
 
-The issue inventory remains the issue-level authority for severity, impact,
-recommendation, regression coverage, and live status. The remediation map binds
-all 99 baseline identities to exactly one owning workstream; it does not replace
-the full inventory. Importing that inventory into repository/release tracking
-and preserving its digest is still required.
+The unchanged [issue inventory](audit-issues.json) remains the issue-level
+authority for severity, impact, recommendation, and original evidence status.
+Its digest-bound [live status overlay](audit-issue-status.yaml) binds resolved
+findings to ancestor fix commits and executable regression paths. The
+`tools/check_audit_inventory.py` gate verifies the original digest, all 99
+identities and severity counts, complete remediation-map coverage, evidence
+paths, commit ancestry, and zero open P0/P1 findings. P2 and P3 remain open by
+default until individually added to the overlay.
 
 The evidence bundle intentionally omits the audited source archive and contains
 no Git metadata. Its source commit, tree, and archive digest therefore remain
@@ -50,9 +53,10 @@ A finding moves to resolved only when:
 4. the release matrix or profile evidence is updated when the finding changes a
    compatibility or production claim.
 
-The audit baseline records what was observed in the audited snapshot. It is not
-a live count of open findings; open and resolved counts must be generated from
-the imported inventory.
+The current generated count is 27 resolved P0/P1 findings, zero open P0/P1,
+64 open P2, and 8 open P3. This closes the code-and-regression count; it does
+not replace the independent review, candidate attestation, platform, or soak
+gates.
 
 ## Release posture
 
@@ -463,11 +467,11 @@ silently omitted or counted closed twice.
 | `QG-QUALITY-AND-CI` | Cross-cutting | 15 | Fuzz, typing/exception/assert debt, lint, coverage, SAST, model and platform gates |
 | `QG-DOCUMENTATION-FACTS` | Cross-cutting | 7 | Generated facts, evidence-bound risks, maturity/readiness and claim automation |
 
-CI validates the baseline severity counts, artifact digests, reproduction
-inventory, unique workstream ownership, referenced profiles, and referenced
-release gates. Finding status remains external until the full JSON inventory is
-imported; the map must never fabricate an open count from the immutable
-baseline.
+CI validates the unchanged inventory digest and severity counts, unique
+workstream ownership, ancestor fix commits, executable regression paths, and
+the zero-open P0/P1 release threshold. The closure overlay is deliberately
+separate from the immutable baseline so status changes cannot rewrite the
+auditor's finding content.
 
 ## Evidence and performance seed matrix
 

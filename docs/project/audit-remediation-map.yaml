@@ -9,9 +9,11 @@ artifactDigests:
   inventorySha256: 9f98ebde8dc981b0eaee8ed795e04306ac67f707223cfe844e2365561db7eb44
   evidenceBundleSha256: 75cf142766d1e8cbf8c89c1157727d8a4ca0e945b15e9157c8977f1c6a02fe06
 statusAuthority:
-  source: graphblocks-audit-issues.json
-  repositoryBinding: pending-full-inventory-import
-  note: Baseline identities are bound here; live open and resolved state must come from the imported inventory.
+  source: docs/project/audit-issue-status.yaml
+  inventory: docs/project/audit-issues.json
+  repositoryBinding: digest-bound-live-overlay
+  checker: tools/check_audit_inventory.py
+  note: The unchanged inventory owns finding content; the overlay binds resolved findings to ancestor commits and executable regression paths.
 
 baselineBySeverity:
   P0:
