@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from bisect import bisect_left, bisect_right, insort
 from collections import deque
 from collections.abc import Callable, Mapping
 from concurrent.futures import Executor, Future
@@ -138,6 +139,8 @@ DEFAULT_MAX_ASYNC_CALLBACK_REQUEST_BODY_BYTES = 512 * 1024
 _SERVER_REQUEST_BODY_READ_CHUNK_BYTES = 64 * 1024
 DEFAULT_MAX_SERVER_EVENT_PAGE_EVENTS = 100
 DEFAULT_MAX_SERVER_EVENT_PAGE_BYTES = 1024 * 1024
+DEFAULT_MAX_SERVER_RUN_LIST_PAGE_RUNS = 100
+MAX_SERVER_RUN_LIST_CURSOR_BYTES = 4_096
 DEFAULT_MAX_ACCEPTED_RUN_RUNTIME_STATE_BYTES = 4 * 1024 * 1024
 DEFAULT_MAX_IN_MEMORY_RUNS = 10_000
 DEFAULT_MAX_IN_MEMORY_RUNS_PER_TENANT = 1_000
@@ -411,6 +414,68 @@ def _validate_run_cursor(owner: str, field_name: str, run_id: str, value: object
             f"{owner} {field_name} sequence must be at most {MAX_RUN_CURSOR_SEQUENCE}"
         )
     return cursor
+
+
+def _run_list_scope(
+    principal: PrincipalRef | None,
+) -> tuple[str, str | None, str | None]:
+    if principal is None:
+        return ("owner", None, None)
+    if "operator" in principal.roles:
+        return ("tenant", principal.tenant_id, None)
+    return ("owner", principal.tenant_id, principal.principal_id)
+
+
+def _run_list_scope_digest(
+    scope: tuple[str, str | None, str | None],
+) -> str:
+    scope_kind, tenant_id, owner_principal_id = scope
+    return canonical_hash(
+        {
+            "kind": scope_kind,
+            "tenantId": tenant_id,
+            "ownerPrincipalId": owner_principal_id,
+        }
+    )
+
+
+def _encode_run_list_cursor(
+    scope: tuple[str, str | None, str | None],
+    run_id: str,
+) -> str:
+    return (
+        f"v1|{_run_list_scope_digest(scope)}|"
+        f"{quote(run_id, safe='')}"
+    )
+
+
+def _decode_run_list_cursor(
+    value: object,
+    scope: tuple[str, str | None, str | None],
+) -> str:
+    cursor = _validate_exact_non_empty_string(
+        "server run list",
+        "cursor",
+        value,
+    )
+    if len(cursor.encode("utf-8")) > MAX_SERVER_RUN_LIST_CURSOR_BYTES:
+        raise ValueError(
+            "server run list cursor exceeds the maximum encoded size"
+        )
+    version, separator, remainder = cursor.partition("|")
+    scope_digest, second_separator, encoded_run_id = remainder.partition("|")
+    if (
+        version != "v1"
+        or not separator
+        or not second_separator
+        or scope_digest != _run_list_scope_digest(scope)
+        or not encoded_run_id
+    ):
+        raise ValueError("server run list cursor is invalid for this scope")
+    run_id = unquote(encoded_run_id)
+    if not run_id or quote(run_id, safe="") != encoded_run_id:
+        raise ValueError("server run list cursor is malformed")
+    return run_id
 
 
 def _server_request_json_body(request: ServerRequest, owner: str) -> object:
@@ -3414,6 +3479,7 @@ class GraphBlocksServerApp:
     )
     max_event_page_events: int = DEFAULT_MAX_SERVER_EVENT_PAGE_EVENTS
     max_event_page_bytes: int = DEFAULT_MAX_SERVER_EVENT_PAGE_BYTES
+    max_run_list_page_runs: int = DEFAULT_MAX_SERVER_RUN_LIST_PAGE_RUNS
     max_in_memory_runs: int = DEFAULT_MAX_IN_MEMORY_RUNS
     max_in_memory_runs_per_tenant: int = (
         DEFAULT_MAX_IN_MEMORY_RUNS_PER_TENANT
@@ -3504,6 +3570,19 @@ class GraphBlocksServerApp:
     )
     _events_by_run_id: dict[str, tuple[Mapping[str, object], ...]] = field(default_factory=dict, init=False, repr=False)
     _run_authorization_by_run_id: dict[str, _ServerRunAuthorizationRecord] = field(
+        default_factory=dict,
+        init=False,
+        repr=False,
+    )
+    _run_ids_by_tenant: dict[str | None, list[str]] = field(
+        default_factory=dict,
+        init=False,
+        repr=False,
+    )
+    _run_ids_by_owner: dict[
+        tuple[str | None, str | None],
+        list[str],
+    ] = field(
         default_factory=dict,
         init=False,
         repr=False,
@@ -3796,6 +3875,7 @@ class GraphBlocksServerApp:
             "max_async_callback_request_body_bytes",
             "max_event_page_events",
             "max_event_page_bytes",
+            "max_run_list_page_runs",
             "max_accepted_run_runtime_state_bytes",
             "max_async_callback_rejection_history_bytes",
             "max_in_memory_runs",
@@ -3876,13 +3956,63 @@ class GraphBlocksServerApp:
         principal: PrincipalRef | None,
         created_at: str,
     ) -> None:
-        self._run_authorization_by_run_id[
-            run_id
-        ] = _ServerRunAuthorizationRecord.create(
+        record = _ServerRunAuthorizationRecord.create(
             run_id,
             principal,
             created_at,
         )
+        with self._accepted_run_condition:
+            previous = self._run_authorization_by_run_id.get(run_id)
+            if previous is not None:
+                self._remove_run_from_list_indexes(previous)
+            self._run_authorization_by_run_id[run_id] = record
+            owner_key = (record.tenant_id, record.owner_principal_id)
+            insort(
+                self._run_ids_by_owner.setdefault(owner_key, []),
+                run_id,
+            )
+            if record.owner_principal_id is not None:
+                insort(
+                    self._run_ids_by_tenant.setdefault(
+                        record.tenant_id,
+                        [],
+                    ),
+                    run_id,
+                )
+
+    def _remove_run_from_list_indexes(
+        self,
+        record: _ServerRunAuthorizationRecord,
+    ) -> None:
+        owner_key = (record.tenant_id, record.owner_principal_id)
+        owner_run_ids = self._run_ids_by_owner.get(owner_key)
+        if owner_run_ids is not None:
+            owner_index = bisect_left(
+                owner_run_ids,
+                record.external_run_id,
+            )
+            if (
+                owner_index < len(owner_run_ids)
+                and owner_run_ids[owner_index] == record.external_run_id
+            ):
+                owner_run_ids.pop(owner_index)
+            if not owner_run_ids:
+                self._run_ids_by_owner.pop(owner_key, None)
+        if record.owner_principal_id is None:
+            return
+        tenant_run_ids = self._run_ids_by_tenant.get(record.tenant_id)
+        if tenant_run_ids is not None:
+            tenant_index = bisect_left(
+                tenant_run_ids,
+                record.external_run_id,
+            )
+            if (
+                tenant_index < len(tenant_run_ids)
+                and tenant_run_ids[tenant_index] == record.external_run_id
+            ):
+                tenant_run_ids.pop(tenant_index)
+            if not tenant_run_ids:
+                self._run_ids_by_tenant.pop(record.tenant_id, None)
 
     def delete_terminal_run(
         self,
@@ -4052,6 +4182,7 @@ class GraphBlocksServerApp:
                         run_id,
                         None,
                     )
+                    self._remove_run_from_list_indexes(authorization)
                     self._run_authorization_by_run_id.pop(run_id, None)
                     self._subscriptions_by_run_id.pop(run_id, None)
                     self._subscription_history_bytes_by_run_id.pop(
@@ -8115,14 +8246,95 @@ class GraphBlocksServerApp:
         route = route_match.endpoint
         if route.operation == "list_runs":
             try:
-                runs = [
-                    self._run_status_payload(run_id, events, include_ok=False)
-                    for run_id, events in sorted(self._events_by_run_id.items())
-                    if self._principal_can_access_run(
-                        run_id,
-                        auth_decision.principal,
+                scope = _run_list_scope(auth_decision.principal)
+                cursor = request.query.get("cursor")
+                after_run_id = (
+                    _decode_run_list_cursor(cursor, scope)
+                    if cursor is not None
+                    else None
+                )
+                page_limit = self.max_run_list_page_runs
+                requested_limit = request.query.get("limit")
+                if requested_limit is not None:
+                    if requested_limit != requested_limit.strip():
+                        raise ValueError(
+                            "server run list limit must not contain "
+                            "surrounding whitespace"
+                        )
+                    if (
+                        not requested_limit.isascii()
+                        or not requested_limit.isdecimal()
+                    ):
+                        raise ValueError(
+                            "server run list limit must be a positive "
+                            "ASCII integer"
+                        )
+                    if len(requested_limit) > len(
+                        str(self.max_run_list_page_runs)
+                    ):
+                        raise ValueError(
+                            "server run list limit must be at most "
+                            f"{self.max_run_list_page_runs}"
+                        )
+                    page_limit = int(requested_limit)
+                    if page_limit < 1:
+                        raise ValueError(
+                            "server run list limit must be a positive "
+                            "ASCII integer"
+                        )
+                    if page_limit > self.max_run_list_page_runs:
+                        raise ValueError(
+                            "server run list limit must be at most "
+                            f"{self.max_run_list_page_runs}"
+                        )
+                scope_kind, tenant_id, owner_principal_id = scope
+                with self._accepted_run_condition:
+                    if scope_kind == "tenant":
+                        indexed_run_ids = self._run_ids_by_tenant.get(
+                            tenant_id,
+                            (),
+                        )
+                    else:
+                        indexed_run_ids = self._run_ids_by_owner.get(
+                            (tenant_id, owner_principal_id),
+                            (),
+                        )
+                    page_start = (
+                        bisect_right(indexed_run_ids, after_run_id)
+                        if after_run_id is not None
+                        else 0
                     )
+                    page_run_ids = tuple(
+                        indexed_run_ids[
+                            page_start : page_start + page_limit + 1
+                        ]
+                    )
+                    has_more = len(page_run_ids) > page_limit
+                    page_run_ids = page_run_ids[:page_limit]
+                    page_records = tuple(
+                        (run_id, self._events_by_run_id[run_id])
+                        for run_id in page_run_ids
+                        if (
+                            run_id in self._events_by_run_id
+                            and self._principal_can_access_run(
+                                run_id,
+                                auth_decision.principal,
+                            )
+                        )
+                    )
+                runs = [
+                    self._run_status_payload(
+                        run_id,
+                        events,
+                        include_ok=False,
+                    )
+                    for run_id, events in page_records
                 ]
+                next_cursor = (
+                    _encode_run_list_cursor(scope, page_run_ids[-1])
+                    if has_more and page_run_ids
+                    else None
+                )
             except (TypeError, ValueError) as error:
                 return ServerResponse.json(
                     400,
@@ -8131,7 +8343,14 @@ class GraphBlocksServerApp:
                         "error": str(error),
                     },
                 )
-            return ServerResponse.json(200, {"ok": True, "runs": runs})
+            return ServerResponse.json(
+                200,
+                {
+                    "ok": True,
+                    "runs": runs,
+                    "nextCursor": next_cursor,
+                },
+            )
         if route.operation == "delete_run":
             run_id = route_match.path_params.get("run_id", "")
             try:

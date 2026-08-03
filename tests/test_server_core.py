@@ -105,6 +105,26 @@ def _seed_succeeded_run(
     )
 
 
+def _seed_listable_succeeded_run(
+    app: GraphBlocksServerApp,
+    run_id: str,
+    principal: PrincipalRef,
+) -> None:
+    _record_seeded_run_owner(app, run_id, principal)
+    app._events_by_run_id[run_id] = (
+        {
+            "kind": "RunSucceeded",
+            "metadata": {
+                "eventId": f"evt-{run_id}-1",
+                "runId": run_id,
+                "sequence": 1,
+                "occurredAt": "2026-07-01T00:00:00Z",
+            },
+            "payload": {},
+        },
+    )
+
+
 def _seed_collectible_terminal_run(
     app: GraphBlocksServerApp,
     run_id: str,
@@ -690,7 +710,11 @@ def test_server_app_requires_authentication_for_protected_manifests() -> None:
     )
 
     assert protected.status_code == 200
-    assert json.loads(protected.body) == {"ok": True, "runs": []}
+    assert json.loads(protected.body) == {
+        "ok": True,
+        "runs": [],
+        "nextCursor": None,
+    }
 
 
 def test_server_app_owns_public_route_semantics_instead_of_auth_hook() -> None:
@@ -752,6 +776,7 @@ def test_server_app_validates_reference_tenant_boundary() -> None:
         "max_async_callback_request_body_bytes",
         "max_event_page_events",
         "max_event_page_bytes",
+        "max_run_list_page_runs",
         "max_accepted_run_runtime_state_bytes",
         "max_async_callback_rejection_history_bytes",
         "max_in_memory_runs",
@@ -2522,7 +2547,11 @@ def test_server_app_hides_run_scoped_resources_from_other_principals_and_tenants
         )
     )
     assert bob_list.status_code == 200
-    assert json.loads(bob_list.body.decode("utf-8")) == {"ok": True, "runs": []}
+    assert json.loads(bob_list.body.decode("utf-8")) == {
+        "ok": True,
+        "runs": [],
+        "nextCursor": None,
+    }
 
     original_events = app._events_by_run_id["run-tenant-authz-1"]
     hidden_requests = (
@@ -7340,6 +7369,8 @@ def test_server_app_deletes_only_owner_visible_terminal_runs_and_reclaims_capaci
     }
     assert "run-delete-terminal-1" not in app._events_by_run_id
     assert "run-delete-terminal-1" not in app._run_authorization_by_run_id
+    assert app._run_ids_by_owner == {}
+    assert app._run_ids_by_tenant == {}
     assert "run-delete-terminal-1" not in app._accepted_run_results_by_run_id
     assert "run-delete-terminal-1" in app._retired_runs_by_run_id
 
@@ -13007,7 +13038,186 @@ def test_server_app_lists_run_statuses_from_authoritative_events() -> None:
                 "activeOperations": [],
             },
         ],
+        "nextCursor": None,
     }
+
+
+def test_server_app_paginates_runs_with_principal_scoped_cursors() -> None:
+    alice = PrincipalRef("alice", tenant_id="tenant-a")
+    charlie = PrincipalRef("charlie", tenant_id="tenant-a")
+    operator = PrincipalRef(
+        "operator-a",
+        tenant_id="tenant-a",
+        roles=("operator",),
+    )
+    bob = PrincipalRef("bob", tenant_id="tenant-b")
+    app = GraphBlocksServerApp(
+        auth_hook=StaticBearerAuthHook(
+            {
+                "alice-token": alice,
+                "operator-token": operator,
+                "bob-token": bob,
+            }
+        ),
+        max_run_list_page_runs=2,
+        allow_unsafe_multi_tenant_dev=True,
+    )
+    for run_id in ("run-3", "run-1", "run-2"):
+        _seed_listable_succeeded_run(app, run_id, alice)
+    _seed_listable_succeeded_run(app, "run-0", charlie)
+    _seed_listable_succeeded_run(app, "run-foreign", bob)
+
+    first = app.handle(
+        ServerRequest(
+            method="GET",
+            path="/runs",
+            headers={"Authorization": "Bearer alice-token"},
+            query={"limit": "2"},
+            cookies={},
+        )
+    )
+    first_payload = json.loads(first.body.decode("utf-8"))
+    second = app.handle(
+        ServerRequest(
+            method="GET",
+            path="/runs",
+            headers={"Authorization": "Bearer alice-token"},
+            query={"cursor": first_payload["nextCursor"], "limit": "2"},
+            cookies={},
+        )
+    )
+    second_payload = json.loads(second.body.decode("utf-8"))
+    operator_page = app.handle(
+        ServerRequest(
+            method="GET",
+            path="/runs",
+            headers={"Authorization": "Bearer operator-token"},
+            query={"limit": "2"},
+            cookies={},
+        )
+    )
+    foreign_cursor = app.handle(
+        ServerRequest(
+            method="GET",
+            path="/runs",
+            headers={"Authorization": "Bearer bob-token"},
+            query={"cursor": first_payload["nextCursor"]},
+            cookies={},
+        )
+    )
+
+    assert first.status_code == 200
+    assert [run["runId"] for run in first_payload["runs"]] == [
+        "run-1",
+        "run-2",
+    ]
+    assert isinstance(first_payload["nextCursor"], str)
+    assert second.status_code == 200
+    assert [run["runId"] for run in second_payload["runs"]] == ["run-3"]
+    assert second_payload["nextCursor"] is None
+    assert [
+        run["runId"]
+        for run in json.loads(operator_page.body.decode("utf-8"))["runs"]
+    ] == ["run-0", "run-1"]
+    assert foreign_cursor.status_code == 400
+    assert json.loads(foreign_cursor.body.decode("utf-8")) == {
+        "ok": False,
+        "error": "server run list cursor is invalid for this scope",
+    }
+
+
+@pytest.mark.parametrize(
+    "query",
+    (
+        {"limit": "0"},
+        {"limit": " 1"},
+        {"limit": "١"},
+        {"limit": "1.0"},
+        {"limit": "3"},
+    ),
+)
+def test_server_app_rejects_invalid_run_list_limits(
+    query: dict[str, str],
+) -> None:
+    app = GraphBlocksServerApp(
+        auth_hook=StaticBearerAuthHook(
+            {"token-1": PrincipalRef("user-1")}
+        ),
+        max_run_list_page_runs=2,
+    )
+
+    response = app.handle(
+        ServerRequest(
+            method="GET",
+            path="/runs",
+            headers={"Authorization": "Bearer token-1"},
+            query=query,
+            cookies={},
+        )
+    )
+
+    assert response.status_code == 400
+    assert "server run list limit" in json.loads(
+        response.body.decode("utf-8")
+    )["error"]
+
+
+def test_server_app_bounds_run_projection_work_at_ten_thousand_runs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    principal = PrincipalRef("user-scale", tenant_id="tenant-scale")
+    app = GraphBlocksServerApp(
+        auth_hook=StaticBearerAuthHook({"token-scale": principal}),
+        max_run_list_page_runs=25,
+        max_in_memory_runs_per_tenant=10_000,
+    )
+    for index in range(10_000):
+        _seed_listable_succeeded_run(
+            app,
+            f"run-scale-{index:05d}",
+            principal,
+        )
+
+    original_projection = GraphBlocksServerApp._run_status_payload
+    projection_calls = 0
+
+    def count_projection(
+        server_app: GraphBlocksServerApp,
+        run_id: str,
+        events: tuple[Mapping[str, object], ...],
+        *,
+        include_ok: bool,
+    ) -> dict[str, object]:
+        nonlocal projection_calls
+        projection_calls += 1
+        return original_projection(
+            server_app,
+            run_id,
+            events,
+            include_ok=include_ok,
+        )
+
+    monkeypatch.setattr(
+        GraphBlocksServerApp,
+        "_run_status_payload",
+        count_projection,
+    )
+    response = app.handle(
+        ServerRequest(
+            method="GET",
+            path="/runs",
+            headers={"Authorization": "Bearer token-scale"},
+            query={},
+            cookies={},
+        )
+    )
+    payload = json.loads(response.body.decode("utf-8"))
+
+    assert response.status_code == 200
+    assert len(payload["runs"]) == 25
+    assert projection_calls == 25
+    assert isinstance(payload["nextCursor"], str)
+    assert len(app._run_ids_by_tenant["tenant-scale"]) == 10_000
 
 
 def test_server_app_attaches_to_run_after_cursor() -> None:
