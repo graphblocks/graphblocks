@@ -2202,6 +2202,133 @@ def test_deploy_plan_cli_builds_physical_execution_plan(tmp_path, capsys) -> Non
     ]
 
 
+@pytest.mark.parametrize(
+    ("field_path", "invalid_value", "expected_error"),
+    (
+        (("metadata", "name"), False, "GraphDeployment metadata.name expected non-empty string"),
+        (("spec", "profile"), False, "GraphDeployment spec.environment expected non-empty string"),
+        (
+            ("spec", "targets"),
+            {" control ": {"kind": "service", "executionHost": "rust"}},
+            "GraphDeployment target id must be a non-empty string",
+        ),
+        (
+            ("spec", "targets", "control", "executionHost"),
+            False,
+            "GraphDeployment target 'control' executionHost expected non-empty string",
+        ),
+        (
+            ("spec", "targets", "control", "accepts", "capabilities"),
+            {"graph.coordinator": False},
+            "GraphDeployment target 'control' accepts.capabilities expected array of strings",
+        ),
+        (
+            ("spec", "targets", "control", "effects"),
+            [False],
+            "GraphDeployment target 'control' effects[0] expected non-empty string",
+        ),
+        (
+            ("spec", "targets", "control", "packageLock"),
+            False,
+            "GraphDeployment target 'control' packageLock expected non-empty string or null",
+        ),
+        (
+            ("spec", "targets", "control", "image"),
+            False,
+            "GraphDeployment target 'control' image expected non-empty string or null",
+        ),
+        (
+            ("spec", "placements", "0", "id"),
+            False,
+            "GraphDeployment placement 0 ruleId expected non-empty string",
+        ),
+        (
+            ("spec", "placements", "0", "select", "capabilities"),
+            {"graph.coordinator": False},
+            "GraphDeployment placement 0 selector.capabilities expected array of strings",
+        ),
+        (
+            ("spec", "placements", "0", "target"),
+            False,
+            "GraphDeployment placement 0 target expected non-empty string",
+        ),
+        (
+            ("spec", "packageLockHash"),
+            False,
+            "GraphDeployment spec.packageLockHash expected non-empty string or null",
+        ),
+        (
+            ("spec", "resolvedBindingHash"),
+            False,
+            "GraphDeployment spec.resolvedBindingHash expected non-empty string",
+        ),
+    ),
+)
+def test_deploy_plan_cli_rejects_type_confusion(
+    tmp_path: Path,
+    capsys,
+    field_path: tuple[str, ...],
+    invalid_value: object,
+    expected_error: str,
+) -> None:
+    release = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "GraphRelease",
+        "metadata": {"name": "support-agent", "version": "2026.06.24.1"},
+        "spec": {
+            "bundle": {
+                "digest": "sha256:bundle",
+                "mediaType": "application/vnd.graphblocks.release.v1",
+            },
+            "graphs": {
+                "turn": {
+                    "graphHash": "sha256:graph-turn",
+                    "normalizedPlanHash": "sha256:plan-turn",
+                }
+            },
+        },
+    }
+    deployment: dict[str, object] = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "GraphDeployment",
+        "metadata": {"name": "support-production"},
+        "spec": {
+            "profile": "production",
+            "targets": {
+                "control": {
+                    "kind": "service",
+                    "executionHost": "rust",
+                    "accepts": {"capabilities": ["graph.coordinator"]},
+                }
+            },
+            "placements": [
+                {
+                    "id": "coordinator",
+                    "select": {"capabilities": ["graph.coordinator"]},
+                    "target": "control",
+                }
+            ],
+        },
+    }
+    owner: object = deployment
+    for segment in field_path[:-1]:
+        if type(owner) is list:
+            owner = owner[int(segment)]
+        else:
+            assert type(owner) is dict
+            owner = owner[segment]
+    assert type(owner) is dict
+    owner[field_path[-1]] = invalid_value
+    path = tmp_path / "deployment.yaml"
+    path.write_text(yaml.safe_dump_all([release, deployment]), encoding="utf-8")
+
+    assert main(["deploy", "plan", str(path), "--revision", "rev-1", "--json"]) == 1
+    assert json.loads(capsys.readouterr().out) == {
+        "ok": False,
+        "error": expected_error,
+    }
+
+
 def test_deploy_plan_cli_rejects_non_boolean_default_selector(tmp_path, capsys) -> None:
     release = {
         "apiVersion": "graphblocks.ai/v1alpha3",
@@ -2280,6 +2407,129 @@ def test_deploy_render_cli_renders_kubernetes_manifest_set(tmp_path, capsys) -> 
     assert payload["manifests"][0]["spec"]["template"]["spec"]["containers"][0]["image"] == (
         "registry.example.com/graphblocks/control@sha256:control"
     )
+
+
+@pytest.mark.parametrize(
+    ("field_path", "invalid_value", "expected_error"),
+    (
+        (
+            ("deploymentId",),
+            False,
+            "deploy plan payload deploymentId expected non-empty string or null",
+        ),
+        (
+            ("plan", "targets"),
+            {" control ": {"kind": "service", "executionHost": "rust"}},
+            "deploy plan payload plan target id must be a non-empty string",
+        ),
+        (
+            ("plan", "targets", "control", "kind"),
+            False,
+            "deploy plan payload plan.targets.control.kind expected non-empty string",
+        ),
+        (
+            ("plan", "targets", "control", "executionHost"),
+            False,
+            "deploy plan payload plan.targets.control.executionHost expected non-empty string",
+        ),
+        (
+            ("plan", "targets", "control", "capabilities"),
+            {"graph.coordinator": False},
+            "deploy plan payload plan.targets.control.capabilities expected array of strings",
+        ),
+        (
+            ("plan", "targets", "control", "effects"),
+            [False],
+            "deploy plan payload plan.targets.control.effects[0] expected non-empty string",
+        ),
+        (
+            ("plan", "targets", "control", "packageLock"),
+            False,
+            "deploy plan payload plan.targets.control.packageLock expected non-empty string or null",
+        ),
+        (
+            ("plan", "targets", "control", "image"),
+            False,
+            "deploy plan payload plan.targets.control.image expected non-empty string or null",
+        ),
+        (
+            ("plan", "packageLockHash"),
+            False,
+            "deploy plan payload plan.packageLockHash expected non-empty string or null",
+        ),
+        (
+            ("plan", "defaultTarget"),
+            False,
+            "deploy plan payload plan.defaultTarget expected non-empty string or null",
+        ),
+        (
+            ("plan", "placements"),
+            [
+                {
+                    "ruleId": False,
+                    "selector": {"kind": "nodes", "values": ["node"]},
+                    "target": "control",
+                }
+            ],
+            "deploy plan payload plan.placements[0].ruleId expected non-empty string",
+        ),
+        (
+            ("plan", "placements"),
+            [
+                {
+                    "ruleId": "route",
+                    "selector": {"kind": False, "values": ["node"]},
+                    "target": "control",
+                }
+            ],
+            "deploy plan payload plan.placements[0].selector.kind expected non-empty string",
+        ),
+        (
+            ("plan", "placements"),
+            [
+                {
+                    "ruleId": "route",
+                    "selector": {"kind": "nodes", "values": {"node": False}},
+                    "target": "control",
+                }
+            ],
+            "deploy plan payload plan.placements[0].selector.values expected array of strings",
+        ),
+        (
+            ("plan", "placements"),
+            [
+                {
+                    "ruleId": "route",
+                    "selector": {"kind": "nodes", "values": ["node"]},
+                    "target": False,
+                }
+            ],
+            "deploy plan payload plan.placements[0].target expected non-empty string",
+        ),
+    ),
+)
+def test_deploy_render_cli_rejects_type_confusion(
+    tmp_path: Path,
+    capsys,
+    field_path: tuple[str, ...],
+    invalid_value: object,
+    expected_error: str,
+) -> None:
+    plan = _render_plan_payload()
+    owner: object = plan
+    for segment in field_path[:-1]:
+        assert type(owner) is dict
+        owner = owner[segment]
+    assert type(owner) is dict
+    owner[field_path[-1]] = invalid_value
+    path = tmp_path / "plan.json"
+    path.write_text(json.dumps(plan), encoding="utf-8")
+
+    assert main(["deploy", "render", str(path), "--target", "kubernetes", "--json"]) == 1
+    assert json.loads(capsys.readouterr().out) == {
+        "ok": False,
+        "error": expected_error,
+    }
 
 
 def test_deploy_render_cli_requires_explicit_successful_plan(tmp_path, capsys) -> None:

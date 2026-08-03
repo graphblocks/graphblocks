@@ -115,15 +115,6 @@ def _field(mapping: Mapping[str, object], *names: str, default: object = None) -
     return default
 
 
-def _tuple_field(mapping: Mapping[str, object], *names: str) -> tuple[str, ...]:
-    value = _field(mapping, *names, default=())
-    if value is None:
-        return ()
-    if isinstance(value, str):
-        return (value,)
-    return tuple(str(item) for item in value)
-
-
 def _exact_string_field(
     mapping: Mapping[str, object],
     *names: str,
@@ -171,9 +162,9 @@ def _exact_mapping_field(
     path: str,
 ) -> dict[str, object]:
     value = _field(mapping, *names, default={})
-    if not isinstance(value, Mapping):
+    if type(value) is not dict:
         raise ValueError(f"{path} expected object")
-    return dict(value)
+    return value.copy()
 
 
 def _exact_list_field(
@@ -590,12 +581,12 @@ def _load_release(args: argparse.Namespace) -> _LoadedRelease:
                 "GraphRelease bundle release",
                 archive_release_bytes.decode("utf-8"),
             )
-        if not isinstance(manifest_value, Mapping):
+        if type(manifest_value) is not dict:
             raise ValueError("GraphRelease bundle manifest must be a mapping")
-        if not isinstance(release_value, Mapping):
+        if type(release_value) is not dict:
             raise ValueError("GraphRelease bundle release must be a mapping")
         archive_manifest = manifest_value
-        release_documents = [dict(release_value)]
+        release_documents = [release_value.copy()]
     else:
         try:
             release_documents = load_documents(args.path)
@@ -2200,7 +2191,7 @@ def _run_deploy_command(
                 "deploy plan payload",
                 args.path.read_text(encoding="utf-8"),
             )
-            if not isinstance(payload, Mapping):
+            if type(payload) is not dict:
                 raise ValueError("deploy plan payload must be a JSON object")
             if payload.get("ok") is not True:
                 raise ValueError("deploy plan payload is not successful")
@@ -2234,7 +2225,7 @@ def _run_deploy_command(
                     "deploy plan payload releaseDigest must be a canonical sha256 digest"
                 )
             deployment_revision = payload.get("deploymentRevision")
-            if not isinstance(deployment_revision, Mapping):
+            if type(deployment_revision) is not dict:
                 raise ValueError("deploy plan payload deploymentRevision must be an object")
             for revision_field, top_level_field in (
                 ("revisionId", "deploymentRevisionId"),
@@ -2246,70 +2237,157 @@ def _run_deploy_command(
                         "deploy plan payload deploymentRevision does not match top-level provenance"
                     )
             plan_payload = payload.get("plan")
-            if not isinstance(plan_payload, Mapping):
+            if type(plan_payload) is not dict:
                 raise ValueError("deploy plan payload requires plan mapping")
             graph_hash = plan_payload.get("graphHash")
-            if not isinstance(graph_hash, str) or not graph_hash.strip():
+            if (
+                type(graph_hash) is not str
+                or not graph_hash
+                or graph_hash != graph_hash.strip()
+            ):
                 raise ValueError("deploy plan payload plan.graphHash must be a non-empty string")
             targets_payload = plan_payload.get("targets")
-            if not isinstance(targets_payload, Mapping) or not targets_payload:
+            if type(targets_payload) is not dict or not targets_payload:
                 raise ValueError("deploy plan payload requires non-empty plan.targets")
-            canonical_targets: list[dict[str, object]] = []
-            for target_id, target in sorted(targets_payload.items()):
-                if not isinstance(target, Mapping):
-                    raise ValueError("deploy plan payload plan target must be an object")
-                capabilities = target.get("capabilities", [])
-                effects = target.get("effects", [])
-                if not isinstance(capabilities, list) or not isinstance(effects, list):
+            canonical_targets_by_id: dict[str, dict[str, object]] = {}
+            decoded_targets: dict[str, ExecutionTarget] = {}
+            for target_id, target in targets_payload.items():
+                if (
+                    type(target_id) is not str
+                    or not target_id
+                    or target_id != target_id.strip()
+                ):
                     raise ValueError(
-                        "deploy plan payload plan target capabilities and effects must be arrays"
+                        "deploy plan payload plan target id must be a non-empty string"
                     )
-                canonical_targets.append(
-                    {
-                        "target_id": target_id,
-                        "kind": target.get("kind"),
-                        "execution_host": target.get("executionHost"),
-                        "capabilities": capabilities,
-                        "effects": effects,
-                        "package_lock": target.get("packageLock"),
-                        "image": target.get("image"),
-                    }
+                if type(target) is not dict:
+                    raise ValueError("deploy plan payload plan target must be an object")
+                kind = _exact_string_field(
+                    target,
+                    "kind",
+                    path=f"deploy plan payload plan.targets.{target_id}.kind",
                 )
+                execution_host = _exact_string_field(
+                    target,
+                    "executionHost",
+                    path=(
+                        f"deploy plan payload plan.targets.{target_id}.executionHost"
+                    ),
+                )
+                capabilities = list(
+                    _exact_string_list_field(
+                        target,
+                        "capabilities",
+                        path=(
+                            f"deploy plan payload plan.targets.{target_id}.capabilities"
+                        ),
+                    )
+                )
+                effects = list(
+                    _exact_string_list_field(
+                        target,
+                        "effects",
+                        path=f"deploy plan payload plan.targets.{target_id}.effects",
+                    )
+                )
+                package_lock = _exact_optional_string_field(
+                    target,
+                    "packageLock",
+                    path=f"deploy plan payload plan.targets.{target_id}.packageLock",
+                )
+                image = _exact_optional_string_field(
+                    target,
+                    "image",
+                    path=f"deploy plan payload plan.targets.{target_id}.image",
+                )
+                decoded_targets[target_id] = ExecutionTarget(
+                    target_id=target_id,
+                    kind=kind,
+                    execution_host=execution_host,
+                    capabilities=tuple(capabilities),
+                    effects=tuple(effects),
+                    package_lock=package_lock,
+                    image=image,
+                )
+                canonical_targets_by_id[target_id] = {
+                    "target_id": target_id,
+                    "kind": kind,
+                    "execution_host": execution_host,
+                    "capabilities": capabilities,
+                    "effects": effects,
+                    "package_lock": package_lock,
+                    "image": image,
+                }
+            canonical_targets = [
+                canonical_targets_by_id[target_id]
+                for target_id in sorted(canonical_targets_by_id)
+            ]
             placements = plan_payload.get("placements", [])
-            if not isinstance(placements, list):
+            if type(placements) is not list:
                 raise ValueError("deploy plan payload plan.placements must be an array")
             canonical_placements: list[dict[str, object]] = []
-            for placement in placements:
-                if not isinstance(placement, Mapping):
+            for index, placement in enumerate(placements):
+                if type(placement) is not dict:
                     raise ValueError("deploy plan payload plan placement must be an object")
                 selector = placement.get("selector")
-                if not isinstance(selector, Mapping):
+                if type(selector) is not dict:
                     raise ValueError("deploy plan payload plan placement selector must be an object")
-                selector_values = selector.get("values", [])
-                if not isinstance(selector_values, list):
-                    raise ValueError(
-                        "deploy plan payload plan placement selector values must be an array"
+                rule_id = _exact_string_field(
+                    placement,
+                    "ruleId",
+                    path=f"deploy plan payload plan.placements[{index}].ruleId",
+                )
+                selector_kind = _exact_string_field(
+                    selector,
+                    "kind",
+                    path=(
+                        f"deploy plan payload plan.placements[{index}].selector.kind"
+                    ),
+                )
+                selector_values = list(
+                    _exact_string_list_field(
+                        selector,
+                        "values",
+                        path=(
+                            f"deploy plan payload plan.placements[{index}].selector.values"
+                        ),
                     )
+                )
+                placement_target = _exact_string_field(
+                    placement,
+                    "target",
+                    path=f"deploy plan payload plan.placements[{index}].target",
+                )
                 canonical_placements.append(
                     {
-                        "rule_id": placement.get("ruleId"),
+                        "rule_id": rule_id,
                         "selector": {
-                            "kind": selector.get("kind"),
+                            "kind": selector_kind,
                             "values": selector_values,
                         },
-                        "target_id": placement.get("target"),
+                        "target_id": placement_target,
                     }
                 )
             canonical_placements.sort(key=canonical_dumps)
+            package_lock_hash = _exact_optional_string_field(
+                plan_payload,
+                "packageLockHash",
+                path="deploy plan payload plan.packageLockHash",
+            )
+            default_target = _exact_optional_string_field(
+                plan_payload,
+                "defaultTarget",
+                path="deploy plan payload plan.defaultTarget",
+            )
             computed_plan_hash = canonical_hash(
                 {
                     "release_digest": provenance_fields["releaseDigest"],
                     "deployment_revision_id": provenance_fields["deploymentRevisionId"],
                     "graph_hash": graph_hash,
-                    "package_lock_hash": plan_payload.get("packageLockHash"),
+                    "package_lock_hash": package_lock_hash,
                     "targets": canonical_targets,
                     "placements": canonical_placements,
-                    "default_target": plan_payload.get("defaultTarget"),
+                    "default_target": default_target,
                 }
             )
             if computed_plan_hash != provenance_fields["planHash"]:
@@ -2356,27 +2434,18 @@ def _run_deploy_command(
 
             options = KubernetesRenderOptions(namespace=args.namespace)
             manifest_documents: list[dict[str, object]] = []
-            name_prefix = str(args.name or payload.get("deploymentId") or "graphblocks")
-            for target_id, target_payload in sorted(targets_payload.items()):
-                if not isinstance(target_payload, Mapping):
-                    raise ValueError(f"deploy plan target {target_id!r} must be a mapping")
-                target = ExecutionTarget(
-                    target_id=str(target_id),
-                    kind=str(target_payload.get("kind", "")),
-                    execution_host=str(target_payload.get("executionHost", "")),
-                    capabilities=tuple(str(item) for item in target_payload.get("capabilities", ()) or ()),
-                    effects=tuple(str(item) for item in target_payload.get("effects", ()) or ()),
-                    package_lock=(
-                        str(target_payload.get("packageLock"))
-                        if target_payload.get("packageLock") is not None
-                        else None
-                    ),
-                    image=(
-                        str(target_payload.get("image"))
-                        if target_payload.get("image") is not None
-                        else None
-                    ),
-                )
+            deployment_id = _exact_optional_string_field(
+                payload,
+                "deploymentId",
+                path="deploy plan payload deploymentId",
+            )
+            if (
+                args.name is not None
+                and (not args.name or args.name != args.name.strip())
+            ):
+                raise ValueError("--name must be a non-empty string")
+            name_prefix = args.name or deployment_id or "graphblocks"
+            for target_id, target in sorted(decoded_targets.items()):
                 manifest_set = render_target_manifests(
                     f"{name_prefix}-{target.target_id}",
                     target,
@@ -2402,11 +2471,7 @@ def _run_deploy_command(
                 chart = render_helm_chart(
                     name_prefix,
                     manifest_set,
-                    app_version=(
-                        str(payload.get("deploymentRevisionId"))
-                        if payload.get("deploymentRevisionId") is not None
-                        else None
-                    ),
+                    app_version=provenance_fields["deploymentRevisionId"],
                     values=chart_values,
                 )
                 output = {
@@ -2464,46 +2529,59 @@ def _run_deploy_command(
             deployment_document = deployment_documents[0]
             metadata = deployment_document.get("metadata", {})
             spec = deployment_document.get("spec", {})
-            if not isinstance(metadata, Mapping) or not isinstance(spec, Mapping):
+            if type(metadata) is not dict or type(spec) is not dict:
                 raise ValueError(
                     "GraphDeployment documents require metadata and spec mappings"
                 )
-            deployment_id = str(_field(metadata, "name", default="")).strip()
-            if not deployment_id:
-                raise ValueError("GraphDeployment metadata.name is required")
+            deployment_id = _exact_string_field(
+                metadata,
+                "name",
+                path="GraphDeployment metadata.name",
+            )
 
             release_ref = _field(spec, "releaseRef", "release_ref", default={})
-            if not isinstance(release_ref, Mapping):
+            if type(release_ref) is not dict:
                 raise ValueError("GraphDeployment spec.releaseRef must be a mapping")
-            release_name = _field(release_ref, "name")
-            if release_name is not None and str(release_name) != release.name:
+            release_name = _exact_optional_string_field(
+                release_ref,
+                "name",
+                path="GraphDeployment spec.releaseRef.name",
+            )
+            if release_name is not None and release_name != release.name:
                 raise ValueError(
                     f"GraphDeployment releaseRef.name {release_name!r} "
                     f"does not match {release.name!r}"
                 )
-            release_digest = _field(release_ref, "digest")
+            release_digest = _exact_optional_string_field(
+                release_ref,
+                "digest",
+                path="GraphDeployment spec.releaseRef.digest",
+            )
             if (
                 release_digest is not None
-                and str(release_digest) != release.content_digest()
+                and release_digest != release.content_digest()
             ):
                 raise ValueError(
                     f"GraphDeployment releaseRef.digest {release_digest!r} "
                     f"does not match {release.content_digest()!r}"
                 )
 
-            graph_name_value = args.graph or _field(
-                spec,
-                "graph",
-                "graphName",
-                "graph_name",
-            )
+            graph_name_value = args.graph
+            if graph_name_value is None:
+                graph_name_value = _exact_optional_string_field(
+                    spec,
+                    "graph",
+                    "graphName",
+                    "graph_name",
+                    path="GraphDeployment spec.graph",
+                )
             if graph_name_value is None:
                 if len(release.graphs) != 1:
                     raise ValueError(
                         "GraphDeployment requires --graph when the release does not contain exactly one graph"
                     )
                 graph_name_value = next(iter(release.graphs))
-            graph_name = str(graph_name_value)
+            graph_name = graph_name_value
             if graph_name not in release.graphs:
                 raise ValueError(
                     f"GraphRelease {release.name!r} has no graph {graph_name!r}"
@@ -2514,12 +2592,16 @@ def _run_deploy_command(
                 release=release,
                 graph_name=graph_name,
                 deployment_revision_id=args.revision,
-                environment=str(
-                    _field(spec, "environment", "profile", default="local")
+                environment=_exact_string_field(
+                    spec,
+                    "environment",
+                    "profile",
+                    path="GraphDeployment spec.environment",
+                    default="local",
                 ),
             )
             targets_data = _field(spec, "targets", default={})
-            if not isinstance(targets_data, Mapping):
+            if type(targets_data) is not dict:
                 raise ValueError("GraphDeployment spec.targets must be a mapping")
             target_kind_names = {
                 "service": "service",
@@ -2534,79 +2616,97 @@ def _run_deploy_command(
                 "external": "external",
             }
             for target_id, target_data in targets_data.items():
-                if not isinstance(target_data, Mapping):
+                if (
+                    type(target_id) is not str
+                    or not target_id
+                    or target_id != target_id.strip()
+                ):
+                    raise ValueError(
+                        "GraphDeployment target id must be a non-empty string"
+                    )
+                if type(target_data) is not dict:
                     raise ValueError(
                         f"GraphDeployment target {target_id!r} must be a mapping"
                     )
-                raw_kind = str(_field(target_data, "kind", default=""))
+                raw_kind = _exact_string_field(
+                    target_data,
+                    "kind",
+                    path=f"GraphDeployment target {target_id!r} kind",
+                )
                 target_kind = target_kind_names.get(raw_kind)
                 if target_kind is None:
                     raise ValueError(
                         f"GraphDeployment target {target_id!r} has unknown kind {raw_kind!r}"
                     )
-                execution_host = str(
-                    _field(
-                        target_data,
-                        "executionHost",
-                        "execution_host",
-                        default="",
-                    )
+                execution_host = _exact_string_field(
+                    target_data,
+                    "executionHost",
+                    "execution_host",
+                    path=(
+                        f"GraphDeployment target {target_id!r} executionHost"
+                    ),
                 )
-                if not execution_host:
-                    raise ValueError(
-                        f"GraphDeployment target {target_id!r} requires executionHost"
-                    )
                 accepts = _field(target_data, "accepts", default={})
-                if not isinstance(accepts, Mapping):
+                if type(accepts) is not dict:
                     raise ValueError(
                         f"GraphDeployment target {target_id!r} accepts must be a mapping"
                     )
+                accepted_capabilities = _exact_string_list_field(
+                    accepts,
+                    "capabilities",
+                    path=(
+                        f"GraphDeployment target {target_id!r} accepts.capabilities"
+                    ),
+                )
+                target_capabilities = _exact_string_list_field(
+                    target_data,
+                    "capabilities",
+                    path=f"GraphDeployment target {target_id!r} capabilities",
+                )
+                accepted_effects = _exact_string_list_field(
+                    accepts,
+                    "effects",
+                    path=f"GraphDeployment target {target_id!r} accepts.effects",
+                )
+                target_effects = _exact_string_list_field(
+                    target_data,
+                    "effects",
+                    path=f"GraphDeployment target {target_id!r} effects",
+                )
                 target = ExecutionTarget(
-                    target_id=str(target_id),
+                    target_id=target_id,
                     kind=target_kind,
                     execution_host=execution_host,
-                    capabilities=_tuple_field(
-                        accepts,
-                        "capabilities",
-                    )
-                    or _tuple_field(target_data, "capabilities"),
-                    effects=_tuple_field(accepts, "effects")
-                    or _tuple_field(target_data, "effects"),
-                    package_lock=(
-                        str(
-                            _field(
-                                target_data,
-                                "packageLock",
-                                "package_lock",
-                            )
-                        )
-                        if _field(
-                            target_data,
-                            "packageLock",
-                            "package_lock",
-                        )
-                        is not None
-                        else None
+                    capabilities=accepted_capabilities or target_capabilities,
+                    effects=accepted_effects or target_effects,
+                    package_lock=_exact_optional_string_field(
+                        target_data,
+                        "packageLock",
+                        "package_lock",
+                        path=f"GraphDeployment target {target_id!r} packageLock",
                     ),
-                    image=(
-                        str(_field(target_data, "image"))
-                        if _field(target_data, "image") is not None
-                        else None
+                    image=_exact_optional_string_field(
+                        target_data,
+                        "image",
+                        path=f"GraphDeployment target {target_id!r} image",
                     ),
                 )
                 deployment = deployment.with_target(target)
 
             coordinator = _field(spec, "coordinator", default={})
-            if coordinator is not None and not isinstance(coordinator, Mapping):
+            if coordinator is not None and type(coordinator) is not dict:
                 raise ValueError("GraphDeployment spec.coordinator must be a mapping")
             default_target = (
-                str(_field(coordinator, "target"))
-                if isinstance(coordinator, Mapping)
-                and _field(coordinator, "target") is not None
+                _exact_optional_string_field(
+                    coordinator,
+                    "target",
+                    path="GraphDeployment spec.coordinator.target",
+                )
+                if type(coordinator) is dict
                 else None
             )
             placements_data = _field(spec, "placements", default=())
-            if not isinstance(placements_data, list):
+            if type(placements_data) is not list:
                 raise ValueError("GraphDeployment spec.placements must be a list")
             selector_kinds = {
                 "nodes": "nodes",
@@ -2621,20 +2721,20 @@ def _run_deploy_command(
                 "execution_classes": "execution_classes",
             }
             for index, placement_data in enumerate(placements_data):
-                if not isinstance(placement_data, Mapping):
+                if type(placement_data) is not dict:
                     raise ValueError(
                         f"GraphDeployment placement {index} must be a mapping"
                     )
                 selector_data = _field(placement_data, "select", "selector")
-                if not isinstance(selector_data, Mapping):
+                if type(selector_data) is not dict:
                     raise ValueError(
                         f"GraphDeployment placement {index} requires select mapping"
                     )
-                target_id = str(_field(placement_data, "target", default=""))
-                if not target_id:
-                    raise ValueError(
-                        f"GraphDeployment placement {index} requires target"
-                    )
+                target_id = _exact_string_field(
+                    placement_data,
+                    "target",
+                    path=f"GraphDeployment placement {index} target",
+                )
                 default_selector = _field(
                     selector_data,
                     "default",
@@ -2653,7 +2753,16 @@ def _run_deploy_command(
                     default_target = target_id
                     continue
                 selected = [
-                    (selector_kinds[key], _tuple_field(selector_data, key))
+                    (
+                        selector_kinds[key],
+                        _exact_string_list_field(
+                            selector_data,
+                            key,
+                            path=(
+                                f"GraphDeployment placement {index} selector.{key}"
+                            ),
+                        ),
+                    )
                     for key in selector_kinds
                     if key in selector_data
                 ]
@@ -2668,14 +2777,13 @@ def _run_deploy_command(
                     )
                 deployment = deployment.with_placement(
                     PlacementRule(
-                        rule_id=str(
-                            _field(
-                                placement_data,
-                                "ruleId",
-                                "rule_id",
-                                "id",
-                                default=f"placement-{index + 1}",
-                            )
+                        rule_id=_exact_string_field(
+                            placement_data,
+                            "ruleId",
+                            "rule_id",
+                            "id",
+                            path=f"GraphDeployment placement {index} ruleId",
+                            default=f"placement-{index + 1}",
                         ),
                         selector=PlacementSelector(
                             selector_kind,
@@ -2691,16 +2799,12 @@ def _run_deploy_command(
                     )
                 deployment = deployment.with_default_target(default_target)
 
-            package_lock_hash = _field(
-                spec,
-                "packageLockHash",
-                "package_lock_hash",
-            )
             plan = deployment.to_physical_plan(
-                package_lock_hash=(
-                    str(package_lock_hash)
-                    if package_lock_hash is not None
-                    else None
+                package_lock_hash=_exact_optional_string_field(
+                    spec,
+                    "packageLockHash",
+                    "package_lock_hash",
+                    path="GraphDeployment spec.packageLockHash",
                 )
             )
             deployment_spec_hash = deployment.deployment_spec_hash()
@@ -2714,7 +2818,12 @@ def _run_deploy_command(
                 binding_ref = _field(spec, "bindingRef", "binding_ref", default={})
                 resolved_binding_hash = canonical_hash(binding_ref)
             else:
-                resolved_binding_hash = str(resolved_binding_hash_value)
+                resolved_binding_hash = _exact_string_field(
+                    spec,
+                    "resolvedBindingHash",
+                    "resolved_binding_hash",
+                    path="GraphDeployment spec.resolvedBindingHash",
+                )
             revision = DeploymentRevision(
                 revision_id=deployment.deployment_revision_id,
                 release_digest=plan.release_digest,
