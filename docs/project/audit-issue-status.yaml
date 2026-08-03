@@ -181,3 +181,6 @@ resolved:
   - id: GB-QA-005
     fixCommits: ['45547d71']
     regression: [tests/test_release_supply_chain.py]
+  - id: GB-QA-006
+    fixCommits: ['95feb606']
+    regression: [tests/test_release_supply_chain.py]

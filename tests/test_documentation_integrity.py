@@ -1580,8 +1580,8 @@ def test_stable_release_matrix_is_complete_and_machine_readable() -> None:
         "authority": "docs/project/audit-issue-status.yaml",
         "inventory": "docs/project/audit-issues.json",
         "checker": "tools/check_audit_inventory.py",
-        "resolved": 59,
-        "openBySeverity": {"P0": 0, "P1": 0, "P2": 32, "P3": 8},
+        "resolved": 60,
+        "openBySeverity": {"P0": 0, "P1": 0, "P2": 31, "P3": 8},
     }
     assert "signed-candidate-and-final-promotion-audit-closure-binding" in (
         audit_gate["implementedEvidence"]
@@ -1605,6 +1605,9 @@ def test_stable_release_matrix_is_complete_and_machine_readable() -> None:
         audit_gate["implementedEvidence"]
     )
     assert "required-pinned-ruff-lint-and-progressive-format-gate" in (
+        audit_gate["implementedEvidence"]
+    )
+    assert "security-critical-module-branch-and-ninety-percent-diff-coverage" in (
         audit_gate["implementedEvidence"]
     )
     assert audit_gate["blockers"] == [
