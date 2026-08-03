@@ -172,3 +172,6 @@ resolved:
   - id: GB-PERF-006
     fixCommits: [782325b5]
     regression: [tests/test_server_core.py]
+  - id: GB-QA-001
+    fixCommits: ['68090120']
+    regression: [tests/test_stable_typing_scope.py, tests/test_typed_graph_typing.py]
