@@ -53,8 +53,8 @@ A finding moves to resolved only when:
 4. the release matrix or profile evidence is updated when the finding changes a
    compatibility or production claim.
 
-The current generated count is 29 resolved findings: all 27 P0/P1 findings and
-the first 2 P2 findings. There are zero open P0/P1, 62 open P2, and 8 open P3.
+The current generated count is 31 resolved findings: all 27 P0/P1 findings and
+the first 4 P2 findings. There are zero open P0/P1, 60 open P2, and 8 open P3.
 This closes the recorded code-and-regression count; it does not replace the
 independent review, candidate attestation, platform, or soak gates.
 

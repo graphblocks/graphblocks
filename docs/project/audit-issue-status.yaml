@@ -91,3 +91,9 @@ resolved:
   - id: GB-API-003
     fixCommits: [722e2e0e]
     regression: [tests/test_internal_import_boundaries.py]
+  - id: GB-ARCH-003
+    fixCommits: [edb42c42]
+    regression: [tests/test_documentation_integrity.py]
+  - id: GB-ARCH-004
+    fixCommits: [c5836de6]
+    regression: [tests/test_documentation_integrity.py]
