@@ -178,3 +178,6 @@ resolved:
   - id: GB-QA-002
     fixCommits: ['68090120', 'bc10db40']
     regression: [tests/test_stable_typing_scope.py]
+  - id: GB-QA-005
+    fixCommits: ['45547d71']
+    regression: [tests/test_release_supply_chain.py]
