@@ -145,3 +145,6 @@ resolved:
   - id: GB-COR-009
     fixCommits: [daa02815]
     regression: [tests/test_server_core.py]
+  - id: GB-COR-011
+    fixCommits: [a8800a84]
+    regression: [tests/test_server_core.py]
