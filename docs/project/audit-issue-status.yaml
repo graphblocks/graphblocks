@@ -121,3 +121,6 @@ resolved:
   - id: GB-ARCH-013
     fixCommits: [00857381, 92e4188b]
     regression: [tests/test_journal_store.py]
+  - id: GB-ARCH-015
+    fixCommits: [0b51df7f]
+    regression: [tests/test_documentation_integrity.py, tests/test_release_supply_chain.py]
