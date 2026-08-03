@@ -973,6 +973,7 @@ releaseGates:
       - zero-open-p0-p1-with-ancestor-fix-and-regression-bindings
       - signed-candidate-and-final-promotion-audit-closure-binding
       - exact-captured-nine-finding-reproduction-suite-and-current-ci-regressions
+      - signed-candidate-and-final-reproduction-manifest-file-and-selector-source-binding
     evidence:
       - docs/project/audit-issues.json
       - docs/project/audit-issue-status.yaml

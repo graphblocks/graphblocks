@@ -112,11 +112,15 @@ AUDIT_INVENTORY_PATH = "docs/project/audit-issues.json"
 AUDIT_STATUS_PATH = "docs/project/audit-issue-status.yaml"
 AUDIT_REMEDIATION_MAP_PATH = "docs/project/audit-remediation-map.yaml"
 AUDIT_CHECKER_PATH = "tools/check_audit_inventory.py"
+AUDIT_REPRODUCTION_MANIFEST_PATH = "reproductions/audit-reproduction-manifest.yaml"
+AUDIT_REPRODUCTION_CHECKER_PATH = "tools/check_audit_reproductions.py"
 AUDIT_CLOSURE_SOURCE_PATHS = (
     AUDIT_INVENTORY_PATH,
     AUDIT_STATUS_PATH,
     AUDIT_REMEDIATION_MAP_PATH,
     AUDIT_CHECKER_PATH,
+    AUDIT_REPRODUCTION_MANIFEST_PATH,
+    AUDIT_REPRODUCTION_CHECKER_PATH,
 )
 PROMOTION_IMMUTABLE_AUTHORITY_PATHS = {
     "docs/project/stable-release-matrix.yaml",
@@ -717,6 +721,303 @@ def _promotion_regular_blob_exists(revision: str, path: str) -> bool:
         return False
 
 
+def _audit_reproduction_claim_from_blobs(
+    *,
+    manifest_bytes: bytes,
+    checker_bytes: bytes,
+    remediation_map: Mapping[str, object],
+    status: Mapping[str, object],
+    read_file: Callable[[str], bytes],
+    regular_file_exists: Callable[[str], bool],
+) -> dict[str, object]:
+    try:
+        manifest = yaml.safe_load(manifest_bytes)
+    except (UnicodeError, yaml.YAMLError) as error:
+        raise ReleaseBundleError(
+            "stable promotion audit reproduction manifest could not be loaded"
+        ) from error
+    manifest = _require_exact_keys(
+        manifest,
+        {
+            "formatVersion",
+            "auditDate",
+            "artifactBinding",
+            "auditedSource",
+            "execution",
+            "capturedFiles",
+            "reconstructedFiles",
+            "findings",
+        },
+        owner="stable promotion audit reproduction manifest",
+    )
+    if manifest.get("formatVersion") != 1 or manifest.get("auditDate") != "2026-07-27":
+        raise ReleaseBundleError(
+            "stable promotion audit reproduction manifest version/date is invalid"
+        )
+    if manifest.get("artifactBinding") != remediation_map.get("artifactDigests"):
+        raise ReleaseBundleError(
+            "stable promotion audit reproduction artifact binding drifted"
+        )
+    if (
+        remediation_map.get("reproductionManifest")
+        != AUDIT_REPRODUCTION_MANIFEST_PATH
+        or remediation_map.get("reproductionChecker")
+        != AUDIT_REPRODUCTION_CHECKER_PATH
+    ):
+        raise ReleaseBundleError(
+            "stable promotion audit reproduction authority drifted"
+        )
+    audited_source = _require_exact_keys(
+        manifest.get("auditedSource"),
+        {"status", "description", "gitRevision", "archiveDigest", "limitation"},
+        owner="stable promotion audit reproduction source",
+    )
+    if (
+        audited_source.get("status") != "unavailable"
+        or audited_source.get("gitRevision") is not None
+        or audited_source.get("archiveDigest") is not None
+    ):
+        raise ReleaseBundleError(
+            "stable promotion audit reproduction source identity is not truthful"
+        )
+    execution = _require_exact_keys(
+        manifest.get("execution"),
+        {"supportedPython", "runner", "timeoutSeconds"},
+        owner="stable promotion audit reproduction execution",
+    )
+    if (
+        execution.get("supportedPython") != ["3.11", "3.12"]
+        or execution.get("runner") != AUDIT_REPRODUCTION_CHECKER_PATH
+        or not isinstance(execution.get("timeoutSeconds"), int)
+    ):
+        raise ReleaseBundleError(
+            "stable promotion audit reproduction execution contract is invalid"
+        )
+
+    def validate_file_record(
+        raw_record: object,
+        *,
+        fields: set[str],
+        owner: str,
+    ) -> tuple[Mapping[str, object], str]:
+        record = _require_exact_keys(raw_record, fields, owner=owner)
+        path = _require_prefixed_repository_path(
+            record.get("path"), prefix="reproductions/", owner=f"{owner} path"
+        )
+        digest = _require_sha256(record.get("sha256"), owner=f"{owner} sha256")
+        size = record.get("size")
+        if not isinstance(size, int) or isinstance(size, bool) or size < 0:
+            raise ReleaseBundleError(f"{owner} size is invalid")
+        if not regular_file_exists(path):
+            raise ReleaseBundleError(f"{owner} is not a regular source file")
+        data = read_file(path)
+        if len(data) != size or _sha256_bytes(data) != digest:
+            raise ReleaseBundleError(f"{owner} content was substituted")
+        return record, path
+
+    captured = manifest.get("capturedFiles")
+    if not isinstance(captured, list) or len(captured) != 13:
+        raise ReleaseBundleError(
+            "stable promotion audit captured-file inventory is incomplete"
+        )
+    captured_paths: set[str] = set()
+    for index, raw_record in enumerate(captured):
+        _record, path = validate_file_record(
+            raw_record,
+            fields={"path", "sha256", "size"},
+            owner=f"stable promotion audit captured file {index}",
+        )
+        if path in captured_paths:
+            raise ReleaseBundleError(
+                "stable promotion audit captured-file inventory has duplicates"
+            )
+        captured_paths.add(path)
+
+    reconstructed = manifest.get("reconstructedFiles")
+    if not isinstance(reconstructed, list) or len(reconstructed) != 5:
+        raise ReleaseBundleError(
+            "stable promotion audit reconstructed-harness inventory is incomplete"
+        )
+    reconstructed_paths: set[str] = set()
+    for index, raw_record in enumerate(reconstructed):
+        record, path = validate_file_record(
+            raw_record,
+            fields={"path", "source", "sha256", "size"},
+            owner=f"stable promotion audit reconstructed harness {index}",
+        )
+        source = _require_prefixed_repository_path(
+            record.get("source"),
+            prefix="reproductions/original/",
+            owner=f"stable promotion audit reconstructed harness {index} source",
+        )
+        if path in reconstructed_paths or source not in captured_paths:
+            raise ReleaseBundleError(
+                "stable promotion audit reconstructed-harness identity is invalid"
+            )
+        reconstructed_paths.add(path)
+
+    resolved = status.get("resolved")
+    if not isinstance(resolved, list):
+        raise ReleaseBundleError("stable promotion audit status is invalid")
+    fixes_by_id = {
+        entry.get("id"): entry.get("fixCommits")
+        for entry in resolved
+        if isinstance(entry, Mapping)
+    }
+    mapped_findings = remediation_map.get("reproducedFindings")
+    if not isinstance(mapped_findings, list):
+        raise ReleaseBundleError(
+            "stable promotion audit reproduction remediation map is invalid"
+        )
+    mapped_by_id: dict[str, Mapping[str, object]] = {}
+    for index, raw_mapped_finding in enumerate(mapped_findings):
+        mapped_finding = _require_exact_keys(
+            raw_mapped_finding,
+            {"id", "harness", "evidence", "currentVerification"},
+            owner=f"stable promotion audit remediation reproduction {index}",
+        )
+        mapped_id = _require_nonempty_string(
+            mapped_finding.get("id"),
+            owner=f"stable promotion audit remediation reproduction {index} id",
+        )
+        if mapped_id in mapped_by_id:
+            raise ReleaseBundleError(
+                "stable promotion audit remediation reproduction IDs are duplicated"
+            )
+        mapped_by_id[mapped_id] = mapped_finding
+    mapped_ids = set(mapped_by_id)
+    findings = manifest.get("findings")
+    if (
+        not isinstance(findings, list)
+        or len(findings) != 9
+        or len(mapped_ids) != 9
+    ):
+        raise ReleaseBundleError(
+            "stable promotion audit reproduction finding inventory is incomplete"
+        )
+    finding_ids: set[str] = set()
+    referenced_evidence: set[str] = set()
+    selector_sources: dict[str, str] = {}
+    for index, raw_finding in enumerate(findings):
+        finding = _require_exact_keys(
+            raw_finding,
+            {"id", "evidence", "harness", "fixCommits", "currentSelectors"},
+            owner=f"stable promotion audit reproduction finding {index}",
+        )
+        finding_id = _require_nonempty_string(
+            finding.get("id"),
+            owner=f"stable promotion audit reproduction finding {index} id",
+        )
+        evidence = finding.get("evidence")
+        selectors = finding.get("currentSelectors")
+        if (
+            finding_id in finding_ids
+            or finding_id not in mapped_ids
+            or finding.get("fixCommits") != fixes_by_id.get(finding_id)
+            or not isinstance(evidence, list)
+            or not evidence
+            or any(
+                not isinstance(path, str) or path not in captured_paths
+                for path in evidence
+            )
+            or not isinstance(selectors, list)
+            or len(selectors) != 1
+        ):
+            raise ReleaseBundleError(
+                f"stable promotion audit reproduction {finding_id} mapping is invalid"
+            )
+        harness = _require_exact_keys(
+            finding.get("harness"),
+            {"status", "path", "sharedWith"},
+            owner=f"stable promotion audit reproduction {finding_id} harness",
+        )
+        harness_path = _require_prefixed_repository_path(
+            harness.get("path"),
+            prefix="reproductions/",
+            owner=f"stable promotion audit reproduction {finding_id} harness path",
+        )
+        if harness_path not in captured_paths | reconstructed_paths:
+            raise ReleaseBundleError(
+                f"stable promotion audit reproduction {finding_id} harness is unknown"
+            )
+        harness_status = harness.get("status")
+        shared_with = harness.get("sharedWith")
+        if (
+            harness_status == "reconstructed-from-captured-output"
+            and (harness_path not in reconstructed_paths or shared_with is not None)
+        ) or (
+            harness_status == "original-captured"
+            and (harness_path not in captured_paths or shared_with is not None)
+        ) or (
+            harness_status == "shared-original"
+            and (harness_path not in captured_paths or shared_with not in mapped_ids)
+        ) or harness_status not in {
+            "reconstructed-from-captured-output",
+            "original-captured",
+            "shared-original",
+        }:
+            raise ReleaseBundleError(
+                f"stable promotion audit reproduction {finding_id} harness status is invalid"
+            )
+        selector = _require_nonempty_string(
+            selectors[0], owner=f"stable promotion audit reproduction {finding_id} selector"
+        )
+        selector_parts = selector.split("::", 1)
+        if len(selector_parts) != 2 or not selector_parts[1].startswith("test_"):
+            raise ReleaseBundleError(
+                f"stable promotion audit reproduction {finding_id} selector is invalid"
+            )
+        selector_path = _require_prefixed_repository_path(
+            selector_parts[0],
+            prefix="tests/",
+            owner=f"stable promotion audit reproduction {finding_id} selector path",
+        )
+        if not regular_file_exists(selector_path):
+            raise ReleaseBundleError(
+                f"stable promotion audit reproduction {finding_id} selector source is missing"
+            )
+        selector_sources[selector_path] = _sha256_bytes(read_file(selector_path))
+        mapped_harness = (
+            f"shared-original-with-{shared_with}"
+            if harness_status == "shared-original"
+            else harness_status
+        )
+        if mapped_by_id[finding_id] != {
+            "id": finding_id,
+            "harness": mapped_harness,
+            "evidence": evidence,
+            "currentVerification": selector,
+        }:
+            raise ReleaseBundleError(
+                f"stable promotion audit reproduction {finding_id} remediation mapping drifted"
+            )
+        finding_ids.add(finding_id)
+        referenced_evidence.update(evidence)
+    if finding_ids != mapped_ids or referenced_evidence != captured_paths:
+        raise ReleaseBundleError(
+            "stable promotion audit reproduction coverage is incomplete"
+        )
+    return {
+        "manifest": {
+            "path": AUDIT_REPRODUCTION_MANIFEST_PATH,
+            "sha256": "sha256:" + _sha256_bytes(manifest_bytes),
+        },
+        "checker": {
+            "path": AUDIT_REPRODUCTION_CHECKER_PATH,
+            "sha256": "sha256:" + _sha256_bytes(checker_bytes),
+        },
+        "findings": len(finding_ids),
+        "capturedFiles": len(captured_paths),
+        "reconstructedHarnesses": len(reconstructed_paths),
+        "currentSelectors": len(findings),
+        "selectorSources": [
+            {"path": path, "sha256": "sha256:" + digest}
+            for path, digest in sorted(selector_sources.items())
+        ],
+        "auditedSourceIdentity": "unavailable",
+    }
+
+
 def _audit_closure_claim_from_result(
     source_blobs: Mapping[str, bytes],
     result: Mapping[str, object],
@@ -750,6 +1051,8 @@ def _audit_closure_claim_from_blobs(
     *,
     is_ancestor: Callable[[str], bool],
     regression_exists: Callable[[str], bool],
+    read_file: Callable[[str], bytes],
+    regular_file_exists: Callable[[str], bool],
 ) -> dict[str, object]:
     if set(source_blobs) != set(AUDIT_CLOSURE_SOURCE_PATHS):
         raise ReleaseBundleError("stable promotion audit source set is incomplete")
@@ -762,6 +1065,7 @@ def _audit_closure_claim_from_blobs(
         ) from error
     if (
         not isinstance(status, Mapping)
+        or not isinstance(remediation_map, Mapping)
         or not isinstance(status.get("inventory"), Mapping)
         or status["inventory"].get("path") != AUDIT_INVENTORY_PATH
     ):
@@ -780,7 +1084,16 @@ def _audit_closure_claim_from_blobs(
         raise ReleaseBundleError(
             f"stable promotion audit closure is invalid: {error}"
         ) from error
-    return _audit_closure_claim_from_result(source_blobs, result)
+    claim = _audit_closure_claim_from_result(source_blobs, result)
+    claim["reproductions"] = _audit_reproduction_claim_from_blobs(
+        manifest_bytes=source_blobs[AUDIT_REPRODUCTION_MANIFEST_PATH],
+        checker_bytes=source_blobs[AUDIT_REPRODUCTION_CHECKER_PATH],
+        remediation_map=remediation_map,
+        status=status,
+        read_file=read_file,
+        regular_file_exists=regular_file_exists,
+    )
+    return claim
 
 
 def _audit_closure_claim_for_revision(revision: str) -> dict[str, object]:
@@ -797,6 +1110,10 @@ def _audit_closure_claim_for_revision(revision: str) -> dict[str, object]:
         source_blobs,
         is_ancestor=lambda commit: _promotion_commit_is_ancestor(commit, revision),
         regression_exists=lambda path: _promotion_regular_blob_exists(revision, path),
+        read_file=lambda path: _promotion_git_blob(revision, path),
+        regular_file_exists=lambda path: _promotion_regular_blob_exists(
+            revision, path
+        ),
     )
 
 

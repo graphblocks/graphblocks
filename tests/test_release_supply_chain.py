@@ -147,6 +147,21 @@ def _trust_test_source(
     }
     original_promotion_git_blob = module._promotion_git_blob
     integration_matrix_path = "docs/project/stable-release-matrix.yaml"
+    audit_reproduction_manifest = yaml.safe_load(
+        (Path(__file__).parents[1] / module.AUDIT_REPRODUCTION_MANIFEST_PATH).read_text(
+            encoding="utf-8"
+        )
+    )
+    audit_reproduction_paths = {
+        record["path"]
+        for field in ("capturedFiles", "reconstructedFiles")
+        for record in audit_reproduction_manifest[field]
+    }
+    audit_reproduction_paths.update(
+        selector.split("::", 1)[0]
+        for finding in audit_reproduction_manifest["findings"]
+        for selector in finding["currentSelectors"]
+    )
     source_blobs = {
         path: (Path(__file__).parents[1] / path).read_bytes()
         for path in (
@@ -154,6 +169,7 @@ def _trust_test_source(
             module.SECURITY_GATE_MANIFEST_PATH,
             *module.SECURITY_GATE_EVIDENCE_PATHS,
             *module.AUDIT_CLOSURE_SOURCE_PATHS,
+            *sorted(audit_reproduction_paths),
         )
     }
     module._promotion_git_blob = (
@@ -515,6 +531,10 @@ def _audit_closure_report(module: ModuleType) -> dict[str, object]:
             },
             is_ancestor=lambda _commit: True,
             regression_exists=lambda _path: True,
+            read_file=lambda path: (Path(__file__).parents[1] / path).read_bytes(),
+            regular_file_exists=lambda path: (
+                Path(__file__).parents[1] / path
+            ).is_file(),
         ),
     }
 
@@ -983,6 +1003,8 @@ def test_promotion_source_diff_allows_only_release_metadata(
         "docs/project/audit-issue-status.yaml",
         "docs/project/audit-remediation-map.yaml",
         "tools/check_audit_inventory.py",
+        "reproductions/audit-reproduction-manifest.yaml",
+        "tools/check_audit_reproductions.py",
     ),
 )
 def test_promotion_source_diff_rejects_release_authority_drift(
@@ -1547,6 +1569,32 @@ def test_final_release_rejects_audit_closure_drift_after_candidate(
         )
 
 
+def test_final_release_rejects_substituted_captured_audit_reproduction(
+    tmp_path: Path,
+) -> None:
+    module = _load_module()
+    _trust_test_source(module)
+    evidence = _write_promotion_evidence(module, tmp_path / "promotion.json")
+    snapshot = module._snapshot_regular_file(evidence, owner="test promotion evidence")
+    trusted_git_blob = module._promotion_git_blob
+    captured_path = "reproductions/original/repro_canonical_bigint_cost.out"
+    module._promotion_git_blob = lambda revision, path: (
+        trusted_git_blob(revision, path) + b"substituted"
+        if revision == CANDIDATE_COMMIT and path == captured_path
+        else trusted_git_blob(revision, path)
+    )
+
+    with pytest.raises(module.ReleaseBundleError, match="content was substituted"):
+        module._validate_promotion_evidence(
+            snapshot,
+            git_commit=COMMIT,
+            git_tree=TREE,
+            release_ref="refs/tags/v1.0.0",
+            release_version="1.0.0",
+            verify_source_diff=True,
+        )
+
+
 def test_final_release_verification_rejects_promotion_evidence_tampering(
     tmp_path: Path,
 ) -> None:
@@ -1907,6 +1955,9 @@ def test_candidate_workflow_derives_and_freezes_audit_closure(
 
     assert frozen.data == module._canonical_json_bytes(payload)
     assert payload["openBySeverity"] == {"P0": 0, "P1": 0, "P2": 64, "P3": 8}
+    assert payload["reproductions"]["findings"] == 9
+    assert payload["reproductions"]["capturedFiles"] == 13
+    assert payload["reproductions"]["reconstructedHarnesses"] == 5
 
     module._current_git_commit = lambda: COMMIT
     with pytest.raises(module.ReleaseBundleError, match="checkout does not match"):

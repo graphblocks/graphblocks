@@ -178,9 +178,13 @@ reconstructs the five output-only or command-wrapper harnesses, and binds all
 nine findings to current executable regression selectors through
 [`audit-reproduction-manifest.yaml`](../../reproductions/audit-reproduction-manifest.yaml).
 CI rejects substituted evidence and reruns the reconstructed harnesses and
-selectors. Historical vulnerable behavior still cannot be independently
-replayed against an identified audited source; that source-identity gap remains
-blocking and is not inferred from the captured timestamps.
+selectors. The signed `audit-closure` promotion report additionally binds the
+reproduction manifest and checker, validates all captured and reconstructed
+file digests from both candidate and final Git objects, and records the exact
+selector-source digests. Historical vulnerable behavior still cannot be
+independently replayed against an identified audited source; that
+source-identity gap remains blocking and is not inferred from the captured
+timestamps.
 
 The stable promotion validator treats runtime security as evidence distinct
 from supply-chain integrity. Each candidate matrix attestation carries the
