@@ -143,6 +143,7 @@ def test_macos_native_wheel_smoke_is_required_for_both_python_versions() -> None
     workflow = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())
     job = workflow["jobs"]["macos-native-smoke"]
     assert job["runs-on"] == "macos-15"
+    assert job["env"] == {"RUSTUP_TOOLCHAIN": "1.94.0"}
     assert job["strategy"] == {
         "fail-fast": False,
         "matrix": {"python-version": ["3.11", "3.12"]},

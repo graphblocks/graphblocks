@@ -121,6 +121,7 @@ def test_ci_requires_dependency_audit_and_codeql() -> None:
 
     dependency_audit = jobs["dependency-audit"]
     assert dependency_audit["permissions"] == {"contents": "read"}
+    assert dependency_audit["env"] == {"RUSTUP_TOOLCHAIN": "1.94.0"}
     dependency_steps = {step["name"]: step for step in dependency_audit["steps"]}
     assert dependency_steps["Install pinned vulnerability scanners"]["run"] == (
         "python -m pip install pip-audit==2.10.1 PyYAML==6.0.3\n"
