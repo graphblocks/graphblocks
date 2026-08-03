@@ -84,8 +84,8 @@ deepAudit:
     authority: docs/project/audit-issue-status.yaml
     inventory: docs/project/audit-issues.json
     checker: tools/check_audit_inventory.py
-    resolved: 44
-    openBySeverity: {P0: 0, P1: 0, P2: 47, P3: 8}
+    resolved: 45
+    openBySeverity: {P0: 0, P1: 0, P2: 46, P3: 8}
   exitPolicy:
     securityFreeze: {maxOpenP0: 0}
     stableRelease: {maxOpenP0: 0, maxOpenP1: 0}
@@ -984,6 +984,7 @@ releaseGates:
       - deployment-chart-scaffold-with-no-operator-maturity-claim
       - unique-generated-run-and-response-identities
       - tenant-and-principal-bound-admission-ticket-subjects
+      - atomic-run-reservation-before-graph-compilation
     evidence:
       - docs/project/audit-issues.json
       - docs/project/audit-issue-status.yaml
