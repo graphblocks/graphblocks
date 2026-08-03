@@ -20,6 +20,44 @@ from graphblocks.run_store import (
 )
 
 
+def _create_legacy_sqlite_run_store(database, schema_version: int) -> None:
+    columns = [
+        "run_id TEXT PRIMARY KEY NOT NULL",
+        "sequence INTEGER NOT NULL UNIQUE",
+        "graph_hash TEXT NOT NULL",
+        "inputs_json TEXT NOT NULL",
+        "status TEXT NOT NULL",
+        "state_json TEXT NOT NULL",
+        "state_revision INTEGER NOT NULL",
+    ]
+    values: dict[str, object] = {
+        "run_id": "run-000001",
+        "sequence": 1,
+        "graph_hash": "sha256:test",
+        "inputs_json": "{}",
+        "status": "created",
+        "state_json": "{}",
+        "state_revision": 0,
+    }
+    if schema_version >= 1:
+        columns.append("deployment_provenance_json TEXT")
+        values["deployment_provenance_json"] = "{}"
+    if schema_version >= 2:
+        columns.append("model_visible_tools_json TEXT")
+        values["model_visible_tools_json"] = "[]"
+    connection = sqlite3.connect(database)
+    connection.execute(f"CREATE TABLE runs ({', '.join(columns)})")
+    field_names = tuple(values)
+    connection.execute(
+        f"INSERT INTO runs ({', '.join(field_names)}) "
+        f"VALUES ({', '.join('?' for _ in field_names)})",
+        tuple(values.values()),
+    )
+    connection.execute(f"PRAGMA user_version = {schema_version}")
+    connection.commit()
+    connection.close()
+
+
 def test_run_store_applies_state_patch_with_revision_cas() -> None:
     store = InMemoryRunStore()
     record = store.create_run("sha256:test", {"message": {"text": "hello"}})
@@ -561,6 +599,95 @@ def test_sqlite_run_store_persists_invocation_mode_across_instances(tmp_path) ->
 
     assert second.get_run(accepted.run_id).invocation_mode == "accepted"
     assert second.get_run(background.run_id).invocation_mode == "background"
+
+
+@pytest.mark.parametrize("schema_version", (0, 1, 2))
+def test_sqlite_run_store_migrates_each_previous_schema_transactionally(
+    tmp_path,
+    schema_version: int,
+) -> None:
+    database = tmp_path / f"runs-v{schema_version}.sqlite3"
+    _create_legacy_sqlite_run_store(database, schema_version)
+
+    store = SQLiteRunStore(database)
+    record = store.get_run("run-000001")
+    migrated_version = store.connection.execute("PRAGMA user_version").fetchone()[0]
+    columns = {
+        str(row["name"])
+        for row in store.connection.execute("PRAGMA table_info(runs)").fetchall()
+    }
+
+    assert migrated_version == 3
+    assert {
+        "deployment_provenance_json",
+        "invocation_mode",
+        "model_visible_tools_json",
+    } <= columns
+    assert record.deployment_provenance == RunDeploymentProvenance()
+    assert record.invocation_mode == "sync"
+    assert record.model_visible_tools == ()
+    store.close()
+
+
+def test_sqlite_run_store_rolls_back_interrupted_migration_and_retries(
+    tmp_path,
+) -> None:
+    database = tmp_path / "runs-interrupted.sqlite3"
+    _create_legacy_sqlite_run_store(database, 0)
+    connection = sqlite3.connect(database)
+    connection.execute(
+        """
+        CREATE TRIGGER abort_run_migration
+        BEFORE UPDATE ON runs
+        BEGIN
+          SELECT RAISE(ABORT, 'injected migration interruption');
+        END
+        """
+    )
+    connection.commit()
+    connection.close()
+
+    with pytest.raises(sqlite3.IntegrityError, match="injected migration interruption"):
+        SQLiteRunStore(database)
+
+    connection = sqlite3.connect(database)
+    version_after_failure = connection.execute("PRAGMA user_version").fetchone()[0]
+    columns_after_failure = {
+        str(row[1])
+        for row in connection.execute("PRAGMA table_info(runs)").fetchall()
+    }
+    connection.execute("DROP TRIGGER abort_run_migration")
+    connection.commit()
+    connection.close()
+
+    assert version_after_failure == 0
+    assert "deployment_provenance_json" not in columns_after_failure
+
+    store = SQLiteRunStore(database)
+    assert store.connection.execute("PRAGMA user_version").fetchone()[0] == 3
+    assert store.get_run("run-000001").invocation_mode == "sync"
+    store.close()
+
+
+def test_sqlite_run_store_serializes_concurrent_schema_migration(tmp_path) -> None:
+    database = tmp_path / "runs-concurrent-migration.sqlite3"
+    _create_legacy_sqlite_run_store(database, 0)
+    start = Barrier(2)
+
+    def open_store() -> tuple[int, str]:
+        start.wait(timeout=2)
+        store = SQLiteRunStore(database)
+        try:
+            version = store.connection.execute("PRAGMA user_version").fetchone()[0]
+            return int(version), store.get_run("run-000001").invocation_mode
+        finally:
+            store.close()
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = tuple(executor.submit(open_store) for _index in range(2))
+        results = tuple(future.result(timeout=5) for future in futures)
+
+    assert results == ((3, "sync"), (3, "sync"))
 
 
 def test_sqlite_run_store_rejects_malformed_deployment_provenance_on_replay(tmp_path) -> None:

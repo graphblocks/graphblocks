@@ -89,6 +89,7 @@ _R = TypeVar("_R")
 _MAX_RUN_JSON_DEPTH = 64
 _MAX_SQLITE_INTEGER = (1 << 63) - 1
 _RUN_STORE_SQLITE_BUSY_TIMEOUT_MS = 5_000
+_RUN_STORE_SQLITE_SCHEMA_VERSION = 3
 
 
 def _with_in_memory_run_store_lock(
@@ -597,49 +598,138 @@ class SQLiteRunStore:
             except sqlite3.OperationalError as error:
                 if "locked" not in str(error).casefold():
                     raise
-        self.connection.execute(
-            """
-            CREATE TABLE IF NOT EXISTS runs (
-              run_id TEXT PRIMARY KEY,
-              sequence INTEGER NOT NULL UNIQUE,
-              graph_hash TEXT NOT NULL,
-              inputs_json TEXT NOT NULL,
-              deployment_provenance_json TEXT NOT NULL,
-              invocation_mode TEXT NOT NULL DEFAULT 'sync',
-              model_visible_tools_json TEXT NOT NULL,
-              status TEXT NOT NULL,
-              state_json TEXT NOT NULL,
-              state_revision INTEGER NOT NULL
-            )
-            """
-        )
-        columns = {
-            str(row["name"])
-            for row in self.connection.execute("PRAGMA table_info(runs)").fetchall()
-        }
-        if "deployment_provenance_json" not in columns:
-            self.connection.execute("ALTER TABLE runs ADD COLUMN deployment_provenance_json TEXT")
-            self.connection.execute(
+        try:
+            self.connection.execute("BEGIN IMMEDIATE")
+            version_row = self.connection.execute("PRAGMA user_version").fetchone()
+            schema_version = int(version_row[0])
+            if schema_version < 0 or schema_version > _RUN_STORE_SQLITE_SCHEMA_VERSION:
+                raise RuntimeError(
+                    "run store SQLite schema version "
+                    f"{schema_version} is newer than supported version "
+                    f"{_RUN_STORE_SQLITE_SCHEMA_VERSION}"
+                )
+            table_exists = self.connection.execute(
                 """
-                UPDATE runs
-                SET deployment_provenance_json = ?
-                WHERE deployment_provenance_json IS NULL
-                """,
-                (_deployment_provenance_json(RunDeploymentProvenance()),),
-            )
-        if "model_visible_tools_json" not in columns:
-            self.connection.execute("ALTER TABLE runs ADD COLUMN model_visible_tools_json TEXT")
-            self.connection.execute(
+                SELECT 1
+                FROM sqlite_master
+                WHERE type = 'table' AND name = 'runs'
                 """
-                UPDATE runs
-                SET model_visible_tools_json = ?
-                WHERE model_visible_tools_json IS NULL
-                """,
-                (_model_visible_tools_json(()),),
-            )
-        if "invocation_mode" not in columns:
-            self.connection.execute("ALTER TABLE runs ADD COLUMN invocation_mode TEXT NOT NULL DEFAULT 'sync'")
-        self.connection.commit()
+            ).fetchone()
+            if table_exists is None:
+                if schema_version != 0:
+                    raise RuntimeError(
+                        "run store SQLite schema version is set but runs table is missing"
+                    )
+                self.connection.execute(
+                    """
+                    CREATE TABLE runs (
+                      run_id TEXT PRIMARY KEY,
+                      sequence INTEGER NOT NULL UNIQUE,
+                      graph_hash TEXT NOT NULL,
+                      inputs_json TEXT NOT NULL,
+                      deployment_provenance_json TEXT NOT NULL,
+                      invocation_mode TEXT NOT NULL DEFAULT 'sync',
+                      model_visible_tools_json TEXT NOT NULL,
+                      status TEXT NOT NULL,
+                      state_json TEXT NOT NULL,
+                      state_revision INTEGER NOT NULL
+                    )
+                    """
+                )
+                self.connection.execute(
+                    f"PRAGMA user_version = {_RUN_STORE_SQLITE_SCHEMA_VERSION}"
+                )
+            else:
+                columns = {
+                    str(row["name"])
+                    for row in self.connection.execute(
+                        "PRAGMA table_info(runs)"
+                    ).fetchall()
+                }
+                base_columns = {
+                    "run_id",
+                    "sequence",
+                    "graph_hash",
+                    "inputs_json",
+                    "status",
+                    "state_json",
+                    "state_revision",
+                }
+                missing_base_columns = base_columns.difference(columns)
+                if missing_base_columns:
+                    raise RuntimeError(
+                        "run store SQLite schema is missing base columns: "
+                        + ", ".join(sorted(missing_base_columns))
+                    )
+
+                if schema_version < 1:
+                    if "deployment_provenance_json" not in columns:
+                        self.connection.execute(
+                            "ALTER TABLE runs ADD COLUMN deployment_provenance_json TEXT"
+                        )
+                        self.connection.execute(
+                            """
+                            UPDATE runs
+                            SET deployment_provenance_json = ?
+                            WHERE deployment_provenance_json IS NULL
+                            """,
+                            (
+                                _deployment_provenance_json(
+                                    RunDeploymentProvenance()
+                                ),
+                            ),
+                        )
+                        columns.add("deployment_provenance_json")
+                    self.connection.execute("PRAGMA user_version = 1")
+                    schema_version = 1
+
+                if schema_version < 2:
+                    if "model_visible_tools_json" not in columns:
+                        self.connection.execute(
+                            "ALTER TABLE runs ADD COLUMN model_visible_tools_json TEXT"
+                        )
+                        self.connection.execute(
+                            """
+                            UPDATE runs
+                            SET model_visible_tools_json = ?
+                            WHERE model_visible_tools_json IS NULL
+                            """,
+                            (_model_visible_tools_json(()),),
+                        )
+                        columns.add("model_visible_tools_json")
+                    self.connection.execute("PRAGMA user_version = 2")
+                    schema_version = 2
+
+                if schema_version < 3:
+                    if "invocation_mode" not in columns:
+                        self.connection.execute(
+                            """
+                            ALTER TABLE runs
+                            ADD COLUMN invocation_mode TEXT NOT NULL DEFAULT 'sync'
+                            """
+                        )
+                        columns.add("invocation_mode")
+                    self.connection.execute("PRAGMA user_version = 3")
+                    schema_version = 3
+
+                required_columns = base_columns | {
+                    "deployment_provenance_json",
+                    "invocation_mode",
+                    "model_visible_tools_json",
+                }
+                missing_columns = required_columns.difference(columns)
+                if missing_columns:
+                    raise RuntimeError(
+                        "run store SQLite schema version "
+                        f"{schema_version} is missing columns: "
+                        + ", ".join(sorted(missing_columns))
+                    )
+            self.connection.commit()
+        except Exception:
+            self.connection.rollback()
+            self.connection.close()
+            self._closed = True
+            raise
 
     def close(self) -> None:
         with self._lock:
