@@ -24,6 +24,10 @@ PYPROJECT_PATH = Path("pyproject.toml")
 PACKAGE_INIT_PATH = Path("src/graphblocks/__init__.py")
 PRODUCTION_SOURCE_ROOT = Path("src/graphblocks")
 _ISSUE_PATTERN = re.compile(r"TYPE-[0-9]{3,}")
+_CODED_TYPE_IGNORE_PATTERN = re.compile(
+    r"# type: ignore\[[a-z][a-z0-9-]*(?:,\s*[a-z][a-z0-9-]*)*\]"
+    r"(?:\s+#.*)?\Z"
+)
 
 
 def _load_yaml(path: Path) -> object:
@@ -247,19 +251,23 @@ def _review_date(value: object) -> date | None:
     return parsed if value == parsed.isoformat() else None
 
 
-def _production_type_ignore_comment_count(source_root: Path) -> int:
+def _production_type_ignore_comment_counts(
+    source_root: Path,
+) -> tuple[int, int]:
     count = 0
+    uncoded_count = 0
     for source_path in sorted(source_root.rglob("*.py")):
         with source_path.open("rb") as source_file:
-            count += sum(
-                1
-                for token in tokenize.tokenize(source_file.readline)
+            for token in tokenize.tokenize(source_file.readline):
                 if (
-                    token.type == tokenize.COMMENT
-                    and token.string.startswith("# type: ignore")
-                )
-            )
-    return count
+                    token.type != tokenize.COMMENT
+                    or not token.string.startswith("# type: ignore")
+                ):
+                    continue
+                count += 1
+                if _CODED_TYPE_IGNORE_PATTERN.fullmatch(token.string) is None:
+                    uncoded_count += 1
+    return count, uncoded_count
 
 
 def validate_production_typing_budget(
@@ -267,6 +275,7 @@ def validate_production_typing_budget(
     budget: object,
     strict_module_count: int,
     type_ignore_comment_count: int,
+    uncoded_type_ignore_comment_count: int,
 ) -> list[str]:
     """Return production strict-scope and no-new-ignore budget violations."""
 
@@ -277,6 +286,7 @@ def validate_production_typing_budget(
         "productionSourceRoot",
         "minimumStrictModuleCount",
         "maximumTypeIgnoreCommentCount",
+        "maximumUncodedTypeIgnoreCommentCount",
     }
     errors: list[str] = []
     unknown_fields = sorted(set(budget) - expected_fields)
@@ -328,6 +338,24 @@ def validate_production_typing_budget(
         errors.append(
             "production type-ignore debt increased: "
             f"maximum {maximum_type_ignores}, found {type_ignore_comment_count}"
+        )
+    maximum_uncoded_type_ignores = budget.get(
+        "maximumUncodedTypeIgnoreCommentCount"
+    )
+    if (
+        isinstance(maximum_uncoded_type_ignores, bool)
+        or not isinstance(maximum_uncoded_type_ignores, int)
+        or maximum_uncoded_type_ignores < 0
+    ):
+        errors.append(
+            "production typing scope maximumUncodedTypeIgnoreCommentCount "
+            "must be a non-negative integer"
+        )
+    elif uncoded_type_ignore_comment_count > maximum_uncoded_type_ignores:
+        errors.append(
+            "production uncoded type-ignore debt increased: "
+            f"maximum {maximum_uncoded_type_ignores}, "
+            f"found {uncoded_type_ignore_comment_count}"
         )
     return errors
 
@@ -461,7 +489,10 @@ def check_repository(
     strict_modules = _strict_modules(pyproject)
     debt = _load_yaml(root / DEBT_PATH)
     scope_budget = _load_yaml(root / SCOPE_BUDGET_PATH)
-    type_ignore_comment_count = _production_type_ignore_comment_count(
+    (
+        type_ignore_comment_count,
+        uncoded_type_ignore_comment_count,
+    ) = _production_type_ignore_comment_counts(
         root / PRODUCTION_SOURCE_ROOT
     )
     return sorted(
@@ -481,6 +512,9 @@ def check_repository(
                 budget=scope_budget,
                 strict_module_count=len(strict_modules),
                 type_ignore_comment_count=type_ignore_comment_count,
+                uncoded_type_ignore_comment_count=(
+                    uncoded_type_ignore_comment_count
+                ),
             ),
         }
     )

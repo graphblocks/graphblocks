@@ -7,6 +7,7 @@ import sys
 import tomllib
 import yaml
 
+from tools import check_stable_typing
 from tools.check_stable_typing import (
     check_repository,
     validate_production_typing_budget,
@@ -61,6 +62,7 @@ def test_repository_mypy_scope_silences_only_transitive_diagnostics() -> None:
         "productionSourceRoot": "src/graphblocks",
         "minimumStrictModuleCount": 14,
         "maximumTypeIgnoreCommentCount": 145,
+        "maximumUncodedTypeIgnoreCommentCount": 0,
     }
 
 
@@ -70,21 +72,41 @@ def test_production_typing_budget_rejects_scope_and_ignore_regressions() -> None
         "productionSourceRoot": "src/graphblocks",
         "minimumStrictModuleCount": 14,
         "maximumTypeIgnoreCommentCount": 145,
+        "maximumUncodedTypeIgnoreCommentCount": 0,
     }
 
     assert validate_production_typing_budget(
         budget=budget,
         strict_module_count=14,
         type_ignore_comment_count=145,
+        uncoded_type_ignore_comment_count=0,
     ) == []
     assert validate_production_typing_budget(
         budget=budget,
         strict_module_count=13,
         type_ignore_comment_count=146,
+        uncoded_type_ignore_comment_count=1,
     ) == [
         "production strict mypy scope regressed: expected at least 14 modules, found 13",
         "production type-ignore debt increased: maximum 145, found 146",
+        "production uncoded type-ignore debt increased: maximum 0, found 1",
     ]
+
+
+def test_production_typing_scanner_distinguishes_coded_and_bare_ignores(
+    tmp_path: Path,
+) -> None:
+    source_root = tmp_path / "graphblocks"
+    source_root.mkdir()
+    (source_root / "sample.py").write_text(
+        "coded = value  # type: ignore[arg-type]\n"
+        "bare = value  # type: ignore\n",
+        encoding="utf-8",
+    )
+
+    assert check_stable_typing._production_type_ignore_comment_counts(
+        source_root
+    ) == (2, 1)
 
 
 def test_stable_typing_scope_requires_exact_ordered_root_exports() -> None:
