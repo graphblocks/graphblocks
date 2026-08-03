@@ -1,0 +1,10 @@
+{
+  "cases": [
+    {
+      "caseId": "malformed-object-becomes-allow-list",
+      "failures": [],
+      "passed": true
+    }
+  ],
+  "ok": true
+}

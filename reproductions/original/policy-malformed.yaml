@@ -1,0 +1,14 @@
+apiVersion: graphblocks.ai/v1alpha1
+kind: PolicyBundle
+metadata:
+  name: malformed-policy
+  version: 1.0.0
+spec:
+  ruleLanguage: static
+  rules:
+    - ruleId: allow-model
+      effect: allow
+      actions:
+        model.generate: true
+      resourceSelectors:
+        model: true

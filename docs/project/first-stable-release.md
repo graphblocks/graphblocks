@@ -172,9 +172,15 @@ artifact.
 The original report, issue inventory, and evidence bundle digests plus the
 99-finding workstream crosswalk are recorded in
 [`audit-remediation-map.yaml`](audit-remediation-map.yaml). The evidence bundle
-does not contain the audited source revision/archive digest or a complete
-command/tool manifest, and several reproduced findings have output without an
-executable harness. Those provenance and reconstruction gaps remain blocking.
+does not contain the audited source revision/archive digest. The repository now
+preserves all 13 captured reproduction files at their exact bundle digests,
+reconstructs the five output-only or command-wrapper harnesses, and binds all
+nine findings to current executable regression selectors through
+[`audit-reproduction-manifest.yaml`](../../reproductions/audit-reproduction-manifest.yaml).
+CI rejects substituted evidence and reruns the reconstructed harnesses and
+selectors. Historical vulnerable behavior still cannot be independently
+replayed against an identified audited source; that source-identity gap remains
+blocking and is not inferred from the captured timestamps.
 
 The stable promotion validator treats runtime security as evidence distinct
 from supply-chain integrity. Each candidate matrix attestation carries the

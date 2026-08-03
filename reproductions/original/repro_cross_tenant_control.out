@@ -1,0 +1,3 @@
+alice-create (202, {'cancel': '/runs/alice-pending/cancel', 'eventStream': '/runs/alice-pending/events', 'initialCursor': 'alice-pending:0', 'ok': True, 'runId': 'alice-pending', 'status': 'accepted', 'websocket': '/runs/alice-pending/ws'})
+bob-cancel (202, {'lastCursor': 'alice-pending:2', 'ok': True, 'reason': 'cross-tenant', 'runId': 'alice-pending', 'status': 'cancelled'})
+alice-status (200, {'activeOperations': [], 'completedAt': '2026-07-27T00:00:01Z', 'lastCursor': 'alice-pending:2', 'ok': True, 'releaseId': 'local', 'runId': 'alice-pending', 'startedAt': '2026-07-27T00:00:00Z', 'state': 'cancelled', 'updatedAt': '2026-07-27T00:00:01Z', 'waitingOn': []})

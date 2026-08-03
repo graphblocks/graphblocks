@@ -120,49 +120,60 @@ baselineBySeverity:
     - GB-DOC-009
     - GB-DOC-010
 
+reproductionManifest: reproductions/audit-reproduction-manifest.yaml
+reproductionChecker: tools/check_audit_reproductions.py
 reproducedFindings:
   - id: GB-POL-001
-    harness: missing-cli-command-wrapper
+    harness: reconstructed-from-captured-output
     evidence:
-      - reproductions/policy-malformed.yaml
-      - reproductions/policy-case.yaml
-      - reproductions/repro_policy_fail_open.out
+      - reproductions/original/policy-malformed.yaml
+      - reproductions/original/policy-case.yaml
+      - reproductions/original/repro_policy_fail_open.out
+    currentVerification: tests/test_cli.py::test_policy_test_cli_rejects_object_coerced_to_action_list
   - id: GB-SEC-001
-    harness: present
+    harness: original-captured
     evidence:
-      - reproductions/repro_server_authz.py
-      - reproductions/repro_server_authz.out
+      - reproductions/original/repro_server_authz.py
+      - reproductions/original/repro_server_authz.out
+    currentVerification: tests/test_server_core.py::test_server_app_hides_run_scoped_resources_from_other_principals_and_tenants
   - id: GB-SEC-002
-    harness: present
+    harness: original-captured
     evidence:
-      - reproductions/repro_cross_tenant_control.py
-      - reproductions/repro_cross_tenant_control.out
+      - reproductions/original/repro_cross_tenant_control.py
+      - reproductions/original/repro_cross_tenant_control.out
+    currentVerification: tests/test_server_core.py::test_server_app_rejects_cross_tenant_run_controls_atomically
   - id: GB-SEC-003
-    harness: shared-with-GB-SEC-001
+    harness: shared-original-with-GB-SEC-001
     evidence:
-      - reproductions/repro_server_authz.py
-      - reproductions/repro_server_authz.out
+      - reproductions/original/repro_server_authz.py
+      - reproductions/original/repro_server_authz.out
+    currentVerification: tests/test_server_core.py::test_server_app_requires_authentication_for_protected_manifests
   - id: GB-INP-001
-    harness: present
+    harness: original-captured
     evidence:
-      - reproductions/repro_mcp_regex_redos.py
-      - reproductions/repro_mcp_regex_redos.out
+      - reproductions/original/repro_mcp_regex_redos.py
+      - reproductions/original/repro_mcp_regex_redos.out
+    currentVerification: tests/test_mcp_schema_execution.py::test_mcp_inline_schemas_reject_regular_expression_keywords
   - id: GB-INP-004
-    harness: missing-output-only
+    harness: reconstructed-from-captured-output
     evidence:
-      - reproductions/repro_canonical_bigint_cost.out
+      - reproductions/original/repro_canonical_bigint_cost.out
+    currentVerification: tests/test_canonical_integer_limits.py::test_canonical_loads_rejects_oversized_integer_tokens
   - id: GB-INP-005
-    harness: missing-output-only
+    harness: reconstructed-from-captured-output
     evidence:
-      - reproductions/repro_canonical_decimal_cost.out
+      - reproductions/original/repro_canonical_decimal_cost.out
+    currentVerification: tests/test_canonical_numeric_encoding.py::test_canonical_numeric_tokens_do_not_rescan_output_per_value
   - id: GB-PERF-002
-    harness: missing-output-only
+    harness: reconstructed-from-captured-output
     evidence:
-      - reproductions/repro_journal_append_cost.out
+      - reproductions/original/repro_journal_append_cost.out
+    currentVerification: tests/test_journal_store.py::test_in_memory_journal_append_keeps_constant_time_internal_storage
   - id: GB-SEC-007
-    harness: missing-output-only
+    harness: reconstructed-from-captured-output
     evidence:
-      - reproductions/repro_nonexistent_delivery_control.out
+      - reproductions/original/repro_nonexistent_delivery_control.out
+    currentVerification: tests/test_server_core.py::test_server_app_rejects_control_for_unknown_callback_delivery
 
 workstreams:
   - id: M0-AUTHORIZATION

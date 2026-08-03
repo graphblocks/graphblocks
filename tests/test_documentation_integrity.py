@@ -1567,6 +1567,8 @@ def test_stable_release_matrix_is_complete_and_machine_readable() -> None:
     reproduced = [entry["id"] for entry in coverage["reproducedFindings"]]
     assert len(reproduced) == audit["baseline"]["reproduced"] == len(set(reproduced))
     assert set(reproduced) <= set(baseline_ids)
+    assert (ROOT / coverage["reproductionManifest"]).is_file()
+    assert (ROOT / coverage["reproductionChecker"]).is_file()
 
     audit_gate = next(
         entry for entry in matrix["releaseGates"] if entry["id"] == "REL-AUDIT-REMEDIATION"
@@ -1586,7 +1588,6 @@ def test_stable_release_matrix_is_complete_and_machine_readable() -> None:
     )
     assert audit_gate["blockers"] == [
         "audited-source-commit-tree-or-archive-digest-unavailable",
-        "reproduction-harnesses-and-command-provenance-incomplete",
     ]
     assert audit_gate["exitCriteria"]["maxOpenBySeverity"] == {"P0": 0, "P1": 0}
     assert audit_gate["companionGates"] == [

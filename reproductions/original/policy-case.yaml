@@ -1,0 +1,18 @@
+apiVersion: graphblocks.ai/v1alpha1
+kind: PolicyTestCase
+metadata:
+  name: malformed-object-becomes-allow-list
+spec:
+  request:
+    requestId: request-1
+    enforcementPoint: before_provider_call
+    action: model.generate
+    resource:
+      resourceId: model:support
+      resourceKind: model
+    occurredAt: "2026-07-27T00:00:00Z"
+  expect:
+    effect: allow
+    reasonCodes: [allow-model]
+    enforcementStatus: enforced
+  evaluatedAt: "2026-07-27T00:00:01Z"

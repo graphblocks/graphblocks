@@ -1,0 +1,4 @@
+redrive 202 {"deliveryId":"never-existed","ok":true,"operator":"bob","reason":"test","status":"redrive_requested"}
+dead-letter 202 {"deliveryId":"never-existed","ok":true,"operator":"bob","reason":"test","status":"dead_letter_requested"}
+redrives (mappingproxy({'deliveryId': 'never-existed', 'operator': 'bob', 'reason': 'test', 'requestedAt': '2026-07-27T00:00:00+00:00', 'status': 'redrive_requested'}),)
+deadletters (mappingproxy({'deliveryId': 'never-existed', 'operator': 'bob', 'reason': 'test', 'requestedAt': '2026-07-27T00:00:00+00:00', 'status': 'dead_letter_requested'}),)

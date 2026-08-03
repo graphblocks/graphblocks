@@ -1,0 +1,82 @@
+formatVersion: 1
+auditDate: '2026-07-27'
+artifactBinding:
+  reportSha256: 5ad9b3dcb77b387e1a5d6b41bdb65b9c609c18526d0f1ec712dcb102bfba9f2c
+  inventorySha256: 9f98ebde8dc981b0eaee8ed795e04306ac67f707223cfe844e2365561db7eb44
+  evidenceBundleSha256: 75cf142766d1e8cbf8c89c1157727d8a4ca0e945b15e9157c8977f1c6a02fe06
+auditedSource:
+  status: unavailable
+  description: User-provided graphblocks-main.zip
+  gitRevision: null
+  archiveDigest: null
+  limitation: Historical vulnerable behavior cannot be independently replayed against an identified audited source; captured files and reconstructed commands remain evidence-bound without claiming that missing identity.
+execution:
+  supportedPython: ['3.11', '3.12']
+  runner: tools/check_audit_reproductions.py
+  timeoutSeconds: 120
+capturedFiles:
+  - {path: reproductions/original/policy-case.yaml, sha256: 51d8fafafc8b6377c7b3be1786bb773d878ee855d921037303a71f3d1bbb5230, size: 463}
+  - {path: reproductions/original/policy-malformed.yaml, sha256: fb6455539de447a2f025c1d9580de2df181a1baea4d4a762417f420af45cc39f, size: 280}
+  - {path: reproductions/original/repro_canonical_bigint_cost.out, sha256: 69d1cb0750ac9d508751c2253f32df74f63edd0385a5eac757b8cd2fd07e0c4b, size: 124}
+  - {path: reproductions/original/repro_canonical_decimal_cost.out, sha256: 7ba3a7e73e74d715cd638cbeb4b663aebc26c831420a5651094e4c0c520c92a2, size: 100}
+  - {path: reproductions/original/repro_cross_tenant_control.out, sha256: 935d5283e2ebd8b52589c58e232c748b96cc469a83a7e8f185f27d134afed5c0, size: 670}
+  - {path: reproductions/original/repro_cross_tenant_control.py, sha256: e62c92e3a5201868dda8c1c6236ba3b69da7e17f89dab97e5f0f7506f06eebd0, size: 1286}
+  - {path: reproductions/original/repro_journal_append_cost.out, sha256: c2d9f744a47f7e527297128667bf26ffbd047dcdd4c5e083006c92e104e5c147, size: 71}
+  - {path: reproductions/original/repro_mcp_regex_redos.out, sha256: 3fbc671d94b9b0209ce6a5b38db2487bd74d16edde422bab4a502a6ad003efd1, size: 60}
+  - {path: reproductions/original/repro_mcp_regex_redos.py, sha256: fd315c83cfcaec6d49d7d14ab2ab88aaa6d89f04ba4074d794f6bf289f5a1ded, size: 541}
+  - {path: reproductions/original/repro_nonexistent_delivery_control.out, sha256: 68050ee5756479115f029571b36c4a3f7a163f23502160c9972b37ffc82c9566, size: 585}
+  - {path: reproductions/original/repro_policy_fail_open.out, sha256: ad23f7a3639ae878814ea20ea7bd849a2931ec2c4b3314518b6c7a1d1388fd72, size: 145}
+  - {path: reproductions/original/repro_server_authz.out, sha256: 96fa03d06e2c8370e6f6f1e76a1be07a51b006cb37f02a1c7059faadda47b20f, size: 2764}
+  - {path: reproductions/original/repro_server_authz.py, sha256: d8694238c5187166c099fab069ea123e0a6182d5d801600c9525b6facc934b80, size: 2143}
+reconstructedFiles:
+  - {path: reproductions/reconstructed/repro_canonical_bigint_cost.py, source: reproductions/original/repro_canonical_bigint_cost.out, sha256: 33e31a2e667dbe38e1dac9c928ceb4ad920c2beb2c92a28256a5ff021af68b6d, size: 743}
+  - {path: reproductions/reconstructed/repro_canonical_decimal_cost.py, source: reproductions/original/repro_canonical_decimal_cost.out, sha256: eec47fb999c8cbb6d223e1086dd9c0bbcdb1dcc1f6b2864f23fc63f788fc30bc, size: 1298}
+  - {path: reproductions/reconstructed/repro_journal_append_cost.py, source: reproductions/original/repro_journal_append_cost.out, sha256: 7508279c8248843592a6a7181fa7ab8cd1288f0527975746ca1e3fa895d4c6cd, size: 890}
+  - {path: reproductions/reconstructed/repro_nonexistent_delivery_control.py, source: reproductions/original/repro_nonexistent_delivery_control.out, sha256: 4b411c2ad7b8a2a432bad7b0585d437ef84e1645e9fa29fef9cb1602ceb92b79, size: 1374}
+  - {path: reproductions/reconstructed/repro_policy_fail_open.py, source: reproductions/original/repro_policy_fail_open.out, sha256: 16c1ff5385a1ff4de1b2fad228dc5ad86b18eb0ec1e0780cbda6dd02f7a89bb0, size: 1152}
+findings:
+  - id: GB-POL-001
+    evidence: [reproductions/original/policy-malformed.yaml, reproductions/original/policy-case.yaml, reproductions/original/repro_policy_fail_open.out]
+    harness: {status: reconstructed-from-captured-output, path: reproductions/reconstructed/repro_policy_fail_open.py, sharedWith: null}
+    fixCommits: [0959ffd4]
+    currentSelectors: [tests/test_cli.py::test_policy_test_cli_rejects_object_coerced_to_action_list]
+  - id: GB-SEC-001
+    evidence: [reproductions/original/repro_server_authz.py, reproductions/original/repro_server_authz.out]
+    harness: {status: original-captured, path: reproductions/original/repro_server_authz.py, sharedWith: null}
+    fixCommits: [a5eb785d, 334fd438]
+    currentSelectors: [tests/test_server_core.py::test_server_app_hides_run_scoped_resources_from_other_principals_and_tenants]
+  - id: GB-SEC-002
+    evidence: [reproductions/original/repro_cross_tenant_control.py, reproductions/original/repro_cross_tenant_control.out]
+    harness: {status: original-captured, path: reproductions/original/repro_cross_tenant_control.py, sharedWith: null}
+    fixCommits: [a5eb785d]
+    currentSelectors: [tests/test_server_core.py::test_server_app_rejects_cross_tenant_run_controls_atomically]
+  - id: GB-SEC-003
+    evidence: [reproductions/original/repro_server_authz.py, reproductions/original/repro_server_authz.out]
+    harness: {status: shared-original, path: reproductions/original/repro_server_authz.py, sharedWith: GB-SEC-001}
+    fixCommits: [819e1ddf]
+    currentSelectors: [tests/test_server_core.py::test_server_app_requires_authentication_for_protected_manifests]
+  - id: GB-INP-001
+    evidence: [reproductions/original/repro_mcp_regex_redos.py, reproductions/original/repro_mcp_regex_redos.out]
+    harness: {status: original-captured, path: reproductions/original/repro_mcp_regex_redos.py, sharedWith: null}
+    fixCommits: [148d9ccc]
+    currentSelectors: [tests/test_mcp_schema_execution.py::test_mcp_inline_schemas_reject_regular_expression_keywords]
+  - id: GB-INP-004
+    evidence: [reproductions/original/repro_canonical_bigint_cost.out]
+    harness: {status: reconstructed-from-captured-output, path: reproductions/reconstructed/repro_canonical_bigint_cost.py, sharedWith: null}
+    fixCommits: [71e89cbb, 1449c4ea]
+    currentSelectors: [tests/test_canonical_integer_limits.py::test_canonical_loads_rejects_oversized_integer_tokens]
+  - id: GB-INP-005
+    evidence: [reproductions/original/repro_canonical_decimal_cost.out]
+    harness: {status: reconstructed-from-captured-output, path: reproductions/reconstructed/repro_canonical_decimal_cost.py, sharedWith: null}
+    fixCommits: [d0e5163b]
+    currentSelectors: [tests/test_canonical_numeric_encoding.py::test_canonical_numeric_tokens_do_not_rescan_output_per_value]
+  - id: GB-PERF-002
+    evidence: [reproductions/original/repro_journal_append_cost.out]
+    harness: {status: reconstructed-from-captured-output, path: reproductions/reconstructed/repro_journal_append_cost.py, sharedWith: null}
+    fixCommits: [78df4a5e, 92e4188b]
+    currentSelectors: [tests/test_journal_store.py::test_in_memory_journal_append_keeps_constant_time_internal_storage]
+  - id: GB-SEC-007
+    evidence: [reproductions/original/repro_nonexistent_delivery_control.out]
+    harness: {status: reconstructed-from-captured-output, path: reproductions/reconstructed/repro_nonexistent_delivery_control.py, sharedWith: null}
+    fixCommits: [656af0d1]
+    currentSelectors: [tests/test_server_core.py::test_server_app_rejects_control_for_unknown_callback_delivery]

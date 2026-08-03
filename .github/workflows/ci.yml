@@ -100,6 +100,9 @@ jobs:
       - name: Verify deep-audit issue closure
         if: ${{ matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11' }}
         run: python tools/check_audit_inventory.py
+      - name: Execute deep-audit reproductions
+        if: ${{ matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11' }}
+        run: python tools/check_audit_reproductions.py --execute
       - name: Run Python tests
         shell: bash
         run: |

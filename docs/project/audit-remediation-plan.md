@@ -500,9 +500,11 @@ absolute cap, and slope/complexity rule. Also seed:
   bombs, and concurrency/rate limits.
 
 The audit ran Python tests on unsupported Python 3.13 and could not run Rust.
-Closure evidence must rerun the reconstructed reproductions and applicable full
-gates on Python 3.11/3.12 and pinned Rust 1.94, while retaining exact commands,
-versions, environment identity, and results.
+The repository reproduction gate now preserves the captured files, executes the
+five reconstructed harnesses, and runs all nine current regression selectors on
+the canonical Python 3.11 CI leg. Candidate-bound full gates must still run on
+Python 3.11/3.12 and pinned Rust 1.94 while retaining exact commands, versions,
+environment identity, and results.
 
 ## Required CI and review gates
 

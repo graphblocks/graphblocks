@@ -972,6 +972,7 @@ releaseGates:
       - digest-bound-live-99-finding-inventory
       - zero-open-p0-p1-with-ancestor-fix-and-regression-bindings
       - signed-candidate-and-final-promotion-audit-closure-binding
+      - exact-captured-nine-finding-reproduction-suite-and-current-ci-regressions
     evidence:
       - docs/project/audit-issues.json
       - docs/project/audit-issue-status.yaml
@@ -981,6 +982,9 @@ releaseGates:
       - tools/release_supply_chain.py
       - tests/test_release_supply_chain.py
       - .github/workflows/promotion-reports.yml
+      - reproductions/audit-reproduction-manifest.yaml
+      - tools/check_audit_reproductions.py
+      - tests/test_audit_reproductions.py
       - pyproject.toml
       - tests/test_canonical_properties.py
       - crates/graphblocks-schema/tests/canonical_properties.rs
@@ -1022,7 +1026,6 @@ releaseGates:
         - promotion-evidence-bound-audit-inventory
     blockers:
       - audited-source-commit-tree-or-archive-digest-unavailable
-      - reproduction-harnesses-and-command-provenance-incomplete
   - id: REL-NORMATIVE-AUTHORITY
     description: Rust is the normative Graph compiler and selected target production-runtime authority while Python remains the authoring facade and deterministic reference oracle; this gate tracks the remaining transition.
     readiness: blocked
