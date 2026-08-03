@@ -5,9 +5,11 @@ from pathlib import Path
 import subprocess
 import sys
 import tomllib
+import yaml
 
 from tools.check_stable_typing import (
     check_repository,
+    validate_production_typing_budget,
     validate_root_exports,
     validate_typing_coverage,
 )
@@ -42,6 +44,47 @@ def test_repository_mypy_scope_silences_only_transitive_diagnostics() -> None:
         mypy = tomllib.load(pyproject_file)["tool"]["mypy"]
 
     assert mypy["follow_imports"] == "silent"
+    production_files = [
+        path
+        for path in mypy["files"]
+        if path.startswith("src/graphblocks/")
+    ]
+    assert len(production_files) >= 14
+
+    budget = yaml.safe_load(
+        (ROOT / "compatibility/python-typing-scope.yaml").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert budget == {
+        "version": 1,
+        "productionSourceRoot": "src/graphblocks",
+        "minimumStrictModuleCount": 14,
+        "maximumTypeIgnoreCommentCount": 145,
+    }
+
+
+def test_production_typing_budget_rejects_scope_and_ignore_regressions() -> None:
+    budget = {
+        "version": 1,
+        "productionSourceRoot": "src/graphblocks",
+        "minimumStrictModuleCount": 14,
+        "maximumTypeIgnoreCommentCount": 145,
+    }
+
+    assert validate_production_typing_budget(
+        budget=budget,
+        strict_module_count=14,
+        type_ignore_comment_count=145,
+    ) == []
+    assert validate_production_typing_budget(
+        budget=budget,
+        strict_module_count=13,
+        type_ignore_comment_count=146,
+    ) == [
+        "production strict mypy scope regressed: expected at least 14 modules, found 13",
+        "production type-ignore debt increased: maximum 145, found 146",
+    ]
 
 
 def test_stable_typing_scope_requires_exact_ordered_root_exports() -> None:

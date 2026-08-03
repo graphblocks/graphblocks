@@ -11,6 +11,7 @@ from pathlib import Path, PurePosixPath
 import re
 import sys
 import tomllib
+import tokenize
 
 import yaml
 
@@ -18,8 +19,10 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 SURFACE_PATH = Path("compatibility/stable-python-surface.yaml")
 DEBT_PATH = Path("compatibility/stable-python-typing-debt.yaml")
+SCOPE_BUDGET_PATH = Path("compatibility/python-typing-scope.yaml")
 PYPROJECT_PATH = Path("pyproject.toml")
 PACKAGE_INIT_PATH = Path("src/graphblocks/__init__.py")
+PRODUCTION_SOURCE_ROOT = Path("src/graphblocks")
 _ISSUE_PATTERN = re.compile(r"TYPE-[0-9]{3,}")
 
 
@@ -244,6 +247,91 @@ def _review_date(value: object) -> date | None:
     return parsed if value == parsed.isoformat() else None
 
 
+def _production_type_ignore_comment_count(source_root: Path) -> int:
+    count = 0
+    for source_path in sorted(source_root.rglob("*.py")):
+        with source_path.open("rb") as source_file:
+            count += sum(
+                1
+                for token in tokenize.tokenize(source_file.readline)
+                if (
+                    token.type == tokenize.COMMENT
+                    and token.string.startswith("# type: ignore")
+                )
+            )
+    return count
+
+
+def validate_production_typing_budget(
+    *,
+    budget: object,
+    strict_module_count: int,
+    type_ignore_comment_count: int,
+) -> list[str]:
+    """Return production strict-scope and no-new-ignore budget violations."""
+
+    if not isinstance(budget, Mapping):
+        return ["production typing scope budget must contain a mapping"]
+    expected_fields = {
+        "version",
+        "productionSourceRoot",
+        "minimumStrictModuleCount",
+        "maximumTypeIgnoreCommentCount",
+    }
+    errors: list[str] = []
+    unknown_fields = sorted(set(budget) - expected_fields)
+    missing_fields = sorted(expected_fields - set(budget))
+    if unknown_fields:
+        errors.append(
+            "production typing scope budget has unknown fields: "
+            + ", ".join(unknown_fields)
+        )
+    if missing_fields:
+        errors.append(
+            "production typing scope budget is missing fields: "
+            + ", ".join(missing_fields)
+        )
+    if budget.get("version") != 1:
+        errors.append("production typing scope budget version must be 1")
+    if budget.get("productionSourceRoot") != PRODUCTION_SOURCE_ROOT.as_posix():
+        errors.append(
+            "production typing scope budget source root must be "
+            f"{PRODUCTION_SOURCE_ROOT.as_posix()}"
+        )
+    minimum_strict_modules = budget.get("minimumStrictModuleCount")
+    if (
+        isinstance(minimum_strict_modules, bool)
+        or not isinstance(minimum_strict_modules, int)
+        or minimum_strict_modules < 1
+    ):
+        errors.append(
+            "production typing scope minimumStrictModuleCount must be a "
+            "positive integer"
+        )
+    elif strict_module_count < minimum_strict_modules:
+        errors.append(
+            "production strict mypy scope regressed: "
+            f"expected at least {minimum_strict_modules} modules, "
+            f"found {strict_module_count}"
+        )
+    maximum_type_ignores = budget.get("maximumTypeIgnoreCommentCount")
+    if (
+        isinstance(maximum_type_ignores, bool)
+        or not isinstance(maximum_type_ignores, int)
+        or maximum_type_ignores < 0
+    ):
+        errors.append(
+            "production typing scope maximumTypeIgnoreCommentCount must be "
+            "a non-negative integer"
+        )
+    elif type_ignore_comment_count > maximum_type_ignores:
+        errors.append(
+            "production type-ignore debt increased: "
+            f"maximum {maximum_type_ignores}, found {type_ignore_comment_count}"
+        )
+    return errors
+
+
 def validate_typing_coverage(
     *,
     stable_symbols: Sequence[str],
@@ -372,6 +460,10 @@ def check_repository(
         pyproject = tomllib.load(pyproject_file)
     strict_modules = _strict_modules(pyproject)
     debt = _load_yaml(root / DEBT_PATH)
+    scope_budget = _load_yaml(root / SCOPE_BUDGET_PATH)
+    type_ignore_comment_count = _production_type_ignore_comment_count(
+        root / PRODUCTION_SOURCE_ROOT
+    )
     return sorted(
         {
             *validate_root_exports(
@@ -384,6 +476,11 @@ def check_repository(
                 strict_modules=strict_modules,
                 debt=debt,
                 today=today or date.today(),
+            ),
+            *validate_production_typing_budget(
+                budget=scope_budget,
+                strict_module_count=len(strict_modules),
+                type_ignore_comment_count=type_ignore_comment_count,
             ),
         }
     )
@@ -398,6 +495,7 @@ def main() -> int:
         SyntaxError,
         ValueError,
         tomllib.TOMLDecodeError,
+        tokenize.TokenError,
         yaml.YAMLError,
     ) as error:
         print(f"stable typing configuration error: {error}", file=sys.stderr)

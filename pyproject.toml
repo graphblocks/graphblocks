@@ -71,7 +71,19 @@ show_error_codes = true
 warn_unused_ignores = true
 follow_imports = "silent"
 files = [
-  "src/graphblocks/typed.py",
+  "src/graphblocks/_json.py",
+  "src/graphblocks/_lazy_exports.py",
+  "src/graphblocks/_root_compat.py",
+  "src/graphblocks/_validation.py",
+  "src/graphblocks/_version.py",
+  "src/graphblocks/admission.py",
+  "src/graphblocks/conformance.py",
+  "src/graphblocks/durable_registry.py",
+  "src/graphblocks/leases.py",
+  "src/graphblocks/provider_effects.py",
+  "src/graphblocks/server_storage.py",
+  "src/graphblocks/sqlite_outbox.py",
   "src/graphblocks/stdlib_blocks.py",
+  "src/graphblocks/typed.py",
   "tests/typing/valid_typed_graph.py",
 ]
