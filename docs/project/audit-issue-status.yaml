@@ -154,3 +154,6 @@ resolved:
   - id: GB-DOC-006
     fixCommits: [1dd8c114]
     regression: [tests/test_compatibility_snapshots.py, tests/test_stable_typing_scope.py]
+  - id: GB-INP-006
+    fixCommits: [bdd717ed]
+    regression: [tests/test_loader.py]
