@@ -3858,6 +3858,19 @@ def test_ci_primes_offline_rust_inputs_and_retains_failure_diagnostics() -> None
     workflow = yaml.safe_load((root / ".github" / "workflows" / "ci.yml").read_text())
     jobs = workflow["jobs"]
 
+    quality = jobs["python-quality"]
+    assert quality["name"] == "Python lint and format"
+    quality_steps = {step["name"]: step for step in quality["steps"]}
+    assert quality_steps["Install pinned Ruff"]["run"] == (
+        "python -m pip install ruff==0.15.22"
+    )
+    quality_command = quality_steps[
+        "Check Python lint and progressive format baseline"
+    ]["run"]
+    assert "python -m ruff check ." in quality_command
+    assert "python -m ruff format --check" in quality_command
+    assert quality_command.count("src/graphblocks/") == 7
+
     for job_name in ("python", "installed-artifacts", "examples", "rust"):
         steps = {step["name"]: step for step in jobs[job_name]["steps"]}
         setup = steps["Set up pinned Rust"]["run"]
@@ -3928,17 +3941,25 @@ def test_ci_primes_offline_rust_inputs_and_retains_failure_diagnostics() -> None
     assert example_diagnostics["with"]["if-no-files-found"] == "warn"
 
     required = jobs["required-gates"]
-    assert required["needs"] == ["python", "installed-artifacts", "examples", "rust"]
+    assert required["needs"] == [
+        "python-quality",
+        "python",
+        "installed-artifacts",
+        "examples",
+        "rust",
+    ]
     assert required["if"] == "always()"
     assert required["permissions"] == {}
     required_step = required["steps"][0]
     assert required_step["env"] == {
+        "PYTHON_QUALITY_RESULT": "${{ needs.python-quality.result }}",
         "PYTHON_RESULT": "${{ needs.python.result }}",
         "INSTALLED_ARTIFACTS_RESULT": "${{ needs.installed-artifacts.result }}",
         "EXAMPLES_RESULT": "${{ needs.examples.result }}",
         "RUST_RESULT": "${{ needs.rust.result }}",
     }
     for variable in (
+        "PYTHON_QUALITY_RESULT",
         "PYTHON_RESULT",
         "INSTALLED_ARTIFACTS_RESULT",
         "EXAMPLES_RESULT",
