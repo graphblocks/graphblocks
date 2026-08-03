@@ -53,10 +53,10 @@ A finding moves to resolved only when:
 4. the release matrix or profile evidence is updated when the finding changes a
    compatibility or production claim.
 
-The current generated count is 60 resolved findings: all 27 P0/P1 findings,
+The current generated count is 61 resolved findings: all 27 P0/P1 findings,
 the first 11 P2 findings, GB-ARCH-013, and GB-ARCH-015 through GB-ARCH-017.
 GB-COR-005 through GB-COR-009 are also resolved. There are zero open P0/P1,
-31 open P2, and 8 open P3; GB-COR-011, GB-COR-012, GB-DOC-006, GB-INP-006,
+30 open P2, and 8 open P3; GB-COR-011, GB-COR-012, GB-DOC-006, GB-INP-006,
 GB-INP-007, GB-INP-010, GB-PERF-004, and GB-PERF-005 are resolved. GB-ARCH-012
 remains open pending shared-primitives consolidation. GB-PERF-006 is resolved
 with tenant/owner-scoped indexed run-list cursor pagination and a 10,000-run
@@ -73,6 +73,10 @@ intentional example bootstrap imports have a narrow E402 exception.
 GB-QA-006 is resolved by required branch-coverage floors for canonical (80%),
 server (80%), and policy (65%), plus 90% changed-line branch coverage across
 those security-critical modules with XML and JUnit evidence retained by CI.
+GB-QA-007 is resolved by required, pinned pip-audit and cargo-audit dependency
+scans plus CodeQL security-extended analysis. Any dependency exception is a
+closed, machine-readable entry with package, reason, HTTPS evidence, and an
+enforced expiry date; audit outputs and the active exception set are retained.
 This closes the recorded code-and-regression count; it does not replace the
 independent review, candidate attestation, platform, or soak gates.
 

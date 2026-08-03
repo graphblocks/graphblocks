@@ -84,8 +84,8 @@ deepAudit:
     authority: docs/project/audit-issue-status.yaml
     inventory: docs/project/audit-issues.json
     checker: tools/check_audit_inventory.py
-    resolved: 60
-    openBySeverity: {P0: 0, P1: 0, P2: 31, P3: 8}
+    resolved: 61
+    openBySeverity: {P0: 0, P1: 0, P2: 30, P3: 8}
   exitPolicy:
     securityFreeze: {maxOpenP0: 0}
     stableRelease: {maxOpenP0: 0, maxOpenP1: 0}
@@ -1000,6 +1000,7 @@ releaseGates:
       - coded-type-ignore-only-and-zero-uncoded-ignore-budget
       - required-pinned-ruff-lint-and-progressive-format-gate
       - security-critical-module-branch-and-ninety-percent-diff-coverage
+      - required-python-rust-vulnerability-audits-and-codeql-security-extended
     evidence:
       - docs/project/audit-issues.json
       - docs/project/audit-issue-status.yaml
@@ -1021,6 +1022,9 @@ releaseGates:
       - .github/workflows/security-fuzz.yml
       - tests/test_security_fuzz_workflow.py
       - docs/project/security-fuzzing.md
+      - security/vulnerability-exceptions.yaml
+      - tools/run_dependency_audits.py
+      - tests/test_security_analysis_workflow.py
     exitCriteria:
       maxOpenBySeverity: {P0: 0, P1: 0}
       requiredEvidence:
