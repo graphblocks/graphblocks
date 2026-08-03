@@ -3887,7 +3887,7 @@ def test_ci_primes_offline_rust_inputs_and_retains_failure_diagnostics() -> None
 
     python_job = jobs["python"]
     python_steps = {step["name"]: step for step in python_job["steps"]}
-    assert python_steps["Check out repository"]["with"] == {"fetch-depth": 2}
+    assert python_steps["Check out repository"]["with"] == {"fetch-depth": 0}
     assert python_job["env"]["PYTHONPATH"] == (
         "${{ github.workspace }}/packages/graphblocks-testing/src"
     )

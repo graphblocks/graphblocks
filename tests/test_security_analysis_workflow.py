@@ -123,7 +123,7 @@ def test_ci_requires_dependency_audit_and_codeql() -> None:
     assert dependency_audit["permissions"] == {"contents": "read"}
     dependency_steps = {step["name"]: step for step in dependency_audit["steps"]}
     assert dependency_steps["Install pinned vulnerability scanners"]["run"] == (
-        "python -m pip install pip-audit==2.10.1\n"
+        "python -m pip install pip-audit==2.10.1 PyYAML==6.0.3\n"
         "cargo install cargo-audit --version 0.22.2 --locked\n"
     )
     audit_run = dependency_steps["Audit Python and Rust dependency graphs"]["run"]
