@@ -169,3 +169,6 @@ resolved:
   - id: GB-PERF-005
     fixCommits: [1bdbe357, 722e2e0e, cca5c6dc, 048816d1]
     regression: [tests/test_python_package_boundaries.py, tests/test_wheelhouse_schema_verification.py]
+  - id: GB-PERF-006
+    fixCommits: [782325b5]
+    regression: [tests/test_server_core.py]

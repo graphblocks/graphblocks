@@ -1580,8 +1580,8 @@ def test_stable_release_matrix_is_complete_and_machine_readable() -> None:
         "authority": "docs/project/audit-issue-status.yaml",
         "inventory": "docs/project/audit-issues.json",
         "checker": "tools/check_audit_inventory.py",
-        "resolved": 55,
-        "openBySeverity": {"P0": 0, "P1": 0, "P2": 36, "P3": 8},
+        "resolved": 56,
+        "openBySeverity": {"P0": 0, "P1": 0, "P2": 35, "P3": 8},
     }
     assert "signed-candidate-and-final-promotion-audit-closure-binding" in (
         audit_gate["implementedEvidence"]
@@ -1593,6 +1593,9 @@ def test_stable_release_matrix_is_complete_and_machine_readable() -> None:
         audit_gate["implementedEvidence"]
     )
     assert "cold-root-and-canonical-import-time-rss-and-module-budgets" in (
+        audit_gate["implementedEvidence"]
+    )
+    assert "tenant-owner-indexed-run-list-cursor-pagination-with-page-cap" in (
         audit_gate["implementedEvidence"]
     )
     assert audit_gate["blockers"] == [

@@ -84,8 +84,8 @@ deepAudit:
     authority: docs/project/audit-issue-status.yaml
     inventory: docs/project/audit-issues.json
     checker: tools/check_audit_inventory.py
-    resolved: 55
-    openBySeverity: {P0: 0, P1: 0, P2: 36, P3: 8}
+    resolved: 56
+    openBySeverity: {P0: 0, P1: 0, P2: 35, P3: 8}
   exitPolicy:
     securityFreeze: {maxOpenP0: 0}
     stableRelease: {maxOpenP0: 0, maxOpenP1: 0}
@@ -995,6 +995,7 @@ releaseGates:
       - exact-cli-string-list-and-object-codecs-with-type-confusion-regressions
       - append-friendly-server-histories-with-constant-time-byte-accounting
       - cold-root-and-canonical-import-time-rss-and-module-budgets
+      - tenant-owner-indexed-run-list-cursor-pagination-with-page-cap
     evidence:
       - docs/project/audit-issues.json
       - docs/project/audit-issue-status.yaml
