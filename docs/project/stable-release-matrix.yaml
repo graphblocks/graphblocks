@@ -84,8 +84,8 @@ deepAudit:
     authority: docs/project/audit-issue-status.yaml
     inventory: docs/project/audit-issues.json
     checker: tools/check_audit_inventory.py
-    resolved: 52
-    openBySeverity: {P0: 0, P1: 0, P2: 39, P3: 8}
+    resolved: 53
+    openBySeverity: {P0: 0, P1: 0, P2: 38, P3: 8}
   exitPolicy:
     securityFreeze: {maxOpenP0: 0}
     stableRelease: {maxOpenP0: 0, maxOpenP1: 0}
@@ -992,6 +992,7 @@ releaseGates:
       - profile-bounded-root-api-with-no-preview-wildcard-exports
       - streaming-yaml-document-byte-count-and-cumulative-node-budgets
       - bounded-contained-and-symlink-safe-cli-document-directories
+      - exact-cli-string-list-and-object-codecs-with-type-confusion-regressions
     evidence:
       - docs/project/audit-issues.json
       - docs/project/audit-issue-status.yaml

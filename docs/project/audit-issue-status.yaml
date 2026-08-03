@@ -160,3 +160,6 @@ resolved:
   - id: GB-INP-007
     fixCommits: [6e8b9943]
     regression: [tests/test_cli.py]
+  - id: GB-INP-010
+    fixCommits: [06cbe875]
+    regression: [tests/test_cli.py]
