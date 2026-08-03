@@ -53,10 +53,10 @@ A finding moves to resolved only when:
 4. the release matrix or profile evidence is updated when the finding changes a
    compatibility or production claim.
 
-The current generated count is 61 resolved findings: all 27 P0/P1 findings,
+The current generated count is 62 resolved findings: all 27 P0/P1 findings,
 the first 11 P2 findings, GB-ARCH-013, and GB-ARCH-015 through GB-ARCH-017.
 GB-COR-005 through GB-COR-009 are also resolved. There are zero open P0/P1,
-30 open P2, and 8 open P3; GB-COR-011, GB-COR-012, GB-DOC-006, GB-INP-006,
+29 open P2, and 8 open P3; GB-COR-011, GB-COR-012, GB-DOC-006, GB-INP-006,
 GB-INP-007, GB-INP-010, GB-PERF-004, and GB-PERF-005 are resolved. GB-ARCH-012
 remains open pending shared-primitives consolidation. GB-PERF-006 is resolved
 with tenant/owner-scoped indexed run-list cursor pagination and a 10,000-run
@@ -77,6 +77,10 @@ GB-QA-007 is resolved by required, pinned pip-audit and cargo-audit dependency
 scans plus CodeQL security-extended analysis. Any dependency exception is a
 closed, machine-readable entry with package, reason, HTTPS evidence, and an
 enforced expiry date; audit outputs and the active exception set are retained.
+GB-QA-009 is resolved by a required Loom 0.7.2 checkpoint-recovery model that
+exhaustively explores initial claim races, renew-versus-takeover, and
+complete-versus-takeover interleavings while asserting monotonic fencing and
+stale-owner rejection. Its dedicated CI log is retained with Rust diagnostics.
 This closes the recorded code-and-regression count; it does not replace the
 independent review, candidate attestation, platform, or soak gates.
 

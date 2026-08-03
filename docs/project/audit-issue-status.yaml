@@ -187,3 +187,6 @@ resolved:
   - id: GB-QA-007
     fixCommits: ['c3685485']
     regression: [tests/test_security_analysis_workflow.py, tests/test_release_supply_chain.py]
+  - id: GB-QA-009
+    fixCommits: ['c3702abf']
+    regression: [crates/graphblocks-runtime-durable/tests/checkpoint_recovery_loom.rs, tests/test_rust_concurrency_workflow.py]
