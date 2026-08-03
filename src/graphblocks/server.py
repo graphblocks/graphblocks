@@ -11008,7 +11008,8 @@ class GraphBlocksServerApp:
                 },
             )
         metadata = matched_event.get("metadata")
-        assert isinstance(metadata, Mapping)
+        if not isinstance(metadata, Mapping):
+            raise ValueError("ack request event metadata must be a mapping")
         matched_sequence = metadata.get("sequence")
         if not isinstance(matched_sequence, int) or isinstance(matched_sequence, bool):
             raise ValueError("ack request sequence must be an integer")

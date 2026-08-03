@@ -16,6 +16,9 @@ from io import BytesIO
 from itertools import permutations
 import json
 import math
+from pathlib import Path
+import subprocess
+import sys
 from threading import Barrier, Event, Lock, Thread
 from time import monotonic, sleep
 import textwrap
@@ -16425,6 +16428,68 @@ def test_server_app_rejects_ack_when_retained_event_sequence_is_malformed() -> N
         "error": "ack request sequence must be an integer",
     }
     assert app.event_acks("run-ack-bool-sequence-1", "sub-ack-bool-sequence") == ()
+
+
+def test_ack_metadata_validation_matches_under_python_optimization() -> None:
+    script = textwrap.dedent(
+        """
+        from graphblocks.server import GraphBlocksServerApp, ServerEventSubscription
+
+        class ChangingEvent(dict):
+            def __init__(self):
+                super().__init__(kind="RunSucceeded", payload={})
+                self.metadata_reads = 0
+
+            def get(self, key, default=None):
+                if key != "metadata":
+                    return super().get(key, default)
+                self.metadata_reads += 1
+                if self.metadata_reads == 1:
+                    return {"eventId": "event-1", "sequence": 1}
+                return "corrupt persisted metadata"
+
+        app = GraphBlocksServerApp(allow_unauthenticated_dev=True)
+        subscription = ServerEventSubscription(
+            subscription_id="subscription-1",
+            run_id="run-1",
+            event_filter={},
+            delivery={"kind": "local_callback", "callback_name": "test"},
+        )
+        try:
+            app._ack_event_response(
+                "run-1",
+                "subscription-1",
+                subscription,
+                (ChangingEvent(),),
+                {"eventId": "event-1"},
+                "2026-07-03T00:00:00Z",
+            )
+        except Exception as error:
+            print(f"{type(error).__name__}:{error}")
+        else:
+            print("no-error")
+        """
+    )
+    outputs: list[str] = []
+    for optimized in (False, True):
+        command = [sys.executable]
+        if optimized:
+            command.append("-O")
+        command.extend(("-c", script))
+        completed = subprocess.run(
+            command,
+            cwd=Path(__file__).parents[1],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        assert completed.returncode == 0, completed.stderr
+        outputs.append(completed.stdout.strip())
+
+    assert outputs == [
+        "ValueError:ack request event metadata must be a mapping",
+        "ValueError:ack request event metadata must be a mapping",
+    ]
 
 
 def test_server_app_deduplicates_repeated_subscription_ack_by_event_identity() -> None:
