@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from graphblocks import load_documents
+from graphblocks.loader import InputBudget
 
 
 def test_graph_document_loader_rejects_duplicate_yaml_mapping_keys(
@@ -112,3 +113,48 @@ def test_load_documents_normalizes_invalid_utf8(tmp_path: Path) -> None:
         match=r"invalid-utf8\.yaml: invalid YAML: document is not UTF-8",
     ):
         load_documents(path)
+
+
+def test_load_documents_stops_at_stream_document_budget(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "many-empty-documents.yaml"
+    path.write_text("---\n" * 10_000, encoding="utf-8")
+
+    with pytest.raises(
+        ValueError,
+        match="YAML stream exceeds maximum document count 3",
+    ):
+        load_documents(path, budget=InputBudget(max_documents=3))
+
+
+def test_load_documents_enforces_cumulative_node_budget(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "many-small-documents.yaml"
+    path.write_text("value: 1\n---\nvalue: 2\n", encoding="utf-8")
+
+    with pytest.raises(
+        ValueError,
+        match="YAML stream exceeds maximum cumulative node count 3",
+    ):
+        load_documents(path, budget=InputBudget(max_cumulative_nodes=3))
+
+
+def test_load_documents_rejects_input_before_unbounded_decode(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "oversized.yaml"
+    path.write_bytes(b"value: " + b"x" * 64)
+
+    with pytest.raises(
+        ValueError,
+        match="YAML input exceeds maximum byte count 16",
+    ):
+        load_documents(path, budget=InputBudget(max_input_bytes=16))
+
+
+@pytest.mark.parametrize("value", (0, -1, True, 1.5, "10"))
+def test_input_budget_requires_exact_positive_integers(value: object) -> None:
+    with pytest.raises(ValueError, match="must be a positive integer"):
+        InputBudget(max_documents=value)  # type: ignore[arg-type]
