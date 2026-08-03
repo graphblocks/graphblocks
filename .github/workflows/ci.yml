@@ -341,6 +341,61 @@ jobs:
           if-no-files-found: warn
           retention-days: 30
 
+  dependency-audit:
+    name: Dependency vulnerability audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - name: Set up pinned Rust
+        run: |
+          rustup toolchain install 1.94.0 --profile minimal
+          rustup default 1.94.0
+      - name: Install pinned vulnerability scanners
+        run: |
+          python -m pip install pip-audit==2.10.1
+          cargo install cargo-audit --version 0.22.2 --locked
+      - name: Audit Python and Rust dependency graphs
+        run: python tools/run_dependency_audits.py --output-dir dist/ci/dependency-audit
+      - name: Retain dependency-audit evidence
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: graphblocks-dependency-audit-attempt-${{ github.run_attempt }}
+          path: dist/ci/dependency-audit
+          if-no-files-found: error
+          retention-days: 90
+
+  codeql:
+    name: CodeQL Python security analysis
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@7211b7c8077ea37d8641b6271f6a365a22a5fbfa # v4.36.0
+        with:
+          languages: python
+          queries: security-extended
+      - name: Analyze Python
+        uses: github/codeql-action/analyze@7211b7c8077ea37d8641b6271f6a365a22a5fbfa # v4.36.0
+        with:
+          category: /language:python
+
   required-gates:
     name: Required gates
     needs:
@@ -349,6 +404,8 @@ jobs:
       - installed-artifacts
       - examples
       - rust
+      - dependency-audit
+      - codeql
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -361,6 +418,8 @@ jobs:
           INSTALLED_ARTIFACTS_RESULT: ${{ needs.installed-artifacts.result }}
           EXAMPLES_RESULT: ${{ needs.examples.result }}
           RUST_RESULT: ${{ needs.rust.result }}
+          DEPENDENCY_AUDIT_RESULT: ${{ needs.dependency-audit.result }}
+          CODEQL_RESULT: ${{ needs.codeql.result }}
         run: |
           failed=0
           for gate in \
@@ -368,7 +427,9 @@ jobs:
             "python:$PYTHON_RESULT" \
             "installed-artifacts:$INSTALLED_ARTIFACTS_RESULT" \
             "examples:$EXAMPLES_RESULT" \
-            "rust:$RUST_RESULT"
+            "rust:$RUST_RESULT" \
+            "dependency-audit:$DEPENDENCY_AUDIT_RESULT" \
+            "codeql:$CODEQL_RESULT"
           do
             name=${gate%%:*}
             result=${gate#*:}

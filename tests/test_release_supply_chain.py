@@ -3974,6 +3974,8 @@ def test_ci_primes_offline_rust_inputs_and_retains_failure_diagnostics() -> None
         "installed-artifacts",
         "examples",
         "rust",
+        "dependency-audit",
+        "codeql",
     ]
     assert required["if"] == "always()"
     assert required["permissions"] == {}
@@ -3984,6 +3986,8 @@ def test_ci_primes_offline_rust_inputs_and_retains_failure_diagnostics() -> None
         "INSTALLED_ARTIFACTS_RESULT": "${{ needs.installed-artifacts.result }}",
         "EXAMPLES_RESULT": "${{ needs.examples.result }}",
         "RUST_RESULT": "${{ needs.rust.result }}",
+        "DEPENDENCY_AUDIT_RESULT": "${{ needs.dependency-audit.result }}",
+        "CODEQL_RESULT": "${{ needs.codeql.result }}",
     }
     for variable in (
         "PYTHON_QUALITY_RESULT",
@@ -3991,6 +3995,8 @@ def test_ci_primes_offline_rust_inputs_and_retains_failure_diagnostics() -> None
         "INSTALLED_ARTIFACTS_RESULT",
         "EXAMPLES_RESULT",
         "RUST_RESULT",
+        "DEPENDENCY_AUDIT_RESULT",
+        "CODEQL_RESULT",
     ):
         assert variable in required_step["run"]
 
