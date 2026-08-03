@@ -3887,6 +3887,7 @@ def test_ci_primes_offline_rust_inputs_and_retains_failure_diagnostics() -> None
 
     python_job = jobs["python"]
     python_steps = {step["name"]: step for step in python_job["steps"]}
+    assert python_steps["Check out repository"]["with"] == {"fetch-depth": 2}
     assert python_job["env"]["PYTHONPATH"] == (
         "${{ github.workspace }}/packages/graphblocks-testing/src"
     )
@@ -3903,6 +3904,32 @@ def test_ci_primes_offline_rust_inputs_and_retains_failure_diagnostics() -> None
     python_tests = python_steps["Run Python tests"]["run"]
     assert "--junitxml=dist/ci/python-tests.xml" in python_tests
     assert "dist/ci/python-tests.log" in python_tests
+    coverage_step = python_steps[
+        "Run security-critical branch and changed-line coverage gates"
+    ]
+    assert coverage_step["if"] == (
+        "${{ matrix.os == 'ubuntu-latest' && "
+        "matrix.python-version == '3.11' }}"
+    )
+    assert coverage_step["env"]["COVERAGE_COMPARE_REF"] == (
+        "${{ github.event_name == 'pull_request' && "
+        "github.event.pull_request.base.sha || github.event.before }}"
+    )
+    coverage_command = coverage_step["run"]
+    for module, threshold in (
+        ("server.py", 80),
+        ("policy.py", 65),
+        ("canonical.py", 80),
+    ):
+        assert f"--include=src/graphblocks/{module}" in coverage_command
+        assert f"--fail-under={threshold}" in coverage_command
+    assert "--cov-branch" in coverage_command
+    assert "--branch-coverage" in coverage_command
+    assert '--compare-branch "$COVERAGE_COMPARE_REF"' in coverage_command
+    assert "--ignore-staged" in coverage_command
+    assert "--ignore-unstaged" in coverage_command
+    assert "--fail-under=90" in coverage_command
+    assert "dist/ci/security-critical-coverage.xml" in coverage_command
     python_diagnostics = python_steps["Retain Python CI diagnostics"]
     assert python_diagnostics["if"] == "always()"
     assert python_diagnostics["with"]["if-no-files-found"] == "warn"

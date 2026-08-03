@@ -53,6 +53,8 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          fetch-depth: 2
       - name: Set up pinned Rust
         run: |
           rustup toolchain install 1.94.0 --profile minimal --component clippy,rustfmt
@@ -137,6 +139,45 @@ jobs:
           python -m pytest \
             --junitxml=dist/ci/python-tests.xml \
             2>&1 | tee dist/ci/python-tests.log
+      - name: Run security-critical branch and changed-line coverage gates
+        if: ${{ matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11' }}
+        shell: bash
+        env:
+          COVERAGE_COMPARE_REF: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          set -o pipefail
+          python -m pytest \
+            tests/test_server_core.py \
+            tests/test_policy_core.py \
+            tests/test_canonical.py \
+            tests/test_canonical_integer_limits.py \
+            tests/test_canonical_numeric_encoding.py \
+            --cov=graphblocks.server \
+            --cov=graphblocks.policy \
+            --cov=graphblocks.canonical \
+            --cov-branch \
+            --cov-report=xml:dist/ci/security-critical-coverage.xml \
+            --junitxml=dist/ci/security-critical-coverage-tests.xml \
+            2>&1 | tee dist/ci/security-critical-coverage.log
+          python -m coverage report \
+            --include=src/graphblocks/server.py \
+            --fail-under=80
+          python -m coverage report \
+            --include=src/graphblocks/policy.py \
+            --fail-under=65
+          python -m coverage report \
+            --include=src/graphblocks/canonical.py \
+            --fail-under=80
+          diff-cover dist/ci/security-critical-coverage.xml \
+            --branch-coverage \
+            --compare-branch "$COVERAGE_COMPARE_REF" \
+            --ignore-staged \
+            --ignore-unstaged \
+            --include \
+              src/graphblocks/server.py \
+              src/graphblocks/policy.py \
+              src/graphblocks/canonical.py \
+            --fail-under=90
       - name: Run manifest-bound stable security gates
         if: ${{ matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11' }}
         env:
