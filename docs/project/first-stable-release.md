@@ -314,9 +314,12 @@ Release-candidate refs need no promotion record and continue to produce a
 `candidate` manifest. Final `v1.0.0` assembly instead fails before creating a
 bundle unless `--promotion-evidence` names an explicit regular, non-symlink
 JSON file. The record must use canonical JSON and carry a self-verifying
-`contentDigest`. The current validator does not yet bind the deep-audit
-inventory; `REL-AUDIT-REMEDIATION` remains blocked until it does. The required
-closed contract must bind all of the following:
+`contentDigest`. Its `auditClosure` claim and signed `audit-closure` report bind
+the immutable issue inventory, live status overlay, remediation map, and
+checker by exact source digest. The validator re-runs the closure contract from
+both the candidate and final Git objects, requires identical claims, verifies
+every fix commit and regression path against the candidate history, and rejects
+any open P0/P1 finding. The closed contract binds all of the following:
 
 - the exact final ref and `1.0.0` version, with the enclosing release manifest
   separately binding the final Git commit and tree;

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import argparse
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from datetime import datetime, timezone
 from decimal import Decimal
 import hashlib
@@ -13,13 +13,30 @@ import stat
 import subprocess
 from tempfile import TemporaryDirectory
 import tomllib
-from typing import NamedTuple
+from typing import NamedTuple, TYPE_CHECKING
 
 from packaging.requirements import InvalidRequirement, Requirement
 from packaging.utils import canonicalize_name, parse_sdist_filename, parse_wheel_filename
-import yaml
+import yaml  # type: ignore[import-untyped]
 
 from graphblocks.canonical import canonical_dumps, canonical_hash
+
+if TYPE_CHECKING:
+    from tools.check_audit_inventory import (
+        AuditInventoryError,
+        validate_audit_inventory,
+    )
+else:
+    try:
+        from tools.check_audit_inventory import (
+            AuditInventoryError,
+            validate_audit_inventory,
+        )
+    except ModuleNotFoundError:  # Direct script execution.
+        from check_audit_inventory import (
+            AuditInventoryError,
+            validate_audit_inventory,
+        )
 
 try:
     from tools.stable_security_gates import (
@@ -76,6 +93,7 @@ SIGNATURE_BUNDLE_NAME = "release-manifest.sigstore.json"
 PROMOTION_EVIDENCE_NAME = "promotion-evidence.json"
 PROMOTION_REPORT_TYPES = (
     "candidate-manifest",
+    "audit-closure",
     "soak-application",
     "api-review",
     "security-review",
@@ -90,9 +108,20 @@ PROMOTION_DOCUMENTATION_PATHS = {
     "README.zh-CN.md",
 }
 PROMOTION_DOCUMENTATION_PREFIX = "docs/project/"
+AUDIT_INVENTORY_PATH = "docs/project/audit-issues.json"
+AUDIT_STATUS_PATH = "docs/project/audit-issue-status.yaml"
+AUDIT_REMEDIATION_MAP_PATH = "docs/project/audit-remediation-map.yaml"
+AUDIT_CHECKER_PATH = "tools/check_audit_inventory.py"
+AUDIT_CLOSURE_SOURCE_PATHS = (
+    AUDIT_INVENTORY_PATH,
+    AUDIT_STATUS_PATH,
+    AUDIT_REMEDIATION_MAP_PATH,
+    AUDIT_CHECKER_PATH,
+)
 PROMOTION_IMMUTABLE_AUTHORITY_PATHS = {
     "docs/project/stable-release-matrix.yaml",
     SECURITY_GATE_MANIFEST_PATH,
+    *AUDIT_CLOSURE_SOURCE_PATHS,
 }
 PROMOTION_PYPROJECT_PATHS = {
     "pyproject.toml",
@@ -660,6 +689,115 @@ def _promotion_git_mode(commit: str, path: str) -> str:
             f"stable promotion source path has an invalid Git mode: {path}"
         ) from error
     return mode
+
+
+def _promotion_commit_is_ancestor(commit: str, revision: str) -> bool:
+    try:
+        completed = subprocess.run(
+            ["git", "merge-base", "--is-ancestor", commit, revision],
+            check=False,
+            cwd=ROOT,
+            capture_output=True,
+        )
+    except OSError as error:
+        raise ReleaseBundleError(
+            "stable promotion audit history could not be observed"
+        ) from error
+    if completed.returncode not in {0, 1}:
+        raise ReleaseBundleError(
+            "stable promotion audit history could not be observed"
+        )
+    return completed.returncode == 0
+
+
+def _promotion_regular_blob_exists(revision: str, path: str) -> bool:
+    try:
+        return _promotion_git_mode(revision, path) == "100644"
+    except ReleaseBundleError:
+        return False
+
+
+def _audit_closure_claim_from_result(
+    source_blobs: Mapping[str, bytes],
+    result: Mapping[str, object],
+) -> dict[str, object]:
+    return {
+        "inventory": {
+            "path": AUDIT_INVENTORY_PATH,
+            "sha256": "sha256:" + _sha256_bytes(source_blobs[AUDIT_INVENTORY_PATH]),
+        },
+        "status": {
+            "path": AUDIT_STATUS_PATH,
+            "sha256": "sha256:" + _sha256_bytes(source_blobs[AUDIT_STATUS_PATH]),
+        },
+        "remediationMap": {
+            "path": AUDIT_REMEDIATION_MAP_PATH,
+            "sha256": "sha256:"
+            + _sha256_bytes(source_blobs[AUDIT_REMEDIATION_MAP_PATH]),
+        },
+        "checker": {
+            "path": AUDIT_CHECKER_PATH,
+            "sha256": "sha256:" + _sha256_bytes(source_blobs[AUDIT_CHECKER_PATH]),
+        },
+        "totalFindings": result["total"],
+        "resolvedFindings": result["resolved"],
+        "openBySeverity": result["openBySeverity"],
+    }
+
+
+def _audit_closure_claim_from_blobs(
+    source_blobs: Mapping[str, bytes],
+    *,
+    is_ancestor: Callable[[str], bool],
+    regression_exists: Callable[[str], bool],
+) -> dict[str, object]:
+    if set(source_blobs) != set(AUDIT_CLOSURE_SOURCE_PATHS):
+        raise ReleaseBundleError("stable promotion audit source set is incomplete")
+    try:
+        status = yaml.safe_load(source_blobs[AUDIT_STATUS_PATH])
+        remediation_map = yaml.safe_load(source_blobs[AUDIT_REMEDIATION_MAP_PATH])
+    except (UnicodeError, yaml.YAMLError) as error:
+        raise ReleaseBundleError(
+            "stable promotion audit contracts could not be loaded"
+        ) from error
+    if (
+        not isinstance(status, Mapping)
+        or not isinstance(status.get("inventory"), Mapping)
+        or status["inventory"].get("path") != AUDIT_INVENTORY_PATH
+    ):
+        raise ReleaseBundleError(
+            "stable promotion audit status does not bind the fixed inventory path"
+        )
+    try:
+        result = validate_audit_inventory(
+            inventory_bytes=source_blobs[AUDIT_INVENTORY_PATH],
+            status_value=status,
+            remediation_map_value=remediation_map,
+            is_ancestor=is_ancestor,
+            regression_exists=regression_exists,
+        )
+    except AuditInventoryError as error:
+        raise ReleaseBundleError(
+            f"stable promotion audit closure is invalid: {error}"
+        ) from error
+    return _audit_closure_claim_from_result(source_blobs, result)
+
+
+def _audit_closure_claim_for_revision(revision: str) -> dict[str, object]:
+    for path in AUDIT_CLOSURE_SOURCE_PATHS:
+        if not _promotion_regular_blob_exists(revision, path):
+            raise ReleaseBundleError(
+                f"stable promotion audit source must be a regular file: {path}"
+            )
+    source_blobs = {
+        path: _promotion_git_blob(revision, path)
+        for path in AUDIT_CLOSURE_SOURCE_PATHS
+    }
+    return _audit_closure_claim_from_blobs(
+        source_blobs,
+        is_ancestor=lambda commit: _promotion_commit_is_ancestor(commit, revision),
+        regression_exists=lambda path: _promotion_regular_blob_exists(revision, path),
+    )
 
 
 def _promotion_source_diff(
@@ -1348,6 +1486,21 @@ def freeze_promotion_report(
             raise ReleaseBundleError(
                 "candidate manifest promotion report does not bind this candidate"
             )
+    elif report_type == "audit-closure":
+        if _current_git_commit() != candidate_commit:
+            raise ReleaseBundleError(
+                "audit-closure promotion report checkout does not match the candidate"
+            )
+        expected_audit_report = {
+            "candidateRef": candidate_ref,
+            "candidateCommit": candidate_commit,
+            **_audit_closure_claim_for_revision(candidate_commit),
+        }
+        if payload != expected_audit_report:
+            raise ReleaseBundleError(
+                "audit-closure promotion report does not bind this candidate's "
+                "validated audit state"
+            )
     elif report_type == "soak-application":
         report = _require_exact_keys(
             payload,
@@ -1548,6 +1701,7 @@ def _validate_promotion_evidence(
             "formatVersion",
             "release",
             "candidate",
+            "auditClosure",
             "upgradeGate",
             "supportedMatrixRuns",
             "integrationRuns",
@@ -1643,6 +1797,43 @@ def _validate_promotion_evidence(
             "stable promotion candidate manifest does not bind the prior candidate"
         )
     used_report_digests = {candidate_manifest_digest}
+
+    candidate_audit_closure = _audit_closure_claim_for_revision(candidate_commit)
+    final_audit_closure = _audit_closure_claim_for_revision(git_commit)
+    if candidate_audit_closure != final_audit_closure:
+        raise ReleaseBundleError(
+            "stable promotion audit closure changed after the candidate"
+        )
+    audit_closure = _require_exact_keys(
+        payload.get("auditClosure"),
+        set(candidate_audit_closure)
+        | {"candidateRef", "candidateCommit", "reportDigest"},
+        owner="stable promotion audit closure",
+    )
+    audit_report_digest = _require_prefixed_sha256(
+        audit_closure.get("reportDigest"),
+        owner="stable promotion audit closure report digest",
+    )
+    expected_audit_report = {
+        "candidateRef": candidate_ref,
+        "candidateCommit": candidate_commit,
+        **candidate_audit_closure,
+    }
+    if (
+        {key: value for key, value in audit_closure.items() if key != "reportDigest"}
+        != expected_audit_report
+        or _promotion_report(
+            reports,
+            audit_report_digest,
+            owner="stable promotion audit closure",
+        )
+        != expected_audit_report
+    ):
+        raise ReleaseBundleError(
+            "stable promotion audit report does not bind the candidate's "
+            "zero-open P0/P1 closure"
+        )
+    used_report_digests.add(audit_report_digest)
 
     if integration_matrix is None:
         integration_matrix_path = "docs/project/stable-release-matrix.yaml"

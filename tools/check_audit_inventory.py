@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 from collections import Counter
+from collections.abc import Callable
 import hashlib
 import json
 from pathlib import Path
@@ -66,9 +67,18 @@ def _is_ancestor(commit: str) -> bool:
     return completed.returncode == 0
 
 
-def check_audit_inventory() -> dict[str, object]:
+def validate_audit_inventory(
+    *,
+    inventory_bytes: bytes,
+    status_value: object,
+    remediation_map_value: object,
+    is_ancestor: Callable[[str], bool],
+    regression_exists: Callable[[str], bool],
+) -> dict[str, object]:
+    """Validate supplied audit blobs without trusting the live checkout."""
+
     status = _closed_mapping(
-        _load_yaml(STATUS_PATH, "audit issue status"),
+        status_value,
         {"statusVersion", "inventory", "defaultStatus", "resolved"},
         "audit issue status",
     )
@@ -79,11 +89,16 @@ def check_audit_inventory() -> dict[str, object]:
         {"path", "sha256"},
         "audit inventory reference",
     )
-    inventory_path = _repository_path(inventory_ref["path"], "inventory path")
+    inventory_path = _exact_text(inventory_ref["path"], "inventory path")
+    candidate_inventory_path = Path(inventory_path)
+    if (
+        candidate_inventory_path.is_absolute()
+        or ".." in candidate_inventory_path.parts
+    ):
+        raise AuditInventoryError("inventory path must be repository-relative")
     try:
-        inventory_bytes = inventory_path.read_bytes()
         inventory = json.loads(inventory_bytes)
-    except (OSError, UnicodeError, json.JSONDecodeError) as error:
+    except (UnicodeError, json.JSONDecodeError) as error:
         raise AuditInventoryError("audit inventory cannot be loaded") from error
     expected_digest = _exact_text(inventory_ref["sha256"], "inventory sha256")
     actual_digest = hashlib.sha256(inventory_bytes).hexdigest()
@@ -134,22 +149,26 @@ def check_audit_inventory() -> dict[str, object]:
                 )
         for raw_commit in entry["fixCommits"]:
             commit = _exact_text(raw_commit, f"audit resolution {issue_id} commit")
-            if not _is_ancestor(commit):
+            if not is_ancestor(commit):
                 raise AuditInventoryError(
                     f"audit resolution {issue_id} commit {commit!r} is not in HEAD"
                 )
         for raw_path in entry["regression"]:
-            evidence_path = _repository_path(
-                raw_path,
-                f"audit resolution {issue_id} regression",
+            evidence_path = _exact_text(
+                raw_path, f"audit resolution {issue_id} regression"
             )
-            if not evidence_path.is_file():
+            candidate_path = Path(evidence_path)
+            if candidate_path.is_absolute() or ".." in candidate_path.parts:
+                raise AuditInventoryError(
+                    f"audit resolution {issue_id} regression must be repository-relative"
+                )
+            if not regression_exists(evidence_path):
                 raise AuditInventoryError(
                     f"audit resolution {issue_id} regression is missing"
                 )
         resolved_ids.add(issue_id)
 
-    remediation_map = _load_yaml(MAP_PATH, "audit remediation map")
+    remediation_map = remediation_map_value
     if type(remediation_map) is not dict:
         raise AuditInventoryError("audit remediation map must be an object")
     mapped_ids: set[str] = set()
@@ -223,6 +242,30 @@ def check_audit_inventory() -> dict[str, object]:
         "resolved": len(resolved_ids),
         "openBySeverity": open_by_severity,
     }
+
+
+def check_audit_inventory() -> dict[str, object]:
+    status = _load_yaml(STATUS_PATH, "audit issue status")
+    if type(status) is not dict or type(status.get("inventory")) is not dict:
+        raise AuditInventoryError("audit issue status is invalid")
+    inventory_path = _repository_path(
+        status["inventory"].get("path"),
+        "inventory path",
+    )
+    try:
+        inventory_bytes = inventory_path.read_bytes()
+    except OSError as error:
+        raise AuditInventoryError("audit inventory cannot be loaded") from error
+    return validate_audit_inventory(
+        inventory_bytes=inventory_bytes,
+        status_value=status,
+        remediation_map_value=_load_yaml(MAP_PATH, "audit remediation map"),
+        is_ancestor=_is_ancestor,
+        regression_exists=lambda path: _repository_path(
+            path,
+            "audit regression path",
+        ).is_file(),
+    )
 
 
 def main() -> int:

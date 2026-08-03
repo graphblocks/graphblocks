@@ -971,12 +971,16 @@ releaseGates:
       - hypothesis-cargo-fuzz-and-proptest-pr-smoke-and-scheduled
       - digest-bound-live-99-finding-inventory
       - zero-open-p0-p1-with-ancestor-fix-and-regression-bindings
+      - signed-candidate-and-final-promotion-audit-closure-binding
     evidence:
       - docs/project/audit-issues.json
       - docs/project/audit-issue-status.yaml
       - tools/check_audit_inventory.py
       - tests/test_audit_inventory.py
       - .github/workflows/ci.yml
+      - tools/release_supply_chain.py
+      - tests/test_release_supply_chain.py
+      - .github/workflows/promotion-reports.yml
       - pyproject.toml
       - tests/test_canonical_properties.py
       - crates/graphblocks-schema/tests/canonical_properties.rs
@@ -1019,7 +1023,6 @@ releaseGates:
     blockers:
       - audited-source-commit-tree-or-archive-digest-unavailable
       - reproduction-harnesses-and-command-provenance-incomplete
-      - promotion-validator-does-not-yet-bind-audit-inventory
   - id: REL-NORMATIVE-AUTHORITY
     description: Rust is the normative Graph compiler and selected target production-runtime authority while Python remains the authoring facade and deterministic reference oracle; this gate tracks the remaining transition.
     readiness: blocked
@@ -1109,6 +1112,7 @@ releaseGates:
       - exact final ref/version evidence plus manifest-bound final commit/tree
       - distinct ancestor prior-RC manifest and digest-bound release-metadata-only source diff
       - stable release matrix and stable security-gate manifest are immutable from RC to final
+      - signed audit-closure report and immutable candidate-to-final audit inventory status map and checker digests
       - three distinct complete supported-matrix attestations and fourteen-day two-application soak validation
       - distinct approved API/security review and zero critical/high defect or unexplained-flake validation
       - protected-final-ref and authorized real staged publish rollback yank restore validation

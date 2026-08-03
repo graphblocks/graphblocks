@@ -565,7 +565,8 @@ following audit gates pass:
 
 - zero open P0 and P1 findings;
 - all 99 immutable baseline IDs map to one workstream, and the imported live
-  inventory is digest-bound to promotion evidence;
+  inventory remains digest-bound to the signed `audit-closure` promotion
+  report;
 - the audited source commit/tree or source-archive digest and a file-level
   evidence manifest are present;
 - the two-principal/two-tenant authorization matrix is green;

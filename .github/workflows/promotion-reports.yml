@@ -9,6 +9,7 @@ on:
         type: choice
         options:
           - candidate-manifest
+          - audit-closure
           - soak-application
           - api-review
           - security-review

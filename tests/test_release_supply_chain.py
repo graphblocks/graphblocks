@@ -153,6 +153,7 @@ def _trust_test_source(
             integration_matrix_path,
             module.SECURITY_GATE_MANIFEST_PATH,
             *module.SECURITY_GATE_EVIDENCE_PATHS,
+            *module.AUDIT_CLOSURE_SOURCE_PATHS,
         )
     }
     module._promotion_git_blob = (
@@ -162,6 +163,8 @@ def _trust_test_source(
             else original_promotion_git_blob(commit, path)
         )
     )
+    module._promotion_commit_is_ancestor = lambda _commit, _revision: True
+    module._promotion_regular_blob_exists = lambda _revision, _path: True
     module._first_party_versions = lambda: {
         "graphblocks": stable_version,
         "graphblocks-runtime": "0.1.0",
@@ -501,6 +504,21 @@ def _inputs(
     return inputs
 
 
+def _audit_closure_report(module: ModuleType) -> dict[str, object]:
+    return {
+        "candidateRef": RELEASE_REF,
+        "candidateCommit": CANDIDATE_COMMIT,
+        **module._audit_closure_claim_from_blobs(
+            {
+                path: (Path(__file__).parents[1] / path).read_bytes()
+                for path in module.AUDIT_CLOSURE_SOURCE_PATHS
+            },
+            is_ancestor=lambda _commit: True,
+            regression_exists=lambda _path: True,
+        ),
+    }
+
+
 def _promotion_payload_and_files(
     module: ModuleType,
     *,
@@ -521,7 +539,8 @@ def _promotion_payload_and_files(
             "releaseRef": RELEASE_REF,
             "releaseVersion": RELEASE_VERSION,
             "gitCommit": CANDIDATE_COMMIT,
-        }
+        },
+        "audit-closure": _audit_closure_report(module),
     }
     report_files: dict[str, bytes] = {}
     candidate_manifest_bytes = module._canonical_json_bytes(
@@ -676,6 +695,10 @@ def _promotion_payload_and_files(
                     dict(change) for change in PROMOTION_SOURCE_DIFF["changes"]
                 ],
             },
+        },
+        "auditClosure": {
+            **reports["audit-closure"],
+            "reportDigest": report_digests["audit-closure"],
         },
         "supportedMatrixRuns": [
             {
@@ -956,6 +979,10 @@ def test_promotion_source_diff_allows_only_release_metadata(
     (
         "docs/project/stable-release-matrix.yaml",
         "docs/project/stable-security-gates.yaml",
+        "docs/project/audit-issues.json",
+        "docs/project/audit-issue-status.yaml",
+        "docs/project/audit-remediation-map.yaml",
+        "tools/check_audit_inventory.py",
     ),
 )
 def test_promotion_source_diff_rejects_release_authority_drift(
@@ -1335,11 +1362,15 @@ def test_final_promotion_consumes_signed_concrete_real_service_runs(
         "oauth2"
     )
     module._promotion_git_blob = (
-        lambda commit, _path: yaml.safe_dump(
-            integration_matrix
-            if commit == CANDIDATE_COMMIT
-            else changed_final_matrix
-        ).encode("utf-8")
+        lambda commit, path: (
+            yaml.safe_dump(
+                integration_matrix
+                if commit == CANDIDATE_COMMIT
+                else changed_final_matrix
+            ).encode("utf-8")
+            if path == "docs/project/stable-release-matrix.yaml"
+            else trusted_promotion_git_blob(commit, path)
+        )
     )
     with pytest.raises(module.ReleaseBundleError, match="claims changed"):
         module._validate_promotion_evidence(
@@ -1439,6 +1470,7 @@ def test_final_promotion_consumes_signed_concrete_real_service_runs(
         ("reviewer", "independent object-authorization"),
         ("noncanonical-digest", "lowercase SHA-256 digest"),
         ("defect", "zero unresolved"),
+        ("audit-closure", "audit report"),
         ("upgrade", "first-stable upgrade exemption"),
         ("rehearsal", "authorized real staged"),
     ),
@@ -1467,6 +1499,8 @@ def test_final_release_rejects_promotion_evidence_substitution(
         payload["reviews"]["security"]["reportDigest"] = "sha256:" + "A" * 64
     elif substitution == "defect":
         payload["stableScope"]["unresolvedHigh"] = 1
+    elif substitution == "audit-closure":
+        payload["auditClosure"]["openBySeverity"]["P1"] = 1
     elif substitution == "upgrade":
         payload["upgradeGate"]["status"] = "passed"
     else:
@@ -1478,6 +1512,31 @@ def test_final_release_rejects_promotion_evidence_substitution(
     snapshot = module._snapshot_regular_file(evidence, owner="test promotion evidence")
 
     with pytest.raises(module.ReleaseBundleError, match=message):
+        module._validate_promotion_evidence(
+            snapshot,
+            git_commit=COMMIT,
+            git_tree=TREE,
+            release_ref="refs/tags/v1.0.0",
+            release_version="1.0.0",
+            verify_source_diff=True,
+        )
+
+
+def test_final_release_rejects_audit_closure_drift_after_candidate(
+    tmp_path: Path,
+) -> None:
+    module = _load_module()
+    _trust_test_source(module)
+    evidence = _write_promotion_evidence(module, tmp_path / "promotion.json")
+    snapshot = module._snapshot_regular_file(evidence, owner="test promotion evidence")
+    trusted_git_blob = module._promotion_git_blob
+    module._promotion_git_blob = lambda revision, path: (
+        trusted_git_blob(revision, path) + b"\n"
+        if revision == COMMIT and path == module.AUDIT_STATUS_PATH
+        else trusted_git_blob(revision, path)
+    )
+
+    with pytest.raises(module.ReleaseBundleError, match="changed after the candidate"):
         module._validate_promotion_evidence(
             snapshot,
             git_commit=COMMIT,
@@ -1537,8 +1596,9 @@ def test_final_release_resolves_hashes_and_verifies_every_promotion_report(
         promotion_evidence=promotion,
     )
 
-    assert len(verified) == 22
-    assert len({name for name, _identity in verified}) == 11
+    assert len(verified) == 24
+    assert len({name for name, _identity in verified}) == 12
+    assert any(name == "audit-closure.json" for name, _identity in verified)
     ci_identity = (
         "https://github.com/graphblocks/graphblocks/.github/workflows/"
         "ci.yml@refs/tags/v1.0.0-rc.1"
@@ -1548,7 +1608,7 @@ def test_final_release_resolves_hashes_and_verifies_every_promotion_report(
         "promotion-reports.yml@refs/tags/v1.0.0-rc.1"
     )
     assert [identity for _name, identity in verified].count(ci_identity) == 6
-    assert [identity for _name, identity in verified].count(promotion_identity) == 16
+    assert [identity for _name, identity in verified].count(promotion_identity) == 18
 
     missing_promotion = _write_promotion_evidence(
         module, tmp_path / "missing" / "promotion.json"
@@ -1825,6 +1885,38 @@ def test_candidate_workflow_can_validate_and_freeze_each_promotion_report_type(
     assert frozen.path == output_dir / "report.json"
     assert frozen.data == module._canonical_json_bytes(payload)
     assert frozen.sha256 == module._sha256_bytes(frozen.data)
+
+
+def test_candidate_workflow_derives_and_freezes_audit_closure(
+    tmp_path: Path,
+) -> None:
+    module = _load_module()
+    payload = _audit_closure_report(module)
+    input_path = tmp_path / "audit-closure-input.json"
+    input_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    _trust_test_source(module)
+    module._current_git_commit = lambda: CANDIDATE_COMMIT
+
+    frozen = module.freeze_promotion_report(
+        input_path=input_path,
+        output_dir=tmp_path / "audit-closure-frozen",
+        report_type="audit-closure",
+        candidate_ref=RELEASE_REF,
+        candidate_commit=CANDIDATE_COMMIT,
+    )
+
+    assert frozen.data == module._canonical_json_bytes(payload)
+    assert payload["openBySeverity"] == {"P0": 0, "P1": 0, "P2": 64, "P3": 8}
+
+    module._current_git_commit = lambda: COMMIT
+    with pytest.raises(module.ReleaseBundleError, match="checkout does not match"):
+        module.freeze_promotion_report(
+            input_path=input_path,
+            output_dir=tmp_path / "wrong-checkout",
+            report_type="audit-closure",
+            candidate_ref=RELEASE_REF,
+            candidate_commit=CANDIDATE_COMMIT,
+        )
 
 
 def test_candidate_ci_freezes_one_canonical_matrix_run_attestation(

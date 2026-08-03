@@ -1581,6 +1581,13 @@ def test_stable_release_matrix_is_complete_and_machine_readable() -> None:
         "resolved": 27,
         "openBySeverity": {"P0": 0, "P1": 0, "P2": 64, "P3": 8},
     }
+    assert "signed-candidate-and-final-promotion-audit-closure-binding" in (
+        audit_gate["implementedEvidence"]
+    )
+    assert audit_gate["blockers"] == [
+        "audited-source-commit-tree-or-archive-digest-unavailable",
+        "reproduction-harnesses-and-command-provenance-incomplete",
+    ]
     assert audit_gate["exitCriteria"]["maxOpenBySeverity"] == {"P0": 0, "P1": 0}
     assert audit_gate["companionGates"] == [
         "REL-OBJECT-AUTHORIZATION-REVIEW",
