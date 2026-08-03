@@ -97,3 +97,21 @@ resolved:
   - id: GB-ARCH-004
     fixCommits: [c5836de6]
     regression: [tests/test_documentation_integrity.py]
+  - id: GB-ARCH-005
+    fixCommits: [7d82a996, b5020217, f002c9a6, 2307cff1, b4e6b7a1, df0ae1f9, 300e3686, d491d25f, d1343a79, ff746218]
+    regression: [tests/test_server_core.py]
+  - id: GB-ARCH-006
+    fixCommits: [d7d58dce, f4115955, b4f4b204, a4617884, d2c13352, c03e5b30, 48b1ee3f]
+    regression: [tests/test_cli.py]
+  - id: GB-ARCH-007
+    fixCommits: [508c9fa7, 69cc0a82, 0a05bd22, 17aa6514]
+    regression: [tests/test_compiler_native_bridge.py]
+  - id: GB-ARCH-008
+    fixCommits: [9a3b2535]
+    regression: [tests/test_stdlib_runtime_contracts.py]
+  - id: GB-ARCH-009
+    fixCommits: [d7f7c8d5]
+    regression: [tests/test_testing_package_architecture.py]
+  - id: GB-ARCH-010
+    fixCommits: [5d69fb02]
+    regression: [tests/test_durable_tck_dispatch.py]
