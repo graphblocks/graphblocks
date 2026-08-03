@@ -127,3 +127,6 @@ resolved:
   - id: GB-ARCH-016
     fixCommits: [a21455d0]
     regression: [crates/graphblocksd/tests/control_plane.rs, tests/test_documentation_integrity.py]
+  - id: GB-ARCH-017
+    fixCommits: [2cb91bcb]
+    regression: [tests/test_deployment_chart_artifact.py, tests/test_documentation_integrity.py, tests/test_package_layout.py]

@@ -84,8 +84,8 @@ deepAudit:
     authority: docs/project/audit-issue-status.yaml
     inventory: docs/project/audit-issues.json
     checker: tools/check_audit_inventory.py
-    resolved: 41
-    openBySeverity: {P0: 0, P1: 0, P2: 50, P3: 8}
+    resolved: 42
+    openBySeverity: {P0: 0, P1: 0, P2: 49, P3: 8}
   exitPolicy:
     securityFreeze: {maxOpenP0: 0}
     stableRelease: {maxOpenP0: 0, maxOpenP1: 0}
@@ -981,6 +981,7 @@ releaseGates:
       - mutable-journals-with-detached-immutable-snapshots
       - contract-only-integration-maturity-and-promotion-gate
       - one-shot-graphblocks-control-cli-naming-and-usage-contract
+      - deployment-chart-scaffold-with-no-operator-maturity-claim
     evidence:
       - docs/project/audit-issues.json
       - docs/project/audit-issue-status.yaml
