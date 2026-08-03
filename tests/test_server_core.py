@@ -18886,7 +18886,10 @@ def test_server_app_treats_repeated_callback_dead_letter_move_as_idempotent() ->
         ServerRequest(
             method="POST",
             path="/callbacks/deliveries/del-idempotent/dead-letter",
-            headers={"Authorization": "Bearer token-1"},
+            headers={
+                "Authorization": "Bearer token-1",
+                "GraphBlocks-Idempotency-Key": "dead-letter-operation-1",
+            },
             query={},
             cookies={},
             body=json.dumps({"operator": "operator-1", "reason": "max attempts exhausted"}).encode("utf-8"),
@@ -18897,10 +18900,13 @@ def test_server_app_treats_repeated_callback_dead_letter_move_as_idempotent() ->
         ServerRequest(
             method="POST",
             path="/callbacks/deliveries/del-idempotent/dead-letter",
-            headers={"Authorization": "Bearer token-1"},
+            headers={
+                "Authorization": "Bearer token-1",
+                "GraphBlocks-Idempotency-Key": "dead-letter-operation-1",
+            },
             query={},
             cookies={},
-            body=json.dumps({"reason": "already moved"}).encode("utf-8"),
+            body=json.dumps({"reason": "max attempts exhausted"}).encode("utf-8"),
             requested_at="2026-07-03T00:02:00Z",
         )
     )
@@ -18914,6 +18920,7 @@ def test_server_app_treats_repeated_callback_dead_letter_move_as_idempotent() ->
         "reason": "max attempts exhausted",
         "status": "dead_letter_requested",
         "requestedAt": "2026-07-03T00:01:00Z",
+        "idempotencyKey": "dead-letter-operation-1",
         "duplicate": True,
     }
     assert app.callback_delivery_dead_letter_moves("del-idempotent") == (
@@ -18922,9 +18929,48 @@ def test_server_app_treats_repeated_callback_dead_letter_move_as_idempotent() ->
             "operator": "operator-1",
             "reason": "max attempts exhausted",
             "requestedAt": "2026-07-03T00:01:00Z",
+            "idempotencyKey": "dead-letter-operation-1",
             "sourceAttempt": 1,
             "status": "dead_letter_requested",
         },
+    )
+
+    conflict = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/callbacks/deliveries/del-idempotent/dead-letter",
+            headers={
+                "Authorization": "Bearer token-1",
+                "GraphBlocks-Idempotency-Key": "dead-letter-operation-1",
+            },
+            query={},
+            cookies={},
+            body=json.dumps({"reason": "different request"}).encode("utf-8"),
+            requested_at="2026-07-03T00:03:00Z",
+        )
+    )
+    assert conflict.status_code == 409
+    assert json.loads(conflict.body.decode("utf-8"))["reasonCode"] == (
+        "server.callback_delivery_control_idempotency_conflict"
+    )
+
+    distinct_operation = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/callbacks/deliveries/del-idempotent/dead-letter",
+            headers={
+                "Authorization": "Bearer token-1",
+                "GraphBlocks-Idempotency-Key": "dead-letter-operation-2",
+            },
+            query={},
+            cookies={},
+            body=json.dumps({"reason": "max attempts exhausted"}).encode("utf-8"),
+            requested_at="2026-07-03T00:04:00Z",
+        )
+    )
+    assert distinct_operation.status_code == 409
+    assert json.loads(distinct_operation.body.decode("utf-8"))["state"] == (
+        "dead_lettered"
     )
 
 
@@ -18936,7 +18982,10 @@ def test_server_app_treats_repeated_callback_redrive_as_idempotent() -> None:
         ServerRequest(
             method="POST",
             path="/callbacks/deliveries/del-redrive-idempotent/redrive",
-            headers={"Authorization": "Bearer token-1"},
+            headers={
+                "Authorization": "Bearer token-1",
+                "GraphBlocks-Idempotency-Key": "redrive-operation-1",
+            },
             query={},
             cookies={},
             body=json.dumps({"reason": reason}).encode("utf-8"),
@@ -18944,7 +18993,7 @@ def test_server_app_treats_repeated_callback_redrive_as_idempotent() -> None:
         )
         for reason, requested_at in (
             ("receiver recovered", "2026-07-03T00:01:00Z"),
-            ("already requested", "2026-07-03T00:02:00Z"),
+            ("receiver recovered", "2026-07-03T00:02:00Z"),
         )
     )
 
@@ -18959,6 +19008,7 @@ def test_server_app_treats_repeated_callback_redrive_as_idempotent() -> None:
         "reason": "receiver recovered",
         "status": "redrive_requested",
         "requestedAt": "2026-07-03T00:01:00Z",
+        "idempotencyKey": "redrive-operation-1",
         "duplicate": True,
     }
     assert len(app.callback_delivery_redrives("del-redrive-idempotent")) == 1
@@ -18980,7 +19030,10 @@ def test_server_app_bounds_callback_delivery_control_history() -> None:
     redrive_request = ServerRequest(
         method="POST",
         path="/callbacks/deliveries/delivery-control-capacity-1/redrive",
-        headers={"Authorization": "Bearer token-1"},
+        headers={
+            "Authorization": "Bearer token-1",
+            "GraphBlocks-Idempotency-Key": "redrive-capacity-operation-1",
+        },
         query={},
         cookies={},
         body=json.dumps({"reason": "receiver recovered"}).encode("utf-8"),
@@ -19238,10 +19291,13 @@ def test_server_app_serializes_concurrent_callback_dead_letter_moves() -> None:
         ServerRequest(
             method="POST",
             path="/callbacks/deliveries/del-concurrent/dead-letter",
-            headers={"Authorization": "Bearer token-1"},
+            headers={
+                "Authorization": "Bearer token-1",
+                "GraphBlocks-Idempotency-Key": "dead-letter-concurrent-1",
+            },
             query={},
             cookies={},
-            body=json.dumps({"reason": f"terminal failure {index}"}).encode("utf-8"),
+            body=json.dumps({"reason": "terminal failure"}).encode("utf-8"),
             requested_at=f"2026-07-03T00:01:0{index}Z",
         )
         for index in (1, 2)

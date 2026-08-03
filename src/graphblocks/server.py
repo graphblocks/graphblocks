@@ -2775,7 +2775,12 @@ def _optional_callback_string(body: Mapping[str, object], snake: str, camel: str
     return _validate_exact_non_empty_string("server async callback", snake, value)
 
 
-def _callback_idempotency_key(body: Mapping[str, object], headers: Mapping[str, str]) -> object:
+def _server_idempotency_key(
+    body: Mapping[str, object],
+    headers: Mapping[str, str],
+    *,
+    owner: str,
+) -> object:
     graphblocks_header_value = headers.get("graphblocks-idempotency-key")
     legacy_header_value = headers.get("idempotency-key")
     if (
@@ -2783,16 +2788,29 @@ def _callback_idempotency_key(body: Mapping[str, object], headers: Mapping[str, 
         and legacy_header_value is not None
         and graphblocks_header_value != legacy_header_value
     ):
-        raise ValueError("server async callback idempotency_key header values must not conflict")
+        raise ValueError(f"{owner} idempotency_key header values must not conflict")
     header_value = graphblocks_header_value if graphblocks_header_value is not None else legacy_header_value
-    body_value = _callback_alias_value(body, "idempotency_key", "idempotencyKey")
+    body_value = _server_alias_value(
+        body,
+        owner,
+        "idempotency_key",
+        "idempotencyKey",
+    )
     if body_value is not None and header_value is not None and body_value != header_value:
-        raise ValueError("server async callback idempotency_key body/header values must not conflict")
+        raise ValueError(f"{owner} idempotency_key body/header values must not conflict")
     if body_value is not None:
         return body_value
     if header_value is not None:
         return header_value
     return ""
+
+
+def _callback_idempotency_key(body: Mapping[str, object], headers: Mapping[str, str]) -> object:
+    return _server_idempotency_key(
+        body,
+        headers,
+        owner="server async callback",
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -7639,12 +7657,27 @@ class GraphBlocksServerApp:
                 payload = _server_request_json_body(request, "callback delivery control request")
                 if not isinstance(payload, Mapping):
                     raise ValueError("callback delivery control request body must be a JSON object")
+                idempotency_value = _server_idempotency_key(
+                    payload,
+                    request.headers,
+                    owner="callback delivery control request",
+                )
+                idempotency_key = (
+                    None
+                    if idempotency_value == ""
+                    else _validate_exact_non_empty_string(
+                        "callback delivery control request",
+                        "idempotency_key",
+                        idempotency_value,
+                    )
+                )
                 return self._callback_delivery_control_response(
                     delivery_id,
                     route.operation,
                     payload,
                     request.requested_at or _utc_now_iso(),
                     auth_decision.principal,
+                    idempotency_key=idempotency_key,
                 )
             except PermissionError as error:
                 return ServerResponse.json(
@@ -9962,6 +9995,8 @@ class GraphBlocksServerApp:
         payload: Mapping[str, object],
         requested_at: str,
         principal: PrincipalRef | None,
+        *,
+        idempotency_key: str | None,
     ) -> ServerResponse:
         requested_at = _validate_iso_datetime("callback delivery control request", "requested_at", requested_at)
         delivery_id = _validate_exact_non_empty_string(
@@ -10072,41 +10107,60 @@ class GraphBlocksServerApp:
             )
             if operation == "redrive_callback_delivery":
                 existing = redrive_history
-                duplicate = next(
-                    (
-                        item
-                        for item in reversed(existing)
-                        if item.get("resultingAttempt") == delivery.attempt
-                        and delivery.status == "pending"
-                    ),
-                    None,
-                )
                 allowed_states = {"failed", "dead_lettered"}
             else:
                 existing = dead_letter_history
-                duplicate = next(
-                    (
-                        item
-                        for item in reversed(existing)
-                        if item.get("sourceAttempt") == delivery.attempt
-                        and delivery.status == "dead_lettered"
-                    ),
-                    None,
-                )
                 allowed_states = {"failed"}
-            if duplicate is not None:
-                return ServerResponse.json(
-                    200,
-                    {
-                        "ok": True,
-                        "deliveryId": delivery_id,
-                        "operator": duplicate.get("operator"),
-                        "reason": duplicate.get("reason"),
-                        "status": duplicate.get("status"),
-                        "requestedAt": duplicate.get("requestedAt"),
-                        "duplicate": True,
-                    },
+            if idempotency_key is not None:
+                operation_histories = (
+                    ("redrive_callback_delivery", redrive_history),
+                    ("move_callback_to_dead_letter", dead_letter_history),
                 )
+                for recorded_operation, history in operation_histories:
+                    duplicate = next(
+                        (
+                            item
+                            for item in reversed(history)
+                            if item.get("idempotencyKey") == idempotency_key
+                        ),
+                        None,
+                    )
+                    if duplicate is None:
+                        continue
+                    if (
+                        recorded_operation != operation
+                        or duplicate.get("operator") != operator
+                        or duplicate.get("reason") != reason
+                    ):
+                        return ServerResponse.json(
+                            409,
+                            {
+                                "ok": False,
+                                "deliveryId": delivery_id,
+                                "idempotencyKey": idempotency_key,
+                                "reasonCode": (
+                                    "server.callback_delivery_control_"
+                                    "idempotency_conflict"
+                                ),
+                                "error": (
+                                    "callback delivery control idempotency key "
+                                    "was already used with a different request"
+                                ),
+                            },
+                        )
+                    return ServerResponse.json(
+                        200,
+                        {
+                            "ok": True,
+                            "deliveryId": delivery_id,
+                            "operator": duplicate.get("operator"),
+                            "reason": duplicate.get("reason"),
+                            "status": duplicate.get("status"),
+                            "requestedAt": duplicate.get("requestedAt"),
+                            "idempotencyKey": idempotency_key,
+                            "duplicate": True,
+                        },
+                    )
             if delivery.status not in allowed_states:
                 return ServerResponse.json(
                     409,
@@ -10130,6 +10184,8 @@ class GraphBlocksServerApp:
                 "sourceAttempt": delivery.attempt,
                 "status": status,
             }
+            if idempotency_key is not None:
+                record_payload["idempotencyKey"] = idempotency_key
             if operation == "redrive_callback_delivery":
                 record_payload["resultingAttempt"] = delivery.attempt + 1
                 updated_delivery = replace(
@@ -10199,16 +10255,16 @@ class GraphBlocksServerApp:
                 self._callback_delivery_redrives[control_key] = (*existing, record)
             else:
                 self._callback_delivery_dead_letter_moves[control_key] = (*existing, record)
-        return ServerResponse.json(
-            202,
-            {
-                "ok": True,
-                "deliveryId": delivery_id,
-                "operator": operator,
-                "reason": reason,
-                "status": status,
-            },
-        )
+        response_payload: dict[str, object] = {
+            "ok": True,
+            "deliveryId": delivery_id,
+            "operator": operator,
+            "reason": reason,
+            "status": status,
+        }
+        if idempotency_key is not None:
+            response_payload["idempotencyKey"] = idempotency_key
+        return ServerResponse.json(202, response_payload)
 
     def _attach_to_run_response(
         self,
