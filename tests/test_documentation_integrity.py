@@ -1580,13 +1580,16 @@ def test_stable_release_matrix_is_complete_and_machine_readable() -> None:
         "authority": "docs/project/audit-issue-status.yaml",
         "inventory": "docs/project/audit-issues.json",
         "checker": "tools/check_audit_inventory.py",
-        "resolved": 53,
-        "openBySeverity": {"P0": 0, "P1": 0, "P2": 38, "P3": 8},
+        "resolved": 54,
+        "openBySeverity": {"P0": 0, "P1": 0, "P2": 37, "P3": 8},
     }
     assert "signed-candidate-and-final-promotion-audit-closure-binding" in (
         audit_gate["implementedEvidence"]
     )
     assert "exact-cli-string-list-and-object-codecs-with-type-confusion-regressions" in (
+        audit_gate["implementedEvidence"]
+    )
+    assert "append-friendly-server-histories-with-constant-time-byte-accounting" in (
         audit_gate["implementedEvidence"]
     )
     assert audit_gate["blockers"] == [

@@ -163,3 +163,6 @@ resolved:
   - id: GB-INP-010
     fixCommits: [06cbe875]
     regression: [tests/test_cli.py]
+  - id: GB-PERF-004
+    fixCommits: [1781edbc]
+    regression: [tests/test_server_core.py, tests/test_server_callback_webhook_delivery.py]
