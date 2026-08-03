@@ -4011,6 +4011,7 @@ def test_ci_retains_each_rust_gate_log_on_failure() -> None:
     expected_logs = {
         "Check Rust formatting": "dist/ci/rust-fmt.log",
         "Run Clippy": "dist/ci/rust-clippy.log",
+        "Run checkpoint recovery Loom model": "dist/ci/rust-checkpoint-loom.log",
         "Run Rust tests": "dist/ci/rust-tests.log",
         "Verify Rust packages": "dist/ci/rust-packages.log",
     }

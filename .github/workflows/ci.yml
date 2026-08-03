@@ -673,6 +673,14 @@ jobs:
           set -o pipefail
           cargo clippy --workspace --all-targets --locked -- -D warnings \
             2>&1 | tee dist/ci/rust-clippy.log
+      - name: Run checkpoint recovery Loom model
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo test -p graphblocks-runtime-durable \
+            --test checkpoint_recovery_loom \
+            --locked \
+            2>&1 | tee dist/ci/rust-checkpoint-loom.log
       - name: Run Rust tests
         shell: bash
         run: |
