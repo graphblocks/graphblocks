@@ -118,3 +118,6 @@ resolved:
   - id: GB-ARCH-011
     fixCommits: [1235660d]
     regression: [tests/test_durable_tck_fixture_generation.py]
+  - id: GB-ARCH-013
+    fixCommits: [00857381, 92e4188b]
+    regression: [tests/test_journal_store.py]
