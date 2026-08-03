@@ -53,10 +53,11 @@ A finding moves to resolved only when:
 4. the release matrix or profile evidence is updated when the finding changes a
    compatibility or production claim.
 
-The current generated count is 43 resolved findings: all 27 P0/P1 findings,
+The current generated count is 44 resolved findings: all 27 P0/P1 findings,
 the first 11 P2 findings, GB-ARCH-013, and GB-ARCH-015 through GB-ARCH-017.
-GB-COR-005 is also resolved. There are zero open P0/P1, 48 open P2, and 8 open
-P3. GB-ARCH-012 remains open pending shared-primitives consolidation.
+GB-COR-005 and GB-COR-006 are also resolved. There are zero open P0/P1, 47
+open P2, and 8 open P3. GB-ARCH-012 remains open pending shared-primitives
+consolidation.
 This closes the recorded code-and-regression count; it does not replace the
 independent review, candidate attestation, platform, or soak gates.
 

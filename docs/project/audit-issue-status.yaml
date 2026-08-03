@@ -133,3 +133,6 @@ resolved:
   - id: GB-COR-005
     fixCommits: [b93da55b]
     regression: [tests/test_server_core.py]
+  - id: GB-COR-006
+    fixCommits: [a93560ad]
+    regression: [tests/test_admission_ticket.py, tests/test_server_admission_ticket.py]
