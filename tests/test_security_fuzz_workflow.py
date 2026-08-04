@@ -171,7 +171,9 @@ def test_fuzz_gate_remains_release_blocking_and_documented() -> None:
         if gate["id"] == "REL-AUDIT-REMEDIATION"
     )
 
-    assert audit_gate["readiness"] == "blocked"
+    assert audit_gate["readiness"] == (
+        "code-closure-enforced-external-evidence-blocked"
+    )
     assert (
         "hypothesis-cargo-fuzz-and-proptest-pr-smoke-and-scheduled"
         in audit_gate["implementedEvidence"]
