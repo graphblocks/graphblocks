@@ -1580,8 +1580,8 @@ def test_stable_release_matrix_is_complete_and_machine_readable() -> None:
         "authority": "docs/project/audit-issue-status.yaml",
         "inventory": "docs/project/audit-issues.json",
         "checker": "tools/check_audit_inventory.py",
-        "resolved": 62,
-        "openBySeverity": {"P0": 0, "P1": 0, "P2": 29, "P3": 8},
+        "resolved": 63,
+        "openBySeverity": {"P0": 0, "P1": 0, "P2": 28, "P3": 8},
     }
     assert "signed-candidate-and-final-promotion-audit-closure-binding" in (
         audit_gate["implementedEvidence"]
@@ -1617,6 +1617,10 @@ def test_stable_release_matrix_is_complete_and_machine_readable() -> None:
     assert "loom-exhaustive-checkpoint-claim-renew-complete-takeover-model" in (
         audit_gate["implementedEvidence"]
     )
+    assert (
+        "required-macos-15-arm64-python-311-312-installed-native-wheel-smoke"
+        in audit_gate["implementedEvidence"]
+    )
     assert audit_gate["blockers"] == [
         "audited-source-commit-tree-or-archive-digest-unavailable",
     ]
@@ -1632,6 +1636,26 @@ def test_stable_release_matrix_is_complete_and_machine_readable() -> None:
     )
     assert macos_gate["classification"] == "smoke-only"
     assert macos_gate["changesSupportedPlatformMatrix"] is False
+    assert macos_gate["readiness"] == "required-ci-smoke-enforced"
+    assert macos_gate["platforms"] == {
+        "runner": "macos-15",
+        "architecture": "arm64",
+        "pythonVersions": ["3.11", "3.12"],
+    }
+    assert macos_gate["evidence"] == [
+        ".github/workflows/ci.yml",
+        "tools/macos_native_smoke.py",
+        "tests/test_macos_native_smoke.py",
+    ]
+    assert macos_gate["observedCiEvidence"] == {
+        "runId": 30843785151,
+        "headSha": "ab0f2bf19f0f76f40d9aa4a8ba9f9992a44bccba",
+        "jobs": {
+            "macos-native-wheel-smoke-python-3.11": "success",
+            "macos-native-wheel-smoke-python-3.12": "success",
+        },
+    }
+    assert macos_gate["blockers"] == []
 
     authority = matrix["authorityTransition"]
     assert authority["readiness"] == "in-progress-blocked"

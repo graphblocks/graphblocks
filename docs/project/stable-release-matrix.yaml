@@ -84,8 +84,8 @@ deepAudit:
     authority: docs/project/audit-issue-status.yaml
     inventory: docs/project/audit-issues.json
     checker: tools/check_audit_inventory.py
-    resolved: 62
-    openBySeverity: {P0: 0, P1: 0, P2: 29, P3: 8}
+    resolved: 63
+    openBySeverity: {P0: 0, P1: 0, P2: 28, P3: 8}
   exitPolicy:
     securityFreeze: {maxOpenP0: 0}
     stableRelease: {maxOpenP0: 0, maxOpenP1: 0}
@@ -1002,6 +1002,7 @@ releaseGates:
       - security-critical-module-branch-and-ninety-percent-diff-coverage
       - required-python-rust-vulnerability-audits-and-codeql-security-extended
       - loom-exhaustive-checkpoint-claim-renew-complete-takeover-model
+      - required-macos-15-arm64-python-311-312-installed-native-wheel-smoke
     evidence:
       - docs/project/audit-issues.json
       - docs/project/audit-issue-status.yaml
@@ -1029,6 +1030,8 @@ releaseGates:
       - crates/graphblocks-runtime-durable/Cargo.toml
       - crates/graphblocks-runtime-durable/tests/checkpoint_recovery_loom.rs
       - tests/test_rust_concurrency_workflow.py
+      - tools/macos_native_smoke.py
+      - tests/test_macos_native_smoke.py
     exitCriteria:
       maxOpenBySeverity: {P0: 0, P1: 0}
       requiredEvidence:
@@ -1108,15 +1111,28 @@ releaseGates:
     blockers: []
   - id: REL-MACOS-NATIVE-SMOKE
     description: A separately defined macOS and native-wheel smoke gate passes without implicitly expanding the supported-platform matrix.
-    readiness: planned-blocked
+    readiness: required-ci-smoke-enforced
     classification: smoke-only
     changesSupportedPlatformMatrix: false
+    platforms:
+      runner: macos-15
+      architecture: arm64
+      pythonVersions: ['3.11', '3.12']
     exitCriteria:
       - install the intended release artifacts on the selected macOS runner
       - import and execute the native binding smoke contract
       - retain runner Python artifact and result identities
-    blockers:
-      - macos-native-wheel-smoke-not-enforced
+    evidence:
+      - .github/workflows/ci.yml
+      - tools/macos_native_smoke.py
+      - tests/test_macos_native_smoke.py
+    observedCiEvidence:
+      runId: 30843785151
+      headSha: ab0f2bf19f0f76f40d9aa4a8ba9f9992a44bccba
+      jobs:
+        macos-native-wheel-smoke-python-3.11: success
+        macos-native-wheel-smoke-python-3.12: success
+    blockers: []
   - id: REL-SUPPLY-CHAIN
     description: Checksums SBOM provenance signatures publish and rollback are verified.
     readiness: promotion-contract-enforced-external-evidence-absent

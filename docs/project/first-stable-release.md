@@ -251,9 +251,12 @@ from the exact release artifacts:
 9. The unchanged release candidate completes a two-to-four-week soak in at
    least two non-trivial applications and passes independent API/security
    review.
-10. A separately defined macOS and native-wheel smoke gate passes. This does not
-   expand the supported-platform matrix without a separate release-tooling and
-   evidence change.
+10. The required `macos-15` arm64 native-wheel smoke matrix passes on Python
+   3.11 and 3.12. It builds and installs the exact base and native wheels in an
+   isolated environment, executes the native compiler binding, validates the
+   runner, architecture, ABI, module origin, and wheel digests, and retains the
+   evidence record. This does not expand the supported-platform matrix without
+   a separate release-tooling and evidence change.
 
 The stable tag must not be cut by waiving a missing gate. A capability gate may
 be removed only by changing the stable scope in this document and explaining

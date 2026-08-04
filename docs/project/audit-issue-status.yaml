@@ -190,3 +190,6 @@ resolved:
   - id: GB-QA-009
     fixCommits: ['c3702abf']
     regression: [crates/graphblocks-runtime-durable/tests/checkpoint_recovery_loom.rs, tests/test_rust_concurrency_workflow.py]
+  - id: GB-QA-010
+    fixCommits: ['e4fd73ec', 'ab0f2bf1']
+    regression: [tests/test_macos_native_smoke.py, tests/test_release_supply_chain.py]
