@@ -196,3 +196,6 @@ resolved:
   - id: GB-QA-012
     fixCommits: ['bca3256b', '997deeaa', '70d57470']
     regression: [tests/test_quick_ci_gate.py, tests/test_release_supply_chain.py]
+  - id: GB-QA-013
+    fixCommits: ['e97816aa', 'fe86e124', 'b16bbecf']
+    regression: [tests/test_dev_lock.py, tests/test_quick_ci_gate.py]

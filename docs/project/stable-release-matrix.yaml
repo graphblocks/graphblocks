@@ -84,8 +84,8 @@ deepAudit:
     authority: docs/project/audit-issue-status.yaml
     inventory: docs/project/audit-issues.json
     checker: tools/check_audit_inventory.py
-    resolved: 64
-    openBySeverity: {P0: 0, P1: 0, P2: 27, P3: 8}
+    resolved: 65
+    openBySeverity: {P0: 0, P1: 0, P2: 26, P3: 8}
   exitPolicy:
     securityFreeze: {maxOpenP0: 0}
     stableRelease: {maxOpenP0: 0, maxOpenP1: 0}
@@ -1004,6 +1004,7 @@ releaseGates:
       - loom-exhaustive-checkpoint-claim-renew-complete-takeover-model
       - required-macos-15-arm64-python-311-312-installed-native-wheel-smoke
       - always-run-push-pr-quick-feedback-with-full-required-matrix-in-parallel
+      - checkout-independent-exact-development-lock-regeneration-and-matrix-install
     evidence:
       - docs/project/audit-issues.json
       - docs/project/audit-issue-status.yaml
@@ -1035,6 +1036,9 @@ releaseGates:
       - tests/test_macos_native_smoke.py
       - tools/check_compatibility.py
       - tests/test_quick_ci_gate.py
+      - requirements/dev.lock
+      - tools/check_dev_lock.py
+      - tests/test_dev_lock.py
     quickFeedbackCi:
       workflow: .github/workflows/ci.yml
       job: python-quality
@@ -1047,6 +1051,21 @@ releaseGates:
         headSha: 70d57470ccf817d108330a090368ea1d60846441
         conclusion: success
         durationSeconds: 28
+    developmentLockCi:
+      generator: pip-tools-7.6.0
+      lock: requirements/dev.lock
+      exactPins: 28
+      platformSpecificMarkersAllowed: false
+      observedCiEvidence:
+        runId: 30866954698
+        headSha: b16bbecfc213712a1a5812947233a07378e377ef
+        regenerationJobId: 91860894481
+        regenerationConclusion: success
+        constraintInstallJobs:
+          ubuntu-python-3.11: {jobId: 91860894506, conclusion: success}
+          ubuntu-python-3.12: {jobId: 91860894525, conclusion: success}
+          windows-python-3.11: {jobId: 91860894534, conclusion: success}
+          windows-python-3.12: {jobId: 91860894543, conclusion: success}
     exitCriteria:
       maxOpenBySeverity: {P0: 0, P1: 0}
       requiredEvidence:

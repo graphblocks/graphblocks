@@ -53,10 +53,10 @@ A finding moves to resolved only when:
 4. the release matrix or profile evidence is updated when the finding changes a
    compatibility or production claim.
 
-The current generated count is 64 resolved findings: all 27 P0/P1 findings,
+The current generated count is 65 resolved findings: all 27 P0/P1 findings,
 the first 11 P2 findings, GB-ARCH-013, and GB-ARCH-015 through GB-ARCH-017.
 GB-COR-005 through GB-COR-009 are also resolved. There are zero open P0/P1,
-27 open P2, and 8 open P3; GB-COR-011, GB-COR-012, GB-DOC-006, GB-INP-006,
+26 open P2, and 8 open P3; GB-COR-011, GB-COR-012, GB-DOC-006, GB-INP-006,
 GB-INP-007, GB-INP-010, GB-PERF-004, and GB-PERF-005 are resolved. GB-ARCH-012
 remains open pending shared-primitives consolidation. GB-PERF-006 is resolved
 with tenant/owner-scoped indexed run-list cursor pagination and a 10,000-run
@@ -94,6 +94,13 @@ native-free 86-test core smoke. It retains logs and JUnit evidence, has a
 five-minute hard timeout, completed its first green CI execution in 28 seconds,
 and does not use path filters; the full platform, native, Rust, security, and
 artifact matrix continues in parallel and remains required.
+GB-QA-013 is resolved by a pip-tools 7.6.0 development constraints lock with
+28 exact direct and transitive pins. The checker rejects URL, extra,
+non-exact, duplicate, and OS/architecture-specific entries, covers the base and
+test dependency declarations, uses checkout-relative generation inputs, emits
+a useful drift diff, and regenerates byte-for-byte in the quick gate. Every
+Ubuntu/Windows and Python 3.11/3.12 test installation consumes the same lock;
+all four clean-runner constraint installation steps have passed.
 This closes the recorded code-and-regression count; it does not replace the
 independent review, candidate attestation, platform, or soak gates.
 

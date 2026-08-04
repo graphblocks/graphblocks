@@ -1580,8 +1580,8 @@ def test_stable_release_matrix_is_complete_and_machine_readable() -> None:
         "authority": "docs/project/audit-issue-status.yaml",
         "inventory": "docs/project/audit-issues.json",
         "checker": "tools/check_audit_inventory.py",
-        "resolved": 64,
-        "openBySeverity": {"P0": 0, "P1": 0, "P2": 27, "P3": 8},
+        "resolved": 65,
+        "openBySeverity": {"P0": 0, "P1": 0, "P2": 26, "P3": 8},
     }
     assert "signed-candidate-and-final-promotion-audit-closure-binding" in (
         audit_gate["implementedEvidence"]
@@ -1637,6 +1637,28 @@ def test_stable_release_matrix_is_complete_and_machine_readable() -> None:
             "headSha": "70d57470ccf817d108330a090368ea1d60846441",
             "conclusion": "success",
             "durationSeconds": 28,
+        },
+    }
+    assert (
+        "checkout-independent-exact-development-lock-regeneration-and-matrix-install"
+        in audit_gate["implementedEvidence"]
+    )
+    assert audit_gate["developmentLockCi"] == {
+        "generator": "pip-tools-7.6.0",
+        "lock": "requirements/dev.lock",
+        "exactPins": 28,
+        "platformSpecificMarkersAllowed": False,
+        "observedCiEvidence": {
+            "runId": 30866954698,
+            "headSha": "b16bbecfc213712a1a5812947233a07378e377ef",
+            "regenerationJobId": 91860894481,
+            "regenerationConclusion": "success",
+            "constraintInstallJobs": {
+                "ubuntu-python-3.11": {"jobId": 91860894506, "conclusion": "success"},
+                "ubuntu-python-3.12": {"jobId": 91860894525, "conclusion": "success"},
+                "windows-python-3.11": {"jobId": 91860894534, "conclusion": "success"},
+                "windows-python-3.12": {"jobId": 91860894543, "conclusion": "success"},
+            },
         },
     }
     assert audit_gate["blockers"] == [
