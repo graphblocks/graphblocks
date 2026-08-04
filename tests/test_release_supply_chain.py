@@ -3859,13 +3859,14 @@ def test_ci_primes_offline_rust_inputs_and_retains_failure_diagnostics() -> None
     jobs = workflow["jobs"]
 
     quality = jobs["python-quality"]
-    assert quality["name"] == "Python lint and format"
+    assert quality["name"] == "Quick feedback (lint, contracts, unit smoke)"
     quality_steps = {step["name"]: step for step in quality["steps"]}
-    assert quality_steps["Install pinned Ruff"]["run"] == (
-        "python -m pip install ruff==0.15.22"
+    assert quality_steps["Install quick-gate dependencies"]["run"] == (
+        "python -m pip install pip==25.1.1\n"
+        'python -m pip install -e ".[test]"\n'
     )
     quality_command = quality_steps[
-        "Check Python lint and progressive format baseline"
+        "Check lint and progressive format baseline"
     ]["run"]
     assert "python -m ruff check ." in quality_command
     assert "python -m ruff format --check" in quality_command
