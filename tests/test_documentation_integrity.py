@@ -1580,8 +1580,8 @@ def test_stable_release_matrix_is_complete_and_machine_readable() -> None:
         "authority": "docs/project/audit-issue-status.yaml",
         "inventory": "docs/project/audit-issues.json",
         "checker": "tools/check_audit_inventory.py",
-        "resolved": 66,
-        "openBySeverity": {"P0": 0, "P1": 0, "P2": 25, "P3": 8},
+        "resolved": 67,
+        "openBySeverity": {"P0": 0, "P1": 0, "P2": 24, "P3": 8},
     }
     assert "signed-candidate-and-final-promotion-audit-closure-binding" in (
         audit_gate["implementedEvidence"]
@@ -1687,6 +1687,50 @@ def test_stable_release_matrix_is_complete_and_machine_readable() -> None:
             "headSha": "5fd9008e6b8013251059cecfe670b03a34edd4d0",
             "conclusion": "success",
             "durationSeconds": 32,
+        },
+    }
+    assert (
+        "package-scoped-preview-typing-diagnostic-module-ignore-and-root-alias-budgets"
+        in audit_gate["implementedEvidence"]
+    )
+    assert audit_gate["previewTypingDebt"] == {
+        "budget": "compatibility/python-preview-typing-budget.yaml",
+        "mypyVersion": "1.20.2",
+        "mode": "strict-no-incremental-follow-imports-silent",
+        "packageBudgets": {
+            "graphblocks": {
+                "minimumStrictModules": 14,
+                "maximumDebtModules": 92,
+                "maximumDiagnostics": 728,
+                "maximumTypeIgnores": 145,
+                "maximumUncodedTypeIgnores": 0,
+                "maximumPreviewRootAliases": 606,
+            },
+            "graphblocks-runtime": {
+                "minimumStrictModules": 0,
+                "maximumDebtModules": 1,
+                "maximumDiagnostics": 73,
+                "maximumTypeIgnores": 0,
+                "maximumUncodedTypeIgnores": 0,
+            },
+            "graphblocks-testing": {
+                "minimumStrictModules": 0,
+                "maximumDebtModules": 13,
+                "maximumDiagnostics": 292,
+                "maximumTypeIgnores": 40,
+                "maximumUncodedTypeIgnores": 0,
+            },
+        },
+        "reportArtifacts": {
+            "quick": "dist/ci/quick/python-typing-debt.json",
+            "fullPythonMatrix": "dist/ci/python-typing-debt.json",
+        },
+        "observedCiEvidence": {
+            "runId": 30893691146,
+            "jobId": 91941457942,
+            "headSha": "c38eeda0d485df76663ec0eeaabe12f974c8e49a",
+            "conclusion": "success",
+            "durationSeconds": 47,
         },
     }
     assert audit_gate["blockers"] == [

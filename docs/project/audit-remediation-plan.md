@@ -53,10 +53,10 @@ A finding moves to resolved only when:
 4. the release matrix or profile evidence is updated when the finding changes a
    compatibility or production claim.
 
-The current generated count is 66 resolved findings: all 27 P0/P1 findings,
+The current generated count is 67 resolved findings: all 27 P0/P1 findings,
 the first 11 P2 findings, GB-ARCH-013, and GB-ARCH-015 through GB-ARCH-017.
 GB-COR-005 through GB-COR-009 are also resolved. There are zero open P0/P1,
-25 open P2, and 8 open P3; GB-COR-011, GB-COR-012, GB-DOC-006, GB-INP-006,
+24 open P2, and 8 open P3; GB-COR-011, GB-COR-012, GB-DOC-006, GB-INP-006,
 GB-INP-007, GB-INP-010, GB-PERF-004, and GB-PERF-005 are resolved. GB-ARCH-012
 remains open pending shared-primitives consolidation. GB-PERF-006 is resolved
 with tenant/owner-scoped indexed run-list cursor pagination and a 10,000-run
@@ -109,6 +109,12 @@ fail-closed mismatch regressions, and corrects the package catalog so its
 constraints accept the versions it actually publishes. The matrix is enforced
 by the always-run quick feedback gate, whose first matrix-aware execution passed
 in 32 seconds.
+GB-QA-015 is resolved by retaining the strict stable-symbol gate while adding
+strict mypy debt budgets for every shipped Python package. The gate caps debt
+module, diagnostic, type-ignore, uncoded-ignore, and preview root-alias counts;
+it emits a deterministic per-module strict/debt JSON report that both quick and
+full Python CI retain. The first clean quick execution reproduced the committed
+core/runtime/testing diagnostic ceilings and completed in 47 seconds.
 This closes the recorded code-and-regression count; it does not replace the
 independent review, candidate attestation, platform, or soak gates.
 
