@@ -193,3 +193,6 @@ resolved:
   - id: GB-QA-010
     fixCommits: ['e4fd73ec', 'ab0f2bf1']
     regression: [tests/test_macos_native_smoke.py, tests/test_release_supply_chain.py]
+  - id: GB-QA-012
+    fixCommits: ['bca3256b', '997deeaa', '70d57470']
+    regression: [tests/test_quick_ci_gate.py, tests/test_release_supply_chain.py]

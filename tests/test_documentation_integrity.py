@@ -1580,8 +1580,8 @@ def test_stable_release_matrix_is_complete_and_machine_readable() -> None:
         "authority": "docs/project/audit-issue-status.yaml",
         "inventory": "docs/project/audit-issues.json",
         "checker": "tools/check_audit_inventory.py",
-        "resolved": 63,
-        "openBySeverity": {"P0": 0, "P1": 0, "P2": 28, "P3": 8},
+        "resolved": 64,
+        "openBySeverity": {"P0": 0, "P1": 0, "P2": 27, "P3": 8},
     }
     assert "signed-candidate-and-final-promotion-audit-closure-binding" in (
         audit_gate["implementedEvidence"]
@@ -1621,6 +1621,24 @@ def test_stable_release_matrix_is_complete_and_machine_readable() -> None:
         "required-macos-15-arm64-python-311-312-installed-native-wheel-smoke"
         in audit_gate["implementedEvidence"]
     )
+    assert (
+        "always-run-push-pr-quick-feedback-with-full-required-matrix-in-parallel"
+        in audit_gate["implementedEvidence"]
+    )
+    assert audit_gate["quickFeedbackCi"] == {
+        "workflow": ".github/workflows/ci.yml",
+        "job": "python-quality",
+        "hardTimeoutMinutes": 5,
+        "pathFiltersAllowed": False,
+        "fullRequiredMatrixRunsInParallel": True,
+        "observedCiEvidence": {
+            "runId": 30866032584,
+            "jobId": 91858042883,
+            "headSha": "70d57470ccf817d108330a090368ea1d60846441",
+            "conclusion": "success",
+            "durationSeconds": 28,
+        },
+    }
     assert audit_gate["blockers"] == [
         "audited-source-commit-tree-or-archive-digest-unavailable",
     ]
