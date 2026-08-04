@@ -62,9 +62,9 @@ jobs:
           set -o pipefail
           python -m pytest -q \
             tests/test_audit_inventory.py \
-            tests/test_compatibility_snapshots.py \
             tests/test_canonical_integer_limits.py \
             tests/test_package_layout.py \
+            tests/test_quick_ci_gate.py \
             --junitxml=dist/ci/quick/unit-smoke.xml \
             2>&1 | tee dist/ci/quick/unit-smoke.log
       - name: Retain quick-feedback diagnostics

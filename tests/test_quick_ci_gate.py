@@ -56,9 +56,9 @@ def test_quick_feedback_gate_has_a_bounded_release_contract_smoke() -> None:
     smoke = steps["Run core unit smoke"]["run"]
     for path in (
         "tests/test_audit_inventory.py",
-        "tests/test_compatibility_snapshots.py",
         "tests/test_canonical_integer_limits.py",
         "tests/test_package_layout.py",
+        "tests/test_quick_ci_gate.py",
     ):
         assert path in smoke
     assert "--junitxml=dist/ci/quick/unit-smoke.xml" in smoke
