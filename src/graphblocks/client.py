@@ -2123,11 +2123,13 @@ class HttpGraphBlocksClient:
         *,
         reason: object,
         operator: object | None = None,
+        idempotency_key: object | None = None,
     ) -> dict[str, object]:
         return self._callback_delivery_control(
             delivery_id,
             operator=operator,
             reason=reason,
+            idempotency_key=idempotency_key,
             action="redrive",
             label="GraphBlocks callback delivery redrive response",
         )
@@ -2138,11 +2140,13 @@ class HttpGraphBlocksClient:
         *,
         reason: object,
         operator: object | None = None,
+        idempotency_key: object | None = None,
     ) -> dict[str, object]:
         return self._callback_delivery_control(
             delivery_id,
             operator=operator,
             reason=reason,
+            idempotency_key=idempotency_key,
             action="dead-letter",
             label="GraphBlocks callback delivery dead-letter response",
         )
@@ -2153,6 +2157,7 @@ class HttpGraphBlocksClient:
         *,
         reason: object,
         operator: object | None,
+        idempotency_key: object | None,
         action: str,
         label: str,
     ) -> dict[str, object]:
@@ -2167,6 +2172,11 @@ class HttpGraphBlocksClient:
             "Accept": "application/json",
             "Content-Type": "application/json",
         }
+        if idempotency_key is not None:
+            headers["GraphBlocks-Idempotency-Key"] = _http_non_empty_string(
+                "idempotency_key",
+                idempotency_key,
+            )
         if self.bearer_token is not None:
             headers["Authorization"] = f"Bearer {self.bearer_token}"
         request = Request(

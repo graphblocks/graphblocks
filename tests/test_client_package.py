@@ -4515,6 +4515,7 @@ def test_client_package_moves_callback_delivery_to_dead_letter_over_http_transpo
         assert path == "/callbacks/deliveries/del-client-2/dead-letter"
         assert headers["authorization"] == "Bearer token-1"
         assert headers["content-type"] == "application/json"
+        assert headers["graphblocks-idempotency-key"] == "dead-letter-client-2"
         assert json.loads(request.data.decode("utf-8")) == {
             "operator": "operator-1",
             "reason": "max attempts exhausted",
@@ -4542,11 +4543,13 @@ def test_client_package_moves_callback_delivery_to_dead_letter_over_http_transpo
         "del-client-2",
         operator="operator-1",
         reason="max attempts exhausted",
+        idempotency_key="dead-letter-client-2",
     )
     duplicate = client.move_callback_to_dead_letter(
         "del-client-2",
         operator="operator-1",
         reason="max attempts exhausted",
+        idempotency_key="dead-letter-client-2",
     )
 
     assert response == {
@@ -4555,6 +4558,7 @@ def test_client_package_moves_callback_delivery_to_dead_letter_over_http_transpo
         "operator": "operator-1",
         "reason": "max attempts exhausted",
         "status": "dead_letter_requested",
+        "idempotencyKey": "dead-letter-client-2",
     }
     assert duplicate == {
         "ok": True,
@@ -4563,6 +4567,7 @@ def test_client_package_moves_callback_delivery_to_dead_letter_over_http_transpo
         "reason": "max attempts exhausted",
         "status": "dead_letter_requested",
         "requestedAt": "2026-07-03T00:01:00Z",
+        "idempotencyKey": "dead-letter-client-2",
         "duplicate": True,
     }
     assert app.callback_delivery_dead_letter_moves("del-client-2") == (
@@ -4573,6 +4578,7 @@ def test_client_package_moves_callback_delivery_to_dead_letter_over_http_transpo
             "requestedAt": "2026-07-03T00:01:00Z",
             "sourceAttempt": 1,
             "status": "dead_letter_requested",
+            "idempotencyKey": "dead-letter-client-2",
         },
     )
 
