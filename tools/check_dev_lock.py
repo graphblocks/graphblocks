@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 from collections.abc import Sequence
+import difflib
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 import subprocess
@@ -181,8 +182,17 @@ def check_dev_lock(*, write: bool = False) -> int:
         raise DevLockError("development lock cannot be read") from error
     validate_lock(committed)
     if committed != generated:
+        difference = "".join(
+            difflib.unified_diff(
+                committed.splitlines(keepends=True),
+                generated.splitlines(keepends=True),
+                fromfile="requirements/dev.lock",
+                tofile="regenerated development lock",
+            )
+        )
         raise DevLockError(
             "development lock drifted; run python tools/check_dev_lock.py --write"
+            + (f"\n{difference}" if difference else "")
         )
     print(
         "development lock passed: "

@@ -52,7 +52,7 @@ def test_development_lock_check_detects_regeneration_drift(
         "_compile_lock_body",
         lambda: generated_body.replace("pytest==9.1.1", "pytest==9.1.0"),
     )
-    with pytest.raises(check_dev_lock.DevLockError, match="drifted"):
+    with pytest.raises(check_dev_lock.DevLockError, match="pytest==9.1.0"):
         check_dev_lock.check_dev_lock()
 
 
