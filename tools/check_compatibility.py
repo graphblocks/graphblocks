@@ -689,13 +689,16 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="intentionally replace snapshots with the current API and CLI contracts",
     )
+    parser.add_argument(
+        "--api-only",
+        action="store_true",
+        help="check static Python API snapshots without executing CLI contracts",
+    )
     args = parser.parse_args(argv)
     try:
         api_snapshot = build_python_snapshot()
         root_compatibility_snapshot = build_root_compatibility_snapshot()
-        cli_snapshot = build_cli_snapshot()
         testing_api_snapshot = build_testing_snapshot()
-        testing_cli_snapshot = build_testing_cli_snapshot()
         results = [
             _check_or_update(PYTHON_SNAPSHOT_PATH, api_snapshot, update=args.update),
             _check_or_update(
@@ -703,18 +706,27 @@ def main(argv: list[str] | None = None) -> int:
                 root_compatibility_snapshot,
                 update=args.update,
             ),
-            _check_or_update(CLI_SNAPSHOT_PATH, cli_snapshot, update=args.update),
             _check_or_update(
                 TESTING_SNAPSHOT_PATH,
                 testing_api_snapshot,
                 update=args.update,
             ),
-            _check_or_update(
-                TESTING_CLI_SNAPSHOT_PATH,
-                testing_cli_snapshot,
-                update=args.update,
-            ),
         ]
+        if not args.api_only:
+            results.extend(
+                (
+                    _check_or_update(
+                        CLI_SNAPSHOT_PATH,
+                        build_cli_snapshot(),
+                        update=args.update,
+                    ),
+                    _check_or_update(
+                        TESTING_CLI_SNAPSHOT_PATH,
+                        build_testing_cli_snapshot(),
+                        update=args.update,
+                    ),
+                )
+            )
     except (ImportError, OSError, TypeError, ValueError) as error:
         print(f"compatibility snapshot error: {error}", file=sys.stderr)
         return 2

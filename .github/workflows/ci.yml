@@ -53,7 +53,7 @@ jobs:
           set -o pipefail
           {
             python tools/check_stable_typing.py
-            python tools/check_compatibility.py
+            python tools/check_compatibility.py --api-only
             python tools/check_audit_inventory.py
           } 2>&1 | tee dist/ci/quick/contracts.log
       - name: Run core unit smoke

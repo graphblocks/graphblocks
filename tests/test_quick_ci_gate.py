@@ -48,7 +48,7 @@ def test_quick_feedback_gate_has_a_bounded_release_contract_smoke() -> None:
     contracts = steps["Check stable contracts and audit inventory"]["run"]
     for command in (
         "python tools/check_stable_typing.py",
-        "python tools/check_compatibility.py",
+        "python tools/check_compatibility.py --api-only",
         "python tools/check_audit_inventory.py",
     ):
         assert command in contracts

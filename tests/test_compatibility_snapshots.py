@@ -34,6 +34,47 @@ def test_stable_compatibility_snapshots_match_the_implementation() -> None:
     assert completed.returncode == 0, completed.stdout + completed.stderr
 
 
+def test_api_only_compatibility_check_does_not_execute_cli_contracts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        compatibility_module,
+        "build_python_snapshot",
+        lambda: {"snapshotVersion": 1},
+    )
+    monkeypatch.setattr(
+        compatibility_module,
+        "build_root_compatibility_snapshot",
+        lambda: {"snapshotVersion": 1},
+    )
+    monkeypatch.setattr(
+        compatibility_module,
+        "build_testing_snapshot",
+        lambda: {"snapshotVersion": 1},
+    )
+    monkeypatch.setattr(
+        compatibility_module,
+        "_check_or_update",
+        lambda path, contract, *, update: True,
+    )
+
+    def unexpected_cli_execution() -> dict[str, object]:
+        raise AssertionError("API-only compatibility must not execute CLI contracts")
+
+    monkeypatch.setattr(
+        compatibility_module,
+        "build_cli_snapshot",
+        unexpected_cli_execution,
+    )
+    monkeypatch.setattr(
+        compatibility_module,
+        "build_testing_cli_snapshot",
+        unexpected_cli_execution,
+    )
+
+    assert compatibility_module.main(["--api-only"]) == 0
+
+
 def test_snapshot_writer_requires_explicit_update_for_drift(
     tmp_path,
     monkeypatch,
