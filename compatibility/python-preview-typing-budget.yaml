@@ -1,0 +1,27 @@
+version: 1
+mypyVersion: 1.20.2
+mypyMode: strict-no-incremental-follow-imports-silent
+packages:
+  - distribution: graphblocks
+    sourceRoot: src/graphblocks
+    minimumStrictModuleCount: 14
+    maximumDebtModuleCount: 92
+    maximumDiagnosticCount: 728
+    maximumTypeIgnoreCommentCount: 145
+    maximumUncodedTypeIgnoreCommentCount: 0
+    rootCompatibilityMap: src/graphblocks/_root_compat.py
+    maximumPreviewCompatibilityAliasCount: 606
+  - distribution: graphblocks-runtime
+    sourceRoot: packages/graphblocks-runtime/src/graphblocks_runtime
+    minimumStrictModuleCount: 0
+    maximumDebtModuleCount: 1
+    maximumDiagnosticCount: 73
+    maximumTypeIgnoreCommentCount: 0
+    maximumUncodedTypeIgnoreCommentCount: 0
+  - distribution: graphblocks-testing
+    sourceRoot: packages/graphblocks-testing/src/graphblocks_testing
+    minimumStrictModuleCount: 0
+    maximumDebtModuleCount: 13
+    maximumDiagnosticCount: 292
+    maximumTypeIgnoreCommentCount: 40
+    maximumUncodedTypeIgnoreCommentCount: 0

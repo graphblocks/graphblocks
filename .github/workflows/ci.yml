@@ -56,7 +56,8 @@ jobs:
         run: |
           set -o pipefail
           {
-            python tools/check_stable_typing.py
+            python tools/check_stable_typing.py \
+              --report dist/ci/quick/python-typing-debt.json
             python tools/check_compatibility.py --api-only
             python tools/check_audit_inventory.py
           } 2>&1 | tee dist/ci/quick/contracts.log
@@ -163,7 +164,8 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          python tools/check_stable_typing.py
+          python tools/check_stable_typing.py \
+            --report dist/ci/python-typing-debt.json
           python -m mypy 2>&1 | tee dist/ci/mypy.log
       - name: Check candidate stable API and CLI snapshots
         shell: bash

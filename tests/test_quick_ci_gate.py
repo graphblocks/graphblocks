@@ -54,6 +54,7 @@ def test_quick_feedback_gate_has_a_bounded_release_contract_smoke() -> None:
         "python tools/check_audit_inventory.py",
     ):
         assert command in contracts
+    assert "--report dist/ci/quick/python-typing-debt.json" in contracts
 
     smoke = steps["Run core unit smoke"]["run"]
     for path in (
