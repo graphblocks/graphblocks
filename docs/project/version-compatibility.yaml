@@ -1,0 +1,97 @@
+matrixVersion: 1
+targetRelease: '1.0'
+policy:
+  packageSemverEqualsContractVersion: false
+  compatibilityAuthority: this-matrix-plus-runtime-handshake
+  unsupportedCombinationBehavior: fail-closed-before-operation
+  releaseTrainMeaning: Package versions identify independently published artifacts; protocol, schema, and checkpoint versions identify interoperability contracts.
+artifacts:
+  - id: pypi:graphblocks
+    version: 1.0.0rc1
+    manifest: pyproject.toml
+    catalogDistribution: graphblocks
+    releaseTrain: core-1.0-candidate
+    role: python-authoring-facade
+  - id: pypi:graphblocks-testing
+    version: 1.0.0rc1
+    manifest: packages/graphblocks-testing/pyproject.toml
+    catalogDistribution: graphblocks-testing
+    releaseTrain: core-1.0-candidate
+    role: reference-oracle-and-tck
+  - id: pypi:graphblocks-runtime
+    version: 0.1.0
+    manifest: packages/graphblocks-runtime/pyproject.toml
+    catalogDistribution: graphblocks-runtime
+    releaseTrain: native-0.1
+    role: native-binding
+  - id: helm:graphblocks-deployment-chart
+    version: 0.1.0
+    manifest: packages/graphblocks-deployment-chart/Chart.yaml
+    catalogDistribution: graphblocks-deployment-chart
+    releaseTrain: deployment-preview-0.1
+    role: disabled-deployment-scaffold
+  - id: cargo:active-workspace
+    version: 0.1.0
+    manifests:
+      - crates/graphblocks-flow/Cargo.toml
+      - crates/graphblocks-telemetry/Cargo.toml
+      - crates/graphblocks-cli-native/Cargo.toml
+      - crates/graphblocks-schema/Cargo.toml
+      - crates/graphblocks-compiler/Cargo.toml
+      - crates/graphblocks-runtime-core/Cargo.toml
+      - crates/graphblocks-runtime-durable/Cargo.toml
+      - crates/graphblocks-python/Cargo.toml
+      - crates/graphblocks-protocol/Cargo.toml
+      - crates/graphblocksd/Cargo.toml
+    releaseTrain: native-0.1
+    role: rust-normative-and-runtime-components
+  - id: cargo:graphblocks-reserved
+    version: 0.0.2
+    manifest: crates/graphblocks/Cargo.toml
+    releaseTrain: reserved-name
+    role: reserved-name-only-no-usable-api
+  - id: npm:graphblocks-reserved
+    version: 0.0.2
+    manifest: packages/graphblocks-npm/package.json
+    releaseTrain: reserved-name
+    role: reserved-name-only-no-usable-api
+contracts:
+  - id: schema-graph-v1
+    version: graphblocks.ai/v1
+    authority: schemas/graphblocks.ai/v1/graph.schema.json
+    combinations:
+      - {artifact: 'pypi:graphblocks', versions: '>=1.0.0rc1,<2'}
+      - {artifact: 'pypi:graphblocks-testing', versions: '>=1.0.0rc1,<2'}
+      - {artifact: 'cargo:active-workspace', versions: '>=0.1,<0.2'}
+    mismatchEvidence: [tests/test_schema_values.py]
+  - id: native-binding-v1
+    version: 1
+    authority: packages/graphblocks-runtime/src/graphblocks_runtime/__init__.py
+    combinations:
+      - {artifact: 'pypi:graphblocks', versions: '>=1.0.0rc1,<2', role: consumer}
+      - {artifact: 'pypi:graphblocks-runtime', versions: '>=0.1,<0.2', role: provider}
+      - {artifact: 'cargo:active-workspace', versions: '>=0.1,<0.2', role: provider}
+    mismatchEvidence: [tests/test_runtime_package.py]
+  - id: worker-protocol-v1
+    version: 1
+    authority: crates/graphblocks-protocol/src/lib.rs
+    mirror: src/graphblocks/worker.py
+    combinations:
+      - {artifact: 'pypi:graphblocks', versions: '>=1.0.0rc1,<2'}
+      - {artifact: 'cargo:active-workspace', versions: '>=0.1,<0.2'}
+    mismatchEvidence: [tests/test_worker_core.py]
+  - id: application-protocol-v1
+    version: graphblocks.app.v1
+    authority: tck/application-protocol/cases.json
+    combinations:
+      - {artifact: 'pypi:graphblocks', versions: '>=1.0.0rc1,<2'}
+      - {artifact: 'pypi:graphblocks-testing', versions: '>=1.0.0rc1,<2'}
+      - {artifact: 'cargo:active-workspace', versions: '>=0.1,<0.2'}
+    mismatchEvidence: [tests/test_server_core.py, crates/graphblocks-runtime-core/tests/application_protocol_tck.rs]
+  - id: durable-checkpoint-v1
+    version: graphblocks.runtime@v1
+    authority: src/graphblocks/durable_server.py
+    combinations:
+      - {artifact: 'pypi:graphblocks', versions: '>=1.0.0rc1,<2'}
+      - {artifact: 'cargo:active-workspace', versions: '>=0.1,<0.2'}
+    mismatchEvidence: [tests/test_server_storage_contract.py]

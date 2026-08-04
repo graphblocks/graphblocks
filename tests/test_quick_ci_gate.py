@@ -61,6 +61,7 @@ def test_quick_feedback_gate_has_a_bounded_release_contract_smoke() -> None:
         "tests/test_canonical_integer_limits.py",
         "tests/test_package_layout.py",
         "tests/test_quick_ci_gate.py",
+        "tests/test_version_compatibility.py",
     ):
         assert path in smoke
     assert "--junitxml=dist/ci/quick/unit-smoke.xml" in smoke

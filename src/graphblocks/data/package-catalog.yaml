@@ -1,4 +1,4 @@
-catalogVersion: 8
+catalogVersion: 9
 specVersion: '1.0'
 defaultSelection:
   artifacts:
@@ -43,7 +43,7 @@ artifacts:
   import: graphblocks
   kind: pure_python
   manifest: pyproject.toml
-  versionConstraint: ~=0.1
+  versionConstraint: '>=1.0.0rc1,<2'
   dependsOn: []
   stableClaimRequires:
   - graphblocks-runtime
@@ -51,20 +51,20 @@ artifacts:
   import: graphblocks_runtime
   kind: native_wheel
   manifest: packages/graphblocks-runtime/pyproject.toml
-  versionConstraint: ~=0.1
+  versionConstraint: '>=0.1,<0.2'
   dependsOn: []
 - distribution: graphblocks-testing
   import: graphblocks_testing
   kind: pure_python
   manifest: packages/graphblocks-testing/pyproject.toml
-  versionConstraint: ~=0.1
+  versionConstraint: '>=1.0.0rc1,<2'
   dependsOn:
   - graphblocks
 - distribution: graphblocks-deployment-chart
   import: null
   kind: helm_scaffold
   manifest: packages/graphblocks-deployment-chart/Chart.yaml
-  versionConstraint: ~=0.1
+  versionConstraint: '>=0.1,<0.2'
   dependsOn: []
 releaseTrains:
   core:

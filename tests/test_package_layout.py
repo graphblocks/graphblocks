@@ -419,7 +419,7 @@ def test_catalog_declares_three_python_artifacts_and_deployment_scaffold() -> No
         artifact["distribution"]: artifact for artifact in catalog["artifacts"]
     }
 
-    assert catalog["catalogVersion"] == 8
+    assert catalog["catalogVersion"] == 9
     assert "defaultMetaPackage" not in catalog
     assert "packages" not in catalog
     assert artifacts == {
@@ -428,7 +428,7 @@ def test_catalog_declares_three_python_artifacts_and_deployment_scaffold() -> No
             "import": "graphblocks",
             "kind": "pure_python",
             "manifest": "pyproject.toml",
-            "versionConstraint": "~=0.1",
+            "versionConstraint": ">=1.0.0rc1,<2",
             "dependsOn": [],
             "stableClaimRequires": ["graphblocks-runtime"],
         },
@@ -437,7 +437,7 @@ def test_catalog_declares_three_python_artifacts_and_deployment_scaffold() -> No
             "import": "graphblocks_runtime",
             "kind": "native_wheel",
             "manifest": "packages/graphblocks-runtime/pyproject.toml",
-            "versionConstraint": "~=0.1",
+            "versionConstraint": ">=0.1,<0.2",
             "dependsOn": [],
         },
         "graphblocks-testing": {
@@ -445,7 +445,7 @@ def test_catalog_declares_three_python_artifacts_and_deployment_scaffold() -> No
             "import": "graphblocks_testing",
             "kind": "pure_python",
             "manifest": "packages/graphblocks-testing/pyproject.toml",
-            "versionConstraint": "~=0.1",
+            "versionConstraint": ">=1.0.0rc1,<2",
             "dependsOn": ["graphblocks"],
         },
         "graphblocks-deployment-chart": {
@@ -453,7 +453,7 @@ def test_catalog_declares_three_python_artifacts_and_deployment_scaffold() -> No
             "import": None,
             "kind": "helm_scaffold",
             "manifest": "packages/graphblocks-deployment-chart/Chart.yaml",
-            "versionConstraint": "~=0.1",
+            "versionConstraint": ">=0.1,<0.2",
             "dependsOn": [],
         },
     }
@@ -613,7 +613,9 @@ def test_package_lock_resolves_default_component_and_artifact_selection() -> Non
     assert lock.artifacts == ("graphblocks",)
     assert entries["graphblocks-core"].artifact == "graphblocks"
     assert entries["graphblocks-core"].import_package == "graphblocks"
-    assert all(entry.version_constraint == "~=0.1" for entry in lock.entries)
+    assert all(
+        entry.version_constraint == ">=1.0.0rc1,<2" for entry in lock.entries
+    )
     assert not (
         {
             "graphblocks-openai",
@@ -717,7 +719,7 @@ def test_package_lock_payload_and_digest_are_canonical() -> None:
         "kind": "pure_python",
         "layer": "integration",
         "stability": "integration",
-        "versionConstraint": "~=0.1",
+        "versionConstraint": ">=1.0.0rc1,<2",
     }
     assert left.lock_payload()["requested"] == [
         "graphblocks-mcp",

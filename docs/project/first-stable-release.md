@@ -6,6 +6,13 @@ source tree is already stable. A row marked **stable** is part of the 1.0
 promise only after every release gate in this document passes. The canonical
 machine-readable form of these classifications is
 [`stable-release-matrix.yaml`](stable-release-matrix.yaml).
+Artifact release trains and interoperability contracts are separately recorded
+in [`version-compatibility.yaml`](version-compatibility.yaml). A package SemVer
+identifies an independently published artifact; it does not imply the schema,
+native-binding, worker, application, or durable-checkpoint protocol version.
+Only combinations declared by that matrix and accepted by the runtime
+handshake are supported. An undeclared or mismatched combination fails closed
+before the operation begins.
 
 The boundary deliberately starts with the portable schema/compiler and local
 runtime. It does not cancel the work on AI application, governance, production,
@@ -23,6 +30,15 @@ promoted independently without weakening the initial core promise.
 
 Repository presence, a passing unit test, a package-catalog entry, or a
 `0.1.x` version does not promote an item to stable.
+
+The Python core and testing artifacts use the `1.0.0rc1` core candidate train,
+while the native runtime, active Rust workspace crates, and deployment scaffold
+remain on their independent `0.1.0` trains. The Cargo and npm `graphblocks`
+packages at `0.0.2` reserve names only. These version numbers express artifact
+release maturity and publication history, not wire compatibility. The
+machine-readable compatibility matrix binds each contract to the exact
+artifact ranges allowed to participate in it and to mismatch regression
+evidence.
 
 ## Artifact matrix
 
