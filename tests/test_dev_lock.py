@@ -29,6 +29,15 @@ def test_development_lock_is_exact_portable_and_covers_test_dependencies() -> No
     } <= names
 
 
+def test_development_lock_generation_uses_a_checkout_relative_source(
+    tmp_path: Path,
+) -> None:
+    command = check_dev_lock.compile_command(tmp_path / "dev.lock")
+
+    assert command[-1] == "pyproject.toml"
+    assert str(check_dev_lock.ROOT) not in command
+
+
 def test_development_lock_rejects_platform_markers_and_non_exact_pins() -> None:
     header = check_dev_lock.LOCK_HEADER
     with pytest.raises(check_dev_lock.DevLockError, match="exact version pin"):

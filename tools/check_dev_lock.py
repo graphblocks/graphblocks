@@ -57,7 +57,7 @@ def compile_command(output_path: Path) -> tuple[str, ...]:
         "--quiet",
         "--output-file",
         str(output_path),
-        str(SOURCE_PATH),
+        SOURCE_PATH.name,
     )
 
 
