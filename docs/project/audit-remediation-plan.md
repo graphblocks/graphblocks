@@ -53,10 +53,10 @@ A finding moves to resolved only when:
 4. the release matrix or profile evidence is updated when the finding changes a
    compatibility or production claim.
 
-The current generated count is 65 resolved findings: all 27 P0/P1 findings,
+The current generated count is 66 resolved findings: all 27 P0/P1 findings,
 the first 11 P2 findings, GB-ARCH-013, and GB-ARCH-015 through GB-ARCH-017.
 GB-COR-005 through GB-COR-009 are also resolved. There are zero open P0/P1,
-26 open P2, and 8 open P3; GB-COR-011, GB-COR-012, GB-DOC-006, GB-INP-006,
+25 open P2, and 8 open P3; GB-COR-011, GB-COR-012, GB-DOC-006, GB-INP-006,
 GB-INP-007, GB-INP-010, GB-PERF-004, and GB-PERF-005 are resolved. GB-ARCH-012
 remains open pending shared-primitives consolidation. GB-PERF-006 is resolved
 with tenant/owner-scoped indexed run-list cursor pagination and a 10,000-run
@@ -90,7 +90,7 @@ matrix.
 GB-QA-012 is resolved by an always-run push/PR quick-feedback job that checks
 repository lint and the progressive format baseline, static stable API
 compatibility, strict typing ownership, the live audit inventory, and a
-native-free 86-test core smoke. It retains logs and JUnit evidence, has a
+native-free 88-test core smoke. It retains logs and JUnit evidence, has a
 five-minute hard timeout, completed its first green CI execution in 28 seconds,
 and does not use path filters; the full platform, native, Rust, security, and
 artifact matrix continues in parallel and remains required.
@@ -101,6 +101,14 @@ test dependency declarations, uses checkout-relative generation inputs, emits
 a useful drift diff, and regenerates byte-for-byte in the quick gate. Every
 Ubuntu/Windows and Python 3.11/3.12 test installation consumes the same lock;
 all four clean-runner constraint installation steps have passed.
+GB-QA-014 is resolved by a machine-readable artifact/protocol compatibility
+matrix that separates package SemVer from schema, native-binding, worker,
+application, and durable-checkpoint contract versions. It binds every artifact
+train to its source manifest, declares supported combinations, points to
+fail-closed mismatch regressions, and corrects the package catalog so its
+constraints accept the versions it actually publishes. The matrix is enforced
+by the always-run quick feedback gate, whose first matrix-aware execution passed
+in 32 seconds.
 This closes the recorded code-and-regression count; it does not replace the
 independent review, candidate attestation, platform, or soak gates.
 

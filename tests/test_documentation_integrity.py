@@ -1580,8 +1580,8 @@ def test_stable_release_matrix_is_complete_and_machine_readable() -> None:
         "authority": "docs/project/audit-issue-status.yaml",
         "inventory": "docs/project/audit-issues.json",
         "checker": "tools/check_audit_inventory.py",
-        "resolved": 65,
-        "openBySeverity": {"P0": 0, "P1": 0, "P2": 26, "P3": 8},
+        "resolved": 66,
+        "openBySeverity": {"P0": 0, "P1": 0, "P2": 25, "P3": 8},
     }
     assert "signed-candidate-and-final-promotion-audit-closure-binding" in (
         audit_gate["implementedEvidence"]
@@ -1659,6 +1659,34 @@ def test_stable_release_matrix_is_complete_and_machine_readable() -> None:
                 "windows-python-3.11": {"jobId": 91860894534, "conclusion": "success"},
                 "windows-python-3.12": {"jobId": 91860894543, "conclusion": "success"},
             },
+        },
+    }
+    assert (
+        "artifact-semver-independent-protocol-capability-matrix-and-fail-closed-handshakes"
+        in audit_gate["implementedEvidence"]
+    )
+    assert audit_gate["versionCompatibility"] == {
+        "matrix": "docs/project/version-compatibility.yaml",
+        "packageSemverEqualsContractVersion": False,
+        "unsupportedCombinationBehavior": "fail-closed-before-operation",
+        "artifactTrains": {
+            "pypiCore": "1.0.0rc1",
+            "nativeAndRust": "0.1.0",
+            "reservedNames": "0.0.2",
+        },
+        "contractVersions": {
+            "schema": "graphblocks.ai/v1",
+            "nativeBinding": 1,
+            "worker": 1,
+            "application": "graphblocks.app.v1",
+            "durableCheckpoint": "graphblocks.runtime@v1",
+        },
+        "observedCiEvidence": {
+            "runId": 30867849816,
+            "jobId": 91863503054,
+            "headSha": "5fd9008e6b8013251059cecfe670b03a34edd4d0",
+            "conclusion": "success",
+            "durationSeconds": 32,
         },
     }
     assert audit_gate["blockers"] == [
