@@ -3863,7 +3863,9 @@ def test_ci_primes_offline_rust_inputs_and_retains_failure_diagnostics() -> None
     quality_steps = {step["name"]: step for step in quality["steps"]}
     assert quality_steps["Install quick-gate dependencies"]["run"] == (
         "python -m pip install pip==25.1.1\n"
-        'python -m pip install -e ".[test]"\n'
+        "python -m pip install pip-tools==7.6.0\n"
+        "python tools/check_dev_lock.py\n"
+        'python -m pip install -c requirements/dev.lock -e ".[test]"\n'
     )
     quality_command = quality_steps[
         "Check lint and progressive format baseline"

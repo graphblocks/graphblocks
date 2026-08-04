@@ -38,7 +38,9 @@ def test_quick_feedback_gate_has_a_bounded_release_contract_smoke() -> None:
     assert steps["Check out repository"]["with"] == {"fetch-depth": 0}
     assert steps["Install quick-gate dependencies"]["run"] == (
         "python -m pip install pip==25.1.1\n"
-        'python -m pip install -e ".[test]"\n'
+        "python -m pip install pip-tools==7.6.0\n"
+        "python tools/check_dev_lock.py\n"
+        'python -m pip install -c requirements/dev.lock -e ".[test]"\n'
     )
 
     lint = steps["Check lint and progressive format baseline"]["run"]

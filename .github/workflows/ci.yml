@@ -26,11 +26,15 @@ jobs:
         with:
           python-version: "3.11"
           cache: pip
-          cache-dependency-path: pyproject.toml
+          cache-dependency-path: |
+            pyproject.toml
+            requirements/dev.lock
       - name: Install quick-gate dependencies
         run: |
           python -m pip install pip==25.1.1
-          python -m pip install -e ".[test]"
+          python -m pip install pip-tools==7.6.0
+          python tools/check_dev_lock.py
+          python -m pip install -c requirements/dev.lock -e ".[test]"
       - name: Check lint and progressive format baseline
         shell: bash
         run: |
@@ -112,12 +116,14 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
           cache: pip
-          cache-dependency-path: pyproject.toml
+          cache-dependency-path: |
+            pyproject.toml
+            requirements/dev.lock
       - name: Install test dependencies
         run: |
           python -m pip install pip==25.1.1
           python -m pip install build==1.5.1 hatchling==1.31.0 maturin==1.14.1
-          python -m pip install -e ".[test]"
+          python -m pip install -c requirements/dev.lock -e ".[test]"
       - name: Set up pinned Helm for the deployment scaffold contract
         if: ${{ matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11' }}
         uses: Azure/setup-helm@dda3372f752e03dde6b3237bc9431cdc2f7a02a2 # v5.0.0
@@ -280,12 +286,14 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
           cache: pip
-          cache-dependency-path: pyproject.toml
+          cache-dependency-path: |
+            pyproject.toml
+            requirements/dev.lock
       - name: Install wheel verification tooling
         run: |
           python -m pip install pip==25.1.1
           python -m pip install build==1.5.1 hatchling==1.31.0 maturin==1.14.1 cyclonedx-bom==7.3.0
-          python -m pip install -e ".[test]"
+          python -m pip install -c requirements/dev.lock -e ".[test]"
       - name: Build once, install, and run installed-artifact gates
         shell: bash
         run: |
@@ -346,12 +354,14 @@ jobs:
         with:
           python-version: "3.11"
           cache: pip
-          cache-dependency-path: pyproject.toml
+          cache-dependency-path: |
+            pyproject.toml
+            requirements/dev.lock
       - name: Install test dependencies
         run: |
           python -m pip install pip==25.1.1
           python -m pip install maturin==1.14.1
-          python -m pip install -e ".[test]"
+          python -m pip install -c requirements/dev.lock -e ".[test]"
       - name: Install native compiler target
         run: python -m pip install --no-build-isolation --no-deps --editable ./packages/graphblocks-runtime
       - name: Prime offline Rust example dependencies
