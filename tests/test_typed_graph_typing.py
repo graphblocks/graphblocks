@@ -43,3 +43,14 @@ def test_incompatible_typed_graph_fails_mypy(tmp_path: Path) -> None:
     assert 'Argument "query"' in completed.stdout
     assert 'Argument "sources"' in completed.stdout
     assert 'type parameter "T" of "publish"' in completed.stdout
+
+
+def test_frozen_server_mappings_reject_mutation_in_mypy(tmp_path: Path) -> None:
+    completed = _run_mypy(
+        "incompatible_server_immutability.py",
+        tmp_path / "server-immutability-cache",
+    )
+
+    assert completed.returncode == 1
+    assert completed.stdout.count(": error:") == 13
+    assert completed.stdout.count("Unsupported target for indexed assignment") == 13

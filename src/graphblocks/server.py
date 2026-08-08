@@ -1035,7 +1035,7 @@ class ServerRouteNotFoundError(KeyError):
 @dataclass(frozen=True, slots=True)
 class ServerRouteMatch:
     endpoint: ServerEndpoint
-    path_params: dict[str, str] = field(default_factory=dict)
+    path_params: Mapping[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if not isinstance(self.path_params, Mapping):
@@ -1237,9 +1237,9 @@ def default_server_route_manifest() -> ServerRouteManifest:
 @dataclass(frozen=True, slots=True)
 class ServerAuthRequest:
     route: ServerEndpoint
-    headers: dict[str, str]
-    query: dict[str, str]
-    cookies: dict[str, str]
+    headers: Mapping[str, str]
+    query: Mapping[str, str]
+    cookies: Mapping[str, str]
     requested_at: str
 
     def __post_init__(self) -> None:
@@ -1267,9 +1267,9 @@ class ServerRequestHead:
 
     method: str
     path: str
-    headers: dict[str, str]
-    query: dict[str, str]
-    cookies: dict[str, str]
+    headers: Mapping[str, str]
+    query: Mapping[str, str]
+    cookies: Mapping[str, str]
     requested_at: str = ""
 
     def __post_init__(self) -> None:
@@ -1329,9 +1329,9 @@ class ServerRequestHead:
 class ServerRequest:
     method: str
     path: str
-    headers: dict[str, str]
-    query: dict[str, str]
-    cookies: dict[str, str]
+    headers: Mapping[str, str]
+    query: Mapping[str, str]
+    cookies: Mapping[str, str]
     body: bytes = b""
     requested_at: str = ""
 
@@ -1365,7 +1365,7 @@ class ServerRequest:
 @dataclass(frozen=True, slots=True)
 class ServerResponse:
     status_code: int
-    headers: dict[str, str]
+    headers: Mapping[str, str]
     body: bytes
 
     def __post_init__(self) -> None:
@@ -3413,7 +3413,7 @@ class _ServerRunDeletionConflictError(RuntimeError):
 
 @dataclass(frozen=True, slots=True)
 class StaticBearerAuthHook:
-    principals_by_token: dict[str, PrincipalRef] = field(default_factory=dict)
+    principals_by_token: Mapping[str, PrincipalRef] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if not isinstance(self.principals_by_token, Mapping):
@@ -3443,7 +3443,10 @@ class StaticBearerAuthHook:
 @dataclass(frozen=True, slots=True)
 class ServerHealth:
     service: str
-    checks: tuple[tuple[str, ServerHealthStatus, dict[str, object]], ...] = field(default_factory=tuple)
+    checks: tuple[
+        tuple[str, ServerHealthStatus, Mapping[str, object]],
+        ...,
+    ] = field(default_factory=tuple)
     observed_at: str = ""
 
     def __post_init__(self) -> None:
@@ -3458,7 +3461,9 @@ class ServerHealth:
             checks = tuple(self.checks)
         except TypeError as error:
             raise ValueError("server health checks must be a collection of check records") from error
-        normalized_checks: list[tuple[str, ServerHealthStatus, MappingProxyType[str, object]]] = []
+        normalized_checks: list[
+            tuple[str, ServerHealthStatus, Mapping[str, object]]
+        ] = []
         for check in checks:
             try:
                 name, status, details = check
@@ -3472,7 +3477,9 @@ class ServerHealth:
             details_copy = dict(details)
             if any(not isinstance(key, str) or not key.strip() for key in details_copy):
                 raise ValueError("server health check detail keys must be non-empty strings")
-            normalized_checks.append((name, status, MappingProxyType(details_copy)))  # type: ignore[arg-type]
+            normalized_checks.append(
+                (name, status, MappingProxyType(details_copy))
+            )
         object.__setattr__(self, "checks", tuple(normalized_checks))
 
     def overall_status(self) -> ServerHealthStatus:
