@@ -1,0 +1,241 @@
+[
+  {
+    "name": "graph_v1alpha1_to_v1",
+    "document": {
+      "apiVersion": "graphblocks.ai/v1alpha1",
+      "kind": "Graph",
+      "metadata": {
+        "name": "legacy-inline",
+        "annotations": {
+          "example.ai/source": "fixture"
+        }
+      },
+      "spec": {
+        "nodes": {
+          "echo": {
+            "block": "example.echo@1",
+            "connection": "provider",
+            "inputs": {
+              "message": "$input.message"
+            },
+            "outputs": {
+              "result": "$output.result"
+            }
+          }
+        }
+      }
+    },
+    "expected": {
+      "document": {
+        "apiVersion": "graphblocks.ai/v1",
+        "kind": "Graph",
+        "metadata": {
+          "name": "legacy-inline",
+          "annotations": {
+            "example.ai/source": "fixture",
+            "graphblocks.ai/migratedFrom": "graphblocks.ai/v1alpha1"
+          }
+        },
+        "spec": {
+          "nodes": {
+            "echo": {
+              "block": "example.echo@1",
+              "connection": "provider",
+              "inputs": {
+                "message": "$input.message"
+              },
+              "outputs": {
+                "result": "$output.result"
+              }
+            }
+          }
+        }
+      },
+      "normalized": {
+        "apiVersion": "graphblocks.ai/v1",
+        "kind": "Graph",
+        "metadata": {
+          "name": "legacy-inline",
+          "annotations": {
+            "example.ai/source": "fixture",
+            "graphblocks.ai/migratedFrom": "graphblocks.ai/v1alpha1"
+          }
+        },
+        "spec": {
+          "nodes": {
+            "echo": {
+              "block": "example.echo@1",
+              "bindings": {
+                "default": "provider"
+              }
+            }
+          },
+          "edges": [
+            {
+              "from": "$input.message",
+              "to": "echo.message"
+            },
+            {
+              "from": "echo.result",
+              "to": "$output.result"
+            }
+          ]
+        }
+      }
+    }
+  },
+  {
+    "name": "graph_v1alpha2_to_v1",
+    "document": {
+      "apiVersion": "graphblocks.ai/v1alpha2",
+      "kind": "Graph",
+      "metadata": {
+        "name": "alpha2"
+      },
+      "spec": {
+        "nodes": {}
+      }
+    },
+    "expected": {
+      "document": {
+        "apiVersion": "graphblocks.ai/v1",
+        "kind": "Graph",
+        "metadata": {
+          "name": "alpha2",
+          "annotations": {
+            "graphblocks.ai/migratedFrom": "graphblocks.ai/v1alpha2"
+          }
+        },
+        "spec": {
+          "nodes": {}
+        }
+      }
+    }
+  },
+  {
+    "name": "graph_v1alpha3_to_v1_overwrites_untrusted_provenance",
+    "document": {
+      "apiVersion": "graphblocks.ai/v1alpha3",
+      "kind": "Graph",
+      "metadata": {
+        "name": "alpha3",
+        "annotations": {
+          "graphblocks.ai/migratedFrom": "graphblocks.ai/v0"
+        }
+      },
+      "spec": {
+        "nodes": {}
+      }
+    },
+    "expected": {
+      "document": {
+        "apiVersion": "graphblocks.ai/v1",
+        "kind": "Graph",
+        "metadata": {
+          "name": "alpha3",
+          "annotations": {
+            "graphblocks.ai/migratedFrom": "graphblocks.ai/v1alpha3"
+          }
+        },
+        "spec": {
+          "nodes": {}
+        }
+      }
+    }
+  },
+  {
+    "name": "plugin_manifest_v1alpha1_to_v1",
+    "document": {
+      "apiVersion": "graphblocks.ai/v1alpha1",
+      "kind": "PluginManifest",
+      "metadata": {
+        "name": "example.plugin"
+      },
+      "spec": {
+        "pluginId": "example.plugin",
+        "version": "1.0.0",
+        "blocks": []
+      }
+    },
+    "expected": {
+      "document": {
+        "apiVersion": "graphblocks.ai/v1",
+        "kind": "PluginManifest",
+        "metadata": {
+          "name": "example.plugin",
+          "annotations": {
+            "graphblocks.ai/migratedFrom": "graphblocks.ai/v1alpha1"
+          }
+        },
+        "spec": {
+          "pluginId": "example.plugin",
+          "version": "1.0.0",
+          "blocks": []
+        }
+      }
+    }
+  },
+  {
+    "name": "stable_graph_is_identity_copy",
+    "document": {
+      "apiVersion": "graphblocks.ai/v1",
+      "kind": "Graph",
+      "metadata": {
+        "name": "stable"
+      },
+      "spec": {
+        "nodes": {}
+      }
+    },
+    "expected": {
+      "document": {
+        "apiVersion": "graphblocks.ai/v1",
+        "kind": "Graph",
+        "metadata": {
+          "name": "stable"
+        },
+        "spec": {
+          "nodes": {}
+        }
+      }
+    }
+  },
+  {
+    "name": "unknown_graph_version_fails",
+    "document": {
+      "apiVersion": "graphblocks.ai/v2",
+      "kind": "Graph",
+      "metadata": {
+        "name": "future"
+      },
+      "spec": {
+        "nodes": {}
+      }
+    },
+    "expected": {
+      "error": {
+        "code": "GB0002",
+        "path": "$.apiVersion"
+      }
+    }
+  },
+  {
+    "name": "missing_plugin_version_fails",
+    "document": {
+      "kind": "PluginManifest",
+      "metadata": {
+        "name": "missing-version"
+      },
+      "spec": {
+        "pluginId": "missing-version",
+        "version": "1.0.0"
+      }
+    },
+    "expected": {
+      "error": {
+        "code": "GB2002",
+        "path": "$.apiVersion"
+      }
+    }
+  }
+]

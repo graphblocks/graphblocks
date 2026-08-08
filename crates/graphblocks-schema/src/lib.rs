@@ -1112,6 +1112,57 @@ mod resource_validation {
 
     impl Error for ResourceValidationError {}
 
+    /// A versioned resource has no valid explicit migration to the stable wire schema.
+    #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+    pub struct ResourceMigrationError {
+        pub code: String,
+        pub path: String,
+        pub message: String,
+    }
+
+    impl Display for ResourceMigrationError {
+        fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
+            write!(formatter, "{} {}: {}", self.code, self.path, self.message)
+        }
+    }
+
+    impl Error for ResourceMigrationError {}
+
+    /// A resource migration failed because the migration was invalid or a schema was unavailable.
+    #[derive(Clone, Debug, Eq, PartialEq)]
+    pub enum ResourceMigrationFailure {
+        Migration(ResourceMigrationError),
+        Schema(ResourceSchemaError),
+    }
+
+    impl ResourceMigrationFailure {
+        #[must_use]
+        pub fn migration_error(&self) -> Option<&ResourceMigrationError> {
+            match self {
+                Self::Migration(error) => Some(error),
+                Self::Schema(_) => None,
+            }
+        }
+    }
+
+    impl Display for ResourceMigrationFailure {
+        fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
+            match self {
+                Self::Migration(error) => Display::fmt(error, formatter),
+                Self::Schema(error) => Display::fmt(error, formatter),
+            }
+        }
+    }
+
+    impl Error for ResourceMigrationFailure {
+        fn source(&self) -> Option<&(dyn Error + 'static)> {
+            match self {
+                Self::Migration(error) => Some(error),
+                Self::Schema(error) => Some(error),
+            }
+        }
+    }
+
     /// Returns the first excessive resource nesting violation without cloning the document.
     pub fn resource_depth_violation(document: &Value) -> Option<ResourceSchemaViolation> {
         let path = excessive_json_nesting_path(document, 0, MAX_RESOURCE_DOCUMENT_DEPTH)?;
@@ -1208,6 +1259,147 @@ mod resource_validation {
             Ok(())
         } else {
             Err(ResourceValidationError::Violations(violations))
+        }
+    }
+
+    /// Migrates Graph and PluginManifest resources through explicit stable-wire paths.
+    ///
+    /// Other resource kinds are returned unchanged. Known stable resources are still
+    /// validated so malformed inputs cannot use migration as a schema bypass.
+    pub fn migrate_resource(document: &Value) -> Result<Value, ResourceMigrationFailure> {
+        const STABLE_API_VERSION: &str = "graphblocks.ai/v1";
+        const LEGACY_GRAPH_API_VERSIONS: [&str; 3] = [
+            "graphblocks.ai/v1alpha1",
+            "graphblocks.ai/v1alpha2",
+            "graphblocks.ai/v1alpha3",
+        ];
+
+        if let Some(violation) = resource_depth_violation(document) {
+            return Err(ResourceMigrationFailure::Migration(
+                ResourceMigrationError {
+                    code: violation.code,
+                    path: violation.path,
+                    message: violation.message,
+                },
+            ));
+        }
+
+        let mut migrated = document.clone();
+        let Some(kind) = migrated
+            .get("kind")
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+        else {
+            return Ok(migrated);
+        };
+        let api_version = migrated.get("apiVersion").and_then(Value::as_str);
+
+        let (invalid_version_code, invalid_target_code) = match kind.as_str() {
+            "Graph" => ("GB0002", "GB0002"),
+            "PluginManifest" => ("GB2002", "GB2018"),
+            _ => return Ok(migrated),
+        };
+        if api_version == Some(STABLE_API_VERSION) {
+            require_valid_migration_target(&migrated, invalid_target_code, &kind)?;
+            return Ok(migrated);
+        }
+
+        let supported_legacy_version = match (kind.as_str(), api_version) {
+            ("Graph", Some(version)) => LEGACY_GRAPH_API_VERSIONS.contains(&version),
+            ("PluginManifest", Some("graphblocks.ai/v1alpha1")) => true,
+            _ => false,
+        };
+        if !supported_legacy_version {
+            let version = migrated
+                .get("apiVersion")
+                .map_or_else(|| "null".to_owned(), canonical_json_unchecked);
+            return Err(ResourceMigrationFailure::Migration(
+                ResourceMigrationError {
+                    code: invalid_version_code.to_owned(),
+                    path: "$.apiVersion".to_owned(),
+                    message: format!(
+                        "{kind} apiVersion {version} has no migration to {STABLE_API_VERSION}"
+                    ),
+                },
+            ));
+        }
+
+        let previous = api_version.unwrap_or_default().to_owned();
+        let Some(root) = migrated.as_object_mut() else {
+            return Ok(migrated);
+        };
+        root.insert(
+            "apiVersion".to_owned(),
+            Value::String(STABLE_API_VERSION.to_owned()),
+        );
+        record_migration_source(root, &previous);
+        if kind == "PluginManifest" {
+            complete_legacy_plugin_blocks(root);
+        }
+        require_valid_migration_target(&migrated, invalid_target_code, &kind)?;
+        Ok(migrated)
+    }
+
+    fn require_valid_migration_target(
+        document: &Value,
+        code: &str,
+        resource_name: &str,
+    ) -> Result<(), ResourceMigrationFailure> {
+        let violations =
+            resource_schema_errors(document).map_err(ResourceMigrationFailure::Schema)?;
+        let Some(violation) = violations.first() else {
+            return Ok(());
+        };
+        Err(ResourceMigrationFailure::Migration(
+            ResourceMigrationError {
+                code: code.to_owned(),
+                path: violation.path.clone(),
+                message: format!(
+                    "legacy {resource_name} cannot be represented by the stable wire schema: {}",
+                    violation.message
+                ),
+            },
+        ))
+    }
+
+    fn record_migration_source(root: &mut serde_json::Map<String, Value>, previous: &str) {
+        let metadata = root
+            .entry("metadata")
+            .or_insert_with(|| Value::Object(serde_json::Map::new()));
+        let Some(metadata) = metadata.as_object_mut() else {
+            return;
+        };
+        let annotations = metadata
+            .entry("annotations")
+            .or_insert_with(|| Value::Object(serde_json::Map::new()));
+        let Some(annotations) = annotations.as_object_mut() else {
+            return;
+        };
+        annotations.insert(
+            "graphblocks.ai/migratedFrom".to_owned(),
+            Value::String(previous.to_owned()),
+        );
+    }
+
+    fn complete_legacy_plugin_blocks(root: &mut serde_json::Map<String, Value>) {
+        let Some(blocks) = root
+            .get_mut("spec")
+            .and_then(Value::as_object_mut)
+            .and_then(|spec| spec.get_mut("blocks"))
+            .and_then(Value::as_array_mut)
+        else {
+            return;
+        };
+        for block in blocks {
+            let Some(block) = block.as_object_mut() else {
+                continue;
+            };
+            block
+                .entry("capabilities")
+                .or_insert_with(|| Value::Array(Vec::new()));
+            block
+                .entry("configSchema")
+                .or_insert_with(|| json!({"type": "object"}));
         }
     }
 
@@ -1458,7 +1650,8 @@ mod resource_validation {
 
 #[cfg(feature = "resource-validation")]
 pub use resource_validation::{
-    RESOURCE_SCHEMA_PATHS, ResourceSchemaDescriptor, ResourceSchemaError, ResourceSchemaViolation,
-    ResourceValidationError, resource_depth_violation, resource_schema_errors,
+    RESOURCE_SCHEMA_PATHS, ResourceMigrationError, ResourceMigrationFailure,
+    ResourceSchemaDescriptor, ResourceSchemaError, ResourceSchemaViolation,
+    ResourceValidationError, migrate_resource, resource_depth_violation, resource_schema_errors,
     resource_schema_path, validate_resource,
 };

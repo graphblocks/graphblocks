@@ -2,60 +2,18 @@ use std::collections::BTreeSet;
 
 use serde_json::{Map, Value};
 
-use graphblocks_schema::resource_schema_errors;
+use graphblocks_schema::migrate_resource;
 
 pub const GRAPH_API_VERSION: &str = "graphblocks.ai/v1";
 pub const PSEUDO_NODES: [&str; 5] = ["$input", "$output", "$state", "$context", "$execution"];
 
 pub fn migrate_graph(document: &Value) -> Value {
-    let mut migrated = document.clone();
-    if migrated.get("kind").and_then(Value::as_str) != Some("Graph") {
-        return migrated;
+    if document.get("kind").and_then(Value::as_str) != Some("Graph") {
+        return document.clone();
     }
-    let Some(previous) = migrated
-        .get("apiVersion")
-        .and_then(Value::as_str)
-        .filter(|version| {
-            matches!(
-                *version,
-                "graphblocks.ai/v1alpha1" | "graphblocks.ai/v1alpha2" | "graphblocks.ai/v1alpha3"
-            )
-        })
-        .map(str::to_owned)
-    else {
-        return migrated;
-    };
-
-    let Some(root) = migrated.as_object_mut() else {
-        return migrated;
-    };
-    root.insert(
-        "apiVersion".to_owned(),
-        Value::String(GRAPH_API_VERSION.to_owned()),
-    );
-    if !root.contains_key("metadata") {
-        root.insert("metadata".to_owned(), Value::Object(Map::new()));
-    }
-    if let Some(metadata) = root.get_mut("metadata").and_then(Value::as_object_mut) {
-        if !metadata.contains_key("annotations") {
-            metadata.insert("annotations".to_owned(), Value::Object(Map::new()));
-        }
-        if let Some(annotations) = metadata
-            .get_mut("annotations")
-            .and_then(Value::as_object_mut)
-        {
-            annotations.insert(
-                "graphblocks.ai/migratedFrom".to_owned(),
-                Value::String(previous),
-            );
-        }
-    }
-    match resource_schema_errors(&migrated) {
-        Ok(violations) if violations.is_empty() => migrated,
-        // Preview-only alpha fields and malformed legacy resources must never
-        // be relabelled as stable v1 merely to enter compilation.
-        Ok(_) | Err(_) => document.clone(),
-    }
+    // Compilation reports its own complete diagnostics. Migration failures
+    // therefore preserve the source instead of relabelling an invalid graph.
+    migrate_resource(document).unwrap_or_else(|_| document.clone())
 }
 
 pub fn normalize_graph(document: &Value) -> Value {
