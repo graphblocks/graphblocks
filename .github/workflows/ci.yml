@@ -245,6 +245,7 @@ jobs:
             tests/test_server_lifecycle.py \
             tests/test_policy_core.py \
             tests/test_canonical.py \
+            tests/test_canonical_native_facade.py \
             tests/test_canonical_integer_limits.py \
             tests/test_canonical_numeric_encoding.py \
             --cov=graphblocks.server \
