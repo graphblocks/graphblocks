@@ -3904,6 +3904,16 @@ def test_ci_primes_offline_rust_inputs_and_retains_failure_diagnostics() -> None
     assert "examples/12-custom-python-rust-blocks/rust/Cargo.toml" in cargo_fetch
     compatibility = python_steps["Check candidate stable API and CLI snapshots"]["run"]
     assert "dist/ci/compatibility.log" in compatibility
+    crash_recovery = python_steps[
+        "Run accepted-run multi-process crash recovery gate"
+    ]
+    assert crash_recovery["if"] == (
+        "${{ matrix.os == 'ubuntu-latest' && "
+        "matrix.python-version == '3.11' }}"
+    )
+    assert "tests/test_accepted_run_crash_recovery.py" in crash_recovery["run"]
+    assert "dist/ci/accepted-run-crash-recovery.xml" in crash_recovery["run"]
+    assert "dist/ci/accepted-run-crash-recovery.log" in crash_recovery["run"]
     python_tests = python_steps["Run Python tests"]["run"]
     assert "--junitxml=dist/ci/python-tests.xml" in python_tests
     assert "dist/ci/python-tests.log" in python_tests
