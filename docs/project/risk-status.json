@@ -22,7 +22,7 @@
         },
         {
           "path": "crates/graphblocks-runtime-durable/src/lib.rs",
-          "sha256": "83ca6b119122489f45b534528c86dd3da7e769709dcf27c6d61fa216cd458500"
+          "sha256": "f3c93dd9bfa1884fa5d64aeda7cef13c74e48270960915b2b95a24938b15b912"
         }
       ],
       "tckEvidence": {
