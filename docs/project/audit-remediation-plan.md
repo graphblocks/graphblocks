@@ -53,10 +53,10 @@ A finding moves to resolved only when:
 4. the release matrix or profile evidence is updated when the finding changes a
    compatibility or production claim.
 
-The current generated count is 76 resolved findings: all 27 P0/P1 findings,
+The current generated count is 77 resolved findings: all 27 P0/P1 findings,
 the first 11 P2 findings, GB-ARCH-013, and GB-ARCH-015 through GB-ARCH-017.
 GB-COR-005 through GB-COR-009 are also resolved. There are zero open P0/P1,
-15 open P2, and 8 open P3; GB-COR-011, GB-COR-012, GB-DOC-006, GB-INP-006,
+14 open P2, and 8 open P3; GB-COR-010 through GB-COR-012, GB-DOC-006, GB-INP-006,
 GB-INP-007, GB-INP-010, GB-PERF-004, and GB-PERF-005 are resolved. GB-ARCH-012
 remains open pending shared-primitives consolidation. GB-PERF-006 is resolved
 with tenant/owner-scoped indexed run-list cursor pagination and a 10,000-run
@@ -287,6 +287,14 @@ made reliable inside process-local dictionaries or monolithic handlers.
     authority wall-clock leases with skew policy, and audit wall timestamps;
     test clock rollback/forward, graceful/forced drain, double close, and submit
     during shutdown.
+
+The `GB-COR-010` server-lifecycle portion is resolved by explicit
+`running -> draining -> closed` admission, monotonic drain deadlines, graceful
+waiting for admitted requests and accepted runs, forced cancellation on timeout,
+idempotent close, and opt-in executor ownership. Health remains observable
+during shutdown, already-admitted requests may finish scheduling their work,
+and direct submit after drain fails closed. Thirteen lifecycle regressions are
+included in the security-critical changed-line branch-coverage gate.
 
 Phase 1 exits when every related P1 has executable closure evidence, the durable
 vertical slice passes multi-process crash/restart tests, and resource-budget

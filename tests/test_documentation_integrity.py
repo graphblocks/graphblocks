@@ -1707,8 +1707,8 @@ def test_stable_release_matrix_is_complete_and_machine_readable() -> None:
         "authority": "docs/project/audit-issue-status.yaml",
         "inventory": "docs/project/audit-issues.json",
         "checker": "tools/check_audit_inventory.py",
-        "resolved": 76,
-        "openBySeverity": {"P0": 0, "P1": 0, "P2": 15, "P3": 8},
+        "resolved": 77,
+        "openBySeverity": {"P0": 0, "P1": 0, "P2": 14, "P3": 8},
     }
     rust_debt = audit_gate["rustProductionExpectDebt"]
     assert rust_debt["workspaceLint"] == "clippy::expect_used=deny"
@@ -1735,6 +1735,22 @@ def test_stable_release_matrix_is_complete_and_machine_readable() -> None:
             "conclusion": "success",
         },
     }
+    assert audit_gate["serverLifecycle"] == {
+        "states": ["running", "draining", "closed"],
+        "healthAvailableDuringShutdown": True,
+        "rejectsNewNonHealthRequestsDuringShutdown": True,
+        "admittedRequestWorkDrains": True,
+        "forcedTimeoutCancels": [
+            "execution-tokens",
+            "active-worker-tokens",
+            "queued-futures",
+            "pending-runs",
+        ],
+        "externalExecutorCallerOwnedByDefault": True,
+        "ownedExecutorShutdownExactlyOnce": True,
+        "regression": "tests/test_server_lifecycle.py",
+        "changedLineBranchCoverageMinimumPercent": 90,
+    }
     assert "stable-public-server-error-codes-correlation-and-bounded-internal-audit" in (
         audit_gate["implementedEvidence"]
     )
@@ -1751,6 +1767,9 @@ def test_stable_release_matrix_is_complete_and_machine_readable() -> None:
         audit_gate["implementedEvidence"]
     )
     assert "profile-bounded-root-api-with-no-preview-wildcard-exports" in (
+        audit_gate["implementedEvidence"]
+    )
+    assert "explicit-server-running-draining-closed-lifecycle-and-executor-ownership" in (
         audit_gate["implementedEvidence"]
     )
     assert "signed-candidate-and-final-promotion-audit-closure-binding" in (

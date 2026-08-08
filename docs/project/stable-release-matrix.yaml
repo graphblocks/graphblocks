@@ -109,8 +109,8 @@ deepAudit:
     authority: docs/project/audit-issue-status.yaml
     inventory: docs/project/audit-issues.json
     checker: tools/check_audit_inventory.py
-    resolved: 76
-    openBySeverity: {P0: 0, P1: 0, P2: 15, P3: 8}
+    resolved: 77
+    openBySeverity: {P0: 0, P1: 0, P2: 14, P3: 8}
   exitPolicy:
     securityFreeze: {maxOpenP0: 0}
     stableRelease: {maxOpenP0: 0, maxOpenP1: 0}
@@ -1068,6 +1068,7 @@ releaseGates:
       - roadmap-v1-wire-state-bound-to-schema-and-release-gates
       - artifact-specific-maturity-and-security-support-policy
       - core-c0-c1-and-independently-promoted-extension-profile-tracks
+      - explicit-server-running-draining-closed-lifecycle-and-executor-ownership
     evidence:
       - docs/project/audit-issues.json
       - docs/project/audit-issue-status.yaml
@@ -1133,6 +1134,18 @@ releaseGates:
       - tests/test_python_package_boundaries.py
       - tests/test_internal_import_boundaries.py
       - tests/test_wheelhouse_schema_verification.py
+      - docs/specification/operations/applications-async-callbacks.md
+      - tests/test_server_lifecycle.py
+    serverLifecycle:
+      states: [running, draining, closed]
+      healthAvailableDuringShutdown: true
+      rejectsNewNonHealthRequestsDuringShutdown: true
+      admittedRequestWorkDrains: true
+      forcedTimeoutCancels: [execution-tokens, active-worker-tokens, queued-futures, pending-runs]
+      externalExecutorCallerOwnedByDefault: true
+      ownedExecutorShutdownExactlyOnce: true
+      regression: tests/test_server_lifecycle.py
+      changedLineBranchCoverageMinimumPercent: 90
     quickFeedbackCi:
       workflow: .github/workflows/ci.yml
       job: python-quality
