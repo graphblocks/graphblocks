@@ -48,6 +48,12 @@ def test_project_and_artifact_maturity_claims_are_consistent() -> None:
         "document": "SECURITY.md",
         "productionSecurityBoundaryClaimed": False,
     }
+    assert policy["observedCiEvidence"] == {
+        "runId": 31247119804,
+        "jobId": 93077455406,
+        "headSha": "8a896e7fad37f3f460475672d0ca3e42b6f43a0b",
+        "conclusion": "success",
+    }
     assert "no released maintenance series is supported yet" in security
     assert "Do not use the reference runtime as a security boundary" in security
 
@@ -1701,8 +1707,8 @@ def test_stable_release_matrix_is_complete_and_machine_readable() -> None:
         "authority": "docs/project/audit-issue-status.yaml",
         "inventory": "docs/project/audit-issues.json",
         "checker": "tools/check_audit_inventory.py",
-        "resolved": 73,
-        "openBySeverity": {"P0": 0, "P1": 0, "P2": 18, "P3": 8},
+        "resolved": 74,
+        "openBySeverity": {"P0": 0, "P1": 0, "P2": 17, "P3": 8},
     }
     rust_debt = audit_gate["rustProductionExpectDebt"]
     assert rust_debt["workspaceLint"] == "clippy::expect_used=deny"
@@ -1736,6 +1742,9 @@ def test_stable_release_matrix_is_complete_and_machine_readable() -> None:
         audit_gate["implementedEvidence"]
     )
     assert "roadmap-v1-wire-state-bound-to-schema-and-release-gates" in (
+        audit_gate["implementedEvidence"]
+    )
+    assert "artifact-specific-maturity-and-security-support-policy" in (
         audit_gate["implementedEvidence"]
     )
     assert "signed-candidate-and-final-promotion-audit-closure-binding" in (

@@ -21,6 +21,11 @@ maturityPolicy:
     - artifactId: pypi:graphblocks-runtime
       metadata: packages/graphblocks-runtime/pyproject.toml
       classifier: 'Development Status :: 3 - Alpha'
+  observedCiEvidence:
+    runId: 31247119804
+    jobId: 93077455406
+    headSha: 8a896e7fad37f3f460475672d0ca3e42b6f43a0b
+    conclusion: success
 readinessAxes:
   formatVersion: 1
   generatedBy: tools/generate_status_readiness.py
@@ -104,8 +109,8 @@ deepAudit:
     authority: docs/project/audit-issue-status.yaml
     inventory: docs/project/audit-issues.json
     checker: tools/check_audit_inventory.py
-    resolved: 73
-    openBySeverity: {P0: 0, P1: 0, P2: 18, P3: 8}
+    resolved: 74
+    openBySeverity: {P0: 0, P1: 0, P2: 17, P3: 8}
   exitPolicy:
     securityFreeze: {maxOpenP0: 0}
     stableRelease: {maxOpenP0: 0, maxOpenP1: 0}
@@ -1061,6 +1066,7 @@ releaseGates:
       - stable-public-server-error-codes-correlation-and-bounded-internal-audit
       - status-docs-forbid-fixed-test-counts-and-defer-to-commit-bound-ci
       - roadmap-v1-wire-state-bound-to-schema-and-release-gates
+      - artifact-specific-maturity-and-security-support-policy
     evidence:
       - docs/project/audit-issues.json
       - docs/project/audit-issue-status.yaml
@@ -1114,6 +1120,10 @@ releaseGates:
       - tests/test_documentation_integrity.py
       - schemas/graphblocks.ai/v1/graph.schema.json
       - schemas/graphblocks.ai/v1/plugin-manifest.schema.json
+      - SECURITY.md
+      - pyproject.toml
+      - packages/graphblocks-runtime/pyproject.toml
+      - packages/graphblocks-testing/pyproject.toml
     quickFeedbackCi:
       workflow: .github/workflows/ci.yml
       job: python-quality
