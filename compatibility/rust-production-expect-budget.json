@@ -8,11 +8,10 @@
     "--bins",
     "--locked"
   ],
-  "total": 103,
+  "total": 101,
   "files": {
     "crates/graphblocks-runtime-core/src/async_operation.rs": 16,
     "crates/graphblocks-runtime-core/src/budget.rs": 24,
-    "crates/graphblocks-runtime-core/src/callback_delivery.rs": 2,
     "crates/graphblocks-runtime-core/src/canonical.rs": 2,
     "crates/graphblocks-runtime-core/src/deployment.rs": 9,
     "crates/graphblocks-runtime-core/src/policy.rs": 2,

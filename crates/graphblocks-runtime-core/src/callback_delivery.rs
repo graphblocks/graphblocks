@@ -1,5 +1,3 @@
-#![allow(clippy::expect_used)] // Guarded by compatibility/rust-production-expect-budget.json.
-
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
@@ -2268,7 +2266,7 @@ impl WebhookSigningConfig {
         });
         if let Some(operation_id) = &event.metadata.operation_id {
             body.as_object_mut()
-                .expect("webhook envelope body is an object")
+                .ok_or(WebhookSignatureError::InvalidBody)?
                 .insert("operation_id".to_owned(), json!(operation_id));
         }
         let body_size_bytes = canonical_body_size_bytes(&body);
@@ -3491,9 +3489,7 @@ impl CallbackDeliveryScheduler {
             return Some(None);
         }
 
-        let delivery = self
-            .schedule_event(subscription, event)
-            .expect("subscription and event were already checked");
+        let delivery = self.schedule_event(subscription, event)?;
         if subscription.ordered_delivery {
             ordering.record_scheduled(&delivery);
         }
