@@ -95,7 +95,10 @@ from graphblocks.exhaustion import (
     MissingExhaustionBoundaryError,
     validate_exhaustion_policy,
 )
-from graphblocks.migration import MigrationError, migrate_document
+from graphblocks.migration import (
+    MigrationError,
+    migrate_document_reference as migrate_document,
+)
 from graphblocks.output_policy import (
     GenerationChunk,
     OutputDeliveryGate,

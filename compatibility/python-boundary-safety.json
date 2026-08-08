@@ -6,7 +6,7 @@
     "productionAsserts": "Production asserts are reviewed only as side-effect-free internal invariants, exhaustive branch proofs, or type narrowing after explicit validation. Public boundary behavior must also pass the optimized-mode shard with asserts disabled."
   },
   "broadExceptionHandlers": {
-    "total": 127,
+    "total": 130,
     "files": [
       {
         "path": "src/graphblocks/_schema_execution.py",
@@ -105,6 +105,13 @@
         "semanticDigest": "sha256:318551766c694d50b2218eab411897d88582637efd86ea30c7512e26c17d97f5",
         "classifications": ["process-isolation-boundary"],
         "rationale": "The child-process envelope must report terminal failures, including non-Exception exits, to the supervising process."
+      },
+      {
+        "path": "src/graphblocks/migration.py",
+        "count": 3,
+        "semanticDigest": "sha256:2f138602017e977baac5a3977faa6ec9696d1ab6c60a9ae4feb9339ab760f25b",
+        "classifications": ["external-callback-boundary", "optional-dependency-boundary"],
+        "rationale": "The public migration facade isolates native-extension discovery, handshake, and invocation failures while preserving a fail-closed authority boundary and explicit reference oracle."
       },
       {
         "path": "src/graphblocks/plugins.py",

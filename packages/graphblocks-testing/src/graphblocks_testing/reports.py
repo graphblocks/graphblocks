@@ -12,7 +12,10 @@ from types import MappingProxyType
 from graphblocks.canonical import (
     canonical_hash_reference as canonical_hash,
 )
-from graphblocks.migration import GRAPH_API_VERSION, migrate_document
+from graphblocks.migration import (
+    GRAPH_API_VERSION,
+    migrate_document_reference as migrate_document,
+)
 
 from .models import (
     FaultKind,

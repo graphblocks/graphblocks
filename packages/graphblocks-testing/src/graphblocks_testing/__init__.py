@@ -27,7 +27,7 @@ from graphblocks.exhaustion import (
     ExhaustionController,
     ExhaustionPolicy,
 )
-from graphblocks.migration import migrate_document
+from graphblocks.migration import migrate_document_reference as migrate_document
 from graphblocks.plugins import BlockCatalog
 from graphblocks.run_store import (
     InMemoryRunStore,

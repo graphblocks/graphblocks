@@ -22,7 +22,7 @@ from .migration import (
     GRAPH_API_VERSION,
     LEGACY_GRAPH_API_VERSIONS,
     MigrationError,
-    migrate_document,
+    migrate_document_reference as migrate_document,
 )
 from .output_policy import (
     VALID_DELIVERY_MODES as VALID_OUTPUT_DELIVERY_MODES,

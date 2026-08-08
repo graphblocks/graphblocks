@@ -7,7 +7,10 @@ from pathlib import Path
 import pytest
 
 import graphblocks_runtime
-from graphblocks.migration import MigrationError, migrate_document
+from graphblocks.migration import (
+    MigrationError,
+    migrate_document_reference as migrate_document,
+)
 
 
 ROOT = Path(__file__).parents[1]
