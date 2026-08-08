@@ -1,0 +1,45 @@
+schemaVersion: 1
+scope: stable-core-seed
+thresholds:
+  minimumMutationScorePercent: 100
+  maximumSurvivingMutants: 0
+  timeoutSecondsPerMutant: 30
+mutants:
+  - id: canonical-sha256-digest
+    category: canonical
+    source: src/graphblocks/canonical.py
+    description: canonical_hash must compute a SHA-256 digest
+    find: |
+      return "sha256:" + hashlib.sha256(canonical_dumps(value).encode("utf-8")).hexdigest()
+    replace: |
+      return "sha256:" + hashlib.sha1(canonical_dumps(value).encode("utf-8")).hexdigest()
+    tests:
+      - tests/test_mutation_targets.py::test_canonical_hash_uses_sha256
+  - id: policy-explicit-deny-precedence
+    category: policy
+    source: src/graphblocks/policy.py
+    description: an explicit matching deny must override matching allow rules
+    find: |
+              if matching_deny:
+    replace: |
+              if False and matching_deny:
+    tests:
+      - tests/test_policy_core.py::test_static_policy_evaluator_gives_explicit_deny_precedence
+  - id: compiler-graph-hash-binds-normalized-ir
+    category: compiler
+    source: src/graphblocks/compiler.py
+    description: graph_hash must bind the compiler's normalized graph
+    find: |
+              graph_hash=canonical_hash(lowered.normalized),
+    replace: |
+              graph_hash=canonical_hash({}),
+    tests:
+      - tests/test_compiler_native_bridge.py::test_reference_compiler_phase_golden_fixture
+  - id: durable-source-replay-events
+    category: durable-handler
+    source: packages/graphblocks-testing/src/graphblocks_testing/durable_cases.py
+    description: the source replay handler must process the declared events
+    find: "def run_source_replay_case(context: SourceReplayCase) -> dict[str, object]:\n    durable = context.durable\n    raw_events = context.events"
+    replace: "def run_source_replay_case(context: SourceReplayCase) -> dict[str, object]:\n    durable = context.durable\n    raw_events = ()"
+    tests:
+      - tests/test_durable_tck_dispatch.py::test_durable_dispatch_preserves_full_report_contract_digest

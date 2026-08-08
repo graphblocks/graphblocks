@@ -184,6 +184,19 @@ jobs:
         run: >-
           python tools/check_performance_budgets.py
           --report dist/ci/python-performance-budgets.json
+      - name: Run stable mutation budget
+        if: ${{ matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11' }}
+        run: >-
+          python tools/check_mutation_coverage.py
+          --report dist/ci/stable-mutation-report.json
+      - name: Retain stable mutation evidence
+        if: ${{ always() && matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11' }}
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: graphblocks-stable-mutation-evidence-${{ github.run_attempt }}
+          path: dist/ci/stable-mutation-report.json
+          if-no-files-found: error
+          retention-days: 90
       - name: Run accepted-run multi-process crash recovery gate
         if: ${{ matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11' }}
         shell: bash
