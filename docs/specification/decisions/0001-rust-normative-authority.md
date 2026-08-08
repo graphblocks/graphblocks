@@ -103,8 +103,9 @@ Rust implementation crates remain internal APIs unless separately promoted.
 4. Move the production scheduler and durable authority checks behind the Rust
    runtime protocol while retaining the Python local runtime as a reference
    interpreter. The installed stable C1 local scheduler/journal slice now runs
-   through the Rust stdlib runtime, fails closed without it, and compares the
-   complete stable result/lifecycle contract with the Python oracle. Wider
+   through the Rust stdlib runtime, requires the versioned `runtime.local.v1`
+   binding capability, fails closed without it, and compares the complete
+   stable result/lifecycle contract with the Python oracle. Wider
    production suspension and durability evidence remains incomplete.
 5. Extract the reusable control-plane library so language bindings do not
    depend on an executable/control-plane layer. This step is implemented:

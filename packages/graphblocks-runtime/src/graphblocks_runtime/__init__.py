@@ -13,6 +13,7 @@ _REQUIRED_NATIVE_CAPABILITIES = (
     "compiler.graph.v1",
     "protocol.application.v1",
     "protocol.worker.v1",
+    "runtime.local.v1",
     "schema.identity.v1",
     "schema.resource-migration.v1",
     "schema.resource-validation.v1",

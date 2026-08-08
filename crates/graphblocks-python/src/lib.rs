@@ -9,12 +9,12 @@ use graphblocks_compiler::graph::GRAPH_API_VERSION;
 use graphblocks_control_plane::{DaemonConfig, DaemonStatus, WorkerRegistry, WorkerRegistryError};
 use graphblocks_protocol::{
     NATIVE_CAPABILITY_APPLICATION_PROTOCOL, NATIVE_CAPABILITY_CANONICAL_JSON,
-    NATIVE_CAPABILITY_GRAPH_COMPILER, NATIVE_CAPABILITY_RESOURCE_SCHEMA_MIGRATION,
-    NATIVE_CAPABILITY_RESOURCE_SCHEMA_VALIDATION, NATIVE_CAPABILITY_SCHEMA_IDENTITY,
-    NATIVE_CAPABILITY_WORKER_PROTOCOL, NativeBindingAdvertisement, RemotePayload,
-    RemotePayloadError, RemotePayloadLimits, WorkerAdmissionPolicy, WorkerAdvertisement,
-    WorkerProtocolError, WorkerProtocolMessage, WorkerProtocolMessageKind,
-    admit_worker_with_policy, validate_remote_payload,
+    NATIVE_CAPABILITY_GRAPH_COMPILER, NATIVE_CAPABILITY_LOCAL_RUNTIME,
+    NATIVE_CAPABILITY_RESOURCE_SCHEMA_MIGRATION, NATIVE_CAPABILITY_RESOURCE_SCHEMA_VALIDATION,
+    NATIVE_CAPABILITY_SCHEMA_IDENTITY, NATIVE_CAPABILITY_WORKER_PROTOCOL,
+    NativeBindingAdvertisement, RemotePayload, RemotePayloadError, RemotePayloadLimits,
+    WorkerAdmissionPolicy, WorkerAdvertisement, WorkerProtocolError, WorkerProtocolMessage,
+    WorkerProtocolMessageKind, admit_worker_with_policy, validate_remote_payload,
 };
 use graphblocks_runtime_core::agent::{AgentLoopController, AgentLoopDecision, AgentSpec};
 use graphblocks_runtime_core::application_event::{
@@ -137,6 +137,7 @@ fn binding_contract_json() -> PyResult<String> {
             NATIVE_CAPABILITY_GRAPH_COMPILER,
             NATIVE_CAPABILITY_APPLICATION_PROTOCOL,
             NATIVE_CAPABILITY_WORKER_PROTOCOL,
+            NATIVE_CAPABILITY_LOCAL_RUNTIME,
             NATIVE_CAPABILITY_SCHEMA_IDENTITY,
             NATIVE_CAPABILITY_RESOURCE_SCHEMA_MIGRATION,
             NATIVE_CAPABILITY_RESOURCE_SCHEMA_VALIDATION,
@@ -9698,6 +9699,7 @@ mod tests {
                 "compiler.graph.v1",
                 "protocol.application.v1",
                 "protocol.worker.v1",
+                "runtime.local.v1",
                 "schema.identity.v1",
                 "schema.resource-migration.v1",
                 "schema.resource-validation.v1",

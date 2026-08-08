@@ -55,9 +55,10 @@ tag.
 The Python release surface is consolidated into three distributions:
 `graphblocks` for the Python authoring/reference SDK, built-ins, CLI, and server
 contracts; `graphblocks-runtime` for the normative compiler binding and native
-runtime; and `graphblocks-testing` for the TCK. Package catalog component
-entries remain capability and binding identities, not separately published
-wheels.
+runtime, whose fail-closed binding handshake explicitly requires
+`runtime.local.v1`; and `graphblocks-testing` for the TCK. Package catalog
+component entries remain capability and binding identities, not separately
+published wheels.
 
 Revision-specific test, wheelhouse, and release-gate results are commit-bound CI
 facts and are not maintained as prose on this page. The remediation plan

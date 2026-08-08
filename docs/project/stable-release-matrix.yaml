@@ -136,6 +136,7 @@ authorityTransition:
     - standalone-canonical-and-schema-facade-authority
     - broader-resource-schema-validation-and-migration-authority
     - installed-local-runtime-exact-differential
+    - native-local-runtime-capability-handshake
   remainingPhases:
     - production-scheduler-and-durable-authority
   targetMilestone: phase-2-before-1.0

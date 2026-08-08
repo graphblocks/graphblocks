@@ -209,6 +209,8 @@ profiles:
             - packages/graphblocks-runtime/src/graphblocks_runtime/__init__.py
           pythonFacadeAndReference:
             - src/graphblocks/runtime.py
+        scopeNotes:
+          - Installed authority evidence is accepted only when the native binding advertises the versioned runtime.local.v1 capability before executing the exact Rust/Python runtime differential.
         schemas: []
         tckSuites: [runtime]
         evidence:

@@ -94,6 +94,7 @@ def _native_binding_payload(
         "compiler.graph.v1",
         "protocol.application.v1",
         "protocol.worker.v1",
+        "runtime.local.v1",
         "schema.identity.v1",
         "schema.resource-migration.v1",
         "schema.resource-validation.v1",
@@ -155,6 +156,7 @@ def test_installed_native_binding_handshake_requires_versioned_capabilities() ->
             "compiler.graph.v1",
             "protocol.application.v1",
             "protocol.worker.v1",
+            "runtime.local.v1",
             "schema.identity.v1",
             "schema.resource-migration.v1",
             "schema.resource-validation.v1",
@@ -310,6 +312,20 @@ def test_wheelhouse_runs_native_authority_probe_from_a_script_file() -> None:
                 )
             ),
             "missing required capabilities",
+        ),
+        (
+            _native_binding_payload(
+                capabilities=(
+                    "canonical.json.v1",
+                    "compiler.graph.v1",
+                    "protocol.application.v1",
+                    "protocol.worker.v1",
+                    "schema.identity.v1",
+                    "schema.resource-migration.v1",
+                    "schema.resource-validation.v1",
+                )
+            ),
+            "missing required capabilities: runtime.local.v1",
         ),
         (
             _native_binding_payload(binding_version="0.2.0"),
@@ -746,6 +762,33 @@ def test_default_tck_output_matches_source_derived_release_expectations(
         graphblocks_testing,
         "_native_compiler_version",
         lambda: "0.1.0",
+    )
+    graphblocks_runtime = importlib.import_module("graphblocks_runtime")
+    testing_cli = importlib.import_module("graphblocks_testing.cli")
+    runtime_module = importlib.import_module("graphblocks.runtime")
+
+    def reference_runtime_bridge(
+        graph: Mapping[str, object],
+        inputs: Mapping[str, object],
+        **options: object,
+    ) -> dict[str, object]:
+        run_id = str(options["run_id"])
+        result = runtime_module.LocalRuntime(
+            testing_cli._tck_registry("runtime")
+        ).run(graph, inputs, run_id)
+        return {
+            "runId": result.run_id,
+            "status": result.status,
+            "outputs": runtime_module._mutable_json_like(result.outputs),
+            "journal": [
+                {"kind": record.kind} for record in result.journal.records
+            ],
+        }
+
+    monkeypatch.setattr(
+        graphblocks_runtime,
+        "run_stdlib_graph",
+        reference_runtime_bridge,
     )
 
     exit_code = graphblocks_testing.main(

@@ -17,6 +17,7 @@ VALID_NATIVE_CAPABILITIES = (
     "compiler.graph.v1",
     "protocol.application.v1",
     "protocol.worker.v1",
+    "runtime.local.v1",
     "schema.identity.v1",
     "schema.resource-migration.v1",
     "schema.resource-validation.v1",
@@ -141,6 +142,16 @@ def test_runtime_wrapper_accepts_a_versioned_native_binding_contract() -> None:
                 )
             ),
             "missing required capabilities: compiler.graph.v1",
+        ),
+        (
+            _binding_contract_json(
+                capabilities=tuple(
+                    capability
+                    for capability in VALID_NATIVE_CAPABILITIES
+                    if capability != "runtime.local.v1"
+                )
+            ),
+            "missing required capabilities: runtime.local.v1",
         ),
         (
             _binding_contract_json(

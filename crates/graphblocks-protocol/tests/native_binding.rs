@@ -4,9 +4,9 @@ use std::error::Error;
 use graphblocks_protocol::{
     MAX_NATIVE_BINDING_IMPLEMENTATION_LENGTH, MAX_NATIVE_BINDING_IMPLEMENTATION_VERSION_LENGTH,
     NATIVE_BINDING_PROTOCOL_VERSION, NATIVE_CAPABILITY_APPLICATION_PROTOCOL,
-    NATIVE_CAPABILITY_GRAPH_COMPILER, NATIVE_CAPABILITY_WORKER_PROTOCOL,
-    NativeBindingAdvertisement, NativeBindingAdvertisementError, NativeBindingPolicy,
-    validate_native_binding_advertisement,
+    NATIVE_CAPABILITY_GRAPH_COMPILER, NATIVE_CAPABILITY_LOCAL_RUNTIME,
+    NATIVE_CAPABILITY_WORKER_PROTOCOL, NativeBindingAdvertisement, NativeBindingAdvertisementError,
+    NativeBindingPolicy, validate_native_binding_advertisement,
 };
 use serde_json::json;
 
@@ -19,6 +19,7 @@ fn native_binding_advertisement_is_canonical_and_versioned() -> Result<(), Box<d
             NATIVE_CAPABILITY_WORKER_PROTOCOL,
             NATIVE_CAPABILITY_APPLICATION_PROTOCOL,
             NATIVE_CAPABILITY_GRAPH_COMPILER,
+            NATIVE_CAPABILITY_LOCAL_RUNTIME,
         ],
     )?;
 
@@ -32,6 +33,7 @@ fn native_binding_advertisement_is_canonical_and_versioned() -> Result<(), Box<d
                 NATIVE_CAPABILITY_GRAPH_COMPILER,
                 NATIVE_CAPABILITY_APPLICATION_PROTOCOL,
                 NATIVE_CAPABILITY_WORKER_PROTOCOL,
+                NATIVE_CAPABILITY_LOCAL_RUNTIME,
             ],
         })
     );
@@ -73,6 +75,24 @@ fn native_binding_handshake_rejects_missing_required_capabilities() {
         validate_native_binding_advertisement(&policy, &advertisement),
         Err(NativeBindingAdvertisementError::MissingRequiredCapability {
             capability: NATIVE_CAPABILITY_WORKER_PROTOCOL.to_owned(),
+        })
+    );
+}
+
+#[test]
+fn native_binding_handshake_requires_local_runtime_semantics_when_claimed() {
+    let advertisement = NativeBindingAdvertisement {
+        binding_protocol_version: NATIVE_BINDING_PROTOCOL_VERSION,
+        implementation: "graphblocks-python".to_owned(),
+        implementation_version: "0.1.0".to_owned(),
+        capabilities: vec![NATIVE_CAPABILITY_GRAPH_COMPILER.to_owned()],
+    };
+    let policy = NativeBindingPolicy::current().require_capability(NATIVE_CAPABILITY_LOCAL_RUNTIME);
+
+    assert_eq!(
+        validate_native_binding_advertisement(&policy, &advertisement),
+        Err(NativeBindingAdvertisementError::MissingRequiredCapability {
+            capability: NATIVE_CAPABILITY_LOCAL_RUNTIME.to_owned(),
         })
     );
 }

@@ -12,6 +12,7 @@ pub const NATIVE_CAPABILITY_CANONICAL_JSON: &str = "canonical.json.v1";
 pub const NATIVE_CAPABILITY_GRAPH_COMPILER: &str = "compiler.graph.v1";
 pub const NATIVE_CAPABILITY_APPLICATION_PROTOCOL: &str = "protocol.application.v1";
 pub const NATIVE_CAPABILITY_WORKER_PROTOCOL: &str = "protocol.worker.v1";
+pub const NATIVE_CAPABILITY_LOCAL_RUNTIME: &str = "runtime.local.v1";
 pub const NATIVE_CAPABILITY_SCHEMA_IDENTITY: &str = "schema.identity.v1";
 pub const NATIVE_CAPABILITY_RESOURCE_SCHEMA_MIGRATION: &str = "schema.resource-migration.v1";
 pub const NATIVE_CAPABILITY_RESOURCE_SCHEMA_VALIDATION: &str = "schema.resource-validation.v1";
