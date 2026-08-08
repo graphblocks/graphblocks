@@ -566,8 +566,9 @@ contract before the Rust result is accepted. A separate installed platform
 record proves the active canonical/SchemaId and resource
 validation/migration utility slices. The complete schema and C1 runtime suite
 claims are phase-scoped: the bundled stable runtime suite now executes the Rust
-stdlib path with exact native/reference result and lifecycle comparison, while
-the remaining C1 suites stay `reference-only`. This preserves the boundary for
+stdlib path with exact native/reference result and lifecycle comparison. The
+`application-events` suite also uses an installed Rust executor; the five
+remaining C1 suites stay `reference-only`. This preserves the boundary for
 other schema-facing behavior and the remaining stable C1 transition blockers.
 When a selected native wheel is supplied, the `application-events` report now
 also replays every Python-materialized event through the installed Rust stream
@@ -579,8 +580,9 @@ traces, accepted events, and structured diagnostics with the Python oracle.
 Numeric `*UnixMs` fixture fields are authoritative over legacy display
 timestamps. The shared adversarial corpus now covers boolean numeric coercion
 and unknown operations with exact code, message, and path comparison. The
-release matrix still keeps `application-events` at `python-reference` until its
-claim is promoted separately.
+release matrix therefore binds `application-events` to the
+`rust-application-events-exact-differential` executor and exact runtime-wheel
+identity, with Python retained as the reference oracle.
 The stable installed runtime API is now an explicit three-symbol allowlist with
 an exact signature snapshot. Its core execution result is projected to a
 closed checkpoint-free envelope, while persistence and other C4/X3 options use

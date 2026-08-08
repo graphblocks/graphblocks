@@ -444,9 +444,9 @@ def test_release_evidence_binds_native_reports_to_exact_runtime_wheel() -> None:
                         "ok": True,
                         "evidence": {
                             "fixture_digest": "sha256:" + "d" * 64,
-                            "implementation": "graphblocks-python",
-                            "implementation_version": "1.0.0rc1",
-                            "native_stream_artifact": observed_artifact,
+                            "implementation": "graphblocks-runtime",
+                            "implementation_version": "0.1.0",
+                            "implementation_artifact": observed_artifact,
                             "suite": "application-events",
                         },
                         "results": [
@@ -1254,18 +1254,21 @@ def test_stable_tck_expectations_bind_bundled_c0_c1_profiles_and_contract_digest
         "reference_implementation_version"
     ] == "1.0.0rc1"
     assert expectations["suites"]["application-events"]["implementation"] == (
-        "graphblocks-python"
+        "graphblocks-runtime"
     )
     assert expectations["suites"]["application-events"][
-        "native_stream_artifact_distribution"
+        "implementation_artifact_distribution"
     ] == "graphblocks-runtime"
     assert expectations["suites"]["application-events"]["execution_claim"] == {
-        "executor_id": "python-reference",
-        "implementation": "graphblocks-python",
-        "language": "python",
-        "comparison": "reference-only",
+        "executor_id": "rust-application-events-exact-differential",
+        "implementation": "graphblocks-runtime",
+        "language": "rust",
+        "comparison": "exact-native-reference",
         "reference_implementation": "graphblocks-python",
     }
+    assert expectations["suites"]["application-events"][
+        "reference_implementation_version"
+    ] == "1.0.0rc1"
     assert expectations["suites"]["runtime"]["implementation"] == (
         "graphblocks-runtime"
     )
@@ -1288,7 +1291,7 @@ def test_stable_tck_expectations_bind_bundled_c0_c1_profiles_and_contract_digest
     assert {
         expectation["implementation"]
         for suite, expectation in expectations["suites"].items()
-        if suite not in {"compiler", "runtime"}
+        if suite not in {"application-events", "compiler", "runtime"}
     } == {"graphblocks-python"}
 
 

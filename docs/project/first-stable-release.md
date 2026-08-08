@@ -266,16 +266,17 @@ store/journal evidence.
 The installed `application-events` report additionally runs each
 Python-materialized attempted event through the selected Rust wheel and exact
 compares the closed accepted/dropped update sequence, final accepted events,
-and cutoff-response projection. The report retains the selected wheel identity
-as supplemental evidence, but its suite claim remains `python-reference`:
-the installed Rust boundary now also interprets every raw shared-fixture
-operation and exact-compares normalized metadata/payloads, per-operation
+and cutoff-response projection. Its suite claim is
+`exact-native-reference`, bound to the selected `graphblocks-runtime` wheel:
+the installed Rust boundary also interprets every raw shared-fixture operation
+and exact-compares normalized metadata/payloads, per-operation
 emission/admission traces, accepted events, and structured diagnostics.
 Numeric `*UnixMs` fields are the cross-language time authority. The shared
 adversarial corpus includes boolean numeric coercion and unknown-operation
 cases, with exact code, message, and path comparison. The authority matrix
-still declares this suite `python-reference`; changing that release claim is a
-separate promotion step.
+assigns this suite to `rust-application-events-exact-differential`, with Python
+retained as the reference oracle. Five other C1 suites remain
+`reference-only` transition work.
 
 ## Release gates
 

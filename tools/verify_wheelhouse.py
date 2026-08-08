@@ -1056,6 +1056,7 @@ def _tck_expectations(
         raise RuntimeError("checked-in native compiler version is invalid") from error
     suites: dict[str, dict[str, object]] = {}
     contracts: list[dict[str, object]] = []
+    native_exact_suites = {"application-events", "compiler", "runtime"}
     for cases_path in sorted(tck_root.glob("*/cases.json"), key=lambda path: path.parent.name):
         suite = cases_path.parent.name
         case_ids = [
@@ -1105,13 +1106,11 @@ def _tck_expectations(
         case_ids_digest = canonical_hash({"case_ids": case_ids})
         contracts.append(contract)
         suite_implementation = (
-            "graphblocks-runtime"
-            if suite in {"compiler", "runtime"}
-            else implementation
+            "graphblocks-runtime" if suite in native_exact_suites else implementation
         )
         suite_implementation_version = (
             native_compiler_version
-            if suite in {"compiler", "runtime"}
+            if suite in native_exact_suites
             else implementation_version
         )
         suites[suite] = {
@@ -1122,12 +1121,8 @@ def _tck_expectations(
             "implementation_version": suite_implementation_version,
             "suite_manifest_digest": suite_manifest_digest,
         }
-        if suite in {"compiler", "runtime"}:
+        if suite in native_exact_suites:
             suites[suite]["implementation_artifact_distribution"] = (
-                "graphblocks-runtime"
-            )
-        elif suite == "application-events":
-            suites[suite]["native_stream_artifact_distribution"] = (
                 "graphblocks-runtime"
             )
     if not suites:
@@ -1203,24 +1198,19 @@ def _tck_expectations(
         authority_matrix = ConformanceAuthorityMatrix.from_document(
             authority_documents[0]
         )
+        exact_executor_ids = {
+            "application-events": "rust-application-events-exact-differential",
+            "compiler": "rust-compiler-exact-differential",
+            "runtime": "rust-runtime-exact-differential",
+        }
         observed_execution_claims = {
             suite: {
-                "executor_id": (
-                    "rust-compiler-exact-differential"
-                    if suite == "compiler"
-                    else (
-                        "rust-runtime-exact-differential"
-                        if suite == "runtime"
-                        else "python-reference"
-                    )
-                ),
+                "executor_id": exact_executor_ids.get(suite, "python-reference"),
                 "implementation": expectation["implementation"],
-                "language": (
-                    "rust" if suite in {"compiler", "runtime"} else "python"
-                ),
+                "language": "rust" if suite in exact_executor_ids else "python",
                 "comparison": (
                     "exact-native-reference"
-                    if suite in {"compiler", "runtime"}
+                    if suite in exact_executor_ids
                     else "reference-only"
                 ),
                 "reference_implementation": "graphblocks-python",
@@ -1382,10 +1372,7 @@ def _require_release_evidence(
                     else ()
                 )
                 if isinstance(expectation, Mapping)
-                for distribution in (
-                    expectation.get("implementation_artifact_distribution"),
-                    expectation.get("native_stream_artifact_distribution"),
-                )
+                for distribution in (expectation.get("implementation_artifact_distribution"),)
                 if isinstance(distribution, str)
             }
             if required_artifact_distributions:
@@ -1581,11 +1568,11 @@ def _require_release_evidence(
                 else None
             )
             if not isinstance(application_event_evidence, Mapping) or (
-                application_event_evidence.get("native_stream_artifact")
+                application_event_evidence.get("implementation_artifact")
                 != expected_artifact
             ):
                 raise RuntimeError(
-                    "installed application-event stream evidence does not bind the "
+                    "installed application-event implementation evidence does not bind the "
                     "exact graphblocks-runtime wheel"
                 )
             for suite in ("compiler", "runtime"):

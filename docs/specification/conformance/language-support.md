@@ -37,9 +37,10 @@ canonical/identity corpus and the complete shared resource-validation and
 migration corpora across public/reference/direct-native paths to the exact
 runtime wheel. The complete C0 schema suite remains `reference-only`. C1
 evidence is phase-scoped: the bundled runtime suite is
-`exact-native-reference`, while the other C1 suites remain `reference-only`.
-With a selected native wheel, the `application-events` report carries a
-supplemental exact differential for materialized-event stream admission:
+`exact-native-reference`. The `application-events` suite is also
+`exact-native-reference`; five other C1 suites remain `reference-only`.
+With a selected native wheel, the `application-events` report executes a
+materialized-event stream admission differential:
 per-operation accepted/dropped updates, final accepted events, and cutoff
 responses must match the Python oracle. The installed private conformance
 adapter also executes the raw shared-fixture operations through Rust and exact
@@ -47,8 +48,9 @@ compares normalized metadata/payloads, operation-level emission and admission,
 accepted events, and structured diagnostics. Numeric `*UnixMs` fields are
 authoritative over legacy display timestamps. The shared adversarial corpus
 includes boolean numeric coercion and unknown-operation cases with exact code,
-message, and path comparison. The release matrix still declares the suite
-`python-reference`; its claim promotion remains a separate release decision.
+message, and path comparison. The release matrix binds the report to the
+`rust-application-events-exact-differential` executor and exact runtime wheel,
+with Python retained as the reference oracle.
 This preserves the boundary around other schema-facing and stable C1 runtime
 behavior. C4 production and X3 durable-stream durability are preview promotion
 work under `REL-EXTENSION-RUNTIME-AUTHORITY`; their live-authority,

@@ -9334,6 +9334,10 @@ class TckRunner:
 
 class _ApplicationEventStreamDifferentialTckRunner(TckRunner):
     __slots__ = ()
+    authority_executor_id = "rust-application-events-exact-differential"
+    authority_language = "rust"
+    authority_comparison = "exact-native-reference"
+    authority_reference_implementation = "graphblocks-python"
     native_application_event_authority = True
     native_application_event_tck_authority = True
 

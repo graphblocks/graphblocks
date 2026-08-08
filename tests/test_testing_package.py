@@ -1898,8 +1898,8 @@ def test_application_event_stream_admission_is_exact_native_reference(
     report = runners._ApplicationEventStreamDifferentialTckRunner(
         graphblocks_testing.stdlib_registry(),
         suite="application-events",
-        implementation="graphblocks-python",
-        implementation_version="1.0.0rc1",
+        implementation="graphblocks-runtime",
+        implementation_version="0.1.0",
     ).run_cases(cases)
 
     assert report.ok
@@ -1977,8 +1977,8 @@ def test_application_event_raw_tck_execution_rejects_native_drift(monkeypatch) -
     report = runners._ApplicationEventStreamDifferentialTckRunner(
         graphblocks_testing.stdlib_registry(),
         suite="application-events",
-        implementation="graphblocks-python",
-        implementation_version="1.0.0rc1",
+        implementation="graphblocks-runtime",
+        implementation_version="0.1.0",
     ).run_cases((case,))
 
     assert not report.ok
@@ -2024,8 +2024,8 @@ def test_application_event_stream_admission_rejects_native_drift(monkeypatch) ->
     report = runners._ApplicationEventStreamDifferentialTckRunner(
         graphblocks_testing.stdlib_registry(),
         suite="application-events",
-        implementation="graphblocks-python",
-        implementation_version="1.0.0rc1",
+        implementation="graphblocks-runtime",
+        implementation_version="0.1.0",
     ).run_cases((case,))
 
     assert not report.ok
@@ -10393,23 +10393,23 @@ def test_testing_package_cli_emits_observed_release_tck_identity(
         }
     application_event_report = payload["reports"]["application-events"]
     assert application_event_report["evidence"]["implementation"] == (
-        "graphblocks-python"
+        "graphblocks-runtime"
     )
     assert application_event_report["evidence"]["implementation_version"] == (
-        "1.0.0rc1"
+        "0.1.0"
     )
-    assert application_event_report["evidence"]["native_stream_artifact"] == (
+    assert application_event_report["evidence"]["implementation_artifact"] == (
         compiler_artifact
     )
     assert application_event_report["evidence"]["authority_claim"]["comparison"] == (
-        "reference-only"
+        "exact-native-reference"
     )
     assert application_event_report["evidence"]["execution_claim"][
         "executor_id"
-    ] == ("python-reference")
-    assert "reference_implementation_version" not in application_event_report[
-        "evidence"
-    ]
+    ] == ("rust-application-events-exact-differential")
+    assert application_event_report["evidence"][
+        "reference_implementation_version"
+    ] == "1.0.0rc1"
     assert len(native_application_event_calls) == len(
         application_event_report["results"]
     )

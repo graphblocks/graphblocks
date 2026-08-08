@@ -2191,7 +2191,6 @@ def test_stable_release_matrix_is_complete_and_machine_readable() -> None:
             "local-flow",
         ],
         "remainingExactSuites": [
-            "application-events",
             "retry",
             "sequence",
             "tool-execution",
@@ -2429,7 +2428,7 @@ def test_stable_release_matrix_is_complete_and_machine_readable() -> None:
         suite
         for requirement in target_c1_requirements
         for suite in requirement["tckSuites"]
-        if suite != "runtime"
+        if suite not in {"application-events", "runtime"}
     }
     assert set(runtime_gate["completedEvidence"]) <= set(
         runtime_gate["requiredEvidence"]

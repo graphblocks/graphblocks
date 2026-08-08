@@ -433,7 +433,7 @@ def _write_platform_input(
         and record["artifactType"] == "wheel"
     )
     tck["reports"]["application-events"]["evidence"][
-        "native_stream_artifact"
+        "implementation_artifact"
     ] = dict(native_compiler_artifact)
     tck["reports"]["compiler"]["evidence"]["implementation_artifact"] = dict(
         native_compiler_artifact
