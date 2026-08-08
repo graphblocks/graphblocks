@@ -1,5 +1,3 @@
-#![allow(clippy::expect_used)] // Guarded by compatibility/rust-production-expect-budget.json.
-
 use std::cell::Cell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
@@ -477,21 +475,18 @@ impl WindowAccumulator {
             .windows
             .keys()
             .copied()
-            .filter(|start_unix_ms| {
-                start_unix_ms
-                    .checked_add(self.policy.size_ms)
-                    .expect("accepted window has a representable end")
-                    <= watermark.unix_ms
+            .filter_map(|start_unix_ms| {
+                let end_unix_ms = start_unix_ms.checked_add(self.policy.size_ms)?;
+                let deadline_unix_ms = end_unix_ms.checked_add(self.policy.allowed_lateness_ms)?;
+                (end_unix_ms <= watermark.unix_ms).then_some((
+                    start_unix_ms,
+                    end_unix_ms,
+                    deadline_unix_ms,
+                ))
             })
             .collect::<Vec<_>>();
         let mut emitted = Vec::new();
-        for start_unix_ms in triggerable {
-            let end_unix_ms = start_unix_ms
-                .checked_add(self.policy.size_ms)
-                .expect("accepted window has a representable end");
-            let deadline_unix_ms = end_unix_ms
-                .checked_add(self.policy.allowed_lateness_ms)
-                .expect("accepted window has a representable lateness deadline");
+        for (start_unix_ms, end_unix_ms, deadline_unix_ms) in triggerable {
             if deadline_unix_ms <= watermark.unix_ms {
                 if let Some(mut events) = self.windows.remove(&start_unix_ms) {
                     events.sort_by(|left, right| left.cursor.cmp(&right.cursor));
