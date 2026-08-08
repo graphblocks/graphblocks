@@ -109,8 +109,8 @@ deepAudit:
     authority: docs/project/audit-issue-status.yaml
     inventory: docs/project/audit-issues.json
     checker: tools/check_audit_inventory.py
-    resolved: 75
-    openBySeverity: {P0: 0, P1: 0, P2: 16, P3: 8}
+    resolved: 76
+    openBySeverity: {P0: 0, P1: 0, P2: 15, P3: 8}
   exitPolicy:
     securityFreeze: {maxOpenP0: 0}
     stableRelease: {maxOpenP0: 0, maxOpenP1: 0}
@@ -1127,6 +1127,12 @@ releaseGates:
       - packages/graphblocks-testing/pyproject.toml
       - src/graphblocks/data/conformance-profiles.yaml
       - README.md
+      - compatibility/python-package-boundaries.yaml
+      - compatibility/python-root-compatibility.json
+      - src/graphblocks/__init__.py
+      - tests/test_python_package_boundaries.py
+      - tests/test_internal_import_boundaries.py
+      - tests/test_wheelhouse_schema_verification.py
     quickFeedbackCi:
       workflow: .github/workflows/ci.yml
       job: python-quality
