@@ -81,6 +81,7 @@ def _native_binding_payload(
         "compiler.graph.v1",
         "protocol.application.v1",
         "protocol.worker.v1",
+        "schema.identity.v1",
     ),
 ) -> dict[str, object]:
     return {
@@ -89,6 +90,11 @@ def _native_binding_payload(
             "json": '{"a":1,"b":2}',
         },
         "distributionVersion": distribution_version,
+        "schemaIdSmoke": {
+            "canonical": "schemas/Message@4294967295",
+            "majorVersion": 4_294_967_295,
+            "name": "schemas/Message",
+        },
         "status": {
             "available": True,
             "binding_crate": "graphblocks-python",
@@ -133,6 +139,7 @@ def test_installed_native_binding_handshake_requires_versioned_capabilities() ->
             "compiler.graph.v1",
             "protocol.application.v1",
             "protocol.worker.v1",
+            "schema.identity.v1",
             "vendor.future.v1",
         )
     )
@@ -152,6 +159,22 @@ def test_installed_native_binding_handshake_rejects_wrong_canonical_smoke() -> N
     }
 
     with pytest.raises(RuntimeError, match="canonical smoke does not match"):
+        module._validate_installed_native_binding(
+            payload,
+            expected_distribution_version="0.1.0",
+        )
+
+
+def test_installed_native_binding_handshake_rejects_wrong_schema_id_smoke() -> None:
+    module = _load_wheelhouse_module()
+    payload = _native_binding_payload()
+    payload["schemaIdSmoke"] = {
+        "canonical": "schemas/Message@1",
+        "majorVersion": 1,
+        "name": "schemas/Message",
+    }
+
+    with pytest.raises(RuntimeError, match="schema id smoke does not match"):
         module._validate_installed_native_binding(
             payload,
             expected_distribution_version="0.1.0",

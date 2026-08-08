@@ -13,6 +13,7 @@ _REQUIRED_NATIVE_CAPABILITIES = (
     "compiler.graph.v1",
     "protocol.application.v1",
     "protocol.worker.v1",
+    "schema.identity.v1",
 )
 _MAX_NATIVE_BINDING_CONTRACT_BYTES = 16_384
 _MAX_NATIVE_CAPABILITIES = 64
@@ -183,6 +184,7 @@ try:
         evaluate_usage_ledger_json,
         finalize_tool_call_json,
         negotiate_application_protocol_capabilities_json,
+        parse_schema_id_json,
         prepare_tool_result_for_model_json,
         record_tool_effect_audit_event_json,
         record_tool_effect_precondition_json,
@@ -237,9 +239,15 @@ except Exception as error:
 
     def canonicalize_json(value_json: str) -> str:
         require_native_extension()
+        raise RuntimeError("native canonicalization is unavailable")
 
     def canonical_hash_json(value_json: str) -> str:
         require_native_extension()
+        raise RuntimeError("native canonical hashing is unavailable")
+
+    def parse_schema_id_json(value: str) -> str:
+        require_native_extension()
+        raise RuntimeError("native schema identity is unavailable")
 
     def capture_telemetry_content_json(decision_json: str, content_json: str) -> str:
         require_native_extension()
@@ -705,11 +713,17 @@ def _canonical_json(value: object) -> str:
 
 
 def canonicalize(value: object) -> str:
-    return canonicalize_json(_canonical_json(value))
+    result = canonicalize_json(_canonical_json(value))
+    if type(result) is not str:
+        raise TypeError("native canonical JSON result must be a string")
+    return result
 
 
 def canonical_hash(value: object) -> str:
-    return canonical_hash_json(_canonical_json(value))
+    result = canonical_hash_json(_canonical_json(value))
+    if type(result) is not str:
+        raise TypeError("native canonical hash result must be a string")
+    return result
 
 
 def _json_object_result(result_json: str, label: str) -> dict[str, object]:
@@ -761,6 +775,32 @@ def _json_object_result(result_json: str, label: str) -> dict[str, object]:
         raise ValueError(f"{label} must be valid strict JSON") from error
     if not isinstance(payload, dict):
         raise ValueError(f"{label} must decode to a JSON object")
+    return payload
+
+
+def parse_schema_id(value: str) -> dict[str, object]:
+    if not isinstance(value, str):
+        raise TypeError("schema id must be a string")
+    result_json = parse_schema_id_json(str.__str__(value))
+    if type(result_json) is not str:
+        raise TypeError("native schema id JSON result must be a string")
+    payload = _json_object_result(
+        result_json,
+        "native schema id result",
+    )
+    if set(payload) != {"canonical", "majorVersion", "name"}:
+        raise ValueError("native schema id result must be closed")
+    canonical = payload["canonical"]
+    major_version = payload["majorVersion"]
+    name = payload["name"]
+    if (
+        type(canonical) is not str
+        or type(name) is not str
+        or type(major_version) is not int
+        or major_version <= 0
+        or canonical != f"{name}@{major_version}"
+    ):
+        raise ValueError("native schema id result has invalid identity fields")
     return payload
 
 
@@ -1391,6 +1431,8 @@ __all__ = [
     "native_extension_status",
     "negotiate_application_protocol_capabilities",
     "negotiate_application_protocol_capabilities_json",
+    "parse_schema_id",
+    "parse_schema_id_json",
     "prepare_tool_result_for_model",
     "prepare_tool_result_for_model_json",
     "record_tool_effect_audit_event",

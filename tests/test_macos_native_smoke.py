@@ -69,6 +69,7 @@ def _probe(tmp_path: Path) -> dict[str, object]:
                 "compiler.graph.v1",
                 "protocol.application.v1",
                 "protocol.worker.v1",
+                "schema.identity.v1",
             ],
             "module": "graphblocks_runtime._native",
             "error": None,
@@ -76,6 +77,11 @@ def _probe(tmp_path: Path) -> dict[str, object]:
         "canonicalSmoke": {
             "hash": "sha256:43258cff783fe7036d8a43033f830adfc60ec037382473548ac742b888292777",
             "json": '{"a":1,"b":2}',
+        },
+        "schemaIdSmoke": {
+            "canonical": "schemas/Message@4294967295",
+            "majorVersion": 4_294_967_295,
+            "name": "schemas/Message",
         },
         "compilerSmoke": {
             "ok": True,
@@ -121,6 +127,15 @@ def test_macos_probe_is_closed_installed_and_native(tmp_path: Path) -> None:
     with pytest.raises(tool.MacosSmokeError, match="canonical smoke does not match"):
         tool.validate_probe(
             wrong_canonical,
+            expected_runner="macos-15",
+            expected_python="3.11",
+        )
+
+    wrong_schema_id = deepcopy(probe)
+    wrong_schema_id["schemaIdSmoke"]["majorVersion"] = 1
+    with pytest.raises(tool.MacosSmokeError, match="schema id smoke does not match"):
+        tool.validate_probe(
+            wrong_schema_id,
             expected_runner="macos-15",
             expected_python="3.11",
         )

@@ -56,11 +56,17 @@ REQUIRED_NATIVE_BINDING_CAPABILITIES = (
     "compiler.graph.v1",
     "protocol.application.v1",
     "protocol.worker.v1",
+    "schema.identity.v1",
 )
 NATIVE_CANONICAL_SMOKE_JSON = '{"a":1,"b":2}'
 NATIVE_CANONICAL_SMOKE_HASH = (
     "sha256:43258cff783fe7036d8a43033f830adfc60ec037382473548ac742b888292777"
 )
+NATIVE_SCHEMA_ID_SMOKE = {
+    "canonical": "schemas/Message@4294967295",
+    "majorVersion": 4_294_967_295,
+    "name": "schemas/Message",
+}
 MAX_SDIST_MEMBER_COUNT = 100_000
 MAX_SDIST_UNPACKED_SIZE = 512 * 1024 * 1024
 WINDOWS_RESERVED_PATH_NAMES = {
@@ -276,6 +282,7 @@ def _validate_installed_native_binding(
     if not isinstance(payload, dict) or set(payload) != {
         "canonicalSmoke",
         "distributionVersion",
+        "schemaIdSmoke",
         "status",
     }:
         raise RuntimeError(
@@ -360,6 +367,10 @@ def _validate_installed_native_binding(
     }:
         raise RuntimeError(
             "installed native binding canonical smoke does not match"
+        )
+    if payload["schemaIdSmoke"] != NATIVE_SCHEMA_ID_SMOKE:
+        raise RuntimeError(
+            "installed native binding schema id smoke does not match"
         )
     return dict(status)
 
@@ -1868,6 +1879,8 @@ def main(argv: list[str] | None = None) -> int:
                     "'json': graphblocks_runtime.canonicalize_json('{\"b\":2,\"a\":1}')"
                     "}, "
                     "'distributionVersion': version('graphblocks-runtime'), "
+                    "'schemaIdSmoke': graphblocks_runtime.parse_schema_id("
+                    "'schemas/Message@4294967295'), "
                     "'status': graphblocks_runtime.native_extension_status()"
                     "}, sort_keys=True))"
                 ),

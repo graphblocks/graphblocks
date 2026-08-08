@@ -9,10 +9,11 @@ use graphblocks_compiler::graph::GRAPH_API_VERSION;
 use graphblocks_control_plane::{DaemonConfig, DaemonStatus, WorkerRegistry, WorkerRegistryError};
 use graphblocks_protocol::{
     NATIVE_CAPABILITY_APPLICATION_PROTOCOL, NATIVE_CAPABILITY_CANONICAL_JSON,
-    NATIVE_CAPABILITY_GRAPH_COMPILER, NATIVE_CAPABILITY_WORKER_PROTOCOL,
-    NativeBindingAdvertisement, RemotePayload, RemotePayloadError, RemotePayloadLimits,
-    WorkerAdmissionPolicy, WorkerAdvertisement, WorkerProtocolError, WorkerProtocolMessage,
-    WorkerProtocolMessageKind, admit_worker_with_policy, validate_remote_payload,
+    NATIVE_CAPABILITY_GRAPH_COMPILER, NATIVE_CAPABILITY_SCHEMA_IDENTITY,
+    NATIVE_CAPABILITY_WORKER_PROTOCOL, NativeBindingAdvertisement, RemotePayload,
+    RemotePayloadError, RemotePayloadLimits, WorkerAdmissionPolicy, WorkerAdvertisement,
+    WorkerProtocolError, WorkerProtocolMessage, WorkerProtocolMessageKind,
+    admit_worker_with_policy, validate_remote_payload,
 };
 use graphblocks_runtime_core::agent::{AgentLoopController, AgentLoopDecision, AgentSpec};
 use graphblocks_runtime_core::application_event::{
@@ -110,7 +111,7 @@ use graphblocks_runtime_durable::{
     DurableOutputCutoffTerminalReason, DurableResponsePolicyStopRecord, DurableToolTerminalRecord,
     DurableToolTerminalState, InMemoryDurableToolTerminalStore, ToolTerminalStoreError,
 };
-use graphblocks_schema::{canonical_json, parse_canonical_json};
+use graphblocks_schema::{SchemaId, canonical_json, parse_canonical_json};
 use pyo3::exceptions::{PyRuntimeError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyBool;
@@ -131,6 +132,7 @@ fn binding_contract_json() -> PyResult<String> {
             NATIVE_CAPABILITY_GRAPH_COMPILER,
             NATIVE_CAPABILITY_APPLICATION_PROTOCOL,
             NATIVE_CAPABILITY_WORKER_PROTOCOL,
+            NATIVE_CAPABILITY_SCHEMA_IDENTITY,
         ],
     )
     .map_err(|error| {
@@ -158,6 +160,18 @@ fn canonical_hash_json(value_json: &str) -> PyResult<String> {
     canonical_hash(&value).map_err(|error| {
         PyValueError::new_err(format!("cannot hash canonical JSON value: {error}"))
     })
+}
+
+#[pyfunction]
+fn parse_schema_id_json(value: &str) -> PyResult<String> {
+    let schema_id = SchemaId::parse(value)
+        .map_err(|error| PyValueError::new_err(format!("invalid schema id: {error}")))?;
+    canonical_json(&json!({
+        "canonical": schema_id.as_str(),
+        "majorVersion": schema_id.major_version(),
+        "name": schema_id.name(),
+    }))
+    .map_err(|error| PyRuntimeError::new_err(format!("failed to serialize schema id: {error}")))
 }
 
 fn strict_u64_argument(value: &Bound<'_, PyAny>) -> PyResult<u64> {
@@ -9463,6 +9477,7 @@ fn _native(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(binding_contract_json, module)?)?;
     module.add_function(wrap_pyfunction!(canonicalize_json, module)?)?;
     module.add_function(wrap_pyfunction!(canonical_hash_json, module)?)?;
+    module.add_function(wrap_pyfunction!(parse_schema_id_json, module)?)?;
     module.add_function(wrap_pyfunction!(finalize_tool_call_json, module)?)?;
     module.add_function(wrap_pyfunction!(compile_graph_json, module)?)?;
     module.add_function(wrap_pyfunction!(
@@ -9578,7 +9593,7 @@ mod tests {
         evaluate_tool_resolution_json, evaluate_tool_result_stream_json,
         evaluate_usage_ledger_json, finalize_tool_call_json,
         negotiate_application_protocol_capabilities_json, parse_application_protocol_event_kind,
-        parse_json_argument, parse_resolved_tool, parse_tool_call,
+        parse_json_argument, parse_resolved_tool, parse_schema_id_json, parse_tool_call,
         prepare_tool_result_for_model_json, record_tool_effect_audit_event_json,
         record_tool_effect_precondition_json, run_stdlib_graph_json,
         run_stdlib_graph_with_options_json, run_test_graph_json, run_test_graph_with_options_json,
@@ -9605,6 +9620,7 @@ mod tests {
                 "compiler.graph.v1",
                 "protocol.application.v1",
                 "protocol.worker.v1",
+                "schema.identity.v1",
             ])
         );
         Ok(())
@@ -9630,6 +9646,27 @@ mod tests {
             .expect_err("duplicate keys must fail before canonicalization");
 
         assert!(error.to_string().contains("duplicate JSON object key"));
+    }
+
+    #[test]
+    fn native_schema_id_bridge_returns_closed_identity() -> Result<(), String> {
+        let parsed = parse_schema_id_json("schemas/Message@4294967295")
+            .map_err(|error| error.to_string())?;
+
+        assert_eq!(
+            parsed,
+            r#"{"canonical":"schemas/Message@4294967295","majorVersion":4294967295,"name":"schemas/Message"}"#
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn native_schema_id_bridge_rejects_noncanonical_version() {
+        pyo3::Python::initialize();
+        let error = parse_schema_id_json("schemas/Message@01")
+            .expect_err("noncanonical versions must fail closed");
+
+        assert!(error.to_string().contains("must not use leading zeroes"));
     }
 
     #[test]

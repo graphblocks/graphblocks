@@ -17,6 +17,7 @@ VALID_NATIVE_CAPABILITIES = (
     "compiler.graph.v1",
     "protocol.application.v1",
     "protocol.worker.v1",
+    "schema.identity.v1",
 )
 
 
@@ -335,6 +336,39 @@ def test_runtime_wrapper_exposes_native_canonical_boundary() -> None:
     assert "canonical_hash_json" in runtime.__all__
     assert "canonicalize" in runtime.__all__
     assert "canonicalize_json" in runtime.__all__
+
+
+def test_runtime_wrapper_exposes_closed_native_schema_id_boundary() -> None:
+    calls: list[str] = []
+
+    class FakeNative:
+        __version__ = "0.1.0"
+
+        def __getattr__(self, name: str):
+            if name.endswith("_json"):
+                return lambda *args, **kwargs: '{"ok":true}'
+            raise AttributeError(name)
+
+        def binding_version(self) -> str:
+            return self.__version__
+
+        def parse_schema_id_json(self, value: str) -> str:
+            calls.append(value)
+            return (
+                '{"canonical":"schemas/Message@4294967295",'
+                '"majorVersion":4294967295,"name":"schemas/Message"}'
+            )
+
+    runtime = load_runtime_wrapper(FakeNative())
+
+    assert runtime.parse_schema_id("schemas/Message@4294967295") == {
+        "canonical": "schemas/Message@4294967295",
+        "majorVersion": 4_294_967_295,
+        "name": "schemas/Message",
+    }
+    assert calls == ["schemas/Message@4294967295"]
+    assert "parse_schema_id" in runtime.__all__
+    assert "parse_schema_id_json" in runtime.__all__
 
 
 def test_runtime_wrapper_rejects_non_standard_native_json_results() -> None:
@@ -1175,6 +1209,9 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
         finalize_tool_call_json=finalize_tool_call_json,
         negotiate_application_protocol_capabilities_json=(
             negotiate_application_protocol_capabilities_json
+        ),
+        parse_schema_id_json=lambda value: json.dumps(
+            {"canonical": value, "majorVersion": 1, "name": "schemas/Message"}
         ),
         prepare_tool_result_for_model_json=prepare_tool_result_for_model_json,
         record_tool_effect_audit_event_json=record_tool_effect_audit_event_json,

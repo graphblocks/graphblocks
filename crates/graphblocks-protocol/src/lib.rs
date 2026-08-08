@@ -12,6 +12,7 @@ pub const NATIVE_CAPABILITY_CANONICAL_JSON: &str = "canonical.json.v1";
 pub const NATIVE_CAPABILITY_GRAPH_COMPILER: &str = "compiler.graph.v1";
 pub const NATIVE_CAPABILITY_APPLICATION_PROTOCOL: &str = "protocol.application.v1";
 pub const NATIVE_CAPABILITY_WORKER_PROTOCOL: &str = "protocol.worker.v1";
+pub const NATIVE_CAPABILITY_SCHEMA_IDENTITY: &str = "schema.identity.v1";
 pub const MAX_NATIVE_BINDING_IMPLEMENTATION_LENGTH: usize = 128;
 pub const MAX_NATIVE_BINDING_IMPLEMENTATION_VERSION_LENGTH: usize = 64;
 pub const MAX_NATIVE_BINDING_CAPABILITIES: usize = 64;

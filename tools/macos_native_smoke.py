@@ -22,11 +22,17 @@ REQUIRED_CAPABILITIES = (
     "compiler.graph.v1",
     "protocol.application.v1",
     "protocol.worker.v1",
+    "schema.identity.v1",
 )
 NATIVE_CANONICAL_SMOKE_JSON = '{"a":1,"b":2}'
 NATIVE_CANONICAL_SMOKE_HASH = (
     "sha256:43258cff783fe7036d8a43033f830adfc60ec037382473548ac742b888292777"
 )
+NATIVE_SCHEMA_ID_SMOKE = {
+    "canonical": "schemas/Message@4294967295",
+    "majorVersion": 4_294_967_295,
+    "name": "schemas/Message",
+}
 
 
 class MacosSmokeError(ValueError):
@@ -145,6 +151,9 @@ def create_probe(*, runner_label: str) -> dict[str, object]:
             "hash": graphblocks_runtime.canonical_hash_json('{"b":2,"a":1}'),
             "json": graphblocks_runtime.canonicalize_json('{"b":2,"a":1}'),
         },
+        "schemaIdSmoke": graphblocks_runtime.parse_schema_id(
+            "schemas/Message@4294967295"
+        ),
         "compilerSmoke": {
             "ok": True,
             "diagnosticCount": len(diagnostics),
@@ -167,6 +176,7 @@ def validate_probe(
             "canonicalSmoke",
             "schemaVersion",
             "runnerLabel",
+            "schemaIdSmoke",
             "os",
             "machine",
             "platform",
@@ -282,6 +292,9 @@ def validate_probe(
         "json": NATIVE_CANONICAL_SMOKE_JSON,
     }:
         raise MacosSmokeError("macOS native canonical smoke does not match")
+
+    if probe["schemaIdSmoke"] != NATIVE_SCHEMA_ID_SMOKE:
+        raise MacosSmokeError("macOS native schema id smoke does not match")
 
     compiler = _closed_mapping(
         probe["compilerSmoke"],
