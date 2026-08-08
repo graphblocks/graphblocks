@@ -81,7 +81,9 @@ fn checkpoint_barrier_digest_is_stable_and_includes_required_state() {
     assert_eq!(barrier.source_cursors["orders"].len(), 2);
     assert_eq!(barrier.content_digest(), reversed.content_digest());
     assert_eq!(
-        barrier.content_digest(),
+        barrier
+            .content_digest()
+            .expect("test checkpoint barrier must be canonically hashable"),
         "sha256:a1d296d22a2858fd633c0b2b53e53657fc0780532beedf6c2f718dda6b51b7e0"
     );
 }
@@ -136,7 +138,8 @@ fn sink_commit_log_is_idempotent_and_rejects_mutated_replay() {
         })
     );
     assert_eq!(
-        log.content_digest(),
+        log.content_digest()
+            .expect("test sink commit log must be canonically hashable"),
         "sha256:44f3d946c8929c37202f95f3b38faec719b3bee986ec7d8f403c385a60cb2c7f"
     );
 }

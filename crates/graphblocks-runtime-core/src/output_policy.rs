@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::canonical::canonical_hash;
+use crate::canonical::{CanonicalJsonError, canonical_hash};
 use serde_json::json;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -661,6 +661,7 @@ pub struct DeclarativeOutputPolicyRule {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum DeclarativeOutputPolicyRuleError {
+    CanonicalJson(CanonicalJsonError),
     EmptyRuleId,
     EmptyLiteral {
         rule_id: String,
@@ -680,6 +681,12 @@ pub enum DeclarativeOutputPolicyRuleError {
     InvalidEvaluationTimestamp {
         evaluated_at_unix_ms: u64,
     },
+}
+
+impl From<CanonicalJsonError> for DeclarativeOutputPolicyRuleError {
+    fn from(error: CanonicalJsonError) -> Self {
+        Self::CanonicalJson(error)
+    }
 }
 
 impl DeclarativeOutputPolicyRule {
@@ -817,15 +824,15 @@ impl DeclarativeOutputPolicyEvaluator {
             );
         }
         self.validate()?;
-        Ok(self.evaluate_chunk_unchecked(chunk, evaluated_at_unix_ms))
+        self.evaluate_chunk_unchecked(chunk, evaluated_at_unix_ms)
     }
 
     fn evaluate_chunk_unchecked(
         &self,
         chunk: &GenerationChunk,
         evaluated_at_unix_ms: u64,
-    ) -> OutputPolicyDecision {
-        let input_digest = self.input_digest(chunk);
+    ) -> Result<OutputPolicyDecision, DeclarativeOutputPolicyRuleError> {
+        let input_digest = self.input_digest(chunk)?;
         let mut rules = self.rules.iter().collect::<Vec<_>>();
         rules.sort_by(|left, right| {
             right
@@ -835,18 +842,18 @@ impl DeclarativeOutputPolicyEvaluator {
         });
         for rule in rules {
             if chunk.text.contains(&rule.literal) {
-                return self
-                    .decision_for_rule(rule, chunk, &input_digest)
-                    .evaluated_at_unix_ms(evaluated_at_unix_ms);
+                return Ok(self
+                    .decision_for_rule(rule, chunk, &input_digest)?
+                    .evaluated_at_unix_ms(evaluated_at_unix_ms));
             }
         }
 
-        OutputPolicyDecision::allow(
-            Self::decision_id(&input_digest, OutputDisposition::Allow, None),
+        Ok(OutputPolicyDecision::allow(
+            Self::decision_id(&input_digest, OutputDisposition::Allow, None)?,
             Some(chunk.sequence),
             input_digest,
         )
-        .evaluated_at_unix_ms(evaluated_at_unix_ms)
+        .evaluated_at_unix_ms(evaluated_at_unix_ms))
     }
 
     fn decision_for_rule(
@@ -854,8 +861,8 @@ impl DeclarativeOutputPolicyEvaluator {
         rule: &DeclarativeOutputPolicyRule,
         chunk: &GenerationChunk,
         input_digest: &str,
-    ) -> OutputPolicyDecision {
-        let decision_id = Self::decision_id(input_digest, rule.disposition, Some(&rule.rule_id));
+    ) -> Result<OutputPolicyDecision, CanonicalJsonError> {
+        let decision_id = Self::decision_id(input_digest, rule.disposition, Some(&rule.rule_id))?;
         let decision = match rule.disposition {
             OutputDisposition::Allow => {
                 OutputPolicyDecision::allow(decision_id, Some(chunk.sequence), input_digest)
@@ -890,9 +897,9 @@ impl DeclarativeOutputPolicyEvaluator {
             }
         };
 
-        decision
+        Ok(decision
             .with_reason_codes(rule.reason_codes.clone())
-            .with_policy_refs(rule.effective_policy_refs())
+            .with_policy_refs(rule.effective_policy_refs()))
     }
 
     fn redactions_for_rule(
@@ -918,7 +925,7 @@ impl DeclarativeOutputPolicyEvaluator {
         redactions
     }
 
-    fn input_digest(&self, chunk: &GenerationChunk) -> String {
+    fn input_digest(&self, chunk: &GenerationChunk) -> Result<String, CanonicalJsonError> {
         canonical_hash(&json!({
             "chunk": {
                 "stream_id": chunk.stream_id,
@@ -942,13 +949,13 @@ impl DeclarativeOutputPolicyEvaluator {
         input_digest: &str,
         disposition: OutputDisposition,
         rule_id: Option<&str>,
-    ) -> String {
-        "output-decision:".to_owned()
+    ) -> Result<String, CanonicalJsonError> {
+        Ok("output-decision:".to_owned()
             + &canonical_hash(&json!({
                 "input_digest": input_digest,
                 "disposition": disposition_name(disposition),
                 "rule_id": rule_id,
-            }))
+            }))?)
     }
 }
 

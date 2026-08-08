@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt;
 
-use crate::canonical::canonical_hash;
+use crate::canonical::{CanonicalJsonError, canonical_hash};
 use serde_json::{Value, json};
 
 use crate::evaluation::{ResourceSnapshotRef, ReviewDecision, ReviewRecord};
@@ -47,7 +47,7 @@ impl ReviewRequest {
         self
     }
 
-    pub fn content_digest(&self) -> String {
+    pub fn content_digest(&self) -> Result<String, CanonicalJsonError> {
         canonical_hash(&json!({
             "subject": {
                 "resource_id": self.subject.resource_id,

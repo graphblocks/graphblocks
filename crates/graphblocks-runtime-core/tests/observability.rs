@@ -169,12 +169,14 @@ fn callback_delivery_observation_accepts_low_cardinality_labels_and_attributes()
 
 #[test]
 fn hash_only_capture_keeps_digest_without_exporting_content() {
-    let captured = CaptureDecision::hash_only("billing-30d").capture_text(
-        "message",
-        "hello secret",
-        None,
-        [RedactionRule::literal("secret", "[redacted]")],
-    );
+    let captured = CaptureDecision::hash_only("billing-30d")
+        .capture_text(
+            "message",
+            "hello secret",
+            None,
+            [RedactionRule::literal("secret", "[redacted]")],
+        )
+        .expect("test captured text must be canonically hashable");
 
     assert_eq!(captured.mode, CaptureMode::HashOnly);
     assert_eq!(captured.content_kind, "message");
@@ -194,7 +196,8 @@ fn redacted_preview_applies_redaction_before_export_capture() {
             "safe prefix secret suffix",
             None,
             [RedactionRule::literal("secret", "[redacted]")],
-        );
+        )
+        .expect("test captured text must be canonically hashable");
 
     assert_eq!(captured.mode, CaptureMode::RedactedPreview);
     assert_eq!(
@@ -209,12 +212,9 @@ fn redacted_preview_applies_redaction_before_export_capture() {
 
 #[test]
 fn reference_only_capture_exports_reference_without_preview() {
-    let captured = CaptureDecision::reference_only("records-90d").capture_text(
-        "document",
-        "document body",
-        Some("artifact://doc-1"),
-        [],
-    );
+    let captured = CaptureDecision::reference_only("records-90d")
+        .capture_text("document", "document body", Some("artifact://doc-1"), [])
+        .expect("test captured text must be canonically hashable");
 
     assert_eq!(captured.mode, CaptureMode::ReferenceOnly);
     assert_eq!(captured.preview, None);

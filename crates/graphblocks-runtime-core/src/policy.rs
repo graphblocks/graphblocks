@@ -1,10 +1,11 @@
 use std::collections::BTreeMap;
 
-use crate::canonical::canonical_hash;
+use crate::canonical::{CanonicalJsonError, canonical_hash};
 use serde_json::{Value, json};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum PolicyValidationError {
+    CanonicalJson(CanonicalJsonError),
     EmptyField {
         owner: &'static str,
         field: &'static str,
@@ -20,6 +21,12 @@ pub enum PolicyValidationError {
     EmptyPolicyRuleCollection {
         field: &'static str,
     },
+}
+
+impl From<CanonicalJsonError> for PolicyValidationError {
+    fn from(error: CanonicalJsonError) -> Self {
+        Self::CanonicalJson(error)
+    }
 }
 
 fn validate_non_empty_field(
@@ -527,7 +534,7 @@ impl PolicyBundle {
             "external_evaluator_ref": self.external_evaluator_ref,
             "obligation_schema_versions": self.obligation_schema_versions,
             "default_fail_modes": self.default_fail_modes,
-        })))
+        }))?)
     }
 
     pub fn content_digest(&self) -> Result<String, PolicyValidationError> {
@@ -636,7 +643,7 @@ impl EntitlementSnapshot {
         }
     }
 
-    pub fn content_digest(&self) -> String {
+    pub fn content_digest(&self) -> Result<String, CanonicalJsonError> {
         canonical_hash(&json!({
             "subject": self.subject.digest_value(),
             "scopes": self.scopes.iter().map(ResourceRef::digest_value).collect::<Vec<_>>(),
@@ -682,14 +689,16 @@ pub fn resolve_policy_snapshot(
     for bundle in &ordered_bundles {
         bundle_digests.push(json!([bundle.reference(), bundle.content_digest()?]));
     }
-    let entitlement_digest = entitlement.map(EntitlementSnapshot::content_digest);
+    let entitlement_digest = entitlement
+        .map(EntitlementSnapshot::content_digest)
+        .transpose()?;
     let effective_policy_digest = canonical_hash(&json!({
         "profile": profile.digest_value(),
         "bundles": bundle_digests,
         "entitlement": entitlement_digest,
         "pricing_revision": Value::Null,
         "quota_window_ids": Vec::<String>::new(),
-    }));
+    }))?;
 
     Ok(PolicySnapshot {
         snapshot_id: snapshot_id.into(),
@@ -873,7 +882,7 @@ impl PolicyRequest {
             "attributes": self.attributes,
             "policy_snapshot_id": self.policy_snapshot_id,
         });
-        self.input_digest = canonical_hash(&payload);
+        self.input_digest = canonical_hash(&payload)?;
         Ok(self)
     }
 
@@ -1003,13 +1012,13 @@ impl StaticPolicyEvaluator {
                 .iter()
                 .map(|rule| rule.rule_id.clone())
                 .collect::<Vec<_>>();
-            return Ok(policy_decision(
+            return policy_decision(
                 PolicyEffect::Deny,
                 policy_refs,
                 Vec::new(),
                 evaluated_at.into(),
                 digested_request.input_digest,
-            ));
+            );
         }
 
         if !matching_allow.is_empty() || !matching_obligate.is_empty() {
@@ -1027,22 +1036,22 @@ impl StaticPolicyEvaluator {
             } else {
                 PolicyEffect::AllowWithObligations
             };
-            return Ok(policy_decision(
+            return policy_decision(
                 effect,
                 policy_refs,
                 obligations,
                 evaluated_at.into(),
                 digested_request.input_digest,
-            ));
+            );
         }
 
-        Ok(policy_decision(
+        policy_decision(
             PolicyEffect::Deny,
             vec!["default_deny".to_string()],
             Vec::new(),
             evaluated_at.into(),
             digested_request.input_digest,
-        ))
+        )
     }
 }
 
@@ -1052,14 +1061,14 @@ fn policy_decision(
     obligations: Vec<PolicyObligation>,
     evaluated_at: String,
     input_digest: String,
-) -> PolicyDecision {
+) -> Result<PolicyDecision, PolicyValidationError> {
     let decision_id = "decision:".to_string()
         + &canonical_hash(&json!({
             "input_digest": input_digest,
             "effect": effect.as_str(),
             "policy_refs": policy_refs,
-        }));
-    PolicyDecision {
+        }))?;
+    Ok(PolicyDecision {
         decision_id,
         effect,
         reason_codes: policy_refs.clone(),
@@ -1069,7 +1078,7 @@ fn policy_decision(
         evaluated_at,
         valid_until: None,
         input_digest,
-    }
+    })
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1124,7 +1133,7 @@ pub fn unavailable_policy_decision(
         }
     };
 
-    Ok(policy_decision(
+    policy_decision(
         effect,
         vec![
             "policy_unavailable".to_string(),
@@ -1133,7 +1142,8 @@ pub fn unavailable_policy_decision(
         obligations,
         evaluated_at,
         digested_request.input_digest,
-    ))
+    )
+    .map_err(PolicyUnavailableError::InvalidRequest)
 }
 
 fn cached_decision_is_expired(valid_until: Option<&str>, evaluated_at: &str) -> bool {

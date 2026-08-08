@@ -305,7 +305,8 @@ fn tool_result_from_fixture(case: &Value, case_name: &str) -> Result<ToolResult,
         .iter()
         .map(content_part_from_fixture)
         .collect::<Result<Vec<_>, _>>()?;
-    let mut result = ToolResult::completed("call-1", output, 1_100, 1_200);
+    let mut result = ToolResult::completed("call-1", output, 1_100, 1_200)
+        .map_err(|error| format!("tool-result TCK case {case_name} is not canonical: {error:?}"))?;
 
     if let Some(mutation) = raw_result
         .get("mutateAfterDigest")
@@ -378,7 +379,10 @@ fn tool_result_event_from_fixture(
                     optional_map_u64(raw_result, "completedAtUnixMs")
                         .or_else(|| optional_map_u64(raw_result, "completed_at_unix_ms"))
                         .unwrap_or(1_200),
-                ),
+                )
+                .map_err(|error| {
+                    format!("tool-result completed event is not canonical: {error:?}")
+                })?,
             ))
         }
         "denied" => {

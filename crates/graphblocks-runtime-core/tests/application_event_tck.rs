@@ -448,6 +448,9 @@ fn run_case(case: &Value) -> Result<(), String> {
                                 required_u64(operation, "startedAtUnixMs")?,
                                 required_u64(operation, "completedAtUnixMs")?,
                             )
+                            .map_err(|error| {
+                                format!("{case_name}: tool result is not canonical: {error:?}")
+                            })?
                             .with_effect_outcome(effect_outcome);
                             ToolResultEvent::completed(tool_call_id, tool_result_sequence, result)
                         }

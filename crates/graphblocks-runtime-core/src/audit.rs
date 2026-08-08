@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt;
 
-use crate::canonical::canonical_hash;
+use crate::canonical::{CanonicalJsonError, canonical_hash};
 use serde_json::{Value, json};
 
 use crate::async_operation::ExternalCallbackReceived;
@@ -108,6 +108,7 @@ pub struct ToolEffectPrecondition {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ToolEffectAuditError {
+    CanonicalJson(CanonicalJsonError),
     ResolvedToolMismatch {
         expected: String,
         actual: String,
@@ -129,6 +130,7 @@ pub enum ToolEffectAuditError {
 impl fmt::Display for ToolEffectAuditError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::CanonicalJson(error) => error.fmt(formatter),
             Self::ResolvedToolMismatch { expected, actual } => write!(
                 formatter,
                 "tool call resolved tool {actual:?} does not match audited resolved tool {expected:?}"
@@ -153,6 +155,12 @@ impl fmt::Display for ToolEffectAuditError {
 }
 
 impl Error for ToolEffectAuditError {}
+
+impl From<CanonicalJsonError> for ToolEffectAuditError {
+    fn from(error: CanonicalJsonError) -> Self {
+        Self::CanonicalJson(error)
+    }
+}
 
 impl ToolEffectPrecondition {
     pub fn from_admitted_call(
@@ -185,7 +193,7 @@ impl ToolEffectPrecondition {
             "sandbox_id": context.sandbox_id,
             "admitted_at_unix_ms": context.call.admitted_at_unix_ms,
         });
-        let digest = canonical_hash(&payload);
+        let digest = canonical_hash(&payload)?;
         Ok(Self { payload, digest })
     }
 }
@@ -374,7 +382,7 @@ impl AuditEvent {
         }))
     }
 
-    pub fn payload_digest(&self) -> String {
+    pub fn payload_digest(&self) -> Result<String, CanonicalJsonError> {
         canonical_hash(&json!({
             "target_kind": self.target_kind.as_str(),
             "actor": self.actor.as_ref().map(|actor| json!({
@@ -465,6 +473,7 @@ pub struct AuditOutboxRecord {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum AuditOutboxError {
+    CanonicalJson(CanonicalJsonError),
     DuplicateRecord { record_id: String },
     RecordNotFound { record_id: String },
     RecordAlreadyPublished { record_id: String },
@@ -474,6 +483,7 @@ pub enum AuditOutboxError {
 impl fmt::Display for AuditOutboxError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::CanonicalJson(error) => error.fmt(formatter),
             Self::DuplicateRecord { record_id } => {
                 write!(
                     formatter,
@@ -498,6 +508,12 @@ impl fmt::Display for AuditOutboxError {
 }
 
 impl Error for AuditOutboxError {}
+
+impl From<CanonicalJsonError> for AuditOutboxError {
+    fn from(error: CanonicalJsonError) -> Self {
+        Self::CanonicalJson(error)
+    }
+}
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct InMemoryAuditOutbox {
@@ -529,7 +545,7 @@ impl InMemoryAuditOutbox {
                 message: "audit outbox occurred_at must not be empty".to_owned(),
             });
         }
-        let payload_digest = canonical_hash(&payload);
+        let payload_digest = canonical_hash(&payload)?;
         let actual_record_id = record_id.unwrap_or_else(|| format!("audit:{payload_digest}"));
         if actual_record_id.trim().is_empty() {
             return Err(AuditOutboxError::InvalidRecord {

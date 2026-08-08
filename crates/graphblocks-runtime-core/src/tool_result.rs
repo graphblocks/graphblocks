@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::canonical::canonical_hash;
+use crate::canonical::{CanonicalJsonError, canonical_hash};
 use serde_json::{Value, json};
 
 use crate::observability::{CaptureDecision, CaptureMode, RedactionRule};
@@ -304,6 +304,7 @@ pub struct ToolResult {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ToolResultError {
+    CanonicalJson(CanonicalJsonError),
     EmptyToolCallId,
     InvalidContentPart {
         source: ContentPartError,
@@ -327,21 +328,27 @@ pub enum ToolResultError {
     },
 }
 
+impl From<CanonicalJsonError> for ToolResultError {
+    fn from(error: CanonicalJsonError) -> Self {
+        Self::CanonicalJson(error)
+    }
+}
+
 impl ToolResult {
     pub fn completed<I>(
         tool_call_id: impl Into<String>,
         output: I,
         started_at_unix_ms: u64,
         completed_at_unix_ms: u64,
-    ) -> Self
+    ) -> Result<Self, ToolResultError>
     where
         I: IntoIterator<Item = ContentPart>,
     {
         let output = output.into_iter().collect::<Vec<_>>();
-        Self {
+        Ok(Self {
             tool_call_id: tool_call_id.into(),
             status: ToolResultStatus::Completed,
-            output_digest: Some(tool_result_output_digest(&output)),
+            output_digest: Some(tool_result_output_digest(&output)?),
             output,
             artifacts: Vec::new(),
             diagnostics: Vec::new(),
@@ -349,7 +356,7 @@ impl ToolResult {
             started_at_unix_ms: Some(started_at_unix_ms),
             completed_at_unix_ms: Some(completed_at_unix_ms),
             effect_outcome: ToolEffectOutcome::Unknown,
-        }
+        })
     }
 
     pub fn failed(
@@ -523,7 +530,7 @@ impl ToolResult {
                 .map_err(|source| ToolResultError::InvalidContentPart { source })?;
         }
         if let Some(output_digest) = self.output_digest.as_ref()
-            && output_digest != &tool_result_output_digest(&self.output)
+            && output_digest != &tool_result_output_digest(&self.output)?
         {
             return Err(ToolResultError::OutputDigestMismatch {
                 tool_call_id: self.tool_call_id.clone(),
@@ -533,7 +540,7 @@ impl ToolResult {
     }
 }
 
-fn tool_result_output_digest(output: &[ContentPart]) -> String {
+fn tool_result_output_digest(output: &[ContentPart]) -> Result<String, CanonicalJsonError> {
     canonical_hash(&Value::Array(
         output
             .iter()
@@ -708,7 +715,13 @@ impl ToolResultValidation {
                 tool_call_id: request.result.tool_call_id.clone(),
             });
         };
-        if output_digest != &tool_result_output_digest(&request.result.output) {
+        let actual_output_digest =
+            tool_result_output_digest(&request.result.output).map_err(|error| {
+                ToolResultValidationError::InvalidToolResult {
+                    source: ToolResultError::CanonicalJson(error),
+                }
+            })?;
+        if output_digest != &actual_output_digest {
             return Err(ToolResultValidationError::OutputDigestMismatch {
                 tool_call_id: request.result.tool_call_id.clone(),
             });
@@ -973,12 +986,16 @@ impl ToolResultValidation {
                 let Some((content_kind, capture_text, content_ref)) = capture_input else {
                     continue;
                 };
-                let captured = capture_decision.capture_text(
-                    content_kind,
-                    &capture_text,
-                    content_ref.as_deref(),
-                    Vec::<RedactionRule>::new(),
-                );
+                let captured = capture_decision
+                    .capture_text(
+                        content_kind,
+                        &capture_text,
+                        content_ref.as_deref(),
+                        Vec::<RedactionRule>::new(),
+                    )
+                    .map_err(|error| ToolResultValidationError::InvalidToolResult {
+                        source: ToolResultError::CanonicalJson(error),
+                    })?;
                 let mode = match captured.mode {
                     CaptureMode::None => "none",
                     CaptureMode::HashOnly => "hash_only",

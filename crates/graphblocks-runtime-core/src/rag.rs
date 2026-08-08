@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt;
 
-use crate::canonical::canonical_hash;
+use crate::canonical::{CanonicalJsonError, canonical_hash};
 use serde_json::{Map, Value, json};
 
 use crate::documents::{DocumentChunk, DocumentSpan, SourceRef};
@@ -1160,6 +1160,7 @@ pub struct CitationSourceTrace {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum RagError {
+    CanonicalJson(CanonicalJsonError),
     InvalidPerDocumentMaxChunks,
     InvalidPerSectionMaxChunks,
     InvalidPerSourceMaxChunks,
@@ -1197,6 +1198,7 @@ pub enum RagError {
 impl fmt::Display for RagError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::CanonicalJson(error) => error.fmt(formatter),
             Self::InvalidPerDocumentMaxChunks => {
                 write!(formatter, "per_document_max_chunks must be at least 1")
             }
@@ -1250,6 +1252,12 @@ impl fmt::Display for RagError {
 }
 
 impl Error for RagError {}
+
+impl From<CanonicalJsonError> for RagError {
+    fn from(error: CanonicalJsonError) -> Self {
+        Self::CanonicalJson(error)
+    }
+}
 
 pub fn knowledge_item_from_chunk(chunk: &DocumentChunk) -> KnowledgeItemRef {
     let source = chunk.source_refs.first().cloned().unwrap_or_else(|| {
@@ -1305,17 +1313,22 @@ impl InMemoryChunkRetriever {
         }
     }
 
-    pub fn search(&self, query_text: impl Into<String>, top_k: usize) -> Vec<SearchHit> {
-        self.retrieve(SearchRequest::new(query_text).with_top_k(top_k))
-            .hits
+    pub fn search(
+        &self,
+        query_text: impl Into<String>,
+        top_k: usize,
+    ) -> Result<Vec<SearchHit>, RagError> {
+        Ok(self
+            .retrieve(SearchRequest::new(query_text).with_top_k(top_k))?
+            .hits)
     }
 
-    pub fn retrieve(&self, request: SearchRequest) -> RetrievalResult {
+    pub fn retrieve(&self, request: SearchRequest) -> Result<RetrievalResult, RagError> {
         let request_hash = canonical_hash(&json!({
             "query_text": &request.query_text,
             "top_k": request.top_k,
             "filters": &request.filters,
-        }));
+        }))?;
         let retrieval_id = format!("{}:{request_hash}", self.retriever_id);
         let mut terms = Vec::new();
         let mut current = String::new();
@@ -1332,7 +1345,7 @@ impl InMemoryChunkRetriever {
         if terms.is_empty() {
             let mut result = RetrievalResult::new(retrieval_id, request, Vec::new());
             result.total_candidates = Some(0);
-            return result;
+            return Ok(result);
         }
         let mut scored = Vec::new();
         for (index, chunk) in self.chunks.iter().enumerate() {
@@ -1349,7 +1362,7 @@ impl InMemoryChunkRetriever {
         if scored.is_empty() {
             let mut result = RetrievalResult::new(retrieval_id, request, Vec::new());
             result.total_candidates = Some(0);
-            return result;
+            return Ok(result);
         }
         let max_score = scored[0].0 as f64;
         let mut hits = Vec::new();
@@ -1369,7 +1382,7 @@ impl InMemoryChunkRetriever {
         }
         let mut result = RetrievalResult::new(retrieval_id, request, hits);
         result.total_candidates = Some(scored.len());
-        result
+        Ok(result)
     }
 }
 
@@ -1744,7 +1757,7 @@ fn build_answer_from_model_response_inner(
     }
     answer.metadata.insert(
         "model_response_digest".to_owned(),
-        json!(canonical_hash(model_response)),
+        json!(canonical_hash(model_response)?),
     );
     if let Some(response_id) = model_response.get("response_id").and_then(Value::as_str) {
         answer
@@ -1839,7 +1852,7 @@ pub fn federated_retrieve(
             "successful_sources": &successful_sources,
             "failed_sources": &failed_sources,
             "fusion_strategy": fusion_strategy_label(&options.fusion_strategy),
-        }))
+        }))?
     );
     let mut result = RetrievalResult::new(retrieval_id, request, hits);
     result.total_candidates = Some(total_candidates);

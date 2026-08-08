@@ -1,13 +1,10 @@
-#![allow(clippy::expect_used)] // Guarded by compatibility/rust-production-expect-budget.json.
-
+pub(crate) use graphblocks_compiler::canonical::CanonicalJsonError;
 use serde_json::Value;
 
-pub(crate) fn canonical_hash(value: &Value) -> String {
+pub(crate) fn canonical_hash(value: &Value) -> Result<String, CanonicalJsonError> {
     graphblocks_compiler::canonical::canonical_hash(value)
-        .expect("runtime contract values must satisfy canonical JSON depth limits")
 }
 
-pub(crate) fn canonical_json(value: &Value) -> String {
+pub(crate) fn canonical_json(value: &Value) -> Result<String, CanonicalJsonError> {
     graphblocks_compiler::canonical::canonical_json(value)
-        .expect("runtime contract values must satisfy canonical JSON depth limits")
 }

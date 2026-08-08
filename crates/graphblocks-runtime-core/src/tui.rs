@@ -1,6 +1,6 @@
 use std::collections::BTreeSet;
 
-use crate::canonical::canonical_hash;
+use crate::canonical::{CanonicalJsonError, canonical_hash};
 use serde_json::json;
 
 use crate::application_event::{
@@ -194,7 +194,7 @@ impl TuiRunView {
         self.cursor_expired.as_ref()
     }
 
-    pub fn content_digest(&self) -> String {
+    pub fn content_digest(&self) -> Result<String, CanonicalJsonError> {
         canonical_hash(&json!({
             "run_id": self.run_id,
             "state": run_status_name(self.state),

@@ -2305,6 +2305,10 @@ fn run_store_error_json(error: &RunStoreError) -> Value {
 
 fn async_operation_error_json(error: &AsyncOperationError) -> Value {
     match error {
+        AsyncOperationError::CanonicalJson(error) => json!({
+            "code": "daemon.async_operation.canonical_json",
+            "message": error.to_string(),
+        }),
         AsyncOperationError::EmptyField { field } => json!({
             "code": "daemon.async_operation.empty_field",
             "field": field,

@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt;
 
-use crate::canonical::canonical_hash;
+use crate::canonical::{CanonicalJsonError, canonical_hash};
 use serde_json::{Value, json};
 
 fn require_non_empty(field: &'static str, value: &str) -> Result<(), DurableStreamError> {
@@ -257,7 +257,7 @@ impl CheckpointBarrier {
         Ok(())
     }
 
-    pub fn content_digest(&self) -> String {
+    pub fn content_digest(&self) -> Result<String, CanonicalJsonError> {
         canonical_hash(&json!({
             "plan_hash": self.plan_hash,
             "barrier_sequence": self.barrier_sequence,
@@ -311,7 +311,7 @@ impl SinkCommitRecord {
         idempotency_key: impl Into<String>,
         metadata: Value,
     ) -> Result<Self, SinkCommitError> {
-        let metadata_digest = canonical_hash(&metadata);
+        let metadata_digest = canonical_hash(&metadata)?;
         let record = Self {
             commit_id: commit_id.into(),
             sink_id: sink_id.into(),
@@ -338,7 +338,7 @@ impl SinkCommitRecord {
         if !self.metadata.is_object() {
             return Err(SinkCommitError::InvalidMetadata { field: "metadata" });
         }
-        if self.metadata_digest != canonical_hash(&self.metadata) {
+        if self.metadata_digest != canonical_hash(&self.metadata)? {
             return Err(SinkCommitError::MetadataDigestMismatch {
                 sink_id: self.sink_id.clone(),
                 idempotency_key: self.idempotency_key.clone(),
@@ -365,6 +365,7 @@ pub struct SinkCommitOutcome {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum SinkCommitError {
+    CanonicalJson(CanonicalJsonError),
     EmptyField {
         field: &'static str,
     },
@@ -388,6 +389,7 @@ pub enum SinkCommitError {
 impl fmt::Display for SinkCommitError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::CanonicalJson(error) => error.fmt(formatter),
             Self::EmptyField { field } => write!(formatter, "{field} must not be empty"),
             Self::SinkMismatch { expected, actual } => {
                 write!(
@@ -417,6 +419,12 @@ impl fmt::Display for SinkCommitError {
 }
 
 impl Error for SinkCommitError {}
+
+impl From<CanonicalJsonError> for SinkCommitError {
+    fn from(error: CanonicalJsonError) -> Self {
+        Self::CanonicalJson(error)
+    }
+}
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct SinkCommitLog {
@@ -484,7 +492,7 @@ impl SinkCommitLog {
         self.records.values().collect()
     }
 
-    pub fn content_digest(&self) -> String {
+    pub fn content_digest(&self) -> Result<String, CanonicalJsonError> {
         canonical_hash(&json!({
             "sink_id": self.sink_id,
             "delivery_guarantee": self.delivery_guarantee.as_str(),

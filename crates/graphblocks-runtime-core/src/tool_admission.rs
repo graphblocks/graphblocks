@@ -1,4 +1,4 @@
-use crate::canonical::canonical_hash;
+use crate::canonical::{CanonicalJsonError, canonical_hash};
 use serde_json::{Value, json};
 
 use crate::policy::{
@@ -45,6 +45,7 @@ pub struct ToolPolicyRequestContext<'a> {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ToolAdmissionError {
+    CanonicalJson(CanonicalJsonError),
     InvalidToolCall {
         source: ToolCallError,
     },
@@ -129,6 +130,12 @@ pub enum ToolAdmissionError {
     ResponsePolicyStopped {
         response_id: String,
     },
+}
+
+impl From<CanonicalJsonError> for ToolAdmissionError {
+    fn from(error: CanonicalJsonError) -> Self {
+        Self::CanonicalJson(error)
+    }
 }
 
 pub struct ToolAdmission;
@@ -253,7 +260,7 @@ impl ToolAdmission {
                 actual: request.call.name,
             });
         }
-        if canonical_hash(&request.call.arguments) != request.call.arguments_digest {
+        if canonical_hash(&request.call.arguments)? != request.call.arguments_digest {
             return Err(ToolAdmissionError::ArgumentsDigestMismatch {
                 tool_call_id: request.call.tool_call_id,
             });

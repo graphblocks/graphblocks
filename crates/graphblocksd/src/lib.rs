@@ -350,7 +350,9 @@ impl WebhookHttpClient for StdWebhookHttpClient {
             return Err(WebhookHttpClientError::UnsupportedMethod(request.method));
         }
         let endpoint = parse_http_url(&request.url)?;
-        let body = request.canonical_body();
+        let body = request.canonical_body().map_err(|error| {
+            WebhookHttpClientError::Transport(format!("cannot canonicalize webhook body: {error}"))
+        })?;
         let mut has_content_type = false;
         for (name, value) in &request.headers {
             validate_header(name, value)?;

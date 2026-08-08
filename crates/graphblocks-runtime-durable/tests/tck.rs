@@ -420,7 +420,10 @@ fn run_case(case: &Value) -> Result<(), String> {
                     output,
                     started_at_unix_ms,
                     completed_at_unix_ms,
-                ),
+                )
+                .map_err(|error| {
+                    format!("{name} completed tool result is not canonical: {error:?}")
+                })?,
                 "failed" => ToolResult::failed(
                     tool_call_id,
                     BlockError::new(error_code, ErrorCategory::Permanent, error_message, false),

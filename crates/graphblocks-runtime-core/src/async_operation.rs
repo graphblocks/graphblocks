@@ -8,7 +8,7 @@ use rusqlite::{Connection, TransactionBehavior, params};
 use serde_json::{Value, json};
 use sha2::Sha256;
 
-use crate::canonical::{canonical_hash, canonical_json};
+use crate::canonical::{CanonicalJsonError, canonical_hash, canonical_json};
 use crate::tool_result::ToolEffectOutcome;
 use crate::tool_schema::{ToolSchemaRegistry, ToolSchemaValidationError};
 
@@ -808,7 +808,7 @@ impl CallbackEndpointRef {
         self.auth.validate()
     }
 
-    pub fn binding_key(&self) -> String {
+    pub fn binding_key(&self) -> Result<String, CanonicalJsonError> {
         callback_resume_binding_key(
             self.tenant_id.as_deref(),
             self.release_id.as_deref().unwrap_or(""),
@@ -819,7 +819,10 @@ impl CallbackEndpointRef {
         )
     }
 
-    pub fn receipt_binding_key(&self, submission: &AsyncCallbackSubmission) -> String {
+    pub fn receipt_binding_key(
+        &self,
+        submission: &AsyncCallbackSubmission,
+    ) -> Result<String, CanonicalJsonError> {
         callback_resume_binding_key(
             self.tenant_id.as_deref(),
             self.release_id.as_deref().unwrap_or(""),
@@ -1318,7 +1321,7 @@ impl CallbackEndpointAuth {
         let signature = headers
             .get(signature_header)
             .ok_or_else(|| callback_auth_failed(endpoint_id, "signature_missing"))?;
-        let message = callback_signature_message(timestamp, payload);
+        let message = callback_signature_message(timestamp, payload)?;
         if !verifier(public_key, &message, signature) {
             return Err(callback_auth_failed(endpoint_id, "signature_mismatch"));
         }
@@ -1411,7 +1414,7 @@ pub enum AsyncCallbackResumeDecision {
 }
 
 impl ExternalCallbackReceived {
-    pub fn compute_payload_digest(&self) -> String {
+    pub fn compute_payload_digest(&self) -> Result<String, CanonicalJsonError> {
         canonical_hash(&self.payload)
     }
 }
@@ -1739,6 +1742,7 @@ pub enum AsyncOperationEvent {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum AsyncOperationError {
+    CanonicalJson(CanonicalJsonError),
     EmptyField {
         field: String,
     },
@@ -1808,6 +1812,12 @@ pub enum AsyncOperationError {
     Storage {
         message: String,
     },
+}
+
+impl From<CanonicalJsonError> for AsyncOperationError {
+    fn from(error: CanonicalJsonError) -> Self {
+        Self::CanonicalJson(error)
+    }
 }
 
 #[derive(Debug, Default)]
@@ -1910,7 +1920,7 @@ impl AsyncOperationStore {
         );
         if let Some(existing) = inner.quarantined_callbacks.get(&quarantine_key) {
             if let Some(field) =
-                callback_submission_idempotency_conflict_field(&existing.submission, &submission)
+                callback_submission_idempotency_conflict_field(&existing.submission, &submission)?
             {
                 return Err(AsyncOperationError::CallbackIdempotencyConflict {
                     operation_id: quarantine_key.0,
@@ -1988,7 +1998,7 @@ impl AsyncOperationStore {
             for key in keys {
                 if let Some(record) = inner.quarantined_callbacks.remove(&key) {
                     if record.expires_at_unix_ms <= operation_created_at_unix_ms {
-                        let payload_digest = canonical_hash(&record.submission.payload);
+                        let payload_digest = canonical_hash(&record.submission.payload)?;
                         let policy_snapshot_id = record.submission.policy_snapshot_id.clone();
                         inner
                             .events_by_operation
@@ -2022,7 +2032,7 @@ impl AsyncOperationStore {
         let mut first_error = None;
         for submission in submissions {
             if resume_winner_seen {
-                self.record_callback_rejected(&submission, "quarantined_callback_superseded");
+                self.record_callback_rejected(&submission, "quarantined_callback_superseded")?;
                 continue;
             }
             let result = match self.accept_callback_with_resume_decision(
@@ -2119,14 +2129,14 @@ impl AsyncOperationStore {
     ) -> Result<AcceptedCallback, AsyncOperationError> {
         validate_callback_submission_and_resume_decision(&submission, &resume_decision)?;
         if let Err(error) = ensure_callback_submission_authenticated(&submission) {
-            self.record_callback_rejected(&submission, "authentication_failed");
+            self.record_callback_rejected(&submission, "authentication_failed")?;
             return Err(error);
         }
         let artifacts =
-            if callback_payload_size_bytes(&submission.payload) > limits.max_payload_bytes {
+            if callback_payload_size_bytes(&submission.payload)? > limits.max_payload_bytes {
                 artifact.validate()?;
                 submission.payload =
-                    compact_callback_payload_with_artifact(&submission.payload, &artifact);
+                    compact_callback_payload_with_artifact(&submission.payload, &artifact)?;
                 vec![artifact]
             } else {
                 Vec::new()
@@ -2148,13 +2158,13 @@ impl AsyncOperationStore {
     ) -> Result<AcceptedCallback, AsyncOperationError> {
         validate_callback_submission_and_resume_decision(&submission, &resume_decision)?;
         if let Err(error) = ensure_callback_submission_authenticated(&submission) {
-            self.record_callback_rejected(&submission, "authentication_failed");
+            self.record_callback_rejected(&submission, "authentication_failed")?;
             return Err(error);
         }
 
-        let payload_size = callback_payload_size_bytes(&submission.payload);
+        let payload_size = callback_payload_size_bytes(&submission.payload)?;
         if payload_size > limits.max_payload_bytes {
-            self.record_callback_rejected(&submission, "payload_too_large");
+            self.record_callback_rejected(&submission, "payload_too_large")?;
             return Err(AsyncOperationError::CallbackPayloadTooLarge {
                 operation_id: submission.operation_id,
                 max_payload_bytes: limits.max_payload_bytes,
@@ -2182,14 +2192,14 @@ impl AsyncOperationStore {
             submission.operation_id.clone(),
             submission.idempotency_key.clone(),
         );
-        let rejected_payload_digest = canonical_hash(&submission.payload);
+        let rejected_payload_digest = canonical_hash(&submission.payload)?;
         let rejected_verified_by = submission.verified_by.clone();
         let rejected_policy_snapshot_id = submission.policy_snapshot_id.clone();
         if let Some(receipt) = inner
             .receipts_by_operation_and_idempotency
             .get(&receipt_key)
         {
-            if let Some(field) = callback_idempotency_conflict_field(receipt, &submission) {
+            if let Some(field) = callback_idempotency_conflict_field(receipt, &submission)? {
                 inner
                     .events_by_operation
                     .entry(submission.operation_id.clone())
@@ -2428,7 +2438,7 @@ impl AsyncOperationStore {
             attempt_id: submission.attempt_id,
             provider_operation_id: submission.provider_operation_id,
             idempotency_key: submission.idempotency_key.clone(),
-            payload_digest: canonical_hash(&submission.payload),
+            payload_digest: canonical_hash(&submission.payload)?,
             payload: submission.payload,
             artifacts,
             received_at_unix_ms: submission.received_at_unix_ms,
@@ -2691,11 +2701,16 @@ impl AsyncOperationStore {
             .map(|operation| operation.state)
     }
 
-    fn record_callback_rejected(&self, submission: &AsyncCallbackSubmission, reason: &str) {
+    fn record_callback_rejected(
+        &self,
+        submission: &AsyncCallbackSubmission,
+        reason: &str,
+    ) -> Result<(), AsyncOperationError> {
         let mut inner = lock_async_operation_store(&self.inner);
         if !inner.operations.contains_key(&submission.operation_id) {
-            return;
+            return Ok(());
         }
+        let payload_digest = canonical_hash(&submission.payload)?;
         inner
             .events_by_operation
             .entry(submission.operation_id.clone())
@@ -2705,10 +2720,11 @@ impl AsyncOperationStore {
                 callback_id: submission.callback_id.clone(),
                 reason: reason.to_owned(),
                 occurred_at_unix_ms: submission.received_at_unix_ms,
-                payload_digest: canonical_hash(&submission.payload),
+                payload_digest,
                 verified_by: submission.verified_by.clone(),
                 policy_snapshot_id: submission.policy_snapshot_id.clone(),
             });
+        Ok(())
     }
 }
 
@@ -3306,76 +3322,76 @@ impl SqliteAsyncOperationStore {
     }
 }
 
-fn callback_payload_size_bytes(payload: &Value) -> usize {
-    canonical_json(payload).len()
+fn callback_payload_size_bytes(payload: &Value) -> Result<usize, CanonicalJsonError> {
+    Ok(canonical_json(payload)?.len())
 }
 
 fn callback_idempotency_conflict_field(
     receipt: &ExternalCallbackReceived,
     submission: &AsyncCallbackSubmission,
-) -> Option<&'static str> {
+) -> Result<Option<&'static str>, CanonicalJsonError> {
     if receipt.operation_id != submission.operation_id {
-        return Some("operation_id");
+        return Ok(Some("operation_id"));
     }
     if receipt.run_id != submission.run_id {
-        return Some("run_id");
+        return Ok(Some("run_id"));
     }
     if receipt.node_id != submission.node_id {
-        return Some("node_id");
+        return Ok(Some("node_id"));
     }
     if receipt.attempt_id != submission.attempt_id {
-        return Some("attempt_id");
+        return Ok(Some("attempt_id"));
     }
     if receipt.provider_operation_id != submission.provider_operation_id {
-        return Some("provider_operation_id");
+        return Ok(Some("provider_operation_id"));
     }
     if receipt.idempotency_key != submission.idempotency_key {
-        return Some("idempotency_key");
+        return Ok(Some("idempotency_key"));
     }
-    if receipt.payload_digest != canonical_hash(&submission.payload) {
-        return Some("payload_digest");
+    if receipt.payload_digest != canonical_hash(&submission.payload)? {
+        return Ok(Some("payload_digest"));
     }
     if receipt.verified_by != submission.verified_by {
-        return Some("verified_by");
+        return Ok(Some("verified_by"));
     }
     if receipt.policy_snapshot_id != submission.policy_snapshot_id {
-        return Some("policy_snapshot_id");
+        return Ok(Some("policy_snapshot_id"));
     }
-    None
+    Ok(None)
 }
 
 fn callback_submission_idempotency_conflict_field(
     existing: &AsyncCallbackSubmission,
     incoming: &AsyncCallbackSubmission,
-) -> Option<&'static str> {
+) -> Result<Option<&'static str>, CanonicalJsonError> {
     if existing.operation_id != incoming.operation_id {
-        return Some("operation_id");
+        return Ok(Some("operation_id"));
     }
     if existing.run_id != incoming.run_id {
-        return Some("run_id");
+        return Ok(Some("run_id"));
     }
     if existing.node_id != incoming.node_id {
-        return Some("node_id");
+        return Ok(Some("node_id"));
     }
     if existing.attempt_id != incoming.attempt_id {
-        return Some("attempt_id");
+        return Ok(Some("attempt_id"));
     }
     if existing.provider_operation_id != incoming.provider_operation_id {
-        return Some("provider_operation_id");
+        return Ok(Some("provider_operation_id"));
     }
     if existing.idempotency_key != incoming.idempotency_key {
-        return Some("idempotency_key");
+        return Ok(Some("idempotency_key"));
     }
-    if canonical_hash(&existing.payload) != canonical_hash(&incoming.payload) {
-        return Some("payload_digest");
+    if canonical_hash(&existing.payload)? != canonical_hash(&incoming.payload)? {
+        return Ok(Some("payload_digest"));
     }
     if existing.verified_by != incoming.verified_by {
-        return Some("verified_by");
+        return Ok(Some("verified_by"));
     }
     if existing.policy_snapshot_id != incoming.policy_snapshot_id {
-        return Some("policy_snapshot_id");
+        return Ok(Some("policy_snapshot_id"));
     }
-    None
+    Ok(None)
 }
 
 fn callback_resume_binding_key(
@@ -3385,7 +3401,7 @@ fn callback_resume_binding_key(
     node_id: &str,
     attempt_id: &str,
     operation_id: &str,
-) -> String {
+) -> Result<String, CanonicalJsonError> {
     canonical_hash(&json!({
         "tenant_id": tenant_id.unwrap_or(""),
         "release_id": release_id,
@@ -3595,11 +3611,11 @@ fn ensure_callback_submission_authenticated(
 fn compact_callback_payload_with_artifact(
     payload: &Value,
     artifact: &CallbackArtifactRef,
-) -> Value {
+) -> Result<Value, CanonicalJsonError> {
     let mut compact = serde_json::Map::new();
     if let Some(object) = payload.as_object() {
         for (key, value) in object {
-            if callback_payload_size_bytes(value) <= 256
+            if callback_payload_size_bytes(value)? <= 256
                 && !matches!(
                     key.as_str(),
                     "log" | "logs" | "output" | "stdout" | "stderr"
@@ -3610,7 +3626,7 @@ fn compact_callback_payload_with_artifact(
         }
     }
     compact.insert("artifact".to_owned(), artifact.canonical_value());
-    Value::Object(compact)
+    Ok(Value::Object(compact))
 }
 
 fn callback_auth_failed(endpoint_id: &str, reason: &str) -> AsyncOperationError {
@@ -3630,13 +3646,20 @@ fn compute_callback_hmac_signature(
             operation_id: "callback_endpoint_auth".to_owned(),
             reason: "invalid hmac secret".to_owned(),
         })?;
-    let message = callback_signature_message(timestamp_unix_ms, payload);
+    let message = callback_signature_message(timestamp_unix_ms, payload)?;
     mac.update(message.as_bytes());
     Ok(hex_encode(&mac.finalize().into_bytes()))
 }
 
-fn callback_signature_message(timestamp_unix_ms: u64, payload: &Value) -> String {
-    format!("{}.{}", timestamp_unix_ms, canonical_json(payload))
+fn callback_signature_message(
+    timestamp_unix_ms: u64,
+    payload: &Value,
+) -> Result<String, CanonicalJsonError> {
+    Ok(format!(
+        "{}.{}",
+        timestamp_unix_ms,
+        canonical_json(payload)?
+    ))
 }
 
 fn hex_encode(bytes: &[u8]) -> String {
@@ -3751,7 +3774,7 @@ fn receipt_from_value(value: Value) -> Result<ExternalCallbackReceived, AsyncOpe
         verified_by: required_string(&value, "verified_by")?,
         policy_snapshot_id: required_string(&value, "policy_snapshot_id")?,
     };
-    if receipt.payload_digest != receipt.compute_payload_digest() {
+    if receipt.payload_digest != receipt.compute_payload_digest()? {
         return Err(AsyncOperationError::Storage {
             message: "stored callback receipt payload_digest does not match payload".to_owned(),
         });

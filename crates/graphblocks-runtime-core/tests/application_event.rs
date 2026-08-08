@@ -1528,7 +1528,11 @@ fn tool_result_events_map_to_standard_tool_application_events() {
                 .with_checksum("sha256:artifact")
                 .with_media_type("application/json"),
         ),
-        ToolResultEvent::completed("call-1", 4, completed),
+        ToolResultEvent::completed(
+            "call-1",
+            4,
+            completed.expect("test tool result must be canonically hashable"),
+        ),
         ToolResultEvent::failed("call-2", 5, failed),
         ToolResultEvent::denied("call-3", 6, denied),
         ToolResultEvent::cancelled("call-4", 7, cancelled),
@@ -2410,7 +2414,8 @@ fn protocol_events_represent_streaming_tool_result_deltas_and_artifacts() {
     let completed = ToolResultEvent::completed(
         "call-1",
         9,
-        ToolResult::completed("call-1", [ContentPart::text("done")], 1_000, 1_050),
+        ToolResult::completed("call-1", [ContentPart::text("done")], 1_000, 1_050)
+            .expect("test tool result must be canonically hashable"),
     );
     assert_eq!(
         ApplicationProtocolEvent::tool_result_stream(

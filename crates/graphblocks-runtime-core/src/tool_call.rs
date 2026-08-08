@@ -1,4 +1,4 @@
-use crate::canonical::canonical_hash;
+use crate::canonical::{CanonicalJsonError, canonical_hash};
 use graphblocks_schema::parse_canonical_json;
 use serde_json::Value;
 
@@ -54,6 +54,7 @@ impl ToolCallStatus {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ToolCallError {
+    CanonicalJson(CanonicalJsonError),
     DraftAlreadyComplete,
     ArgumentsNotComplete {
         status: ToolCallDraftStatus,
@@ -87,6 +88,12 @@ pub enum ToolCallError {
     ArgumentsDigestMismatch {
         tool_call_id: String,
     },
+}
+
+impl From<CanonicalJsonError> for ToolCallError {
+    fn from(error: CanonicalJsonError) -> Self {
+        Self::CanonicalJson(error)
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -180,7 +187,7 @@ impl ToolCallDraft {
         }
         let arguments =
             parse_canonical_json(&assembled).map_err(|_| ToolCallError::InvalidArgumentsJson)?;
-        let arguments_digest = canonical_hash(&arguments);
+        let arguments_digest = canonical_hash(&arguments)?;
 
         let call = ToolCall {
             tool_call_id: self.tool_call_id,
@@ -269,7 +276,7 @@ impl ToolCall {
                 field: "depends_on",
             });
         }
-        if canonical_hash(&self.arguments) != self.arguments_digest {
+        if canonical_hash(&self.arguments)? != self.arguments_digest {
             return Err(ToolCallError::ArgumentsDigestMismatch {
                 tool_call_id: self.tool_call_id.clone(),
             });
@@ -286,7 +293,7 @@ impl ToolCall {
         }
 
         let mut revised = self.clone();
-        revised.arguments_digest = canonical_hash(&arguments);
+        revised.arguments_digest = canonical_hash(&arguments)?;
         revised.arguments = arguments;
         revised.revision = self
             .revision

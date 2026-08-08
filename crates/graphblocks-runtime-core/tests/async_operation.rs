@@ -1286,7 +1286,10 @@ fn external_callback_is_journaled_before_operation_can_resume() {
     assert_eq!(accepted.receipt.operation_id, "op-1");
     assert_eq!(
         accepted.receipt.payload_digest,
-        accepted.receipt.compute_payload_digest()
+        accepted
+            .receipt
+            .compute_payload_digest()
+            .expect("test callback payload must be canonically hashable")
     );
     assert_eq!(events.len(), 5);
     assert!(matches!(

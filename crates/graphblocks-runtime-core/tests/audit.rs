@@ -397,6 +397,7 @@ fn tool_effect_audit_event_records_precondition_outcome_and_immutable_digests() 
         1_100,
         1_250,
     )
+    .expect("test tool result must be canonically hashable")
     .with_effect_outcome(ToolEffectOutcome::Committed);
 
     let event = AuditEvent::tool_effect_outcome(ToolEffectAuditContext {
@@ -450,7 +451,12 @@ fn tool_effect_audit_event_records_precondition_outcome_and_immutable_digests() 
             .reason_codes
             .contains(&"tool_effect.committed".to_owned())
     );
-    assert!(event.payload_digest().starts_with("sha256:"));
+    assert!(
+        event
+            .payload_digest()
+            .expect("test audit event must be canonically hashable")
+            .starts_with("sha256:")
+    );
 }
 
 #[test]
@@ -535,6 +541,7 @@ fn tool_effect_audit_event_rejects_mismatched_call_result_or_resolved_tool() {
     let resolved_tool = resolved_ticket_tool();
     let call = ticket_call(&resolved_tool.resolved_tool_id);
     let result = ToolResult::completed("other-call", [ContentPart::text("ok")], 1_100, 1_250)
+        .expect("test tool result must be canonically hashable")
         .with_effect_outcome(ToolEffectOutcome::NoExternalEffect);
 
     assert_eq!(
@@ -566,7 +573,8 @@ fn tool_effect_audit_event_rejects_mismatched_call_result_or_resolved_tool() {
             actor: PrincipalRef::new("user-1"),
             resolved_tool: &resolved_tool,
             call: &mismatched_call,
-            result: &ToolResult::completed("call-1", [ContentPart::text("ok")], 1_100, 1_250),
+            result: &ToolResult::completed("call-1", [ContentPart::text("ok")], 1_100, 1_250,)
+                .expect("test tool result must be canonically hashable"),
             effect_key: None,
             precondition_digest: None,
             idempotency_key: None,

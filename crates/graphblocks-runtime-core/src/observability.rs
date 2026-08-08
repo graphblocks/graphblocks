@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, VecDeque};
 use std::error::Error;
 use std::fmt;
 
-use crate::canonical::canonical_hash;
+use crate::canonical::{CanonicalJsonError, canonical_hash};
 use serde_json::{Value, json};
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -334,7 +334,7 @@ impl CaptureDecision {
         text: impl AsRef<str>,
         content_ref: Option<&str>,
         redactions: impl IntoIterator<Item = RedactionRule>,
-    ) -> CapturedContent {
+    ) -> Result<CapturedContent, CanonicalJsonError> {
         let text = text.as_ref();
         let mut preview = text.to_owned();
         let mut redaction_count = 0;
@@ -349,10 +349,10 @@ impl CaptureDecision {
             }
         }
 
-        CapturedContent {
+        Ok(CapturedContent {
             mode: self.mode,
             content_kind: content_kind.into(),
-            content_digest: canonical_hash(&json!(text)),
+            content_digest: canonical_hash(&json!(text))?,
             preview: match self.mode {
                 CaptureMode::RedactedPreview | CaptureMode::Full => Some(preview),
                 CaptureMode::None | CaptureMode::HashOnly | CaptureMode::ReferenceOnly => None,
@@ -371,7 +371,7 @@ impl CaptureDecision {
                 CaptureMode::None | CaptureMode::HashOnly | CaptureMode::ReferenceOnly => 0,
             },
             original_bytes: text.len() as u64,
-        }
+        })
     }
 }
 
@@ -962,7 +962,7 @@ impl DiagnosticBundle {
         Ok(())
     }
 
-    pub fn content_digest(&self) -> String {
+    pub fn content_digest(&self) -> Result<String, CanonicalJsonError> {
         canonical_hash(&json!({
             "run_id": self.run_id,
             "redaction": self.redaction.as_str(),

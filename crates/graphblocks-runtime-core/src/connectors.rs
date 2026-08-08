@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt;
 
-use crate::canonical::canonical_hash;
+use crate::canonical::{CanonicalJsonError, canonical_hash};
 use serde_json::{Value, json};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -316,7 +316,7 @@ impl PromptTemplate {
         self
     }
 
-    pub fn content_digest(&self) -> String {
+    pub fn content_digest(&self) -> Result<String, CanonicalJsonError> {
         canonical_hash(&json!({
             "name": self.name,
             "version": self.version,

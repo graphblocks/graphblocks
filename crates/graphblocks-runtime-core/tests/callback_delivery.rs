@@ -10,8 +10,8 @@ use graphblocks_runtime_core::callback_delivery::{
     CallbackFailurePolicy, CallbackRetryPolicy, CallbackSubscription, CallbackSubscriptionStatus,
     EventFilter, OrderedDeliveryState, SqliteCallbackDeadLetterStore, SqliteCallbackDeliveryQueue,
     WebhookDeliveryAttempt, WebhookDeliveryTarget, WebhookDeliveryWorker, WebhookEgressPolicy,
-    WebhookEndpointError, WebhookHttpResponse, WebhookHttpTransport, WebhookSignatureError,
-    WebhookSigningConfig,
+    WebhookEndpointError, WebhookHttpRequest, WebhookHttpResponse, WebhookHttpTransport,
+    WebhookSignatureError, WebhookSigningConfig,
 };
 use graphblocks_runtime_core::connectors::{
     InMemorySecretProvider, SecretProviderError, SecretRef,
@@ -41,6 +41,22 @@ fn sqlite_callback_delivery_queue_path(label: &str) -> PathBuf {
     std::env::temp_dir().join(format!(
         "graphblocks-callback-delivery-queue-{label}-{unique}.sqlite3"
     ))
+}
+
+#[test]
+fn webhook_request_rejects_over_nested_canonical_body() {
+    let mut body = serde_json::Value::Null;
+    for _ in 0..256 {
+        body = json!([body]);
+    }
+    let request = WebhookHttpRequest {
+        url: "https://hooks.example.com/events".to_owned(),
+        method: "POST".to_owned(),
+        headers: Default::default(),
+        body,
+    };
+
+    assert!(request.canonical_body().is_err());
 }
 
 fn protocol_event(
@@ -3738,7 +3754,10 @@ fn webhook_target_default_payload_limit_allows_normal_signed_payload() {
         .expect("normal payload signs under default limit");
 
     assert!(
-        signed.body_size_bytes() <= target.max_payload_bytes,
+        signed
+            .body_size_bytes()
+            .expect("test webhook body must be canonical")
+            <= target.max_payload_bytes,
         "signed webhook body should fit target payload limit"
     );
 }

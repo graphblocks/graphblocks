@@ -8,8 +8,6 @@
     "--bins",
     "--locked"
   ],
-  "total": 2,
-  "files": {
-    "crates/graphblocks-runtime-core/src/canonical.rs": 2
-  }
+  "total": 0,
+  "files": {}
 }

@@ -311,7 +311,12 @@ fn deployment_target_profiles_project_to_execution_targets() {
         target.image.as_deref(),
         Some("registry.example.com/gb/control@sha256:control")
     );
-    assert!(target_set.content_digest().starts_with("sha256:"));
+    assert!(
+        target_set
+            .content_digest()
+            .expect("test deployment target set must be canonically hashable")
+            .starts_with("sha256:")
+    );
 }
 
 #[test]
@@ -515,7 +520,12 @@ fn helm_renderer_projects_target_set_to_stable_values() {
             }
         })
     );
-    assert!(rendered.content_digest().starts_with("sha256:"));
+    assert!(
+        rendered
+            .content_digest()
+            .expect("test rendered values must be canonically hashable")
+            .starts_with("sha256:")
+    );
 }
 
 #[test]
@@ -595,7 +605,12 @@ fn callback_ingress_manifest_parses_security_limits_and_routes() {
             }
         })
     );
-    assert!(ingress.content_digest().starts_with("sha256:"));
+    assert!(
+        ingress
+            .content_digest()
+            .expect("test callback ingress must be canonically hashable")
+            .starts_with("sha256:")
+    );
 }
 
 #[test]
@@ -1403,7 +1418,11 @@ fn worker_drain_plan_reports_when_drain_can_complete() {
             ]
         })
     );
-    assert!(plan.content_digest().starts_with("sha256:"));
+    assert!(
+        plan.content_digest()
+            .expect("test deployment plan must be canonically hashable")
+            .starts_with("sha256:")
+    );
 }
 
 #[test]
@@ -1548,7 +1567,12 @@ fn deployment_slo_profile_evaluates_slo_within_budget_condition() {
         )
         .expect("failed SLO deployment condition is valid")
     );
-    assert!(profile.content_digest().starts_with("sha256:"));
+    assert!(
+        profile
+            .content_digest()
+            .expect("test deployment profile must be canonically hashable")
+            .starts_with("sha256:")
+    );
 }
 
 #[test]
@@ -1616,7 +1640,12 @@ fn deployment_recovery_profile_evaluates_restore_test_freshness() {
             "max_restore_test_age_seconds": 86400,
         })
     );
-    assert!(profile.content_digest().starts_with("sha256:"));
+    assert!(
+        profile
+            .content_digest()
+            .expect("test recovery profile must be canonically hashable")
+            .starts_with("sha256:")
+    );
 }
 
 #[test]
@@ -1632,16 +1661,22 @@ fn rollout_traffic_assignment_is_deterministic_and_sticky_by_affinity() {
         .current_step(2)
         .expect("canary rollout step exists for assignment");
 
-    let first = plan.assign_revision("conversation-1", step);
-    let second = plan.assign_revision("conversation-1", step);
+    let first = plan
+        .assign_revision("conversation-1", step)
+        .expect("test rollout assignment must be canonically hashable");
+    let second = plan
+        .assign_revision("conversation-1", step)
+        .expect("test rollout assignment must be canonically hashable");
 
     assert_eq!(first, second);
     assert_eq!(
-        plan.assign_revision("conversation-1", &RolloutStep::canary("stable", 0)),
+        plan.assign_revision("conversation-1", &RolloutStep::canary("stable", 0))
+            .expect("test rollout assignment must be canonically hashable"),
         "rev-stable"
     );
     assert_eq!(
-        plan.assign_revision("conversation-1", &RolloutStep::canary("candidate", 100)),
+        plan.assign_revision("conversation-1", &RolloutStep::canary("candidate", 100))
+            .expect("test rollout assignment must be canonically hashable"),
         "rev-canary"
     );
 }

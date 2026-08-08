@@ -467,7 +467,10 @@ fn admission_rejects_stale_argument_digest() {
 fn admission_requires_approval_when_policy_obligates_it() {
     let mut resolved_tool = resolved_process_tool();
     resolved_tool.binding.approval = ToolApproval::Policy;
-    resolved_tool.binding_digest = resolved_tool.binding.digest();
+    resolved_tool.binding_digest = resolved_tool
+        .binding
+        .digest()
+        .expect("test binding must be canonically hashable");
     resolved_tool.resolved_tool_id = "resolved-policy-process".to_owned();
     let call = process_call(&resolved_tool);
     let schemas = process_schema_registry();
@@ -618,7 +621,10 @@ fn admission_rejects_expired_policy_decision() {
     let mut resolved_tool = resolved_process_tool();
     resolved_tool.binding.approval = ToolApproval::Never;
     resolved_tool.binding.idempotency = ToolIdempotency::Optional;
-    resolved_tool.binding_digest = resolved_tool.binding.digest();
+    resolved_tool.binding_digest = resolved_tool
+        .binding
+        .digest()
+        .expect("test binding must be canonically hashable");
     let call = process_call(&resolved_tool);
     let schemas = process_schema_registry();
     let mut policy_decision = allow_tool_policy_decision();

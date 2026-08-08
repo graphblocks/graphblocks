@@ -489,7 +489,10 @@ fn resolved_tool_validates_identity_fields() {
         None,
     )
     .expect("resolved tool is valid");
-    let expected_definition_digest = stale_definition_digest.definition.digest();
+    let expected_definition_digest = stale_definition_digest
+        .definition
+        .digest()
+        .expect("test tool definition must be canonically hashable");
     stale_definition_digest.definition_digest = "sha256:stale".to_owned();
     assert_eq!(
         stale_definition_digest.validate(),
@@ -513,7 +516,10 @@ fn resolved_tool_validates_identity_fields() {
         None,
     )
     .expect("resolved tool is valid");
-    let expected_binding_digest = stale_binding_digest.binding.digest();
+    let expected_binding_digest = stale_binding_digest
+        .binding
+        .digest()
+        .expect("test tool binding must be canonically hashable");
     stale_binding_digest.binding_digest = "sha256:stale".to_owned();
     assert_eq!(
         stale_binding_digest.validate(),
@@ -545,7 +551,10 @@ fn resolved_tool_validates_identity_fields() {
             "createTicket",
         )),
     );
-    mismatched_binding.binding_digest = mismatched_binding.binding.digest();
+    mismatched_binding.binding_digest = mismatched_binding
+        .binding
+        .digest()
+        .expect("test tool binding must be canonically hashable");
     assert_eq!(
         mismatched_binding.validate(),
         Err(ToolResolutionError::BindingToolNameMismatch {
@@ -662,5 +671,10 @@ fn tool_binding_digest_serializes_effects_by_canonical_string_order() {
     }))
     .expect("bounded tool identity should hash");
 
-    assert_eq!(binding.digest(), expected);
+    assert_eq!(
+        binding
+            .digest()
+            .expect("test tool binding must be canonically hashable"),
+        expected
+    );
 }

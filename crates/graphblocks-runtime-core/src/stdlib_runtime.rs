@@ -27,7 +27,7 @@ use crate::async_operation::{
     AsyncOperationKind, AsyncOperationResult, AsyncOperationResultStatus, AsyncOperationState,
     CallbackArtifactRef, ExternalEffectRecord, SqliteAsyncOperationStore,
 };
-use crate::canonical::{canonical_hash, canonical_json};
+use crate::canonical::canonical_json;
 use crate::journal::{JournalMetadata, JournalRecord, SqliteExecutionJournal};
 use crate::outcome::{BlockError, ErrorCategory, Outcome, SkipReason};
 use crate::readiness::{InputDependency, PortRef, ResolvedInput};
@@ -1435,7 +1435,10 @@ fn acquire_native_callback_resume_lock(
         .ok_or_else(|| {
             StdlibRuntimeError::invalid("checkpointStorePath cannot identify a callback lock")
         })?;
-    let run_digest = canonical_hash(&Value::String(run_id.to_owned()));
+    let run_digest = runtime_canonical_hash(
+        &Value::String(run_id.to_owned()),
+        "callback resume lock run id",
+    )?;
     lock_path.set_file_name(format!(
         "{file_name}.{}.callback-resume.lock",
         run_digest.trim_start_matches("sha256:")
@@ -2699,15 +2702,18 @@ fn validate_trusted_native_callback_admission(
 
 fn native_callback_ownership_fence_token(
     admission: &TrustedNativeCallbackResumeAdmission,
-) -> String {
-    canonical_hash(&json!({
-        "authenticationDecisionId": admission.authentication_decision_id,
-        "ownerId": admission.owner_id,
-        "leaseId": admission.lease_id,
-        "fencingEpoch": admission.fencing_epoch,
-        "fenceToken": admission.fence_token,
-        "schemaVerificationId": admission.schema_verification_id,
-    }))
+) -> Result<String, StdlibRuntimeError> {
+    runtime_canonical_hash(
+        &json!({
+            "authenticationDecisionId": admission.authentication_decision_id,
+            "ownerId": admission.owner_id,
+            "leaseId": admission.lease_id,
+            "fencingEpoch": admission.fencing_epoch,
+            "fenceToken": admission.fence_token,
+            "schemaVerificationId": admission.schema_verification_id,
+        }),
+        "native callback ownership fence",
+    )
 }
 
 fn validate_persisted_native_callback_acceptance(
@@ -2726,7 +2732,7 @@ fn validate_persisted_native_callback_acceptance(
         })?;
     let expected_provider_operation_id =
         native_callback_receipt_string(receipt, "provider_operation_id")?;
-    let expected_ownership_fence_token = native_callback_ownership_fence_token(admission);
+    let expected_ownership_fence_token = native_callback_ownership_fence_token(admission)?;
     let mut callback_position = None;
     let mut authorization_position = None;
     for (position, event) in events.iter().enumerate() {
@@ -2960,7 +2966,7 @@ fn accept_native_callback(
                 policy_decision_id: admission.policy_decision_id.clone(),
                 budget_reservation_id: admission.budget_reservation_id.clone(),
                 compatible_release_id: admission.compatible_release_digest.clone(),
-                ownership_fence_token: native_callback_ownership_fence_token(admission),
+                ownership_fence_token: native_callback_ownership_fence_token(admission)?,
             },
         )
         .map_err(|_| StdlibRuntimeError::invalid("native async callback rejected"))?;
@@ -4313,7 +4319,7 @@ fn execute_retrieval_fusion(inputs: &Value, config: &Value) -> Result<Value, Blo
                 .get("rank")
                 .and_then(Value::as_u64)
                 .unwrap_or((index + 1) as u64);
-            let dedupe_key = stdlib_fusion_dedupe_key(hit);
+            let dedupe_key = stdlib_fusion_dedupe_key(hit)?;
             let normalized_score = hit
                 .get("normalizedScore")
                 .or_else(|| hit.get("normalized_score"))
@@ -4338,12 +4344,16 @@ fn execute_retrieval_fusion(inputs: &Value, config: &Value) -> Result<Value, Blo
                     false,
                 ));
             }
-            let hit_id = hit
+            let hit_id = if let Some(hit_id) = hit
                 .get("hitId")
                 .or_else(|| hit.get("hit_id"))
                 .and_then(Value::as_str)
                 .map(str::to_owned)
-                .unwrap_or_else(|| canonical_hash(hit));
+            {
+                hit_id
+            } else {
+                block_canonical_hash(hit, "fusion hit identity")?
+            };
             candidates.push(FusionCandidate {
                 dedupe_key,
                 hit_id,
@@ -4483,7 +4493,7 @@ fn execute_retrieval_fusion(inputs: &Value, config: &Value) -> Result<Value, Blo
     }))
 }
 
-fn stdlib_fusion_dedupe_key(hit: &Value) -> String {
+fn stdlib_fusion_dedupe_key(hit: &Value) -> Result<String, BlockError> {
     let source_locator = hit.pointer("/item/source/locator");
     let highlight_locator = hit
         .get("highlights")
@@ -4509,13 +4519,27 @@ fn stdlib_fusion_dedupe_key(hit: &Value) -> String {
             "cell_range": alias_json_value(locator, "cellRange", "cell_range"),
             "slide": locator.get("slide").cloned().unwrap_or(Value::Null),
         });
-        return format!("source_span:{}", canonical_json(&normalized));
+        return Ok(format!(
+            "source_span:{}",
+            canonical_json(&normalized).map_err(|error| {
+                BlockError::new(
+                    "stdlib.canonical_json_depth",
+                    ErrorCategory::Validation,
+                    format!("fusion source span exceeds canonical JSON limits: {error}"),
+                    false,
+                )
+            })?
+        ));
     }
     hit.pointer("/item/itemId")
         .or_else(|| hit.pointer("/item/item_id"))
         .and_then(Value::as_str)
         .map(|item_id| format!("item:{item_id}"))
-        .unwrap_or_else(|| format!("item:unknown:{}", canonical_hash(hit)))
+        .map(Ok)
+        .unwrap_or_else(|| {
+            block_canonical_hash(hit, "fusion hit identity")
+                .map(|digest| format!("item:unknown:{digest}"))
+        })
 }
 
 fn alias_json_value(value: &Value, primary: &str, alternate: &str) -> Value {

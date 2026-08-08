@@ -33,6 +33,7 @@ fn tool_terminal_record_projects_completed_tool_result() {
         1_820_000_000_100,
         1_820_000_000_200,
     )
+    .expect("test tool result must be canonically hashable")
     .with_effect_outcome(ToolEffectOutcome::Committed);
     let record = DurableToolTerminalRecord::from_tool_result(
         "run-000001",

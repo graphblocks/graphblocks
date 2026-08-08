@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::canonical::canonical_hash;
+use crate::canonical::{CanonicalJsonError, canonical_hash};
 use graphblocks_schema::{SchemaId, SchemaIdError};
 use serde_json::{Value, json};
 
@@ -73,7 +73,7 @@ impl ToolDefinition {
         Ok(())
     }
 
-    pub fn digest(&self) -> String {
+    pub fn digest(&self) -> Result<String, CanonicalJsonError> {
         canonical_hash(&json!({
             "name": self.name,
             "description": self.description,
@@ -467,7 +467,7 @@ impl ToolBinding {
         Ok(())
     }
 
-    pub fn digest(&self) -> String {
+    pub fn digest(&self) -> Result<String, CanonicalJsonError> {
         canonical_hash(&json!({
             "binding_id": self.binding_id,
             "tool_name": self.tool_name,
@@ -521,7 +521,7 @@ impl ResolvedTool {
                 binding_tool_name: self.binding.tool_name.clone(),
             });
         }
-        let definition_digest = self.definition.digest();
+        let definition_digest = self.definition.digest()?;
         if self.definition_digest != definition_digest {
             return Err(ToolResolutionError::ResolvedToolDigestMismatch {
                 field: "definition_digest",
@@ -529,7 +529,7 @@ impl ResolvedTool {
                 actual: self.definition_digest.clone(),
             });
         }
-        let binding_digest = self.binding.digest();
+        let binding_digest = self.binding.digest()?;
         if self.binding_digest != binding_digest {
             return Err(ToolResolutionError::ResolvedToolDigestMismatch {
                 field: "binding_digest",
@@ -555,8 +555,8 @@ impl ResolvedTool {
                 binding_tool_name: binding.tool_name,
             });
         }
-        let definition_digest = definition.digest();
-        let binding_digest = binding.digest();
+        let definition_digest = definition.digest()?;
+        let binding_digest = binding.digest()?;
         let resolved_tool = Self {
             resolved_tool_id: resolved_tool_id.into(),
             definition,
@@ -574,6 +574,7 @@ impl ResolvedTool {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ToolResolutionError {
+    CanonicalJson(CanonicalJsonError),
     EmptyToolDefinitionField {
         field: &'static str,
     },
@@ -629,6 +630,12 @@ pub enum ToolResolutionError {
     ToolBindingMissing {
         tool_name: String,
     },
+}
+
+impl From<CanonicalJsonError> for ToolResolutionError {
+    fn from(error: CanonicalJsonError) -> Self {
+        Self::CanonicalJson(error)
+    }
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -846,14 +853,14 @@ impl ToolCatalog {
                     tool_name: tool_name.clone(),
                 }
             })?;
-            let definition_digest = definition.digest();
-            let binding_digest = binding.digest();
+            let definition_digest = definition.digest()?;
+            let binding_digest = binding.digest()?;
             let resolved_tool_id = canonical_hash(&json!({
                 "tool_name": tool_name,
                 "definition_digest": definition_digest,
                 "binding_digest": binding_digest,
                 "policy_snapshot": policy_snapshot,
-            }));
+            }))?;
             let resolved_tool = ResolvedTool {
                 resolved_tool_id,
                 definition: definition.clone(),

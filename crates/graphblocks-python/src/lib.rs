@@ -1940,7 +1940,9 @@ fn record_tool_effect_audit_event_json(
         policy_decision_id,
     })
     .map_err(|error| PyValueError::new_err(format!("invalid tool effect audit event: {error}")))?;
-    let payload = serialize_audit_event(&event);
+    let payload = serialize_audit_event(&event).map_err(|error| {
+        PyValueError::new_err(format!("invalid tool effect audit payload: {error}"))
+    })?;
     serde_json::to_string(&payload).map_err(|error| {
         PyRuntimeError::new_err(format!(
             "failed to serialize tool effect audit event: {error}"
@@ -1989,7 +1991,11 @@ fn capture_telemetry_content_json(decision_json: &str, content_json: &str) -> Py
         Vec::new()
     };
 
-    let captured = decision.capture_text(content_kind, text, content_ref, redactions);
+    let captured = decision
+        .capture_text(content_kind, text, content_ref, redactions)
+        .map_err(|error| {
+            PyValueError::new_err(format!("invalid telemetry captured content: {error}"))
+        })?;
     serde_json::to_string(&serialize_captured_content(&captured)).map_err(|error| {
         PyRuntimeError::new_err(format!(
             "failed to serialize telemetry captured content: {error}"
@@ -4933,6 +4939,10 @@ fn serialize_tool_call(call: &ToolCall) -> Value {
 
 fn serialize_tool_admission_error(error: &ToolAdmissionError) -> Value {
     match error {
+        ToolAdmissionError::CanonicalJson(error) => json!({
+            "code": "canonical_json",
+            "message": error.to_string(),
+        }),
         ToolAdmissionError::InvalidToolCall { source } => json!({
             "code": "invalid_tool_call",
             "source": format!("{source:?}"),
@@ -5171,6 +5181,10 @@ fn serialize_resolved_tool(tool: &ResolvedTool) -> Value {
 
 fn serialize_tool_resolution_error(error: &ToolResolutionError) -> Value {
     match error {
+        ToolResolutionError::CanonicalJson(error) => json!({
+            "code": "canonical_json",
+            "message": error.to_string(),
+        }),
         ToolResolutionError::EmptyToolDefinitionField { field } => json!({
             "code": "empty_tool_definition_field",
             "field": field,
@@ -5512,8 +5526,10 @@ fn serialize_budget_error(error: &BudgetError) -> Value {
     }
 }
 
-fn serialize_audit_event(event: &AuditEvent) -> Value {
-    json!({
+fn serialize_audit_event(
+    event: &AuditEvent,
+) -> Result<Value, graphblocks_schema::CanonicalJsonError> {
+    Ok(json!({
         "eventId": event.event_id.as_str(),
         "targetKind": event.target_kind.as_str(),
         "occurredAt": event.occurred_at.as_str(),
@@ -5522,8 +5538,8 @@ fn serialize_audit_event(event: &AuditEvent) -> Value {
         "reasonCodes": &event.reason_codes,
         "payload": &event.payload,
         "metadata": &event.metadata,
-        "payloadDigest": event.payload_digest(),
-    })
+        "payloadDigest": event.payload_digest()?,
+    }))
 }
 
 fn serialize_capture_mode(mode: CaptureMode) -> &'static str {
@@ -10044,7 +10060,8 @@ mod tests {
             [ContentPart::text("safe secret suffix")],
             1_001,
             1_002,
-        );
+        )
+        .map_err(|error| format!("test tool result is not canonical: {error:?}"))?;
         let result_json = serde_json::to_string(&json!({
             "toolCallId": "call-1",
             "status": "completed",
@@ -10162,7 +10179,8 @@ mod tests {
         )
         .map_err(|error| error.to_string())?;
         let result =
-            ToolResult::completed("call-1", [ContentPart::text("safe output")], 1_001, 1_002);
+            ToolResult::completed("call-1", [ContentPart::text("safe output")], 1_001, 1_002)
+                .map_err(|error| format!("test tool result is not canonical: {error:?}"))?;
         let result_json = serde_json::to_string(&json!({
             "toolCallId": "call-1",
             "status": "completed",

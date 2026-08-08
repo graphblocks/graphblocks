@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt;
 
-use crate::canonical::canonical_hash;
+use crate::canonical::{CanonicalJsonError, canonical_hash};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
@@ -208,7 +208,7 @@ impl OciReleaseBundleManifest {
         })
     }
 
-    pub fn content_digest(&self) -> String {
+    pub fn content_digest(&self) -> Result<String, CanonicalJsonError> {
         canonical_hash(&self.manifest_contract())
     }
 
@@ -484,7 +484,7 @@ impl CallbackIngressConfig {
         })
     }
 
-    pub fn content_digest(&self) -> String {
+    pub fn content_digest(&self) -> Result<String, CanonicalJsonError> {
         canonical_hash(&self.manifest_contract())
     }
 
@@ -603,7 +603,7 @@ impl GraphRelease {
         self
     }
 
-    pub fn content_digest(&self) -> String {
+    pub fn content_digest(&self) -> Result<String, CanonicalJsonError> {
         canonical_hash(&json!({
             "version": self.version,
             "bundle": {
@@ -744,7 +744,7 @@ impl DeploymentRevision {
         }
     }
 
-    pub fn content_digest(&self) -> String {
+    pub fn content_digest(&self) -> Result<String, CanonicalJsonError> {
         canonical_hash(&json!({
             "release_digest": self.release_digest,
             "deployment_spec_hash": self.deployment_spec_hash,
@@ -1083,7 +1083,7 @@ impl DeploymentSloProfile {
         })
     }
 
-    pub fn content_digest(&self) -> String {
+    pub fn content_digest(&self) -> Result<String, CanonicalJsonError> {
         canonical_hash(&self.profile_contract())
     }
 }
@@ -1246,7 +1246,7 @@ impl DeploymentRecoveryProfile {
         })
     }
 
-    pub fn content_digest(&self) -> String {
+    pub fn content_digest(&self) -> Result<String, CanonicalJsonError> {
         canonical_hash(&self.recovery_contract())
     }
 }
@@ -1525,19 +1525,23 @@ impl RolloutPlan {
             .ok_or_else(|| RolloutError::new("rollout step index out of range"))
     }
 
-    pub fn assign_revision(&self, affinity_key: &str, step: &RolloutStep) -> String {
+    pub fn assign_revision(
+        &self,
+        affinity_key: &str,
+        step: &RolloutStep,
+    ) -> Result<String, CanonicalJsonError> {
         if step.traffic_percent == 0 {
-            return self.stable_revision_id.clone();
+            return Ok(self.stable_revision_id.clone());
         }
         if step.traffic_percent >= 100 {
-            return self.candidate_revision_id.clone();
+            return Ok(self.candidate_revision_id.clone());
         }
 
         let bucket_digest = canonical_hash(&json!({
             "rollout_id": self.rollout_id,
             "affinity": self.affinity,
             "affinity_key": affinity_key,
-        }));
+        }))?;
         let bucket_hex = bucket_digest
             .strip_prefix("sha256:")
             .unwrap_or(bucket_digest.as_str());
@@ -1547,9 +1551,9 @@ impl RolloutPlan {
             .unwrap_or(0)
             % 100;
         if bucket < u32::from(step.traffic_percent) {
-            self.candidate_revision_id.clone()
+            Ok(self.candidate_revision_id.clone())
         } else {
-            self.stable_revision_id.clone()
+            Ok(self.stable_revision_id.clone())
         }
     }
 }
@@ -1836,7 +1840,7 @@ impl WorkerDrainPlan {
         })
     }
 
-    pub fn content_digest(&self) -> String {
+    pub fn content_digest(&self) -> Result<String, CanonicalJsonError> {
         canonical_hash(&self.plan_contract())
     }
 }
@@ -1985,7 +1989,7 @@ impl RemoteExecutionEnvelope {
         })
     }
 
-    pub fn content_digest(&self) -> String {
+    pub fn content_digest(&self) -> Result<String, CanonicalJsonError> {
         canonical_hash(&self.context_contract())
     }
 }
@@ -2566,7 +2570,7 @@ pub struct HelmRenderedValues {
 }
 
 impl HelmRenderedValues {
-    pub fn content_digest(&self) -> String {
+    pub fn content_digest(&self) -> Result<String, CanonicalJsonError> {
         canonical_hash(&self.values)
     }
 }
@@ -2775,7 +2779,7 @@ impl TerraformOutputRequirementSet {
             .collect()
     }
 
-    pub fn content_digest(&self) -> String {
+    pub fn content_digest(&self) -> Result<String, CanonicalJsonError> {
         canonical_hash(&json!({
             "requirements": self.requirement_contracts(),
         }))
@@ -2961,7 +2965,7 @@ impl DeploymentTargetProfileSet {
         })
     }
 
-    pub fn content_digest(&self) -> String {
+    pub fn content_digest(&self) -> Result<String, CanonicalJsonError> {
         canonical_hash(&self.manifest_contract())
     }
 }
@@ -3375,7 +3379,7 @@ impl PhysicalExecutionPlan {
         self
     }
 
-    pub fn plan_hash(&self) -> String {
+    pub fn plan_hash(&self) -> Result<String, CanonicalJsonError> {
         let mut placements = self
             .placements
             .iter()

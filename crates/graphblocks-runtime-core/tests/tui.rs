@@ -99,7 +99,8 @@ fn tui_view_deduplicates_replay_and_live_events() {
     assert_eq!(view.rows()[1].summary, "running tests");
     assert_eq!(view.rows()[2].severity, TuiRowSeverity::Error);
     assert_eq!(
-        view.content_digest(),
+        view.content_digest()
+            .expect("test TUI view must be canonically hashable"),
         "sha256:f1c917f9c7ac90bb972b5fa6d9586125a521c212b4b33175c5ca2036b87b734e"
     );
 }

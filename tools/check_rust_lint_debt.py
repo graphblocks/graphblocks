@@ -81,8 +81,8 @@ def parse_baseline(value: object, *, root: Path = ROOT) -> RustLintBaseline:
         raise RustLintDebtError("$.toolchain: expected non-empty string")
 
     raw_files = payload["files"]
-    if type(raw_files) is not dict or not raw_files:
-        raise RustLintDebtError("$.files: expected non-empty object")
+    if type(raw_files) is not dict:
+        raise RustLintDebtError("$.files: expected object")
     files: dict[str, int] = {}
     for raw_path, raw_count in raw_files.items():
         if type(raw_path) is not str:

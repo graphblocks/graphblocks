@@ -8,7 +8,7 @@ use crate::application_event::{
     ApplicationEvent, ApplicationEventKind, ApplicationProtocolEvent, ApplicationProtocolEventKind,
     ApplicationProtocolLog,
 };
-use crate::canonical::canonical_json;
+use crate::canonical::{CanonicalJsonError, canonical_json};
 use crate::connectors::{SecretProviderError, SecretRef, SecretResolver};
 use hmac::{Hmac, Mac};
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
@@ -2269,7 +2269,7 @@ impl WebhookSigningConfig {
                 .ok_or(WebhookSignatureError::InvalidBody)?
                 .insert("operation_id".to_owned(), json!(operation_id));
         }
-        let body_size_bytes = canonical_body_size_bytes(&body);
+        let body_size_bytes = canonical_body_size_bytes(&body)?;
         if let Some(max_payload_bytes) = max_payload_bytes
             && body_size_bytes > max_payload_bytes
         {
@@ -2376,7 +2376,7 @@ impl WebhookSigningConfig {
         timestamp_unix_ms: u64,
         body: &Value,
     ) -> Result<String, WebhookSignatureError> {
-        let body = canonical_json(body);
+        let body = canonical_json(body)?;
         let mut mac = HmacSha256::new_from_slice(&self.secret)
             .map_err(|_| WebhookSignatureError::InvalidSecret)?;
         mac.update(timestamp_unix_ms.to_string().as_bytes());
@@ -2402,7 +2402,7 @@ pub struct WebhookHttpRequest {
 }
 
 impl WebhookHttpRequest {
-    pub fn canonical_body(&self) -> String {
+    pub fn canonical_body(&self) -> Result<String, CanonicalJsonError> {
         canonical_json(&self.body)
     }
 }
@@ -2622,13 +2622,14 @@ pub struct SignedWebhookDelivery {
 }
 
 impl SignedWebhookDelivery {
-    pub fn body_size_bytes(&self) -> usize {
+    pub fn body_size_bytes(&self) -> Result<usize, CanonicalJsonError> {
         canonical_body_size_bytes(&self.body)
     }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum WebhookSignatureError {
+    CanonicalJson(CanonicalJsonError),
     EmptyField {
         field: String,
     },
@@ -2661,8 +2662,14 @@ pub enum WebhookSignatureError {
     InvalidSecret,
 }
 
-fn canonical_body_size_bytes(body: &Value) -> usize {
-    canonical_json(body).len()
+impl From<CanonicalJsonError> for WebhookSignatureError {
+    fn from(error: CanonicalJsonError) -> Self {
+        Self::CanonicalJson(error)
+    }
+}
+
+fn canonical_body_size_bytes(body: &Value) -> Result<usize, CanonicalJsonError> {
+    Ok(canonical_json(body)?.len())
 }
 
 fn hex_encode(bytes: &[u8]) -> String {

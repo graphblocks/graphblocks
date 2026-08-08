@@ -302,7 +302,7 @@ fn playback_ledger_interrupts_active_items_only() -> Result<(), Box<dyn Error>> 
     assert_eq!(interrupted.entries[1].status, PlaybackStatus::Interrupted);
     assert_eq!(interrupted.entries[1].completed_at_ms, Some(150));
     assert_eq!(interrupted.entries[1].reason.as_deref(), Some("barge_in"));
-    assert!(interrupted.content_digest().starts_with("sha256:"));
+    assert!(interrupted.content_digest()?.starts_with("sha256:"));
     Ok(())
 }
 
@@ -563,7 +563,7 @@ fn realtime_provider_adapter_builds_stable_provider_session_request() -> Result<
     );
     assert_eq!(envelope["options"]["voice"], serde_json::json!("alloy"));
     assert_eq!(
-        request.content_digest(),
+        request.content_digest()?,
         "sha256:0450d3dc36db2cc56d14189f617d6abc44dbee5ff9aeacbcec8f07bd28ae5d6a"
     );
     Ok(())

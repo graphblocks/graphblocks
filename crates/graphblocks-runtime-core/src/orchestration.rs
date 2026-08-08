@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt;
 
-use crate::canonical::canonical_hash;
+use crate::canonical::{CanonicalJsonError, canonical_hash};
 use serde_json::{Value, json};
 
 use crate::budget::{BudgetPermit, UsageAmount};
@@ -247,7 +247,7 @@ impl TaskContextAccessGraph {
             .collect()
     }
 
-    pub fn content_digest(&self) -> String {
+    pub fn content_digest(&self) -> Result<String, CanonicalJsonError> {
         canonical_hash(&json!({
             "edges": self.edge_contracts(),
         }))
@@ -635,7 +635,7 @@ impl TaskPlan {
         )
     }
 
-    pub fn content_digest(&self) -> String {
+    pub fn content_digest(&self) -> Result<String, CanonicalJsonError> {
         canonical_hash(&json!({
             "objective": self.objective,
             "steps": self.steps.iter().map(TaskStep::canonical_value).collect::<Vec<_>>(),

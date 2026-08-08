@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt;
 
-use crate::canonical::canonical_hash;
+use crate::canonical::{CanonicalJsonError, canonical_hash};
 use serde_json::{Value, json};
 
 use crate::orchestration::LeaseGrant;
@@ -475,7 +475,7 @@ pub struct WorkspaceCommitRecord {
 }
 
 impl WorkspaceCommitRecord {
-    pub fn content_digest(&self) -> String {
+    pub fn content_digest(&self) -> Result<String, CanonicalJsonError> {
         canonical_hash(&json!({
             "workspace_id": self.workspace_id,
             "change_set_id": self.change_set_id,
@@ -1789,7 +1789,7 @@ impl ResultBundle {
         self
     }
 
-    pub fn content_digest(&self) -> String {
+    pub fn content_digest(&self) -> Result<String, CanonicalJsonError> {
         canonical_hash(&json!({
             "run_id": self.run_id,
             "release_id": self.release_id,

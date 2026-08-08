@@ -194,7 +194,12 @@ fn task_plan_context_access_graph_serializes_write_conflicts() -> Result<(), Box
             "conflict": "write_read"
         })]
     );
-    assert!(graph.content_digest().starts_with("sha256:"));
+    assert!(
+        graph
+            .content_digest()
+            .expect("test orchestration graph must be canonically hashable")
+            .starts_with("sha256:")
+    );
     Ok(())
 }
 

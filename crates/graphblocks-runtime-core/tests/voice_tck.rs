@@ -145,7 +145,7 @@ fn voice_tck_cases_match_runtime_core() {
                     "statuses": interrupted.entries.iter().map(|entry| entry.status.as_str()).collect::<Vec<_>>(),
                     "completedAtMs": interrupted.entries.iter().map(|entry| entry.completed_at_ms).collect::<Vec<_>>(),
                     "reasons": interrupted.entries.iter().map(|entry| entry.reason.clone()).collect::<Vec<_>>(),
-                    "digest": interrupted.content_digest(),
+                    "digest": interrupted.content_digest().expect("test playback journal must be canonically hashable"),
                 })
             }
             "validation_errors" => {

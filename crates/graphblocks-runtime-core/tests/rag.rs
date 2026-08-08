@@ -70,7 +70,9 @@ fn in_memory_chunk_retriever_returns_ranked_hits_with_lineage() {
     let retriever = InMemoryChunkRetriever::new(chunks.clone(), "local-test");
     let request = SearchRequest::new("beta").with_top_k(2);
 
-    let result = retriever.retrieve(request.clone());
+    let result = retriever
+        .retrieve(request.clone())
+        .expect("test retrieval request must be canonically hashable");
 
     let request_hash = canonical_hash(&json!({
         "filters": {},
@@ -219,7 +221,10 @@ fn in_memory_knowledge_index_upserts_chunks_and_exposes_retriever_view() {
     let mut index = InMemoryKnowledgeIndex::new("knowledge-local");
 
     let report = index.upsert_chunks(chunks.clone());
-    let result = index.retriever("knowledge-local-read").search("beta", 10);
+    let result = index
+        .retriever("knowledge-local-read")
+        .search("beta", 10)
+        .expect("test search request must be canonically hashable");
 
     assert_eq!(report.operation, "upsert");
     assert_eq!(report.affected_count, 2);
@@ -249,7 +254,10 @@ fn in_memory_knowledge_index_tombstones_without_returning_deleted_chunks() {
     let report = index
         .delete_asset(&asset.asset_id, KnowledgeDeleteMode::Tombstone)
         .expect("delete succeeds");
-    let result = index.retriever("knowledge-local-read").search("beta", 10);
+    let result = index
+        .retriever("knowledge-local-read")
+        .search("beta", 10)
+        .expect("test search request must be canonically hashable");
 
     assert_eq!(report.operation, "delete");
     assert_eq!(report.affected_count, 2);
@@ -314,6 +322,7 @@ fn in_memory_knowledge_index_updates_metadata_acl_and_publishes_revision()
     let hit = index
         .retriever("knowledge-local-read")
         .search("beta", 1)
+        .expect("test search request must be canonically hashable")
         .remove(0);
 
     assert_eq!(publish.asset_id, asset.asset_id);

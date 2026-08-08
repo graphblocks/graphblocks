@@ -303,7 +303,12 @@ fn workspace_commit_applies_changeset_with_compare_and_swap_gate_and_review() {
     assert_eq!(record.previous_revision, 7);
     assert_eq!(record.new_revision, 8);
     assert_eq!(record.change_set_id, "change-1");
-    assert!(record.content_digest().starts_with("sha256:"));
+    assert!(
+        record
+            .content_digest()
+            .expect("test evaluation record must be canonically hashable")
+            .starts_with("sha256:")
+    );
 }
 
 #[test]

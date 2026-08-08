@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt;
 
-use crate::canonical::canonical_hash;
+use crate::canonical::{CanonicalJsonError, canonical_hash};
 use serde_json::{Value, json};
 
 fn require_non_empty(field_name: &'static str, value: &str) -> Result<(), VoiceContractError> {
@@ -979,7 +979,7 @@ impl PlaybackLedger {
         Self::from_entries(entries)
     }
 
-    pub fn content_digest(&self) -> String {
+    pub fn content_digest(&self) -> Result<String, CanonicalJsonError> {
         canonical_hash(&json!({
             "entries": self.entries.iter().map(PlaybackEntry::contract).collect::<Vec<_>>(),
         }))
@@ -1437,7 +1437,7 @@ impl RealtimeProviderSessionRequest {
         })
     }
 
-    pub fn content_digest(&self) -> String {
+    pub fn content_digest(&self) -> Result<String, CanonicalJsonError> {
         canonical_hash(&self.provider_envelope())
     }
 }
