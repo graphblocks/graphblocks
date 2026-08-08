@@ -27,7 +27,10 @@ from packaging.requirements import InvalidRequirement, Requirement
 from packaging.utils import canonicalize_name, parse_sdist_filename, parse_wheel_filename
 import yaml
 
-from graphblocks.canonical import canonical_dumps, canonical_hash
+from graphblocks.canonical import (
+    canonical_dumps_reference as canonical_dumps,
+    canonical_hash_reference as canonical_hash,
+)
 from graphblocks.conformance import ConformanceAuthorityMatrix
 from graphblocks.loader import load_documents
 from graphblocks.packages import build_wheel_matrix, load_package_catalog

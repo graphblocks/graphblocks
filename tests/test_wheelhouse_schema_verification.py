@@ -15,6 +15,10 @@ from types import ModuleType, SimpleNamespace
 
 import pytest
 
+from graphblocks.canonical import (
+    canonical_dumps_reference,
+    canonical_hash_reference,
+)
 from graphblocks.schema import SchemaManifest
 
 
@@ -25,6 +29,13 @@ def _load_wheelhouse_module() -> ModuleType:
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+def test_wheelhouse_expectations_use_reference_canonical_oracle() -> None:
+    module = _load_wheelhouse_module()
+
+    assert module.canonical_dumps is canonical_dumps_reference
+    assert module.canonical_hash is canonical_hash_reference
 
 
 def _with_content_digest(module: ModuleType, payload: dict[str, object]) -> dict[str, object]:
