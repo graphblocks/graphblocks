@@ -8,9 +8,8 @@
     "--bins",
     "--locked"
   ],
-  "total": 117,
+  "total": 113,
   "files": {
-    "crates/graphblocks-flow/src/ticket.rs": 4,
     "crates/graphblocks-runtime-core/src/async_operation.rs": 16,
     "crates/graphblocks-runtime-core/src/budget.rs": 24,
     "crates/graphblocks-runtime-core/src/callback_delivery.rs": 2,

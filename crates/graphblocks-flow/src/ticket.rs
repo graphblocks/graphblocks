@@ -1,5 +1,3 @@
-#![allow(clippy::expect_used)] // Guarded by compatibility/rust-production-expect-budget.json.
-
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, SystemTime};
@@ -250,6 +248,9 @@ pub enum AdmissionTicketError {
         expected: u64,
         actual: u64,
     },
+    InvariantViolation {
+        operation: &'static str,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -470,10 +471,11 @@ impl AdmissionTicketQueue {
                 return Err(AdmissionTicketError::IdentifierOverflow);
             };
             inner.next_fencing_token = next_fencing_token;
-            let ticket = inner
-                .tickets
-                .get_mut(&ticket_id)
-                .expect("admitted ticket was checked before claim");
+            let ticket = inner.tickets.get_mut(&ticket_id).ok_or(
+                AdmissionTicketError::InvariantViolation {
+                    operation: "claim admitted ticket",
+                },
+            )?;
             ticket.state = AdmissionTicketState::Running;
             ticket.running_at = Some(now);
             ticket.fencing_token = Some(fencing_token);
@@ -610,10 +612,13 @@ impl AdmissionTicketQueue {
         if current_state == AdmissionTicketState::Admitted {
             inner.concurrent = inner.concurrent.saturating_sub(1);
         }
-        let ticket = inner
-            .tickets
-            .get_mut(ticket_id)
-            .expect("nonterminal ticket was checked before cancellation");
+        let ticket =
+            inner
+                .tickets
+                .get_mut(ticket_id)
+                .ok_or(AdmissionTicketError::InvariantViolation {
+                    operation: "cancel nonterminal ticket",
+                })?;
         ticket.state = AdmissionTicketState::Cancelled;
         ticket.terminal_at = Some(now);
         let cancelled = ticket.clone();
@@ -668,7 +673,9 @@ impl AdmissionTicketQueue {
         }
         let expected = ticket
             .fencing_token
-            .expect("running admission ticket has a fencing token");
+            .ok_or(AdmissionTicketError::InvariantViolation {
+                operation: "read running ticket fencing token",
+            })?;
         if fencing_token != expected {
             return Err(AdmissionTicketError::StaleFencingToken {
                 ticket_id: ticket_id.to_owned(),
@@ -676,10 +683,13 @@ impl AdmissionTicketQueue {
                 actual: fencing_token,
             });
         }
-        let ticket = inner
-            .tickets
-            .get_mut(ticket_id)
-            .expect("running ticket was checked before terminal transition");
+        let ticket =
+            inner
+                .tickets
+                .get_mut(ticket_id)
+                .ok_or(AdmissionTicketError::InvariantViolation {
+                    operation: "transition running ticket",
+                })?;
         ticket.state = terminal_state;
         ticket.terminal_at = Some(now);
         let terminal = ticket.clone();
@@ -843,4 +853,43 @@ fn ensure_ticket_issued(
         });
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn missing_running_fence_returns_invariant_error() -> Result<(), AdmissionTicketError> {
+        let now = SystemTime::UNIX_EPOCH;
+        let config = AdmissionTicketQueueConfig::new(
+            1,
+            1,
+            Duration::from_secs(60),
+            1,
+            Duration::from_secs(60),
+        )?;
+        let queue = AdmissionTicketQueue::new_at(config, now);
+        let ticket = queue.admit_at("request-1", "owner-1", now)?.into_ticket();
+        let claim = queue
+            .claim_next_at(now)?
+            .ok_or(AdmissionTicketError::InvariantViolation {
+                operation: "claim test ticket",
+            })?;
+
+        {
+            let mut inner = queue.lock();
+            if let Some(running) = inner.tickets.get_mut(ticket.ticket_id()) {
+                running.fencing_token = None;
+            }
+        }
+
+        assert_eq!(
+            queue.complete_at(ticket.ticket_id(), claim.fencing_token(), now),
+            Err(AdmissionTicketError::InvariantViolation {
+                operation: "read running ticket fencing token",
+            })
+        );
+        Ok(())
+    }
 }
