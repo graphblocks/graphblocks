@@ -14,6 +14,58 @@ import yaml
 ROOT = Path(__file__).parents[1]
 
 
+def test_project_and_artifact_maturity_claims_are_consistent() -> None:
+    matrix = yaml.safe_load(
+        (ROOT / "docs" / "project" / "stable-release-matrix.yaml").read_text(
+            encoding="utf-8"
+        )
+    )
+    policy = matrix["maturityPolicy"]
+    status = " ".join(
+        (ROOT / policy["projectPhaseDocument"])
+        .read_text(encoding="utf-8")
+        .split()
+    )
+    security = " ".join(
+        (ROOT / policy["securitySupport"]["document"])
+        .read_text(encoding="utf-8")
+        .split()
+    )
+    artifacts = {entry["id"]: entry for entry in matrix["artifacts"]}
+
+    assert policy["formatVersion"] == 1
+    assert policy["projectPhase"] == "pre-1.0-release-candidate"
+    assert policy["classifierSemantics"] == (
+        "packaging-distribution-maturity-only-not-profile-compatibility-"
+        "or-security-support"
+    )
+    assert policy["profileTierAuthority"] == "profiles"
+    assert "GraphBlocks is pre-1.0 release-candidate software." in status
+    assert "GraphBlocks is pre-1.0 release-candidate software." in security
+    assert "GraphBlocks is alpha software." not in security
+    assert policy["securitySupport"] == {
+        "policy": "current-development-branch-only-no-maintenance-series",
+        "document": "SECURITY.md",
+        "productionSecurityBoundaryClaimed": False,
+    }
+    assert "no released maintenance series is supported yet" in security
+    assert "Do not use the reference runtime as a security boundary" in security
+
+    for declaration in policy["artifactClassifiers"]:
+        metadata_path = declaration["metadata"]
+        metadata = tomllib.loads((ROOT / metadata_path).read_text(encoding="utf-8"))
+        development_classifiers = [
+            classifier
+            for classifier in metadata["project"]["classifiers"]
+            if classifier.startswith("Development Status :: ")
+        ]
+        assert development_classifiers == [declaration["classifier"]]
+        artifact = artifacts[declaration["artifactId"]]
+        assert artifact["path"] == metadata_path
+        assert artifact["tier"] == "stable"
+        assert artifact["readiness"] != "ready"
+
+
 def test_roadmap_v1_wire_claims_match_schema_and_release_gates() -> None:
     roadmap = " ".join(
         (ROOT / "docs" / "project" / "roadmap.md")

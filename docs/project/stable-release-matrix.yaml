@@ -1,6 +1,26 @@
 matrixVersion: 1
 targetRelease: '1.0'
 currentReadiness: blocked
+maturityPolicy:
+  formatVersion: 1
+  projectPhase: pre-1.0-release-candidate
+  projectPhaseDocument: docs/project/status.md
+  classifierSemantics: packaging-distribution-maturity-only-not-profile-compatibility-or-security-support
+  profileTierAuthority: profiles
+  securitySupport:
+    policy: current-development-branch-only-no-maintenance-series
+    document: SECURITY.md
+    productionSecurityBoundaryClaimed: false
+  artifactClassifiers:
+    - artifactId: pypi:graphblocks
+      metadata: pyproject.toml
+      classifier: 'Development Status :: 4 - Beta'
+    - artifactId: pypi:graphblocks-testing
+      metadata: packages/graphblocks-testing/pyproject.toml
+      classifier: 'Development Status :: 4 - Beta'
+    - artifactId: pypi:graphblocks-runtime
+      metadata: packages/graphblocks-runtime/pyproject.toml
+      classifier: 'Development Status :: 3 - Alpha'
 readinessAxes:
   formatVersion: 1
   generatedBy: tools/generate_status_readiness.py
