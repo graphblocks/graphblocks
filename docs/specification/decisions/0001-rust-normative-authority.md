@@ -25,8 +25,8 @@ implementation currently covers more optional features.
 
 Rust is the normative authority for portable graph compilation, standalone
 canonical/schema-identity utilities, and resource validation/migration, and the
-target normative authority for the runtime protocol and production scheduler.
-Python is the authoring facade, schema-facing SDK,
+target normative authority for the stable C1 local runtime. Python is the
+authoring facade, schema-facing SDK,
 deterministic reference compiler/interpreter, and TCK oracle.
 
 The transition is phase-scoped:
@@ -37,7 +37,8 @@ The transition is phase-scoped:
 | Python graph builders, typed authoring, YAML composition, and ergonomic schema APIs | Python | Supported authoring surface; materializes portable resources for the normative compiler |
 | Reference compiler and local reference interpreter | Python | Explicit oracle through `graphblocks.compiler.compile_graph_reference` and reference-runtime/TCK imports; never an implicit production fallback |
 | Standalone canonical/schema-identity and resource validation/migration utility authority | Rust | Implemented through fail-closed public canonical, `SchemaId.parse`, resource validation, and migration facades; supported installed-wheel evidence binds public, reference, and direct-native results over the complete shared resource corpora to the exact runtime artifact |
-| Runtime protocol and production scheduler | Rust | Runtime protocol handshake and the installed stable C1 local scheduler/journal slice are exact native/reference evidence; suspension, crash/restart, fencing, and the wider production scheduler still block the release gate |
+| Stable C1 local runtime | Rust | Runtime capability handshake and the installed local scheduler/journal slice are exact native/reference evidence; five C1 requirements, six exact-differential suites, the stable native API, and panic-free public boundaries still block the core authority gate |
+| C4 production and X3 durable-stream runtime | Profile-specific Rust target | Preview only; live authority, multi-process recovery, fencing, outbox/effect, and adapter evidence are governed by `REL-EXTENSION-RUNTIME-AUTHORITY` and do not block the first C0/C1 release |
 | AI application, governance, durable stream, voice, deployment, observability, and integrations | Profile-specific | No authority or stability is implied until the named extension profile passes its own gates |
 
 The Python API follows these rules:
@@ -100,22 +101,25 @@ Rust implementation crates remain internal APIs unless separately promoted.
    migration corpora plus the fixed canonical/identity corpus to the exact
    `graphblocks-runtime` wheel record. It does not relabel unrelated cases in
    the complete schema TCK.
-4. Move the production scheduler and durable authority checks behind the Rust
-   runtime protocol while retaining the Python local runtime as a reference
+4. Move every stable C1 local-runtime requirement behind the Rust runtime
+   protocol while retaining the Python local runtime as a reference
    interpreter. The installed stable C1 local scheduler/journal slice now runs
    through the Rust stdlib runtime, requires the versioned `runtime.local.v1`
    binding capability, fails closed without it, and compares the complete
-   stable result/lifecycle contract with the Python oracle. Wider
-   production suspension and durability evidence remains incomplete.
+   stable result/lifecycle contract with the Python oracle. The remaining C1
+   requirements, suites, native API contract, and panic-free public boundaries
+   are enumerated by `REL-NORMATIVE-AUTHORITY` and
+   `REL-RUNTIME-CORRECTNESS`. Wider production durability belongs to the
+   separate nonblocking extension-promotion gate.
 5. Extract the reusable control-plane library so language bindings do not
    depend on an executable/control-plane layer. This step is implemented:
    `graphblocks-python` and the one-shot `graphblocks-control` CLI both consume
    the `graphblocks-control-plane` library target.
 
-Until step 4 and its production-runtime differential evidence are complete,
+Until step 4 and its stable C1 differential and API evidence are complete,
 `REL-NORMATIVE-AUTHORITY` remains blocked and
-the project must not describe the entire native runtime or C1/C4 production
-plane as stable.
+the project must not describe the entire native runtime as stable. C4/X3 remain
+preview independently of the first C0/C1 release decision.
 
 ## Conformance impact
 

@@ -230,9 +230,10 @@ compares public facades, explicit Python oracles, and direct native functions
 over the fixed utility corpus and complete shared resource corpora, then binds
 those results to the exact runtime wheel record. This does not relabel other
 behavior in the broader reference-only schema TCK.
-`REL-NORMATIVE-AUTHORITY` therefore still blocks 1.0 on production
-scheduler/durable authority. Installed compiler TCK reports execute the
-normative facade and bind the
+`REL-NORMATIVE-AUTHORITY` therefore still blocks 1.0 only on the remaining C1
+requirement authority, exact-differential suites, stable native runtime API,
+and panic-free public Rust boundaries. Installed compiler TCK reports execute
+the normative facade and bind the
 `graphblocks-runtime` implementation version plus the exact platform wheel
 record and SHA-256. The evidence runner also compares the installed package and
 loaded native-module bytes with that wheel, while release assembly rechecks the
@@ -243,8 +244,12 @@ case executes the Rust stdlib scheduler/journal path without fallback, compares
 status, outputs, terminal state, and normalized lifecycle order with the Python
 oracle, and binds the runtime report to the exact `graphblocks-runtime` wheel.
 This promotes only the named local scheduler/journal slice; production
-suspension, crash/restart, lease/fence, and durable effect boundaries remain
-blocked.
+suspension, multi-worker crash recovery, lease/fence, and durable effect
+boundaries remain preview promotion work under
+`REL-EXTENSION-RUNTIME-AUTHORITY`, which does not block the first C0/C1 release.
+`REL-RUNTIME-CORRECTNESS` separately continues to block 1.0 on the remaining
+C1 requirements, suites, native API snapshot, and restart-independent local
+store/journal evidence.
 
 ## Release gates
 

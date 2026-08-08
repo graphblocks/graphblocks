@@ -57,12 +57,12 @@ readinessAxes:
       claimBoundary: The reference server is not a production-ready multi-tenant authority boundary; object authorization and adversarial resource evidence remain mandatory.
     - id: durability
       label: Durability and recovery
-      readiness: core-c1-authority-blocked-production-preview
-      primaryGates: [REL-AUDIT-REMEDIATION, REL-NORMATIVE-AUTHORITY]
+      readiness: core-c1-runtime-authority-and-correctness-blocked-production-preview
+      primaryGates: [REL-AUDIT-REMEDIATION, REL-NORMATIVE-AUTHORITY, REL-RUNTIME-CORRECTNESS]
       targetReleaseClaim: core-c1-local-runtime-authority
       blocksTargetRelease: true
       shippedP0P1RemainBlocking: true
-      claimBoundary: C1 local-runtime durability and scheduler-authority evidence blocks 1.0; C4/X3 production durability remains preview and excluded until restart, crash, lease, fence, and outbox evidence passes.
+      claimBoundary: The five remaining C1 requirements, six remaining exact-differential suites, stable native runtime API, and restart-independent local correctness block 1.0; C4/X3 production durability is governed by a separate nonblocking preview-promotion gate.
     - id: adapters
       label: External adapters
       readiness: contract-only-no-real-adapters
@@ -138,7 +138,21 @@ authorityTransition:
     - installed-local-runtime-exact-differential
     - native-local-runtime-capability-handshake
   remainingPhases:
-    - production-scheduler-and-durable-authority
+    - stable-c1-requirement-authority
+    - stable-c1-suite-exact-differential
+    - stable-native-local-runtime-api-contract
+    - fallible-panic-free-rust-public-boundaries
+  coreRuntimeAuthority:
+    profile: GB-C1-LOCAL-RUNTIME
+    remainingRequirements: [typed-ports, outcome, cancellation, local-flow, local-runtime-api]
+    remainingExactSuites: [application-events, retry, sequence, tool-execution, tool-lifecycle, tool-result]
+    runtimeCorrectnessGate: REL-RUNTIME-CORRECTNESS
+    blocksTargetRelease: true
+  extensionRuntimeAuthority:
+    profiles: [GB-C4-PRODUCTION, GB-X3-DURABLE-STREAM]
+    promotionGate: REL-EXTENSION-RUNTIME-AUTHORITY
+    blocksTargetRelease: false
+    excludedFromCore1_0: true
   targetMilestone: phase-2-before-1.0
   blocksTargetRelease: true
   requiredGate: REL-NORMATIVE-AUTHORITY
@@ -432,7 +446,7 @@ profiles:
     implementation: rust-native-runtime-target+python-reference-oracle
     tier: stable
     readiness: blocked
-    authority: {activeCompiler: rust, activeLocalRuntime: rust, activeReferenceInterpreter: python, targetProductionScheduler: rust-transition-blocked, inheritedAuthorityFrom: extends}
+    authority: {activeCompiler: rust, activeLocalRuntime: rust, activeReferenceInterpreter: python, targetCoreRuntimeAuthority: rust-transition-blocked, inheritedAuthorityFrom: extends}
     promotionGate: REL-CORE-PROFILE
     extends: [GB-C0-SCHEMA]
     requiredGates: [REL-CORE-PROFILE, REL-WIRE-V1, REL-CLOSED-SCHEMA, REL-CLOSED-WORLD, REL-DIAGNOSTICS, REL-TRACEABILITY, REL-INSTALLED-TCK, REL-NORMATIVE-AUTHORITY, REL-API-SNAPSHOT, REL-RUNTIME-CORRECTNESS]
@@ -481,7 +495,7 @@ profiles:
     tier: preview
     roadmap: active
     promotionGate: REL-EXTENSION-PROFILE
-    requiredGates: *extension-profile-gates
+    requiredGates: &extension-runtime-profile-gates [REL-CORE-PROFILE, REL-WIRE-V1, REL-CLOSED-SCHEMA, REL-CLOSED-WORLD, REL-DIAGNOSTICS, REL-TRACEABILITY, REL-INSTALLED-TCK, REL-NORMATIVE-AUTHORITY, REL-API-SNAPSHOT, REL-RUNTIME-CORRECTNESS, REL-EXTENSION-PROFILE, REL-EXTENSION-RUNTIME-AUTHORITY]
     blockers: [fail-closed-protected-routes, tenant-scoped-object-authorization, restart-durable-accepted-runs, authenticated-idempotent-resume, worker-crash-recovery, atomic-outbox-claims, retention-and-pagination, resource-execution-budgets, fencing, production-adapter-evidence]
   - id: GB-X1-ORCHESTRATION
     releaseTrack: extension
@@ -530,7 +544,7 @@ profiles:
     qualifier: experimental
     roadmap: active
     promotionGate: REL-EXTENSION-PROFILE
-    requiredGates: *extension-profile-gates
+    requiredGates: *extension-runtime-profile-gates
 
 wireVersions:
   - id: graphblocks.ai/v1:Graph
@@ -893,7 +907,50 @@ releaseGates:
       - schemas/graphblocks.ai/v1/plugin-manifest.schema.json
       - pyproject.toml
       - .github/workflows/docs.yml
-  - {id: REL-RUNTIME-CORRECTNESS, description: C1 lifecycle cancellation journal bounded-flow and tool gates pass.}
+  - id: REL-RUNTIME-CORRECTNESS
+    description: The stable C1 local runtime has normative implementations, exact differential coverage, a frozen native API, and restart-independent local correctness evidence.
+    readiness: blocked
+    scope: core-c1-local-runtime
+    blocksTargetRelease: true
+    requirementSelectors: [typed-ports, outcome, cancellation, local-flow, local-runtime-api]
+    exactSuiteSelectors: [application-events, retry, sequence, tool-execution, tool-lifecycle, tool-result]
+    requiredEvidence:
+      - deterministic-local-scheduler-and-journal-native-authority
+      - installed-native-local-runtime-artifact-identity
+      - all-stable-c1-requirements-normative
+      - all-stable-c1-suites-exact-native-reference
+      - stable-native-local-runtime-api-snapshot
+      - restart-independent-local-runtime-store-and-journal-reopen
+      - stale-authoritative-commit-rejection
+    completedEvidence:
+      - deterministic-local-scheduler-and-journal-native-authority
+      - installed-native-local-runtime-artifact-identity
+    blockers:
+      - stable-c1-requirement-authority-incomplete
+      - stable-c1-suite-exact-differential-incomplete
+      - stable-native-local-runtime-api-snapshot-incomplete
+      - restart-independent-local-runtime-correctness-incomplete
+  - id: REL-EXTENSION-RUNTIME-AUTHORITY
+    description: C4 production and X3 durable-stream profiles require live authority, multi-process recovery, fencing, and durable output/effect boundaries before their separate preview promotion.
+    readiness: definition-blocked
+    scope: extension-profile-promotion
+    blocksTargetRelease: false
+    profileSelectors: [GB-C4-PRODUCTION, GB-X3-DURABLE-STREAM]
+    requiredEvidence:
+      - live-policy-budget-schema-and-lease-authority-revalidation
+      - independent-process-crash-recovery-and-competing-worker-fencing
+      - durable-output-and-effect-outbox-idempotency
+      - explicit-delivery-and-effect-guarantees
+      - production-storage-and-adapter-evidence
+      - durable-stream-restart-and-sink-commit-evidence
+    currentEvidence:
+      - sqlite-accepted-run-crash-and-stale-claim-primitives
+      - in-memory-durable-stream-contract-and-loom-primitives
+    blockers:
+      - live-authority-revalidation-incomplete
+      - deployment-like-multi-process-recovery-incomplete
+      - durable-output-effect-boundary-incomplete
+      - production-adapter-evidence-incomplete
   - id: REL-INTEGRATION-PROMOTION
     description: Integration maturity, authentication, version, failure-model, and candidate-bound signed real-service runs are verified before promotion.
     readiness: candidate-enforced
@@ -1434,7 +1491,7 @@ releaseGates:
     blockers:
       - audited-source-commit-tree-or-archive-digest-unavailable
   - id: REL-NORMATIVE-AUTHORITY
-    description: Rust is the normative Graph compiler and standalone canonical/schema-identity and resource validation/migration utility authority, and remains the selected target production-runtime authority while Python stays the authoring facade and deterministic reference oracle; this gate tracks the remaining scheduler/durable transition.
+    description: Rust is the normative C0/C1 compiler and runtime authority while Python stays the authoring facade and deterministic reference oracle; this gate tracks only the remaining stable C1 authority transition, not C4/X3 preview durability.
     readiness: blocked
     blocksTargetRelease: true
     decisionStatus: accepted
@@ -1453,6 +1510,10 @@ releaseGates:
       - supported-installed-native-canonical-schema-identity-differential-and-artifact-identity
       - native-resource-schema-validation-and-migration-routing-and-installed-differential
       - supported-installed-native-local-runtime-differential-and-artifact-identity
+      - native-local-runtime-capability-handshake
+      - stable-c1-typed-ports-outcome-cancellation-local-flow-and-runtime-api-authority
+      - exact-shared-c1-application-events-retry-sequence-tool-execution-tool-lifecycle-and-result-differential
+      - stable-native-local-runtime-api-snapshot-and-installed-identity
       - fallible-panic-free-rust-public-boundaries
     completedEvidence:
       - accepted-authority-transition-adr
@@ -1466,9 +1527,12 @@ releaseGates:
       - supported-installed-native-canonical-schema-identity-differential-and-artifact-identity
       - native-resource-schema-validation-and-migration-routing-and-installed-differential
       - supported-installed-native-local-runtime-differential-and-artifact-identity
+      - native-local-runtime-capability-handshake
     blockers:
-      - production-runtime-authority-transition-incomplete
-      - remaining-normative-phase-differential-evidence-incomplete
+      - stable-c1-requirement-authority-incomplete
+      - stable-c1-suite-exact-differential-incomplete
+      - stable-native-local-runtime-api-contract-incomplete
+      - fallible-panic-free-rust-public-boundaries-incomplete
   - id: REL-PLATFORM-MATRIX
     description: Install typing and runtime gates pass on every published platform; upgrade is explicitly exempt only for v1.0.0.
     readiness: candidate-enforced-with-first-stable-upgrade-exemption

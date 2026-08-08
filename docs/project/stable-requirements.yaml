@@ -7,7 +7,7 @@ authorityRoles:
   graphCompiler: rust
   standaloneCanonicalAndSchemaIdentity: rust
   standaloneResourceSchemaValidationAndMigration: rust
-  productionRuntimeTarget: rust
+  stableLocalRuntimeTarget: rust
   python: authoring-facade-and-explicit-reference-oracle
   implicitReferenceFallback: false
 implementationRoleDefinitions:

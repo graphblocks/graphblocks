@@ -522,7 +522,7 @@ Rust normative
   schema reader and migration semantics
   normalized IR, canonical serialization, and canonical hash
   diagnostic registry and physical plan
-  runtime protocol and production scheduler
+  stable C1 runtime protocol and local execution authority
 
 Python
   typed authoring and ergonomic builders
@@ -541,7 +541,9 @@ available. Supported installed-wheel evidence compares public, reference, and
 direct-native results over the complete shared resource corpora and binds the
 corpus to the exact runtime artifact. The audit inventory's `GB-ARCH-001` and
 `GB-ARCH-002` implementation findings have executable closure evidence; the
-separate release transition remains blocked on production scheduler authority.
+separate release transition remains blocked on five stable C1 requirements,
+six exact-differential suites, the native API contract, and panic-free Rust
+public boundaries.
 The native binding exposes a separate
 versioned,
 closed capability handshake; the Python wrapper rejects incompatible protocol,
@@ -566,11 +568,12 @@ validation/migration utility slices. The complete schema and C1 runtime suite
 claims are phase-scoped: the bundled stable runtime suite now executes the Rust
 stdlib path with exact native/reference result and lifecycle comparison, while
 the remaining C1 suites stay `reference-only`. This preserves the boundary for
-other schema-facing behavior and the transition blocker for the production
-scheduler.
+other schema-facing behavior and the remaining stable C1 transition blockers.
 This accepted, phase-scoped authority direction resolves `GB-ARCH-020` itself;
-it does not close the separately tracked production scheduler transition
-blocker required by `REL-NORMATIVE-AUTHORITY`.
+it does not close the C1 authority and correctness blockers required by
+`REL-NORMATIVE-AUTHORITY` and `REL-RUNTIME-CORRECTNESS`. C4 production and X3
+durable-stream evidence are tracked separately by the nonblocking
+`REL-EXTENSION-RUNTIME-AUTHORITY` preview-promotion gate.
 
 The reusable `graphblocks-control-plane` library boundary is extracted:
 `graphblocks-python` and the `graphblocks-control` binary now depend on that

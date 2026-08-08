@@ -9,7 +9,7 @@ release compatibility promise.
 | Graph compiler and canonical Plan identity | `compile_graph` is a fail-closed native facade; `compile_graph_reference` is the explicit oracle executed beside every installed compiler-TCK case | Normative compiler, exposed through the exact `graphblocks-runtime` wheel and accepted only when its complete Plan contract matches the Python oracle |
 | Cross-file YAML composition authoring | Implemented; materializes an expanded Graph | Does not resolve authoring sources; consumes expanded Graph YAML |
 | Typed code graph authoring | Implemented and mypy-tested for the stdlib RAG vertical slice; catalog-backed and materializes a portable Graph | Implemented and trybuild-tested for the stdlib RAG vertical slice; catalog-backed and materializes a portable Graph |
-| Local runtime, cancellation, tools, budget core | Implemented reference interpreter and exact oracle for the bundled stable runtime suite | Active authority for the installed stable local scheduler/journal slice; wider cancellation, tool, budget, suspension, and production scheduler promotion remains blocked on durability evidence |
+| Local runtime, cancellation, tools, budget core | Implemented reference interpreter and exact oracle for the bundled stable runtime suite | Active authority for the installed stable local scheduler/journal slice; typed ports, outcomes, cancellation, local flow, the stable native API, and six exact-differential suites still block complete C1 authority |
 | Documents, RAG, conversation reference APIs | Implemented | Selected core models/TCK behavior |
 | Accepted runs and callback resume | Reference server; process-local checkpoint continuation | Preview single-process/single-worker SQLite continuation plus core async/callback records and TCK behavior; consumes trusted pre-admission assertions and does not query policy/budget/schema/lease authorities or verify lease freshness |
 | Registered-secret signed webhook dispatch | Implemented in `graphblocks.callbacks` | Implemented in runtime-core with HMAC signing, replay verification, and egress-bound delivery hooks |
@@ -38,8 +38,11 @@ migration corpora across public/reference/direct-native paths to the exact
 runtime wheel. The complete C0 schema suite remains `reference-only`. C1
 evidence is phase-scoped: the bundled runtime suite is
 `exact-native-reference`, while the other C1 suites remain `reference-only`.
-This preserves the boundary around other schema-facing and production
-scheduler behavior.
+This preserves the boundary around other schema-facing and stable C1 runtime
+behavior. C4 production and X3 durable-stream durability are preview promotion
+work under `REL-EXTENSION-RUNTIME-AUTHORITY`; their live-authority,
+multi-process, fencing, and outbox requirements do not block the first C0/C1
+release.
 
 Composition is outside the runtime language boundary. A Python-authored graph
 may be materialized with `graphblocks compose` and then compiled or run by Rust

@@ -243,6 +243,14 @@ def test_every_stable_clause_has_exact_requirement_and_evidence_traceability() -
 
 def test_stable_requirement_implementation_roles_match_the_authority_transition() -> None:
     traceability = _load_mapping(TRACEABILITY_PATH)
+    assert traceability["authorityRoles"] == {
+        "graphCompiler": "rust",
+        "standaloneCanonicalAndSchemaIdentity": "rust",
+        "standaloneResourceSchemaValidationAndMigration": "rust",
+        "stableLocalRuntimeTarget": "rust",
+        "python": "authoring-facade-and-explicit-reference-oracle",
+        "implicitReferenceFallback": False,
+    }
     assert traceability["implementationRoleDefinitions"] == {
         "normative": "Active implementation authority for the named requirement.",
         "pythonFacadeAndReference": (
@@ -325,6 +333,15 @@ def test_stable_requirement_implementation_roles_match_the_authority_transition(
         entry["id"]: entry
         for entry in profiles["GB-C1-LOCAL-RUNTIME"]["requirements"]
     }
+    normative_requirements = {"deterministic-local-scheduler", "journal"}
+    target_requirements = {
+        "typed-ports",
+        "outcome",
+        "cancellation",
+        "local-flow",
+        "local-runtime-api",
+    }
+    assert set(c1_entries) == normative_requirements | target_requirements
     for requirement in ("deterministic-local-scheduler", "journal"):
         roles = c1_entries[requirement]["implementations"]
         assert set(roles) == {"normative", "pythonFacadeAndReference"}
@@ -332,9 +349,8 @@ def test_stable_requirement_implementation_roles_match_the_authority_transition(
             not path.startswith("src/graphblocks/")
             for path in roles["normative"]
         )
-    for requirement, entry in c1_entries.items():
-        if requirement in {"deterministic-local-scheduler", "journal"}:
-            continue
+    for requirement in target_requirements:
+        entry = c1_entries[requirement]
         roles = entry["implementations"]
         assert "normative" not in roles, entry["id"]
         assert set(roles) == {"pythonFacadeAndReference", "targetNormative"}

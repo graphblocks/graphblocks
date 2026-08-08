@@ -1027,7 +1027,7 @@ def test_profile_release_tracks_are_closed_owned_and_independent() -> None:
         "activeCompiler": "rust",
         "activeLocalRuntime": "rust",
         "activeReferenceInterpreter": "python",
-        "targetProductionScheduler": "rust-transition-blocked",
+        "targetCoreRuntimeAuthority": "rust-transition-blocked",
         "inheritedAuthorityFrom": "extends",
     }
     for profile_id in extension_profile_ids:
@@ -1049,7 +1049,7 @@ def test_profile_release_tracks_are_closed_owned_and_independent() -> None:
             ("GB-C1-LOCAL-RUNTIME", "activeReferenceInterpreter")
         ] == "python"
         assert resolved_authority[
-            ("GB-C1-LOCAL-RUNTIME", "targetProductionScheduler")
+            ("GB-C1-LOCAL-RUNTIME", "targetCoreRuntimeAuthority")
         ] == "rust-transition-blocked"
         assert resolved_authority[("GB-C0-SCHEMA", "activeCompiler")] == "rust"
     assert profiles["GB-C4-PRODUCTION"]["authority"][
@@ -2177,9 +2177,38 @@ def test_stable_release_matrix_is_complete_and_machine_readable() -> None:
     assert authority["publicCompilerAuthority"] == "rust"
     assert authority["pythonRole"] == "authoring-facade-and-explicit-reference-oracle"
     assert authority["implicitReferenceFallback"] is False
-    assert "production-scheduler-and-durable-authority" in authority[
-        "remainingPhases"
+    assert authority["remainingPhases"] == [
+        "stable-c1-requirement-authority",
+        "stable-c1-suite-exact-differential",
+        "stable-native-local-runtime-api-contract",
+        "fallible-panic-free-rust-public-boundaries",
     ]
+    assert authority["coreRuntimeAuthority"] == {
+        "profile": "GB-C1-LOCAL-RUNTIME",
+        "remainingRequirements": [
+            "typed-ports",
+            "outcome",
+            "cancellation",
+            "local-flow",
+            "local-runtime-api",
+        ],
+        "remainingExactSuites": [
+            "application-events",
+            "retry",
+            "sequence",
+            "tool-execution",
+            "tool-lifecycle",
+            "tool-result",
+        ],
+        "runtimeCorrectnessGate": "REL-RUNTIME-CORRECTNESS",
+        "blocksTargetRelease": True,
+    }
+    assert authority["extensionRuntimeAuthority"] == {
+        "profiles": ["GB-C4-PRODUCTION", "GB-X3-DURABLE-STREAM"],
+        "promotionGate": "REL-EXTENSION-RUNTIME-AUTHORITY",
+        "blocksTargetRelease": False,
+        "excludedFromCore1_0": True,
+    }
     assert "broader-resource-schema-validation-and-migration-authority" not in (
         authority["remainingPhases"]
     )
@@ -2227,7 +2256,7 @@ def test_stable_release_matrix_is_complete_and_machine_readable() -> None:
         "activeCompiler": "rust",
         "activeLocalRuntime": "rust",
         "activeReferenceInterpreter": "python",
-        "targetProductionScheduler": "rust-transition-blocked",
+        "targetCoreRuntimeAuthority": "rust-transition-blocked",
         "inheritedAuthorityFrom": "extends",
     }
     assert "REL-NORMATIVE-AUTHORITY" in matrix_profiles["GB-C1-LOCAL-RUNTIME"][
@@ -2245,6 +2274,21 @@ def test_stable_release_matrix_is_complete_and_machine_readable() -> None:
         assert "implementation" not in profile
         assert profile["extensionImplementation"] == "python-reference"
         assert profile["inheritsCoreAuthority"] is True
+    assert "REL-EXTENSION-RUNTIME-AUTHORITY" in matrix_profiles[
+        "GB-C4-PRODUCTION"
+    ]["requiredGates"]
+    assert "REL-EXTENSION-RUNTIME-AUTHORITY" in matrix_profiles[
+        "GB-X3-DURABLE-STREAM"
+    ]["requiredGates"]
+    for profile_id in (
+        "GB-C2-AI-APPLICATION",
+        "GB-C3-GOVERNED-RUNTIME",
+        "GB-X1-ORCHESTRATION",
+        "GB-X2-VOICE",
+    ):
+        assert "REL-EXTENSION-RUNTIME-AUTHORITY" not in matrix_profiles[profile_id][
+            "requiredGates"
+        ]
     assert artifacts["pypi:graphblocks"]["stableClaimRequires"] == [
         "pypi:graphblocks-runtime"
     ]
@@ -2268,8 +2312,11 @@ def test_stable_release_matrix_is_complete_and_machine_readable() -> None:
         in authority_gate["completedEvidence"]
     )
     assert "authority-transition-adr-not-accepted" not in authority_gate["blockers"]
-    assert "production-runtime-authority-transition-incomplete" in authority_gate[
-        "blockers"
+    assert authority_gate["blockers"] == [
+        "stable-c1-requirement-authority-incomplete",
+        "stable-c1-suite-exact-differential-incomplete",
+        "stable-native-local-runtime-api-contract-incomplete",
+        "fallible-panic-free-rust-public-boundaries-incomplete",
     ]
     assert "installed-native-compiler-tck-and-artifact-identity-incomplete" not in (
         authority_gate["blockers"]
@@ -2307,6 +2354,9 @@ def test_stable_release_matrix_is_complete_and_machine_readable() -> None:
         "supported-installed-native-local-runtime-differential-and-artifact-identity"
         in authority_gate["completedEvidence"]
     )
+    assert "native-local-runtime-capability-handshake" in authority_gate[
+        "completedEvidence"
+    ]
     assert (
         "resource-schema-validation-and-migration-authority-incomplete"
         not in authority_gate["blockers"]
@@ -2322,10 +2372,60 @@ def test_stable_release_matrix_is_complete_and_machine_readable() -> None:
         "graphCompiler": "rust",
         "standaloneCanonicalAndSchemaIdentity": "rust",
         "standaloneResourceSchemaValidationAndMigration": "rust",
-        "productionRuntimeTarget": "rust",
+        "stableLocalRuntimeTarget": "rust",
         "python": "authoring-facade-and-explicit-reference-oracle",
         "implicitReferenceFallback": False,
     }
+
+    runtime_gate = next(
+        entry
+        for entry in matrix["releaseGates"]
+        if entry["id"] == "REL-RUNTIME-CORRECTNESS"
+    )
+    c1_requirements = traceability["profiles"]["GB-C1-LOCAL-RUNTIME"][
+        "requirements"
+    ]
+    target_c1_requirements = [
+        requirement
+        for requirement in c1_requirements
+        if "targetNormative" in requirement["implementations"]
+    ]
+    assert runtime_gate["blocksTargetRelease"] is True
+    assert runtime_gate["requirementSelectors"] == authority[
+        "coreRuntimeAuthority"
+    ]["remainingRequirements"]
+    assert runtime_gate["requirementSelectors"] == [
+        requirement["id"] for requirement in target_c1_requirements
+    ]
+    assert runtime_gate["exactSuiteSelectors"] == authority[
+        "coreRuntimeAuthority"
+    ]["remainingExactSuites"]
+    assert set(runtime_gate["exactSuiteSelectors"]) == {
+        suite
+        for requirement in target_c1_requirements
+        for suite in requirement["tckSuites"]
+        if suite != "runtime"
+    }
+    assert set(runtime_gate["completedEvidence"]) <= set(
+        runtime_gate["requiredEvidence"]
+    )
+    assert runtime_gate["blockers"] == [
+        "stable-c1-requirement-authority-incomplete",
+        "stable-c1-suite-exact-differential-incomplete",
+        "stable-native-local-runtime-api-snapshot-incomplete",
+        "restart-independent-local-runtime-correctness-incomplete",
+    ]
+
+    extension_runtime_gate = next(
+        entry
+        for entry in matrix["releaseGates"]
+        if entry["id"] == "REL-EXTENSION-RUNTIME-AUTHORITY"
+    )
+    assert extension_runtime_gate["blocksTargetRelease"] is False
+    assert extension_runtime_gate["profileSelectors"] == authority[
+        "extensionRuntimeAuthority"
+    ]["profiles"]
+    assert extension_runtime_gate["scope"] == "extension-profile-promotion"
 
     api_gate = next(entry for entry in matrix["releaseGates"] if entry["id"] == "REL-API-SNAPSHOT")
     assert api_gate["readiness"] == "candidate-enforced"

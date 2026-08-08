@@ -102,13 +102,23 @@ def test_readiness_axes_are_independent_generated_and_release_blocking(
     ]
     assert by_id["runtime-security"]["blocksTargetRelease"] is True
     assert by_id["durability"]["readiness"] == (
-        "core-c1-authority-blocked-production-preview"
+        "core-c1-runtime-authority-and-correctness-blocked-production-preview"
     )
+    assert by_id["durability"]["primaryGates"] == [
+        "REL-AUDIT-REMEDIATION",
+        "REL-NORMATIVE-AUTHORITY",
+        "REL-RUNTIME-CORRECTNESS",
+    ]
     assert by_id["durability"]["targetReleaseClaim"] == (
         "core-c1-local-runtime-authority"
     )
     assert by_id["durability"]["blocksTargetRelease"] is True
     assert release_gates["REL-NORMATIVE-AUTHORITY"]["blocksTargetRelease"] is True
+    assert release_gates["REL-RUNTIME-CORRECTNESS"]["blocksTargetRelease"] is True
+    assert (
+        release_gates["REL-EXTENSION-RUNTIME-AUTHORITY"]["blocksTargetRelease"]
+        is False
+    )
     assert by_id["adapters"]["readiness"] == "contract-only-no-real-adapters"
     assert by_id["adapters"]["blocksTargetRelease"] is False
 
