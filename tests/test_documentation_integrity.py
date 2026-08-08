@@ -1707,8 +1707,8 @@ def test_stable_release_matrix_is_complete_and_machine_readable() -> None:
         "authority": "docs/project/audit-issue-status.yaml",
         "inventory": "docs/project/audit-issues.json",
         "checker": "tools/check_audit_inventory.py",
-        "resolved": 85,
-        "openBySeverity": {"P0": 0, "P1": 0, "P2": 6, "P3": 8},
+        "resolved": 86,
+        "openBySeverity": {"P0": 0, "P1": 0, "P2": 6, "P3": 7},
     }
     rust_debt = audit_gate["rustProductionExpectDebt"]
     assert rust_debt["workspaceLint"] == "clippy::expect_used=deny"
@@ -1926,6 +1926,10 @@ def test_stable_release_matrix_is_complete_and_machine_readable() -> None:
     )
     assert (
         "accepted-phase-scoped-rust-authority-and-python-reference-facade"
+        in audit_gate["implementedEvidence"]
+    )
+    assert (
+        "fail-closed-notice-only-reserved-rust-and-npm-artifacts"
         in audit_gate["implementedEvidence"]
     )
     assert "signed-candidate-and-final-promotion-audit-closure-binding" in (

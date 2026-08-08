@@ -259,3 +259,6 @@ resolved:
   - id: GB-ARCH-020
     fixCommits: [e685ee9d, edb42c42, c5836de6, ef8966ba, a21455d0]
     regression: [tests/test_conformance_authority.py, tests/test_wheelhouse_schema_verification.py, crates/graphblocksd/tests/control_plane.rs, tests/test_documentation_integrity.py]
+  - id: GB-ARCH-018
+    fixCommits: [3b769f1c]
+    regression: [tests/test_reserved_artifacts.py, crates/graphblocks/src/lib.rs, packages/graphblocks-npm/smoke.cjs]
