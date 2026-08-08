@@ -77,12 +77,17 @@ def _native_binding_payload(
     binding_version: str = "0.1.0",
     protocol_version: object = 1,
     capabilities: object = (
+        "canonical.json.v1",
         "compiler.graph.v1",
         "protocol.application.v1",
         "protocol.worker.v1",
     ),
 ) -> dict[str, object]:
     return {
+        "canonicalSmoke": {
+            "hash": "sha256:43258cff783fe7036d8a43033f830adfc60ec037382473548ac742b888292777",
+            "json": '{"a":1,"b":2}',
+        },
         "distributionVersion": distribution_version,
         "status": {
             "available": True,
@@ -124,6 +129,7 @@ def test_installed_native_binding_handshake_requires_versioned_capabilities() ->
     module = _load_wheelhouse_module()
     payload = _native_binding_payload(
         capabilities=(
+            "canonical.json.v1",
             "compiler.graph.v1",
             "protocol.application.v1",
             "protocol.worker.v1",
@@ -135,6 +141,21 @@ def test_installed_native_binding_handshake_requires_versioned_capabilities() ->
         payload,
         expected_distribution_version="0.1.0",
     ) == payload["status"]
+
+
+def test_installed_native_binding_handshake_rejects_wrong_canonical_smoke() -> None:
+    module = _load_wheelhouse_module()
+    payload = _native_binding_payload()
+    payload["canonicalSmoke"] = {
+        "hash": "sha256:" + "0" * 64,
+        "json": '{"b":2,"a":1}',
+    }
+
+    with pytest.raises(RuntimeError, match="canonical smoke does not match"):
+        module._validate_installed_native_binding(
+            payload,
+            expected_distribution_version="0.1.0",
+        )
 
 
 @pytest.mark.parametrize(

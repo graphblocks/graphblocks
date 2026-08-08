@@ -52,9 +52,14 @@ SUPPORTED_PLATFORM_MATRIX = {
 STABLE_CONFORMANCE_PROFILES = ("GB-C0-SCHEMA", "GB-C1-LOCAL-RUNTIME")
 NATIVE_BINDING_PROTOCOL_VERSION = 1
 REQUIRED_NATIVE_BINDING_CAPABILITIES = (
+    "canonical.json.v1",
     "compiler.graph.v1",
     "protocol.application.v1",
     "protocol.worker.v1",
+)
+NATIVE_CANONICAL_SMOKE_JSON = '{"a":1,"b":2}'
+NATIVE_CANONICAL_SMOKE_HASH = (
+    "sha256:43258cff783fe7036d8a43033f830adfc60ec037382473548ac742b888292777"
 )
 MAX_SDIST_MEMBER_COUNT = 100_000
 MAX_SDIST_UNPACKED_SIZE = 512 * 1024 * 1024
@@ -269,6 +274,7 @@ def _validate_installed_native_binding(
     expected_distribution_version: str,
 ) -> dict[str, object]:
     if not isinstance(payload, dict) or set(payload) != {
+        "canonicalSmoke",
         "distributionVersion",
         "status",
     }:
@@ -346,6 +352,14 @@ def _validate_installed_native_binding(
     if status["module"] != "graphblocks_runtime._native":
         raise RuntimeError(
             "installed native binding reports an unexpected extension module"
+        )
+    canonical_smoke = payload["canonicalSmoke"]
+    if canonical_smoke != {
+        "hash": NATIVE_CANONICAL_SMOKE_HASH,
+        "json": NATIVE_CANONICAL_SMOKE_JSON,
+    }:
+        raise RuntimeError(
+            "installed native binding canonical smoke does not match"
         )
     return dict(status)
 
@@ -1849,6 +1863,10 @@ def main(argv: list[str] | None = None) -> int:
                     "from importlib.metadata import version; "
                     "import graphblocks_runtime; "
                     "print(json.dumps({"
+                    "'canonicalSmoke': {"
+                    "'hash': graphblocks_runtime.canonical_hash_json('{\"b\":2,\"a\":1}'), "
+                    "'json': graphblocks_runtime.canonicalize_json('{\"b\":2,\"a\":1}')"
+                    "}, "
                     "'distributionVersion': version('graphblocks-runtime'), "
                     "'status': graphblocks_runtime.native_extension_status()"
                     "}, sort_keys=True))"

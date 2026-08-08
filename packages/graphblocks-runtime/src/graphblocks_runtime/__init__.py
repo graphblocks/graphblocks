@@ -9,6 +9,7 @@ _NATIVE_EXTENSION_MODULE = "graphblocks_runtime._native"
 _BINDING_CRATE = "graphblocks-python"
 _NATIVE_BINDING_PROTOCOL_VERSION = 1
 _REQUIRED_NATIVE_CAPABILITIES = (
+    "canonical.json.v1",
     "compiler.graph.v1",
     "protocol.application.v1",
     "protocol.worker.v1",
@@ -152,6 +153,8 @@ try:
         admit_worker_message_json,
         binding_contract_json as _binding_contract_json,
         binding_version,
+        canonical_hash_json,
+        canonicalize_json,
         capture_telemetry_content_json,
         compile_graph_json,
         decide_agent_step_json,
@@ -231,6 +234,12 @@ except Exception as error:
 
     def binding_version() -> str:
         return __version__
+
+    def canonicalize_json(value_json: str) -> str:
+        require_native_extension()
+
+    def canonical_hash_json(value_json: str) -> str:
+        require_native_extension()
 
     def capture_telemetry_content_json(decision_json: str, content_json: str) -> str:
         require_native_extension()
@@ -693,6 +702,14 @@ def _canonical_json(value: object) -> str:
             copy_start = cursor
     parts.append(encoded[copy_start:])
     return "".join(parts)
+
+
+def canonicalize(value: object) -> str:
+    return canonicalize_json(_canonical_json(value))
+
+
+def canonical_hash(value: object) -> str:
+    return canonical_hash_json(_canonical_json(value))
 
 
 def _json_object_result(result_json: str, label: str) -> dict[str, object]:
@@ -1312,6 +1329,10 @@ __all__ = [
     "admit_worker_message",
     "admit_worker_message_json",
     "binding_version",
+    "canonical_hash",
+    "canonical_hash_json",
+    "canonicalize",
+    "canonicalize_json",
     "capture_telemetry_content",
     "capture_telemetry_content_json",
     "compile_graph",

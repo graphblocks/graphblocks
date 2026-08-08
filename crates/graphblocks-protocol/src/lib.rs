@@ -8,6 +8,7 @@ use serde_json::Value;
 
 pub const WORKER_PROTOCOL_VERSION: u16 = 1;
 pub const NATIVE_BINDING_PROTOCOL_VERSION: u16 = 1;
+pub const NATIVE_CAPABILITY_CANONICAL_JSON: &str = "canonical.json.v1";
 pub const NATIVE_CAPABILITY_GRAPH_COMPILER: &str = "compiler.graph.v1";
 pub const NATIVE_CAPABILITY_APPLICATION_PROTOCOL: &str = "protocol.application.v1";
 pub const NATIVE_CAPABILITY_WORKER_PROTOCOL: &str = "protocol.worker.v1";

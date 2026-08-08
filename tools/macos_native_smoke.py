@@ -18,9 +18,14 @@ ROOT = Path(__file__).resolve().parents[1]
 SUPPORTED_RUNNER = "macos-15"
 SUPPORTED_PYTHON = frozenset({"3.11", "3.12"})
 REQUIRED_CAPABILITIES = (
+    "canonical.json.v1",
     "compiler.graph.v1",
     "protocol.application.v1",
     "protocol.worker.v1",
+)
+NATIVE_CANONICAL_SMOKE_JSON = '{"a":1,"b":2}'
+NATIVE_CANONICAL_SMOKE_HASH = (
+    "sha256:43258cff783fe7036d8a43033f830adfc60ec037382473548ac742b888292777"
 )
 
 
@@ -136,6 +141,10 @@ def create_probe(*, runner_label: str) -> dict[str, object]:
             "module": status["module"],
             "error": status["error"],
         },
+        "canonicalSmoke": {
+            "hash": graphblocks_runtime.canonical_hash_json('{"b":2,"a":1}'),
+            "json": graphblocks_runtime.canonicalize_json('{"b":2,"a":1}'),
+        },
         "compilerSmoke": {
             "ok": True,
             "diagnosticCount": len(diagnostics),
@@ -155,6 +164,7 @@ def validate_probe(
     probe = _closed_mapping(
         payload,
         {
+            "canonicalSmoke",
             "schemaVersion",
             "runnerLabel",
             "os",
@@ -261,6 +271,17 @@ def validate_probe(
         "error": None,
     }:
         raise MacosSmokeError("macOS native binding contract does not match")
+
+    canonical = _closed_mapping(
+        probe["canonicalSmoke"],
+        {"hash", "json"},
+        "macOS native canonical smoke",
+    )
+    if canonical != {
+        "hash": NATIVE_CANONICAL_SMOKE_HASH,
+        "json": NATIVE_CANONICAL_SMOKE_JSON,
+    }:
+        raise MacosSmokeError("macOS native canonical smoke does not match")
 
     compiler = _closed_mapping(
         probe["compilerSmoke"],

@@ -1,5 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
+use graphblocks_compiler::canonical::canonical_hash;
 use graphblocks_compiler::compiler::{
     BlockCatalog, MAX_NODE_RETRY_ATTEMPTS, compile_graph_with_catalog, json_integer_exceeds_u64,
 };
@@ -7,11 +8,11 @@ use graphblocks_compiler::diagnostics::Severity;
 use graphblocks_compiler::graph::GRAPH_API_VERSION;
 use graphblocks_control_plane::{DaemonConfig, DaemonStatus, WorkerRegistry, WorkerRegistryError};
 use graphblocks_protocol::{
-    NATIVE_CAPABILITY_APPLICATION_PROTOCOL, NATIVE_CAPABILITY_GRAPH_COMPILER,
-    NATIVE_CAPABILITY_WORKER_PROTOCOL, NativeBindingAdvertisement, RemotePayload,
-    RemotePayloadError, RemotePayloadLimits, WorkerAdmissionPolicy, WorkerAdvertisement,
-    WorkerProtocolError, WorkerProtocolMessage, WorkerProtocolMessageKind,
-    admit_worker_with_policy, validate_remote_payload,
+    NATIVE_CAPABILITY_APPLICATION_PROTOCOL, NATIVE_CAPABILITY_CANONICAL_JSON,
+    NATIVE_CAPABILITY_GRAPH_COMPILER, NATIVE_CAPABILITY_WORKER_PROTOCOL,
+    NativeBindingAdvertisement, RemotePayload, RemotePayloadError, RemotePayloadLimits,
+    WorkerAdmissionPolicy, WorkerAdvertisement, WorkerProtocolError, WorkerProtocolMessage,
+    WorkerProtocolMessageKind, admit_worker_with_policy, validate_remote_payload,
 };
 use graphblocks_runtime_core::agent::{AgentLoopController, AgentLoopDecision, AgentSpec};
 use graphblocks_runtime_core::application_event::{
@@ -109,7 +110,7 @@ use graphblocks_runtime_durable::{
     DurableOutputCutoffTerminalReason, DurableResponsePolicyStopRecord, DurableToolTerminalRecord,
     DurableToolTerminalState, InMemoryDurableToolTerminalStore, ToolTerminalStoreError,
 };
-use graphblocks_schema::parse_canonical_json;
+use graphblocks_schema::{canonical_json, parse_canonical_json};
 use pyo3::exceptions::{PyRuntimeError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyBool;
@@ -126,6 +127,7 @@ fn binding_contract_json() -> PyResult<String> {
         "graphblocks-python",
         env!("CARGO_PKG_VERSION"),
         [
+            NATIVE_CAPABILITY_CANONICAL_JSON,
             NATIVE_CAPABILITY_GRAPH_COMPILER,
             NATIVE_CAPABILITY_APPLICATION_PROTOCOL,
             NATIVE_CAPABILITY_WORKER_PROTOCOL,
@@ -140,6 +142,21 @@ fn binding_contract_json() -> PyResult<String> {
         PyRuntimeError::new_err(format!(
             "failed to serialize native binding contract: {error}"
         ))
+    })
+}
+
+#[pyfunction]
+fn canonicalize_json(value_json: &str) -> PyResult<String> {
+    let value = parse_json_argument(value_json, "canonical value")?;
+    canonical_json(&value)
+        .map_err(|error| PyValueError::new_err(format!("cannot canonicalize JSON value: {error}")))
+}
+
+#[pyfunction]
+fn canonical_hash_json(value_json: &str) -> PyResult<String> {
+    let value = parse_json_argument(value_json, "canonical hash value")?;
+    canonical_hash(&value).map_err(|error| {
+        PyValueError::new_err(format!("cannot hash canonical JSON value: {error}"))
     })
 }
 
@@ -9444,6 +9461,8 @@ fn _native(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add("__version__", env!("CARGO_PKG_VERSION"))?;
     module.add_function(wrap_pyfunction!(binding_version, module)?)?;
     module.add_function(wrap_pyfunction!(binding_contract_json, module)?)?;
+    module.add_function(wrap_pyfunction!(canonicalize_json, module)?)?;
+    module.add_function(wrap_pyfunction!(canonical_hash_json, module)?)?;
     module.add_function(wrap_pyfunction!(finalize_tool_call_json, module)?)?;
     module.add_function(wrap_pyfunction!(compile_graph_json, module)?)?;
     module.add_function(wrap_pyfunction!(
@@ -9545,18 +9564,19 @@ mod tests {
 
     use super::{
         ToolTerminalStoreError, admit_exhaustion_work_json, admit_worker_message_json,
-        binding_contract_json, capture_telemetry_content_json, compile_graph_json,
-        decide_agent_step_json, durable_tool_terminal_store_error_code,
-        evaluate_application_event_stream_json, evaluate_application_protocol_log_json,
-        evaluate_application_protocol_stream_json, evaluate_budget_ledger_json,
-        evaluate_cancellation_scope_json, evaluate_connector_capabilities_json,
-        evaluate_declarative_output_policy_json, evaluate_durable_tool_terminal_store_json,
-        evaluate_node_lifecycle_json, evaluate_output_gate_json,
-        evaluate_provider_limit_policy_json, evaluate_readiness_json, evaluate_retry_policy_json,
-        evaluate_scheduler_json, evaluate_sequential_tool_queue_json, evaluate_task_group_json,
-        evaluate_timeout_deadline_json, evaluate_tool_admission_json, evaluate_tool_approval_json,
-        evaluate_tool_execution_plan_json, evaluate_tool_resolution_json,
-        evaluate_tool_result_stream_json, evaluate_usage_ledger_json, finalize_tool_call_json,
+        binding_contract_json, canonical_hash_json, canonicalize_json,
+        capture_telemetry_content_json, compile_graph_json, decide_agent_step_json,
+        durable_tool_terminal_store_error_code, evaluate_application_event_stream_json,
+        evaluate_application_protocol_log_json, evaluate_application_protocol_stream_json,
+        evaluate_budget_ledger_json, evaluate_cancellation_scope_json,
+        evaluate_connector_capabilities_json, evaluate_declarative_output_policy_json,
+        evaluate_durable_tool_terminal_store_json, evaluate_node_lifecycle_json,
+        evaluate_output_gate_json, evaluate_provider_limit_policy_json, evaluate_readiness_json,
+        evaluate_retry_policy_json, evaluate_scheduler_json, evaluate_sequential_tool_queue_json,
+        evaluate_task_group_json, evaluate_timeout_deadline_json, evaluate_tool_admission_json,
+        evaluate_tool_approval_json, evaluate_tool_execution_plan_json,
+        evaluate_tool_resolution_json, evaluate_tool_result_stream_json,
+        evaluate_usage_ledger_json, finalize_tool_call_json,
         negotiate_application_protocol_capabilities_json, parse_application_protocol_event_kind,
         parse_json_argument, parse_resolved_tool, parse_tool_call,
         prepare_tool_result_for_model_json, record_tool_effect_audit_event_json,
@@ -9581,12 +9601,35 @@ mod tests {
         assert_eq!(
             contract["capabilities"],
             json!([
+                "canonical.json.v1",
                 "compiler.graph.v1",
                 "protocol.application.v1",
                 "protocol.worker.v1",
             ])
         );
         Ok(())
+    }
+
+    #[test]
+    fn native_canonical_bridge_normalizes_and_hashes_json() -> Result<(), String> {
+        let source = r#"{"b":2,"decimal":1.2300,"a":1}"#;
+        let canonical = canonicalize_json(source).map_err(|error| error.to_string())?;
+
+        assert_eq!(canonical, r#"{"a":1,"b":2,"decimal":1.23}"#);
+        assert_eq!(
+            canonical_hash_json(source).map_err(|error| error.to_string())?,
+            "sha256:58807e128d7c2504e00cce2ca9266eea2d99c681dd6a18036665db611bd9833e"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn native_canonical_bridge_rejects_duplicate_keys() {
+        pyo3::Python::initialize();
+        let error = canonicalize_json(r#"{"value":1,"value":2}"#)
+            .expect_err("duplicate keys must fail before canonicalization");
+
+        assert!(error.to_string().contains("duplicate JSON object key"));
     }
 
     #[test]

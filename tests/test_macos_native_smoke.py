@@ -65,12 +65,17 @@ def _probe(tmp_path: Path) -> dict[str, object]:
             "bindingVersion": "0.1.0",
             "bindingProtocolVersion": 1,
             "capabilities": [
+                "canonical.json.v1",
                 "compiler.graph.v1",
                 "protocol.application.v1",
                 "protocol.worker.v1",
             ],
             "module": "graphblocks_runtime._native",
             "error": None,
+        },
+        "canonicalSmoke": {
+            "hash": "sha256:43258cff783fe7036d8a43033f830adfc60ec037382473548ac742b888292777",
+            "json": '{"a":1,"b":2}',
         },
         "compilerSmoke": {
             "ok": True,
@@ -107,6 +112,15 @@ def test_macos_probe_is_closed_installed_and_native(tmp_path: Path) -> None:
     with pytest.raises(tool.MacosSmokeError, match="outside the smoke environment"):
         tool.validate_probe(
             source_import,
+            expected_runner="macos-15",
+            expected_python="3.11",
+        )
+
+    wrong_canonical = deepcopy(probe)
+    wrong_canonical["canonicalSmoke"]["json"] = '{"b":2,"a":1}'
+    with pytest.raises(tool.MacosSmokeError, match="canonical smoke does not match"):
+        tool.validate_probe(
+            wrong_canonical,
             expected_runner="macos-15",
             expected_python="3.11",
         )

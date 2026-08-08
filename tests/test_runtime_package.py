@@ -13,6 +13,7 @@ import pytest
 
 ROOT = Path(__file__).parents[1]
 VALID_NATIVE_CAPABILITIES = (
+    "canonical.json.v1",
     "compiler.graph.v1",
     "protocol.application.v1",
     "protocol.worker.v1",
@@ -131,6 +132,7 @@ def test_runtime_wrapper_accepts_a_versioned_native_binding_contract() -> None:
         (
             _binding_contract_json(
                 capabilities=(
+                    "canonical.json.v1",
                     "protocol.application.v1",
                     "protocol.worker.v1",
                 )
@@ -187,7 +189,7 @@ def test_runtime_wrapper_accepts_a_versioned_native_binding_contract() -> None:
                 '"bindingProtocolVersion":1,'
                 '"implementation":"graphblocks-python",'
                 '"implementationVersion":"0.1.0",'
-                '"capabilities":["compiler.graph.v1",'
+                '"capabilities":["canonical.json.v1","compiler.graph.v1",'
                 '"protocol.application.v1","protocol.worker.v1"]}'
             ),
             "duplicate native binding contract field",
@@ -293,6 +295,46 @@ def test_runtime_wrapper_allows_future_optional_native_capabilities() -> None:
         *VALID_NATIVE_CAPABILITIES,
         "vendor.future.v1",
     )
+
+
+def test_runtime_wrapper_exposes_native_canonical_boundary() -> None:
+    calls: list[tuple[str, str]] = []
+
+    class FakeNative:
+        __version__ = "0.1.0"
+
+        def __getattr__(self, name: str):
+            if name.endswith("_json"):
+                return lambda *args, **kwargs: '{"ok":true}'
+            raise AttributeError(name)
+
+        def binding_version(self) -> str:
+            return self.__version__
+
+        def canonicalize_json(self, value_json: str) -> str:
+            calls.append(("canonicalize", value_json))
+            return '{"a":1,"b":2}'
+
+        def canonical_hash_json(self, value_json: str) -> str:
+            calls.append(("hash", value_json))
+            return "sha256:43258cff783fe7036d8a43033f830adfc60ec037382473548ac742b888292777"
+
+    runtime = load_runtime_wrapper(FakeNative())
+
+    assert runtime.canonicalize({"b": 2, "a": 1}) == '{"a":1,"b":2}'
+    assert runtime.canonical_hash({"b": 2, "a": 1}) == (
+        "sha256:43258cff783fe7036d8a43033f830adfc60ec037382473548ac742b888292777"
+    )
+    assert runtime.canonicalize_json('{"b":2,"a":1}') == '{"a":1,"b":2}'
+    assert calls == [
+        ("canonicalize", '{"a":1,"b":2}'),
+        ("hash", '{"a":1,"b":2}'),
+        ("canonicalize", '{"b":2,"a":1}'),
+    ]
+    assert "canonical_hash" in runtime.__all__
+    assert "canonical_hash_json" in runtime.__all__
+    assert "canonicalize" in runtime.__all__
+    assert "canonicalize_json" in runtime.__all__
 
 
 def test_runtime_wrapper_rejects_non_standard_native_json_results() -> None:
@@ -1102,6 +1144,8 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
         admit_exhaustion_work_json=admit_exhaustion_work_json,
         admit_worker_message_json=admit_worker_message_json,
         binding_version=lambda: "0.1.0",
+        canonical_hash_json=lambda _value_json: "sha256:" + "0" * 64,
+        canonicalize_json=lambda value_json: value_json,
         capture_telemetry_content_json=capture_telemetry_content_json,
         compile_graph_json=compile_graph_json,
         decide_agent_step_json=decide_agent_step_json,
