@@ -253,3 +253,6 @@ resolved:
   - id: GB-SEC-011
     fixCommits: ['a89557c7']
     regression: [tests/test_server_field_limits.py]
+  - id: GB-SEC-012
+    fixCommits: ['662a1464']
+    regression: [tests/test_server_adapter_limits.py]

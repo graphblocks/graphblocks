@@ -1707,8 +1707,8 @@ def test_stable_release_matrix_is_complete_and_machine_readable() -> None:
         "authority": "docs/project/audit-issue-status.yaml",
         "inventory": "docs/project/audit-issues.json",
         "checker": "tools/check_audit_inventory.py",
-        "resolved": 83,
-        "openBySeverity": {"P0": 0, "P1": 0, "P2": 8, "P3": 8},
+        "resolved": 84,
+        "openBySeverity": {"P0": 0, "P1": 0, "P2": 7, "P3": 8},
     }
     rust_debt = audit_gate["rustProductionExpectDebt"]
     assert rust_debt["workspaceLint"] == "clippy::expect_used=deny"
@@ -1854,6 +1854,30 @@ def test_stable_release_matrix_is_complete_and_machine_readable() -> None:
         "regression": "tests/test_server_field_limits.py",
         "changedLineBranchCoveragePercent": 97.8,
     }
+    assert audit_gate["serverAdapterLimits"] == {
+        "contract": "src/graphblocks/server_adapter.py",
+        "headerLimits": {"maxCount": 100, "maxEncodedBytes": 32768},
+        "requestBodyMaxBytes": 1048576,
+        "maxConcurrentRequests": 128,
+        "tenantRate": {
+            "maxRequests": 600,
+            "windowSeconds": 60,
+            "maxRetainedBuckets": 10000,
+        },
+        "deadlines": {"bodyIdleSeconds": 15, "requestTotalSeconds": 60},
+        "rejectionStatuses": {
+            "headers": 431,
+            "body": 413,
+            "tenantRate": 429,
+            "concurrencyOrRateState": 503,
+            "ingressDeadline": 408,
+        },
+        "duplicateHeaders": "reject-before-normalization",
+        "ambiguousFraming": "reject-before-body-read",
+        "routeSpecificAppBodyLimits": "independent-defense-in-depth",
+        "regression": "tests/test_server_adapter_limits.py",
+        "moduleBranchCoveragePercent": 95,
+    }
     assert "stable-public-server-error-codes-correlation-and-bounded-internal-audit" in (
         audit_gate["implementedEvidence"]
     )
@@ -1894,6 +1918,10 @@ def test_stable_release_matrix_is_complete_and_machine_readable() -> None:
     )
     assert (
         "normalized-and-bounded-server-identifiers-reasons-and-timestamps"
+        in audit_gate["implementedEvidence"]
+    )
+    assert (
+        "framework-neutral-server-adapter-resource-limit-contract"
         in audit_gate["implementedEvidence"]
     )
     assert "signed-candidate-and-final-promotion-audit-closure-binding" in (

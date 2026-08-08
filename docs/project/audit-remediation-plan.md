@@ -53,12 +53,12 @@ A finding moves to resolved only when:
 4. the release matrix or profile evidence is updated when the finding changes a
    compatibility or production claim.
 
-The current generated count is 83 resolved findings: all 27 P0/P1 findings,
+The current generated count is 84 resolved findings: all 27 P0/P1 findings,
 the first 11 P2 findings, GB-ARCH-013, and GB-ARCH-015 through GB-ARCH-017.
 GB-COR-005 through GB-COR-009 are also resolved. There are zero open P0/P1,
-8 open P2, and 8 open P3; GB-COR-010 through GB-COR-015, GB-DOC-006, GB-INP-006,
+7 open P2, and 8 open P3; GB-COR-010 through GB-COR-015, GB-DOC-006, GB-INP-006,
 GB-INP-007, GB-INP-008, GB-INP-010, GB-PERF-004, GB-PERF-005, and GB-PERF-008
-are resolved. GB-SEC-011 is also resolved. GB-ARCH-012
+are resolved. GB-SEC-011 and GB-SEC-012 are also resolved. GB-ARCH-012
 remains open pending shared-primitives consolidation. GB-PERF-006 is resolved
 with tenant/owner-scoped indexed run-list cursor pagination and a 10,000-run
 bounded-projection regression.
@@ -347,6 +347,18 @@ multi-megabyte identifiers before JSON materialization. The regression corpus
 covers exact boundaries, NUL/CRLF/bidi characters, normalization variants,
 unsafe detach reasons, callback diagnostics, and non-reflecting public errors;
 the implementation has 97.8% changed-line branch coverage.
+`GB-SEC-012` is resolved by the immutable `ServerLimits` contract and
+framework-neutral `ServerAdapterIngress`. Raw header count and encoded bytes
+are checked before normalization or body reads; duplicate headers and ambiguous
+framing fail closed. Declared and chunked bodies share a cumulative wire cap,
+and each read is restricted to the remaining budget plus one probe byte.
+Concurrency spans the whole request, tenant rates use bounded window state,
+and idle plus total deadlines are checked at read and completion boundaries.
+The actual adapter fixture covers Content-Length mismatch/overflow, unbounded
+chunking, slow bodies, header bombs, concurrency exhaustion, tenant isolation,
+and rate-bucket capacity. The new strict-mypy-clean module has 95% branch
+coverage, while the app's route-specific body ceilings remain independent
+defense in depth.
 
 Phase 1 exits when every related P1 has executable closure evidence, the durable
 vertical slice passes multi-process crash/restart tests, and resource-budget

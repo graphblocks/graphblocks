@@ -109,8 +109,8 @@ deepAudit:
     authority: docs/project/audit-issue-status.yaml
     inventory: docs/project/audit-issues.json
     checker: tools/check_audit_inventory.py
-    resolved: 83
-    openBySeverity: {P0: 0, P1: 0, P2: 8, P3: 8}
+    resolved: 84
+    openBySeverity: {P0: 0, P1: 0, P2: 7, P3: 8}
   exitPolicy:
     securityFreeze: {maxOpenP0: 0}
     stableRelease: {maxOpenP0: 0, maxOpenP1: 0}
@@ -1075,6 +1075,7 @@ releaseGates:
       - common-bounded-json-schema-execution-policy-and-entry-point-corpus
       - deterministic-canonical-journal-compiler-and-server-memory-budgets
       - normalized-and-bounded-server-identifiers-reasons-and-timestamps
+      - framework-neutral-server-adapter-resource-limit-contract
     evidence:
       - docs/project/audit-issues.json
       - docs/project/audit-issue-status.yaml
@@ -1156,6 +1157,9 @@ releaseGates:
       - docs/project/performance-budgets.md
       - src/graphblocks/server.py
       - tests/test_server_field_limits.py
+      - src/graphblocks/server_adapter.py
+      - tests/test_server_adapter_limits.py
+      - docs/concepts/architecture.md
     serverLifecycle:
       states: [running, draining, closed]
       healthAvailableDuringShutdown: true
@@ -1239,6 +1243,27 @@ releaseGates:
       oversizedRequestStatus: 413
       regression: tests/test_server_field_limits.py
       changedLineBranchCoveragePercent: 97.8
+    serverAdapterLimits:
+      contract: src/graphblocks/server_adapter.py
+      headerLimits: {maxCount: 100, maxEncodedBytes: 32768}
+      requestBodyMaxBytes: 1048576
+      maxConcurrentRequests: 128
+      tenantRate:
+        maxRequests: 600
+        windowSeconds: 60
+        maxRetainedBuckets: 10000
+      deadlines: {bodyIdleSeconds: 15, requestTotalSeconds: 60}
+      rejectionStatuses:
+        headers: 431
+        body: 413
+        tenantRate: 429
+        concurrencyOrRateState: 503
+        ingressDeadline: 408
+      duplicateHeaders: reject-before-normalization
+      ambiguousFraming: reject-before-body-read
+      routeSpecificAppBodyLimits: independent-defense-in-depth
+      regression: tests/test_server_adapter_limits.py
+      moduleBranchCoveragePercent: 95
     quickFeedbackCi:
       workflow: .github/workflows/ci.yml
       job: python-quality
