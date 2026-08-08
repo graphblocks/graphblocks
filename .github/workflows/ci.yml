@@ -60,6 +60,8 @@ jobs:
               --report dist/ci/quick/python-typing-debt.json
             python tools/check_python_boundary_safety.py \
               --report dist/ci/quick/python-boundary-safety.json
+            python tools/check_risk_status.py \
+              --report dist/ci/quick/risk-status.json
             python tools/check_compatibility.py --api-only
             python tools/check_audit_inventory.py
           } 2>&1 | tee dist/ci/quick/contracts.log
@@ -73,6 +75,7 @@ jobs:
             tests/test_package_layout.py \
             tests/test_python_boundary_safety.py \
             tests/test_quick_ci_gate.py \
+            tests/test_risk_status.py \
             tests/test_server_authorization_matrix.py \
             tests/test_version_compatibility.py \
             --junitxml=dist/ci/quick/unit-smoke.xml \

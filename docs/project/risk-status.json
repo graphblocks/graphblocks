@@ -1,0 +1,55 @@
+{
+  "statusVersion": 1,
+  "authority": "evidence-bound-risk-status",
+  "legacyNarrative": "RISK_REGISTER.md",
+  "risks": [
+    {
+      "id": "ARCH-001",
+      "title": "Accumulating window pane semantics",
+      "severity": "medium",
+      "status": "resolved",
+      "owner": "durable-runtime-maintainers",
+      "openedAt": "2026-07-12",
+      "resolvedAt": "2026-07-12",
+      "resolvedCommit": "1eea97171ca0f0b17d448d18bb1c5761c57fc39a",
+      "resolvedVersion": "1.0.0rc1",
+      "legacyHeading": "[ARCH-001] Accumulating windows have no defined observable semantics",
+      "resolution": "Accumulating windows emit an on-time non-final revision and a final full replacement after allowed lateness, with late admission and cursor ordering shared by Python and Rust.",
+      "sourceEvidence": [
+        {
+          "path": "src/graphblocks/durable.py",
+          "sha256": "6225afe00f8c17e67fb3072b4babe3666c1876b8c12d78eb155dd9b128832776"
+        },
+        {
+          "path": "crates/graphblocks-runtime-durable/src/lib.rs",
+          "sha256": "83ca6b119122489f45b534528c86dd3da7e769709dcf27c6d61fa216cd458500"
+        }
+      ],
+      "tckEvidence": {
+        "path": "tck/durable/cases.json",
+        "mirrorPath": "crates/graphblocks-runtime-durable/tests/fixtures/durable-cases.json",
+        "fileSha256": "fa65e0a0dc7edaa98a0c2cbe27e0468a6dc5f4a8c88727ecf35b30de1bccbc02",
+        "caseId": "window_accumulating_emits_on_time_and_final_replacement",
+        "caseSha256": "f7e132821e9436f34ab757b991ae99eb5be97bd1d17d639916d9d780e5f1ca9e",
+        "semanticAssertions": {
+          "accumulationMode": "accumulating",
+          "beforePaneRevision": 0,
+          "beforePaneIsFinal": false,
+          "beforePaneOffsets": [100, 900],
+          "paneRevision": 1,
+          "paneIsFinal": true,
+          "paneOffsets": [100, 500, 900],
+          "lateError": "late_event"
+        }
+      },
+      "reopenOn": [
+        "missing-evidence",
+        "source-digest-change",
+        "tck-digest-change",
+        "tck-mirror-drift",
+        "semantic-assertion-failure",
+        "resolved-commit-not-ancestor"
+      ]
+    }
+  ]
+}

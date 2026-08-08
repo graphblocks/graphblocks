@@ -17,6 +17,12 @@ preview server therefore must not yet be represented as a production-ready
 multi-tenant authority boundary. See the
 [deep audit remediation plan](audit-remediation-plan.md).
 
+For risk IDs listed in [risk-status.json](risk-status.json), that manifest is
+authoritative over the narrative `RISK_REGISTER.md`. It binds each resolved
+risk to an owner, version, ancestor commit, implementation digests, and TCK
+semantics. The quick CI gate automatically reports the risk as reopened when
+any bound evidence is missing, changed, or no longer reachable from `HEAD`.
+
 Supply-chain controls, API compatibility, runtime security, durability, and
 external-adapter maturity are independent claims. Strength on one axis does not
 promote another. The following projection is generated from the
