@@ -8,9 +8,8 @@
     "--bins",
     "--locked"
   ],
-  "total": 42,
+  "total": 2,
   "files": {
-    "crates/graphblocks-runtime-core/src/canonical.rs": 2,
-    "crates/graphblocks-runtime-core/src/stdlib_runtime.rs": 40
+    "crates/graphblocks-runtime-core/src/canonical.rs": 2
   }
 }

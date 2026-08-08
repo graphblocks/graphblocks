@@ -1,5 +1,3 @@
-#![allow(clippy::expect_used)] // Guarded by compatibility/rust-production-expect-budget.json.
-
 use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt;
@@ -405,9 +403,14 @@ impl NodeExecutor for StdlibExecutor {
             ));
         }
         if let Some(when) = node_spec.get("when") {
-            let when = when
-                .as_str()
-                .expect("runtime bridge validates when references");
+            let when = when.as_str().ok_or_else(|| {
+                BlockError::new(
+                    format!("{}.invalid_when", node.node_id),
+                    ErrorCategory::Configuration,
+                    "node.when must be a string",
+                    false,
+                )
+            })?;
             let mut guard = match resolved_inputs.remove(INTERNAL_WHEN_INPUT) {
                 Some(ResolvedInput::Value(value)) => value,
                 _ => {
@@ -419,10 +422,14 @@ impl NodeExecutor for StdlibExecutor {
                     ));
                 }
             };
-            let guard_path = when
-                .split_once('.')
-                .expect("runtime bridge validates when references")
-                .1;
+            let guard_path = when.split_once('.').map(|(_, path)| path).ok_or_else(|| {
+                BlockError::new(
+                    format!("{}.invalid_when", node.node_id),
+                    ErrorCategory::Configuration,
+                    "node.when must reference a node output path",
+                    false,
+                )
+            })?;
             for part in guard_path.split('.').skip(1) {
                 let Some(value) = guard.get(part).cloned() else {
                     return Err(BlockError::new(
@@ -471,12 +478,11 @@ impl NodeExecutor for StdlibExecutor {
             .unwrap_or_else(|| json!({}));
         let (outputs, phase) = if let Some(outputs) = self.replay_node_outputs.get(&node.node_id) {
             (outputs.clone(), ExecutionPhase::Initial)
-        } else if self
+        } else if let Some(resume) = self
             .resume_wait
             .as_ref()
-            .is_some_and(|resume| resume.node_id == node.node_id)
+            .filter(|resume| resume.node_id == node.node_id)
         {
-            let resume = self.resume_wait.as_ref().expect("resume wait exists");
             let mut operation = resume.operation.clone();
             operation["state"] = json!("resuming");
             (
@@ -1030,13 +1036,12 @@ fn run_native_callback_graph_values(
     }
     let stored = load_native_callback_run(request.checkpoint_store_path, request.run_id)?;
     match (stored, request.callback_receipt) {
-        (Some(_), Some(receipt)) => resume_native_callback_run(
-            request,
-            receipt,
-            admission
+        (Some(_), Some(receipt)) => {
+            let admission = admission
                 .as_ref()
-                .expect("callback receipt admission was parsed"),
-        ),
+                .ok_or_else(trusted_native_callback_admission_rejected)?;
+            resume_native_callback_run(request, receipt, admission)
+        }
         (Some(stored), None) => {
             validate_native_checkpoint_identity(
                 &stored.checkpoint,
@@ -1147,7 +1152,7 @@ fn start_native_callback_run(
         request.inputs,
         request.deployment_provenance,
     )?;
-    let journal = waiting_native_journal(journal_prefix, &suspension, &checkpoint);
+    let journal = waiting_native_journal(journal_prefix, &suspension, &checkpoint)?;
     let waiting = StdlibRunResult {
         run_id: request.run_id.to_owned(),
         graph_hash: graph_hash.clone(),
@@ -1208,15 +1213,10 @@ fn resume_native_callback_run(
         request.inputs,
         request.deployment_provenance,
     )?;
-    let receipt_object = receipt
-        .as_object()
-        .expect("callback receipt shape validation requires an object");
-    let callback_idempotency_key = receipt_object["callback_idempotency_key"]
-        .as_str()
-        .expect("callback idempotency validation requires a string");
-    let callback_payload_digest = receipt_object["payload_digest"]
-        .as_str()
-        .expect("callback payload digest validation requires a string");
+    let receipt_object = native_callback_receipt_object(receipt)?;
+    let callback_idempotency_key =
+        native_callback_receipt_string(receipt_object, "callback_idempotency_key")?;
+    let callback_payload_digest = native_callback_receipt_string(receipt_object, "payload_digest")?;
     validate_native_callback_against_checkpoint(receipt, &stored.checkpoint)?;
     validate_trusted_native_callback_admission(
         admission,
@@ -1254,7 +1254,7 @@ fn resume_native_callback_run(
             .checkpoint
             .pointer("/operation/operation_id")
             .and_then(Value::as_str)
-            .expect("validated callback checkpoint has an operation id");
+            .ok_or_else(|| StdlibRuntimeError::runtime("native callback checkpoint is invalid"))?;
         let operation_store = SqliteAsyncOperationStore::open(request.async_operation_store_path)
             .map_err(|error| {
             StdlibRuntimeError::runtime(format!(
@@ -1316,18 +1316,15 @@ fn resume_native_callback_run(
         .checkpoint
         .get("operation")
         .cloned()
-        .expect("validated checkpoint has operation");
+        .ok_or_else(|| StdlibRuntimeError::runtime("native callback checkpoint is invalid"))?;
     let replay_node_outputs = value_object_to_btree(
         stored
             .checkpoint
             .get("node_outputs")
-            .expect("validated checkpoint has node_outputs"),
+            .ok_or_else(|| StdlibRuntimeError::runtime("native callback checkpoint is invalid"))?,
         "native callback checkpoint node_outputs",
     )?;
-    let wait_node = stored.checkpoint["wait_node"]
-        .as_str()
-        .expect("validated checkpoint wait_node is a string")
-        .to_owned();
+    let wait_node = native_checkpoint_string(&stored.checkpoint, "wait_node")?.to_owned();
     let callback = receipt_object["payload"].clone();
     let RuntimeBridgePlan {
         graph_hash,
@@ -1371,7 +1368,7 @@ fn resume_native_callback_run(
                 &result,
                 &replay_node_outputs,
                 receipt,
-            );
+            )?;
             StdlibRunResult {
                 run_id: request.run_id.to_owned(),
                 graph_hash,
@@ -1389,7 +1386,7 @@ fn resume_native_callback_run(
             receipt,
             format!("stdlib callback resume failed: {error:?}"),
             request.deployment_provenance,
-        ),
+        )?,
     };
     persist_native_callback_run(
         request.checkpoint_store_path,
@@ -1839,7 +1836,7 @@ fn reconcile_native_callback_operation(
         .checkpoint
         .pointer("/operation/operation_id")
         .and_then(Value::as_str)
-        .expect("validated callback checkpoint has an operation id");
+        .ok_or_else(|| StdlibRuntimeError::runtime("native callback checkpoint is invalid"))?;
     let store = SqliteAsyncOperationStore::open(path).map_err(|error| {
         StdlibRuntimeError::runtime(format!(
             "failed to open native async operation store: {error:?}"
@@ -1931,7 +1928,7 @@ fn validate_persisted_native_operation_identity(
     let operation_id = expected
         .get("operation_id")
         .and_then(Value::as_str)
-        .expect("validated callback operation has an id");
+        .ok_or_else(|| StdlibRuntimeError::runtime("native callback operation is invalid"))?;
     let connection = Connection::open(path).map_err(|error| {
         StdlibRuntimeError::runtime(format!(
             "failed to open native async operation store for identity validation: {error}"
@@ -2291,12 +2288,8 @@ fn validate_native_checkpoint_identity(
             "native callback checkpoint journal binding is invalid",
         ));
     }
-    let wait_node = checkpoint["wait_node"]
-        .as_str()
-        .expect("checkpoint wait_node was validated");
-    let operation = checkpoint["operation"]
-        .as_object()
-        .expect("checkpoint operation was validated");
+    let wait_node = native_checkpoint_string(checkpoint, "wait_node")?;
+    let operation = native_checkpoint_object(checkpoint, "operation")?;
     if operation.get("run_id").and_then(Value::as_str) != Some(run_id)
         || operation.get("node_id").and_then(Value::as_str) != Some(wait_node)
         || operation.get("state").and_then(Value::as_str) != Some("waiting_callback")
@@ -2630,6 +2623,52 @@ fn native_callback_rejected() -> StdlibRuntimeError {
     StdlibRuntimeError::invalid("native async callback rejected")
 }
 
+fn native_callback_receipt_object(
+    receipt: &Value,
+) -> Result<&serde_json::Map<String, Value>, StdlibRuntimeError> {
+    receipt.as_object().ok_or_else(native_callback_rejected)
+}
+
+fn native_callback_receipt_string<'a>(
+    receipt: &'a serde_json::Map<String, Value>,
+    field: &str,
+) -> Result<&'a str, StdlibRuntimeError> {
+    receipt
+        .get(field)
+        .and_then(Value::as_str)
+        .ok_or_else(native_callback_rejected)
+}
+
+fn native_callback_receipt_u64(
+    receipt: &serde_json::Map<String, Value>,
+    field: &str,
+) -> Result<u64, StdlibRuntimeError> {
+    receipt
+        .get(field)
+        .and_then(Value::as_u64)
+        .ok_or_else(native_callback_rejected)
+}
+
+fn native_checkpoint_object<'a>(
+    checkpoint: &'a Value,
+    field: &str,
+) -> Result<&'a serde_json::Map<String, Value>, StdlibRuntimeError> {
+    checkpoint
+        .get(field)
+        .and_then(Value::as_object)
+        .ok_or_else(|| StdlibRuntimeError::runtime("native callback checkpoint is invalid"))
+}
+
+fn native_checkpoint_string<'a>(
+    checkpoint: &'a Value,
+    field: &str,
+) -> Result<&'a str, StdlibRuntimeError> {
+    checkpoint
+        .get(field)
+        .and_then(Value::as_str)
+        .ok_or_else(|| StdlibRuntimeError::runtime("native callback checkpoint is invalid"))
+}
+
 fn validate_trusted_native_callback_admission(
     admission: &TrustedNativeCallbackResumeAdmission,
     receipt: &Value,
@@ -2637,9 +2676,7 @@ fn validate_trusted_native_callback_admission(
     deployment_provenance: Option<&RunDeploymentProvenance>,
     graph_hash: &str,
 ) -> Result<(), StdlibRuntimeError> {
-    let receipt = receipt
-        .as_object()
-        .expect("native callback receipt was validated");
+    let receipt = native_callback_receipt_object(receipt)?;
     let expected_release_digest = deployment_provenance
         .and_then(|provenance| provenance.release_digest.as_deref())
         .unwrap_or(graph_hash);
@@ -2678,12 +2715,8 @@ fn validate_persisted_native_callback_acceptance(
     receipt: &Value,
     admission: &TrustedNativeCallbackResumeAdmission,
 ) -> Result<(), StdlibRuntimeError> {
-    let receipt = receipt
-        .as_object()
-        .expect("native callback receipt was validated");
-    let operation_id = receipt["operation_id"]
-        .as_str()
-        .expect("native callback operation id was validated");
+    let receipt = native_callback_receipt_object(receipt)?;
+    let operation_id = native_callback_receipt_string(receipt, "operation_id")?;
     let events = store
         .try_events_for_operation(operation_id)
         .map_err(|error| {
@@ -2691,9 +2724,8 @@ fn validate_persisted_native_callback_acceptance(
                 "failed to load persisted native callback acceptance: {error:?}"
             ))
         })?;
-    let expected_provider_operation_id = receipt["provider_operation_id"]
-        .as_str()
-        .expect("native callback provider operation id was validated");
+    let expected_provider_operation_id =
+        native_callback_receipt_string(receipt, "provider_operation_id")?;
     let expected_ownership_fence_token = native_callback_ownership_fence_token(admission);
     let mut callback_position = None;
     let mut authorization_position = None;
@@ -2755,12 +2787,8 @@ fn validate_native_callback_against_checkpoint(
     receipt: &Value,
     checkpoint: &Value,
 ) -> Result<(), StdlibRuntimeError> {
-    let receipt = receipt
-        .as_object()
-        .expect("callback receipt shape was validated");
-    let operation = checkpoint["operation"]
-        .as_object()
-        .expect("checkpoint operation was validated");
+    let receipt = native_callback_receipt_object(receipt)?;
+    let operation = native_checkpoint_object(checkpoint, "operation")?;
     for (receipt_field, operation_field) in [
         ("operation_id", "operation_id"),
         ("run_id", "run_id"),
@@ -2777,9 +2805,7 @@ fn validate_native_callback_against_checkpoint(
             ));
         }
     }
-    let received_at = receipt["received_at_unix_ms"]
-        .as_u64()
-        .expect("callback timestamp was validated");
+    let received_at = native_callback_receipt_u64(receipt, "received_at_unix_ms")?;
     if operation
         .get("submitted_at_unix_ms")
         .and_then(Value::as_u64)
@@ -2892,12 +2918,8 @@ fn accept_native_callback(
     receipt: &Value,
     admission: &TrustedNativeCallbackResumeAdmission,
 ) -> Result<(), StdlibRuntimeError> {
-    let receipt = receipt
-        .as_object()
-        .expect("native callback receipt was validated");
-    let schema_id = receipt["schema_id"]
-        .as_str()
-        .expect("native callback schema was validated");
+    let receipt = native_callback_receipt_object(receipt)?;
+    let schema_id = native_callback_receipt_string(receipt, "schema_id")?;
     // The trusted admission signature binds the external schema verifier,
     // verification id, schema id, and payload digest. The local registry still
     // enforces the callback envelope's object contract instead of silently
@@ -2909,34 +2931,21 @@ fn accept_native_callback(
             ))
         })?;
     let mut submission = AsyncCallbackSubmission::new(
-        receipt["callback_idempotency_key"]
-            .as_str()
-            .expect("callback idempotency key was validated"),
-        receipt["operation_id"]
-            .as_str()
-            .expect("operation id was validated"),
-        receipt["run_id"].as_str().expect("run id was validated"),
-        receipt["node_id"].as_str().expect("node id was validated"),
-        receipt["attempt_id"]
-            .as_str()
-            .expect("attempt id was validated"),
-        receipt["callback_idempotency_key"]
-            .as_str()
-            .expect("callback idempotency key was validated"),
+        native_callback_receipt_string(receipt, "callback_idempotency_key")?,
+        native_callback_receipt_string(receipt, "operation_id")?,
+        native_callback_receipt_string(receipt, "run_id")?,
+        native_callback_receipt_string(receipt, "node_id")?,
+        native_callback_receipt_string(receipt, "attempt_id")?,
+        native_callback_receipt_string(receipt, "callback_idempotency_key")?,
         receipt["payload"].clone(),
-        receipt["received_at_unix_ms"]
-            .as_u64()
-            .expect("callback timestamp was validated"),
-        receipt["verified_by"]
-            .as_str()
-            .expect("callback verifier was validated"),
+        native_callback_receipt_u64(receipt, "received_at_unix_ms")?,
+        native_callback_receipt_string(receipt, "verified_by")?,
         "runtime-callback-resume",
     );
-    submission = submission.with_provider_operation_id(
-        receipt["provider_operation_id"]
-            .as_str()
-            .expect("provider operation id was validated"),
-    );
+    submission = submission.with_provider_operation_id(native_callback_receipt_string(
+        receipt,
+        "provider_operation_id",
+    )?);
     let store = SqliteAsyncOperationStore::open(path).map_err(|error| {
         StdlibRuntimeError::runtime(format!(
             "failed to open native async operation store: {error:?}"
@@ -2986,12 +2995,11 @@ fn waiting_native_journal(
     mut records: Vec<Value>,
     suspension: &NativeCallbackSuspension,
     checkpoint: &Value,
-) -> Vec<Value> {
+) -> Result<Vec<Value>, StdlibRuntimeError> {
+    let run_id = native_checkpoint_string(checkpoint, "run_id")?;
     push_native_journal_record(
         &mut records,
-        checkpoint["run_id"]
-            .as_str()
-            .expect("validated callback checkpoint run_id is a string"),
+        run_id,
         "run_waiting_callback",
         None,
         Some(json!({
@@ -3002,7 +3010,7 @@ fn waiting_native_journal(
         })),
         false,
     );
-    records
+    Ok(records)
 }
 
 fn resumed_native_journal(
@@ -3010,9 +3018,9 @@ fn resumed_native_journal(
     result: &TestRunResult,
     replay_node_outputs: &BTreeMap<String, Value>,
     receipt: &Value,
-) -> Vec<Value> {
+) -> Result<Vec<Value>, StdlibRuntimeError> {
     let mut records = waiting_records.to_vec();
-    append_native_resume_journal_boundary(&mut records, &result.run_id, receipt);
+    append_native_resume_journal_boundary(&mut records, &result.run_id, receipt)?;
     for record in test_journal_values(result) {
         let kind = record.get("kind").and_then(Value::as_str);
         let node_id = record.get("nodeId").and_then(Value::as_str);
@@ -3045,13 +3053,15 @@ fn resumed_native_journal(
             record.get("terminal") == Some(&Value::Bool(true)),
         );
     }
-    records
+    Ok(records)
 }
 
-fn append_native_resume_journal_boundary(records: &mut Vec<Value>, run_id: &str, receipt: &Value) {
-    let receipt = receipt
-        .as_object()
-        .expect("native callback receipt was validated");
+fn append_native_resume_journal_boundary(
+    records: &mut Vec<Value>,
+    run_id: &str,
+    receipt: &Value,
+) -> Result<(), StdlibRuntimeError> {
+    let receipt = native_callback_receipt_object(receipt)?;
     push_native_journal_record(
         records,
         run_id,
@@ -3077,6 +3087,7 @@ fn append_native_resume_journal_boundary(records: &mut Vec<Value>, run_id: &str,
         })),
         false,
     );
+    Ok(())
 }
 
 fn failed_native_callback_resume_result(
@@ -3086,9 +3097,9 @@ fn failed_native_callback_resume_result(
     receipt: &Value,
     message: String,
     deployment_provenance: Option<&RunDeploymentProvenance>,
-) -> StdlibRunResult {
+) -> Result<StdlibRunResult, StdlibRuntimeError> {
     let mut journal = waiting.journal.clone();
-    append_native_resume_journal_boundary(&mut journal, run_id, receipt);
+    append_native_resume_journal_boundary(&mut journal, run_id, receipt)?;
     push_native_journal_record(
         &mut journal,
         run_id,
@@ -3097,7 +3108,7 @@ fn failed_native_callback_resume_result(
         Some(json!({"error": message})),
         true,
     );
-    StdlibRunResult {
+    Ok(StdlibRunResult {
         run_id: run_id.to_owned(),
         graph_hash,
         status: StdlibRunStatus::Failed,
@@ -3105,7 +3116,7 @@ fn failed_native_callback_resume_result(
         journal,
         checkpoint: None,
         deployment_provenance: deployment_provenance.cloned(),
-    }
+    })
 }
 
 fn push_native_journal_record(
@@ -3237,17 +3248,22 @@ fn build_runtime_bridge_plan(
     let descriptors_by_node = nodes
         .iter()
         .map(|(node_id, node)| {
-            let block_id = node
-                .get("block")
-                .and_then(Value::as_str)
-                .expect("compiled stdlib node has a block id");
+            let block_id = node.get("block").and_then(Value::as_str).ok_or_else(|| {
+                StdlibRuntimeError::invalid(format!(
+                    "compiled stdlib node {node_id:?} has no block id"
+                ))
+            })?;
             let descriptor = runtime_catalog
                 .get(block_id)
-                .expect("stdlib registration was validated before compilation")
+                .ok_or_else(|| {
+                    StdlibRuntimeError::invalid(format!(
+                        "compiled stdlib node {node_id:?} references unknown block {block_id:?}"
+                    ))
+                })?
                 .clone();
-            (node_id.clone(), descriptor)
+            Ok((node_id.clone(), descriptor))
         })
-        .collect::<BTreeMap<_, _>>();
+        .collect::<Result<BTreeMap<_, _>, StdlibRuntimeError>>()?;
     let edges = spec
         .get("edges")
         .and_then(Value::as_array)
@@ -3754,9 +3770,14 @@ fn insert_resolved_input_path(
         };
         current = nested;
     }
-    let leaf = parts
-        .last()
-        .expect("validated path has at least one segment");
+    let leaf = parts.last().ok_or_else(|| {
+        BlockError::new(
+            "stdlib.invalid_input_path",
+            ErrorCategory::Configuration,
+            format!("runtime input path {path:?} must contain non-empty segments"),
+            false,
+        )
+    })?;
     if current.insert((*leaf).to_owned(), value).is_some() {
         return Err(BlockError::new(
             "stdlib.duplicate_input_path",
@@ -5858,9 +5879,14 @@ fn execute_async_start_operation(inputs: &Value, config: &Value) -> Result<Value
 
 fn execute_async_await_callback(inputs: &Value, config: &Value) -> Result<Value, BlockError> {
     let operation = required_async_operation_input(inputs, "async.await_callback@1")?;
-    let operation_object = operation
-        .as_object()
-        .expect("required_async_operation_input returns an object");
+    let operation_object = operation.as_object().ok_or_else(|| {
+        BlockError::new(
+            "async.await_callback.invalid_operation",
+            ErrorCategory::Configuration,
+            "async.await_callback@1 input operation must be an object",
+            false,
+        )
+    })?;
     let state = operation_object
         .get("state")
         .and_then(Value::as_str)
@@ -7468,9 +7494,14 @@ fn required_async_operation_input<'a>(
             false,
         ));
     }
-    let operation_object = operation
-        .as_object()
-        .expect("operation object was checked above");
+    let operation_object = operation.as_object().ok_or_else(|| {
+        BlockError::new(
+            format!("{block_label}.invalid_operation"),
+            ErrorCategory::Configuration,
+            format!("{block_label} input operation must be an object"),
+            false,
+        )
+    })?;
     for (primary, alternate, label) in [
         ("operation_id", "operationId", "operation_id"),
         ("run_id", "runId", "run_id"),
