@@ -288,7 +288,7 @@ fn usage_ledger_replays_identical_records_without_double_counting() -> Result<()
         })
     );
     assert_eq!(ledger.records_for_run("run-1"), vec![record]);
-    assert_eq!(ledger.totals_for_run("run-1"), vec![tokens(12)]);
+    assert_eq!(ledger.totals_for_run("run-1")?, vec![tokens(12)]);
     Ok(())
 }
 
@@ -324,7 +324,7 @@ fn usage_ledgers_reject_records_that_would_overflow_totals() -> Result<(), Usage
 
     assert_eq!(memory.append(records[1].clone()), Err(expected.clone()));
     assert_eq!(sqlite.append(records[1].clone()), Err(expected));
-    assert_eq!(memory.totals_for_run("run-1"), vec![tokens(i64::MAX)]);
+    assert_eq!(memory.totals_for_run("run-1")?, vec![tokens(i64::MAX)]);
     assert_eq!(sqlite.totals_for_run("run-1")?, vec![tokens(i64::MAX)]);
     assert_eq!(memory.records_for_run("run-1"), vec![records[0].clone()]);
     assert_eq!(sqlite.records_for_run("run-1")?, vec![records[0].clone()]);
@@ -542,7 +542,7 @@ fn usage_ledger_totals_replace_provisional_with_reconciled_usage() -> Result<(),
         Some("usage-reconciled".to_string()),
     )?;
 
-    assert_eq!(ledger.totals_for_run("run-1"), vec![tokens(23)]);
+    assert_eq!(ledger.totals_for_run("run-1")?, vec![tokens(23)]);
     Ok(())
 }
 
@@ -581,7 +581,7 @@ fn usage_ledger_rejects_multiple_reconciliations_for_same_source_record()
         })
     );
     assert_eq!(ledger.records_for_run("run-1"), vec![provisional, first]);
-    assert_eq!(ledger.totals_for_run("run-1"), vec![tokens(21)]);
+    assert_eq!(ledger.totals_for_run("run-1")?, vec![tokens(21)]);
     Ok(())
 }
 

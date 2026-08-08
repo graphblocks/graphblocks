@@ -1,5 +1,3 @@
-#![allow(clippy::expect_used)] // Guarded by compatibility/rust-production-expect-budget.json.
-
 use std::{
     collections::{BTreeMap, BTreeSet},
     path::Path,
@@ -237,10 +235,13 @@ impl InMemoryUsageLedger {
         {
             let dedupe_key = (provider_response_id.clone(), record.attempt_id.clone());
             if let Some(existing_id) = self.provider_dedupe.get(&dedupe_key) {
-                let existing = self
-                    .records
-                    .get(existing_id)
-                    .expect("provider dedupe index points to an existing usage record");
+                let existing =
+                    self.records
+                        .get(existing_id)
+                        .ok_or_else(|| UsageLedgerError::Storage {
+                            message: "provider dedupe index points to a missing usage record"
+                                .to_owned(),
+                        })?;
                 if usage_provider_duplicate_conflict(existing, &record) {
                     return Err(UsageLedgerError::RecordConflict {
                         record_id: provider_response_id.clone(),
@@ -287,9 +288,11 @@ impl InMemoryUsageLedger {
             .collect()
     }
 
-    pub fn totals_for_run(&self, run_id: impl AsRef<str>) -> Vec<UsageAmount> {
+    pub fn totals_for_run(
+        &self,
+        run_id: impl AsRef<str>,
+    ) -> Result<Vec<UsageAmount>, UsageLedgerError> {
         usage_totals(&self.records_for_run(run_id))
-            .expect("accepted in-memory usage records must have representable totals")
     }
 
     pub fn reconcile(
@@ -1114,5 +1117,46 @@ fn usage_i64_to_u64(value: i64, label: &'static str) -> Result<u64, UsageLedgerE
 fn usage_storage_error(error: impl std::fmt::Display) -> UsageLedgerError {
     UsageLedgerError::Storage {
         message: error.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn corrupt_provider_dedupe_index_returns_storage_error() -> Result<(), UsageLedgerError> {
+        let mut ledger = InMemoryUsageLedger::new();
+        let record = UsageRecord::new(
+            "usage-1",
+            UsageSource::ProviderReported,
+            UsageConfidence::ProviderExact,
+            [UsageAmount::new("model_output_tokens", 1, "tokens")],
+            1,
+        )
+        .with_attempt_id("attempt-1")
+        .with_provider_response_id("response-1");
+        ledger.append(record.clone())?;
+        ledger.provider_dedupe.insert(
+            ("response-1".to_owned(), Some("attempt-1".to_owned())),
+            "missing-record".to_owned(),
+        );
+        let replay = UsageRecord::new(
+            "usage-2",
+            UsageSource::ProviderReported,
+            UsageConfidence::ProviderExact,
+            [UsageAmount::new("model_output_tokens", 1, "tokens")],
+            1,
+        )
+        .with_attempt_id("attempt-1")
+        .with_provider_response_id("response-1");
+
+        assert_eq!(
+            ledger.append(replay),
+            Err(UsageLedgerError::Storage {
+                message: "provider dedupe index points to a missing usage record".to_owned(),
+            })
+        );
+        Ok(())
     }
 }

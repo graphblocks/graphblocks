@@ -8643,6 +8643,11 @@ fn evaluate_usage_ledger_json(operations_json: &str, run_id: Option<&str>) -> Py
                 .collect::<Vec<_>>(),
             ledger
                 .totals_for_run(run_id)
+                .map_err(|error| {
+                    PyRuntimeError::new_err(format!(
+                        "failed to calculate native usage totals: {error:?}"
+                    ))
+                })?
                 .iter()
                 .map(usage_amount_json)
                 .collect::<Vec<_>>(),

@@ -103,6 +103,7 @@ fn run_case(case: &Value) -> Result<(), String> {
         .collect::<Vec<_>>();
     let totals = ledger
         .totals_for_run(run_id)
+        .map_err(|error| format!("failed to calculate usage totals: {error:?}"))?
         .iter()
         .map(usage_amount_contract)
         .collect::<Vec<_>>();
