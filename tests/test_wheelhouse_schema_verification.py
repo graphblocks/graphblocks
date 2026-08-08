@@ -94,6 +94,7 @@ def _native_binding_payload(
         "protocol.application.v1",
         "protocol.worker.v1",
         "schema.identity.v1",
+        "schema.resource-migration.v1",
         "schema.resource-validation.v1",
     ),
 ) -> dict[str, object]:
@@ -154,6 +155,7 @@ def test_installed_native_binding_handshake_requires_versioned_capabilities() ->
             "protocol.application.v1",
             "protocol.worker.v1",
             "schema.identity.v1",
+            "schema.resource-migration.v1",
             "schema.resource-validation.v1",
             "vendor.future.v1",
         )

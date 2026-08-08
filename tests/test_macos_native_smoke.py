@@ -70,6 +70,7 @@ def _probe(tmp_path: Path) -> dict[str, object]:
                 "protocol.application.v1",
                 "protocol.worker.v1",
                 "schema.identity.v1",
+                "schema.resource-migration.v1",
                 "schema.resource-validation.v1",
             ],
             "module": "graphblocks_runtime._native",

@@ -18,6 +18,7 @@ VALID_NATIVE_CAPABILITIES = (
     "protocol.application.v1",
     "protocol.worker.v1",
     "schema.identity.v1",
+    "schema.resource-migration.v1",
     "schema.resource-validation.v1",
 )
 
@@ -469,6 +470,96 @@ def test_runtime_wrapper_rejects_invalid_resource_schema_results(
 
     with pytest.raises(error_type, match=message):
         runtime.resource_schema_errors({"apiVersion": "invalid", "kind": "Graph"})
+
+
+def test_runtime_wrapper_exposes_closed_native_resource_migration_boundary() -> None:
+    calls: list[str] = []
+
+    class FakeNative:
+        __version__ = "0.1.0"
+
+        def __getattr__(self, name: str):
+            if name.endswith("_json"):
+                return lambda *args, **kwargs: '{"ok":true}'
+            raise AttributeError(name)
+
+        def binding_version(self) -> str:
+            return self.__version__
+
+        def migrate_resource_json(self, document_json: str) -> str:
+            calls.append(document_json)
+            return (
+                '{"document":{"apiVersion":"graphblocks.ai/v1",'
+                '"kind":"Graph"},"ok":true}'
+            )
+
+    runtime = load_runtime_wrapper(FakeNative())
+
+    assert runtime.migrate_resource(
+        {"kind": "Graph", "apiVersion": "graphblocks.ai/v1alpha3"}
+    ) == {
+        "document": {
+            "apiVersion": "graphblocks.ai/v1",
+            "kind": "Graph",
+        },
+        "ok": True,
+    }
+    assert calls == ['{"apiVersion":"graphblocks.ai/v1alpha3","kind":"Graph"}']
+    assert "migrate_resource" in runtime.__all__
+    assert "migrate_resource_json" in runtime.__all__
+
+
+@pytest.mark.parametrize(
+    ("payload", "error_type", "message"),
+    (
+        ('{"document":{},"ok":1}', TypeError, "boolean ok field"),
+        (
+            '{"document":{},"extra":null,"ok":true}',
+            ValueError,
+            "success must be closed",
+        ),
+        ('{"document":[],"ok":true}', TypeError, "must be a JSON object"),
+        (
+            '{"error":{"code":"GB0002","message":"invalid",'
+            '"path":"$.apiVersion"},"extra":null,"ok":false}',
+            ValueError,
+            "failure must be closed",
+        ),
+        (
+            '{"error":{"code":"GB0002"},"ok":false}',
+            ValueError,
+            "error must be closed",
+        ),
+        (
+            '{"error":{"code":"GB0002","message":1,"path":"$.apiVersion"},"ok":false}',
+            TypeError,
+            "error has invalid fields",
+        ),
+    ),
+)
+def test_runtime_wrapper_rejects_invalid_resource_migration_results(
+    payload: str,
+    error_type: type[Exception],
+    message: str,
+) -> None:
+    class FakeNative:
+        __version__ = "0.1.0"
+
+        def __getattr__(self, name: str):
+            if name.endswith("_json"):
+                return lambda *args, **kwargs: '{"ok":true}'
+            raise AttributeError(name)
+
+        def binding_version(self) -> str:
+            return self.__version__
+
+        def migrate_resource_json(self, document_json: str) -> str:
+            return payload
+
+    runtime = load_runtime_wrapper(FakeNative())
+
+    with pytest.raises(error_type, match=message):
+        runtime.migrate_resource({"apiVersion": "invalid", "kind": "Graph"})
 
 
 def test_runtime_wrapper_rejects_non_standard_native_json_results() -> None:
@@ -1312,6 +1403,9 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
         ),
         parse_schema_id_json=lambda value: json.dumps(
             {"canonical": value, "majorVersion": 1, "name": "schemas/Message"}
+        ),
+        migrate_resource_json=lambda document_json: json.dumps(
+            {"document": json.loads(document_json), "ok": True}
         ),
         prepare_tool_result_for_model_json=prepare_tool_result_for_model_json,
         record_tool_effect_audit_event_json=record_tool_effect_audit_event_json,

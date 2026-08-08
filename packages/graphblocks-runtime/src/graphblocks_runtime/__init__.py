@@ -14,6 +14,7 @@ _REQUIRED_NATIVE_CAPABILITIES = (
     "protocol.application.v1",
     "protocol.worker.v1",
     "schema.identity.v1",
+    "schema.resource-migration.v1",
     "schema.resource-validation.v1",
 )
 _MAX_NATIVE_BINDING_CONTRACT_BYTES = 16_384
@@ -184,6 +185,7 @@ try:
         evaluate_tool_result_stream_json,
         evaluate_usage_ledger_json,
         finalize_tool_call_json,
+        migrate_resource_json,
         negotiate_application_protocol_capabilities_json,
         parse_schema_id_json,
         prepare_tool_result_for_model_json,
@@ -254,6 +256,10 @@ except Exception as error:
     def resource_schema_errors_json(document_json: str) -> str:
         require_native_extension()
         raise RuntimeError("native resource schema validation is unavailable")
+
+    def migrate_resource_json(document_json: str) -> str:
+        require_native_extension()
+        raise RuntimeError("native resource migration is unavailable")
 
     def capture_telemetry_content_json(decision_json: str, content_json: str) -> str:
         require_native_extension()
@@ -832,6 +838,32 @@ def resource_schema_errors(document: object) -> tuple[dict[str, str], ...]:
     if valid != (not normalized):
         raise ValueError("native resource schema validation validity is inconsistent")
     return tuple(normalized)
+
+
+def migrate_resource(document: object) -> dict[str, object]:
+    payload = _json_object_result(
+        migrate_resource_json(_canonical_json(document)),
+        "native resource migration result",
+    )
+    ok = payload.get("ok")
+    if type(ok) is not bool:
+        raise TypeError("native resource migration result must have a boolean ok field")
+    if ok:
+        if set(payload) != {"document", "ok"}:
+            raise ValueError("native resource migration success must be closed")
+        if type(payload["document"]) is not dict:
+            raise TypeError(
+                "native resource migration document must be a JSON object"
+            )
+    else:
+        if set(payload) != {"error", "ok"}:
+            raise ValueError("native resource migration failure must be closed")
+        error = payload["error"]
+        if type(error) is not dict or set(error) != {"code", "message", "path"}:
+            raise ValueError("native resource migration error must be closed")
+        if any(type(error[field]) is not str for field in error):
+            raise TypeError("native resource migration error has invalid fields")
+    return payload
 
 
 def capture_telemetry_content(
@@ -1457,6 +1489,8 @@ __all__ = [
     "evaluate_usage_ledger_json",
     "finalize_tool_call",
     "finalize_tool_call_json",
+    "migrate_resource",
+    "migrate_resource_json",
     "native_extension_available",
     "native_extension_status",
     "negotiate_application_protocol_capabilities",

@@ -9,11 +9,12 @@ use graphblocks_compiler::graph::GRAPH_API_VERSION;
 use graphblocks_control_plane::{DaemonConfig, DaemonStatus, WorkerRegistry, WorkerRegistryError};
 use graphblocks_protocol::{
     NATIVE_CAPABILITY_APPLICATION_PROTOCOL, NATIVE_CAPABILITY_CANONICAL_JSON,
-    NATIVE_CAPABILITY_GRAPH_COMPILER, NATIVE_CAPABILITY_RESOURCE_SCHEMA_VALIDATION,
-    NATIVE_CAPABILITY_SCHEMA_IDENTITY, NATIVE_CAPABILITY_WORKER_PROTOCOL,
-    NativeBindingAdvertisement, RemotePayload, RemotePayloadError, RemotePayloadLimits,
-    WorkerAdmissionPolicy, WorkerAdvertisement, WorkerProtocolError, WorkerProtocolMessage,
-    WorkerProtocolMessageKind, admit_worker_with_policy, validate_remote_payload,
+    NATIVE_CAPABILITY_GRAPH_COMPILER, NATIVE_CAPABILITY_RESOURCE_SCHEMA_MIGRATION,
+    NATIVE_CAPABILITY_RESOURCE_SCHEMA_VALIDATION, NATIVE_CAPABILITY_SCHEMA_IDENTITY,
+    NATIVE_CAPABILITY_WORKER_PROTOCOL, NativeBindingAdvertisement, RemotePayload,
+    RemotePayloadError, RemotePayloadLimits, WorkerAdmissionPolicy, WorkerAdvertisement,
+    WorkerProtocolError, WorkerProtocolMessage, WorkerProtocolMessageKind,
+    admit_worker_with_policy, validate_remote_payload,
 };
 use graphblocks_runtime_core::agent::{AgentLoopController, AgentLoopDecision, AgentSpec};
 use graphblocks_runtime_core::application_event::{
@@ -112,7 +113,8 @@ use graphblocks_runtime_durable::{
     DurableToolTerminalState, InMemoryDurableToolTerminalStore, ToolTerminalStoreError,
 };
 use graphblocks_schema::{
-    SchemaId, canonical_json, parse_canonical_json,
+    ResourceMigrationFailure, SchemaId, canonical_json,
+    migrate_resource as schema_migrate_resource, parse_canonical_json,
     resource_schema_errors as schema_resource_schema_errors,
 };
 use pyo3::exceptions::{PyRuntimeError, PyTypeError, PyValueError};
@@ -136,6 +138,7 @@ fn binding_contract_json() -> PyResult<String> {
             NATIVE_CAPABILITY_APPLICATION_PROTOCOL,
             NATIVE_CAPABILITY_WORKER_PROTOCOL,
             NATIVE_CAPABILITY_SCHEMA_IDENTITY,
+            NATIVE_CAPABILITY_RESOURCE_SCHEMA_MIGRATION,
             NATIVE_CAPABILITY_RESOURCE_SCHEMA_VALIDATION,
         ],
     )
@@ -207,6 +210,42 @@ fn resource_schema_errors_json(document_json: &str) -> PyResult<String> {
     .map_err(|error| {
         PyRuntimeError::new_err(format!(
             "failed to serialize resource schema validation result: {error}"
+        ))
+    })
+}
+
+#[pyfunction]
+fn migrate_resource_json(document_json: &str) -> PyResult<String> {
+    let document = parse_json_argument(document_json, "resource migration document")?;
+    if !document.is_object() {
+        return Err(PyTypeError::new_err(
+            "resource migration document must be a JSON object",
+        ));
+    }
+    let result = match schema_migrate_resource(&document) {
+        Ok(document) => json!({
+            "document": document,
+            "ok": true,
+        }),
+        Err(ResourceMigrationFailure::Migration(error)) => json!({
+            "error": {
+                "code": error.code,
+                "message": error.message,
+                "path": error.path,
+            },
+            "ok": false,
+        }),
+        Err(ResourceMigrationFailure::Schema(error)) => {
+            return Err(PyRuntimeError::new_err(format!(
+                "failed to load authoritative resource schema {}: {}",
+                error.path(),
+                error.message()
+            )));
+        }
+    };
+    canonical_json(&result).map_err(|error| {
+        PyRuntimeError::new_err(format!(
+            "failed to serialize resource migration result: {error}"
         ))
     })
 }
@@ -9516,6 +9555,7 @@ fn _native(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(canonical_hash_json, module)?)?;
     module.add_function(wrap_pyfunction!(parse_schema_id_json, module)?)?;
     module.add_function(wrap_pyfunction!(resource_schema_errors_json, module)?)?;
+    module.add_function(wrap_pyfunction!(migrate_resource_json, module)?)?;
     module.add_function(wrap_pyfunction!(finalize_tool_call_json, module)?)?;
     module.add_function(wrap_pyfunction!(compile_graph_json, module)?)?;
     module.add_function(wrap_pyfunction!(
@@ -9629,7 +9669,7 @@ mod tests {
         evaluate_task_group_json, evaluate_timeout_deadline_json, evaluate_tool_admission_json,
         evaluate_tool_approval_json, evaluate_tool_execution_plan_json,
         evaluate_tool_resolution_json, evaluate_tool_result_stream_json,
-        evaluate_usage_ledger_json, finalize_tool_call_json,
+        evaluate_usage_ledger_json, finalize_tool_call_json, migrate_resource_json,
         negotiate_application_protocol_capabilities_json, parse_application_protocol_event_kind,
         parse_json_argument, parse_resolved_tool, parse_schema_id_json, parse_tool_call,
         prepare_tool_result_for_model_json, record_tool_effect_audit_event_json,
@@ -9659,6 +9699,7 @@ mod tests {
                 "protocol.application.v1",
                 "protocol.worker.v1",
                 "schema.identity.v1",
+                "schema.resource-migration.v1",
                 "schema.resource-validation.v1",
             ])
         );
@@ -9741,6 +9782,35 @@ mod tests {
         .map_err(|error| error.to_string())?;
 
         assert_eq!(result, r#"{"errors":[],"valid":true}"#);
+        Ok(())
+    }
+
+    #[test]
+    fn native_resource_migration_bridge_returns_closed_success() -> Result<(), String> {
+        let result = migrate_resource_json(
+            r#"{"apiVersion":"graphblocks.ai/v1alpha3","kind":"Graph","metadata":{"name":"legacy"},"spec":{"nodes":{}}}"#,
+        )
+        .map_err(|error| error.to_string())?;
+
+        assert_eq!(
+            result,
+            r#"{"document":{"apiVersion":"graphblocks.ai/v1","kind":"Graph","metadata":{"annotations":{"graphblocks.ai/migratedFrom":"graphblocks.ai/v1alpha3"},"name":"legacy"},"spec":{"nodes":{}}},"ok":true}"#
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn native_resource_migration_bridge_returns_closed_failure() -> Result<(), String> {
+        let result = migrate_resource_json(
+            r#"{"apiVersion":"graphblocks.ai/v2","kind":"Graph","metadata":{"name":"future"},"spec":{"nodes":{}}}"#,
+        )
+        .map_err(|error| error.to_string())?;
+        let result = serde_json::from_str::<Value>(&result).map_err(|error| error.to_string())?;
+
+        assert_eq!(result["ok"], json!(false));
+        assert_eq!(result["error"]["code"], "GB0002");
+        assert_eq!(result["error"]["path"], "$.apiVersion");
+        assert!(result.get("document").is_none());
         Ok(())
     }
 
