@@ -1707,8 +1707,8 @@ def test_stable_release_matrix_is_complete_and_machine_readable() -> None:
         "authority": "docs/project/audit-issue-status.yaml",
         "inventory": "docs/project/audit-issues.json",
         "checker": "tools/check_audit_inventory.py",
-        "resolved": 79,
-        "openBySeverity": {"P0": 0, "P1": 0, "P2": 12, "P3": 8},
+        "resolved": 80,
+        "openBySeverity": {"P0": 0, "P1": 0, "P2": 11, "P3": 8},
     }
     rust_debt = audit_gate["rustProductionExpectDebt"]
     assert rust_debt["workspaceLint"] == "clippy::expect_used=deny"
@@ -1782,6 +1782,15 @@ def test_stable_release_matrix_is_complete_and_machine_readable() -> None:
         "regression": "tests/typing/incompatible_server_immutability.py",
         "serverChangedLineBranchCoveragePercent": 100,
     }
+    assert audit_gate["runEventResponses"] == {
+        "synchronousDefault": "summary-only",
+        "inlineRetainedEvents": False,
+        "summaryFields": ["eventCount", "lastCursor", "eventStream", "websocket"],
+        "replayLimits": ["maxEvents", "maxBytes"],
+        "largeHistoryRegressionEvents": 20000,
+        "regression": "tests/test_server_core.py",
+        "serverChangedLineBranchCoveragePercent": 100,
+    }
     assert "stable-public-server-error-codes-correlation-and-bounded-internal-audit" in (
         audit_gate["implementedEvidence"]
     )
@@ -1807,6 +1816,9 @@ def test_stable_release_matrix_is_complete_and_machine_readable() -> None:
         audit_gate["implementedEvidence"]
     )
     assert "runtime-and-static-server-mapping-immutability-aligned" in (
+        audit_gate["implementedEvidence"]
+    )
+    assert "summary-only-sync-responses-and-bounded-cursor-event-replay" in (
         audit_gate["implementedEvidence"]
     )
     assert "signed-candidate-and-final-promotion-audit-closure-binding" in (

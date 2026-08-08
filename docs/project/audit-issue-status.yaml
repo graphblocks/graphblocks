@@ -241,3 +241,6 @@ resolved:
   - id: GB-COR-014
     fixCommits: ['ef019566']
     regression: [tests/typing/incompatible_server_immutability.py, tests/test_typed_graph_typing.py, tests/test_server_core.py]
+  - id: GB-COR-015
+    fixCommits: ['901fdde3']
+    regression: [tests/test_server_core.py]

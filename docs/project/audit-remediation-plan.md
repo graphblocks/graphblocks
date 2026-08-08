@@ -53,10 +53,10 @@ A finding moves to resolved only when:
 4. the release matrix or profile evidence is updated when the finding changes a
    compatibility or production claim.
 
-The current generated count is 79 resolved findings: all 27 P0/P1 findings,
+The current generated count is 80 resolved findings: all 27 P0/P1 findings,
 the first 11 P2 findings, GB-ARCH-013, and GB-ARCH-015 through GB-ARCH-017.
 GB-COR-005 through GB-COR-009 are also resolved. There are zero open P0/P1,
-12 open P2, and 8 open P3; GB-COR-010 through GB-COR-014, GB-DOC-006, GB-INP-006,
+11 open P2, and 8 open P3; GB-COR-010 through GB-COR-015, GB-DOC-006, GB-INP-006,
 GB-INP-007, GB-INP-010, GB-PERF-004, and GB-PERF-005 are resolved. GB-ARCH-012
 remains open pending shared-primitives consolidation. GB-PERF-006 is resolved
 with tenant/owner-scoped indexed run-list cursor pagination and a 10,000-run
@@ -310,6 +310,13 @@ request/auth metadata, response headers, bearer principals, and health-check
 details. Existing runtime immutability checks remain green, while a dedicated
 mypy fixture rejects all 13 indexed mutation attempts and compatibility
 snapshots remain unchanged.
+`GB-COR-015` is resolved by making synchronous run invocation responses
+summary-only: outputs remain inline, while retained history is represented by
+an event count, last cursor, and event/WebSocket replay endpoints. Event,
+attach, and subscription replay retain their cursor pagination plus independent
+`maxEvents` and serialized `maxBytes` ceilings. A 20,000-event regression proves
+that the synchronous response stays below one KiB instead of growing with run
+history, and the changed server lines have complete branch coverage.
 
 Phase 1 exits when every related P1 has executable closure evidence, the durable
 vertical slice passes multi-process crash/restart tests, and resource-budget
