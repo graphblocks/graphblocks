@@ -14,6 +14,7 @@ _REQUIRED_NATIVE_CAPABILITIES = (
     "protocol.application.v1",
     "protocol.worker.v1",
     "schema.identity.v1",
+    "schema.resource-validation.v1",
 )
 _MAX_NATIVE_BINDING_CONTRACT_BYTES = 16_384
 _MAX_NATIVE_CAPABILITIES = 64
@@ -188,6 +189,7 @@ try:
         prepare_tool_result_for_model_json,
         record_tool_effect_audit_event_json,
         record_tool_effect_precondition_json,
+        resource_schema_errors_json,
         run_stdlib_graph_json,
         run_stdlib_graph_with_options_json,
         run_test_graph_json,
@@ -248,6 +250,10 @@ except Exception as error:
     def parse_schema_id_json(value: str) -> str:
         require_native_extension()
         raise RuntimeError("native schema identity is unavailable")
+
+    def resource_schema_errors_json(document_json: str) -> str:
+        require_native_extension()
+        raise RuntimeError("native resource schema validation is unavailable")
 
     def capture_telemetry_content_json(decision_json: str, content_json: str) -> str:
         require_native_extension()
@@ -802,6 +808,30 @@ def parse_schema_id(value: str) -> dict[str, object]:
     ):
         raise ValueError("native schema id result has invalid identity fields")
     return payload
+
+
+def resource_schema_errors(document: object) -> tuple[dict[str, str], ...]:
+    payload = _json_object_result(
+        resource_schema_errors_json(_canonical_json(document)),
+        "native resource schema validation result",
+    )
+    if set(payload) != {"errors", "valid"}:
+        raise ValueError("native resource schema validation result must be closed")
+    errors = payload["errors"]
+    valid = payload["valid"]
+    if type(errors) is not list or type(valid) is not bool:
+        raise TypeError("native resource schema validation result has invalid fields")
+    expected_fields = {"code", "keyword", "message", "path", "schemaPath"}
+    normalized: list[dict[str, str]] = []
+    for index, error in enumerate(errors):
+        if type(error) is not dict or set(error) != expected_fields:
+            raise ValueError(f"native resource schema error {index} must be closed")
+        if any(type(error[field]) is not str for field in expected_fields):
+            raise TypeError(f"native resource schema error {index} has invalid fields")
+        normalized.append({field: error[field] for field in sorted(expected_fields)})
+    if valid != (not normalized):
+        raise ValueError("native resource schema validation validity is inconsistent")
+    return tuple(normalized)
 
 
 def capture_telemetry_content(
@@ -1439,6 +1469,8 @@ __all__ = [
     "record_tool_effect_audit_event_json",
     "record_tool_effect_precondition",
     "record_tool_effect_precondition_json",
+    "resource_schema_errors",
+    "resource_schema_errors_json",
     "require_native_extension",
     "run_stdlib_graph",
     "run_stdlib_graph_json",

@@ -61,6 +61,7 @@ REQUIRED_NATIVE_BINDING_CAPABILITIES = (
     "protocol.application.v1",
     "protocol.worker.v1",
     "schema.identity.v1",
+    "schema.resource-validation.v1",
 )
 NATIVE_CANONICAL_SMOKE_JSON = '{"a":1,"b":2}'
 NATIVE_CANONICAL_SMOKE_HASH = (

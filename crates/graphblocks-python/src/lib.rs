@@ -9,11 +9,11 @@ use graphblocks_compiler::graph::GRAPH_API_VERSION;
 use graphblocks_control_plane::{DaemonConfig, DaemonStatus, WorkerRegistry, WorkerRegistryError};
 use graphblocks_protocol::{
     NATIVE_CAPABILITY_APPLICATION_PROTOCOL, NATIVE_CAPABILITY_CANONICAL_JSON,
-    NATIVE_CAPABILITY_GRAPH_COMPILER, NATIVE_CAPABILITY_SCHEMA_IDENTITY,
-    NATIVE_CAPABILITY_WORKER_PROTOCOL, NativeBindingAdvertisement, RemotePayload,
-    RemotePayloadError, RemotePayloadLimits, WorkerAdmissionPolicy, WorkerAdvertisement,
-    WorkerProtocolError, WorkerProtocolMessage, WorkerProtocolMessageKind,
-    admit_worker_with_policy, validate_remote_payload,
+    NATIVE_CAPABILITY_GRAPH_COMPILER, NATIVE_CAPABILITY_RESOURCE_SCHEMA_VALIDATION,
+    NATIVE_CAPABILITY_SCHEMA_IDENTITY, NATIVE_CAPABILITY_WORKER_PROTOCOL,
+    NativeBindingAdvertisement, RemotePayload, RemotePayloadError, RemotePayloadLimits,
+    WorkerAdmissionPolicy, WorkerAdvertisement, WorkerProtocolError, WorkerProtocolMessage,
+    WorkerProtocolMessageKind, admit_worker_with_policy, validate_remote_payload,
 };
 use graphblocks_runtime_core::agent::{AgentLoopController, AgentLoopDecision, AgentSpec};
 use graphblocks_runtime_core::application_event::{
@@ -111,7 +111,10 @@ use graphblocks_runtime_durable::{
     DurableOutputCutoffTerminalReason, DurableResponsePolicyStopRecord, DurableToolTerminalRecord,
     DurableToolTerminalState, InMemoryDurableToolTerminalStore, ToolTerminalStoreError,
 };
-use graphblocks_schema::{SchemaId, canonical_json, parse_canonical_json};
+use graphblocks_schema::{
+    SchemaId, canonical_json, parse_canonical_json,
+    resource_schema_errors as schema_resource_schema_errors,
+};
 use pyo3::exceptions::{PyRuntimeError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyBool;
@@ -133,6 +136,7 @@ fn binding_contract_json() -> PyResult<String> {
             NATIVE_CAPABILITY_APPLICATION_PROTOCOL,
             NATIVE_CAPABILITY_WORKER_PROTOCOL,
             NATIVE_CAPABILITY_SCHEMA_IDENTITY,
+            NATIVE_CAPABILITY_RESOURCE_SCHEMA_VALIDATION,
         ],
     )
     .map_err(|error| {
@@ -172,6 +176,39 @@ fn parse_schema_id_json(value: &str) -> PyResult<String> {
         "name": schema_id.name(),
     }))
     .map_err(|error| PyRuntimeError::new_err(format!("failed to serialize schema id: {error}")))
+}
+
+#[pyfunction]
+fn resource_schema_errors_json(document_json: &str) -> PyResult<String> {
+    let document = parse_json_argument(document_json, "resource schema document")?;
+    let violations = schema_resource_schema_errors(&document).map_err(|error| {
+        PyRuntimeError::new_err(format!(
+            "failed to load authoritative resource schema {}: {}",
+            error.path(),
+            error.message()
+        ))
+    })?;
+    let errors = violations
+        .iter()
+        .map(|violation| {
+            json!({
+                "code": violation.code,
+                "keyword": violation.keyword,
+                "message": violation.message,
+                "path": violation.path,
+                "schemaPath": violation.schema_path,
+            })
+        })
+        .collect::<Vec<_>>();
+    canonical_json(&json!({
+        "errors": errors,
+        "valid": violations.is_empty(),
+    }))
+    .map_err(|error| {
+        PyRuntimeError::new_err(format!(
+            "failed to serialize resource schema validation result: {error}"
+        ))
+    })
 }
 
 fn strict_u64_argument(value: &Bound<'_, PyAny>) -> PyResult<u64> {
@@ -9478,6 +9515,7 @@ fn _native(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(canonicalize_json, module)?)?;
     module.add_function(wrap_pyfunction!(canonical_hash_json, module)?)?;
     module.add_function(wrap_pyfunction!(parse_schema_id_json, module)?)?;
+    module.add_function(wrap_pyfunction!(resource_schema_errors_json, module)?)?;
     module.add_function(wrap_pyfunction!(finalize_tool_call_json, module)?)?;
     module.add_function(wrap_pyfunction!(compile_graph_json, module)?)?;
     module.add_function(wrap_pyfunction!(
@@ -9595,7 +9633,7 @@ mod tests {
         negotiate_application_protocol_capabilities_json, parse_application_protocol_event_kind,
         parse_json_argument, parse_resolved_tool, parse_schema_id_json, parse_tool_call,
         prepare_tool_result_for_model_json, record_tool_effect_audit_event_json,
-        record_tool_effect_precondition_json, run_stdlib_graph_json,
+        record_tool_effect_precondition_json, resource_schema_errors_json, run_stdlib_graph_json,
         run_stdlib_graph_with_options_json, run_test_graph_json, run_test_graph_with_options_json,
         serialize_application_protocol_log_error, validate_remote_payload_json,
         validate_worker_advertisement_json, validate_worker_protocol_message_json,
@@ -9621,6 +9659,7 @@ mod tests {
                 "protocol.application.v1",
                 "protocol.worker.v1",
                 "schema.identity.v1",
+                "schema.resource-validation.v1",
             ])
         );
         Ok(())
@@ -9667,6 +9706,42 @@ mod tests {
             .expect_err("noncanonical versions must fail closed");
 
         assert!(error.to_string().contains("must not use leading zeroes"));
+    }
+
+    #[test]
+    fn native_resource_schema_bridge_returns_closed_violations() -> Result<(), String> {
+        let result = resource_schema_errors_json(
+            r#"{"apiVersion":"graphblocks.ai/v1","kind":"Graph","metadata":{"name":"invalid"},"spec":{"unexpected":true}}"#,
+        )
+        .map_err(|error| error.to_string())?;
+        let result = serde_json::from_str::<Value>(&result).map_err(|error| error.to_string())?;
+        let errors = result["errors"]
+            .as_array()
+            .ok_or_else(|| "resource errors must be an array".to_owned())?;
+
+        assert_eq!(result["valid"], json!(false));
+        assert!(!errors.is_empty());
+        for error in errors {
+            let fields = error
+                .as_object()
+                .ok_or_else(|| "resource error must be an object".to_owned())?
+                .keys()
+                .map(String::as_str)
+                .collect::<Vec<_>>();
+            assert_eq!(fields, ["code", "keyword", "message", "path", "schemaPath"]);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn native_resource_schema_bridge_accepts_a_stable_resource() -> Result<(), String> {
+        let result = resource_schema_errors_json(
+            r#"{"apiVersion":"graphblocks.ai/v1","kind":"Graph","metadata":{"name":"valid"},"spec":{"nodes":{}}}"#,
+        )
+        .map_err(|error| error.to_string())?;
+
+        assert_eq!(result, r#"{"errors":[],"valid":true}"#);
+        Ok(())
     }
 
     #[test]

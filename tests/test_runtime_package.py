@@ -18,6 +18,7 @@ VALID_NATIVE_CAPABILITIES = (
     "protocol.application.v1",
     "protocol.worker.v1",
     "schema.identity.v1",
+    "schema.resource-validation.v1",
 )
 
 
@@ -369,6 +370,105 @@ def test_runtime_wrapper_exposes_closed_native_schema_id_boundary() -> None:
     assert calls == ["schemas/Message@4294967295"]
     assert "parse_schema_id" in runtime.__all__
     assert "parse_schema_id_json" in runtime.__all__
+
+
+def test_runtime_wrapper_exposes_closed_native_resource_schema_boundary() -> None:
+    calls: list[str] = []
+
+    class FakeNative:
+        __version__ = "0.1.0"
+
+        def __getattr__(self, name: str):
+            if name.endswith("_json"):
+                return lambda *args, **kwargs: '{"ok":true}'
+            raise AttributeError(name)
+
+        def binding_version(self) -> str:
+            return self.__version__
+
+        def resource_schema_errors_json(self, document_json: str) -> str:
+            calls.append(document_json)
+            return json.dumps(
+                {
+                    "errors": [
+                        {
+                            "code": "GB0012",
+                            "keyword": "type",
+                            "message": "kind must be a string",
+                            "path": "$.kind",
+                            "schemaPath": "$",
+                        }
+                    ],
+                    "valid": False,
+                },
+                separators=(",", ":"),
+            )
+
+    runtime = load_runtime_wrapper(FakeNative())
+
+    assert runtime.resource_schema_errors(
+        {"kind": 42, "apiVersion": "graphblocks.ai/v1"}
+    ) == (
+        {
+            "code": "GB0012",
+            "keyword": "type",
+            "message": "kind must be a string",
+            "path": "$.kind",
+            "schemaPath": "$",
+        },
+    )
+    assert calls == ['{"apiVersion":"graphblocks.ai/v1","kind":42}']
+    assert "resource_schema_errors" in runtime.__all__
+    assert "resource_schema_errors_json" in runtime.__all__
+
+
+@pytest.mark.parametrize(
+    ("payload", "error_type", "message"),
+    (
+        ('{"errors":[],"valid":true,"extra":null}', ValueError, "must be closed"),
+        ('{"errors":{},"valid":true}', TypeError, "invalid fields"),
+        (
+            '{"errors":[{"code":"GB0012"}],"valid":false}',
+            ValueError,
+            "error 0 must be closed",
+        ),
+        (
+            '{"errors":[{"code":"GB0012","keyword":"type",'
+            '"message":1,"path":"$","schemaPath":"$"}],"valid":false}',
+            TypeError,
+            "error 0 has invalid fields",
+        ),
+        (
+            '{"errors":[{"code":"GB0012","keyword":"type",'
+            '"message":"invalid","path":"$","schemaPath":"$"}],"valid":true}',
+            ValueError,
+            "validity is inconsistent",
+        ),
+    ),
+)
+def test_runtime_wrapper_rejects_invalid_resource_schema_results(
+    payload: str,
+    error_type: type[Exception],
+    message: str,
+) -> None:
+    class FakeNative:
+        __version__ = "0.1.0"
+
+        def __getattr__(self, name: str):
+            if name.endswith("_json"):
+                return lambda *args, **kwargs: '{"ok":true}'
+            raise AttributeError(name)
+
+        def binding_version(self) -> str:
+            return self.__version__
+
+        def resource_schema_errors_json(self, document_json: str) -> str:
+            return payload
+
+    runtime = load_runtime_wrapper(FakeNative())
+
+    with pytest.raises(error_type, match=message):
+        runtime.resource_schema_errors({"apiVersion": "invalid", "kind": "Graph"})
 
 
 def test_runtime_wrapper_rejects_non_standard_native_json_results() -> None:
@@ -1216,6 +1316,9 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
         prepare_tool_result_for_model_json=prepare_tool_result_for_model_json,
         record_tool_effect_audit_event_json=record_tool_effect_audit_event_json,
         record_tool_effect_precondition_json=record_tool_effect_precondition_json,
+        resource_schema_errors_json=lambda _document_json: json.dumps(
+            {"errors": [], "valid": True}
+        ),
         run_stdlib_graph_json=run_stdlib_graph_json,
         run_stdlib_graph_with_options_json=run_stdlib_graph_with_options_json,
         run_test_graph_json=run_test_graph_json,

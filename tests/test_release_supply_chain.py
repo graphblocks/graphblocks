@@ -63,6 +63,7 @@ def _native_authority_probe() -> dict[str, object]:
                 "protocol.application.v1",
                 "protocol.worker.v1",
                 "schema.identity.v1",
+                "schema.resource-validation.v1",
             ],
             "module": "graphblocks_runtime._native",
             "error": None,
