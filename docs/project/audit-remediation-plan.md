@@ -53,10 +53,10 @@ A finding moves to resolved only when:
 4. the release matrix or profile evidence is updated when the finding changes a
    compatibility or production claim.
 
-The current generated count is 74 resolved findings: all 27 P0/P1 findings,
+The current generated count is 75 resolved findings: all 27 P0/P1 findings,
 the first 11 P2 findings, GB-ARCH-013, and GB-ARCH-015 through GB-ARCH-017.
 GB-COR-005 through GB-COR-009 are also resolved. There are zero open P0/P1,
-17 open P2, and 8 open P3; GB-COR-011, GB-COR-012, GB-DOC-006, GB-INP-006,
+16 open P2, and 8 open P3; GB-COR-011, GB-COR-012, GB-DOC-006, GB-INP-006,
 GB-INP-007, GB-INP-010, GB-PERF-004, and GB-PERF-005 are resolved. GB-ARCH-012
 remains open pending shared-primitives consolidation. GB-PERF-006 is resolved
 with tenant/owner-scoped indexed run-list cursor pagination and a 10,000-run
@@ -297,6 +297,19 @@ benchmarks fail closed at configured ceilings.
 Target window: months 1-2. Refactoring follows the security and repository
 contracts so moving code cannot preserve the current authority mistakes behind
 new module names.
+
+### Release scope
+
+`GB-ARCH-014` now has executable closure evidence: the target 1.0 release
+contains only the portable C0 schema/compiler contract and C1 local-runtime
+contract. AI application, governance, production platform, orchestration,
+voice, and durable stream are closed, independently promoted extension tracks
+whose package presence cannot expand the stable claim. Every profile declares
+one claim-owner artifact, separate implementation and evidence artifacts,
+role-scoped authority, compatibility tier, ancestors, and a promotion gate.
+The release matrix and conformance catalog must contain the same closed profile
+set, and the regression rejects ownership, track, tier, gate, or inheritance
+drift.
 
 ### Server
 

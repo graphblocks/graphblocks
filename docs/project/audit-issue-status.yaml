@@ -226,3 +226,6 @@ resolved:
   - id: GB-DOC-005
     fixCommits: ['8a896e7f']
     regression: [tests/test_documentation_integrity.py]
+  - id: GB-ARCH-014
+    fixCommits: ['5d4dc9df']
+    regression: [tests/test_documentation_integrity.py]

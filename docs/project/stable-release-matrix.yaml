@@ -109,8 +109,8 @@ deepAudit:
     authority: docs/project/audit-issue-status.yaml
     inventory: docs/project/audit-issues.json
     checker: tools/check_audit_inventory.py
-    resolved: 74
-    openBySeverity: {P0: 0, P1: 0, P2: 17, P3: 8}
+    resolved: 75
+    openBySeverity: {P0: 0, P1: 0, P2: 16, P3: 8}
   exitPolicy:
     securityFreeze: {maxOpenP0: 0}
     stableRelease: {maxOpenP0: 0, maxOpenP1: 0}
@@ -1067,6 +1067,7 @@ releaseGates:
       - status-docs-forbid-fixed-test-counts-and-defer-to-commit-bound-ci
       - roadmap-v1-wire-state-bound-to-schema-and-release-gates
       - artifact-specific-maturity-and-security-support-policy
+      - core-c0-c1-and-independently-promoted-extension-profile-tracks
     evidence:
       - docs/project/audit-issues.json
       - docs/project/audit-issue-status.yaml
@@ -1124,6 +1125,8 @@ releaseGates:
       - pyproject.toml
       - packages/graphblocks-runtime/pyproject.toml
       - packages/graphblocks-testing/pyproject.toml
+      - src/graphblocks/data/conformance-profiles.yaml
+      - README.md
     quickFeedbackCi:
       workflow: .github/workflows/ci.yml
       job: python-quality
