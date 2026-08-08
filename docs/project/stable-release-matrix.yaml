@@ -84,8 +84,8 @@ deepAudit:
     authority: docs/project/audit-issue-status.yaml
     inventory: docs/project/audit-issues.json
     checker: tools/check_audit_inventory.py
-    resolved: 67
-    openBySeverity: {P0: 0, P1: 0, P2: 24, P3: 8}
+    resolved: 70
+    openBySeverity: {P0: 0, P1: 0, P2: 21, P3: 8}
   exitPolicy:
     securityFreeze: {maxOpenP0: 0}
     stableRelease: {maxOpenP0: 0, maxOpenP1: 0}
@@ -1047,6 +1047,9 @@ releaseGates:
       - compatibility/python-preview-typing-budget.yaml
       - tools/check_stable_typing.py
       - tests/test_stable_typing_scope.py
+      - compatibility/rust-production-expect-budget.json
+      - tools/check_rust_lint_debt.py
+      - tests/test_rust_lint_debt.py
     quickFeedbackCi:
       workflow: .github/workflows/ci.yml
       job: python-quality
@@ -1127,6 +1130,26 @@ releaseGates:
         headSha: c38eeda0d485df76663ec0eeaabe12f974c8e49a
         conclusion: success
         durationSeconds: 47
+    rustProductionExpectDebt:
+      workspaceLint: clippy::expect_used=deny
+      toolchain: 1.94.0
+      scope: ['--workspace', '--lib', '--bins', '--locked']
+      baseline: compatibility/rust-production-expect-budget.json
+      baselineFiles: 16
+      maximumCalls: 119
+      newFilesAllowed: false
+      perFileGrowthAllowed: false
+      checker: tools/check_rust_lint_debt.py
+      regression: tests/test_rust_lint_debt.py
+      reportArtifact: dist/ci/rust-lint-debt.json
+      observedCiEvidence:
+        runId: 31242631454
+        jobId: 93066047306
+        headSha: 698fbd26f3d36a68056401662021fa834d15454c
+        conclusion: success
+        debtCheckDurationSeconds: 27
+        productionClippyDurationSeconds: 9
+        testTargetClippyDurationSeconds: 18
     exitCriteria:
       maxOpenBySeverity: {P0: 0, P1: 0}
       requiredEvidence:

@@ -211,3 +211,6 @@ resolved:
   - id: GB-QA-017
     fixCommits: ['f2bbdcc0']
     regression: [tests/test_accepted_run_crash_recovery.py]
+  - id: GB-RUST-002
+    fixCommits: ['698fbd26']
+    regression: [tests/test_rust_lint_debt.py, tests/test_release_supply_chain.py]

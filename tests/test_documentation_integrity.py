@@ -1587,9 +1587,16 @@ def test_stable_release_matrix_is_complete_and_machine_readable() -> None:
         "authority": "docs/project/audit-issue-status.yaml",
         "inventory": "docs/project/audit-issues.json",
         "checker": "tools/check_audit_inventory.py",
-        "resolved": 67,
-        "openBySeverity": {"P0": 0, "P1": 0, "P2": 24, "P3": 8},
+        "resolved": 70,
+        "openBySeverity": {"P0": 0, "P1": 0, "P2": 21, "P3": 8},
     }
+    rust_debt = audit_gate["rustProductionExpectDebt"]
+    assert rust_debt["workspaceLint"] == "clippy::expect_used=deny"
+    assert rust_debt["baselineFiles"] == 16
+    assert rust_debt["maximumCalls"] == 119
+    assert rust_debt["newFilesAllowed"] is False
+    assert rust_debt["perFileGrowthAllowed"] is False
+    assert rust_debt["observedCiEvidence"]["conclusion"] == "success"
     assert "signed-candidate-and-final-promotion-audit-closure-binding" in (
         audit_gate["implementedEvidence"]
     )

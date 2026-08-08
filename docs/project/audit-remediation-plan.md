@@ -53,10 +53,10 @@ A finding moves to resolved only when:
 4. the release matrix or profile evidence is updated when the finding changes a
    compatibility or production claim.
 
-The current generated count is 67 resolved findings: all 27 P0/P1 findings,
+The current generated count is 70 resolved findings: all 27 P0/P1 findings,
 the first 11 P2 findings, GB-ARCH-013, and GB-ARCH-015 through GB-ARCH-017.
 GB-COR-005 through GB-COR-009 are also resolved. There are zero open P0/P1,
-24 open P2, and 8 open P3; GB-COR-011, GB-COR-012, GB-DOC-006, GB-INP-006,
+21 open P2, and 8 open P3; GB-COR-011, GB-COR-012, GB-DOC-006, GB-INP-006,
 GB-INP-007, GB-INP-010, GB-PERF-004, and GB-PERF-005 are resolved. GB-ARCH-012
 remains open pending shared-primitives consolidation. GB-PERF-006 is resolved
 with tenant/owner-scoped indexed run-list cursor pagination and a 10,000-run
@@ -136,6 +136,14 @@ generation/fencing on expiry, and rejection of the stale winner. Ubuntu Python
 two seconds (CI run 31241802106, job 93064041399). This closes the recorded
 testing gap without promoting the wider C4 production or X3 durable-stream
 profiles.
+GB-RUST-002 is resolved by making `clippy::expect_used` a workspace-level deny
+for production targets while binding the 119 existing calls in 16 source files
+to a closed, Rust-1.94-specific per-file budget. Only those files carry a
+machine-checked exception marker; a forced-warning Clippy pass observes even
+the allowed calls and rejects a new file, any per-file increase, or total
+growth. Test, example, and benchmark targets receive the narrower command-line
+allow. CI retains the deterministic JSON report and separate production/test
+Clippy logs. All three gates passed in CI run 31242631454, Rust job 93066047306.
 This closes the recorded code-and-regression count; it does not replace the
 independent review, candidate attestation, platform, or soak gates.
 
