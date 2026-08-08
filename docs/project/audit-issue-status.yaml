@@ -289,3 +289,9 @@ resolved:
   - id: GB-PERF-007
     fixCommits: [33ae890d]
     regression: [tests/test_mcp_schema_execution.py]
+  - id: GB-QA-003
+    fixCommits: [0eac118e]
+    regression: [tests/test_python_boundary_safety.py, tests/test_quick_ci_gate.py]
+  - id: GB-QA-004
+    fixCommits: [0eac118e]
+    regression: [tests/test_python_boundary_safety.py, tests/test_quick_ci_gate.py]
