@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import Counter
+import json
 from pathlib import Path, PurePosixPath
 import re
 import shlex
@@ -11,6 +12,67 @@ import yaml
 
 
 ROOT = Path(__file__).parents[1]
+
+
+def test_roadmap_v1_wire_claims_match_schema_and_release_gates() -> None:
+    roadmap = " ".join(
+        (ROOT / "docs" / "project" / "roadmap.md")
+        .read_text(encoding="utf-8")
+        .split()
+    )
+    remaining_work = " ".join(
+        (ROOT / "docs" / "project" / "remaining-work.md")
+        .read_text(encoding="utf-8")
+        .split()
+    )
+    matrix = yaml.safe_load(
+        (ROOT / "docs" / "project" / "stable-release-matrix.yaml").read_text(
+            encoding="utf-8"
+        )
+    )
+    gates = {entry["id"]: entry for entry in matrix["releaseGates"]}
+    wires = {entry["id"]: entry for entry in matrix["wireVersions"]}
+    expected_wires = {
+        "graphblocks.ai/v1:Graph": (
+            "Graph",
+            "schemas/graphblocks.ai/v1/graph.schema.json",
+        ),
+        "graphblocks.ai/v1:PluginManifest": (
+            "PluginManifest",
+            "schemas/graphblocks.ai/v1/plugin-manifest.schema.json",
+        ),
+    }
+
+    assert (
+        "The closed `graphblocks.ai/v1` Graph and PluginManifest resources and "
+        "their alpha migrations are already candidate-enforced; they are no "
+        "longer future promotion work."
+    ) in roadmap
+    assert (
+        "The closed `graphblocks.ai/v1` Graph and PluginManifest resources, "
+        "alpha migrations, and candidate snapshots are implemented; recreating "
+        "or re-promoting them is not remaining work."
+    ) in remaining_work
+    assert "Promote the closed core Graph and PluginManifest" not in roadmap
+    assert "Close and promote the Graph and PluginManifest" not in remaining_work
+
+    for wire_id, (kind, schema_path) in expected_wires.items():
+        wire = wires[wire_id]
+        assert wire["tier"] == "stable"
+        assert wire["readiness"] == "candidate-enforced"
+        assert wire["mode"] == "read-write-canonical"
+        assert wire["requiredGates"] == ["REL-WIRE-V1", "REL-CLOSED-SCHEMA"]
+        schema = json.loads((ROOT / schema_path).read_text(encoding="utf-8"))
+        assert schema["$id"] == f"graphblocks.ai/v1/{Path(schema_path).name}"
+        assert schema["properties"]["apiVersion"] == {
+            "const": "graphblocks.ai/v1"
+        }
+        assert schema["properties"]["kind"] == {"const": kind}
+        assert schema_path in gates["REL-WIRE-V1"]["evidence"]
+        assert schema_path in gates["REL-CLOSED-SCHEMA"]["evidence"]
+
+    assert gates["REL-WIRE-V1"]["readiness"] == "candidate-enforced"
+    assert gates["REL-CLOSED-SCHEMA"]["readiness"] == "candidate-enforced"
 
 
 def _validate_real_service_evidence(
