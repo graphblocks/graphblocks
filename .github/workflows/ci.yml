@@ -58,6 +58,8 @@ jobs:
           {
             python tools/check_stable_typing.py \
               --report dist/ci/quick/python-typing-debt.json
+            python tools/check_python_boundary_safety.py \
+              --report dist/ci/quick/python-boundary-safety.json
             python tools/check_compatibility.py --api-only
             python tools/check_audit_inventory.py
           } 2>&1 | tee dist/ci/quick/contracts.log
@@ -69,6 +71,7 @@ jobs:
             tests/test_audit_inventory.py \
             tests/test_canonical_integer_limits.py \
             tests/test_package_layout.py \
+            tests/test_python_boundary_safety.py \
             tests/test_quick_ci_gate.py \
             tests/test_server_authorization_matrix.py \
             tests/test_version_compatibility.py \
@@ -213,6 +216,19 @@ jobs:
           python -m pytest \
             --junitxml=dist/ci/python-tests.xml \
             2>&1 | tee dist/ci/python-tests.log
+      - name: Run Python optimized boundary shard
+        if: ${{ matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11' }}
+        shell: bash
+        run: |
+          set -o pipefail
+          python -O -m pytest -q \
+            tests/test_server_lifecycle.py \
+            tests/test_server_error_contract.py \
+            tests/test_client_package.py \
+            tests/test_durable_server_http.py \
+            tests/test_mcp_schema_execution.py \
+            --junitxml=dist/ci/python-optimized-boundaries.xml \
+            2>&1 | tee dist/ci/python-optimized-boundaries.log
       - name: Run security-critical branch and changed-line coverage gates
         if: ${{ matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11' }}
         shell: bash

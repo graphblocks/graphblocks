@@ -1,0 +1,378 @@
+{
+  "schemaVersion": 1,
+  "scope": "src/graphblocks/**/*.py",
+  "policy": {
+    "broadExceptionHandlers": "Broad handlers are allowed only at reviewed external, optional-dependency, persistence, cleanup, input-normalization, or process-isolation boundaries. Their semantic fingerprints make any handler or body change a new review decision; BaseException is never introduced implicitly.",
+    "productionAsserts": "Production asserts are reviewed only as side-effect-free internal invariants, exhaustive branch proofs, or type narrowing after explicit validation. Public boundary behavior must also pass the optimized-mode shard with asserts disabled."
+  },
+  "broadExceptionHandlers": {
+    "total": 119,
+    "files": [
+      {
+        "path": "src/graphblocks/_schema_execution.py",
+        "count": 2,
+        "semanticDigest": "sha256:85cb4e8061f2de5f46ad27f0c0b397168d13515693a94542ef2d7d00f8107df7",
+        "classifications": ["input-normalization-boundary"],
+        "rationale": "Adversarial Mapping implementations may fail during bounded schema traversal and are normalized to the schema policy error contract."
+      },
+      {
+        "path": "src/graphblocks/audit.py",
+        "count": 6,
+        "semanticDigest": "sha256:10ece0594b3de9d956d4e986f88bc2ee9cc49182dff9c0c6a060e4b565bf63a1",
+        "classifications": ["persistence-transaction-boundary", "best-effort-cleanup"],
+        "rationale": "Audit persistence and publisher cleanup isolate backend failures while retaining explicit delivery state."
+      },
+      {
+        "path": "src/graphblocks/blob_store.py",
+        "count": 2,
+        "semanticDigest": "sha256:c1f811c8b7d43913c767ca00f753cfe05dfd2941977ba652a99949a72f5e0566",
+        "classifications": ["persistence-transaction-boundary", "external-callback-boundary"],
+        "rationale": "Blob storage implementations are pluggable persistence boundaries whose failures are converted to stable storage errors."
+      },
+      {
+        "path": "src/graphblocks/budget.py",
+        "count": 8,
+        "semanticDigest": "sha256:60fe0aea28df3837e45fe9f8e33afd00794fed59d5768d482e2a496150924ed4",
+        "classifications": ["persistence-transaction-boundary", "external-callback-boundary"],
+        "rationale": "Budget ledgers call pluggable repositories and policy hooks while preserving rollback and stable domain failure semantics."
+      },
+      {
+        "path": "src/graphblocks/compiler.py",
+        "count": 2,
+        "semanticDigest": "sha256:b1048805bacee8187c5ffd262f4d55967b1dc152373b8459f3ee5e06f023e042",
+        "classifications": ["external-callback-boundary"],
+        "rationale": "Native compiler bridge failures are translated into deterministic compiler diagnostics at the implementation boundary."
+      },
+      {
+        "path": "src/graphblocks/document_parsers.py",
+        "count": 8,
+        "semanticDigest": "sha256:2a9a9ee19eea99a1692350d4c75319559745e4dbc4868b64f38d66bea296c317",
+        "classifications": ["optional-dependency-boundary", "input-normalization-boundary"],
+        "rationale": "Third-party parsers expose heterogeneous exception types that are normalized to bounded document parse failures."
+      },
+      {
+        "path": "src/graphblocks/documents.py",
+        "count": 4,
+        "semanticDigest": "sha256:58535ba0a3f02ffddc15f6e43a151955fe9ca50c25a596131f65e86fa59256d0",
+        "classifications": ["optional-dependency-boundary", "external-callback-boundary"],
+        "rationale": "Document extractors and converters are optional external implementations with a stable document error envelope."
+      },
+      {
+        "path": "src/graphblocks/durable_server.py",
+        "count": 2,
+        "semanticDigest": "sha256:0ffdd3fb131a87daa61722ddf99002889928ec7c8d7520b96b5c32edca5de69f",
+        "classifications": ["persistence-transaction-boundary"],
+        "rationale": "Durable request transactions translate repository failures without exposing backend-specific exceptions."
+      },
+      {
+        "path": "src/graphblocks/exhaustion.py",
+        "count": 5,
+        "semanticDigest": "sha256:e135d2cc0ef6e3fe079000e18ea11812ee2f251eee11426c66640155ac9edff4",
+        "classifications": ["external-callback-boundary"],
+        "rationale": "User-provided exhaustion decisions are isolated and normalized into explicit continuation outcomes."
+      },
+      {
+        "path": "src/graphblocks/integrations/haystack.py",
+        "count": 1,
+        "semanticDigest": "sha256:61cc502350fba08ed4e1149ccaa2943abffc6ded70c18a8491308fc7b547e687",
+        "classifications": ["optional-dependency-boundary"],
+        "rationale": "The optional Haystack adapter converts dependency-specific failures into its declared adapter contract."
+      },
+      {
+        "path": "src/graphblocks/integrations/oci.py",
+        "count": 1,
+        "semanticDigest": "sha256:801840dc9d9afa45641e133d93f44c63fc22f5c5f4343e89d7f93b983ff01b1b",
+        "classifications": ["external-callback-boundary"],
+        "rationale": "OCI transport cleanup is isolated from the stable artifact publication result."
+      },
+      {
+        "path": "src/graphblocks/integrations/pdf.py",
+        "count": 7,
+        "semanticDigest": "sha256:9a135b158a9175687eaccffd374f5e8aa3528566c72d1089f2e0678b9bfcd6b1",
+        "classifications": ["optional-dependency-boundary", "input-normalization-boundary"],
+        "rationale": "Multiple optional PDF engines use incompatible exception hierarchies and are normalized to bounded parse failures."
+      },
+      {
+        "path": "src/graphblocks/isolated_worker.py",
+        "count": 2,
+        "semanticDigest": "sha256:318551766c694d50b2218eab411897d88582637efd86ea30c7512e26c17d97f5",
+        "classifications": ["process-isolation-boundary"],
+        "rationale": "The child-process envelope must report terminal failures, including non-Exception exits, to the supervising process."
+      },
+      {
+        "path": "src/graphblocks/plugins.py",
+        "count": 5,
+        "semanticDigest": "sha256:cd8307614f81fb02e97e79b57ca109cfcd77940405e9d521cd69e89561b3a38f",
+        "classifications": ["external-callback-boundary", "optional-dependency-boundary"],
+        "rationale": "Untrusted plugin loaders and lifecycle hooks are isolated behind stable plugin diagnostics."
+      },
+      {
+        "path": "src/graphblocks/provider_effects.py",
+        "count": 8,
+        "semanticDigest": "sha256:5d85b681e7ff29aa9916066e10e4280e20911baeed6cfb9a330b0f7edc6196c5",
+        "classifications": ["external-callback-boundary", "optional-dependency-boundary"],
+        "rationale": "Provider SDK and user callback failures are translated to effect outcomes without relying on SDK-specific exception trees."
+      },
+      {
+        "path": "src/graphblocks/run_store.py",
+        "count": 2,
+        "semanticDigest": "sha256:c9c705a3b3c8fce37cdb7df53df1fbc7f59b234ea53e8aa65459cda2d2183f43",
+        "classifications": ["persistence-transaction-boundary"],
+        "rationale": "Run persistence rollback preserves atomic state when backend operations fail."
+      },
+      {
+        "path": "src/graphblocks/runtime.py",
+        "count": 9,
+        "semanticDigest": "sha256:b3d21efb103496b25a8a47e7bc6e6297a26a6580ae55a65a6c284ab612ece3fa",
+        "classifications": ["external-callback-boundary", "best-effort-cleanup"],
+        "rationale": "Runtime blocks, handlers, and compensations are pluggable code whose failures become deterministic runtime events."
+      },
+      {
+        "path": "src/graphblocks/server.py",
+        "count": 26,
+        "semanticDigest": "sha256:546f10266ec9c43d7767962d4d6af42fcb48c5ce006421a31b0d6b8af1557c3a",
+        "classifications": ["external-callback-boundary", "persistence-transaction-boundary", "input-normalization-boundary"],
+        "rationale": "HTTP services isolate authenticators, repositories, executors, callbacks, and malformed boundary objects behind stable server errors."
+      },
+      {
+        "path": "src/graphblocks/sqlite_server_storage.py",
+        "count": 5,
+        "semanticDigest": "sha256:71dd11a9ea8d667d908fcde65b048c3e05048032c62db4462842a0f8ff1337fe",
+        "classifications": ["persistence-transaction-boundary"],
+        "rationale": "BaseException cleanup paths roll back and re-raise, while repository operations preserve explicit transaction state."
+      },
+      {
+        "path": "src/graphblocks/stdlib.py",
+        "count": 2,
+        "semanticDigest": "sha256:fea456128e0f523234fa078eb529d614d1a051f62987da85cc330a44751347af",
+        "classifications": ["optional-dependency-boundary"],
+        "rationale": "Optional standard-library catalog contributors are isolated during discovery."
+      },
+      {
+        "path": "src/graphblocks/stdlib_blocks.py",
+        "count": 1,
+        "semanticDigest": "sha256:f6bf7bd2a895cfab5cf2edcb41d7161ad2492240c4aae8cc78314d4b8b7dd5b1",
+        "classifications": ["external-callback-boundary"],
+        "rationale": "User block execution failures are converted into the declared block outcome contract."
+      },
+      {
+        "path": "src/graphblocks/stdlib_governance.py",
+        "count": 2,
+        "semanticDigest": "sha256:6f36e67f798aa7f491264d3c17ccc8316870309e4bd2d0967ccbab24f0473439",
+        "classifications": ["external-callback-boundary"],
+        "rationale": "Governance policy hooks are pluggable and fail closed through stable policy outcomes."
+      },
+      {
+        "path": "src/graphblocks/stdlib_rag.py",
+        "count": 2,
+        "semanticDigest": "sha256:f7860ad4301f67c4f4003c511f9313742280f46753b06b90e89d1fa87d8c7ff3",
+        "classifications": ["external-callback-boundary"],
+        "rationale": "Retriever and ranking implementations are external callbacks normalized to explicit RAG outcomes."
+      },
+      {
+        "path": "src/graphblocks/stdlib_runtime_handlers.py",
+        "count": 1,
+        "semanticDigest": "sha256:42509651737b8f7815a2b678a62ba396724596123847d6422f17af5b2b10eff4",
+        "classifications": ["external-callback-boundary"],
+        "rationale": "Runtime handler invocation isolates user-provided block implementations."
+      },
+      {
+        "path": "src/graphblocks/telemetry.py",
+        "count": 1,
+        "semanticDigest": "sha256:23a9d7b4834b20c2b81ad90b5f7a23fd859fd56f3be96dc0d5bcc5f71997f3c0",
+        "classifications": ["best-effort-cleanup", "external-callback-boundary"],
+        "rationale": "Telemetry exporters must not change authoritative execution outcomes when an observer fails."
+      },
+      {
+        "path": "src/graphblocks/usage.py",
+        "count": 2,
+        "semanticDigest": "sha256:f39d825ef369a361e802a2ad7c90a52c5d3c0df9ae861747543885afe9cf0d60",
+        "classifications": ["persistence-transaction-boundary"],
+        "rationale": "Usage repository failures are normalized while preserving ledger transaction semantics."
+      },
+      {
+        "path": "src/graphblocks/webhooks.py",
+        "count": 3,
+        "semanticDigest": "sha256:0946fb2aca388d790f334aceca3258b4d21da386d86042f39321768ef41b3732",
+        "classifications": ["external-callback-boundary", "best-effort-cleanup"],
+        "rationale": "Webhook transports and cleanup callbacks use heterogeneous failures mapped to delivery lifecycle states."
+      }
+    ]
+  },
+  "productionAsserts": {
+    "total": 94,
+    "files": [
+      {
+        "path": "src/graphblocks/admission.py",
+        "count": 2,
+        "semanticDigest": "sha256:23d476530d0affbfb2e81faddda90febe11ec59236fd45e8edaf4295ce9cd59c",
+        "classifications": ["internal-state-invariant"],
+        "rationale": "Window timestamps are asserted only after the state transition that initializes them."
+      },
+      {
+        "path": "src/graphblocks/application_event.py",
+        "count": 1,
+        "semanticDigest": "sha256:0d2966578d21c4703d83987dde1ae4f8bcd67b75f75607665fde75de19ef73e8",
+        "classifications": ["validated-type-narrowing"],
+        "rationale": "The assertion narrows a strict JSON snapshot already validated as an object."
+      },
+      {
+        "path": "src/graphblocks/budget.py",
+        "count": 2,
+        "semanticDigest": "sha256:a2d965a0417fdbdb14ba73b92b12974b5e06eacdfc2491342d13a3f7326a0492",
+        "classifications": ["internal-state-invariant", "validated-type-narrowing"],
+        "rationale": "Budget values and reservation identities are asserted after constructor and state-machine validation."
+      },
+      {
+        "path": "src/graphblocks/cli.py",
+        "count": 5,
+        "semanticDigest": "sha256:29f87e4421c4858500f2ccfc90952414c62e92641ff9ad9359bb35a453102736",
+        "classifications": ["exhaustive-branch-invariant", "validated-type-narrowing"],
+        "rationale": "Argparse branch selection and preceding release resolution establish these non-null internal values."
+      },
+      {
+        "path": "src/graphblocks/client.py",
+        "count": 6,
+        "semanticDigest": "sha256:e68bd4fa6308682d4b7345286a46f3b5d79e5941ca3326ee8b81d0ba55e7aa7f",
+        "classifications": ["validated-type-narrowing", "exhaustive-branch-invariant"],
+        "rationale": "Response objects, status codes, and transport callables are explicitly checked before type narrowing."
+      },
+      {
+        "path": "src/graphblocks/clocks.py",
+        "count": 1,
+        "semanticDigest": "sha256:df88beb1a49486f3aee548a9977c5d39ec072debbefcd5a8504b05c640fdc307",
+        "classifications": ["internal-state-invariant"],
+        "rationale": "The monotonic clock value exists after the initialization branch that precedes the assertion."
+      },
+      {
+        "path": "src/graphblocks/composition.py",
+        "count": 3,
+        "semanticDigest": "sha256:4859085b7775abfaf8c8f92bdbc93e0a97c00b05be54a3ce953e98246b6032b3",
+        "classifications": ["validated-type-narrowing", "internal-state-invariant"],
+        "rationale": "Composition shapes and resolved interfaces have explicit validation before internal narrowing."
+      },
+      {
+        "path": "src/graphblocks/deployment.py",
+        "count": 1,
+        "semanticDigest": "sha256:36219723dc6f62830ad501695752f6726be094158a7ab64ade4260d802190877",
+        "classifications": ["validated-type-narrowing"],
+        "rationale": "Binding variants are discriminated before the KnowledgeBinding type narrowing."
+      },
+      {
+        "path": "src/graphblocks/devtools.py",
+        "count": 2,
+        "semanticDigest": "sha256:fbd54e86221b68049f8e761de15d9d1618a11cdc8af010ccc4d876383c2d2f7e",
+        "classifications": ["internal-state-invariant", "exhaustive-branch-invariant"],
+        "rationale": "Traversal branches initialize node and path identities before they are consumed."
+      },
+      {
+        "path": "src/graphblocks/durable_server.py",
+        "count": 7,
+        "semanticDigest": "sha256:f119e941146a4bc3ed7129aa080de6c41b0817329ab6c87261b38a2133aa8956",
+        "classifications": ["validated-type-narrowing"],
+        "rationale": "HTTP fields are explicitly decoded and rejected before typed durable operations use them."
+      },
+      {
+        "path": "src/graphblocks/ingestion.py",
+        "count": 1,
+        "semanticDigest": "sha256:6b2e873c6e4354f253fefa0fd2f2d7d1e9dbf7b5aa5acca2452c880a297340d6",
+        "classifications": ["internal-state-invariant"],
+        "rationale": "Deletion state is established by the immediately preceding successful state transition."
+      },
+      {
+        "path": "src/graphblocks/integrations/qdrant.py",
+        "count": 3,
+        "semanticDigest": "sha256:b8e7965c004724f666c9249b39fe67088bc79b7a4e377f9927e59dda75b8b466",
+        "classifications": ["validated-type-narrowing"],
+        "rationale": "Strict JSON projections and metadata objects are checked before adapter encoding."
+      },
+      {
+        "path": "src/graphblocks/outcome.py",
+        "count": 1,
+        "semanticDigest": "sha256:975d334bed3e5444b1242bf8a71cb6745f587642bc7ed8532634cba9d48f30ea",
+        "classifications": ["validated-type-narrowing"],
+        "rationale": "Outcome metadata is asserted after strict mapping snapshot validation."
+      },
+      {
+        "path": "src/graphblocks/provider_effects.py",
+        "count": 6,
+        "semanticDigest": "sha256:7dbffc5e651051dba95d687785f80049850779a019209752da37bff8cf071fdc",
+        "classifications": ["exhaustive-branch-invariant", "validated-type-narrowing"],
+        "rationale": "Round-trip codec branches establish exact container variants before equality comparison."
+      },
+      {
+        "path": "src/graphblocks/rag.py",
+        "count": 6,
+        "semanticDigest": "sha256:fb2c0ae9be9bf69357a621331e83a2dac86c529ab7c4ae4b11d8df2f9c47a847",
+        "classifications": ["internal-state-invariant", "validated-type-narrowing"],
+        "rationale": "Validated counters and token budgets are narrowed after explicit parameter checks."
+      },
+      {
+        "path": "src/graphblocks/run_store.py",
+        "count": 1,
+        "semanticDigest": "sha256:9aebcda1ac28f0db4db664ef92eebfaf0bc302d3782dde828b8cce3628282f40",
+        "classifications": ["validated-type-narrowing"],
+        "rationale": "Canonical record string fields are checked before construction."
+      },
+      {
+        "path": "src/graphblocks/runtime.py",
+        "count": 5,
+        "semanticDigest": "sha256:2c2015d4753b60acbd03979eb75dfcc7f782a0f0bd64344c55d12a0b87aea255",
+        "classifications": ["internal-state-invariant", "validated-type-narrowing"],
+        "rationale": "Callback, checkpoint, and output values follow explicit state and shape validation."
+      },
+      {
+        "path": "src/graphblocks/server.py",
+        "count": 34,
+        "semanticDigest": "sha256:e484a710b15ef14cb3f70f3ae00a1d28a6d786677055cd310113d24e20e0412c",
+        "classifications": ["validated-type-narrowing", "internal-state-invariant"],
+        "rationale": "Request and repository projections are explicitly validated, while run lifecycle identities follow guarded state transitions; the optimized shard exercises these boundaries."
+      },
+      {
+        "path": "src/graphblocks/server_storage.py",
+        "count": 1,
+        "semanticDigest": "sha256:3a3ebf93bd28ed4a6288747e505953e3621f5c3cf8d7bc014ec8cec2068b5c2e",
+        "classifications": ["internal-state-invariant"],
+        "rationale": "A claimed callback exists after the successful claim branch."
+      },
+      {
+        "path": "src/graphblocks/sqlite_outbox.py",
+        "count": 2,
+        "semanticDigest": "sha256:0d1643ce3cb245cb405b8438922920be090364e8cc44ebfe58ce4b19b00eca65",
+        "classifications": ["internal-state-invariant"],
+        "rationale": "Outbox claims are present after atomic claim transitions return success."
+      },
+      {
+        "path": "src/graphblocks/telemetry.py",
+        "count": 2,
+        "semanticDigest": "sha256:1b3e241027f1a17c32b3198bd4620f78b8d52cb8b790e7a8a3200920346168b3",
+        "classifications": ["validated-type-narrowing"],
+        "rationale": "Telemetry JSON and immutable mappings are validated before typed projection."
+      },
+      {
+        "path": "src/graphblocks/typed.py",
+        "count": 1,
+        "semanticDigest": "sha256:306c2cddaef50e755fa1e8b7d51e64cd9b217ace9743c9a86499a002f8427603",
+        "classifications": ["validated-type-narrowing"],
+        "rationale": "Typed node outputs are checked as an object before graph construction continues."
+      },
+      {
+        "path": "src/graphblocks/usage.py",
+        "count": 1,
+        "semanticDigest": "sha256:03c68afc8bb4b4025b8594019b7fce61162ab70563bede0cda54afff0ffaf221",
+        "classifications": ["validated-type-narrowing"],
+        "rationale": "Usage metadata is a strict JSON object before the typed ledger entry is created."
+      }
+    ]
+  },
+  "optimizedMode": {
+    "pythonFlag": "-O",
+    "tests": [
+      "tests/test_server_lifecycle.py",
+      "tests/test_server_error_contract.py",
+      "tests/test_client_package.py",
+      "tests/test_durable_server_http.py",
+      "tests/test_mcp_schema_execution.py"
+    ]
+  }
+}

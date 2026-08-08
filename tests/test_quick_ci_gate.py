@@ -50,17 +50,20 @@ def test_quick_feedback_gate_has_a_bounded_release_contract_smoke() -> None:
     contracts = steps["Check stable contracts and audit inventory"]["run"]
     for command in (
         "python tools/check_stable_typing.py",
+        "python tools/check_python_boundary_safety.py",
         "python tools/check_compatibility.py --api-only",
         "python tools/check_audit_inventory.py",
     ):
         assert command in contracts
     assert "--report dist/ci/quick/python-typing-debt.json" in contracts
+    assert "--report dist/ci/quick/python-boundary-safety.json" in contracts
 
     smoke = steps["Run core unit smoke"]["run"]
     for path in (
         "tests/test_audit_inventory.py",
         "tests/test_canonical_integer_limits.py",
         "tests/test_package_layout.py",
+        "tests/test_python_boundary_safety.py",
         "tests/test_quick_ci_gate.py",
         "tests/test_server_authorization_matrix.py",
         "tests/test_version_compatibility.py",
