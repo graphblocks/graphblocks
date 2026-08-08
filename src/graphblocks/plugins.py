@@ -16,11 +16,6 @@ from jsonschema import Draft202012Validator
 from jsonschema.exceptions import SchemaError
 import yaml
 
-from ._schema_execution import (
-    DEFAULT_SCHEMA_EXECUTION_POLICY,
-    SchemaExecutionPolicyError,
-    enforce_schema_execution_policy,
-)
 from .canonical import (
     MAX_CANONICAL_JSON_DEPTH,
     _reject_duplicate_keys,
@@ -107,6 +102,12 @@ def _block_capabilities(value: object) -> tuple[str, ...]:
 
 def _normalized_config_schema(value: object) -> dict[str, Any]:
     """Normalize a schema within the common execution-policy boundary."""
+
+    from ._schema_execution import (
+        DEFAULT_SCHEMA_EXECUTION_POLICY,
+        SchemaExecutionPolicyError,
+        enforce_schema_execution_policy,
+    )
 
     if not isinstance(value, Mapping):
         raise ValueError("configSchema must be a mapping")
