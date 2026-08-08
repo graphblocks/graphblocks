@@ -1,5 +1,3 @@
-#![allow(clippy::expect_used)] // Guarded by compatibility/rust-production-expect-budget.json.
-
 use std::collections::{BTreeMap, VecDeque};
 use std::error::Error;
 use std::fmt;
@@ -1045,10 +1043,11 @@ impl TelemetryBuffer {
                 }
 
                 if let Some(position) = lowest_position {
-                    let dropped = self
-                        .records
-                        .remove(position)
-                        .expect("selected telemetry record position must exist");
+                    let Some(dropped) = self.records.remove(position) else {
+                        return Err(TelemetryBufferError::QueueFull {
+                            record_id: record.record_id,
+                        });
+                    };
                     let dropped_record_id = dropped.record_id;
                     self.dropped_count += 1;
                     self.records.push_back(record);
