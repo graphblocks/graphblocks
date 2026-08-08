@@ -105,6 +105,13 @@ must identify both the Rust authority and Python facade/reference roles.
 | `GB-X2-VOICE` | Preview (experimental) | Retains the catalog's experimental qualifier until transport/provider support and interruption/playback authority gates pass. |
 | `GB-X3-DURABLE-STREAM` | Preview (experimental) | Existing source replay, barrier, watermark, window, checkpoint, and sink-commit primitives remain preview evidence. Promotion requires real multi-process restart/crash failpoints, fresh lease and authority checks at commit, durable outbox/idempotency evidence, and an explicit boundary between at-least-once delivery and any exactly-once effect claim. |
 
+The SQLite accepted-run vertical slice now has required independent-process
+`SIGKILL` evidence across admission, lease claim, checkpoint, outbox, and
+terminal-commit transaction boundaries, including competing-worker fencing and
+stale-claim rejection. C4 remains preview because this evidence does not by
+itself establish deployment-like Postgres recovery, provider/output effect
+guarantees, or the separate X3 streaming state machine.
+
 The release matrix assigns every profile a claim-owner artifact, distinct
 implementation and evidence artifacts, role-scoped active/target/reference
 authority, compatibility tier, release track, ancestors, and promotion gate.

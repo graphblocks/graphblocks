@@ -125,6 +125,17 @@ resolver, while principal-scoped routes are included automatically. The same
 three tests are bound to the stable security-gate manifest and always-run quick
 smoke. The first clean matrix-aware quick execution ran 91 tests and completed
 in 52 seconds (CI run 31241231744, job 93062485078).
+GB-QA-017 is resolved for the durable SQLite accepted-run slice by a required
+POSIX process-crash gate. One recovery subprocess forks and kills isolated
+workers with `SIGKILL` at all 15 declared admission, claim, checkpoint, outbox,
+event, state-update, and post-commit failpoints. A reopened repository proves
+pre-commit rollback, post-commit replay, and exactly one checkpoint/outbox
+record. A separate two-worker process race proves one lease winner, monotonic
+generation/fencing on expiry, and rejection of the stale winner. Ubuntu Python
+3.11 CI retains dedicated JUnit and logs; its first execution passed in about
+two seconds (CI run 31241802106, job 93064041399). This closes the recorded
+testing gap without promoting the wider C4 production or X3 durable-stream
+profiles.
 This closes the recorded code-and-regression count; it does not replace the
 independent review, candidate attestation, platform, or soak gates.
 

@@ -208,3 +208,6 @@ resolved:
   - id: GB-QA-016
     fixCommits: ['8c74b55e']
     regression: [tests/test_server_authorization_matrix.py, tests/test_quick_ci_gate.py]
+  - id: GB-QA-017
+    fixCommits: ['f2bbdcc0']
+    regression: [tests/test_accepted_run_crash_recovery.py]
