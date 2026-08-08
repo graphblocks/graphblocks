@@ -206,7 +206,8 @@ fn run_freshness_case(name: &str, case: &Value) -> Result<(), String> {
         .with_minimum_source_modified_at(minimum_source_modified_at),
     )
     .map_err(|error| format!("rag TCK case {name} failed context build: {error:?}"))?;
-    let metrics = evaluate_retrieval_metrics(&retrieval, std::iter::empty::<&str>(), Some(top_k));
+    let metrics = evaluate_retrieval_metrics(&retrieval, std::iter::empty::<&str>(), Some(top_k))
+        .map_err(|error| format!("rag TCK case {name} failed metrics: {error}"))?;
     let freshness_satisfaction = metrics
         .iter()
         .find(|metric| metric.name == "freshness_satisfaction")

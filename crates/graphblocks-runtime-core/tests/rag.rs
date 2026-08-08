@@ -2104,7 +2104,8 @@ fn evaluate_retrieval_metrics_returns_no_data_without_relevant_items() {
         vec![hit("hit-a", "doc-a", "doc-1", "alpha", 1)],
     );
 
-    let metrics = evaluate_retrieval_metrics(&retrieval, Vec::<String>::new(), None);
+    let metrics = evaluate_retrieval_metrics(&retrieval, Vec::<String>::new(), None)
+        .expect("auth-free retrieval metrics evaluate");
 
     let recall = metrics
         .iter()
@@ -2171,7 +2172,8 @@ fn evaluate_retrieval_metrics_reports_freshness_satisfaction() {
         json!("2026-06-21T00:00:00Z"),
     );
 
-    let metrics = evaluate_retrieval_metrics(&retrieval, ["doc-a"], Some(3));
+    let metrics = evaluate_retrieval_metrics(&retrieval, ["doc-a"], Some(3))
+        .expect("auth-free retrieval metrics evaluate");
 
     let freshness_satisfaction = metrics
         .iter()
@@ -2204,7 +2206,8 @@ fn evaluate_retrieval_metrics_compares_freshness_as_datetime() {
         json!("2026-06-24T00:30:00+09:00"),
     );
 
-    let metrics = evaluate_retrieval_metrics(&retrieval, ["doc-a"], Some(2));
+    let metrics = evaluate_retrieval_metrics(&retrieval, ["doc-a"], Some(2))
+        .expect("auth-free retrieval metrics evaluate");
 
     let freshness_satisfaction = metrics
         .iter()

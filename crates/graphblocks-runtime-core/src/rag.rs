@@ -1,5 +1,3 @@
-#![allow(clippy::expect_used)] // Guarded by compatibility/rust-production-expect-budget.json.
-
 use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt;
@@ -1584,11 +1582,10 @@ pub fn render_context_pack(context: &ContextPack) -> String {
     let mut lines = Vec::new();
     lines.push(format!(
         "GRAPHBLOCKS_CONTEXT_PACK_BEGIN {}",
-        serde_json::to_string(&json!({
+        json!({
             "context_id": &context.context_id,
             "trust_boundary": "retrieved_untrusted",
-        }))
-        .expect("context metadata should serialize")
+        })
     ));
     for hit in &context.hits {
         let source_refs = if hit.highlights.is_empty() {
@@ -1628,20 +1625,16 @@ pub fn render_context_pack(context: &ContextPack) -> String {
             .collect::<Vec<_>>();
         lines.push(format!(
             "GRAPHBLOCKS_RETRIEVED_ITEM_BEGIN {}",
-            serde_json::to_string(&json!({
+            json!({
                 "hit_id": &hit.hit_id,
                 "item_id": &hit.item.item_id,
                 "rank": hit.rank,
                 "retriever": &hit.retriever,
                 "sources": sources,
                 "trust": "retrieved_untrusted",
-            }))
-            .expect("item metadata should serialize")
+            })
         ));
-        lines.push(
-            serde_json::to_string(&hit.item.preview.join("\n"))
-                .expect("context content should serialize"),
-        );
+        lines.push(json!(hit.item.preview.join("\n")).to_string());
         lines.push("GRAPHBLOCKS_RETRIEVED_ITEM_END".to_owned());
     }
     lines.push("GRAPHBLOCKS_CONTEXT_PACK_END".to_owned());
@@ -1891,7 +1884,7 @@ pub fn fuse_search_hits(
             |locator| {
                 format!(
                     "source_span:{}",
-                    serde_json::to_string(&json!({
+                    json!({
                         "asset_id": &locator.asset_id,
                         "revision_id": &locator.revision_id,
                         "document_id": &locator.document_id,
@@ -1904,8 +1897,7 @@ pub fn fuse_search_hits(
                         "sheet": &locator.sheet,
                         "cell_range": &locator.cell_range,
                         "slide": locator.slide,
-                    }))
-                    .expect("source span should serialize")
+                    })
                 )
             },
         )
@@ -2760,13 +2752,12 @@ pub fn evaluate_retrieval_metrics<I, S>(
     retrieval: &RetrievalResult,
     relevant_item_ids: I,
     k: Option<usize>,
-) -> Vec<MetricObservation>
+) -> Result<Vec<MetricObservation>, RagError>
 where
     I: IntoIterator<Item = S>,
     S: Into<String>,
 {
     evaluate_retrieval_metrics_with_auth(retrieval, relevant_item_ids, k, None)
-        .expect("auth-free retrieval metrics cannot fail")
 }
 
 pub fn evaluate_retrieval_metrics_with_auth<I, S>(
