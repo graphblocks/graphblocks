@@ -21,6 +21,32 @@ def _load_matrix() -> dict[str, object]:
     return matrix
 
 
+def test_supported_python_matrix_binds_metadata_and_multilingual_readmes() -> None:
+    matrix = _load_matrix()
+    python_support = matrix["pythonSupport"]
+    assert python_support == {
+        "requiresPython": ">=3.11,<3.13",
+        "supportedMinors": ["3.11", "3.12"],
+        "readmeClaims": {
+            "README.md": "Python 3.11 or 3.12",
+            "README.ko.md": "Python 3.11 또는 3.12",
+            "README.zh-CN.md": "Python 3.11 或 3.12",
+        },
+    }
+
+    for manifest_path in (
+        "pyproject.toml",
+        "packages/graphblocks-runtime/pyproject.toml",
+        "packages/graphblocks-testing/pyproject.toml",
+    ):
+        manifest = tomllib.loads((ROOT / manifest_path).read_text(encoding="utf-8"))
+        assert manifest["project"]["requires-python"] == python_support["requiresPython"]
+
+    for readme_path, claim in python_support["readmeClaims"].items():
+        content = (ROOT / readme_path).read_text(encoding="utf-8")
+        assert content.count(claim) == 1
+
+
 def test_artifact_versions_and_catalog_constraints_match_published_matrix() -> None:
     matrix = _load_matrix()
     artifacts = {entry["id"]: entry for entry in matrix["artifacts"]}

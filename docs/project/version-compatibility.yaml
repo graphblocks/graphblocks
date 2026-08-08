@@ -1,5 +1,12 @@
 matrixVersion: 1
 targetRelease: '1.0'
+pythonSupport:
+  requiresPython: '>=3.11,<3.13'
+  supportedMinors: ['3.11', '3.12']
+  readmeClaims:
+    README.md: Python 3.11 or 3.12
+    README.ko.md: Python 3.11 또는 3.12
+    README.zh-CN.md: Python 3.11 或 3.12
 policy:
   packageSemverEqualsContractVersion: false
   compatibilityAuthority: this-matrix-plus-runtime-handshake
