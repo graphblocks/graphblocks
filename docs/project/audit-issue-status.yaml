@@ -277,3 +277,6 @@ resolved:
   - id: GB-DOC-008
     fixCommits: [194da57c]
     regression: [tests/test_documentation_integrity.py, tests/test_docs_checker.py]
+  - id: GB-DOC-009
+    fixCommits: [5d4dc9df, 83111fde, ef8966ba, f8f47ba7, 9f47e571]
+    regression: [tests/test_conformance_authority.py, tests/test_acceptance_applications.py, tests/test_wheelhouse_schema_verification.py, tests/test_documentation_integrity.py]
