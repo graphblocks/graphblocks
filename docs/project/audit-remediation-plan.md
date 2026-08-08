@@ -53,15 +53,11 @@ A finding moves to resolved only when:
 4. the release matrix or profile evidence is updated when the finding changes a
    compatibility or production claim.
 
-The current generated count is 88 resolved findings: all 27 P0/P1 findings,
-the first 11 P2 findings, GB-ARCH-013, and GB-ARCH-015 through GB-ARCH-017.
-GB-COR-005 through GB-COR-009 are also resolved. There are zero open P0/P1,
-6 open P2, and 5 open P3; GB-COR-010 through GB-COR-015, GB-DOC-006, GB-INP-006,
-GB-INP-007, GB-INP-008, GB-INP-010, GB-PERF-004, GB-PERF-005, and GB-PERF-008
-are resolved. GB-SEC-011 and GB-SEC-012 are also resolved. GB-ARCH-012
-remains open pending shared-primitives consolidation. GB-PERF-006 is resolved
-with tenant/owner-scoped indexed run-list cursor pagination and a 10,000-run
-bounded-projection regression.
+The current generated count is 99 resolved findings: all 4 P0, 23 P1, 64 P2,
+and 8 P3 findings are bound to ancestor fix commits and executable evidence.
+There are zero open findings in every severity. The remaining deep-audit release
+blockers are candidate-bound independent review and the unavailable audited
+source identity described above, not issue-level remediation work.
 GB-QA-001 is resolved by expanding strict mypy coverage from 2 to 14
 production modules and enforcing non-regression budgets for both strict module
 count and the 145 remaining type-ignore comments.

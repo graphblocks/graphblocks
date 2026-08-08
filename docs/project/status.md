@@ -7,12 +7,12 @@ transition is implemented, while canonical-facade, scheduler,
 protocol-handshake, and durable execution evidence still block the complete
 authority gate.
 
-The digest-bound 99-finding deep-audit inventory includes 4 P0 and 23 P1
-findings. The live closure overlay now binds all 27 P0/P1 findings to ancestor
-fix commits and executable regression paths, and the repository checker reports
-zero open P0/P1. Candidate-bound independent review, reconstructed reproduction
-execution evidence, audited-source identity, platform evidence, and soak still
-block 1.0. The
+The digest-bound 99-finding deep-audit inventory includes 4 P0, 23 P1, 64 P2,
+and 8 P3 findings. The live closure overlay now binds all 99 findings to
+ancestor fix commits and executable regression paths, and the repository
+checker reports zero open findings in every severity. Candidate-bound
+independent review, reconstructed reproduction execution evidence,
+audited-source identity, platform evidence, and soak still block 1.0. The
 preview server therefore must not yet be represented as a production-ready
 multi-tenant authority boundary. See the
 [deep audit remediation plan](audit-remediation-plan.md).

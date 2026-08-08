@@ -1747,8 +1747,8 @@ def test_stable_release_matrix_is_complete_and_machine_readable() -> None:
         "authority": "docs/project/audit-issue-status.yaml",
         "inventory": "docs/project/audit-issues.json",
         "checker": "tools/check_audit_inventory.py",
-        "resolved": 88,
-        "openBySeverity": {"P0": 0, "P1": 0, "P2": 6, "P3": 5},
+        "resolved": 99,
+        "openBySeverity": {"P0": 0, "P1": 0, "P2": 0, "P3": 0},
     }
     rust_debt = audit_gate["rustProductionExpectDebt"]
     assert rust_debt["workspaceLint"] == "clippy::expect_used=deny"
