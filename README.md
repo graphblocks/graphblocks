@@ -46,6 +46,12 @@ successful core or parent-profile gate.
 Authority is inherited role by role through `extends`, so a blocked Rust target
 cannot be flattened into an active extension authority.
 
+GraphBlocks is a portable contract layer, not a hosted orchestrator, full API
+gateway, secret manager, generic ETL platform, or full Kubernetes operator.
+Those systems remain external and connect through versioned adapter seams. The
+[architecture boundary](docs/concepts/architecture.md#product-boundary-and-core-inclusion)
+defines the core-inclusion test that every scope-expanding ADR must satisfy.
+
 ## Development quickstart
 
 Requirements are Python 3.11 or 3.12 and the Rust toolchain selected by

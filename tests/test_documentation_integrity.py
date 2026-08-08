@@ -515,6 +515,46 @@ def test_living_documentation_has_one_authority_tree() -> None:
     assert (ROOT / "profiles" / "policy-profiles.yaml").is_file()
 
 
+def test_product_non_goals_and_core_inclusion_adr_are_explicit() -> None:
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    architecture = (ROOT / "docs/concepts/architecture.md").read_text(
+        encoding="utf-8"
+    )
+    decisions = (
+        ROOT / "docs/specification/decisions/README.md"
+    ).read_text(encoding="utf-8")
+    template = (
+        ROOT / "docs/specification/decisions/template.md"
+    ).read_text(encoding="utf-8")
+    normalized_readme = " ".join(readme.split())
+    normalized_architecture = " ".join(architecture.split())
+
+    assert "[architecture boundary](docs/concepts/architecture.md#product-boundary-and-core-inclusion)" in readme
+    for non_goal in (
+        "hosted orchestrator",
+        "full API gateway",
+        "secret manager",
+        "generic ETL platform",
+        "full Kubernetes operator",
+    ):
+        assert non_goal in normalized_readme
+        assert non_goal in normalized_architecture
+
+    assert "[ADR template](../specification/decisions/template.md)" in architecture
+    assert "[ADR template](template.md)" in decisions
+    assert "## Scope classification" in template
+    assert "## Core inclusion evidence" in template
+    assert "## Non-goals and adapter seams" in template
+    for required_evidence in (
+        "Portable execution necessity",
+        "Independent implementations",
+        "Provider-neutral conformance",
+        "Policy neutrality",
+    ):
+        assert f"- ☐ {required_evidence}:" in template
+    assert "A portable-core decision requires all four items." in template
+
+
 def test_control_plane_cli_name_and_binding_boundary_are_explicit() -> None:
     control_plane = tomllib.loads(
         (ROOT / "crates" / "graphblocksd" / "Cargo.toml").read_text(

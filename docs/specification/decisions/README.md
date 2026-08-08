@@ -23,3 +23,8 @@ The living architecture follows these durable decisions:
 New decisions that alter a public contract should be added as numbered ADRs
 with context, decision, consequences, migration, and conformance impact. Git
 history retains the retired bundle's draft and legacy decision logs.
+
+Start new decisions from the [ADR template](template.md). Its core-inclusion
+evidence is mandatory for new capabilities and scope changes; a proposal that
+cannot satisfy every core criterion must select an extension, adapter, example,
+or external-project boundary.

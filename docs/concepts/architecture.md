@@ -31,6 +31,37 @@ See [ADR-0001](../specification/decisions/0001-rust-normative-authority.md)
 and the explicit differences in
 [language support](../specification/conformance/language-support.md).
 
+## Product boundary and core inclusion
+
+GraphBlocks is a portable execution-contract toolkit. It does not attempt to
+own the complete operational product around that contract. Explicit non-goals
+are:
+
+- a hosted orchestrator;
+- a full API gateway;
+- a secret manager;
+- a generic ETL platform; and
+- a full Kubernetes operator.
+
+External systems provide hosting, credential custody, edge routing, general
+data movement, and cluster reconciliation. They connect through versioned
+bindings, framework-neutral request/response contracts, and independently
+promoted extension profiles. An adapter may translate those contracts, but its
+presence does not move the external system's lifecycle, availability, or
+security policy into GraphBlocks core.
+
+A proposal may enter core only when its ADR demonstrates all four conditions:
+
+1. the capability is required for portable execution semantics;
+2. two independent runtimes can implement it;
+3. a provider-neutral TCK can verify it; and
+4. it imposes no provider, database, server-framework, or deployment policy.
+
+If any condition is not met, the proposal belongs in an extension profile,
+adapter, example, or external project. New contract decisions use the
+[ADR template](../specification/decisions/template.md), whose core-inclusion
+section is mandatory even when the result is “not core.”
+
 ## Network adapter resource boundary
 
 `graphblocks.server_adapter.ServerLimits` is the mandatory contract between an
