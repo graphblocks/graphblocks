@@ -27,8 +27,8 @@ def _diagnostic(path: str) -> str:
 def test_checked_in_baseline_is_closed_and_matches_workspace_policy() -> None:
     baseline = check_rust_lint_debt.load_baseline()
 
-    assert baseline.total == 119
-    assert len(baseline.files) == 16
+    assert baseline.total == 0
+    assert baseline.files == {}
     check_rust_lint_debt.verify_policy(baseline)
 
 
@@ -65,18 +65,17 @@ def test_clippy_diagnostics_are_counted_by_repository_path() -> None:
     assert check_rust_lint_debt.parse_clippy_messages(lines) == {relative: 2}
 
 
-def test_debt_gate_allows_reduction_but_rejects_growth_and_new_files() -> None:
+def test_zero_debt_gate_rejects_every_expect_diagnostic() -> None:
     baseline = check_rust_lint_debt.load_baseline()
-    reduced = {path: count - 1 for path, count in baseline.files.items()}
-    assert check_rust_lint_debt.evaluate_counts(baseline, reduced) == []
+    assert check_rust_lint_debt.evaluate_counts(baseline, {}) == []
 
-    grown = dict(baseline.files)
-    first_path = next(iter(grown))
-    grown[first_path] += 1
-    grown["crates/new-production-module/src/lib.rs"] = 1
-    violations = check_rust_lint_debt.evaluate_counts(baseline, grown)
+    observed = {
+        "crates/graphblocks-runtime-core/src/lib.rs": 1,
+        "crates/new-production-module/src/lib.rs": 1,
+    }
+    violations = check_rust_lint_debt.evaluate_counts(baseline, observed)
 
-    assert any(first_path in violation for violation in violations)
+    assert any("graphblocks-runtime-core" in violation for violation in violations)
     assert any("new-production-module" in violation for violation in violations)
     assert any(violation.startswith("total:") for violation in violations)
 

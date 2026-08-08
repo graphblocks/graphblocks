@@ -1363,21 +1363,21 @@ releaseGates:
       toolchain: 1.94.0
       scope: ['--workspace', '--lib', '--bins', '--locked']
       baseline: compatibility/rust-production-expect-budget.json
-      baselineFiles: 16
-      maximumCalls: 119
+      baselineFiles: 0
+      maximumCalls: 0
       newFilesAllowed: false
       perFileGrowthAllowed: false
       checker: tools/check_rust_lint_debt.py
       regression: tests/test_rust_lint_debt.py
       reportArtifact: dist/ci/rust-lint-debt.json
       observedCiEvidence:
-        runId: 31242631454
-        jobId: 93066047306
-        headSha: 698fbd26f3d36a68056401662021fa834d15454c
+        runId: 31264478940
+        jobId: 93120302122
+        headSha: 92e1a7119b2b40a6e3b340b9a188e5b2a2fc79a9
         conclusion: success
-        debtCheckDurationSeconds: 27
-        productionClippyDurationSeconds: 9
-        testTargetClippyDurationSeconds: 18
+        debtCheckDurationSeconds: 32
+        productionClippyDurationSeconds: 11
+        testTargetClippyDurationSeconds: 21
     serverErrorContract:
       publicEnvelope: [ok, errorCode, message, correlationId]
       correlationHeader: x-correlation-id

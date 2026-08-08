@@ -1752,8 +1752,8 @@ def test_stable_release_matrix_is_complete_and_machine_readable() -> None:
     }
     rust_debt = audit_gate["rustProductionExpectDebt"]
     assert rust_debt["workspaceLint"] == "clippy::expect_used=deny"
-    assert rust_debt["baselineFiles"] == 16
-    assert rust_debt["maximumCalls"] == 119
+    assert rust_debt["baselineFiles"] == 0
+    assert rust_debt["maximumCalls"] == 0
     assert rust_debt["newFilesAllowed"] is False
     assert rust_debt["perFileGrowthAllowed"] is False
     assert rust_debt["observedCiEvidence"]["conclusion"] == "success"
