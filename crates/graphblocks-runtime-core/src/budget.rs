@@ -1,5 +1,3 @@
-#![allow(clippy::expect_used)] // Guarded by compatibility/rust-production-expect-budget.json.
-
 use std::{
     collections::{BTreeMap, BTreeSet},
     path::Path,
@@ -447,8 +445,16 @@ impl InMemoryBudgetLedger {
             }
         }
 
-        self.reservation_counter += 1;
-        self.fencing_counter += 1;
+        let next_reservation_counter = self
+            .reservation_counter
+            .checked_add(1)
+            .ok_or_else(|| budget_counter_error("reservation_counter"))?;
+        let next_fencing_counter = self
+            .fencing_counter
+            .checked_add(1)
+            .ok_or_else(|| budget_counter_error("fencing_counter"))?;
+        self.reservation_counter = next_reservation_counter;
+        self.fencing_counter = next_fencing_counter;
         let reservation_id = reservation_id
             .unwrap_or_else(|| format!("reservation-{:06}", self.reservation_counter));
         if self.reservations.contains_key(&reservation_id) {
@@ -457,12 +463,10 @@ impl InMemoryBudgetLedger {
 
         for held_budget_id in &held_budget_ids {
             add_amounts(
-                self.reserved
-                    .get_mut(held_budget_id)
-                    .expect("budget has reserved balance map"),
+                budget_balance_map_mut(&mut self.reserved, held_budget_id, "reserved")?,
                 &requested,
             )?;
-            self.bump_revision(held_budget_id);
+            self.bump_revision(held_budget_id)?;
         }
 
         let reservation = BudgetReservation {
@@ -571,17 +575,17 @@ impl InMemoryBudgetLedger {
             let mut reserved_balance = self
                 .reserved
                 .get(held_budget_id)
-                .expect("budget has reserved balance map")
+                .ok_or_else(|| budget_state_error(held_budget_id, "reserved balance"))?
                 .clone();
             let mut committed_balance = self
                 .committed
                 .get(held_budget_id)
-                .expect("budget has committed balance map")
+                .ok_or_else(|| budget_state_error(held_budget_id, "committed balance"))?
                 .clone();
             let mut overdraft_balance = self
                 .overdraft
                 .get(held_budget_id)
-                .expect("budget has overdraft balance map")
+                .ok_or_else(|| budget_state_error(held_budget_id, "overdraft balance"))?
                 .clone();
             subtract_amounts(&mut reserved_balance, &reserved)?;
             add_amounts(&mut committed_balance, &actual)?;
@@ -602,7 +606,7 @@ impl InMemoryBudgetLedger {
                 .insert(held_budget_id.clone(), committed_balance);
             self.overdraft
                 .insert(held_budget_id.clone(), overdraft_balance);
-            self.bump_revision(&held_budget_id);
+            self.bump_revision(&held_budget_id)?;
         }
 
         let updated = BudgetReservation {
@@ -621,7 +625,7 @@ impl InMemoryBudgetLedger {
             revision: self
                 .accounts
                 .get(&reservation.budget_id)
-                .expect("budget account exists")
+                .ok_or_else(|| budget_state_error(&reservation.budget_id, "account"))?
                 .revision,
         })
     }
@@ -652,13 +656,14 @@ impl InMemoryBudgetLedger {
             .cloned()
             .unwrap_or_else(|| vec![reservation.budget_id.clone()]);
         for held_budget_id in &held_budget_ids {
+            budget_balance_map(&self.reserved, held_budget_id, "reserved")?;
+        }
+        for held_budget_id in &held_budget_ids {
             subtract_amounts(
-                self.reserved
-                    .get_mut(held_budget_id)
-                    .expect("budget has reserved balance map"),
+                budget_balance_map_mut(&mut self.reserved, held_budget_id, "reserved")?,
                 &reserved,
             )?;
-            self.bump_revision(held_budget_id);
+            self.bump_revision(held_budget_id)?;
         }
 
         let updated = BudgetReservation {
@@ -677,7 +682,7 @@ impl InMemoryBudgetLedger {
             revision: self
                 .accounts
                 .get(&reservation.budget_id)
-                .expect("budget account exists")
+                .ok_or_else(|| budget_state_error(&reservation.budget_id, "account"))?
                 .revision,
         })
     }
@@ -708,13 +713,14 @@ impl InMemoryBudgetLedger {
             .cloned()
             .unwrap_or_else(|| vec![reservation.budget_id.clone()]);
         for held_budget_id in &held_budget_ids {
+            budget_balance_map(&self.reserved, held_budget_id, "reserved")?;
+        }
+        for held_budget_id in &held_budget_ids {
             subtract_amounts(
-                self.reserved
-                    .get_mut(held_budget_id)
-                    .expect("budget has reserved balance map"),
+                budget_balance_map_mut(&mut self.reserved, held_budget_id, "reserved")?,
                 &reserved,
             )?;
-            self.bump_revision(held_budget_id);
+            self.bump_revision(held_budget_id)?;
         }
 
         let updated = BudgetReservation {
@@ -733,7 +739,7 @@ impl InMemoryBudgetLedger {
             revision: self
                 .accounts
                 .get(&reservation.budget_id)
-                .expect("budget account exists")
+                .ok_or_else(|| budget_state_error(&reservation.budget_id, "account"))?
                 .revision,
         })
     }
@@ -822,19 +828,19 @@ impl InMemoryBudgetLedger {
         let allocated = self
             .allocated
             .get(budget_id)
-            .expect("budget has allocated balance map");
+            .ok_or_else(|| budget_state_error(budget_id, "allocated balance"))?;
         let reserved = self
             .reserved
             .get(budget_id)
-            .expect("budget has reserved balance map");
+            .ok_or_else(|| budget_state_error(budget_id, "reserved balance"))?;
         let committed = self
             .committed
             .get(budget_id)
-            .expect("budget has committed balance map");
+            .ok_or_else(|| budget_state_error(budget_id, "committed balance"))?;
         let overdraft = self
             .overdraft
             .get(budget_id)
-            .expect("budget has overdraft balance map");
+            .ok_or_else(|| budget_state_error(budget_id, "overdraft balance"))?;
         let available = self.available_map(budget_id)?;
 
         Ok(BudgetBalance {
@@ -964,15 +970,16 @@ impl InMemoryBudgetLedger {
             }
         }
 
-        self.fencing_counter += 1;
+        self.fencing_counter = self
+            .fencing_counter
+            .checked_add(1)
+            .ok_or_else(|| budget_counter_error("fencing_counter"))?;
         for held_budget_id in &held_budget_ids {
             add_amounts(
-                self.reserved
-                    .get_mut(held_budget_id)
-                    .expect("budget has reserved balance map"),
+                budget_balance_map_mut(&mut self.reserved, held_budget_id, "reserved")?,
                 &requested,
             )?;
-            self.bump_revision(held_budget_id);
+            self.bump_revision(held_budget_id)?;
         }
 
         let reserve = CompletionReserve {
@@ -1034,7 +1041,10 @@ impl InMemoryBudgetLedger {
             });
         }
 
-        self.reservation_counter += 1;
+        self.reservation_counter = self
+            .reservation_counter
+            .checked_add(1)
+            .ok_or_else(|| budget_counter_error("reservation_counter"))?;
         let reservation_id = format!("reservation-{:06}", self.reservation_counter);
         if self.reservations.contains_key(&reservation_id) {
             return Err(BudgetError::ReservationConflict { reservation_id });
@@ -1110,13 +1120,14 @@ impl InMemoryBudgetLedger {
             .cloned()
             .unwrap_or_else(|| vec![reserve.budget_id.clone()]);
         for held_budget_id in &held_budget_ids {
+            budget_balance_map(&self.reserved, held_budget_id, "reserved")?;
+        }
+        for held_budget_id in &held_budget_ids {
             subtract_amounts(
-                self.reserved
-                    .get_mut(held_budget_id)
-                    .expect("completion reserve hold points to an existing budget"),
+                budget_balance_map_mut(&mut self.reserved, held_budget_id, "reserved")?,
                 &reserved,
             )?;
-            self.bump_revision(held_budget_id);
+            self.bump_revision(held_budget_id)?;
         }
 
         let updated = CompletionReserve { status, ..reserve };
@@ -1135,11 +1146,11 @@ impl InMemoryBudgetLedger {
         let reserved = self
             .reserved
             .get(budget_id)
-            .expect("budget has reserved balance map");
+            .ok_or_else(|| budget_state_error(budget_id, "reserved balance"))?;
         let committed = self
             .committed
             .get(budget_id)
-            .expect("budget has committed balance map");
+            .ok_or_else(|| budget_state_error(budget_id, "committed balance"))?;
         let mut keys = BTreeSet::new();
         keys.extend(allocated.keys().cloned());
         keys.extend(reserved.keys().cloned());
@@ -1178,10 +1189,16 @@ impl InMemoryBudgetLedger {
         Ok(chain)
     }
 
-    fn bump_revision(&mut self, budget_id: &str) {
-        if let Some(account) = self.accounts.get_mut(budget_id) {
-            account.revision += 1;
-        }
+    fn bump_revision(&mut self, budget_id: &str) -> Result<(), BudgetError> {
+        let account = self
+            .accounts
+            .get_mut(budget_id)
+            .ok_or_else(|| budget_state_error(budget_id, "account"))?;
+        account.revision = account
+            .revision
+            .checked_add(1)
+            .ok_or_else(|| budget_state_error(budget_id, "revision counter"))?;
+        Ok(())
     }
 
     fn validate_permit_for_reservation(
@@ -1520,8 +1537,7 @@ impl SqliteBudgetLedger {
 
         let held_budget_ids = sqlite_budget_chain(&transaction, budget_id)?;
         for held_budget_id in &held_budget_ids {
-            let account = sqlite_load_account(&transaction, held_budget_id)?
-                .expect("budget chain only returns existing accounts");
+            let account = sqlite_required_account(&transaction, held_budget_id, "budget chain")?;
             let available = account.available();
             for (key, amount) in &requested {
                 if *amount > available.get(key).copied().unwrap_or(0) {
@@ -1543,10 +1559,14 @@ impl SqliteBudgetLedger {
         }
 
         for held_budget_id in &held_budget_ids {
-            let mut account = sqlite_load_account(&transaction, held_budget_id)?
-                .expect("budget chain only returns existing accounts");
+            let mut account =
+                sqlite_required_account(&transaction, held_budget_id, "budget chain")?;
             add_amounts(&mut account.reserved, &requested)?;
-            account.account.revision += 1;
+            account.account.revision = account
+                .account
+                .revision
+                .checked_add(1)
+                .ok_or_else(|| budget_state_error(held_budget_id, "revision counter"))?;
             sqlite_update_account_balances(&transaction, &account)?;
         }
 
@@ -1902,8 +1922,7 @@ impl SqliteBudgetLedger {
 
         let held_budget_ids = sqlite_budget_chain(&transaction, budget_id)?;
         for held_budget_id in &held_budget_ids {
-            let account = sqlite_load_account(&transaction, held_budget_id)?
-                .expect("budget chain only returns existing accounts");
+            let account = sqlite_required_account(&transaction, held_budget_id, "budget chain")?;
             let available = account.available();
             for (key, amount) in &requested {
                 if *amount > available.get(key).copied().unwrap_or(0) {
@@ -1918,10 +1937,14 @@ impl SqliteBudgetLedger {
 
         let fencing_token = sqlite_next_counter(&transaction, "fencing_counter")?;
         for held_budget_id in &held_budget_ids {
-            let mut account = sqlite_load_account(&transaction, held_budget_id)?
-                .expect("budget chain only returns existing accounts");
+            let mut account =
+                sqlite_required_account(&transaction, held_budget_id, "budget chain")?;
             add_amounts(&mut account.reserved, &requested)?;
-            account.account.revision += 1;
+            account.account.revision = account
+                .account
+                .revision
+                .checked_add(1)
+                .ok_or_else(|| budget_state_error(held_budget_id, "revision counter"))?;
             sqlite_update_account_balances(&transaction, &account)?;
         }
 
@@ -2080,10 +2103,14 @@ impl SqliteBudgetLedger {
 
         let reserved = amounts_to_map(reserve.amounts.clone())?;
         for held_budget_id in &stored_reserve.held_budget_ids {
-            let mut account = sqlite_load_account(&transaction, held_budget_id)?
-                .expect("completion reserve hold points to an existing budget account");
+            let mut account =
+                sqlite_required_account(&transaction, held_budget_id, "completion reserve hold")?;
             subtract_amounts(&mut account.reserved, &reserved)?;
-            account.account.revision += 1;
+            account.account.revision = account
+                .account
+                .revision
+                .checked_add(1)
+                .ok_or_else(|| budget_state_error(held_budget_id, "revision counter"))?;
             sqlite_update_account_balances(&transaction, &account)?;
         }
         sqlite_update_completion_reserve_status(&transaction, reserve_id, status)?;
@@ -2100,6 +2127,38 @@ impl SqliteBudgetLedger {
         })?;
         Ok(account.balance())
     }
+}
+
+fn budget_state_error(budget_id: &str, component: &str) -> BudgetError {
+    BudgetError::Storage {
+        message: format!("budget {budget_id:?} is missing {component}"),
+    }
+}
+
+fn budget_counter_error(counter: &str) -> BudgetError {
+    BudgetError::Storage {
+        message: format!("budget counter {counter:?} is exhausted"),
+    }
+}
+
+fn budget_balance_map<'a>(
+    balances: &'a BTreeMap<String, BTreeMap<AmountKey, i64>>,
+    budget_id: &str,
+    component: &str,
+) -> Result<&'a BTreeMap<AmountKey, i64>, BudgetError> {
+    balances
+        .get(budget_id)
+        .ok_or_else(|| budget_state_error(budget_id, &format!("{component} balance")))
+}
+
+fn budget_balance_map_mut<'a>(
+    balances: &'a mut BTreeMap<String, BTreeMap<AmountKey, i64>>,
+    budget_id: &str,
+    component: &str,
+) -> Result<&'a mut BTreeMap<AmountKey, i64>, BudgetError> {
+    balances
+        .get_mut(budget_id)
+        .ok_or_else(|| budget_state_error(budget_id, &format!("{component} balance")))
 }
 
 fn amount_key(amount: &UsageAmount) -> AmountKey {
@@ -2642,12 +2701,15 @@ fn sqlite_commit_reserved(
     }
 
     for held_budget_id in &stored_reservation.held_budget_ids {
-        let mut account = sqlite_load_account(connection, held_budget_id)?
-            .expect("reservation hold points to an existing budget account");
+        let mut account = sqlite_required_account(connection, held_budget_id, "reservation hold")?;
         subtract_amounts(&mut account.reserved, &reserved)?;
         add_amounts(&mut account.committed, &actual)?;
         add_amounts(&mut account.overdraft, &overdraft)?;
-        account.account.revision += 1;
+        account.account.revision = account
+            .account
+            .revision
+            .checked_add(1)
+            .ok_or_else(|| budget_state_error(held_budget_id, "revision counter"))?;
         sqlite_update_account_balances(connection, &account)?;
     }
     sqlite_update_reservation_status(connection, reservation_id, ReservationStatus::Committed)?;
@@ -2689,10 +2751,13 @@ fn sqlite_release_reserved(
 
     let reserved = amounts_to_map(reservation.amounts.clone())?;
     for held_budget_id in &stored_reservation.held_budget_ids {
-        let mut account = sqlite_load_account(connection, held_budget_id)?
-            .expect("reservation hold points to an existing budget account");
+        let mut account = sqlite_required_account(connection, held_budget_id, "reservation hold")?;
         subtract_amounts(&mut account.reserved, &reserved)?;
-        account.account.revision += 1;
+        account.account.revision = account
+            .account
+            .revision
+            .checked_add(1)
+            .ok_or_else(|| budget_state_error(held_budget_id, "revision counter"))?;
         sqlite_update_account_balances(connection, &account)?;
     }
     sqlite_update_reservation_status(connection, reservation_id, status)?;
@@ -3004,6 +3069,16 @@ fn sqlite_load_account(
     }))
 }
 
+fn sqlite_required_account(
+    connection: &Connection,
+    budget_id: &str,
+    relation: &str,
+) -> Result<StoredBudgetAccount, BudgetError> {
+    sqlite_load_account(connection, budget_id)?.ok_or_else(|| BudgetError::Storage {
+        message: format!("{relation} references missing budget account {budget_id:?}"),
+    })
+}
+
 fn sqlite_update_account_balances(
     connection: &Connection,
     account: &StoredBudgetAccount,
@@ -3291,5 +3366,123 @@ fn budget_i64_to_u64(value: i64, label: &'static str) -> Result<u64, BudgetError
 fn budget_storage_error(error: impl std::fmt::Display) -> BudgetError {
     BudgetError::Storage {
         message: error.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn tokens(amount: i64) -> UsageAmount {
+        UsageAmount::new("model_total_tokens", amount, "tokens")
+    }
+
+    #[test]
+    fn in_memory_ledger_rejects_missing_balance_state_without_panicking() -> Result<(), BudgetError>
+    {
+        let mut ledger = InMemoryBudgetLedger::new();
+        ledger.allocate("budget-1", "tenant:acme", [tokens(100)], "policy-1", None)?;
+        ledger.reserved.remove("budget-1");
+
+        assert_eq!(
+            ledger.reserve(
+                "budget-1",
+                "run:1",
+                [tokens(10)],
+                ReservationPurpose::ProviderCall,
+                "later",
+                None,
+            ),
+            Err(BudgetError::Storage {
+                message: "budget \"budget-1\" is missing reserved balance".to_owned(),
+            })
+        );
+        assert!(ledger.reservations.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn in_memory_ledger_rejects_exhausted_counter_before_balance_mutation()
+    -> Result<(), BudgetError> {
+        let mut ledger = InMemoryBudgetLedger::new();
+        ledger.allocate("budget-1", "tenant:acme", [tokens(100)], "policy-1", None)?;
+        ledger.reservation_counter = u64::MAX;
+
+        assert_eq!(
+            ledger.reserve(
+                "budget-1",
+                "run:1",
+                [tokens(10)],
+                ReservationPurpose::ProviderCall,
+                "later",
+                None,
+            ),
+            Err(BudgetError::Storage {
+                message: "budget counter \"reservation_counter\" is exhausted".to_owned(),
+            })
+        );
+        assert!(
+            ledger
+                .reserved
+                .get("budget-1")
+                .is_some_and(BTreeMap::is_empty)
+        );
+
+        ledger.reservation_counter = 41;
+        ledger.fencing_counter = u64::MAX;
+        assert_eq!(
+            ledger.reserve(
+                "budget-1",
+                "run:2",
+                [tokens(10)],
+                ReservationPurpose::ProviderCall,
+                "later",
+                None,
+            ),
+            Err(BudgetError::Storage {
+                message: "budget counter \"fencing_counter\" is exhausted".to_owned(),
+            })
+        );
+        assert_eq!(ledger.reservation_counter, 41);
+        assert!(ledger.reservations.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn sqlite_ledger_rolls_back_when_reservation_hold_account_is_missing() -> Result<(), BudgetError>
+    {
+        let mut ledger = SqliteBudgetLedger::open_in_memory()?;
+        ledger.allocate("parent", "tenant:acme", [tokens(100)], "policy-1", None)?;
+        ledger.allocate(
+            "child",
+            "run:1",
+            [tokens(50)],
+            "policy-1",
+            Some("parent".to_owned()),
+        )?;
+        let reservation = ledger.reserve(
+            "child",
+            "run:1",
+            [tokens(10)],
+            ReservationPurpose::ProviderCall,
+            "later",
+            None,
+        )?;
+        ledger
+            .connection
+            .execute(
+                "DELETE FROM budget_accounts WHERE budget_id = ?",
+                ["parent"],
+            )
+            .map_err(budget_storage_error)?;
+
+        assert_eq!(
+            ledger.release(&reservation.reservation_id),
+            Err(BudgetError::Storage {
+                message: "reservation hold references missing budget account \"parent\"".to_owned(),
+            })
+        );
+        assert_eq!(ledger.balance("child")?.reserved, vec![tokens(10)]);
+        Ok(())
     }
 }
