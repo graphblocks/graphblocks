@@ -16,6 +16,11 @@ from jsonschema import Draft202012Validator
 from jsonschema.exceptions import SchemaError
 import yaml
 
+from ._schema_execution import (
+    DEFAULT_SCHEMA_EXECUTION_POLICY,
+    SchemaExecutionPolicyError,
+    enforce_schema_execution_policy,
+)
 from .canonical import (
     MAX_CANONICAL_JSON_DEPTH,
     _reject_duplicate_keys,
@@ -46,8 +51,6 @@ STATIC_MANIFEST_NAMES = {
 _PRIMITIVE_TYPE_REFS = frozenset({"Any", "Boolean", "Bytes", "Integer", "Number", "Null", "String"})
 _TYPE_CONSTRUCTOR_ARITY = {"List": 1, "Map": 2, "Optional": 1}
 _MAX_TYPE_REF_DEPTH = 32
-_MAX_CONFIG_SCHEMA_DEPTH = 64
-_MAX_CONFIG_SCHEMA_NODES = 10_000
 _OUTPUT_REQUIREDNESS_PHASES = frozenset({"initial", "resumed"})
 _OUTPUT_REQUIREDNESS_OPERATORS = frozenset(
     {"configEquals", "phase", "all", "any", "not"}
@@ -103,7 +106,7 @@ def _block_capabilities(value: object) -> tuple[str, ...]:
 
 
 def _normalized_config_schema(value: object) -> dict[str, Any]:
-    """Normalize a schema bounded to 64 levels and 10,000 JSON nodes."""
+    """Normalize a schema within the common execution-policy boundary."""
 
     if not isinstance(value, Mapping):
         raise ValueError("configSchema must be a mapping")
@@ -113,7 +116,7 @@ def _normalized_config_schema(value: object) -> dict[str, Any]:
         if "canonical JSON nesting must not exceed" in str(error):
             raise ValueError(
                 "configSchema nesting must not exceed "
-                f"{_MAX_CONFIG_SCHEMA_DEPTH} levels"
+                f"{DEFAULT_SCHEMA_EXECUTION_POLICY.max_depth} levels"
             ) from error
         if "canonical JSON values must not be recursive" in str(error):
             raise ValueError(
@@ -122,60 +125,20 @@ def _normalized_config_schema(value: object) -> dict[str, Any]:
         raise ValueError("configSchema must contain only finite JSON values") from error
     if not isinstance(normalized, dict):
         raise ValueError("configSchema must be a mapping")
-    pending: list[tuple[object, int, bool]] = [(normalized, 0, False)]
-    active_containers: set[int] = set()
-    node_count = 0
-    while pending:
-        candidate, depth, leaving = pending.pop()
-        if leaving:
-            active_containers.remove(id(candidate))
-            continue
-        node_count += 1
-        if node_count > _MAX_CONFIG_SCHEMA_NODES:
-            raise ValueError(
-                "configSchema must not contain more than "
-                f"{_MAX_CONFIG_SCHEMA_NODES} JSON nodes"
-            )
-        if depth > _MAX_CONFIG_SCHEMA_DEPTH:
-            raise ValueError(
-                "configSchema nesting must not exceed "
-                f"{_MAX_CONFIG_SCHEMA_DEPTH} levels"
-            )
-        if isinstance(candidate, Mapping):
-            identity = id(candidate)
-            if identity in active_containers:
-                raise ValueError("configSchema must not contain recursive values")
-            active_containers.add(identity)
-            pending.append((candidate, depth, True))
-            pending.extend(
-                (nested, depth + 1, False) for nested in candidate.values()
-            )
-        elif isinstance(candidate, (list, tuple)):
-            identity = id(candidate)
-            if identity in active_containers:
-                raise ValueError("configSchema must not contain recursive values")
-            active_containers.add(identity)
-            pending.append((candidate, depth, True))
-            pending.extend((nested, depth + 1, False) for nested in candidate)
+    try:
+        enforce_schema_execution_policy(
+            normalized,
+            policy=DEFAULT_SCHEMA_EXECUTION_POLICY,
+            owner="configSchema",
+        )
+    except SchemaExecutionPolicyError as error:
+        raise ValueError(str(error)) from error
     try:
         Draft202012Validator.check_schema(normalized)
     except SchemaError as error:
         raise ValueError(
             f"configSchema is not valid JSON Schema Draft 2020-12: {error.message}"
         ) from error
-    pending: list[object] = [normalized]
-    while pending:
-        candidate = pending.pop()
-        if isinstance(candidate, dict):
-            for keyword in ("$ref", "$dynamicRef"):
-                reference = candidate.get(keyword)
-                if isinstance(reference, str) and not reference.startswith("#"):
-                    raise ValueError(
-                        f"configSchema {keyword} references must be local fragments"
-                    )
-            pending.extend(candidate.values())
-        elif isinstance(candidate, list):
-            pending.extend(candidate)
     return normalized
 
 

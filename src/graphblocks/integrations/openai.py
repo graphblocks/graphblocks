@@ -9,14 +9,17 @@ from types import MappingProxyType
 from jsonschema import Draft202012Validator
 from jsonschema.exceptions import SchemaError
 
+from graphblocks._schema_execution import (
+    SchemaExecutionPolicyError,
+    UNTRUSTED_SCHEMA_EXECUTION_POLICY,
+    enforce_schema_execution_policy,
+)
 from graphblocks.budget import UsageAmount
 from graphblocks.canonical import canonical_dumps, canonical_loads
 from graphblocks.conversation import ContentPart, Message
 from graphblocks.output_policy import GenerationChunk
 from graphblocks.tools import ToolCallDraft, ToolDefinition
 from graphblocks.usage import UsageRecord
-
-from ._wire import find_non_local_schema_reference
 
 
 class OpenAICompatibleAdapterError(ValueError):
@@ -93,17 +96,19 @@ def _validated_inline_json_schema(schema_ref: str, schema: Mapping[str, object])
             f"tool_schemas entry {schema_ref!r} must be a strict JSON object"
         )
     try:
+        enforce_schema_execution_policy(
+            normalized_schema,
+            policy=UNTRUSTED_SCHEMA_EXECUTION_POLICY,
+            owner=f"tool_schemas entry {schema_ref!r}",
+        )
+    except SchemaExecutionPolicyError as error:
+        raise OpenAICompatibleAdapterError(str(error)) from error
+    try:
         Draft202012Validator.check_schema(normalized_schema)
     except SchemaError as error:
         raise OpenAICompatibleAdapterError(
             f"tool_schemas entry {schema_ref!r} is not valid JSON Schema"
         ) from error
-    non_local_reference = find_non_local_schema_reference(normalized_schema)
-    if non_local_reference is not None:
-        raise OpenAICompatibleAdapterError(
-            f"tool_schemas entry {schema_ref!r} contains "
-            f"non-local {non_local_reference}"
-        )
     return normalized_schema
 
 

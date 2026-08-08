@@ -9,7 +9,12 @@ import json
 from jsonschema import Draft202012Validator
 from jsonschema.exceptions import SchemaError, ValidationError
 
-from graphblocks._schema_execution import find_regular_expression_keyword
+from graphblocks._schema_execution import (
+    SchemaExecutionPolicyError,
+    UNTRUSTED_SCHEMA_EXECUTION_POLICY,
+    enforce_schema_execution_policy,
+    find_regular_expression_keyword,
+)
 from graphblocks.canonical import canonical_dumps, canonical_hash, canonical_loads
 from graphblocks.conversation import ContentPart
 from graphblocks.documents import ArtifactRef
@@ -100,6 +105,14 @@ class McpInlineSchemaRegistry:
                 raise McpToolAdapterError(
                     f"MCP inline schema {schema_ref!r} must be an object"
                 )
+            try:
+                enforce_schema_execution_policy(
+                    document,
+                    policy=UNTRUSTED_SCHEMA_EXECUTION_POLICY,
+                    owner=f"MCP inline schema {schema_ref!r}",
+                )
+            except SchemaExecutionPolicyError as error:
+                raise McpToolAdapterError(str(error)) from error
             try:
                 Draft202012Validator.check_schema(document)
             except SchemaError as error:
