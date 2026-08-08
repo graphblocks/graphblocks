@@ -238,3 +238,6 @@ resolved:
   - id: GB-COR-013
     fixCommits: ['3935c82c']
     regression: [tests/test_clock_domains.py, tests/test_leases.py, tests/test_server_lifecycle.py]
+  - id: GB-COR-014
+    fixCommits: ['ef019566']
+    regression: [tests/typing/incompatible_server_immutability.py, tests/test_typed_graph_typing.py, tests/test_server_core.py]
