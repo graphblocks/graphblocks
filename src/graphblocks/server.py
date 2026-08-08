@@ -14,6 +14,7 @@ from threading import Condition, get_ident, Lock, TIMEOUT_MAX
 from time import monotonic
 from types import MappingProxyType
 from typing import Literal, Protocol
+import unicodedata
 from urllib.parse import quote, unquote
 from uuid import uuid4
 
@@ -140,6 +141,11 @@ SERVER_OPTIONAL_CALLBACK_DIAGNOSTIC_EVENT_KINDS = frozenset({
 })
 MAX_SERVER_REQUEST_JSON_DEPTH = 64
 MAX_RUN_CURSOR_SEQUENCE = (1 << 64) - 1
+MAX_SERVER_IDENTIFIER_BYTES = 4_096
+MAX_SERVER_REASON_BYTES = 4_096
+MAX_SERVER_TIMESTAMP_BYTES = 128
+MAX_SERVER_FREE_TEXT_BYTES = 128 * 1024
+MAX_SERVER_PATH_BYTES = 128 * 1024
 DEFAULT_MAX_SERVER_REQUEST_BODY_BYTES = 1024 * 1024
 DEFAULT_MAX_ASYNC_CALLBACK_REQUEST_BODY_BYTES = 512 * 1024
 _SERVER_REQUEST_BODY_READ_CHUNK_BYTES = 64 * 1024
@@ -361,16 +367,93 @@ def _canonical_json_size_bytes(value: object) -> int:
     return len(canonical_dumps(value).encode("utf-8"))
 
 
+def _compact_server_field_name(field_name: str) -> str:
+    return "".join(
+        character.lower() for character in field_name if character.isalnum()
+    )
+
+
+def _server_field_uses_timestamp_policy(field_name: str) -> bool:
+    return (
+        field_name.endswith("_at")
+        or field_name.endswith("At")
+        or _compact_server_field_name(field_name) in {"now", "timestamp"}
+    )
+
+
 def _validate_non_empty_string(owner: str, field_name: str, value: object) -> str:
     if not isinstance(value, str):
         raise ValueError(f"{owner} {field_name} must be a string")
-    stripped = value.strip()
+    text = str.__str__(value)
+    if unicodedata.normalize("NFC", text) != text:
+        raise ValueError(
+            f"{owner} {field_name} must use NFC Unicode normalization"
+        )
+    if any(
+        unicodedata.category(character) in {"Cc", "Cf", "Cs", "Zl", "Zp"}
+        for character in text
+    ):
+        raise ValueError(
+            f"{owner} {field_name} must not contain control or directional characters"
+        )
+    compact_field_name = _compact_server_field_name(field_name)
+    if _server_field_uses_timestamp_policy(field_name):
+        max_bytes = MAX_SERVER_TIMESTAMP_BYTES
+    elif field_name == "path":
+        max_bytes = MAX_SERVER_PATH_BYTES
+    elif compact_field_name == "reason":
+        max_bytes = MAX_SERVER_REASON_BYTES
+    else:
+        max_bytes = MAX_SERVER_FREE_TEXT_BYTES
+    if len(text.encode("utf-8")) > max_bytes:
+        raise ValueError(
+            f"{owner} {field_name} must be at most "
+            f"{max_bytes} UTF-8 bytes"
+        )
+    stripped = text.strip()
     if not stripped:
         raise ValueError(f"{owner} {field_name} must not be empty")
     return stripped
 
 
+def _server_field_uses_identifier_policy(field_name: str) -> bool:
+    compact = _compact_server_field_name(field_name)
+    return compact.endswith(("id", "ids", "code", "codes", "digest")) or (
+        compact == "idempotencykey"
+    )
+
+
+def _validate_server_identifier(
+    owner: str,
+    field_name: str,
+    value: object,
+    *,
+    max_bytes: int = MAX_SERVER_IDENTIFIER_BYTES,
+) -> str:
+    text = _validate_non_empty_string(owner, field_name, value)
+    if value != text:
+        raise ValueError(
+            f"{owner} {field_name} must not contain surrounding whitespace"
+        )
+    if len(text.encode("utf-8")) > max_bytes:
+        raise ValueError(
+            f"{owner} {field_name} must be at most "
+            f"{max_bytes} UTF-8 bytes"
+        )
+    if any(
+        not character.isascii() or not 0x21 <= ord(character) <= 0x7E
+        for character in text
+    ):
+        raise ValueError(
+            f"{owner} {field_name} must contain only printable ASCII "
+            "identifier characters"
+        )
+    return text
+
+
 def _validate_exact_non_empty_string(owner: str, field_name: str, value: object) -> str:
+    if _server_field_uses_identifier_policy(field_name):
+        return _validate_server_identifier(owner, field_name, value)
     text = _validate_non_empty_string(owner, field_name, value)
     if value != text:
         raise ValueError(f"{owner} {field_name} must not contain surrounding whitespace")
@@ -393,6 +476,11 @@ def _validate_transport(value: object) -> ServerTransport:
 
 def _validate_iso_datetime(owner: str, field_name: str, value: object) -> str:
     timestamp = _validate_exact_non_empty_string(owner, field_name, value)
+    if len(timestamp.encode("utf-8")) > MAX_SERVER_TIMESTAMP_BYTES:
+        raise ValueError(
+            f"{owner} {field_name} must be at most "
+            f"{MAX_SERVER_TIMESTAMP_BYTES} UTF-8 bytes"
+        )
     if len(timestamp) <= 19 or timestamp[10] != "T":
         raise ValueError(f"{owner} {field_name} must be an ISO datetime")
     suffix_start = 19
@@ -711,6 +799,12 @@ def _validate_string_mapping(
         key_text = _validate_exact_non_empty_string(owner, f"{field_name} key", key)
         if not isinstance(item, str):
             raise ValueError(f"{owner} {field_name} values must be strings")
+        if field_name == "path_params":
+            item = _validate_server_identifier(
+                owner,
+                f"{field_name} value",
+                item,
+            )
         normalized_key = key_text.lower() if lowercase_keys else key_text
         if normalized_key in normalized:
             raise ValueError(f"{owner} {field_name} contains duplicate key {normalized_key!r}")
@@ -4340,6 +4434,12 @@ class GraphBlocksServerApp:
             failure_detail_bytes.decode("utf-8") != failure_detail
             or not failure_detail
             or failure_detail != failure_detail.strip()
+            or unicodedata.normalize("NFC", failure_detail) != failure_detail
+            or any(
+                unicodedata.category(character)
+                in {"Cc", "Cf", "Cs", "Zl", "Zp"}
+                for character in failure_detail
+            )
             or len(failure_detail_bytes) > MAX_SERVER_ERROR_FAILURE_DETAIL_BYTES
         ):
             failure_detail = (
@@ -10084,10 +10184,11 @@ class GraphBlocksServerApp:
             return tuple(self._callbacks_by_operation_id.get(operation_id, ()))
 
     def async_callback_rejections(self, operation_id: str) -> tuple[dict[str, object], ...]:
-        operation_id = _validate_exact_non_empty_string(
+        operation_id = _validate_server_identifier(
             "server async callback rejection",
             "operation_id",
             operation_id,
+            max_bytes=MAX_SERVER_PATH_BYTES,
         )
         rejections = self._async_callback_rejections_by_operation_id.snapshot(
             operation_id
@@ -11422,7 +11523,7 @@ class GraphBlocksServerApp:
             "clientId",
             "",
         )
-        client_id = _validate_non_empty_string(
+        client_id = _validate_server_identifier(
             "detach request",
             "client_id",
             raw_client_id,
@@ -11932,7 +12033,7 @@ class GraphBlocksServerApp:
         if event_id is None and cursor is None:
             raise ValueError("ack request requires event_id or cursor")
         event_id_text = (
-            _validate_non_empty_string("ack request", "event_id", event_id)
+            _validate_server_identifier("ack request", "event_id", event_id)
             if event_id is not None
             else None
         )
