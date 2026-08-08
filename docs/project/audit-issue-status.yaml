@@ -268,3 +268,6 @@ resolved:
   - id: GB-QA-011
     fixCommits: [fe0e3de5]
     regression: [tests/test_docs_checker.py, tests/test_documentation_integrity.py]
+  - id: GB-QA-018
+    fixCommits: [d7f7c8d5, 5d69fb02, 1235660d, '19941251']
+    regression: [tests/test_testing_package_architecture.py, tests/test_durable_tck_dispatch.py, tests/test_mutation_coverage.py, tests/test_mutation_targets.py]
