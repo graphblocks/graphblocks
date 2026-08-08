@@ -244,3 +244,6 @@ resolved:
   - id: GB-COR-015
     fixCommits: ['901fdde3']
     regression: [tests/test_server_core.py]
+  - id: GB-INP-008
+    fixCommits: ['b84ade85']
+    regression: [tests/test_schema_execution_policy.py, tests/test_mcp_schema_execution.py, tests/test_plugins.py, tests/test_openai_adapter.py]

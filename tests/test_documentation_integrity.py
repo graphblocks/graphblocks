@@ -1707,8 +1707,8 @@ def test_stable_release_matrix_is_complete_and_machine_readable() -> None:
         "authority": "docs/project/audit-issue-status.yaml",
         "inventory": "docs/project/audit-issues.json",
         "checker": "tools/check_audit_inventory.py",
-        "resolved": 80,
-        "openBySeverity": {"P0": 0, "P1": 0, "P2": 11, "P3": 8},
+        "resolved": 81,
+        "openBySeverity": {"P0": 0, "P1": 0, "P2": 10, "P3": 8},
     }
     rust_debt = audit_gate["rustProductionExpectDebt"]
     assert rust_debt["workspaceLint"] == "clippy::expect_used=deny"
@@ -1791,6 +1791,27 @@ def test_stable_release_matrix_is_complete_and_machine_readable() -> None:
         "regression": "tests/test_server_core.py",
         "serverChangedLineBranchCoveragePercent": 100,
     }
+    assert audit_gate["schemaExecutionPolicy"] == {
+        "maxSchemaBytes": 1048576,
+        "maxNodes": 10000,
+        "maxDepth": 64,
+        "maxPatternBytes": 256,
+        "maxValidationSteps": 20000,
+        "remoteReferencesAllowed": False,
+        "untrustedPatternsAllowed": False,
+        "boundedPluginPatterns": (
+            "simple-no-backreferences-lookarounds-or-quantified-groups"
+        ),
+        "externalEntryPoints": [
+            "mcp-inline-schema",
+            "plugin-config-schema",
+            "openai-tool-schema",
+        ],
+        "maliciousCorpus": ["remote-ref", "redos-pattern", "node-budget"],
+        "regression": "tests/test_schema_execution_policy.py",
+        "policyBranchCoveragePercent": 99,
+        "changedLineBranchCoveragePercent": 98.7,
+    }
     assert "stable-public-server-error-codes-correlation-and-bounded-internal-audit" in (
         audit_gate["implementedEvidence"]
     )
@@ -1820,6 +1841,10 @@ def test_stable_release_matrix_is_complete_and_machine_readable() -> None:
     )
     assert "summary-only-sync-responses-and-bounded-cursor-event-replay" in (
         audit_gate["implementedEvidence"]
+    )
+    assert (
+        "common-bounded-json-schema-execution-policy-and-entry-point-corpus"
+        in audit_gate["implementedEvidence"]
     )
     assert "signed-candidate-and-final-promotion-audit-closure-binding" in (
         audit_gate["implementedEvidence"]

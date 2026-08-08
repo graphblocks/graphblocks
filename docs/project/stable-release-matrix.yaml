@@ -109,8 +109,8 @@ deepAudit:
     authority: docs/project/audit-issue-status.yaml
     inventory: docs/project/audit-issues.json
     checker: tools/check_audit_inventory.py
-    resolved: 80
-    openBySeverity: {P0: 0, P1: 0, P2: 11, P3: 8}
+    resolved: 81
+    openBySeverity: {P0: 0, P1: 0, P2: 10, P3: 8}
   exitPolicy:
     securityFreeze: {maxOpenP0: 0}
     stableRelease: {maxOpenP0: 0, maxOpenP1: 0}
@@ -1072,6 +1072,7 @@ releaseGates:
       - explicit-monotonic-authority-wall-and-audit-clock-domains
       - runtime-and-static-server-mapping-immutability-aligned
       - summary-only-sync-responses-and-bounded-cursor-event-replay
+      - common-bounded-json-schema-execution-policy-and-entry-point-corpus
     evidence:
       - docs/project/audit-issues.json
       - docs/project/audit-issue-status.yaml
@@ -1145,6 +1146,8 @@ releaseGates:
       - docs/specification/core/graph-compilation-runtime.md
       - tests/typing/incompatible_server_immutability.py
       - tests/test_typed_graph_typing.py
+      - src/graphblocks/_schema_execution.py
+      - tests/test_schema_execution_policy.py
     serverLifecycle:
       states: [running, draining, closed]
       healthAvailableDuringShutdown: true
@@ -1180,6 +1183,20 @@ releaseGates:
       largeHistoryRegressionEvents: 20000
       regression: tests/test_server_core.py
       serverChangedLineBranchCoveragePercent: 100
+    schemaExecutionPolicy:
+      maxSchemaBytes: 1048576
+      maxNodes: 10000
+      maxDepth: 64
+      maxPatternBytes: 256
+      maxValidationSteps: 20000
+      remoteReferencesAllowed: false
+      untrustedPatternsAllowed: false
+      boundedPluginPatterns: simple-no-backreferences-lookarounds-or-quantified-groups
+      externalEntryPoints: [mcp-inline-schema, plugin-config-schema, openai-tool-schema]
+      maliciousCorpus: [remote-ref, redos-pattern, node-budget]
+      regression: tests/test_schema_execution_policy.py
+      policyBranchCoveragePercent: 99
+      changedLineBranchCoveragePercent: 98.7
     quickFeedbackCi:
       workflow: .github/workflows/ci.yml
       job: python-quality
