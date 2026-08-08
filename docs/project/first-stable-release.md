@@ -224,9 +224,9 @@ generic `approved: true` report or a green unrelated test suite cannot satisfy
 either runtime-security gate.
 
 The profile tables now record the phase-scoped authority accepted by ADR-0001.
-`REL-NORMATIVE-AUTHORITY` still blocks 1.0 until canonical/schema facade routing,
-the runtime scheduler and protocol handshake, supported native artifacts, and
-the remaining phase-level differential evidence are complete. Installed
+`REL-NORMATIVE-AUTHORITY` still blocks 1.0 until standalone canonical/schema
+facade routing, production scheduler/durable authority, and their remaining
+phase-level differential evidence are complete. Installed
 compiler TCK reports now execute the normative facade and bind the
 `graphblocks-runtime` implementation version plus the exact platform wheel
 record and SHA-256. The evidence runner also compares the installed package and

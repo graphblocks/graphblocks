@@ -36,7 +36,7 @@ The transition is phase-scoped:
 | Python graph builders, typed authoring, YAML composition, and ergonomic schema APIs | Python | Supported authoring surface; materializes portable resources for the normative compiler |
 | Reference compiler and local reference interpreter | Python | Explicit oracle through `graphblocks.compiler.compile_graph_reference` and reference-runtime/TCK imports; never an implicit production fallback |
 | Standalone canonical/schema utility authority | Rust | Selected, but remaining public-facade routing and installed differential evidence still block the release gate |
-| Runtime protocol and production scheduler | Rust | Selected, but scheduler, suspension, crash/restart, fencing, and protocol-handshake evidence still block the release gate |
+| Runtime protocol and production scheduler | Rust | Runtime protocol handshake is implemented and candidate-enforced; scheduler, suspension, crash/restart, and fencing evidence still block the release gate |
 | AI application, governance, durable stream, voice, deployment, observability, and integrations | Profile-specific | No authority or stability is implied until the named extension profile passes its own gates |
 
 The Python API follows these rules:
