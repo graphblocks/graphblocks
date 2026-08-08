@@ -1,0 +1,45 @@
+version: 1
+environment:
+  platform: linux
+  python: '3.11'
+protocol:
+  warmupRuns: 1
+  measuredRuns: 3
+  statistic: median
+  garbageCollection: collect-before-each-observation
+companionGates:
+  - compatibility/python-package-boundaries.yaml#coldImportBudgets
+benchmarks:
+  canonical-decimal-scaling:
+    metric: elapsedSeconds
+    sizes: [2000, 8000, 16000]
+    maximumBySize:
+      2000: 0.40
+      8000: 1.00
+      16000: 1.80
+    maximumNormalizedGrowth: 2.50
+  journal-append-scaling:
+    metric: elapsedSeconds
+    sizes: [4000, 16000, 64000]
+    maximumBySize:
+      4000: 0.80
+      16000: 2.50
+      64000: 8.00
+    maximumNormalizedGrowth: 2.50
+  compiler-scaling:
+    metric: elapsedSeconds
+    sizes: [50, 200, 800]
+    maximumBySize:
+      50: 1.00
+      200: 3.00
+      800: 10.00
+    maximumNormalizedGrowth: 3.00
+  server-retained-memory:
+    metric: retainedBytes
+    sizes: [5, 20]
+    warmupRuns: 0
+    measuredRuns: 1
+    maximumBySize:
+      5: 1000000
+      20: 3000000
+    maximumNormalizedGrowth: 2.00

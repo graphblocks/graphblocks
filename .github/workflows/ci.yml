@@ -179,6 +179,11 @@ jobs:
       - name: Execute deep-audit reproductions
         if: ${{ matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11' }}
         run: python tools/check_audit_reproductions.py --execute
+      - name: Enforce deterministic Python performance budgets
+        if: ${{ matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11' }}
+        run: >-
+          python tools/check_performance_budgets.py
+          --report dist/ci/python-performance-budgets.json
       - name: Run accepted-run multi-process crash recovery gate
         if: ${{ matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11' }}
         shell: bash
