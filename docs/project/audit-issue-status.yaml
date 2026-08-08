@@ -256,3 +256,6 @@ resolved:
   - id: GB-SEC-012
     fixCommits: ['662a1464']
     regression: [tests/test_server_adapter_limits.py]
+  - id: GB-ARCH-020
+    fixCommits: [e685ee9d, edb42c42, c5836de6, ef8966ba, a21455d0]
+    regression: [tests/test_conformance_authority.py, tests/test_wheelhouse_schema_verification.py, crates/graphblocksd/tests/control_plane.rs, tests/test_documentation_integrity.py]

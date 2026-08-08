@@ -109,8 +109,8 @@ deepAudit:
     authority: docs/project/audit-issue-status.yaml
     inventory: docs/project/audit-issues.json
     checker: tools/check_audit_inventory.py
-    resolved: 84
-    openBySeverity: {P0: 0, P1: 0, P2: 7, P3: 8}
+    resolved: 85
+    openBySeverity: {P0: 0, P1: 0, P2: 6, P3: 8}
   exitPolicy:
     securityFreeze: {maxOpenP0: 0}
     stableRelease: {maxOpenP0: 0, maxOpenP1: 0}
@@ -1076,6 +1076,7 @@ releaseGates:
       - deterministic-canonical-journal-compiler-and-server-memory-budgets
       - normalized-and-bounded-server-identifiers-reasons-and-timestamps
       - framework-neutral-server-adapter-resource-limit-contract
+      - accepted-phase-scoped-rust-authority-and-python-reference-facade
     evidence:
       - docs/project/audit-issues.json
       - docs/project/audit-issue-status.yaml
@@ -1160,6 +1161,12 @@ releaseGates:
       - src/graphblocks/server_adapter.py
       - tests/test_server_adapter_limits.py
       - docs/concepts/architecture.md
+      - docs/specification/decisions/0001-rust-normative-authority.md
+      - docs/specification/decisions/0002-rust-crate-boundaries.md
+      - src/graphblocks/conformance.py
+      - tests/test_conformance_authority.py
+      - tests/test_wheelhouse_schema_verification.py
+      - crates/graphblocksd/tests/control_plane.rs
     serverLifecycle:
       states: [running, draining, closed]
       healthAvailableDuringShutdown: true
