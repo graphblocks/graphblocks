@@ -214,3 +214,6 @@ resolved:
   - id: GB-RUST-002
     fixCommits: ['698fbd26']
     regression: [tests/test_rust_lint_debt.py, tests/test_release_supply_chain.py]
+  - id: GB-SEC-010
+    fixCommits: ['27cfb6af']
+    regression: [tests/test_server_error_contract.py, tests/test_server_core.py]

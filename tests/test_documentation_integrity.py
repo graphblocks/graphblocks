@@ -1587,8 +1587,8 @@ def test_stable_release_matrix_is_complete_and_machine_readable() -> None:
         "authority": "docs/project/audit-issue-status.yaml",
         "inventory": "docs/project/audit-issues.json",
         "checker": "tools/check_audit_inventory.py",
-        "resolved": 70,
-        "openBySeverity": {"P0": 0, "P1": 0, "P2": 21, "P3": 8},
+        "resolved": 71,
+        "openBySeverity": {"P0": 0, "P1": 0, "P2": 20, "P3": 8},
     }
     rust_debt = audit_gate["rustProductionExpectDebt"]
     assert rust_debt["workspaceLint"] == "clippy::expect_used=deny"
@@ -1597,6 +1597,27 @@ def test_stable_release_matrix_is_complete_and_machine_readable() -> None:
     assert rust_debt["newFilesAllowed"] is False
     assert rust_debt["perFileGrowthAllowed"] is False
     assert rust_debt["observedCiEvidence"]["conclusion"] == "success"
+    server_errors = audit_gate["serverErrorContract"]
+    assert server_errors == {
+        "publicEnvelope": ["ok", "errorCode", "message", "correlationId"],
+        "correlationHeader": "x-correlation-id",
+        "exceptionDetailInPublicResponseAllowed": False,
+        "internalAuditRecord": "graphblocks.server.ServerErrorAuditEvent",
+        "maximumRetainedEvents": 1024,
+        "maximumFailureDetailBytes": 4096,
+        "auditHookFailureAffectsResponse": False,
+        "regression": "tests/test_server_error_contract.py",
+        "changedLineBranchCoverageMinimumPercent": 90,
+        "observedCiEvidence": {
+            "runId": 31245606181,
+            "jobId": 93073622856,
+            "headSha": "7e162dd2384b2c064cc43441901130150c4bfba7",
+            "conclusion": "success",
+        },
+    }
+    assert "stable-public-server-error-codes-correlation-and-bounded-internal-audit" in (
+        audit_gate["implementedEvidence"]
+    )
     assert "signed-candidate-and-final-promotion-audit-closure-binding" in (
         audit_gate["implementedEvidence"]
     )

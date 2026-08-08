@@ -84,8 +84,8 @@ deepAudit:
     authority: docs/project/audit-issue-status.yaml
     inventory: docs/project/audit-issues.json
     checker: tools/check_audit_inventory.py
-    resolved: 70
-    openBySeverity: {P0: 0, P1: 0, P2: 21, P3: 8}
+    resolved: 71
+    openBySeverity: {P0: 0, P1: 0, P2: 20, P3: 8}
   exitPolicy:
     securityFreeze: {maxOpenP0: 0}
     stableRelease: {maxOpenP0: 0, maxOpenP1: 0}
@@ -1007,6 +1007,7 @@ releaseGates:
       - checkout-independent-exact-development-lock-regeneration-and-matrix-install
       - artifact-semver-independent-protocol-capability-matrix-and-fail-closed-handshakes
       - package-scoped-preview-typing-diagnostic-module-ignore-and-root-alias-budgets
+      - stable-public-server-error-codes-correlation-and-bounded-internal-audit
     evidence:
       - docs/project/audit-issues.json
       - docs/project/audit-issue-status.yaml
@@ -1050,6 +1051,9 @@ releaseGates:
       - compatibility/rust-production-expect-budget.json
       - tools/check_rust_lint_debt.py
       - tests/test_rust_lint_debt.py
+      - src/graphblocks/server.py
+      - tests/_server_error_assertions.py
+      - tests/test_server_error_contract.py
     quickFeedbackCi:
       workflow: .github/workflows/ci.yml
       job: python-quality
@@ -1150,6 +1154,21 @@ releaseGates:
         debtCheckDurationSeconds: 27
         productionClippyDurationSeconds: 9
         testTargetClippyDurationSeconds: 18
+    serverErrorContract:
+      publicEnvelope: [ok, errorCode, message, correlationId]
+      correlationHeader: x-correlation-id
+      exceptionDetailInPublicResponseAllowed: false
+      internalAuditRecord: graphblocks.server.ServerErrorAuditEvent
+      maximumRetainedEvents: 1024
+      maximumFailureDetailBytes: 4096
+      auditHookFailureAffectsResponse: false
+      regression: tests/test_server_error_contract.py
+      changedLineBranchCoverageMinimumPercent: 90
+      observedCiEvidence:
+        runId: 31245606181
+        jobId: 93073622856
+        headSha: 7e162dd2384b2c064cc43441901130150c4bfba7
+        conclusion: success
     exitCriteria:
       maxOpenBySeverity: {P0: 0, P1: 0}
       requiredEvidence:

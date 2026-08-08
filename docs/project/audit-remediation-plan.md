@@ -53,10 +53,10 @@ A finding moves to resolved only when:
 4. the release matrix or profile evidence is updated when the finding changes a
    compatibility or production claim.
 
-The current generated count is 70 resolved findings: all 27 P0/P1 findings,
+The current generated count is 71 resolved findings: all 27 P0/P1 findings,
 the first 11 P2 findings, GB-ARCH-013, and GB-ARCH-015 through GB-ARCH-017.
 GB-COR-005 through GB-COR-009 are also resolved. There are zero open P0/P1,
-21 open P2, and 8 open P3; GB-COR-011, GB-COR-012, GB-DOC-006, GB-INP-006,
+20 open P2, and 8 open P3; GB-COR-011, GB-COR-012, GB-DOC-006, GB-INP-006,
 GB-INP-007, GB-INP-010, GB-PERF-004, and GB-PERF-005 are resolved. GB-ARCH-012
 remains open pending shared-primitives consolidation. GB-PERF-006 is resolved
 with tenant/owner-scoped indexed run-list cursor pagination and a 10,000-run
@@ -144,6 +144,19 @@ the allowed calls and rejects a new file, any per-file increase, or total
 growth. Test, example, and benchmark targets receive the narrower command-line
 allow. CI retains the deterministic JSON report and separate production/test
 Clippy logs. All three gates passed in CI run 31242631454, Rust job 93066047306.
+GB-SEC-010 is resolved by replacing exception-derived HTTP payloads with a
+closed public envelope containing a stable `errorCode`, fixed safe message,
+and response/header correlation ID. A bounded internal `ServerErrorAuditEvent`
+retains the route, operation, exception type, and size-limited detail; invalid
+correlation factories fall back to a server UUID, unprintable or noncanonical
+exception details are normalized or hashed, and audit-sink failure cannot
+alter the public response. Background execution and callback-resume failure
+records use the same non-disclosing contract. The dedicated regression injects
+sensitive compiler, persistence, operation-dispatch, and unprintable failures,
+while the security-critical CI selector enforces at least 90% changed-line
+branch coverage for this server change. The clean Python 3.11 execution,
+including the full suite and coverage gate, passed in CI run 31245606181, job
+93073622856.
 This closes the recorded code-and-regression count; it does not replace the
 independent review, candidate attestation, platform, or soak gates.
 
