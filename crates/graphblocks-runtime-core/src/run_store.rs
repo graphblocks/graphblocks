@@ -1,5 +1,3 @@
-#![allow(clippy::expect_used)] // Guarded by compatibility/rust-production-expect-budget.json.
-
 use std::{collections::BTreeMap, path::Path};
 
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
@@ -429,6 +427,7 @@ pub enum RunStoreError {
     NumericOverflow {
         path: Vec<String>,
     },
+    SequenceExhausted,
     Storage {
         message: String,
     },
@@ -1482,7 +1481,11 @@ impl InMemoryRunStore {
         }
     }
 
-    pub fn create_run(&mut self, graph_hash: impl Into<String>, inputs: Value) -> RunRecord {
+    pub fn create_run(
+        &mut self,
+        graph_hash: impl Into<String>,
+        inputs: Value,
+    ) -> Result<RunRecord, RunStoreError> {
         self.create_run_with_provenance(graph_hash, inputs, RunDeploymentProvenance::new())
     }
 
@@ -1524,7 +1527,7 @@ impl InMemoryRunStore {
         graph_hash: impl Into<String>,
         inputs: Value,
         invocation_mode: RunInvocationMode,
-    ) -> RunRecord {
+    ) -> Result<RunRecord, RunStoreError> {
         self.create_run_with_invocation_provenance_and_mode(
             graph_hash,
             inputs,
@@ -1539,7 +1542,7 @@ impl InMemoryRunStore {
         graph_hash: impl Into<String>,
         inputs: Value,
         deployment_provenance: RunDeploymentProvenance,
-    ) -> RunRecord {
+    ) -> Result<RunRecord, RunStoreError> {
         self.create_run_with_invocation_provenance_and_mode(
             graph_hash,
             inputs,
@@ -1555,7 +1558,7 @@ impl InMemoryRunStore {
         inputs: Value,
         deployment_provenance: RunDeploymentProvenance,
         model_visible_tools: Vec<ModelVisibleToolRef>,
-    ) -> RunRecord {
+    ) -> Result<RunRecord, RunStoreError> {
         self.create_run_with_invocation_provenance_and_mode(
             graph_hash,
             inputs,
@@ -1572,7 +1575,7 @@ impl InMemoryRunStore {
         invocation_mode: RunInvocationMode,
         deployment_provenance: RunDeploymentProvenance,
         model_visible_tools: Vec<ModelVisibleToolRef>,
-    ) -> RunRecord {
+    ) -> Result<RunRecord, RunStoreError> {
         self.create_run_with_optional_run_id_invocation_provenance_and_mode(
             None,
             graph_hash,
@@ -1581,7 +1584,6 @@ impl InMemoryRunStore {
             deployment_provenance,
             model_visible_tools,
         )
-        .expect("generated run ids must be valid")
     }
 
     fn create_run_with_optional_run_id_invocation_provenance_and_mode(
@@ -1602,17 +1604,23 @@ impl InMemoryRunStore {
                 return Err(RunStoreError::AlreadyExists { run_id });
             }
             let sequence = self.next_sequence;
-            self.next_sequence += 1;
+            self.next_sequence = sequence
+                .checked_add(1)
+                .ok_or(RunStoreError::SequenceExhausted)?;
             (sequence, run_id)
         } else {
             let mut sequence = self.next_sequence;
             loop {
                 let run_id = format!("run-{sequence:06}");
                 if !self.runs.contains_key(&run_id) {
-                    self.next_sequence = sequence + 1;
+                    self.next_sequence = sequence
+                        .checked_add(1)
+                        .ok_or(RunStoreError::SequenceExhausted)?;
                     break (sequence, run_id);
                 }
-                sequence += 1;
+                sequence = sequence
+                    .checked_add(1)
+                    .ok_or(RunStoreError::SequenceExhausted)?;
             }
         };
         let record = RunRecord {
@@ -2819,5 +2827,22 @@ fn require_single_run_update(updated_rows: usize, run_id: &str) -> Result<(), Ru
 fn storage_error(error: impl std::fmt::Display) -> RunStoreError {
     RunStoreError::Storage {
         message: error.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn in_memory_run_creation_rejects_exhausted_sequence_without_mutation() {
+        let mut store = InMemoryRunStore::new();
+        store.next_sequence = u64::MAX;
+
+        assert_eq!(
+            store.create_run("sha256:graph", json!({})),
+            Err(RunStoreError::SequenceExhausted)
+        );
+        assert!(store.runs.is_empty());
     }
 }

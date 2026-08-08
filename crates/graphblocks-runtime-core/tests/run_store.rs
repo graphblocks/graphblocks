@@ -36,8 +36,8 @@ fn event_position(cursor: &str, sequence: u64) -> ApplicationProtocolLogPosition
 fn run_store_allocates_monotonic_run_snapshots() -> Result<(), RunStoreError> {
     let mut store = InMemoryRunStore::new();
 
-    let first = store.create_run("sha256:one", json!({"message": "hello"}));
-    let second = store.create_run("sha256:two", json!({}));
+    let first = store.create_run("sha256:one", json!({"message": "hello"}))?;
+    let second = store.create_run("sha256:two", json!({}))?;
 
     assert_eq!(first.run_id, "run-000001");
     assert_eq!(first.sequence, 1);
@@ -59,7 +59,7 @@ fn run_store_accepts_requested_run_ids_and_skips_generated_collisions() -> Resul
     let mut store = InMemoryRunStore::new();
 
     let requested = store.create_run_with_run_id("run-000002", "sha256:requested", json!({}))?;
-    let generated = store.create_run("sha256:generated", json!({}));
+    let generated = store.create_run("sha256:generated", json!({}))?;
 
     assert_eq!(requested.run_id, "run-000002");
     assert_eq!(requested.sequence, 1);
@@ -86,12 +86,12 @@ fn run_store_records_invocation_mode_and_builds_accepted_handle() -> Result<(), 
         "sha256:accepted",
         json!({"task": "code"}),
         RunInvocationMode::Accepted,
-    );
+    )?;
     let background = store.create_run_with_invocation_mode(
         "sha256:background",
         json!({"task": "ingest"}),
         RunInvocationMode::Background,
-    );
+    )?;
     let handle = RunInvocationResponse::from_accepted_run(&accepted, "/v1", "evt_000000")
         .expect("accepted run response is valid");
 
@@ -115,7 +115,7 @@ fn run_status_snapshot_reports_waiting_callback_and_active_operations() -> Resul
         "sha256:graph",
         json!({"task": "ci"}),
         RunDeploymentProvenance::new().with_release_digest("release-2026-07-02"),
-    );
+    )?;
     let waiting = store.set_status(&record.run_id, RunStatus::WaitingCallback)?;
 
     let snapshot = RunStatusSnapshot::from_run(
@@ -153,7 +153,7 @@ fn run_status_snapshot_accepts_authoritative_event_stream_position() -> Result<(
         "sha256:graph",
         json!({"task": "ci"}),
         RunDeploymentProvenance::new().with_release_digest("release-2026-07-02"),
-    );
+    )?;
     let waiting = store.set_status(&record.run_id, RunStatus::WaitingCallback)?;
 
     let snapshot = RunStatusSnapshot::from_run(
@@ -175,7 +175,7 @@ fn run_status_snapshot_accepts_authoritative_event_stream_position() -> Result<(
 #[test]
 fn waiting_callback_snapshot_requires_callback_wait_metadata() -> Result<(), RunStoreError> {
     let mut store = InMemoryRunStore::new();
-    let record = store.create_run("sha256:graph", json!({"task": "ci"}));
+    let record = store.create_run("sha256:graph", json!({"task": "ci"}))?;
     let waiting = store.set_status(&record.run_id, RunStatus::WaitingCallback)?;
 
     assert_eq!(
@@ -214,7 +214,7 @@ fn waiting_callback_snapshot_requires_callback_wait_metadata() -> Result<(), Run
 #[test]
 fn run_status_snapshot_rejects_duplicate_active_operations() -> Result<(), RunStoreError> {
     let mut store = InMemoryRunStore::new();
-    let record = store.create_run("sha256:graph", json!({"task": "ci"}));
+    let record = store.create_run("sha256:graph", json!({"task": "ci"}))?;
     let waiting = store.set_status(&record.run_id, RunStatus::WaitingCallback)?;
 
     assert_eq!(
@@ -238,7 +238,7 @@ fn run_status_snapshot_rejects_duplicate_active_operations() -> Result<(), RunSt
 #[test]
 fn run_status_snapshot_rejects_duplicate_wait_reasons() -> Result<(), RunStoreError> {
     let mut store = InMemoryRunStore::new();
-    let record = store.create_run("sha256:graph", json!({"task": "ci"}));
+    let record = store.create_run("sha256:graph", json!({"task": "ci"}))?;
     let paused = store.set_status(&record.run_id, RunStatus::PausedBudget)?;
 
     assert_eq!(
@@ -265,7 +265,7 @@ fn run_status_snapshot_rejects_duplicate_wait_reasons() -> Result<(), RunStoreEr
 #[test]
 fn run_status_snapshot_rejects_wait_reasons_for_active_states() -> Result<(), RunStoreError> {
     let mut store = InMemoryRunStore::new();
-    let record = store.create_run("sha256:graph", json!({"task": "ci"}));
+    let record = store.create_run("sha256:graph", json!({"task": "ci"}))?;
     let running = store.set_status(&record.run_id, RunStatus::Running)?;
 
     assert_eq!(
@@ -290,7 +290,7 @@ fn run_status_snapshot_rejects_wait_reasons_for_active_states() -> Result<(), Ru
 fn run_status_snapshot_requires_matching_wait_reason_for_paused_or_waiting_states()
 -> Result<(), RunStoreError> {
     let mut store = InMemoryRunStore::new();
-    let approval_record = store.create_run("sha256:approval", json!({}));
+    let approval_record = store.create_run("sha256:approval", json!({}))?;
     let waiting_approval = store.set_status(&approval_record.run_id, RunStatus::WaitingApproval)?;
 
     assert_eq!(
@@ -309,7 +309,7 @@ fn run_status_snapshot_requires_matching_wait_reason_for_paused_or_waiting_state
         })
     );
 
-    let budget_record = store.create_run("sha256:budget", json!({}));
+    let budget_record = store.create_run("sha256:budget", json!({}))?;
     let paused_budget = store.set_status(&budget_record.run_id, RunStatus::PausedBudget)?;
     let snapshot = RunStatusSnapshot::from_run(
         &paused_budget,
@@ -328,7 +328,7 @@ fn run_status_snapshot_requires_matching_wait_reason_for_paused_or_waiting_state
         Some("quota_exhausted")
     );
 
-    let callback_delivery_record = store.create_run("sha256:callback-delivery", json!({}));
+    let callback_delivery_record = store.create_run("sha256:callback-delivery", json!({}))?;
     let paused_callback_delivery = store.set_status(
         &callback_delivery_record.run_id,
         RunStatus::PausedCallbackDelivery,
@@ -365,8 +365,8 @@ fn run_status_snapshot_requires_matching_wait_reason_for_paused_or_waiting_state
 #[test]
 fn callback_delivery_run_action_updates_run_status_and_wait_reason() -> Result<(), RunStoreError> {
     let mut store = InMemoryRunStore::new();
-    let pause_run = store.create_run("sha256:pause-callback-delivery", json!({}));
-    let fail_run = store.create_run("sha256:fail-callback-delivery", json!({}));
+    let pause_run = store.create_run("sha256:pause-callback-delivery", json!({}))?;
+    let fail_run = store.create_run("sha256:fail-callback-delivery", json!({}))?;
 
     let paused = store.apply_callback_delivery_run_action(CallbackDeliveryRunAction::PauseRun {
         run_id: pause_run.run_id.clone(),
@@ -421,7 +421,7 @@ fn run_status_snapshot_projects_protocol_json() -> Result<(), RunStoreError> {
         "sha256:graph",
         json!({}),
         RunDeploymentProvenance::new().with_release_digest("release-2026-07-03"),
-    );
+    )?;
     let waiting = store.set_status(&record.run_id, RunStatus::WaitingCallback)?;
     let snapshot = RunStatusSnapshot::from_run(
         &waiting,
@@ -460,7 +460,9 @@ fn run_status_snapshot_projects_protocol_json() -> Result<(), RunStoreError> {
 #[test]
 fn run_status_snapshot_validates_terminal_completion_and_nonterminal_completion() {
     let mut store = InMemoryRunStore::new();
-    let record = store.create_run("sha256:graph", json!({}));
+    let record = store
+        .create_run("sha256:graph", json!({}))
+        .expect("in-memory run is created");
     let running = store
         .set_status(&record.run_id, RunStatus::Running)
         .expect("run can start");
@@ -503,7 +505,9 @@ fn run_status_snapshot_validates_terminal_completion_and_nonterminal_completion(
 #[test]
 fn run_status_snapshot_rejects_zero_status_timestamps() {
     let mut store = InMemoryRunStore::new();
-    let record = store.create_run("sha256:graph", json!({}));
+    let record = store
+        .create_run("sha256:graph", json!({}))
+        .expect("in-memory run is created");
     let running = store
         .set_status(&record.run_id, RunStatus::Running)
         .expect("run can start");
@@ -544,7 +548,7 @@ fn run_status_snapshot_rejects_zero_status_timestamps() {
 fn terminal_run_status_snapshot_rejects_wait_reasons_and_active_operations()
 -> Result<(), RunStoreError> {
     let mut store = InMemoryRunStore::new();
-    let record = store.create_run("sha256:graph", json!({}));
+    let record = store.create_run("sha256:graph", json!({}))?;
     let cancelled = store.set_status(&record.run_id, RunStatus::Cancelled)?;
 
     assert_eq!(
@@ -573,7 +577,7 @@ fn run_store_ownership_lease_fences_stale_coordinator_after_failover() -> Result
         "sha256:graph",
         json!({}),
         RunInvocationMode::Background,
-    );
+    )?;
 
     let first = store.acquire_ownership_lease(&record.run_id, "coordinator-a", 1_000, 1_500)?;
     assert_eq!(first.fencing_epoch, 1);
@@ -619,7 +623,7 @@ fn run_store_ownership_lease_rejects_forged_owner_identity() -> Result<(), RunSt
         "sha256:graph",
         json!({}),
         RunInvocationMode::Background,
-    );
+    )?;
     let lease = store.acquire_ownership_lease(&record.run_id, "coordinator-a", 1_000, 2_000)?;
 
     assert_eq!(
@@ -662,7 +666,7 @@ fn run_store_renews_ownership_lease_without_changing_fence() -> Result<(), RunSt
         "sha256:graph",
         json!({}),
         RunInvocationMode::Background,
-    );
+    )?;
     let lease = store.acquire_ownership_lease(&record.run_id, "coordinator-a", 1_000, 1_500)?;
 
     let renewed = store.renew_ownership_lease(
@@ -706,7 +710,7 @@ fn run_store_rejects_invalid_or_stale_ownership_lease_renewal() -> Result<(), Ru
         "sha256:graph",
         json!({}),
         RunInvocationMode::Background,
-    );
+    )?;
     let first = store.acquire_ownership_lease(&record.run_id, "coordinator-a", 1_000, 1_500)?;
 
     assert_eq!(
@@ -781,7 +785,7 @@ fn run_store_rejects_ownership_lease_use_before_acquisition() -> Result<(), RunS
         "sha256:graph",
         json!({}),
         RunInvocationMode::Background,
-    );
+    )?;
     let lease = store.acquire_ownership_lease(&record.run_id, "coordinator-a", 1_000, 2_000)?;
     let not_yet_active = RunStoreError::InvalidRunOwnershipLease {
         run_id: record.run_id.clone(),
@@ -1141,7 +1145,7 @@ fn run_store_fenced_mutations_reject_stale_coordinator_after_failover() -> Resul
         "sha256:graph",
         json!({}),
         RunInvocationMode::Background,
-    );
+    )?;
     let first = store.acquire_ownership_lease(&record.run_id, "coordinator-a", 1_000, 1_500)?;
     let second = store.acquire_ownership_lease(&record.run_id, "coordinator-b", 1_501, 2_000)?;
 
@@ -1282,12 +1286,12 @@ fn sqlite_run_store_fenced_mutations_reject_stale_coordinator_after_reopen() -> 
 #[test]
 fn run_invocation_response_rejects_sync_or_empty_cursor() {
     let mut store = InMemoryRunStore::new();
-    let sync = store.create_run("sha256:sync", json!({}));
-    let accepted = store.create_run_with_invocation_mode(
-        "sha256:accepted",
-        json!({}),
-        RunInvocationMode::Accepted,
-    );
+    let sync = store
+        .create_run("sha256:sync", json!({}))
+        .expect("in-memory run is created");
+    let accepted = store
+        .create_run_with_invocation_mode("sha256:accepted", json!({}), RunInvocationMode::Accepted)
+        .expect("in-memory run is created");
 
     assert_eq!(
         RunInvocationResponse::from_accepted_run(&sync, "/v1", "evt_000000"),
@@ -1431,7 +1435,7 @@ fn run_store_records_deployment_provenance_and_preserves_it_across_mutations()
         .with_physical_plan_hash("sha256:physical")
         .with_release_signature_digest("sha256:signature");
 
-    let record = store.create_run_with_provenance("sha256:test", json!({}), provenance.clone());
+    let record = store.create_run_with_provenance("sha256:test", json!({}), provenance.clone())?;
     let patched = store.patch_state(
         &record.run_id,
         StatePatch::new(Some(0)).with(PatchOperation::set(["step"], json!(1))),
@@ -1601,7 +1605,7 @@ fn run_store_records_model_visible_tools_and_preserves_them_across_mutations()
         json!({}),
         RunDeploymentProvenance::new(),
         vec![ticket_tool.clone(), search_tool.clone()],
-    );
+    )?;
     let patched = store.patch_state(
         &record.run_id,
         StatePatch::new(Some(0)).with(PatchOperation::set(["step"], json!(1))),
@@ -1617,7 +1621,7 @@ fn run_store_records_model_visible_tools_and_preserves_them_across_mutations()
 #[test]
 fn run_store_records_model_visible_tools_after_run_creation() -> Result<(), RunStoreError> {
     let mut store = InMemoryRunStore::new();
-    let record = store.create_run("sha256:test", json!({}));
+    let record = store.create_run("sha256:test", json!({}))?;
     let ticket_tool = model_visible_tool("ticket.create", "resolved-ticket", false);
     let search_tool = model_visible_tool("knowledge.search", "resolved-search", true);
 
@@ -1635,7 +1639,7 @@ fn run_store_records_model_visible_tools_after_run_creation() -> Result<(), RunS
 #[test]
 fn run_store_applies_state_patch_operations_with_revision_cas() -> Result<(), RunStoreError> {
     let mut store = InMemoryRunStore::new();
-    let record = store.create_run("sha256:test", json!({}));
+    let record = store.create_run("sha256:test", json!({}))?;
 
     let updated = store.patch_state(
         &record.run_id,
@@ -1665,7 +1669,7 @@ fn run_store_applies_state_patch_operations_with_revision_cas() -> Result<(), Ru
 #[test]
 fn run_store_rejects_stale_state_revision_and_keeps_state() -> Result<(), RunStoreError> {
     let mut store = InMemoryRunStore::new();
-    let record = store.create_run("sha256:test", json!({}));
+    let record = store.create_run("sha256:test", json!({}))?;
 
     store.patch_state(
         &record.run_id,
@@ -1690,7 +1694,7 @@ fn run_store_rejects_stale_state_revision_and_keeps_state() -> Result<(), RunSto
 #[test]
 fn run_store_rejects_state_patch_and_status_after_terminal() -> Result<(), RunStoreError> {
     let mut store = InMemoryRunStore::new();
-    let record = store.create_run("sha256:test", json!({}));
+    let record = store.create_run("sha256:test", json!({}))?;
 
     store.set_status(&record.run_id, RunStatus::Running)?;
     let terminal = store.set_status(&record.run_id, RunStatus::Completed)?;
@@ -1733,7 +1737,7 @@ fn run_store_rejects_state_patch_and_status_after_terminal() -> Result<(), RunSt
 #[test]
 fn run_store_rejects_model_visible_tools_after_terminal() -> Result<(), RunStoreError> {
     let mut store = InMemoryRunStore::new();
-    let record = store.create_run("sha256:test", json!({}));
+    let record = store.create_run("sha256:test", json!({}))?;
 
     store.set_status(&record.run_id, RunStatus::Completed)?;
 
@@ -1757,7 +1761,7 @@ fn run_store_rejects_model_visible_tools_after_terminal() -> Result<(), RunStore
 #[test]
 fn run_store_supports_durable_async_lifecycle_statuses() -> Result<(), RunStoreError> {
     let mut store = InMemoryRunStore::new();
-    let record = store.create_run("sha256:test", json!({}));
+    let record = store.create_run("sha256:test", json!({}))?;
 
     for status in [
         RunStatus::Admitted,

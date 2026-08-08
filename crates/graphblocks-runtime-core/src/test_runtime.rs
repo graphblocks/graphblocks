@@ -591,7 +591,7 @@ impl InProcessTestRuntime {
         E: NodeExecutor,
     {
         self.validate_retry_boundaries()?;
-        let run = store.create_run(graph_hash, inputs);
+        let run = store.create_run(graph_hash, inputs)?;
         store.set_status(&run.run_id, RunStatus::Running)?;
         self.journal = ExecutionJournal::new(run.run_id);
         let result = self.run_with_cancellation_state(cancellation_token, executor)?;
