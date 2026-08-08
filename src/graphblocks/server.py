@@ -174,6 +174,7 @@ DEFAULT_MAX_CALLBACK_DELIVERY_CONTROL_HISTORY_BYTES_PER_DELIVERY = (
     1024 * 1024
 )
 DEFAULT_MAX_AUTH_AUDIT_EVENTS = 1_024
+DEFAULT_MAX_SERVER_ERROR_AUDIT_EVENTS = 1_024
 DEFAULT_TERMINAL_RUN_RETENTION_SECONDS = 24 * 60 * 60
 DEFAULT_TERMINAL_RUN_COLLECTION_INTERVAL_SECONDS = 60
 DEFAULT_TERMINAL_RUN_COLLECTION_BATCH_SIZE = 100
@@ -182,6 +183,9 @@ MAX_SERVER_CALLBACK_DELIVERY_ERROR_BYTES = 16_384
 MAX_SERVER_CALLBACK_DELIVERY_TIMESTAMP_BYTES = 128
 MAX_SERVER_AUTH_AUDIT_REQUEST_ID_BYTES = 256
 MAX_SERVER_AUTH_AUDIT_FAILURE_TYPE_BYTES = 256
+MAX_SERVER_ERROR_CODE_BYTES = 256
+MAX_SERVER_ERROR_CORRELATION_ID_BYTES = 256
+MAX_SERVER_ERROR_FAILURE_DETAIL_BYTES = 4_096
 _ServerOperationHandlerKey = Literal[
     "system",
     "run_lifecycle",
@@ -2981,6 +2985,67 @@ class ServerAuthAuditEvent:
 
 
 @dataclass(frozen=True, slots=True)
+class ServerErrorAuditEvent:
+    method: str
+    route: str
+    operation: str
+    status_code: int
+    error_code: str
+    correlation_id: str
+    failure_type: str
+    failure_detail: str
+    observed_at: str
+
+    def __post_init__(self) -> None:
+        owner = "server error audit event"
+        object.__setattr__(
+            self,
+            "method",
+            _validate_exact_non_empty_string(owner, "method", self.method).upper(),
+        )
+        object.__setattr__(self, "route", _validate_route_path(owner, self.route))
+        object.__setattr__(
+            self,
+            "operation",
+            _validate_exact_non_empty_string(owner, "operation", self.operation),
+        )
+        if (
+            isinstance(self.status_code, bool)
+            or not isinstance(self.status_code, int)
+            or self.status_code < 400
+            or self.status_code > 599
+        ):
+            raise ValueError(f"{owner} status_code must be an HTTP error status")
+        for field_name, value, max_bytes in (
+            ("error_code", self.error_code, MAX_SERVER_ERROR_CODE_BYTES),
+            (
+                "correlation_id",
+                self.correlation_id,
+                MAX_SERVER_ERROR_CORRELATION_ID_BYTES,
+            ),
+            (
+                "failure_type",
+                self.failure_type,
+                MAX_SERVER_AUTH_AUDIT_FAILURE_TYPE_BYTES,
+            ),
+            (
+                "failure_detail",
+                self.failure_detail,
+                MAX_SERVER_ERROR_FAILURE_DETAIL_BYTES,
+            ),
+        ):
+            normalized = _validate_exact_non_empty_string(owner, field_name, value)
+            if len(normalized.encode("utf-8")) > max_bytes:
+                raise ValueError(f"{owner} {field_name} exceeds byte limit")
+            object.__setattr__(self, field_name, normalized)
+        object.__setattr__(
+            self,
+            "observed_at",
+            _validate_iso_datetime(owner, "observed_at", self.observed_at),
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class ServerAuthDecision:
     allowed: bool
     principal: PrincipalRef | None = None
@@ -3553,6 +3618,15 @@ class GraphBlocksServerApp:
         DEFAULT_MAX_ASYNC_CALLBACK_REJECTION_HISTORY_BYTES
     )
     allow_process_local_accepted_runs_dev: bool = False
+    max_error_audit_events: int = DEFAULT_MAX_SERVER_ERROR_AUDIT_EVENTS
+    error_audit_hook: Callable[[ServerErrorAuditEvent], None] | None = field(
+        default=None,
+        repr=False,
+    )
+    error_correlation_id_factory: Callable[[], str] = field(
+        default=lambda: str(uuid4()),
+        repr=False,
+    )
     _effective_reference_tenant_id: str | None = field(
         default=None,
         init=False,
@@ -3564,6 +3638,11 @@ class GraphBlocksServerApp:
         repr=False,
     )
     _auth_audit_events: deque[ServerAuthAuditEvent] = field(
+        default_factory=deque,
+        init=False,
+        repr=False,
+    )
+    _error_audit_events: deque[ServerErrorAuditEvent] = field(
         default_factory=deque,
         init=False,
         repr=False,
@@ -3855,6 +3934,14 @@ class GraphBlocksServerApp:
             self.auth_audit_hook
         ):
             raise ValueError("server auth_audit_hook must be callable")
+        if self.error_audit_hook is not None and not callable(
+            self.error_audit_hook
+        ):
+            raise ValueError("server error_audit_hook must be callable")
+        if not callable(self.error_correlation_id_factory):
+            raise ValueError(
+                "server error_correlation_id_factory must be callable"
+            )
         if (
             self.auth_hook is None
             and not self.allow_unauthenticated_dev
@@ -3898,6 +3985,7 @@ class GraphBlocksServerApp:
             "max_callback_delivery_controls_per_delivery",
             "max_callback_delivery_control_history_bytes_per_delivery",
             "max_auth_audit_events",
+            "max_error_audit_events",
             "terminal_run_retention_seconds",
             "terminal_run_collection_interval_seconds",
             "terminal_run_collection_batch_size",
@@ -3907,6 +3995,9 @@ class GraphBlocksServerApp:
                 raise ValueError(f"server {field_name} must be a positive integer")
         self._auth_audit_events = deque(
             maxlen=self.max_auth_audit_events,
+        )
+        self._error_audit_events = deque(
+            maxlen=self.max_error_audit_events,
         )
         self._async_callback_rejections_by_operation_id = (
             _BoundedAsyncCallbackRejectionHistory(
@@ -3941,6 +4032,116 @@ class GraphBlocksServerApp:
 
     def auth_audit_events(self) -> tuple[ServerAuthAuditEvent, ...]:
         return tuple(self._auth_audit_events)
+
+    def error_audit_events(self) -> tuple[ServerErrorAuditEvent, ...]:
+        return tuple(self._error_audit_events)
+
+    def _record_server_error(
+        self,
+        *,
+        method: str,
+        route: str,
+        operation: str,
+        status_code: int,
+        error_code: str,
+        error: BaseException,
+    ) -> str:
+        try:
+            correlation_id = self.error_correlation_id_factory()
+            correlation_id = _validate_exact_non_empty_string(
+                "server error correlation",
+                "correlation_id",
+                correlation_id,
+            )
+            if (
+                len(correlation_id.encode("utf-8"))
+                > MAX_SERVER_ERROR_CORRELATION_ID_BYTES
+            ):
+                raise ValueError("server error correlation_id exceeds byte limit")
+        except Exception:
+            correlation_id = str(uuid4())
+
+        error_type = type(error)
+        failure_type = f"{error_type.__module__}.{error_type.__qualname__}"
+        failure_type_bytes = failure_type.encode("utf-8", errors="backslashreplace")
+        if (
+            failure_type_bytes.decode("utf-8") != failure_type
+            or len(failure_type_bytes) > MAX_SERVER_AUTH_AUDIT_FAILURE_TYPE_BYTES
+        ):
+            failure_type = "sha256:" + hashlib.sha256(failure_type_bytes).hexdigest()
+        try:
+            failure_detail = str(error)
+        except Exception:
+            failure_detail = "unprintable-exception"
+        failure_detail_bytes = failure_detail.encode(
+            "utf-8",
+            errors="backslashreplace",
+        )
+        if (
+            failure_detail_bytes.decode("utf-8") != failure_detail
+            or not failure_detail
+            or failure_detail != failure_detail.strip()
+            or len(failure_detail_bytes) > MAX_SERVER_ERROR_FAILURE_DETAIL_BYTES
+        ):
+            failure_detail = (
+                "sha256:" + hashlib.sha256(failure_detail_bytes).hexdigest()
+            )
+
+        event = ServerErrorAuditEvent(
+            method=method,
+            route=route,
+            operation=operation,
+            status_code=status_code,
+            error_code=error_code,
+            correlation_id=correlation_id,
+            failure_type=failure_type,
+            failure_detail=failure_detail,
+            observed_at=_utc_now_iso(),
+        )
+        self._error_audit_events.append(event)
+        if self.error_audit_hook is not None:
+            try:
+                self.error_audit_hook(event)
+            except Exception:
+                pass
+        return correlation_id
+
+    def _safe_error_response(
+        self,
+        request: ServerRequest | ServerRequestHead,
+        route_match: ServerRouteMatch | None,
+        *,
+        status_code: int,
+        error_code: str,
+        message: str,
+        error: BaseException,
+    ) -> ServerResponse:
+        correlation_id = self._record_server_error(
+            method=request.method,
+            route=(
+                route_match.endpoint.path
+                if route_match is not None
+                else request.path
+            ),
+            operation=(
+                route_match.endpoint.operation
+                if route_match is not None
+                else "route_lookup"
+            ),
+            status_code=status_code,
+            error_code=error_code,
+            error=error,
+        )
+        return ServerResponse.json(
+            status_code,
+            {
+                "ok": False,
+                "errorCode": error_code,
+                "message": message,
+                "correlationId": correlation_id,
+            },
+            headers={"x-correlation-id": correlation_id},
+        )
 
     def _principal_can_access_run(
         self,
@@ -4504,24 +4705,26 @@ class GraphBlocksServerApp:
             )
         except _ServerRequestBodyLengthMismatchError as error:
             abort_body()
-            return ServerResponse.json(
-                400,
-                {
-                    "ok": False,
-                    "error": str(error),
-                },
+            return self._safe_error_response(
+                request,
+                route_match,
+                status_code=400,
+                error_code="server.request.invalid_framing",
+                message="The request body framing is invalid.",
+                error=error,
             )
         except Exception:
             abort_body()
             raise
 
         if route_error is not None:
-            return ServerResponse.json(
-                404,
-                {
-                    "ok": False,
-                    "error": str(route_error),
-                },
+            return self._safe_error_response(
+                request,
+                None,
+                status_code=404,
+                error_code="server.route.not_found",
+                message="The requested endpoint was not found.",
+                error=route_error,
             )
         return self.handle(
             ServerRequest(
@@ -4547,12 +4750,13 @@ class GraphBlocksServerApp:
             route_match = self._match_request_route(request)
             route = route_match.endpoint
         except ServerRouteNotFoundError as error:
-            return ServerResponse.json(
-                404,
-                {
-                    "ok": False,
-                    "error": str(error),
-                },
+            return self._safe_error_response(
+                request,
+                None,
+                status_code=404,
+                error_code="server.route.not_found",
+                message="The requested endpoint was not found.",
+                error=error,
             )
 
         max_body_bytes = self._request_body_limit(route)
@@ -4599,12 +4803,22 @@ class GraphBlocksServerApp:
             else None
         )
         if handler is not None:
-            return handler(
-                self,
-                request,
-                route_match,
-                auth_decision,
-            )
+            try:
+                return handler(
+                    self,
+                    request,
+                    route_match,
+                    auth_decision,
+                )
+            except Exception as error:
+                return self._safe_error_response(
+                    request,
+                    route_match,
+                    status_code=500,
+                    error_code="server.operation.failed",
+                    message="The server could not complete the request.",
+                    error=error,
+                )
         return ServerResponse.json(
             501,
             {
@@ -5453,12 +5667,22 @@ class GraphBlocksServerApp:
                     ] = reservation_candidate
                     accepted_run_reservation = reservation_candidate
 
-                block_catalog = self.registry.compilation_catalog()
-                plan = (
-                    compile_graph(graph, block_catalog=block_catalog)
-                    if block_catalog is not None
-                    else compile_graph(graph)
-                )
+                try:
+                    block_catalog = self.registry.compilation_catalog()
+                    plan = (
+                        compile_graph(graph, block_catalog=block_catalog)
+                        if block_catalog is not None
+                        else compile_graph(graph)
+                    )
+                except Exception as error:
+                    return self._safe_error_response(
+                        request,
+                        route_match,
+                        status_code=500,
+                        error_code="server.run.compilation_failed",
+                        message="The run could not be compiled.",
+                        error=error,
+                    )
                 plan_errors = [
                     item
                     for item in plan.diagnostics.diagnostics
@@ -5622,30 +5846,39 @@ class GraphBlocksServerApp:
                                 units=admission_units,
                             )
                         except AdmissionQueueFullError as error:
-                            return ServerResponse.json(
-                                429,
-                                {
-                                    "ok": False,
-                                    "runId": run_id,
-                                    "limiterId": error.limiter_id,
-                                    "error": str(error),
-                                },
+                            return self._safe_error_response(
+                                request,
+                                route_match,
+                                status_code=429,
+                                error_code="server.admission.capacity_exhausted",
+                                message="Run admission capacity is exhausted.",
+                                error=error,
                             )
                         except AdmissionIdempotencyConflictError as error:
-                            return ServerResponse.json(
-                                409,
-                                {
-                                    "ok": False,
-                                    "runId": run_id,
-                                    "error": str(error),
-                                },
+                            return self._safe_error_response(
+                                request,
+                                route_match,
+                                status_code=409,
+                                error_code="server.admission.idempotency_conflict",
+                                message="The admission request conflicts with an existing request.",
+                                error=error,
                             )
                         admission_ticket = submission.ticket
-                        self._record_run_authorization(
-                            run_id,
-                            auth_decision.principal,
-                            occurred_at,
-                        )
+                        try:
+                            self._record_run_authorization(
+                                run_id,
+                                auth_decision.principal,
+                                occurred_at,
+                            )
+                        except Exception as error:
+                            return self._safe_error_response(
+                                request,
+                                route_match,
+                                status_code=500,
+                                error_code="server.run.persistence_failed",
+                                message="The run could not be persisted.",
+                                error=error,
+                            )
                         self._events_by_run_id[run_id] = ()
                         self._pending_accepted_runs_by_run_id[run_id] = pending_run
                         self._accepted_run_executions_by_run_id[
@@ -5666,32 +5899,26 @@ class GraphBlocksServerApp:
                         executor_probe = self.accepted_run_executor.submit(
                             get_ident
                         )
-                    except RuntimeError as error:
-                        return ServerResponse.json(
-                            503,
-                            {
-                                "ok": False,
-                                "runId": run_id,
-                                "error": (
-                                    "accepted run executor rejected work: "
-                                    f"{error}"
-                                ),
-                            },
+                    except Exception as error:
+                        return self._safe_error_response(
+                            request,
+                            route_match,
+                            status_code=503,
+                            error_code="server.accepted_run.executor_unavailable",
+                            message="Accepted-run execution is unavailable.",
+                            error=error,
                         )
                     if executor_probe.done():
                         try:
                             executor_thread_id = executor_probe.result()
                         except Exception as error:
-                            return ServerResponse.json(
-                                503,
-                                {
-                                    "ok": False,
-                                    "runId": run_id,
-                                    "error": (
-                                        "accepted run executor rejected work: "
-                                        f"{error}"
-                                    ),
-                                },
+                            return self._safe_error_response(
+                                request,
+                                route_match,
+                                status_code=503,
+                                error_code="server.accepted_run.executor_unavailable",
+                                message="Accepted-run execution is unavailable.",
+                                error=error,
                             )
                         if executor_thread_id == get_ident():
                             return ServerResponse.json(
@@ -5713,17 +5940,14 @@ class GraphBlocksServerApp:
                                 accepted_run_execution.admission_reservation_id
                             ),
                         )
-                    except RuntimeError as error:
-                        return ServerResponse.json(
-                            503,
-                            {
-                                "ok": False,
-                                "runId": run_id,
-                                "error": (
-                                    "accepted run executor rejected work: "
-                                    f"{error}"
-                                ),
-                            },
+                    except Exception as error:
+                        return self._safe_error_response(
+                            request,
+                            route_match,
+                            status_code=503,
+                            error_code="server.accepted_run.executor_unavailable",
+                            message="Accepted-run execution is unavailable.",
+                            error=error,
                         )
                     with self._accepted_run_condition:
                         if (
@@ -5736,11 +5960,21 @@ class GraphBlocksServerApp:
                                 f"run {run_id!r} admission reservation changed"
                             )
                         assert frozen_start_event is not None
-                        self._record_run_authorization(
-                            run_id,
-                            auth_decision.principal,
-                            occurred_at,
-                        )
+                        try:
+                            self._record_run_authorization(
+                                run_id,
+                                auth_decision.principal,
+                                occurred_at,
+                            )
+                        except Exception as error:
+                            return self._safe_error_response(
+                                request,
+                                route_match,
+                                status_code=500,
+                                error_code="server.run.persistence_failed",
+                                message="The run could not be persisted.",
+                                error=error,
+                            )
                         self._events_by_run_id[run_id] = (
                             frozen_start_event,
                         )
@@ -5767,11 +6001,21 @@ class GraphBlocksServerApp:
                                 f"run {run_id!r} admission reservation changed"
                             )
                         assert frozen_start_event is not None
-                        self._record_run_authorization(
-                            run_id,
-                            auth_decision.principal,
-                            occurred_at,
-                        )
+                        try:
+                            self._record_run_authorization(
+                                run_id,
+                                auth_decision.principal,
+                                occurred_at,
+                            )
+                        except Exception as error:
+                            return self._safe_error_response(
+                                request,
+                                route_match,
+                                status_code=500,
+                                error_code="server.run.persistence_failed",
+                                message="The run could not be persisted.",
+                                error=error,
+                            )
                         self._events_by_run_id[run_id] = (frozen_start_event,)
                         self._pending_accepted_runs_by_run_id[run_id] = pending_run
                         self._accepted_run_executions_by_run_id[
@@ -5824,12 +6068,13 @@ class GraphBlocksServerApp:
                     },
                 )
             except (KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
-                return ServerResponse.json(
-                    400,
-                    {
-                        "ok": False,
-                        "error": str(error),
-                    },
+                return self._safe_error_response(
+                    request,
+                    route_match,
+                    status_code=400,
+                    error_code="server.run.invalid_request",
+                    message="The run request is invalid.",
+                    error=error,
                 )
             finally:
                 if accepted_run_reservation is not None:
@@ -5979,12 +6224,13 @@ class GraphBlocksServerApp:
                         },
                     )
             except ValueError as error:
-                return ServerResponse.json(
-                    400,
-                    {
-                        "ok": False,
-                        "error": str(error),
-                    },
+                return self._safe_error_response(
+                    request,
+                    route_match,
+                    status_code=400,
+                    error_code="server.events.invalid_request",
+                    message="The event request is invalid.",
+                    error=error,
                 )
             page_candidates: list[tuple[dict[str, object], str]] = []
             for candidate_event in events:
@@ -6247,12 +6493,13 @@ class GraphBlocksServerApp:
                         },
                     )
             except ValueError as error:
-                return ServerResponse.json(
-                    400,
-                    {
-                        "ok": False,
-                        "error": str(error),
-                    },
+                return self._safe_error_response(
+                    request,
+                    route_match,
+                    status_code=400,
+                    error_code="server.application_stream.invalid_request",
+                    message="The application stream request is invalid.",
+                    error=error,
                 )
 
             page_candidates: list[tuple[dict[str, object], str]] = []
@@ -7122,14 +7369,13 @@ class GraphBlocksServerApp:
                             checkpoint,
                         )
                     except Exception as error:
-                        return ServerResponse.json(
-                            403,
-                            {
-                                "ok": False,
-                                "operationId": submission.operation_id,
-                                "runId": submission.run_id,
-                                "error": f"async callback resume admission failed: {error}",
-                            },
+                        return self._safe_error_response(
+                            request,
+                            route_match,
+                            status_code=403,
+                            error_code="server.callback.resume_admission_denied",
+                            message="Callback resume admission was denied.",
+                            error=error,
                         )
                     required_admission = {
                         "schema_validated",
@@ -7244,18 +7490,25 @@ class GraphBlocksServerApp:
                                 )
                             )
                         )
-                    except RuntimeError as error:
+                    except Exception as error:
                         resumable_execution.resume_dispatch_pending = False
+                        correlation_id = self._record_server_error(
+                            method=request.method,
+                            route=route.path,
+                            operation=route.operation,
+                            status_code=503,
+                            error_code="server.callback.resume_executor_unavailable",
+                            error=error,
+                        )
                         paused_record = _freeze_json_value(
                             "run control record",
                             "record",
                             {
                                 "operation": "resume_run",
                                 "status": "paused_callback_delivery",
-                                "reason": (
-                                    "accepted run executor rejected callback resume: "
-                                    f"{error}"
-                                ),
+                                "reason": "Accepted-run callback resume is unavailable.",
+                                "errorCode": "server.callback.resume_executor_unavailable",
+                                "correlationId": correlation_id,
                                 "occurredAt": submission.received_at,
                                 "lastCursor": (
                                     f"{submission.run_id}:"
@@ -7370,12 +7623,13 @@ class GraphBlocksServerApp:
                         )
                     except (TypeError, ValueError, json.JSONDecodeError):
                         pass
-                return ServerResponse.json(
-                    400,
-                    {
-                        "ok": False,
-                        "error": str(error),
-                    },
+                return self._safe_error_response(
+                    request,
+                    route_match,
+                    status_code=400,
+                    error_code="server.callback.invalid_request",
+                    message="The callback request is invalid.",
+                    error=error,
                 )
             finally:
                 if callback_state_locked:
@@ -7766,12 +8020,13 @@ class GraphBlocksServerApp:
                     registration.response_payload(replayed_events, last_cursor, delivery_results),
                 )
             except (TypeError, ValueError, json.JSONDecodeError) as error:
-                return ServerResponse.json(
-                    400,
-                    {
-                        "ok": False,
-                        "error": str(error),
-                    },
+                return self._safe_error_response(
+                    request,
+                    route_match,
+                    status_code=400,
+                    error_code="server.callback_registration.invalid_request",
+                    message="The callback registration request is invalid.",
+                    error=error,
                 )
             finally:
                 if (
@@ -7875,20 +8130,22 @@ class GraphBlocksServerApp:
                     idempotency_key=idempotency_key,
                 )
             except PermissionError as error:
-                return ServerResponse.json(
-                    403,
-                    {
-                        "ok": False,
-                        "error": str(error),
-                    },
+                return self._safe_error_response(
+                    request,
+                    route_match,
+                    status_code=403,
+                    error_code="server.callback_delivery.forbidden",
+                    message="The callback delivery operation is not permitted.",
+                    error=error,
                 )
             except (TypeError, ValueError, json.JSONDecodeError) as error:
-                return ServerResponse.json(
-                    400,
-                    {
-                        "ok": False,
-                        "error": str(error),
-                    },
+                return self._safe_error_response(
+                    request,
+                    route_match,
+                    status_code=400,
+                    error_code="server.callback_delivery.invalid_request",
+                    message="The callback delivery request is invalid.",
+                    error=error,
                 )
         return ServerResponse.json(
             501,
@@ -8058,12 +8315,13 @@ class GraphBlocksServerApp:
                     subscription.response_payload(replay, f"{run_id}:{self._last_event_sequence(events)}"),
                 )
             except (TypeError, ValueError, json.JSONDecodeError) as error:
-                return ServerResponse.json(
-                    400,
-                    {
-                        "ok": False,
-                        "error": str(error),
-                    },
+                return self._safe_error_response(
+                    request,
+                    route_match,
+                    status_code=400,
+                    error_code="server.subscription.invalid_request",
+                    message="The subscription request is invalid.",
+                    error=error,
                 )
         if route.operation == "unsubscribe_events":
             run_id = route_match.path_params.get("run_id", "")
@@ -8211,12 +8469,13 @@ class GraphBlocksServerApp:
                         request.requested_at or _utc_now_iso(),
                     )
             except (TypeError, ValueError, json.JSONDecodeError) as error:
-                return ServerResponse.json(
-                    400,
-                    {
-                        "ok": False,
-                        "error": str(error),
-                    },
+                return self._safe_error_response(
+                    request,
+                    route_match,
+                    status_code=400,
+                    error_code="server.subscription_ack.invalid_request",
+                    message="The subscription acknowledgement request is invalid.",
+                    error=error,
                 )
         return ServerResponse.json(
             501,
@@ -8336,12 +8595,13 @@ class GraphBlocksServerApp:
                     else None
                 )
             except (TypeError, ValueError) as error:
-                return ServerResponse.json(
-                    400,
-                    {
-                        "ok": False,
-                        "error": str(error),
-                    },
+                return self._safe_error_response(
+                    request,
+                    route_match,
+                    status_code=400,
+                    error_code="server.run_list.invalid_request",
+                    message="The run-list request is invalid.",
+                    error=error,
                 )
             return ServerResponse.json(
                 200,
@@ -8368,22 +8628,22 @@ class GraphBlocksServerApp:
                     },
                 )
             except _ServerRunDeletionConflictError as error:
-                return ServerResponse.json(
-                    409,
-                    {
-                        "ok": False,
-                        "runId": error.run_id,
-                        "state": error.state,
-                        "error": str(error),
-                    },
+                return self._safe_error_response(
+                    request,
+                    route_match,
+                    status_code=409,
+                    error_code="server.run.delete_conflict",
+                    message="The run cannot be deleted in its current state.",
+                    error=error,
                 )
             except ValueError as error:
-                return ServerResponse.json(
-                    400,
-                    {
-                        "ok": False,
-                        "error": str(error),
-                    },
+                return self._safe_error_response(
+                    request,
+                    route_match,
+                    status_code=400,
+                    error_code="server.run_delete.invalid_request",
+                    message="The run deletion request is invalid.",
+                    error=error,
                 )
             return ServerResponse.json(
                 200 if payload["duplicate"] else 202,
@@ -8430,12 +8690,13 @@ class GraphBlocksServerApp:
                         auth_decision.principal,
                     )
             except (TypeError, ValueError, json.JSONDecodeError) as error:
-                return ServerResponse.json(
-                    400,
-                    {
-                        "ok": False,
-                        "error": str(error),
-                    },
+                return self._safe_error_response(
+                    request,
+                    route_match,
+                    status_code=400,
+                    error_code="server.run_control.invalid_request",
+                    message="The run control request is invalid.",
+                    error=error,
                 )
         if route.operation == "get_run_status":
             run_id = route_match.path_params.get("run_id", "")
@@ -8459,12 +8720,13 @@ class GraphBlocksServerApp:
             try:
                 return ServerResponse.json(200, self._run_status_payload(run_id, events))
             except (TypeError, ValueError) as error:
-                return ServerResponse.json(
-                    400,
-                    {
-                        "ok": False,
-                        "error": str(error),
-                    },
+                return self._safe_error_response(
+                    request,
+                    route_match,
+                    status_code=500,
+                    error_code="server.run_status.projection_failed",
+                    message="The run status is temporarily unavailable.",
+                    error=error,
                 )
         if route.operation == "attach_to_run":
             try:
@@ -8494,12 +8756,13 @@ class GraphBlocksServerApp:
                     raise ValueError("attach request body must be a JSON object")
                 return self._attach_to_run_response(run_id, events, payload, auth_decision.principal)
             except (TypeError, ValueError, json.JSONDecodeError) as error:
-                return ServerResponse.json(
-                    400,
-                    {
-                        "ok": False,
-                        "error": str(error),
-                    },
+                return self._safe_error_response(
+                    request,
+                    route_match,
+                    status_code=400,
+                    error_code="server.run_attach.invalid_request",
+                    message="The run attach request is invalid.",
+                    error=error,
                 )
         if route.operation == "detach_from_run":
             try:
@@ -8553,12 +8816,13 @@ class GraphBlocksServerApp:
                         request.requested_at or _utc_now_iso(),
                     )
             except (TypeError, ValueError, json.JSONDecodeError) as error:
-                return ServerResponse.json(
-                    400,
-                    {
-                        "ok": False,
-                        "error": str(error),
-                    },
+                return self._safe_error_response(
+                    request,
+                    route_match,
+                    status_code=400,
+                    error_code="server.run_detach.invalid_request",
+                    message="The run detach request is invalid.",
+                    error=error,
                 )
         return ServerResponse.json(
             501,
@@ -8743,11 +9007,24 @@ class GraphBlocksServerApp:
             execution.resume_dispatch_pending = False
             if future.cancelled():
                 reason = "accepted run callback resume dispatch was cancelled before claim"
+                failure_metadata: dict[str, object] = {}
             else:
                 error = future.exception()
                 if error is None:
                     return
-                reason = f"accepted run callback resume failed before claim: {error}"
+                correlation_id = self._record_server_error(
+                    method="INTERNAL",
+                    route="/runs/{run_id}/resume",
+                    operation="resume_run",
+                    status_code=503,
+                    error_code="server.callback.resume_dispatch_failed",
+                    error=error,
+                )
+                reason = "Accepted-run callback resume failed before claim."
+                failure_metadata = {
+                    "errorCode": "server.callback.resume_dispatch_failed",
+                    "correlationId": correlation_id,
+                }
             events = self._events_by_run_id.get(run_id, ())
             pause_at = _utc_now_iso()
             pause_datetime = datetime.fromisoformat(
@@ -8786,18 +9063,20 @@ class GraphBlocksServerApp:
                 if pause_datetime < floor_datetime:
                     pause_at = timestamp_floor
                     pause_datetime = floor_datetime
+            paused_record_payload: dict[str, object] = {
+                "operation": "resume_run",
+                "status": "paused_callback_delivery",
+                "reason": reason,
+                "occurredAt": pause_at,
+                "lastCursor": (
+                    f"{run_id}:{self._last_event_sequence(events)}"
+                ),
+            }
+            paused_record_payload.update(failure_metadata)
             paused_record = _freeze_json_value(
                 "run control record",
                 "record",
-                {
-                    "operation": "resume_run",
-                    "status": "paused_callback_delivery",
-                    "reason": reason,
-                    "occurredAt": pause_at,
-                    "lastCursor": (
-                        f"{run_id}:{self._last_event_sequence(events)}"
-                    ),
-                },
+                paused_record_payload,
             )
             assert isinstance(paused_record, Mapping)
             if (
@@ -9181,10 +9460,20 @@ class GraphBlocksServerApp:
             except Exception as error:
                 result_status = "failed"
                 result_outputs = {}
+                correlation_id = self._record_server_error(
+                    method="INTERNAL",
+                    route="/runs/{run_id}",
+                    operation="execute_accepted_run",
+                    status_code=500,
+                    error_code="server.accepted_run.execution_failed",
+                    error=error,
+                )
                 terminal_payload = {
                     "status": "failed",
                     "outputs": {},
-                    "error": str(error),
+                    "errorCode": "server.accepted_run.execution_failed",
+                    "message": "Accepted-run execution failed.",
+                    "correlationId": correlation_id,
                 }
 
             retained_state_kind = "result"
@@ -9220,10 +9509,20 @@ class GraphBlocksServerApp:
             except Exception as error:
                 result_status = "failed"
                 result_outputs = {}
+                correlation_id = self._record_server_error(
+                    method="INTERNAL",
+                    route="/runs/{run_id}",
+                    operation="retain_accepted_run_state",
+                    status_code=500,
+                    error_code="server.accepted_run.state_encoding_failed",
+                    error=error,
+                )
                 terminal_payload = {
                     "status": "failed",
                     "outputs": {},
-                    "error": str(error),
+                    "errorCode": "server.accepted_run.state_encoding_failed",
+                    "message": "Accepted-run state retention failed.",
+                    "correlationId": correlation_id,
                 }
                 retained_state_kind = "result"
                 retained_state_limit = (
@@ -10289,19 +10588,26 @@ class GraphBlocksServerApp:
                             )
                         )
                     )
-            except RuntimeError as error:
+            except Exception as error:
                 if checkpoint_execution is not None:
                     checkpoint_execution.resume_dispatch_pending = False
+                correlation_id = self._record_server_error(
+                    method="POST",
+                    route="/runs/{run_id}/resume",
+                    operation="resume_run",
+                    status_code=503,
+                    error_code="server.accepted_run.executor_unavailable",
+                    error=error,
+                )
                 return ServerResponse.json(
                     503,
                     {
                         "ok": False,
-                        "runId": run_id,
-                        "error": (
-                            "accepted run executor rejected resumed work: "
-                            f"{error}"
-                        ),
+                        "errorCode": "server.accepted_run.executor_unavailable",
+                        "message": "Accepted-run execution is unavailable.",
+                        "correlationId": correlation_id,
                     },
+                    headers={"x-correlation-id": correlation_id},
                 )
         self._record_run_control(run_id, record)
         self._accepted_run_condition.notify_all()

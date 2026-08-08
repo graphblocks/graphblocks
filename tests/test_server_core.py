@@ -28,6 +28,8 @@ import graphblocks
 import graphblocks.server as graphblocks_server
 import pytest
 
+from _server_error_assertions import assert_safe_server_error
+
 from graphblocks.compiler import compile_graph_reference
 from graphblocks.policy import PrincipalRef
 from graphblocks.runtime import RuntimeRegistry
@@ -2832,10 +2834,7 @@ def test_server_app_rejects_non_standard_request_json_constants() -> None:
     )
 
     assert response.status_code == 400
-    assert json.loads(response.body.decode("utf-8")) == {
-        "ok": False,
-        "error": "run request body must be valid JSON",
-    }
+    assert_safe_server_error(response, 'server.run.invalid_request')
 
 
 @pytest.mark.parametrize(
@@ -3457,10 +3456,7 @@ def test_server_stream_ingress_rejects_content_length_mismatch_before_parsing(
     )
 
     assert response.status_code == 400
-    assert json.loads(response.body) == {
-        "ok": False,
-        "error": "server request content-length must match body length",
-    }
+    assert_safe_server_error(response, 'server.request.invalid_framing')
     assert abort_calls == [None]
     assert parser_calls == 0
 
@@ -3481,10 +3477,7 @@ def test_server_app_rejects_non_unicode_request_json_strings() -> None:
     )
 
     assert response.status_code == 400
-    assert json.loads(response.body.decode("utf-8")) == {
-        "ok": False,
-        "error": "run request body must be valid JSON",
-    }
+    assert_safe_server_error(response, 'server.run.invalid_request')
 
 
 @pytest.mark.parametrize("field_name", ["runId", "policySnapshotId"])
@@ -3511,10 +3504,7 @@ def test_server_app_rejects_duplicate_security_sensitive_request_keys(
     )
 
     assert response.status_code == 400
-    assert json.loads(response.body.decode("utf-8")) == {
-        "ok": False,
-        "error": "run request body must be valid JSON",
-    }
+    assert_safe_server_error(response, 'server.run.invalid_request')
 
 
 @pytest.mark.parametrize(
@@ -3555,9 +3545,7 @@ def test_server_app_rejects_conflicting_run_request_field_aliases(
     )
 
     assert response.status_code == 400
-    assert "multiple field aliases" in json.loads(
-        response.body.decode("utf-8")
-    )["error"]
+    assert_safe_server_error(response, 'server.run.invalid_request')
 
 
 def test_server_subscription_boundaries_reject_conflicting_aliases() -> None:
@@ -3635,10 +3623,7 @@ def test_server_app_rejects_excessively_nested_request_json() -> None:
     )
 
     assert response.status_code == 400
-    assert json.loads(response.body.decode("utf-8")) == {
-        "ok": False,
-        "error": "run request body must be valid JSON",
-    }
+    assert_safe_server_error(response, 'server.run.invalid_request')
 
 
 def test_server_app_accepts_request_json_at_the_nesting_limit() -> None:
@@ -3661,10 +3646,7 @@ def test_server_app_accepts_request_json_at_the_nesting_limit() -> None:
     )
 
     assert response.status_code == 400
-    assert json.loads(response.body.decode("utf-8")) == {
-        "ok": False,
-        "error": "run request body requires graph object",
-    }
+    assert_safe_server_error(response, 'server.run.invalid_request')
 
 
 @pytest.mark.parametrize("response_mode", ("accepted", "background"))
@@ -5328,11 +5310,7 @@ def test_server_app_executor_rejection_does_not_leave_ghost_run() -> None:
     )
 
     assert response.status_code == 503
-    assert json.loads(response.body.decode("utf-8")) == {
-        "ok": False,
-        "runId": "run-rejected-background-1",
-        "error": "accepted run executor rejected work: worker pool is shut down",
-    }
+    assert_safe_server_error(response, 'server.accepted_run.executor_unavailable')
     assert app.pending_accepted_run_ids() == ()
     assert "run-rejected-background-1" not in app._events_by_run_id
 
@@ -6118,9 +6096,7 @@ def test_server_app_deferred_advance_waits_for_resume_after_pause() -> None:
     }
     assert app.pending_accepted_run_ids() == ()
     assert regressive_resume.status_code == 400
-    assert "latest run control" in json.loads(
-        regressive_resume.body.decode("utf-8")
-    )["error"]
+    assert_safe_server_error(regressive_resume, 'server.run_control.invalid_request')
     assert resumed.status_code == 202
     assert completed["status"] == "succeeded"
 
@@ -6175,10 +6151,16 @@ def test_server_app_records_runtime_exception_as_terminal_failure(
         "RunStarted",
         "RunFailed",
     ]
-    assert (
-        app._events_by_run_id[run_id][-1]["payload"]["error"]
-        == "'missing'"
-    )
+    failure = app._events_by_run_id[run_id][-1]["payload"]
+    assert failure == {
+        "status": "failed",
+        "outputs": {},
+        "errorCode": "server.accepted_run.execution_failed",
+        "message": "Accepted-run execution failed.",
+        "correlationId": failure["correlationId"],
+    }
+    assert app.error_audit_events()[-1].correlation_id == failure["correlationId"]
+    assert app.error_audit_events()[-1].failure_detail == "'missing'"
 
 
 def test_server_app_records_non_json_runtime_output_without_reexecution() -> None:
@@ -6454,10 +6436,7 @@ def test_server_app_terminal_control_rejects_timestamp_before_deferred_run_start
     )
 
     assert controlled.status_code == 400
-    assert json.loads(controlled.body.decode("utf-8")) == {
-        "ok": False,
-        "error": "run control request occurred_at must not be before run start",
-    }
+    assert_safe_server_error(controlled, 'server.run_control.invalid_request')
     assert app.pending_accepted_run_ids() == (
         "run-deferred-control-timestamp-1",
     )
@@ -6641,10 +6620,7 @@ def test_server_app_rejects_invoke_graph_whitespace_wrapped_metadata(
     )
 
     assert response.status_code == 400
-    assert json.loads(response.body.decode("utf-8")) == {
-        "ok": False,
-        "error": expected_error,
-    }
+    assert_safe_server_error(response, 'server.run.invalid_request')
 
 
 def test_server_app_rejects_duplicate_invoke_run_id_without_overwriting_events() -> None:
@@ -6986,7 +6962,8 @@ def test_server_app_rejects_stale_worker_after_compile_reservation_retry(
         response_id="response-stale-compile-worker-retried",
     )
 
-    assert failed.status_code == 400
+    assert failed.status_code == 500
+    assert_safe_server_error(failed, "server.run.persistence_failed")
     assert retried.status_code == 202
     assert len(executor.tasks) == 2
     stale_worker, stale_args, stale_kwargs = executor.tasks[0]
@@ -7117,11 +7094,8 @@ def test_server_app_releases_compile_reservation_after_failure(
         response_id="response-compile-retry-succeeded",
     )
 
-    assert failed.status_code == 400
-    assert json.loads(failed.body) == {
-        "ok": False,
-        "error": "synthetic graph compilation failure",
-    }
+    assert failed.status_code == 500
+    assert_safe_server_error(failed, 'server.run.compilation_failed')
     assert retried.status_code == 202
     assert compile_calls == 2
     assert app._accepted_run_reservations_by_run_id == {}
@@ -7286,11 +7260,8 @@ def test_server_app_releases_tenant_reservation_after_executor_failure() -> None
         token="alice-token",
     )
 
-    assert failed.status_code == 400
-    assert json.loads(failed.body.decode("utf-8")) == {
-        "ok": False,
-        "error": "executor failed unexpectedly",
-    }
+    assert failed.status_code == 503
+    assert_safe_server_error(failed, 'server.accepted_run.executor_unavailable')
     assert app._accepted_run_reservations_by_run_id == {}
     assert app._events_by_run_id == {}
 
@@ -7345,12 +7316,7 @@ def test_server_app_deletes_only_owner_visible_terminal_runs_and_reclaims_capaci
 
     assert completed.status_code == 200
     assert too_early.status_code == 400
-    assert json.loads(too_early.body.decode("utf-8")) == {
-        "ok": False,
-        "error": (
-            "server run deletion deleted_at must not precede run completion"
-        ),
-    }
+    assert_safe_server_error(too_early, 'server.run_delete.invalid_request')
     assert denied.status_code == 404
     assert deleted.status_code == 202
     assert json.loads(deleted.body.decode("utf-8")) == {
@@ -7427,14 +7393,7 @@ def test_server_app_rejects_deletion_while_run_is_non_terminal() -> None:
 
     assert accepted.status_code == 202
     assert rejected.status_code == 409
-    assert json.loads(rejected.body.decode("utf-8")) == {
-        "ok": False,
-        "runId": "run-delete-active-1",
-        "state": "running",
-        "error": (
-            "run 'run-delete-active-1' in state 'running' cannot be deleted"
-        ),
-    }
+    assert_safe_server_error(rejected, 'server.run.delete_conflict')
     assert "run-delete-active-1" in app._events_by_run_id
     assert "run-delete-active-1" not in app._retired_runs_by_run_id
 
@@ -7862,8 +7821,9 @@ def test_server_app_defers_terminal_deletion_during_active_callback_delivery() -
     )
 
     assert blocked.status_code == 409
-    assert json.loads(blocked.body.decode("utf-8"))["state"] == (
-        "callback_delivery_in_progress"
+    assert_safe_server_error(
+        blocked,
+        "server.run.delete_conflict",
     )
     assert registered.status_code == 201
     assert deleted.status_code == 202
@@ -8056,10 +8016,7 @@ def test_server_app_rejects_invoke_graph_with_invalid_occurred_timestamp() -> No
     )
 
     assert response.status_code == 400
-    assert json.loads(response.body.decode("utf-8")) == {
-        "ok": False,
-        "error": "run request occurredAt must be an ISO datetime",
-    }
+    assert_safe_server_error(response, 'server.run.invalid_request')
     status = app.handle(
         ServerRequest(
             method="GET",
@@ -8091,10 +8048,7 @@ def test_server_app_rejects_invoke_graph_with_invalid_occurred_timestamp() -> No
     )
 
     assert compact_offset.status_code == 400
-    assert json.loads(compact_offset.body.decode("utf-8")) == {
-        "ok": False,
-        "error": "run request occurredAt must be an ISO datetime",
-    }
+    assert_safe_server_error(compact_offset, 'server.run.invalid_request')
 
 
 def test_server_app_handles_authenticated_cancel_request() -> None:
@@ -8437,10 +8391,7 @@ def test_server_app_rejects_run_control_for_missing_stream_or_malformed_reason()
     )
 
     assert invalid.status_code == 400
-    assert json.loads(invalid.body.decode("utf-8")) == {
-        "ok": False,
-        "error": "run control request reason must not be empty",
-    }
+    assert_safe_server_error(invalid, 'server.run_control.invalid_request')
 
 
 def test_server_app_rejects_run_control_with_whitespace_wrapped_reason() -> None:
@@ -8477,10 +8428,7 @@ def test_server_app_rejects_run_control_with_whitespace_wrapped_reason() -> None
     )
 
     assert response.status_code == 400
-    assert json.loads(response.body.decode("utf-8")) == {
-        "ok": False,
-        "error": "run control request reason must not contain surrounding whitespace",
-    }
+    assert_safe_server_error(response, 'server.run_control.invalid_request')
     assert app.run_controls("run-control-whitespace-reason-1") == ()
 
 
@@ -8518,10 +8466,7 @@ def test_server_app_rejects_run_control_with_invalid_timestamp() -> None:
     )
 
     assert response.status_code == 400
-    assert json.loads(response.body.decode("utf-8")) == {
-        "ok": False,
-        "error": "run control request occurred_at must be an ISO datetime",
-    }
+    assert_safe_server_error(response, 'server.run_control.invalid_request')
     assert app.run_controls("run-control-invalid-time-1") == ()
 
 
@@ -9347,10 +9292,7 @@ def test_server_app_rejects_async_callback_operation_id_mismatch() -> None:
     )
 
     assert response.status_code == 400
-    assert json.loads(response.body.decode("utf-8")) == {
-        "ok": False,
-        "error": "server async callback operation_id must match callback endpoint operation_id",
-    }
+    assert_safe_server_error(response, 'server.callback.invalid_request')
     assert app.callback_submissions("op-ci-path") == ()
     assert app.callback_submissions("op-ci-body") == ()
     assert app.async_callback_rejections("op-ci-path") == (
@@ -10324,7 +10266,7 @@ def test_server_app_rejects_async_callback_with_whitespace_wrapped_required_iden
         )
 
         assert response.status_code == 400
-        assert json.loads(response.body.decode("utf-8")) == {"ok": False, "error": expected_error}
+        assert_safe_server_error(response, 'server.callback.invalid_request')
         assert app.callback_submissions("op-ci-1") == ()
         assert app.async_callback_rejections("op-ci-1") == ()
 
@@ -10378,7 +10320,7 @@ def test_server_app_rejects_async_callback_with_whitespace_wrapped_scope_fences(
 
         operation_id = f"op-ci-scope-{index}"
         assert response.status_code == 400
-        assert json.loads(response.body.decode("utf-8")) == {"ok": False, "error": expected_error}
+        assert_safe_server_error(response, 'server.callback.invalid_request')
         assert app.callback_submissions(operation_id) == ()
         assert app.async_callback_rejections(operation_id) == ()
 
@@ -12047,10 +11989,7 @@ def test_server_app_rejects_malformed_async_callback_submission() -> None:
     )
 
     assert response.status_code == 400
-    assert json.loads(response.body.decode("utf-8")) == {
-        "ok": False,
-        "error": "server async callback payload must be a JSON object",
-    }
+    assert_safe_server_error(response, 'server.callback.invalid_request')
 
 
 def test_server_app_rejects_async_callback_with_invalid_received_timestamp() -> None:
@@ -12069,10 +12008,7 @@ def test_server_app_rejects_async_callback_with_invalid_received_timestamp() -> 
     )
 
     assert response.status_code == 400
-    assert json.loads(response.body.decode("utf-8")) == {
-        "ok": False,
-        "error": "server async callback received_at must be an ISO datetime",
-    }
+    assert_safe_server_error(response, 'server.callback.invalid_request')
     assert app.callback_submissions("op-ci-invalid-time") == ()
 
     space_separator = app.handle(
@@ -12088,10 +12024,7 @@ def test_server_app_rejects_async_callback_with_invalid_received_timestamp() -> 
     )
 
     assert space_separator.status_code == 400
-    assert json.loads(space_separator.body.decode("utf-8")) == {
-        "ok": False,
-        "error": "server async callback received_at must be an ISO datetime",
-    }
+    assert_safe_server_error(space_separator, 'server.callback.invalid_request')
     assert app.callback_submissions("op-ci-invalid-time") == ()
 
 
@@ -12118,10 +12051,7 @@ def test_server_app_rejects_async_callback_with_invalid_policy_snapshot_id() -> 
     )
 
     assert response.status_code == 400
-    assert json.loads(response.body.decode("utf-8")) == {
-        "ok": False,
-        "error": "server async callback policy_snapshot_id must not be empty",
-    }
+    assert_safe_server_error(response, 'server.callback.invalid_request')
     assert app.callback_submissions("op-ci-invalid-policy") == ()
 
 
@@ -12479,7 +12409,7 @@ def test_server_app_rejects_invalid_event_page_limits(
     )
 
     assert response.status_code == 400
-    assert json.loads(response.body)["error"].startswith("application events ")
+    assert_safe_server_error(response, 'server.events.invalid_request')
 
 
 def test_server_app_run_event_replay_filters_visibility_by_principal() -> None:
@@ -12584,10 +12514,7 @@ def test_server_app_rejects_malformed_stored_event_cursor_query() -> None:
     )
 
     assert response.status_code == 400
-    assert json.loads(response.body.decode("utf-8")) == {
-        "ok": False,
-        "error": "application events cursor must use '<run_id>:<sequence>' with a non-negative integer sequence",
-    }
+    assert_safe_server_error(response, 'server.events.invalid_request')
 
 
 @pytest.mark.parametrize(
@@ -12624,10 +12551,7 @@ def test_server_app_rejects_out_of_domain_stored_event_cursor_query(
     )
 
     assert response.status_code == 400
-    assert json.loads(response.body.decode("utf-8")) == {
-        "ok": False,
-        "error": message,
-    }
+    assert_safe_server_error(response, 'server.events.invalid_request')
 
 
 @pytest.mark.parametrize(
@@ -12667,10 +12591,7 @@ def test_server_app_rejects_stored_event_replay_with_malformed_sequence() -> Non
     )
 
     assert response.status_code == 400
-    assert json.loads(response.body.decode("utf-8")) == {
-        "ok": False,
-        "error": "application events sequence must be an integer",
-    }
+    assert_safe_server_error(response, 'server.events.invalid_request')
 
 
 @pytest.mark.parametrize("sequences", ((1, 1), (2, 1)))
@@ -12707,10 +12628,7 @@ def test_server_app_rejects_non_monotonic_stored_event_sequences(
     )
 
     assert response.status_code == 400
-    assert json.loads(response.body) == {
-        "ok": False,
-        "error": "application events sequence must be strictly increasing",
-    }
+    assert_safe_server_error(response, 'server.events.invalid_request')
 
 
 def test_server_app_reports_stored_event_cursor_expired() -> None:
@@ -12859,11 +12777,8 @@ def test_server_app_rejects_run_status_without_event_timestamps() -> None:
         )
     )
 
-    assert response.status_code == 400
-    assert json.loads(response.body.decode("utf-8")) == {
-        "ok": False,
-        "error": "server run status occurredAt must be an ISO datetime",
-    }
+    assert response.status_code == 500
+    assert_safe_server_error(response, 'server.run_status.projection_failed')
 
 
 def test_server_app_rejects_run_status_with_malformed_event_sequence() -> None:
@@ -12897,11 +12812,8 @@ def test_server_app_rejects_run_status_with_malformed_event_sequence() -> None:
         )
     )
 
-    assert response.status_code == 400
-    assert json.loads(response.body.decode("utf-8")) == {
-        "ok": False,
-        "error": "server run status sequence must be an integer",
-    }
+    assert response.status_code == 500
+    assert_safe_server_error(response, 'server.run_status.projection_failed')
 
 
 def test_server_app_terminal_run_status_overrides_stale_control_projection() -> None:
@@ -13120,10 +13032,7 @@ def test_server_app_paginates_runs_with_principal_scoped_cursors() -> None:
         for run in json.loads(operator_page.body.decode("utf-8"))["runs"]
     ] == ["run-0", "run-1"]
     assert foreign_cursor.status_code == 400
-    assert json.loads(foreign_cursor.body.decode("utf-8")) == {
-        "ok": False,
-        "error": "server run list cursor is invalid for this scope",
-    }
+    assert_safe_server_error(foreign_cursor, 'server.run_list.invalid_request')
 
 
 @pytest.mark.parametrize(
@@ -13157,9 +13066,7 @@ def test_server_app_rejects_invalid_run_list_limits(
     )
 
     assert response.status_code == 400
-    assert "server run list limit" in json.loads(
-        response.body.decode("utf-8")
-    )["error"]
+    assert_safe_server_error(response, 'server.run_list.invalid_request')
 
 
 def test_server_app_bounds_run_projection_work_at_ten_thousand_runs(
@@ -13393,10 +13300,7 @@ def test_server_app_rejects_attach_with_invalid_capabilities() -> None:
         )
 
         assert response.status_code == 400
-        assert json.loads(response.body.decode("utf-8")) == {
-            "ok": False,
-            "error": expected_error,
-        }
+        assert_safe_server_error(response, 'server.run_attach.invalid_request')
 
 
 def test_server_app_rejects_attach_replay_with_malformed_sequence() -> None:
@@ -13426,10 +13330,7 @@ def test_server_app_rejects_attach_replay_with_malformed_sequence() -> None:
     )
 
     assert response.status_code == 400
-    assert json.loads(response.body.decode("utf-8")) == {
-        "ok": False,
-        "error": "attach request sequence must be an integer",
-    }
+    assert_safe_server_error(response, 'server.run_attach.invalid_request')
 
 
 def test_server_app_reports_attach_cursor_expired_for_unknown_cursor() -> None:
@@ -13529,10 +13430,7 @@ def test_server_app_rejects_attach_cursor_for_different_run() -> None:
     )
 
     assert response.status_code == 400
-    assert json.loads(response.body.decode("utf-8")) == {
-        "ok": False,
-        "error": "attach request last_cursor must belong to run 'run-attach-cursor-scope-1'",
-    }
+    assert_safe_server_error(response, 'server.run_attach.invalid_request')
 
 
 def test_server_app_rejects_malformed_attach_cursor() -> None:
@@ -13562,10 +13460,7 @@ def test_server_app_rejects_malformed_attach_cursor() -> None:
     )
 
     assert response.status_code == 400
-    assert json.loads(response.body.decode("utf-8")) == {
-        "ok": False,
-        "error": "attach request last_cursor must use '<run_id>:<sequence>' with a non-negative integer sequence",
-    }
+    assert_safe_server_error(response, 'server.run_attach.invalid_request')
 
 
 def test_server_app_detaches_from_run_without_cancelling_or_dropping_events() -> None:
@@ -13937,10 +13832,7 @@ def test_server_app_rejects_detach_for_missing_run_or_client_id() -> None:
         "error": "run detach stream not found for run 'missing-run'",
     }
     assert malformed.status_code == 400
-    assert json.loads(malformed.body.decode("utf-8")) == {
-        "ok": False,
-        "error": "detach request client_id must not be empty",
-    }
+    assert_safe_server_error(malformed, 'server.run_detach.invalid_request')
 
 
 def test_server_app_rejects_detach_with_whitespace_wrapped_client_id_or_reason() -> None:
@@ -13988,10 +13880,7 @@ def test_server_app_rejects_detach_with_whitespace_wrapped_client_id_or_reason()
         )
 
         assert response.status_code == 400
-        assert json.loads(response.body.decode("utf-8")) == {
-            "ok": False,
-            "error": expected_error,
-        }
+        assert_safe_server_error(response, 'server.run_detach.invalid_request')
         assert app.detachments(f"run-detach-whitespace-{index}") == ()
 
 
@@ -14029,10 +13918,7 @@ def test_server_app_rejects_detach_with_invalid_timestamp() -> None:
     )
 
     assert response.status_code == 400
-    assert json.loads(response.body.decode("utf-8")) == {
-        "ok": False,
-        "error": "detach request detached_at must be an ISO datetime",
-    }
+    assert_safe_server_error(response, 'server.run_detach.invalid_request')
     assert app.detachments("run-detach-invalid-time-1") == ()
 
 
@@ -14070,10 +13956,7 @@ def test_server_app_rejects_detach_when_retained_event_sequence_is_malformed() -
     )
 
     assert response.status_code == 400
-    assert json.loads(response.body.decode("utf-8")) == {
-        "ok": False,
-        "error": "detach request sequence must be an integer",
-    }
+    assert_safe_server_error(response, 'server.run_detach.invalid_request')
     assert app.detachments("run-detach-bool-sequence-1") == ()
 
 
@@ -14734,10 +14617,7 @@ def test_server_app_rejects_impossible_ordered_event_subscription_delivery() -> 
     )
 
     assert response.status_code == 400
-    assert json.loads(response.body.decode("utf-8")) == {
-        "ok": False,
-        "error": "server event subscription delivery.ordering requests ordered delivery on an unsupported target",
-    }
+    assert_safe_server_error(response, 'server.subscription.invalid_request')
     assert app.subscriptions("run-subscribe-ordering-1") == ()
 
 
@@ -15171,10 +15051,7 @@ def test_server_app_rejects_subscription_replay_with_malformed_sequence() -> Non
     )
 
     assert response.status_code == 400
-    assert json.loads(response.body.decode("utf-8")) == {
-        "ok": False,
-        "error": "server event subscription sequence must be an integer",
-    }
+    assert_safe_server_error(response, 'server.subscription.invalid_request')
 
 
 def test_server_app_subscribe_events_reports_cursor_expired() -> None:
@@ -15289,10 +15166,7 @@ def test_server_app_rejects_subscription_replay_cursor_for_different_run() -> No
     )
 
     assert response.status_code == 400
-    assert json.loads(response.body.decode("utf-8")) == {
-        "ok": False,
-        "error": "server event subscription replay_from_cursor must belong to run 'run-subscribe-cursor-scope-1'",
-    }
+    assert_safe_server_error(response, 'server.subscription.invalid_request')
     assert app.subscriptions("run-subscribe-cursor-scope-1") == ()
 
 
@@ -15330,13 +15204,7 @@ def test_server_app_rejects_malformed_subscription_replay_cursor() -> None:
     )
 
     assert response.status_code == 400
-    assert json.loads(response.body.decode("utf-8")) == {
-        "ok": False,
-        "error": (
-            "server event subscription replay_from_cursor must use '<run_id>:<sequence>' "
-            "with a non-negative integer sequence"
-        ),
-    }
+    assert_safe_server_error(response, 'server.subscription.invalid_request')
     assert app.subscriptions("run-subscribe-cursor-format-1") == ()
 
 
@@ -15374,10 +15242,7 @@ def test_server_app_rejects_subscription_with_whitespace_wrapped_replay_cursor()
     )
 
     assert response.status_code == 400
-    assert json.loads(response.body.decode("utf-8")) == {
-        "ok": False,
-        "error": "server event subscription replay_from_cursor must not contain surrounding whitespace",
-    }
+    assert_safe_server_error(response, 'server.subscription.invalid_request')
     assert app.subscriptions("run-subscribe-cursor-whitespace-1") == ()
 
 
@@ -15434,10 +15299,7 @@ def test_server_app_rejects_subscription_without_delivery_kind() -> None:
     )
 
     assert response.status_code == 400
-    assert json.loads(response.body.decode("utf-8")) == {
-        "ok": False,
-        "error": "server event subscription delivery.kind must not be empty",
-    }
+    assert_safe_server_error(response, 'server.subscription.invalid_request')
     assert app.subscriptions("run-subscribe-invalid-1") == ()
 
 
@@ -15469,10 +15331,7 @@ def test_server_app_rejects_subscription_with_invalid_failure_policy() -> None:
     )
 
     assert response.status_code == 400
-    assert json.loads(response.body.decode("utf-8")) == {
-        "ok": False,
-        "error": "server subscription failure_policy must be one of best_effort, retry_then_dead_letter, pause_run_on_failure, or fail_run_on_failure",
-    }
+    assert_safe_server_error(response, 'server.subscription.invalid_request')
     assert app.subscriptions("run-subscribe-policy-1") == ()
 
 
@@ -15504,10 +15363,7 @@ def test_server_app_rejects_subscription_with_invalid_created_timestamp() -> Non
     )
 
     assert response.status_code == 400
-    assert json.loads(response.body.decode("utf-8")) == {
-        "ok": False,
-        "error": "server event subscription created_at must be an ISO datetime",
-    }
+    assert_safe_server_error(response, 'server.subscription.invalid_request')
     assert app.subscriptions("run-subscribe-created-time-1") == ()
 
 
@@ -15543,10 +15399,7 @@ def test_server_app_rejects_mandatory_subscription_without_retry_or_dead_letter_
     )
 
     assert response.status_code == 400
-    assert json.loads(response.body.decode("utf-8")) == {
-        "ok": False,
-        "error": "server event subscription mandatory delivery requires retry, dead-letter, pause-run, or fail-run failure policy",
-    }
+    assert_safe_server_error(response, 'server.subscription.invalid_request')
     assert app.subscriptions("run-subscribe-mandatory-1") == ()
 
 
@@ -15578,10 +15431,7 @@ def test_server_app_rejects_mandatory_subscription_failure_policy_without_dead_l
     )
 
     assert response.status_code == 400
-    assert json.loads(response.body.decode("utf-8")) == {
-        "ok": False,
-        "error": "server event subscription mandatory callback failure policy requires dead-letter or fallback behavior",
-    }
+    assert_safe_server_error(response, 'server.subscription.invalid_request')
     assert app.subscriptions("run-subscribe-mandatory-policy-1") == ()
 
 
@@ -15613,10 +15463,7 @@ def test_server_app_rejects_retrying_subscription_without_dead_letter_behavior()
     )
 
     assert response.status_code == 400
-    assert json.loads(response.body.decode("utf-8")) == {
-        "ok": False,
-        "error": "server event subscription retrying callback failure policy requires dead-letter or fallback behavior",
-    }
+    assert_safe_server_error(response, 'server.subscription.invalid_request')
     assert app.subscriptions("run-subscribe-retry-policy-1") == ()
 
 
@@ -15648,10 +15495,7 @@ def test_server_app_rejects_subscription_with_whitespace_wrapped_failure_policy(
     )
 
     assert response.status_code == 400
-    assert json.loads(response.body.decode("utf-8")) == {
-        "ok": False,
-        "error": "server subscription failure_policy must not contain surrounding whitespace",
-    }
+    assert_safe_server_error(response, 'server.subscription.invalid_request')
     assert app.subscriptions("run-subscribe-failure-policy-whitespace-1") == ()
 
 
@@ -15683,10 +15527,7 @@ def test_server_app_rejects_authoritative_event_subscription_projection() -> Non
     )
 
     assert response.status_code == 400
-    assert json.loads(response.body.decode("utf-8")) == {
-        "ok": False,
-        "error": "server event subscription callback delivery must not be used as the source of truth",
-    }
+    assert_safe_server_error(response, 'server.subscription.invalid_request')
     assert app.subscriptions("run-subscribe-authoritative-1") == ()
 
 
@@ -15718,10 +15559,7 @@ def test_server_app_rejects_subscription_with_invalid_event_filter_before_replay
         )
 
         assert response.status_code == 400
-        assert json.loads(response.body.decode("utf-8")) == {
-            "ok": False,
-            "error": "server event subscription event_filter.severity_min is invalid",
-        }
+        assert_safe_server_error(response, 'server.subscription.invalid_request')
         assert app.subscriptions("run-subscribe-filter-invalid-1") == ()
 
 
@@ -15753,10 +15591,7 @@ def test_server_app_rejects_subscription_with_invalid_visibility_filter() -> Non
         )
 
         assert response.status_code == 400
-        assert json.loads(response.body.decode("utf-8")) == {
-            "ok": False,
-            "error": "server event subscription event_filter.visibility must contain only client, operator, internal, or audit_only",
-        }
+        assert_safe_server_error(response, 'server.subscription.invalid_request')
         assert app.subscriptions("run-subscribe-visibility-invalid-1") == ()
 
 
@@ -15802,10 +15637,7 @@ def test_server_app_rejects_subscription_with_whitespace_wrapped_identity_filter
         )
 
         assert response.status_code == 400
-        assert json.loads(response.body.decode("utf-8")) == {
-            "ok": False,
-            "error": expected_error,
-        }
+        assert_safe_server_error(response, 'server.subscription.invalid_request')
         assert app.subscriptions("run-subscribe-identity-invalid-1") == ()
 
 
@@ -15862,10 +15694,7 @@ def test_server_app_rejects_object_valued_event_filter_sequences() -> None:
         )
 
         assert response.status_code == 400
-        assert json.loads(response.body.decode("utf-8")) == {
-            "ok": False,
-            "error": expected_error,
-        }
+        assert_safe_server_error(response, 'server.subscription.invalid_request')
         assert app.subscriptions("run-subscribe-sequence-invalid-1") == ()
 
 
@@ -15905,13 +15734,7 @@ def test_server_app_rejects_duplicate_event_filter_constraints() -> None:
     )
 
     assert response.status_code == 400
-    assert json.loads(response.body.decode("utf-8")) == {
-        "ok": False,
-        "error": (
-            "server event subscription event_filter.types "
-            "must not contain duplicates"
-        ),
-    }
+    assert_safe_server_error(response, 'server.subscription.invalid_request')
     assert app.subscriptions("run-subscribe-duplicate-filter-1") == ()
 
 
@@ -15943,10 +15766,7 @@ def test_server_app_rejects_subscription_with_whitespace_wrapped_subscription_id
         )
 
         assert response.status_code == 400
-        assert json.loads(response.body.decode("utf-8")) == {
-            "ok": False,
-            "error": "server event subscription subscription_id must not contain surrounding whitespace",
-        }
+        assert_safe_server_error(response, 'server.subscription.invalid_request')
         assert app.subscriptions(f"run-subscribe-id-invalid-{index}") == ()
 
 
@@ -16636,10 +16456,7 @@ def test_server_app_rejects_ack_cursor_for_different_run() -> None:
     )
 
     assert response.status_code == 400
-    assert json.loads(response.body.decode("utf-8")) == {
-        "ok": False,
-        "error": "ack request cursor must belong to run 'run-ack-cursor-scope-1'",
-    }
+    assert_safe_server_error(response, 'server.subscription_ack.invalid_request')
     assert app.event_acks("run-ack-cursor-scope-1", "sub-ack-cursor-scope") == ()
 
 
@@ -16691,10 +16508,7 @@ def test_server_app_rejects_malformed_ack_cursor() -> None:
     )
 
     assert response.status_code == 400
-    assert json.loads(response.body.decode("utf-8")) == {
-        "ok": False,
-        "error": "ack request cursor must use '<run_id>:<sequence>' with a non-negative integer sequence",
-    }
+    assert_safe_server_error(response, 'server.subscription_ack.invalid_request')
     assert app.event_acks("run-ack-cursor-format-1", "sub-ack-cursor-format") == ()
 
 
@@ -16747,10 +16561,7 @@ def test_server_app_rejects_ack_when_retained_event_sequence_is_malformed() -> N
     )
 
     assert response.status_code == 400
-    assert json.loads(response.body.decode("utf-8")) == {
-        "ok": False,
-        "error": "ack request sequence must be an integer",
-    }
+    assert_safe_server_error(response, 'server.subscription_ack.invalid_request')
     assert app.event_acks("run-ack-bool-sequence-1", "sub-ack-bool-sequence") == ()
 
 
@@ -17144,10 +16955,7 @@ def test_server_app_rejects_subscription_ack_with_invalid_timestamp() -> None:
     )
 
     assert response.status_code == 400
-    assert json.loads(response.body.decode("utf-8")) == {
-        "ok": False,
-        "error": "ack request acknowledged_at must be an ISO datetime",
-    }
+    assert_safe_server_error(response, 'server.subscription_ack.invalid_request')
     assert app.event_acks("run-ack-invalid-time-1", "sub-ack-invalid-time-1") == ()
 
 
@@ -18249,10 +18057,7 @@ def test_server_app_rejects_callback_registration_with_whitespace_wrapped_replay
     )
 
     assert response.status_code == 400
-    assert json.loads(response.body.decode("utf-8")) == {
-        "ok": False,
-        "error": "server callback registration replay_from_cursor must not contain surrounding whitespace",
-    }
+    assert_safe_server_error(response, 'server.callback_registration.invalid_request')
     assert app.callback_registrations() == ()
 
 
@@ -18318,10 +18123,7 @@ def test_server_app_rejects_callback_registration_with_invalid_scope() -> None:
         )
 
         assert response.status_code == 400
-        assert json.loads(response.body.decode("utf-8")) == {
-            "ok": False,
-            "error": "server callback registration scope must be one of run, conversation, project, tenant, or deployment",
-        }
+        assert_safe_server_error(response, 'server.callback_registration.invalid_request')
         assert app.callback_registrations() == ()
 
 
@@ -18349,10 +18151,7 @@ def test_server_app_rejects_callback_registration_with_invalid_failure_policy() 
     )
 
     assert response.status_code == 400
-    assert json.loads(response.body.decode("utf-8")) == {
-        "ok": False,
-        "error": "server subscription failure_policy must be one of best_effort, retry_then_dead_letter, pause_run_on_failure, or fail_run_on_failure",
-    }
+    assert_safe_server_error(response, 'server.callback_registration.invalid_request')
     assert app.callback_registrations() == ()
 
 
@@ -18380,10 +18179,7 @@ def test_server_app_rejects_callback_registration_with_invalid_created_timestamp
     )
 
     assert response.status_code == 400
-    assert json.loads(response.body.decode("utf-8")) == {
-        "ok": False,
-        "error": "server callback registration created_at must be an ISO datetime",
-    }
+    assert_safe_server_error(response, 'server.callback_registration.invalid_request')
     assert app.callback_registrations() == ()
 
     compact_offset = app.handle(
@@ -18407,10 +18203,7 @@ def test_server_app_rejects_callback_registration_with_invalid_created_timestamp
     )
 
     assert compact_offset.status_code == 400
-    assert json.loads(compact_offset.body.decode("utf-8")) == {
-        "ok": False,
-        "error": "server callback registration created_at must be an ISO datetime",
-    }
+    assert_safe_server_error(compact_offset, 'server.callback_registration.invalid_request')
     assert app.callback_registrations() == ()
 
 
@@ -18439,10 +18232,7 @@ def test_server_app_rejects_mandatory_callback_registration_without_retry_or_dea
     )
 
     assert response.status_code == 400
-    assert json.loads(response.body.decode("utf-8")) == {
-        "ok": False,
-        "error": "server callback registration mandatory delivery requires retry, dead-letter, pause-run, or fail-run failure policy",
-    }
+    assert_safe_server_error(response, 'server.callback_registration.invalid_request')
     assert app.callback_registrations() == ()
 
 
@@ -18470,10 +18260,7 @@ def test_server_app_rejects_mandatory_callback_registration_failure_policy_witho
     )
 
     assert response.status_code == 400
-    assert json.loads(response.body.decode("utf-8")) == {
-        "ok": False,
-        "error": "server callback registration mandatory callback failure policy requires dead-letter or fallback behavior",
-    }
+    assert_safe_server_error(response, 'server.callback_registration.invalid_request')
     assert app.callback_registrations() == ()
 
 
@@ -18501,10 +18288,7 @@ def test_server_app_rejects_retrying_callback_registration_without_dead_letter_b
     )
 
     assert response.status_code == 400
-    assert json.loads(response.body.decode("utf-8")) == {
-        "ok": False,
-        "error": "server callback registration retrying callback failure policy requires dead-letter or fallback behavior",
-    }
+    assert_safe_server_error(response, 'server.callback_registration.invalid_request')
     assert app.callback_registrations() == ()
 
 
@@ -18562,10 +18346,7 @@ def test_server_app_rejects_callback_registration_with_whitespace_wrapped_failur
     )
 
     assert response.status_code == 400
-    assert json.loads(response.body.decode("utf-8")) == {
-        "ok": False,
-        "error": "server subscription failure_policy must not contain surrounding whitespace",
-    }
+    assert_safe_server_error(response, 'server.callback_registration.invalid_request')
     assert app.callback_registrations() == ()
 
 
@@ -18593,10 +18374,7 @@ def test_server_app_rejects_authoritative_callback_registration_projection() -> 
     )
 
     assert response.status_code == 400
-    assert json.loads(response.body.decode("utf-8")) == {
-        "ok": False,
-        "error": "server callback registration callback delivery must not be used as the source of truth",
-    }
+    assert_safe_server_error(response, 'server.callback_registration.invalid_request')
     assert app.callback_registrations() == ()
 
 
@@ -18623,10 +18401,7 @@ def test_server_app_rejects_webhook_callback_registration_without_signing() -> N
     )
 
     assert response.status_code == 400
-    assert json.loads(response.body.decode("utf-8")) == {
-        "ok": False,
-        "error": "server callback registration delivery.signing must be a mapping for webhook delivery",
-    }
+    assert_safe_server_error(response, 'server.callback_registration.invalid_request')
     assert app.callback_registrations() == ()
 
 
@@ -18659,10 +18434,7 @@ def test_server_app_rejects_non_post_webhook_callback_registration_method() -> N
         )
 
         assert response.status_code == 400
-        assert json.loads(response.body.decode("utf-8")) == {
-            "ok": False,
-            "error": "server callback registration delivery.method must be POST for webhook delivery",
-        }
+        assert_safe_server_error(response, 'server.callback_registration.invalid_request')
         assert app.callback_registrations() == ()
 
 
@@ -18717,10 +18489,7 @@ def test_server_app_rejects_whitespace_wrapped_webhook_callback_registration_lit
         )
 
         assert response.status_code == 400
-        assert json.loads(response.body.decode("utf-8")) == {
-            "ok": False,
-            "error": expected_error,
-        }
+        assert_safe_server_error(response, 'server.callback_registration.invalid_request')
         assert app.callback_registrations() == ()
 
 
@@ -18759,10 +18528,7 @@ def test_server_app_rejects_unsafe_webhook_callback_registration_target(url: str
     )
 
     assert response.status_code == 400
-    assert json.loads(response.body.decode("utf-8")) == {
-        "ok": False,
-        "error": "server callback registration delivery.url is unsafe or forbidden by default egress policy",
-    }
+    assert_safe_server_error(response, 'server.callback_registration.invalid_request')
     assert app.callback_registrations() == ()
 
 
@@ -18794,10 +18560,7 @@ def test_server_app_rejects_numeric_webhook_callback_registration_loopback_targe
         )
 
         assert response.status_code == 400
-        assert json.loads(response.body.decode("utf-8")) == {
-            "ok": False,
-            "error": "server callback registration delivery.url is unsafe or forbidden by default egress policy",
-        }
+        assert_safe_server_error(response, 'server.callback_registration.invalid_request')
         assert app.callback_registrations() == ()
 
 
@@ -18829,10 +18592,7 @@ def test_server_app_rejects_whitespace_wrapped_webhook_callback_registration_tar
         )
 
         assert response.status_code == 400
-        assert json.loads(response.body.decode("utf-8")) == {
-            "ok": False,
-            "error": "server callback registration delivery.url is unsafe or forbidden by default egress policy",
-        }
+        assert_safe_server_error(response, 'server.callback_registration.invalid_request')
         assert app.callback_registrations() == ()
 
 
@@ -18870,10 +18630,7 @@ def test_server_app_rejects_invalid_webhook_callback_registration_host_syntax() 
         )
 
         assert response.status_code == 400
-        assert json.loads(response.body.decode("utf-8")) == {
-            "ok": False,
-            "error": "server callback registration delivery.url is unsafe or forbidden by default egress policy",
-        }
+        assert_safe_server_error(response, 'server.callback_registration.invalid_request')
         assert app.callback_registrations() == ()
 
 
@@ -18904,10 +18661,7 @@ def test_server_app_rejects_webhook_callback_registration_target_with_userinfo()
     )
 
     assert response.status_code == 400
-    assert json.loads(response.body.decode("utf-8")) == {
-        "ok": False,
-        "error": "server callback registration delivery.url is unsafe or forbidden by default egress policy",
-    }
+    assert_safe_server_error(response, 'server.callback_registration.invalid_request')
     assert app.callback_registrations() == ()
 
 
@@ -18938,10 +18692,7 @@ def test_server_app_rejects_impossible_ordered_callback_registration_delivery() 
     )
 
     assert response.status_code == 400
-    assert json.loads(response.body.decode("utf-8")) == {
-        "ok": False,
-        "error": "server callback registration delivery.ordering requests ordered delivery on an unsupported target",
-    }
+    assert_safe_server_error(response, 'server.callback_registration.invalid_request')
     assert app.callback_registrations() == ()
 
 
@@ -18973,7 +18724,7 @@ def test_server_app_rejects_callback_registration_with_invalid_event_filter_befo
         )
 
         assert response.status_code == 400
-        assert error_fragment in json.loads(response.body.decode("utf-8"))["error"]
+        assert_safe_server_error(response, 'server.callback_registration.invalid_request')
         assert app.callback_registrations() == ()
 
 
@@ -19001,10 +18752,7 @@ def test_server_app_rejects_callback_registration_with_invalid_visibility_filter
         )
 
         assert response.status_code == 400
-        assert json.loads(response.body.decode("utf-8")) == {
-            "ok": False,
-            "error": "server event subscription event_filter.visibility must contain only client, operator, internal, or audit_only",
-        }
+        assert_safe_server_error(response, 'server.callback_registration.invalid_request')
         assert app.callback_registrations() == ()
 
 
@@ -19046,10 +18794,7 @@ def test_server_app_rejects_callback_registration_with_whitespace_wrapped_identi
         )
 
         assert response.status_code == 400
-        assert json.loads(response.body.decode("utf-8")) == {
-            "ok": False,
-            "error": expected_error,
-        }
+        assert_safe_server_error(response, 'server.callback_registration.invalid_request')
         assert app.callback_registrations() == ()
 
 
@@ -19086,10 +18831,7 @@ def test_server_app_rejects_callback_registration_with_whitespace_wrapped_identi
         )
 
         assert response.status_code == 400
-        assert json.loads(response.body.decode("utf-8")) == {
-            "ok": False,
-            "error": expected_error,
-        }
+        assert_safe_server_error(response, 'server.callback_registration.invalid_request')
         assert app.callback_registrations() == ()
 
 
@@ -19259,10 +19001,7 @@ def test_server_app_rejects_callback_delivery_control_operator_mismatch() -> Non
     )
 
     assert response.status_code == 403
-    assert json.loads(response.body.decode("utf-8")) == {
-        "ok": False,
-        "error": "callback delivery control request operator must match authenticated principal",
-    }
+    assert_safe_server_error(response, 'server.callback_delivery.forbidden')
     assert app.callback_delivery_redrives("del-forged") == ()
 
 
@@ -19715,10 +19454,7 @@ def test_server_app_rejects_malformed_callback_delivery_control_request() -> Non
     )
 
     assert response.status_code == 400
-    assert json.loads(response.body.decode("utf-8")) == {
-        "ok": False,
-        "error": "callback delivery control request reason must not be empty",
-    }
+    assert_safe_server_error(response, 'server.callback_delivery.invalid_request')
     assert app.callback_delivery_redrives("del-1") == ()
 
 
@@ -19749,10 +19485,7 @@ def test_server_app_rejects_callback_delivery_control_with_whitespace_wrapped_op
         )
 
         assert response.status_code == 400
-        assert json.loads(response.body.decode("utf-8")) == {
-            "ok": False,
-            "error": expected_error,
-        }
+        assert_safe_server_error(response, 'server.callback_delivery.invalid_request')
         assert app.callback_delivery_redrives(f"del-whitespace-{index}") == ()
 
 
@@ -19772,10 +19505,7 @@ def test_server_app_rejects_callback_delivery_control_with_whitespace_wrapped_de
     )
 
     assert response.status_code == 400
-    assert json.loads(response.body.decode("utf-8")) == {
-        "ok": False,
-        "error": "callback delivery control request delivery_id must not contain surrounding whitespace",
-    }
+    assert_safe_server_error(response, 'server.callback_delivery.invalid_request')
     assert app.callback_delivery_redrives("del-whitespace-id") == ()
 
 
@@ -19795,10 +19525,7 @@ def test_server_app_rejects_callback_delivery_control_with_invalid_timestamp() -
     )
 
     assert response.status_code == 400
-    assert json.loads(response.body.decode("utf-8")) == {
-        "ok": False,
-        "error": "callback delivery control request requested_at must be an ISO datetime",
-    }
+    assert_safe_server_error(response, 'server.callback_delivery.invalid_request')
     assert app.callback_delivery_redrives("del-invalid-time") == ()
 
 
@@ -20082,14 +19809,9 @@ def test_server_app_validates_application_stream_replay_cursor() -> None:
     expired_payload = json.loads(expired.body.decode("utf-8"))
 
     assert wrong_run.status_code == 400
-    assert json.loads(wrong_run.body.decode("utf-8"))["error"] == (
-        f"application stream cursor must belong to run {run_id!r}"
-    )
+    assert_safe_server_error(wrong_run, 'server.application_stream.invalid_request')
     assert malformed.status_code == 400
-    assert json.loads(malformed.body.decode("utf-8"))["error"] == (
-        "application stream cursor must use '<run_id>:<sequence>' with a "
-        "non-negative integer sequence"
-    )
+    assert_safe_server_error(malformed, 'server.application_stream.invalid_request')
     assert expired.status_code == 409
     assert expired_payload["error"] == "CursorExpired"
     assert expired_payload["requestedCursor"] == f"{run_id}:99"
@@ -20128,7 +19850,4 @@ def test_server_app_rejects_boolean_event_sequence_for_stream_cursor() -> None:
     )
 
     assert response.status_code == 400
-    assert json.loads(response.body.decode("utf-8")) == {
-        "ok": False,
-        "error": "application stream sequence must be an integer",
-    }
+    assert_safe_server_error(response, 'server.application_stream.invalid_request')

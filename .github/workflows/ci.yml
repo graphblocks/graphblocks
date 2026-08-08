@@ -204,6 +204,7 @@ jobs:
           set -o pipefail
           python -m pytest \
             tests/test_server_core.py \
+            tests/test_server_error_contract.py \
             tests/test_policy_core.py \
             tests/test_canonical.py \
             tests/test_canonical_integer_limits.py \

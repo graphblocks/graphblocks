@@ -4,6 +4,8 @@ import importlib
 import json
 from pathlib import Path
 
+from _server_error_assertions import assert_safe_server_error
+
 
 ROOT = Path(__file__).parents[1]
 
@@ -126,7 +128,5 @@ def test_server_package_rejects_malformed_run_metadata(monkeypatch) -> None:
             ).encode("utf-8"),
         )
     )
-    payload = json.loads(response.body.decode("utf-8"))
-
     assert response.status_code == 400
-    assert payload["error"] == "run request runId must be a string"
+    assert_safe_server_error(response, 'server.run.invalid_request')
