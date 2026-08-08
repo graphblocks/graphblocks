@@ -25,9 +25,13 @@ from .migration import (
     GRAPH_API_VERSION,
     LEGACY_GRAPH_API_VERSIONS,
     MigrationError,
-    migrate_document,
+    migrate_document_reference as migrate_document,
 )
-from .schema import SchemaId, SchemaIdError, resource_schema_errors
+from .schema import (
+    SchemaId,
+    SchemaIdError,
+    resource_schema_errors_reference as resource_schema_errors,
+)
 
 
 COMPOSITION_API_VERSION = "graphblocks.ai/composition/v1alpha1"

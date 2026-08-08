@@ -28,9 +28,13 @@ from .loader import _DuplicateKeySafeLoader
 from .migration import (
     MigrationError,
     _migrate_document_unchecked,
-    migrate_document,
+    migrate_document_reference as migrate_document,
 )
-from .schema import SchemaId, SchemaIdError, resource_schema_errors
+from .schema import (
+    SchemaId,
+    SchemaIdError,
+    resource_schema_errors_reference as resource_schema_errors,
+)
 
 STATIC_MANIFEST_NAMES = {
     "graphblocks-plugin.yaml",
