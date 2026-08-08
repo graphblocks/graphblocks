@@ -14,7 +14,10 @@ import xml.etree.ElementTree as ElementTree
 
 import yaml
 
-from graphblocks.canonical import canonical_dumps, canonical_hash
+from graphblocks.canonical import (
+    canonical_dumps_reference as canonical_dumps,
+    canonical_hash_reference as canonical_hash,
+)
 
 
 ROOT = Path(__file__).resolve().parents[1]

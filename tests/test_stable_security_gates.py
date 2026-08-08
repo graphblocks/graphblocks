@@ -8,13 +8,21 @@ import xml.etree.ElementTree as ElementTree
 import pytest
 import yaml
 
-from graphblocks.canonical import canonical_dumps
+from graphblocks.canonical import (
+    canonical_dumps_reference as canonical_dumps,
+    canonical_hash_reference,
+)
 from tools import stable_security_gates
 
 
 ROOT = Path(__file__).parents[1]
 MATRIX_PATH = ROOT / "docs" / "project" / "stable-release-matrix.yaml"
 COMMIT = "a" * 40
+
+
+def test_stable_security_tooling_uses_reference_canonical_oracle() -> None:
+    assert stable_security_gates.canonical_dumps is canonical_dumps
+    assert stable_security_gates.canonical_hash is canonical_hash_reference
 
 
 def _junit_bytes(

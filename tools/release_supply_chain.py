@@ -19,7 +19,10 @@ from packaging.requirements import InvalidRequirement, Requirement
 from packaging.utils import canonicalize_name, parse_sdist_filename, parse_wheel_filename
 import yaml  # type: ignore[import-untyped]
 
-from graphblocks.canonical import canonical_dumps, canonical_hash
+from graphblocks.canonical import (
+    canonical_dumps_reference as canonical_dumps,
+    canonical_hash_reference as canonical_hash,
+)
 
 if TYPE_CHECKING:
     from tools.check_audit_inventory import (

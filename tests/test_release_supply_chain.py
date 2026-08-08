@@ -14,7 +14,10 @@ import xml.etree.ElementTree as ElementTree
 import pytest
 import yaml
 
-from graphblocks.canonical import canonical_hash
+from graphblocks.canonical import (
+    canonical_dumps_reference,
+    canonical_hash_reference as canonical_hash,
+)
 from tools import stable_security_gates
 
 
@@ -33,6 +36,13 @@ PROMOTION_INTEGRATED_TIME = 1781568000
 PROMOTION_INTEGRATED_AT = datetime.fromtimestamp(
     PROMOTION_INTEGRATED_TIME, timezone.utc
 )
+
+
+def test_release_tooling_uses_reference_canonical_oracle() -> None:
+    module = _load_module()
+
+    assert module.canonical_dumps is canonical_dumps_reference
+    assert module.canonical_hash is canonical_hash
 PROMOTION_SOURCE_DIFF = {
     "digest": "sha256:" + "5" * 64,
     "changes": [
