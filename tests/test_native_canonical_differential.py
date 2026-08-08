@@ -10,9 +10,9 @@ import graphblocks_runtime
 from graphblocks.canonical import (
     MAX_CANONICAL_INTEGER_DIGITS,
     MAX_CANONICAL_JSON_DEPTH,
-    canonical_dumps,
-    canonical_hash,
-    canonical_loads,
+    canonical_dumps_reference,
+    canonical_hash_reference,
+    canonical_loads_reference,
 )
 
 
@@ -37,10 +37,12 @@ _JSON_VALUES = st.recursive(
 @settings(max_examples=300, deadline=None)
 @given(value=_JSON_VALUES)
 def test_native_canonical_identity_matches_python_reference(value: object) -> None:
-    reference_json = canonical_dumps(value)
+    reference_json = canonical_dumps_reference(value)
 
     assert graphblocks_runtime.canonicalize_json(reference_json) == reference_json
-    assert graphblocks_runtime.canonical_hash_json(reference_json) == canonical_hash(value)
+    assert graphblocks_runtime.canonical_hash_json(
+        reference_json
+    ) == canonical_hash_reference(value)
 
 
 @pytest.mark.parametrize(
@@ -59,11 +61,13 @@ def test_native_canonical_identity_matches_python_reference(value: object) -> No
 def test_native_canonical_identity_matches_reference_for_noncanonical_json(
     source: str,
 ) -> None:
-    reference_value = canonical_loads(source)
-    reference_json = canonical_dumps(reference_value)
+    reference_value = canonical_loads_reference(source)
+    reference_json = canonical_dumps_reference(reference_value)
 
     assert graphblocks_runtime.canonicalize_json(source) == reference_json
-    assert graphblocks_runtime.canonical_hash_json(source) == canonical_hash(reference_value)
+    assert graphblocks_runtime.canonical_hash_json(
+        source
+    ) == canonical_hash_reference(reference_value)
 
 
 def test_native_canonical_identity_matches_reference_at_resource_limits() -> None:
@@ -73,10 +77,12 @@ def test_native_canonical_identity_matches_reference_at_resource_limits() -> Non
         nested = f"[{nested}]"
 
     for source in (integer, nested):
-        reference = canonical_dumps(canonical_loads(source))
+        reference = canonical_dumps_reference(canonical_loads_reference(source))
         assert graphblocks_runtime.canonicalize_json(source) == reference
-        assert graphblocks_runtime.canonical_hash_json(source) == canonical_hash(
-            canonical_loads(source)
+        assert graphblocks_runtime.canonical_hash_json(
+            source
+        ) == canonical_hash_reference(
+            canonical_loads_reference(source)
         )
 
 
@@ -92,7 +98,7 @@ def test_native_canonical_identity_matches_reference_at_resource_limits() -> Non
 )
 def test_native_canonical_identity_rejects_reference_rejections(source: str) -> None:
     with pytest.raises(ValueError):
-        canonical_loads(source)
+        canonical_loads_reference(source)
     with pytest.raises(ValueError):
         graphblocks_runtime.canonicalize_json(source)
     with pytest.raises(ValueError):
@@ -109,5 +115,5 @@ def test_native_canonical_identity_rejects_reference_rejections(source: str) -> 
     ),
 )
 def test_native_canonical_value_bridge_preserves_exact_decimals(value: Decimal) -> None:
-    assert graphblocks_runtime.canonicalize(value) == canonical_dumps(value)
-    assert graphblocks_runtime.canonical_hash(value) == canonical_hash(value)
+    assert graphblocks_runtime.canonicalize(value) == canonical_dumps_reference(value)
+    assert graphblocks_runtime.canonical_hash(value) == canonical_hash_reference(value)

@@ -193,14 +193,15 @@ def _canonical_snapshot(
     return root[0], occupied_strings, has_decimal, has_large_integer
 
 
-def canonical_loads(value: str | bytes | bytearray) -> Any:
+def canonical_loads_reference(value: str | bytes | bytearray) -> Any:
     try:
         decoded = json.loads(
             value,
             parse_float=lambda token: (
                 float(token)
                 if math.isfinite(float(token))
-                and canonical_dumps(Decimal(token)) == canonical_dumps(float(token))
+                and canonical_dumps_reference(Decimal(token))
+                == canonical_dumps_reference(float(token))
                 else Decimal(token)
             ),
             parse_int=_parse_integer,
@@ -213,6 +214,10 @@ def canonical_loads(value: str | bytes | bytearray) -> Any:
         _canonical_snapshot(decoded)
     )
     return snapshot
+
+
+def canonical_loads(value: str | bytes | bytearray) -> Any:
+    return canonical_loads_reference(value)
 
 
 def _canonical_dumps(value: Any, *, reject_tuples: bool) -> str:
@@ -358,12 +363,22 @@ def _canonical_dumps(value: Any, *, reject_tuples: bool) -> str:
     return "".join(parts)
 
 
-def canonical_dumps(value: Any) -> str:
+def canonical_dumps_reference(value: Any) -> str:
     return _canonical_dumps(value, reject_tuples=False)
 
 
+def canonical_dumps(value: Any) -> str:
+    return canonical_dumps_reference(value)
+
+
+def canonical_hash_reference(value: Any) -> str:
+    return "sha256:" + hashlib.sha256(
+        canonical_dumps_reference(value).encode("utf-8")
+    ).hexdigest()
+
+
 def canonical_hash(value: Any) -> str:
-    return "sha256:" + hashlib.sha256(canonical_dumps(value).encode("utf-8")).hexdigest()
+    return canonical_hash_reference(value)
 
 
 def normalize_graph(document: dict[str, Any]) -> dict[str, Any]:
