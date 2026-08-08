@@ -5,15 +5,15 @@ attrs==26.1.0
     # via
     #   jsonschema
     #   referencing
-chardet==7.4.3
+chardet==7.5.1
     # via diff-cover
-coverage==7.15.3
+coverage==7.15.4
     # via pytest-cov
 diff-cover==10.4.1
     # via graphblocks (pyproject.toml)
 github-slugger==0.0.3
     # via graphblocks (pyproject.toml)
-hypothesis==6.165.0
+hypothesis==6.165.2
     # via graphblocks (pyproject.toml)
 iniconfig==2.3.0
     # via pytest
@@ -23,7 +23,7 @@ jsonschema==4.26.0
     # via graphblocks (pyproject.toml)
 jsonschema-specifications==2025.9.1
     # via jsonschema
-librt==0.13.0
+librt==0.15.0
     # via mypy
 markdown-it-py==4.2.0
     # via graphblocks (pyproject.toml)
@@ -35,7 +35,7 @@ mypy==1.20.2
     # via graphblocks (pyproject.toml)
 mypy-extensions==1.1.0
     # via mypy
-packaging==26.2
+packaging==26.3
     # via
     #   graphblocks (pyproject.toml)
     #   pytest
