@@ -1,9 +1,7 @@
-#![allow(clippy::expect_used)] // Guarded by compatibility/rust-production-expect-budget.json.
-
 use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
-use std::sync::Mutex;
+use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use hmac::{Hmac, Mac};
 use rusqlite::{Connection, TransactionBehavior, params};
@@ -1825,6 +1823,16 @@ struct AsyncOperationStoreInner {
     events_by_operation: BTreeMap<String, Vec<AsyncOperationEvent>>,
 }
 
+fn lock_async_operation_store(
+    inner: &Mutex<AsyncOperationStoreInner>,
+) -> MutexGuard<'_, AsyncOperationStoreInner> {
+    inner.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+fn lock_async_operation_connection(connection: &Mutex<Connection>) -> MutexGuard<'_, Connection> {
+    connection.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
 impl AsyncOperationStore {
     pub fn new() -> Self {
         Self::default()
@@ -1833,10 +1841,7 @@ impl AsyncOperationStore {
     pub fn register(&self, operation: AsyncOperation) -> Result<(), AsyncOperationError> {
         operation.validate()?;
 
-        let mut inner = self
-            .inner
-            .lock()
-            .expect("async operation store lock poisoned");
+        let mut inner = lock_async_operation_store(&self.inner);
         if inner.operations.contains_key(&operation.operation_id) {
             return Err(AsyncOperationError::DuplicateOperation {
                 operation_id: operation.operation_id,
@@ -1890,10 +1895,7 @@ impl AsyncOperationStore {
             });
         }
 
-        let mut inner = self
-            .inner
-            .lock()
-            .expect("async operation store lock poisoned");
+        let mut inner = lock_async_operation_store(&self.inner);
         if inner.operations.contains_key(&submission.operation_id) {
             return Err(AsyncOperationError::InvalidOperation {
                 operation_id: submission.operation_id,
@@ -1940,10 +1942,7 @@ impl AsyncOperationStore {
     }
 
     pub fn quarantined_callback_count(&self, operation_id: &str) -> usize {
-        let inner = self
-            .inner
-            .lock()
-            .expect("async operation store lock poisoned");
+        let inner = lock_async_operation_store(&self.inner);
         inner
             .quarantined_callbacks
             .keys()
@@ -1970,10 +1969,7 @@ impl AsyncOperationStore {
         resume_decision: AsyncCallbackResumeDecision,
     ) -> Result<Vec<AcceptedCallback>, AsyncOperationError> {
         let submissions = {
-            let mut inner = self
-                .inner
-                .lock()
-                .expect("async operation store lock poisoned");
+            let mut inner = lock_async_operation_store(&self.inner);
             let operation_created_at_unix_ms =
                 if let Some(operation) = inner.operations.get(operation_id) {
                     operation.created_at_unix_ms
@@ -2181,10 +2177,7 @@ impl AsyncOperationStore {
         artifacts: Vec<CallbackArtifactRef>,
         resume_decision: AsyncCallbackResumeDecision,
     ) -> Result<AcceptedCallback, AsyncOperationError> {
-        let mut inner = self
-            .inner
-            .lock()
-            .expect("async operation store lock poisoned");
+        let mut inner = lock_async_operation_store(&self.inner);
         let receipt_key = (
             submission.operation_id.clone(),
             submission.idempotency_key.clone(),
@@ -2479,7 +2472,9 @@ impl AsyncOperationStore {
         let operation = inner
             .operations
             .get_mut(&submission.operation_id)
-            .expect("operation exists after validation");
+            .ok_or_else(|| AsyncOperationError::OperationNotFound {
+                operation_id: submission.operation_id.clone(),
+            })?;
         let from = operation.state;
         operation.state = AsyncOperationState::CallbackReceived;
         inner
@@ -2589,10 +2584,7 @@ impl AsyncOperationStore {
         operation_id: &str,
         cancelled_at_unix_ms: u64,
     ) -> Result<(), AsyncOperationError> {
-        let mut inner = self
-            .inner
-            .lock()
-            .expect("async operation store lock poisoned");
+        let mut inner = lock_async_operation_store(&self.inner);
         let operation = inner.operations.get_mut(operation_id).ok_or_else(|| {
             AsyncOperationError::OperationNotFound {
                 operation_id: operation_id.to_owned(),
@@ -2644,10 +2636,7 @@ impl AsyncOperationStore {
         operation_id: &str,
         expired_at_unix_ms: u64,
     ) -> Result<(), AsyncOperationError> {
-        let mut inner = self
-            .inner
-            .lock()
-            .expect("async operation store lock poisoned");
+        let mut inner = lock_async_operation_store(&self.inner);
         let operation = inner.operations.get_mut(operation_id).ok_or_else(|| {
             AsyncOperationError::OperationNotFound {
                 operation_id: operation_id.to_owned(),
@@ -2686,10 +2675,7 @@ impl AsyncOperationStore {
     }
 
     pub fn events_for_operation(&self, operation_id: &str) -> Vec<AsyncOperationEvent> {
-        let inner = self
-            .inner
-            .lock()
-            .expect("async operation store lock poisoned");
+        let inner = lock_async_operation_store(&self.inner);
         inner
             .events_by_operation
             .get(operation_id)
@@ -2698,10 +2684,7 @@ impl AsyncOperationStore {
     }
 
     pub fn operation_state(&self, operation_id: &str) -> Option<AsyncOperationState> {
-        let inner = self
-            .inner
-            .lock()
-            .expect("async operation store lock poisoned");
+        let inner = lock_async_operation_store(&self.inner);
         inner
             .operations
             .get(operation_id)
@@ -2709,10 +2692,7 @@ impl AsyncOperationStore {
     }
 
     fn record_callback_rejected(&self, submission: &AsyncCallbackSubmission, reason: &str) {
-        let mut inner = self
-            .inner
-            .lock()
-            .expect("async operation store lock poisoned");
+        let mut inner = lock_async_operation_store(&self.inner);
         if !inner.operations.contains_key(&submission.operation_id) {
             return;
         }
@@ -2757,10 +2737,7 @@ impl SqliteAsyncOperationStore {
     }
 
     fn initialize(&self) -> Result<(), AsyncOperationError> {
-        let mut connection = self
-            .connection
-            .lock()
-            .expect("sqlite async operation store lock poisoned");
+        let mut connection = lock_async_operation_connection(&self.connection);
         connection
             .execute_batch(
                 "
@@ -3015,10 +2992,7 @@ impl SqliteAsyncOperationStore {
     }
 
     fn load_memory_store(&self) -> Result<AsyncOperationStore, AsyncOperationError> {
-        let mut connection = self
-            .connection
-            .lock()
-            .expect("sqlite async operation store lock poisoned");
+        let mut connection = lock_async_operation_connection(&self.connection);
         let transaction = connection
             .transaction_with_behavior(TransactionBehavior::Deferred)
             .map_err(storage_error)?;
@@ -3031,10 +3005,7 @@ impl SqliteAsyncOperationStore {
         &self,
         mutation: impl FnOnce(&AsyncOperationStore) -> (Result<T, AsyncOperationError>, bool),
     ) -> Result<T, AsyncOperationError> {
-        let mut connection = self
-            .connection
-            .lock()
-            .expect("sqlite async operation store lock poisoned");
+        let mut connection = lock_async_operation_connection(&self.connection);
         let transaction = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(storage_error)?;
@@ -3054,10 +3025,7 @@ impl SqliteAsyncOperationStore {
                 .execute("DELETE FROM async_operations", [])
                 .map_err(storage_error)?;
 
-            let inner = memory
-                .inner
-                .lock()
-                .expect("async operation store lock poisoned");
+            let inner = lock_async_operation_store(&memory.inner);
             for operation in inner.operations.values() {
                 transaction
                     .execute(
@@ -3146,10 +3114,7 @@ impl SqliteAsyncOperationStore {
         connection: &Connection,
     ) -> Result<AsyncOperationStore, AsyncOperationError> {
         let store = AsyncOperationStore::new();
-        let mut inner = store
-            .inner
-            .lock()
-            .expect("async operation store lock poisoned");
+        let mut inner = lock_async_operation_store(&store.inner);
 
         {
             let mut statement = connection
@@ -4346,4 +4311,41 @@ fn sqlite_i64_to_u64(value: i64, label: &'static str) -> Result<u64, AsyncOperat
     u64::try_from(value).map_err(|_| AsyncOperationError::Storage {
         message: format!("{label} is negative"),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use std::panic::{AssertUnwindSafe, catch_unwind};
+
+    use super::*;
+
+    #[test]
+    fn in_memory_store_recovers_poisoned_lock() {
+        let store = AsyncOperationStore::new();
+        let poisoned = catch_unwind(AssertUnwindSafe(|| {
+            let Ok(_guard) = store.inner.lock() else {
+                panic!("test lock starts healthy");
+            };
+            panic!("poison async operation store lock");
+        }));
+
+        assert!(poisoned.is_err());
+        assert!(store.events_for_operation("missing").is_empty());
+        assert_eq!(store.operation_state("missing"), None);
+    }
+
+    #[test]
+    fn sqlite_store_recovers_poisoned_connection_lock() -> Result<(), AsyncOperationError> {
+        let store = SqliteAsyncOperationStore::open_in_memory()?;
+        let poisoned = catch_unwind(AssertUnwindSafe(|| {
+            let Ok(_guard) = store.connection.lock() else {
+                panic!("test lock starts healthy");
+            };
+            panic!("poison sqlite async operation store lock");
+        }));
+
+        assert!(poisoned.is_err());
+        assert_eq!(store.try_operation_state("missing")?, None);
+        Ok(())
+    }
 }
