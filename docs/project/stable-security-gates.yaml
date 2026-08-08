@@ -12,6 +12,9 @@ objectAuthorization:
   categories:
     - id: run-create-list-status-delete-attach-detach-events-and-streams
       pytestSelectors:
+        - tests/test_server_authorization_matrix.py::test_protected_route_manifest_is_fully_covered_by_authorization_matrix
+        - tests/test_server_authorization_matrix.py::test_server_protected_route_authorization_matrix
+        - tests/test_server_authorization_matrix.py::test_server_run_list_filters_the_full_identity_matrix
         - tests/test_server_core.py::test_server_app_requires_authorization_hook_contract
         - tests/test_server_core.py::test_server_app_authorizer_receives_body_digest_without_body
         - tests/test_server_core.py::test_default_protected_resource_routes_have_authorization_policy

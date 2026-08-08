@@ -70,6 +70,7 @@ jobs:
             tests/test_canonical_integer_limits.py \
             tests/test_package_layout.py \
             tests/test_quick_ci_gate.py \
+            tests/test_server_authorization_matrix.py \
             tests/test_version_compatibility.py \
             --junitxml=dist/ci/quick/unit-smoke.xml \
             2>&1 | tee dist/ci/quick/unit-smoke.log
