@@ -50,6 +50,7 @@ from .profiles import ConformanceProfileSet, check_tck_suite_coverage
 from .reports import TckReport
 from .runners import (
     TckRunner,
+    _ApplicationEventStreamDifferentialTckRunner,
     _NormativeCompilerTckRunner,
     _NormativeRuntimeTckRunner,
 )
@@ -669,7 +670,20 @@ def main(argv: list[str] | None = None) -> int:
                 else None
             )
             fixture_path = tck_root / manifest.path
-            if manifest.suite_id == "compiler" and compiler_artifact is not None:
+            if (
+                manifest.suite_id == "application-events"
+                and compiler_artifact is not None
+            ):
+                runner = _ApplicationEventStreamDifferentialTckRunner(
+                    _tck_registry(manifest.suite_id),
+                    profile=args.profile,
+                    evidence_dir=evidence_dir,
+                    suite=manifest.suite_id,
+                    fixture_digest=manifest.fixture_digest,
+                    implementation="graphblocks-python",
+                    implementation_version=GRAPHBLOCKS_VERSION,
+                )
+            elif manifest.suite_id == "compiler" and compiler_artifact is not None:
                 runner = _NormativeCompilerTckRunner(
                     _tck_registry(manifest.suite_id),
                     profile=args.profile,
@@ -712,9 +726,9 @@ def main(argv: list[str] | None = None) -> int:
                 {"case_ids": list(manifest.case_ids)}
             )
             evidence["suite_manifest_digest"] = manifest.content_digest()
-            if manifest.suite_id in {"compiler", "runtime"} and (
-                compiler_artifact is not None
-            ):
+            if manifest.suite_id == "application-events" and compiler_artifact is not None:
+                evidence["native_stream_artifact"] = dict(compiler_artifact)
+            elif manifest.suite_id in {"compiler", "runtime"} and compiler_artifact is not None:
                 evidence["implementation_artifact"] = dict(compiler_artifact)
             observed_execution_claims[manifest.suite_id] = {
                 "executor_id": runner.authority_executor_id,

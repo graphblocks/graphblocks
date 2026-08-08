@@ -355,6 +355,18 @@ def test_stable_requirement_implementation_roles_match_the_authority_transition(
     assert "compatibility/stable-runtime-api.json" in c1_entries[
         "local-runtime-api"
     ]["evidence"]
+    application_event_slice = c1_entries["outcome"]["authoritySlices"][
+        "applicationEventStreamAdmission"
+    ]
+    assert application_event_slice["authority"] == "rust"
+    assert application_event_slice["scope"] == (
+        "materialized-event-admission-and-projection-only"
+    )
+    assert application_event_slice["exclusions"] == [
+        "raw-fixture-operation-construction",
+        "constructor-payload-wire-normalization",
+        "diagnostic-differential",
+    ]
     for requirement in target_requirements:
         entry = c1_entries[requirement]
         roles = entry["implementations"]

@@ -541,9 +541,9 @@ available. Supported installed-wheel evidence compares public, reference, and
 direct-native results over the complete shared resource corpora and binds the
 corpus to the exact runtime artifact. The audit inventory's `GB-ARCH-001` and
 `GB-ARCH-002` implementation findings have executable closure evidence; the
-separate release transition remains blocked on five stable C1 requirements,
-six exact-differential suites, the native API contract, and panic-free Rust
-public boundaries.
+separate release transition remains blocked on four stable C1 requirements,
+six exact-differential suites, restart-independent local correctness, and
+panic-free Rust public boundaries.
 The native binding exposes a separate
 versioned,
 closed capability handshake; the Python wrapper rejects incompatible protocol,
@@ -569,6 +569,13 @@ claims are phase-scoped: the bundled stable runtime suite now executes the Rust
 stdlib path with exact native/reference result and lifecycle comparison, while
 the remaining C1 suites stay `reference-only`. This preserves the boundary for
 other schema-facing behavior and the remaining stable C1 transition blockers.
+When a selected native wheel is supplied, the `application-events` report now
+also replays every Python-materialized event through the installed Rust stream
+and compares the closed per-operation accepted/dropped updates, final accepted
+events, and cutoff-response projection. This closes only the materialized-event
+admission slice. Raw fixture operation construction, constructor payload/time
+normalization, and diagnostic differential remain part of the still-blocking
+`application-events` suite transition.
 The stable installed runtime API is now an explicit three-symbol allowlist with
 an exact signature snapshot. Its core execution result is projected to a
 closed checkpoint-free envelope, while persistence and other C4/X3 options use

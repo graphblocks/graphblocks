@@ -1126,6 +1126,10 @@ def _tck_expectations(
             suites[suite]["implementation_artifact_distribution"] = (
                 "graphblocks-runtime"
             )
+        elif suite == "application-events":
+            suites[suite]["native_stream_artifact_distribution"] = (
+                "graphblocks-runtime"
+            )
     if not suites:
         raise RuntimeError("bundled stable TCK contains no suites")
     profile_catalog_path = root / "src" / "graphblocks" / "data" / "conformance-profiles.yaml"
@@ -1371,17 +1375,18 @@ def _require_release_evidence(
         )
         if expected_tck is not None:
             required_artifact_distributions = {
-                expectation["implementation_artifact_distribution"]
+                distribution
                 for expectation in (
                     raw_expected_suites.values()
                     if isinstance(raw_expected_suites, Mapping)
                     else ()
                 )
                 if isinstance(expectation, Mapping)
-                and isinstance(
+                for distribution in (
                     expectation.get("implementation_artifact_distribution"),
-                    str,
+                    expectation.get("native_stream_artifact_distribution"),
                 )
+                if isinstance(distribution, str)
             }
             if required_artifact_distributions:
                 if expected_compiler_artifact is None:
@@ -1531,8 +1536,36 @@ def _require_release_evidence(
                             raise RuntimeError(
                                 "installed runtime TCK evidence is not exact native/reference execution"
                             )
+                if suite == "application-events":
+                    for result in results:
+                        observed = result.get("observed")
+                        if (
+                            not isinstance(observed, Mapping)
+                            or observed.get("runtime") != "native"
+                            or observed.get("native_reference_match") is not True
+                            or observed.get("native_contract")
+                            != observed.get("reference_contract")
+                        ):
+                            raise RuntimeError(
+                                "installed application-event stream evidence is not "
+                                "exact native/reference admission"
+                            )
         if expected_compiler_artifact is not None:
             expected_artifact = dict(expected_compiler_artifact)
+            application_event_report = reports.get("application-events")
+            application_event_evidence = (
+                application_event_report.get("evidence")
+                if isinstance(application_event_report, Mapping)
+                else None
+            )
+            if not isinstance(application_event_evidence, Mapping) or (
+                application_event_evidence.get("native_stream_artifact")
+                != expected_artifact
+            ):
+                raise RuntimeError(
+                    "installed application-event stream evidence does not bind the "
+                    "exact graphblocks-runtime wheel"
+                )
             for suite in ("compiler", "runtime"):
                 report = reports.get(suite)
                 evidence = (

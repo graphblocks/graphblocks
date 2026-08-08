@@ -38,6 +38,12 @@ migration corpora across public/reference/direct-native paths to the exact
 runtime wheel. The complete C0 schema suite remains `reference-only`. C1
 evidence is phase-scoped: the bundled runtime suite is
 `exact-native-reference`, while the other C1 suites remain `reference-only`.
+With a selected native wheel, the `application-events` report carries a
+supplemental exact differential for materialized-event stream admission:
+per-operation accepted/dropped updates, final accepted events, and cutoff
+responses must match the Python oracle. This does not promote the suite claim;
+raw fixture construction, constructor wire normalization, and diagnostics
+remain `reference-only` transition work.
 This preserves the boundary around other schema-facing and stable C1 runtime
 behavior. C4 production and X3 durable-stream durability are preview promotion
 work under `REL-EXTENSION-RUNTIME-AUTHORITY`; their live-authority,

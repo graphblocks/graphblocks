@@ -267,7 +267,15 @@ def _release_evidence(
             {"case_id": case_id, "status": "passed"}
             for case_id in expectation["case_ids"]
         ]
-        if suite == "runtime":
+        if suite == "application-events":
+            for result in results:
+                result["observed"] = {
+                    "runtime": "native",
+                    "native_reference_match": True,
+                    "native_contract": {"updates": []},
+                    "reference_contract": {"updates": []},
+                }
+        elif suite == "runtime":
             for result in results:
                 result["observed"] = {
                     "runtime": "native",
@@ -409,6 +417,9 @@ def _write_platform_input(
         if record["distribution"] == "graphblocks-runtime"
         and record["artifactType"] == "wheel"
     )
+    tck["reports"]["application-events"]["evidence"][
+        "native_stream_artifact"
+    ] = dict(native_compiler_artifact)
     tck["reports"]["compiler"]["evidence"]["implementation_artifact"] = dict(
         native_compiler_artifact
     )

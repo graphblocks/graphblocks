@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from copy import deepcopy
+from datetime import datetime, timezone
 from decimal import Decimal
 import hashlib
 import importlib
@@ -422,7 +423,7 @@ def test_release_evidence_gate_requires_nonempty_identity_bound_tck_reports() ->
         module._require_release_evidence(invalid, kind="TCK")
 
 
-def test_release_evidence_binds_compiler_and_runtime_reports_to_exact_runtime_wheel() -> None:
+def test_release_evidence_binds_native_reports_to_exact_runtime_wheel() -> None:
     module = _load_wheelhouse_module()
     artifact = {
         "filename": "graphblocks_runtime-0.1.0-cp311-abi3-linux_x86_64.whl",
@@ -439,6 +440,28 @@ def test_release_evidence_binds_compiler_and_runtime_reports_to_exact_runtime_wh
             {
                 "ok": True,
                 "reports": {
+                    "application-events": {
+                        "ok": True,
+                        "evidence": {
+                            "fixture_digest": "sha256:" + "d" * 64,
+                            "implementation": "graphblocks-python",
+                            "implementation_version": "1.0.0rc1",
+                            "native_stream_artifact": observed_artifact,
+                            "suite": "application-events",
+                        },
+                        "results": [
+                            {
+                                "case_id": "application-events/native-stream",
+                                "status": "passed",
+                                "observed": {
+                                    "runtime": "native",
+                                    "native_reference_match": True,
+                                    "native_contract": {"updates": []},
+                                    "reference_contract": {"updates": []},
+                                },
+                            }
+                        ],
+                    },
                     "compiler": {
                         "ok": True,
                         "evidence": {
@@ -805,6 +828,9 @@ def test_default_tck_output_matches_source_derived_release_expectations(
         lambda: "0.1.0",
     )
     graphblocks_runtime = importlib.import_module("graphblocks_runtime")
+    application_event_module = importlib.import_module(
+        "graphblocks.application_event"
+    )
     testing_cli = importlib.import_module("graphblocks_testing.cli")
     runtime_module = importlib.import_module("graphblocks.runtime")
 
@@ -826,10 +852,103 @@ def test_default_tck_output_matches_source_derived_release_expectations(
             ],
         }
 
+    def reference_application_event_stream_bridge(
+        state: dict[str, object],
+        operations: object,
+    ) -> dict[str, object]:
+        assert state == {"acceptedEvents": []}
+        assert isinstance(operations, list)
+        stream = application_event_module.ApplicationEventStreamState()
+        accepted_wires_by_id: dict[str, dict[str, object]] = {}
+        updates: list[dict[str, object]] = []
+        for operation_index, operation in enumerate(operations):
+            assert isinstance(operation, dict) and operation["kind"] == "event"
+            raw_event = operation["event"]
+            assert isinstance(raw_event, dict)
+            raw_metadata = raw_event["metadata"]
+            assert isinstance(raw_metadata, dict)
+            occurred_at_unix_ms = raw_metadata["occurredAtUnixMs"]
+            assert isinstance(occurred_at_unix_ms, int)
+            metadata = application_event_module.ApplicationEventMetadata(
+                event_id=str(raw_metadata["eventId"]),
+                run_id=str(raw_metadata["runId"]),
+                response_id=str(raw_metadata["responseId"]),
+                turn_id=raw_metadata["turnId"],
+                cursor=raw_metadata["cursor"],
+                graph_id=raw_metadata["graphId"],
+                node_id=raw_metadata["nodeId"],
+                operation_id=raw_metadata["operationId"],
+                sequence=raw_metadata["sequence"],
+                release_id=str(raw_metadata["releaseId"]),
+                policy_snapshot_id=str(raw_metadata["policySnapshotId"]),
+                occurred_at=datetime.fromtimestamp(
+                    occurred_at_unix_ms / 1000,
+                    timezone.utc,
+                )
+                .isoformat()
+                .replace("+00:00", "Z"),
+                visibility=raw_metadata["visibility"],
+            )
+            payload = raw_event["payload"]
+            assert isinstance(payload, dict)
+            if raw_event["kind"] == "OutputCutoff":
+                cutoff_occurred_at_unix_ms = payload["occurred_at_unix_ms"]
+                assert isinstance(cutoff_occurred_at_unix_ms, int)
+                payload = dict(payload)
+                payload.pop("occurred_at_unix_ms")
+                payload["occurred_at"] = (
+                    datetime.fromtimestamp(
+                        cutoff_occurred_at_unix_ms / 1000,
+                        timezone.utc,
+                    )
+                    .isoformat()
+                    .replace("+00:00", "Z")
+                )
+            event = application_event_module.ApplicationEvent(
+                kind=raw_event["kind"],
+                metadata=metadata,
+                payload=payload,
+                tool_call_id=raw_event["toolCallId"],
+            )
+            accepted = stream.accept(event)
+            if accepted is None:
+                updates.append(
+                    {
+                        "operationIndex": operation_index,
+                        "kind": "dropped",
+                        "event": raw_event,
+                    }
+                )
+                continue
+            accepted_wires_by_id.setdefault(accepted.metadata.event_id, raw_event)
+            updates.append(
+                {
+                    "operationIndex": operation_index,
+                    "kind": "accepted",
+                    "event": accepted_wires_by_id[accepted.metadata.event_id],
+                }
+            )
+        return {
+            "ok": True,
+            "updates": updates,
+            "state": {
+                "acceptedEvents": [
+                    accepted_wires_by_id[event.metadata.event_id]
+                    for event in stream.accepted_events
+                ],
+                "cutoffResponses": sorted(stream.cutoffs),
+            },
+        }
+
     monkeypatch.setattr(
         graphblocks_runtime,
         "run_stdlib_graph",
         reference_runtime_bridge,
+    )
+    monkeypatch.setattr(
+        graphblocks_runtime,
+        "evaluate_application_event_stream",
+        reference_application_event_stream_bridge,
     )
 
     exit_code = graphblocks_testing.main(
@@ -1085,6 +1204,19 @@ def test_stable_tck_expectations_bind_bundled_c0_c1_profiles_and_contract_digest
     assert expectations["suites"]["compiler"][
         "reference_implementation_version"
     ] == "1.0.0rc1"
+    assert expectations["suites"]["application-events"]["implementation"] == (
+        "graphblocks-python"
+    )
+    assert expectations["suites"]["application-events"][
+        "native_stream_artifact_distribution"
+    ] == "graphblocks-runtime"
+    assert expectations["suites"]["application-events"]["execution_claim"] == {
+        "executor_id": "python-reference",
+        "implementation": "graphblocks-python",
+        "language": "python",
+        "comparison": "reference-only",
+        "reference_implementation": "graphblocks-python",
+    }
     assert expectations["suites"]["runtime"]["implementation"] == (
         "graphblocks-runtime"
     )

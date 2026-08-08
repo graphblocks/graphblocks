@@ -211,12 +211,70 @@ from .models import (
 from .reports import TckReport, TckResult
 
 
+def _application_event_native_contract(
+    event: ApplicationEvent,
+) -> dict[str, object]:
+    occurred_at = datetime.fromisoformat(
+        event.metadata.occurred_at.removesuffix("Z") + "+00:00"
+        if event.metadata.occurred_at.endswith("Z")
+        else event.metadata.occurred_at
+    )
+    if occurred_at.tzinfo is None:
+        raise ValueError("application event occurred_at must include a UTC offset")
+    occurred_at_unix_ms = int(occurred_at.timestamp() * 1000)
+    if occurred_at_unix_ms < 0:
+        raise ValueError("application event occurred_at must not predate the Unix epoch")
+    payload = _runtime_mutable_json_like(event.payload)
+    if event.kind == "OutputCutoff":
+        if not isinstance(payload, dict):
+            raise TypeError("output cutoff payload must be an object")
+        cutoff_occurred_at = payload.pop("occurred_at", None)
+        if not isinstance(cutoff_occurred_at, str):
+            raise TypeError("output cutoff occurred_at must be an ISO timestamp")
+        parsed_cutoff_occurred_at = datetime.fromisoformat(
+            cutoff_occurred_at.removesuffix("Z") + "+00:00"
+            if cutoff_occurred_at.endswith("Z")
+            else cutoff_occurred_at
+        )
+        if parsed_cutoff_occurred_at.tzinfo is None:
+            raise ValueError("output cutoff occurred_at must include a UTC offset")
+        cutoff_occurred_at_unix_ms = int(
+            parsed_cutoff_occurred_at.timestamp() * 1000
+        )
+        if cutoff_occurred_at_unix_ms < 0:
+            raise ValueError(
+                "output cutoff occurred_at must not predate the Unix epoch"
+            )
+        payload["occurred_at_unix_ms"] = cutoff_occurred_at_unix_ms
+    return {
+        "kind": event.kind,
+        "metadata": {
+            "eventId": event.metadata.event_id,
+            "runId": event.metadata.run_id,
+            "responseId": event.metadata.response_id,
+            "turnId": event.metadata.turn_id,
+            "cursor": event.metadata.cursor,
+            "graphId": event.metadata.graph_id,
+            "nodeId": event.metadata.node_id,
+            "operationId": event.metadata.operation_id,
+            "sequence": event.metadata.sequence,
+            "releaseId": event.metadata.release_id,
+            "policySnapshotId": event.metadata.policy_snapshot_id,
+            "occurredAtUnixMs": occurred_at_unix_ms,
+            "visibility": event.metadata.visibility,
+        },
+        "toolCallId": event.tool_call_id,
+        "payload": payload,
+    }
+
+
 @dataclass(frozen=True, slots=True)
 class TckRunner:
     authority_executor_id = "python-reference"
     authority_language = "python"
     authority_comparison = "reference-only"
     authority_reference_implementation = "graphblocks-python"
+    native_application_event_authority = False
     native_runtime_authority = False
 
     registry: RuntimeRegistry
@@ -666,6 +724,22 @@ class TckRunner:
     def _run_application_event_case(self, case: TckCase) -> TckResult:
         state = ApplicationEventStreamState()
         diagnostics: list[dict[str, str]] = []
+        attempted_events: list[ApplicationEvent] = []
+        reference_updates: list[tuple[int, str, ApplicationEvent]] = []
+
+        def accept_event(event: ApplicationEvent) -> ApplicationEvent | None:
+            operation_index = len(attempted_events)
+            attempted_events.append(event)
+            accepted = state.accept(event)
+            reference_updates.append(
+                (
+                    operation_index,
+                    "accepted" if accepted is not None else "dropped",
+                    accepted if accepted is not None else event,
+                )
+            )
+            return accepted
+
         for sequence, operation in enumerate(
             case.application_event_operations, start=1
         ):
@@ -730,7 +804,7 @@ class TckRunner:
                     chunk,
                     input_digest=str(operation.get("inputDigest", "")),
                 )
-                accepted = state.accept(event)
+                accepted = accept_event(event)
                 if (accepted is not None) is not bool(
                     operation.get("expectAccepted", True)
                 ):
@@ -831,7 +905,7 @@ class TckRunner:
                 if isinstance(evaluated_at, str):
                     decision = decision.evaluated_at_time(evaluated_at)
                 event = ApplicationEvent.output_policy_decision(metadata, decision)
-                accepted = state.accept(event)
+                accepted = accept_event(event)
                 if (accepted is not None) is not bool(
                     operation.get("expectAccepted", True)
                 ):
@@ -887,7 +961,7 @@ class TckRunner:
                     )
                     continue
                 for event in ApplicationEvent.output_cutoff(metadata, cutoff):
-                    if state.accept(event) is None:
+                    if accept_event(event) is None:
                         diagnostics.append(
                             {
                                 "code": "ApplicationEventUnexpectedRejection",
@@ -904,7 +978,7 @@ class TckRunner:
                         "outputs": operation.get("outputs", {}),
                     },
                 )
-                accepted = state.accept(event)
+                accepted = accept_event(event)
                 if (accepted is not None) is not bool(
                     operation.get("expectAccepted", True)
                 ):
@@ -979,7 +1053,9 @@ class TckRunner:
                     continue
                 event = ApplicationEvent.tool_call_state(metadata, call)
                 accepted = (
-                    state.accept(event) is not None if event is not None else False
+                    accept_event(event) is not None
+                    if event is not None
+                    else False
                 )
                 if accepted is not bool(operation.get("expectAccepted", True)):
                     diagnostics.append(
@@ -1289,7 +1365,10 @@ class TckRunner:
                             result,
                         )
                 event = ApplicationEvent.tool_result_event(metadata, result_event)
-                accepted = event is not None and state.accept(event) is not None
+                accepted = (
+                    event is not None
+                    and accept_event(event) is not None
+                )
                 if accepted is not bool(operation.get("expectAccepted", True)):
                     diagnostics.append(
                         {
@@ -1316,32 +1395,150 @@ class TckRunner:
                     "path": "$.expectedAcceptedKinds",
                 }
             )
+        observed: dict[str, object] = {
+            "accepted_kinds": accepted_kinds,
+            "accepted_metadata": [
+                {
+                    "event_id": event.metadata.event_id,
+                    "run_id": event.metadata.run_id,
+                    "response_id": event.metadata.response_id,
+                    "turn_id": event.metadata.turn_id,
+                    "sequence": event.metadata.sequence,
+                    "cursor": event.metadata.cursor,
+                    "release_id": event.metadata.release_id,
+                    "policy_snapshot_id": event.metadata.policy_snapshot_id,
+                    "occurred_at": event.metadata.occurred_at,
+                    "graph_id": event.metadata.graph_id,
+                    "node_id": event.metadata.node_id,
+                    "operation_id": event.metadata.operation_id,
+                    "visibility": event.metadata.visibility,
+                }
+                for event in state.accepted_events
+            ],
+        }
+        if self.native_application_event_authority:
+            try:
+                from graphblocks_runtime import evaluate_application_event_stream
+
+                attempted_event_contracts = [
+                    _application_event_native_contract(event)
+                    for event in attempted_events
+                ]
+                reference_events = [
+                    _application_event_native_contract(event)
+                    for event in state.accepted_events
+                ]
+                native_result = evaluate_application_event_stream(
+                    {"acceptedEvents": []},
+                    [
+                        {"kind": "event", "event": event}
+                        for event in attempted_event_contracts
+                    ],
+                )
+                if set(native_result) != {"ok", "state", "updates"}:
+                    raise ValueError(
+                        "native application event result must use the closed contract"
+                    )
+                if native_result["ok"] is not True:
+                    raise ValueError(
+                        "native application event result must report exact success"
+                    )
+                native_updates = native_result["updates"]
+                if not isinstance(native_updates, list) or not all(
+                    isinstance(update, dict)
+                    and set(update) == {"event", "kind", "operationIndex"}
+                    and type(update["operationIndex"]) is int
+                    and update["operationIndex"] >= 0
+                    and update["kind"] in {"accepted", "dropped"}
+                    and isinstance(update["event"], dict)
+                    for update in native_updates
+                ):
+                    raise TypeError(
+                        "native application event result must contain closed updates"
+                    )
+                native_state = native_result["state"]
+                if not isinstance(native_state, dict) or set(native_state) != {
+                    "acceptedEvents",
+                    "cutoffResponses",
+                }:
+                    raise ValueError(
+                        "native application event state must use the closed contract"
+                    )
+                native_events = native_state["acceptedEvents"]
+                native_cutoff_responses = native_state["cutoffResponses"]
+                if not isinstance(native_events, list) or not all(
+                    isinstance(event, dict) for event in native_events
+                ):
+                    raise TypeError(
+                        "native application event state must contain event objects"
+                    )
+                if not isinstance(native_cutoff_responses, list) or not all(
+                    type(response_id) is str and bool(response_id)
+                    for response_id in native_cutoff_responses
+                ):
+                    raise TypeError(
+                        "native application event state must contain cutoff response ids"
+                    )
+                reference_update_contracts = [
+                    {
+                        "operationIndex": operation_index,
+                        "kind": kind,
+                        "event": _application_event_native_contract(event),
+                    }
+                    for operation_index, kind, event in reference_updates
+                ]
+                native_contract = {
+                    "accepted_kinds": [event.get("kind") for event in native_events],
+                    "accepted_events": native_events,
+                    "cutoff_responses": native_cutoff_responses,
+                    "updates": native_updates,
+                }
+                reference_contract = {
+                    "accepted_kinds": accepted_kinds,
+                    "accepted_events": reference_events,
+                    "cutoff_responses": sorted(state.cutoffs),
+                    "updates": reference_update_contracts,
+                }
+                native_reference_match = native_contract == reference_contract
+                observed.update(
+                    {
+                        "runtime": "native",
+                        "native_contract": native_contract,
+                        "reference_contract": reference_contract,
+                        "native_reference_match": native_reference_match,
+                    }
+                )
+                if not native_reference_match:
+                    diagnostics.append(
+                        {
+                            "code": "NativeReferenceMismatch",
+                            "message": (
+                                "native application event stream differs from the "
+                                "Python reference oracle"
+                            ),
+                            "path": "$.observed.reference_contract",
+                        }
+                    )
+            except Exception as error:
+                diagnostics.append(
+                    {
+                        "code": "NativeApplicationEventExecutionError",
+                        "message": str(error),
+                        "path": "$.operations",
+                    }
+                )
+                observed.update(
+                    {
+                        "runtime": "native",
+                        "native_reference_match": False,
+                    }
+                )
         return TckResult(
             case_id=case.case_id,
             kind=case.kind,
             status="passed" if not diagnostics else "failed",
             diagnostics=tuple(diagnostics),
-            observed={
-                "accepted_kinds": accepted_kinds,
-                "accepted_metadata": [
-                    {
-                        "event_id": event.metadata.event_id,
-                        "run_id": event.metadata.run_id,
-                        "response_id": event.metadata.response_id,
-                        "turn_id": event.metadata.turn_id,
-                        "sequence": event.metadata.sequence,
-                        "cursor": event.metadata.cursor,
-                        "release_id": event.metadata.release_id,
-                        "policy_snapshot_id": event.metadata.policy_snapshot_id,
-                        "occurred_at": event.metadata.occurred_at,
-                        "graph_id": event.metadata.graph_id,
-                        "node_id": event.metadata.node_id,
-                        "operation_id": event.metadata.operation_id,
-                        "visibility": event.metadata.visibility,
-                    }
-                    for event in state.accepted_events
-                ],
-            },
+            observed=observed,
         )
 
     def _run_application_protocol_case(self, case: TckCase) -> TckResult:
@@ -8941,6 +9138,11 @@ class TckRunner:
             diagnostics=tuple(diagnostics),
             observed=observed,
         )
+
+
+class _ApplicationEventStreamDifferentialTckRunner(TckRunner):
+    __slots__ = ()
+    native_application_event_authority = True
 
 
 class _NormativeCompilerTckRunner(TckRunner):

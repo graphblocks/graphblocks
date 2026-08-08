@@ -4,6 +4,7 @@ import dataclasses
 import importlib
 import hashlib
 import json
+from datetime import datetime, timezone
 from decimal import Decimal
 import os
 from pathlib import Path
@@ -49,6 +50,102 @@ def _fake_native_stdlib_result(
         "status": result.status,
         "outputs": result.outputs,
         "journal": journal,
+    }
+
+
+def _fake_native_application_event_stream(
+    state: dict[str, object],
+    operations: object,
+) -> dict[str, object]:
+    from graphblocks.application_event import (
+        ApplicationEvent,
+        ApplicationEventMetadata,
+        ApplicationEventStreamState,
+    )
+
+    assert state == {"acceptedEvents": []}
+    assert isinstance(operations, list)
+    stream = ApplicationEventStreamState()
+    accepted_wires_by_id: dict[str, dict[str, object]] = {}
+    updates: list[dict[str, object]] = []
+    for operation_index, operation in enumerate(operations):
+        assert isinstance(operation, dict) and operation["kind"] == "event"
+        raw_event = operation["event"]
+        assert isinstance(raw_event, dict)
+        raw_metadata = raw_event["metadata"]
+        assert isinstance(raw_metadata, dict)
+        occurred_at_unix_ms = raw_metadata["occurredAtUnixMs"]
+        assert isinstance(occurred_at_unix_ms, int)
+        metadata = ApplicationEventMetadata(
+            event_id=str(raw_metadata["eventId"]),
+            run_id=str(raw_metadata["runId"]),
+            response_id=str(raw_metadata["responseId"]),
+            turn_id=raw_metadata["turnId"],  # type: ignore[arg-type]
+            cursor=raw_metadata["cursor"],  # type: ignore[arg-type]
+            graph_id=raw_metadata["graphId"],  # type: ignore[arg-type]
+            node_id=raw_metadata["nodeId"],  # type: ignore[arg-type]
+            operation_id=raw_metadata["operationId"],  # type: ignore[arg-type]
+            sequence=raw_metadata["sequence"],  # type: ignore[arg-type]
+            release_id=str(raw_metadata["releaseId"]),
+            policy_snapshot_id=str(raw_metadata["policySnapshotId"]),
+            occurred_at=datetime.fromtimestamp(
+                occurred_at_unix_ms / 1000,
+                timezone.utc,
+            )
+            .isoformat()
+            .replace("+00:00", "Z"),
+            visibility=raw_metadata["visibility"],  # type: ignore[arg-type]
+        )
+        payload = raw_event["payload"]
+        assert isinstance(payload, dict)
+        if raw_event["kind"] == "OutputCutoff":
+            cutoff_occurred_at_unix_ms = payload["occurred_at_unix_ms"]
+            assert isinstance(cutoff_occurred_at_unix_ms, int)
+            payload = dict(payload)
+            payload.pop("occurred_at_unix_ms")
+            payload["occurred_at"] = (
+                datetime.fromtimestamp(
+                    cutoff_occurred_at_unix_ms / 1000,
+                    timezone.utc,
+                )
+                .isoformat()
+                .replace("+00:00", "Z")
+            )
+        event = ApplicationEvent(
+            kind=raw_event["kind"],  # type: ignore[arg-type]
+            metadata=metadata,
+            payload=payload,  # type: ignore[arg-type]
+            tool_call_id=raw_event["toolCallId"],  # type: ignore[arg-type]
+        )
+        accepted = stream.accept(event)
+        if accepted is None:
+            updates.append(
+                {
+                    "operationIndex": operation_index,
+                    "kind": "dropped",
+                    "event": raw_event,
+                }
+            )
+            continue
+        if accepted.metadata.event_id not in accepted_wires_by_id:
+            accepted_wires_by_id[accepted.metadata.event_id] = raw_event
+        updates.append(
+            {
+                "operationIndex": operation_index,
+                "kind": "accepted",
+                "event": accepted_wires_by_id[accepted.metadata.event_id],
+            }
+        )
+    return {
+        "ok": True,
+        "updates": updates,
+        "state": {
+            "acceptedEvents": [
+                accepted_wires_by_id[event.metadata.event_id]
+                for event in stream.accepted_events
+            ],
+            "cutoffResponses": sorted(stream.cutoffs),
+        },
     }
 
 
@@ -1675,6 +1772,92 @@ def test_testing_package_loads_shared_application_event_tck_cases(monkeypatch) -
             ("RunSucceeded", "RunSucceeded"),
         }
     assert "load_application_event_tck_cases" in graphblocks_testing.__all__
+
+
+def test_application_event_stream_admission_is_exact_native_reference(
+    monkeypatch,
+) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+    runners = importlib.import_module("graphblocks_testing.runners")
+    monkeypatch.setitem(
+        sys.modules,
+        "graphblocks_runtime",
+        SimpleNamespace(
+            evaluate_application_event_stream=_fake_native_application_event_stream
+        ),
+    )
+    cases = graphblocks_testing.load_application_event_tck_cases(
+        ROOT / "tck" / "application-events" / "cases.json"
+    )
+
+    report = runners._ApplicationEventStreamDifferentialTckRunner(
+        graphblocks_testing.stdlib_registry(),
+        suite="application-events",
+        implementation="graphblocks-python",
+        implementation_version="1.0.0rc1",
+    ).run_cases(cases)
+
+    assert report.ok
+    assert all(
+        result.observed["runtime"] == "native"
+        and result.observed["native_reference_match"] is True
+        and result.observed["native_contract"] == result.observed["reference_contract"]
+        for result in report.results
+    )
+    cutoff_events = [
+        event
+        for result in report.results
+        for event in result.observed["native_contract"]["accepted_events"]
+        if event["kind"] == "OutputCutoff"
+    ]
+    assert cutoff_events
+    assert all(
+        "occurred_at" not in event["payload"]
+        and type(event["payload"]["occurred_at_unix_ms"]) is int
+        for event in cutoff_events
+    )
+
+
+def test_application_event_stream_admission_rejects_native_drift(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+    runners = importlib.import_module("graphblocks_testing.runners")
+
+    def reject_all_events(
+        state: dict[str, object],
+        operations: object,
+    ) -> dict[str, object]:
+        return {
+            "ok": True,
+            "updates": [],
+            "state": {"acceptedEvents": [], "cutoffResponses": []},
+        }
+
+    monkeypatch.setitem(
+        sys.modules,
+        "graphblocks_runtime",
+        SimpleNamespace(evaluate_application_event_stream=reject_all_events),
+    )
+    case = graphblocks_testing.load_application_event_tck_cases(
+        ROOT / "tck" / "application-events" / "cases.json"
+    )[0]
+
+    report = runners._ApplicationEventStreamDifferentialTckRunner(
+        graphblocks_testing.stdlib_registry(),
+        suite="application-events",
+        implementation="graphblocks-python",
+        implementation_version="1.0.0rc1",
+    ).run_cases((case,))
+
+    assert not report.ok
+    assert report.results[0].diagnostics[-1] == {
+        "code": "GB3004",
+        "message": (
+            "native application event stream differs from the Python reference oracle"
+        ),
+        "path": "$.observed.reference_contract",
+    }
 
 
 def test_testing_package_application_event_tck_preserves_authoritative_event_metadata(monkeypatch) -> None:
@@ -9918,6 +10101,7 @@ def test_testing_package_cli_emits_observed_release_tck_identity(
         "artifactType": "wheel",
     }
     native_calls: list[str] = []
+    native_application_event_calls: list[int] = []
     native_runtime_calls: list[str] = []
     reference_compile = graphblocks_testing.compile_graph
 
@@ -9947,6 +10131,14 @@ def test_testing_package_cli_emits_observed_release_tck_identity(
             options,
         )
 
+    def evaluate_application_event_stream(
+        state: dict[str, object],
+        operations: object,
+    ) -> dict[str, object]:
+        assert isinstance(operations, list)
+        native_application_event_calls.append(len(operations))
+        return _fake_native_application_event_stream(state, operations)
+
     monkeypatch.setattr(
         graphblocks_testing,
         "_native_compiler_wheel_artifact",
@@ -9965,7 +10157,10 @@ def test_testing_package_cli_emits_observed_release_tck_identity(
     monkeypatch.setitem(
         sys.modules,
         "graphblocks_runtime",
-        SimpleNamespace(run_stdlib_graph=run_stdlib_graph),
+        SimpleNamespace(
+            evaluate_application_event_stream=evaluate_application_event_stream,
+            run_stdlib_graph=run_stdlib_graph,
+        ),
     )
 
     exit_code = graphblocks_testing.main(
@@ -10013,6 +10208,28 @@ def test_testing_package_cli_emits_observed_release_tck_identity(
                 "reference_implementation",
             )
         }
+    application_event_report = payload["reports"]["application-events"]
+    assert application_event_report["evidence"]["implementation"] == (
+        "graphblocks-python"
+    )
+    assert application_event_report["evidence"]["implementation_version"] == (
+        "1.0.0rc1"
+    )
+    assert application_event_report["evidence"]["native_stream_artifact"] == (
+        compiler_artifact
+    )
+    assert application_event_report["evidence"]["authority_claim"]["comparison"] == (
+        "reference-only"
+    )
+    assert application_event_report["evidence"]["execution_claim"][
+        "executor_id"
+    ] == ("python-reference")
+    assert "reference_implementation_version" not in application_event_report[
+        "evidence"
+    ]
+    assert len(native_application_event_calls) == len(
+        application_event_report["results"]
+    )
     compiler_report = payload["reports"]["compiler"]
     assert compiler_report["evidence"]["implementation"] == "graphblocks-runtime"
     assert compiler_report["evidence"]["implementation_version"] == "0.1.0"

@@ -263,6 +263,15 @@ boundaries remain preview promotion work under
 C1 requirements, suites, native API snapshot, and restart-independent local
 store/journal evidence.
 
+The installed `application-events` report additionally runs each
+Python-materialized attempted event through the selected Rust wheel and exact
+compares the closed accepted/dropped update sequence, final accepted events,
+and cutoff-response projection. The report retains the selected wheel identity
+as supplemental evidence, but its suite claim remains `python-reference`:
+Rust does not yet interpret the raw fixture operations through the installed
+boundary, and constructor payload/time normalization plus diagnostic parity are
+still required before the whole suite can become `exact-native-reference`.
+
 ## Release gates
 
 The first stable release is blocked until all of these statements are evidenced

@@ -252,6 +252,25 @@ profiles:
             - src/graphblocks/tools.py
           targetNormative:
             - crates/graphblocks-runtime-core/src/outcome.rs
+        authoritySlices:
+          applicationEventStreamAdmission:
+            status: normative
+            authority: rust
+            scope: materialized-event-admission-and-projection-only
+            normativeImplementations:
+              - crates/graphblocks-runtime-core/src/application_event.rs
+              - crates/graphblocks-python/src/lib.rs
+            pythonFacadeAndReference:
+              - src/graphblocks/application_event.py
+            installedEvidence:
+              - packages/graphblocks-testing/src/graphblocks_testing/runners.py
+              - packages/graphblocks-testing/src/graphblocks_testing/cli.py
+              - tests/test_testing_package.py
+              - tests/test_release_supply_chain.py
+            exclusions:
+              - raw-fixture-operation-construction
+              - constructor-payload-wire-normalization
+              - diagnostic-differential
         schemas: []
         tckSuites: [application-events, tool-result]
         evidence:
