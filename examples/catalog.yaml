@@ -1,0 +1,87 @@
+catalogVersion: 1
+kind: ExamplePatternCatalog
+examples:
+  - slug: 01-enterprise-federated-rag
+    requiredProfiles: [GB-C2-AI-APPLICATION]
+    patterns: [retrieval-provenance, conversation-transaction, grounded-answer]
+    integrationReality: {mode: deterministic-fixture, networkAccess: blocked, realServices: []}
+    threatModel: [untrusted-retrieval-content, cross-tenant-data]
+    nonGoals: [no-domain-correctness-guarantee, no-production-readiness-claim, no-real-service-compatibility-claim]
+  - slug: 02-document-ingestion
+    requiredProfiles: [GB-C2-AI-APPLICATION]
+    patterns: [document-provenance, acl-lineage, bounded-fallback]
+    integrationReality: {mode: deterministic-fixture, networkAccess: blocked, realServices: []}
+    threatModel: [hostile-documents, acl-leakage]
+    nonGoals: [no-domain-correctness-guarantee, no-production-readiness-claim, no-real-service-compatibility-claim]
+  - slug: 03-policy-governed-chat
+    requiredProfiles: [GB-C2-AI-APPLICATION, GB-C3-GOVERNED-RUNTIME]
+    patterns: [policy-admission, budget-boundary, bounded-completion]
+    integrationReality: {mode: deterministic-fixture, networkAccess: blocked, realServices: []}
+    threatModel: [policy-bypass, budget-exhaustion]
+    nonGoals: [no-domain-correctness-guarantee, no-production-readiness-claim, no-real-service-compatibility-claim]
+  - slug: 04-tui-workspace-assistant
+    requiredProfiles: [GB-C2-AI-APPLICATION, GB-C3-GOVERNED-RUNTIME]
+    patterns: [workspace-transaction, provider-binding, human-approval]
+    integrationReality: {mode: deterministic-fixture, networkAccess: blocked, realServices: []}
+    threatModel: [workspace-write, untrusted-model-output]
+    nonGoals: [no-domain-correctness-guarantee, no-production-readiness-claim, no-real-service-compatibility-claim]
+  - slug: 05-authority-backed-advisory
+    requiredProfiles: [GB-C2-AI-APPLICATION, GB-C3-GOVERNED-RUNTIME]
+    patterns: [authority-backed-evidence, supported-claim, human-approval]
+    integrationReality: {mode: deterministic-fixture, networkAccess: blocked, realServices: []}
+    threatModel: [unsupported-claims, approval-bypass]
+    nonGoals: [no-domain-correctness-guarantee, no-production-readiness-claim, no-real-service-compatibility-claim]
+  - slug: 06-bounded-research-orchestrator
+    requiredProfiles: [GB-X1-ORCHESTRATION]
+    patterns: [bounded-delegation, task-budget, replan-cas]
+    integrationReality: {mode: deterministic-fixture, networkAccess: blocked, realServices: []}
+    threatModel: [unbounded-delegation, stale-plan-write]
+    nonGoals: [no-domain-correctness-guarantee, no-production-readiness-claim, no-real-service-compatibility-claim]
+  - slug: 07-verified-rtl-workspace-trial
+    requiredProfiles: [GB-C3-GOVERNED-RUNTIME]
+    patterns: [workspace-transaction, lease-fencing, governed-commit]
+    integrationReality: {mode: deterministic-fixture, networkAccess: blocked, realServices: []}
+    threatModel: [untrusted-workspace-mutation, approval-bypass]
+    nonGoals: [no-domain-correctness-guarantee, no-production-readiness-claim, no-real-service-compatibility-claim]
+  - slug: 08-kubernetes-production-deployment
+    requiredProfiles: [GB-C4-PRODUCTION]
+    patterns: [immutable-release, deployment-revision, canary-rollback]
+    integrationReality: {mode: deterministic-fixture, networkAccess: blocked, realServices: []}
+    threatModel: [unsigned-release, stale-deployment-revision]
+    nonGoals: [no-domain-correctness-guarantee, no-production-readiness-claim, no-real-service-compatibility-claim]
+  - slug: 09-observability-profile
+    requiredProfiles: [GB-C4-PRODUCTION]
+    patterns: [authoritative-journal, telemetry-projection, outage-isolation]
+    integrationReality: {mode: deterministic-fixture, networkAccess: blocked, realServices: []}
+    threatModel: [telemetry-data-leakage, telemetry-outage]
+    nonGoals: [no-domain-correctness-guarantee, no-production-readiness-claim, no-real-service-compatibility-claim]
+  - slug: 10-realtime-voice-extension
+    requiredProfiles: [GB-X2-VOICE]
+    patterns: [provider-authoritative-playback, interruption-authority, vad-boundary]
+    integrationReality: {mode: deterministic-fixture, networkAccess: blocked, realServices: []}
+    threatModel: [untrusted-media, playback-race]
+    nonGoals: [no-domain-correctness-guarantee, no-production-readiness-claim, no-real-service-compatibility-claim]
+  - slug: 11-coding-agent-background-callbacks
+    requiredProfiles: [GB-C4-PRODUCTION]
+    patterns: [background-callback, tool-approval, callback-replay]
+    integrationReality: {mode: deterministic-fixture, networkAccess: blocked, realServices: []}
+    threatModel: [malicious-repository-instructions, callback-replay]
+    nonGoals: [no-domain-correctness-guarantee, no-production-readiness-claim, no-real-service-compatibility-claim]
+  - slug: 12-custom-python-rust-blocks
+    requiredProfiles: [GB-C1-LOCAL-RUNTIME]
+    patterns: [explicit-registry, worker-protocol, cross-language-block]
+    integrationReality: {mode: local-implementation, networkAccess: blocked, realServices: []}
+    threatModel: [untrusted-worker-result, registry-substitution]
+    nonGoals: [no-domain-correctness-guarantee, no-production-readiness-claim, no-real-service-compatibility-claim]
+  - slug: 13-llm-interviewer-rag-benchmark
+    requiredProfiles: [GB-C2-AI-APPLICATION]
+    patterns: [retrieval-provenance, blinded-evaluation, benchmark-composition]
+    integrationReality: {mode: deterministic-fixture, networkAccess: blocked, realServices: []}
+    threatModel: [benchmark-data-leakage, evaluator-bias]
+    nonGoals: [no-domain-correctness-guarantee, no-production-readiness-claim, no-real-service-compatibility-claim]
+  - slug: 14-vllm-config-benchmark
+    requiredProfiles: [GB-C2-AI-APPLICATION]
+    patterns: [benchmark-composition, bounded-measurement, configuration-comparison]
+    integrationReality: {mode: deterministic-fixture, networkAccess: blocked, realServices: []}
+    threatModel: [benchmark-configuration-drift, resource-exhaustion]
+    nonGoals: [no-domain-correctness-guarantee, no-production-readiness-claim, no-real-service-compatibility-claim]

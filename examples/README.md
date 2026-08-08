@@ -12,6 +12,14 @@ also use the composition contract: their root graphs declare typed slots while
 reusable workflow stages live in `fragments/` and are materialized before the
 same validation and integration path runs.
 
+[`catalog.yaml`](catalog.yaml) is the closed metadata inventory for these
+examples. Every entry declares required conformance profiles, reusable generic
+patterns, integration reality, an explicit threat model, and non-goals. No
+entry claims domain correctness, production readiness, or real-service
+compatibility. The integration report binds that metadata by digest, so an
+example remains a non-normative pattern demonstration rather than silently
+becoming a legal, research, coding, deployment, or benchmarking product.
+
 | Example | Contract focus |
 | --- | --- |
 | [01-1 Enterprise RAG — YAML](01-enterprise-federated-rag/1-1-yaml-runtime/README.md) | YAML graph through the CLI runtime |

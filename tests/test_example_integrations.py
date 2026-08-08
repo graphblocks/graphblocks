@@ -5,6 +5,7 @@ from pathlib import Path
 import sys
 
 import pytest
+import yaml
 
 
 ROOT = Path(__file__).parents[1]
@@ -35,19 +36,46 @@ EXAMPLE_SLUGS = (
     "13-llm-interviewer-rag-benchmark",
     "14-vllm-config-benchmark",
 )
+EXAMPLE_FIELDS = {
+    "slug",
+    "requiredProfiles",
+    "patterns",
+    "integrationReality",
+    "threatModel",
+    "nonGoals",
+}
+EXAMPLE_NON_GOALS = {
+    "no-domain-correctness-guarantee",
+    "no-production-readiness-claim",
+    "no-real-service-compatibility-claim",
+}
+
+
+def _load_example_catalog() -> dict[str, object]:
+    catalog = yaml.safe_load(
+        (ROOT / "examples" / "catalog.yaml").read_text(encoding="utf-8")
+    )
+    assert isinstance(catalog, dict)
+    return catalog
 
 
 @pytest.mark.parametrize("slug", EXAMPLE_SLUGS)
 def test_example_executes_mocked_integration(slug: str) -> None:
     example_path = ROOT / "examples" / slug / "example.yaml"
+    catalog = _load_example_catalog()
+    metadata = next(entry for entry in catalog["examples"] if entry["slug"] == slug)
 
     report = run_integration(example_path)
 
     assert report["ok"] is True
     assert report["example"] == slug
     assert "references:resolved" in report["checks"]
+    assert "metadata:resolved" in report["checks"]
     assert len(report["checks"]) >= 3
     assert report["mockedBoundaries"] or report["executedBlocks"]
+    assert report["requiredProfiles"] == metadata["requiredProfiles"]
+    assert report["integrationReality"] == metadata["integrationReality"]
+    assert str(report["exampleMetadataDigest"]).startswith("sha256:")
     assert str(report["evidenceDigest"]).startswith("sha256:")
 
 
@@ -58,7 +86,39 @@ def test_example_integration_inventory_matches_root_examples() -> None:
         if path.is_dir() and path.name[:2].isdigit()
     }
 
+    catalog = _load_example_catalog()
+    assert set(catalog) == {"catalogVersion", "kind", "examples"}
+    assert catalog["catalogVersion"] == 1
+    assert catalog["kind"] == "ExamplePatternCatalog"
+    entries = catalog["examples"]
+    assert isinstance(entries, list)
     assert directories == set(EXAMPLE_SLUGS)
+    assert [entry["slug"] for entry in entries] == list(EXAMPLE_SLUGS)
+
+    profile_catalog = yaml.safe_load(
+        (ROOT / "src/graphblocks/data/conformance-profiles.yaml").read_text(
+            encoding="utf-8"
+        )
+    )
+    profile_ids = {
+        profile["id"] for profile in profile_catalog["spec"]["profiles"]
+    }
+    for entry in entries:
+        assert set(entry) == EXAMPLE_FIELDS
+        assert entry["requiredProfiles"]
+        assert set(entry["requiredProfiles"]) <= profile_ids
+        assert entry["patterns"]
+        assert entry["threatModel"]
+        assert set(entry["nonGoals"]) == EXAMPLE_NON_GOALS
+        assert entry["integrationReality"] == {
+            "mode": (
+                "local-implementation"
+                if entry["slug"] == "12-custom-python-rust-blocks"
+                else "deterministic-fixture"
+            ),
+            "networkAccess": "blocked",
+            "realServices": [],
+        }
     for slug in EXAMPLE_SLUGS:
         example_root = ROOT / "examples" / slug
         assert (example_root / "example.yaml").is_file()

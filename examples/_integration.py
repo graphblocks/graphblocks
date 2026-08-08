@@ -242,6 +242,27 @@ def run_integration(
     spec = integration.get("spec")
     if not isinstance(spec, Mapping):
         raise ValueError(f"{integration_path} spec must be a mapping")
+    catalog_path = ROOT / "examples" / "catalog.yaml"
+    catalog = yaml.safe_load(catalog_path.read_text(encoding="utf-8"))
+    catalog_entries = catalog.get("examples") if isinstance(catalog, Mapping) else None
+    if not isinstance(catalog_entries, list):
+        raise ValueError("examples/catalog.yaml must contain an examples array")
+    slug = example_path.parent.name
+    matching_metadata = [
+        entry
+        for entry in catalog_entries
+        if isinstance(entry, Mapping) and entry.get("slug") == slug
+    ]
+    if len(matching_metadata) != 1:
+        raise ValueError(f"examples/catalog.yaml must contain exactly one entry for {slug}")
+    example_metadata = deepcopy(dict(matching_metadata[0]))
+    required_profiles = example_metadata.get("requiredProfiles")
+    integration_reality = example_metadata.get("integrationReality")
+    if not isinstance(required_profiles, list) or not isinstance(
+        integration_reality, Mapping
+    ):
+        raise ValueError(f"examples/catalog.yaml entry {slug} is malformed")
+    example_metadata_digest = canonical_hash(example_metadata)
 
     for package_src in sorted((ROOT / "packages").glob("*/src")):
         package_path = str(package_src)
@@ -732,8 +753,11 @@ def run_integration(
         if not checks:
             raise AssertionError("example integration did not execute any checks")
         evidence = {
-            "example": example_path.parent.name,
-            "checks": checks,
+            "example": slug,
+            "checks": ["metadata:resolved", *checks],
+            "requiredProfiles": list(required_profiles),
+            "integrationReality": deepcopy(dict(integration_reality)),
+            "exampleMetadataDigest": example_metadata_digest,
             "mockedBoundaries": sorted(mocked_boundaries),
             "mockCalls": mock_calls,
             "executedBlocks": sorted(executed_blocks),
