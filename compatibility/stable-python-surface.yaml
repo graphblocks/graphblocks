@@ -8,6 +8,8 @@ description: >-
   fallback. Names not listed here remain preview or internal.
 requiredArtifacts: [graphblocks, graphblocks-runtime]
 compilerAuthority: rust
+canonicalSchemaIdentityAuthority: rust
+canonicalSchemaIdentityScope: [canonical-loads, canonical-dumps, canonical-hash, schema-id]
 pythonRole: authoring-facade-and-explicit-reference-oracle
 implicitReferenceFallback: false
 symbols:

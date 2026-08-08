@@ -1017,9 +1017,9 @@ def test_profile_release_tracks_are_closed_owned_and_independent() -> None:
 
     assert profiles["GB-C0-SCHEMA"]["authority"] == {
         "activeCompiler": "rust",
+        "activeStandaloneCanonicalAndSchemaIdentity": "rust",
         "activeAuthoringFacade": "python",
         "referenceOracle": "python",
-        "targetStandaloneCanonicalAndSchema": "rust-transition-blocked",
     }
     assert profiles["GB-C1-LOCAL-RUNTIME"]["authority"] == {
         "activeCompiler": "rust",
@@ -2177,6 +2177,15 @@ def test_stable_release_matrix_is_complete_and_machine_readable() -> None:
     assert "production-scheduler-and-durable-authority" in authority[
         "remainingPhases"
     ]
+    assert "broader-resource-schema-validation-and-migration-authority" in authority[
+        "remainingPhases"
+    ]
+    assert "standalone-canonical-and-schema-facade-authority" not in authority[
+        "remainingPhases"
+    ]
+    assert "standalone-canonical-and-schema-facade-authority" in authority[
+        "completedPhases"
+    ]
     assert "supported-installed-native-compiler-tck-and-artifact-evidence" not in (
         authority["remainingPhases"]
     )
@@ -2268,6 +2277,22 @@ def test_stable_release_matrix_is_complete_and_machine_readable() -> None:
         "protocol-capability-and-unsupported-version-handshake-incomplete"
         not in authority_gate["blockers"]
     )
+    assert (
+        "native-first-canonical-schema-identity-facade-and-explicit-reference-oracle-without-implicit-fallback"
+        in authority_gate["completedEvidence"]
+    )
+    assert (
+        "supported-installed-native-canonical-schema-identity-differential-and-artifact-identity"
+        in authority_gate["completedEvidence"]
+    )
+    assert (
+        "standalone-canonical-and-schema-authority-transition-incomplete"
+        not in authority_gate["blockers"]
+    )
+    assert (
+        "resource-schema-validation-and-migration-authority-incomplete"
+        in authority_gate["blockers"]
+    )
 
     traceability = yaml.safe_load(
         (ROOT / "docs" / "project" / "stable-requirements.yaml").read_text(
@@ -2277,6 +2302,7 @@ def test_stable_release_matrix_is_complete_and_machine_readable() -> None:
     assert traceability["authorityDecision"] == authority["decision"]
     assert traceability["authorityRoles"] == {
         "graphCompiler": "rust",
+        "standaloneCanonicalAndSchemaIdentity": "rust",
         "productionRuntimeTarget": "rust",
         "python": "authoring-facade-and-explicit-reference-oracle",
         "implicitReferenceFallback": False,

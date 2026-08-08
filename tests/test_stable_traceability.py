@@ -267,6 +267,32 @@ def test_stable_requirement_implementation_roles_match_the_authority_transition(
         for path in compiler_roles["normative"]
     )
     assert "targetNormative" in c0["canonical-schema-roundtrip"]["implementations"]
+    authority_slices = c0["canonical-schema-roundtrip"]["authoritySlices"]
+    assert authority_slices["canonicalAndSchemaIdentity"] == {
+        "status": "normative",
+        "authority": "rust",
+        "normativeImplementations": [
+            "crates/graphblocks-schema/src/lib.rs",
+            "crates/graphblocks-compiler/src/canonical.rs",
+        ],
+        "pythonFacadeAndReference": [
+            "src/graphblocks/canonical.py",
+            "src/graphblocks/schema.py",
+        ],
+        "installedEvidence": [
+            "tools/verify_wheelhouse.py",
+            "tools/release_supply_chain.py",
+            "tests/test_native_canonical_differential.py",
+            "tests/test_native_schema_id_differential.py",
+            "tests/test_wheelhouse_schema_verification.py",
+            "tests/test_release_supply_chain.py",
+        ],
+    }
+    assert authority_slices["resourceSchemaValidationAndMigration"] == {
+        "status": "transition-blocked",
+        "currentClaim": "python-reference-only",
+        "targetAuthority": "rust",
+    }
 
     c1_entries = profiles["GB-C1-LOCAL-RUNTIME"]["requirements"]
     for entry in c1_entries:

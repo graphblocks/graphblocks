@@ -5,6 +5,7 @@ scope: Candidate-stable phase-scoped GB-C0-SCHEMA and GB-C1-LOCAL-RUNTIME claims
 authorityDecision: docs/specification/decisions/0001-rust-normative-authority.md
 authorityRoles:
   graphCompiler: rust
+  standaloneCanonicalAndSchemaIdentity: rust
   productionRuntimeTarget: rust
   python: authoring-facade-and-explicit-reference-oracle
   implicitReferenceFallback: false
@@ -50,14 +51,41 @@ profiles:
           targetNormative:
             - crates/graphblocks-schema/src/lib.rs
             - crates/graphblocks-compiler/src/canonical.rs
+        authoritySlices:
+          canonicalAndSchemaIdentity:
+            status: normative
+            authority: rust
+            normativeImplementations:
+              - crates/graphblocks-schema/src/lib.rs
+              - crates/graphblocks-compiler/src/canonical.rs
+            pythonFacadeAndReference:
+              - src/graphblocks/canonical.py
+              - src/graphblocks/schema.py
+            installedEvidence:
+              - tools/verify_wheelhouse.py
+              - tools/release_supply_chain.py
+              - tests/test_native_canonical_differential.py
+              - tests/test_native_schema_id_differential.py
+              - tests/test_wheelhouse_schema_verification.py
+              - tests/test_release_supply_chain.py
+          resourceSchemaValidationAndMigration:
+            status: transition-blocked
+            currentClaim: python-reference-only
+            targetAuthority: rust
         schemas:
           - schemas/graphblocks.ai/v1/graph.schema.json
           - schemas/graphblocks.ai/v1/plugin-manifest.schema.json
         tckSuites: [schema]
         evidence:
           - tests/test_canonical.py
+          - tests/test_canonical_native_facade.py
+          - tests/test_native_canonical_differential.py
           - tests/test_schema_values.py
+          - tests/test_schema_native_facade.py
+          - tests/test_native_schema_id_differential.py
           - tests/test_resource_schema_validation.py
+          - tests/test_wheelhouse_schema_verification.py
+          - tests/test_release_supply_chain.py
           - tck/schema/cases.json
           - tck/schema/typed-values.json
           - tck/schema/resources.json

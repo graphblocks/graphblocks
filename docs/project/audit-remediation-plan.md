@@ -534,9 +534,14 @@ Python
 accepts the target Rust authority and the public Python compiler now dispatches
 to it without an implicit reference fallback. The first-stable matrix records
 phase-scoped C0/C1 implementation roles rather than a blanket
-`python-reference` identity. Resolving `GB-ARCH-001` and `GB-ARCH-002` remains a
-1.0 blocker until standalone canonical/schema routing and production scheduler
-authority are complete. The native binding now exposes a separate versioned,
+`python-reference` identity. Standalone canonical serialization/hash and
+SchemaId identity now route through fail-closed native facades, while explicit
+Python reference entry points remain available. Supported installed-wheel
+evidence compares both facades with direct native results and binds the corpus
+to the exact runtime artifact. Resolving `GB-ARCH-001` and `GB-ARCH-002` remains
+a 1.0 blocker for broader resource-schema validation/migration evidence and
+production scheduler authority. The native binding exposes a separate
+versioned,
 closed capability handshake; the Python wrapper rejects incompatible protocol,
 version, and required-capability contracts before native invocation, and the
 installed-wheel gate compares that contract with distribution metadata. During
@@ -553,12 +558,13 @@ missing, extra, relabeled, or executor-mismatched suites before binding the
 matrix digest, resolved authority claim, and executor proof into `tck.json` and
 platform evidence. The compiler executor is `exact-native-reference`: each case
 runs the selected Rust wheel and Python oracle and compares the complete Plan
-contract before the Rust result is accepted. Schema and C1 runtime claims remain
-`reference-only`, preserving the explicit transition blockers for standalone
-Rust schema/canonical routing and the production scheduler.
+contract before the Rust result is accepted. A separate installed platform
+record proves the active canonical/SchemaId utility slice. The broader schema
+and C1 runtime claims remain `reference-only`, preserving the transition
+blockers for resource validation/migration and the production scheduler.
 This accepted, phase-scoped authority direction resolves `GB-ARCH-020` itself;
-it does not close the separately tracked canonical/schema facade or production
-scheduler transition blockers required by `REL-NORMATIVE-AUTHORITY`.
+it does not close the separately tracked broader-schema or production scheduler
+transition blockers required by `REL-NORMATIVE-AUTHORITY`.
 
 The reusable `graphblocks-control-plane` library boundary is extracted:
 `graphblocks-python` and the `graphblocks-control` binary now depend on that

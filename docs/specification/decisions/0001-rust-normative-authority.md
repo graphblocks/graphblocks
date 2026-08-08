@@ -23,9 +23,10 @@ implementation currently covers more optional features.
 
 ## Decision
 
-Rust is the selected normative authority for portable graph compilation and the
-target normative authority for canonical identity, runtime protocol, and the
-production scheduler. Python is the authoring facade, schema-facing SDK,
+Rust is the normative authority for portable graph compilation and standalone
+canonical/schema-identity utilities, and the target normative authority for the
+runtime protocol and production scheduler. Python is the authoring facade,
+schema-facing SDK,
 deterministic reference compiler/interpreter, and TCK oracle.
 
 The transition is phase-scoped:
@@ -35,7 +36,7 @@ The transition is phase-scoped:
 | Graph decode, migration, normalization, catalog resolution, type checking, lowering, diagnostics, plan serialization, and plan hash | Rust | Enforced by the public Python `compile_graph` entry point through `graphblocks-runtime` |
 | Python graph builders, typed authoring, YAML composition, and ergonomic schema APIs | Python | Supported authoring surface; materializes portable resources for the normative compiler |
 | Reference compiler and local reference interpreter | Python | Explicit oracle through `graphblocks.compiler.compile_graph_reference` and reference-runtime/TCK imports; never an implicit production fallback |
-| Standalone canonical/schema utility authority | Rust | Selected, but remaining public-facade routing and installed differential evidence still block the release gate |
+| Standalone canonical/schema-identity utility authority | Rust | Implemented through fail-closed public canonical and `SchemaId.parse` facades; supported installed-wheel evidence binds public, reference, and direct-native corpus results to the exact runtime artifact |
 | Runtime protocol and production scheduler | Rust | Runtime protocol handshake is implemented and candidate-enforced; scheduler, suspension, crash/restart, and fencing evidence still block the release gate |
 | AI application, governance, durable stream, voice, deployment, observability, and integrations | Profile-specific | No authority or stability is implied until the named extension profile passes its own gates |
 
@@ -52,6 +53,11 @@ The Python API follows these rules:
 5. Authoring and reference-runtime workflows may be installed without the
    native wheel, but normative compilation and compiler-backed CLI commands
    require `graphblocks-runtime`, normally through `graphblocks[runtime]`.
+6. Public canonical load/dump/hash operations and `SchemaId.parse` use the same
+   fail-closed native authority. Explicit `*_reference` functions and
+   `SchemaId.parse_reference` retain the portable Python oracle; broader
+   resource-schema validation and migration remain reference-only until their
+   own native routing and differential claim are complete.
 
 Selecting an authority is not itself a compatibility promotion. The native
 binding artifact and C0/C1 claims remain blocked until their artifact,
@@ -87,7 +93,10 @@ Rust implementation crates remain internal APIs unless separately promoted.
    compiler case before accepting the normative result.
 3. Complete standalone canonical/schema authority routing, binding protocol and
    capability negotiation, supported native wheels, and installed-artifact
-   evidence.
+   evidence. This step is implemented for canonical serialization/hash and
+   SchemaId identity. The installed platform report binds a fixed differential
+   corpus and the exact `graphblocks-runtime` wheel record; it does not relabel
+   the broader schema TCK, resource validation, or migration claim.
 4. Move the production scheduler and durable authority checks behind the Rust
    runtime protocol while retaining the Python local runtime as a reference
    interpreter.
@@ -96,7 +105,8 @@ Rust implementation crates remain internal APIs unless separately promoted.
    `graphblocks-python` and the one-shot `graphblocks-control` CLI both consume
    the `graphblocks-control-plane` library target.
 
-Until steps 3 and 4 are complete, `REL-NORMATIVE-AUTHORITY` remains blocked and
+Until step 4 and the remaining broader-schema differential evidence are
+complete, `REL-NORMATIVE-AUTHORITY` remains blocked and
 the project must not describe the entire native runtime or C1/C4 production
 plane as stable.
 
@@ -109,6 +119,9 @@ plane as stable.
   reference fallback.
 - Installed-wheel tests must execute the same native compiler artifact that is
   named in release evidence.
+- Installed-wheel tests execute public canonical and SchemaId facades beside
+  the explicit Python references and direct native functions, then bind the
+  corpus digest and exact runtime wheel record into retained platform evidence.
 - Installed TCK execution must read the packaged stable release authority
   matrix, validate each runner-issued executor proof against the exact suite
   implementation/language/profile-role/comparison claim, and bind the matrix

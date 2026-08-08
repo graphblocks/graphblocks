@@ -224,10 +224,14 @@ generic `approved: true` report or a green unrelated test suite cannot satisfy
 either runtime-security gate.
 
 The profile tables now record the phase-scoped authority accepted by ADR-0001.
-`REL-NORMATIVE-AUTHORITY` still blocks 1.0 until standalone canonical/schema
-facade routing, production scheduler/durable authority, and their remaining
-phase-level differential evidence are complete. Installed
-compiler TCK reports now execute the normative facade and bind the
+Standalone canonical serialization/hash and SchemaId routing are complete:
+installed platform evidence compares public facades, explicit Python oracles,
+and direct native functions over a fixed corpus and binds those results to the
+exact runtime wheel record. This does not relabel the broader reference-only
+schema TCK or resource validation/migration surface. `REL-NORMATIVE-AUTHORITY`
+therefore still blocks 1.0 on that remaining differential scope and production
+scheduler/durable authority. Installed compiler TCK reports execute the
+normative facade and bind the
 `graphblocks-runtime` implementation version plus the exact platform wheel
 record and SHA-256. The evidence runner also compares the installed package and
 loaded native-module bytes with that wheel, while release assembly rechecks the

@@ -468,6 +468,13 @@ def test_stable_python_surface_is_deliberate_and_profile_bounded() -> None:
     assert policy["readiness"] == snapshot["readiness"] == "candidate"
     assert policy["requiredArtifacts"] == ["graphblocks", "graphblocks-runtime"]
     assert policy["compilerAuthority"] == "rust"
+    assert policy["canonicalSchemaIdentityAuthority"] == "rust"
+    assert policy["canonicalSchemaIdentityScope"] == [
+        "canonical-loads",
+        "canonical-dumps",
+        "canonical-hash",
+        "schema-id",
+    ]
     assert policy["pythonRole"] == "authoring-facade-and-explicit-reference-oracle"
     assert policy["implicitReferenceFallback"] is False
     assert {entry["profile"] for entry in policy["symbols"]} == {
