@@ -103,7 +103,8 @@ fn before_tool_or_effect_policy_request_carries_tool_admission_context() {
         output_policy_state: Some(json!({"response_status": "generating"})),
     })
     .expect("policy request is valid")
-    .with_input_digest();
+    .with_input_digest()
+    .expect("valid policy request hashes");
 
     assert_eq!(
         request.enforcement_point,
@@ -588,7 +589,8 @@ fn admission_rejects_policy_decision_for_different_input_digest() {
             output_policy_state: None,
         })
         .expect("policy request is valid")
-        .with_input_digest();
+        .with_input_digest()
+        .expect("valid policy request hashes");
 
     assert_eq!(
         ToolAdmission::admit(ToolAdmissionRequest {

@@ -766,7 +766,23 @@ fn evaluate_tool_admission_json(request_json: &str) -> PyResult<String> {
         })
         .map(PolicyRequest::with_input_digest);
     let policy_request = match policy_request_result {
-        Ok(policy_request) => policy_request,
+        Ok(Ok(policy_request)) => policy_request,
+        Ok(Err(error)) => {
+            let payload = json!({
+                "ok": false,
+                "policyRequest": Value::Null,
+                "admitted": Value::Null,
+                "error": {
+                    "code": "invalid_policy_request",
+                    "source": format!("{error:?}"),
+                },
+            });
+            return serde_json::to_string(&payload).map_err(|error| {
+                PyRuntimeError::new_err(format!(
+                    "failed to serialize tool admission evaluation: {error}"
+                ))
+            });
+        }
         Err(error) => {
             let payload = json!({
                 "ok": false,
@@ -10740,6 +10756,22 @@ mod tests {
                 .and_then(Value::as_str)
                 .is_some_and(|digest| digest.starts_with("sha256:"))
         );
+
+        let mut invalid_request = request.clone();
+        invalid_request["policyRequestId"] = json!("");
+        let invalid_json = evaluate_tool_admission_json(
+            &serde_json::to_string(&invalid_request).map_err(|error| error.to_string())?,
+        )
+        .map_err(|error| error.to_string())?;
+        let invalid =
+            serde_json::from_str::<Value>(&invalid_json).map_err(|error| error.to_string())?;
+
+        assert_eq!(invalid.get("ok").and_then(Value::as_bool), Some(false));
+        assert_eq!(
+            invalid.pointer("/error/code").and_then(Value::as_str),
+            Some("invalid_policy_request")
+        );
+        assert!(invalid.get("policyRequest").is_some_and(Value::is_null));
 
         let mut stopped_request = request;
         stopped_request["outputPolicyState"] = json!({"response_status": "policy_stopped"});

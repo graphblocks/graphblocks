@@ -39,14 +39,20 @@ fn policy_request_digest_is_stable_for_semantic_input() {
     )
     .with_principal(PrincipalRef::new("user-1").with_tenant_id("tenant-1"))
     .with_attribute("model_class", json!("standard"))
-    .with_input_digest();
+    .with_input_digest()
+    .expect("valid policy request hashes");
 
     let same_input = request
         .clone()
         .with_request_id("req-2")
         .with_occurred_at("2026-06-22T00:01:00Z")
-        .with_input_digest();
-    let changed_input = request.clone().with_action("tool.run").with_input_digest();
+        .with_input_digest()
+        .expect("valid policy request hashes");
+    let changed_input = request
+        .clone()
+        .with_action("tool.run")
+        .with_input_digest()
+        .expect("valid policy request hashes");
 
     assert!(request.input_digest.starts_with("sha256:"));
     assert_eq!(same_input.input_digest, request.input_digest);
@@ -64,16 +70,19 @@ fn policy_request_digest_includes_atomic_unit_and_policy_snapshot() {
     )
     .with_atomic_unit(ResourceRef::new("turn:1").with_resource_kind("turn"))
     .with_policy_snapshot_id("snapshot-1")
-    .with_input_digest();
+    .with_input_digest()
+    .expect("valid policy request hashes");
 
     let changed_snapshot = request
         .clone()
         .with_policy_snapshot_id("snapshot-2")
-        .with_input_digest();
+        .with_input_digest()
+        .expect("valid policy request hashes");
     let changed_unit = request
         .clone()
         .with_atomic_unit(ResourceRef::new("turn:2").with_resource_kind("turn"))
-        .with_input_digest();
+        .with_input_digest()
+        .expect("valid policy request hashes");
 
     assert_ne!(changed_snapshot.input_digest, request.input_digest);
     assert_ne!(changed_unit.input_digest, request.input_digest);
@@ -163,17 +172,47 @@ fn policy_bundle_rejects_invalid_rules_before_hashing() {
             "graphblocks.declarative@1",
             [invalid_rule]
         )
-        .try_content_digest(),
+        .content_digest(),
         Err(PolicyValidationError::EmptyCollectionItem {
             owner: "policy rule",
             field: "resource_selectors",
         })
     );
     assert_eq!(
-        invalid_fail_mode.try_content_digest(),
+        invalid_fail_mode.content_digest(),
         Err(PolicyValidationError::EmptyCollectionItem {
             owner: "policy bundle",
             field: "default_fail_modes",
+        })
+    );
+}
+
+#[test]
+fn resolve_policy_snapshot_rejects_invalid_bundle() {
+    let invalid_bundle = PolicyBundle::new(
+        "bundle-1",
+        "1.0.0",
+        "graphblocks.declarative@1",
+        [PolicyRule::new(
+            "rule-1",
+            RuleEffect::Allow,
+            ["tool.run"],
+            [" "],
+        )],
+    );
+    let profile = PolicyProfile::new("profile-1", ["bundle-1"], ["tenant:acme"]);
+
+    assert_eq!(
+        resolve_policy_snapshot(
+            "policy-snapshot-1",
+            &profile,
+            &[invalid_bundle],
+            None,
+            "2026-06-22T00:01:00Z",
+        ),
+        Err(PolicyValidationError::EmptyCollectionItem {
+            owner: "policy rule",
+            field: "resource_selectors",
         })
     );
 }
@@ -327,7 +366,10 @@ fn static_policy_evaluator_gives_explicit_deny_precedence() {
     assert!(decision.obligations.is_empty());
     assert_eq!(
         decision.input_digest,
-        request.with_input_digest().input_digest
+        request
+            .with_input_digest()
+            .expect("valid policy request hashes")
+            .input_digest
     );
 }
 
@@ -433,7 +475,11 @@ fn unavailable_external_policy_applies_declared_fail_modes() {
     );
     assert_eq!(
         closed.input_digest,
-        request.clone().with_input_digest().input_digest
+        request
+            .clone()
+            .with_input_digest()
+            .expect("valid policy request hashes")
+            .input_digest
     );
     assert_eq!(fail_open.effect, PolicyEffect::AllowWithObligations);
     assert_eq!(fail_open.obligations.len(), 1);
@@ -458,7 +504,10 @@ fn unavailable_policy_cache_reuse_requires_matching_digest_and_ttl() {
         ResourceRef::new("model:support").with_resource_kind("model"),
         "2026-06-23T00:00:00Z",
     );
-    let digested_request = request.clone().with_input_digest();
+    let digested_request = request
+        .clone()
+        .with_input_digest()
+        .expect("valid policy request hashes");
     let cached = PolicyDecision {
         decision_id: "decision:cached".to_string(),
         effect: PolicyEffect::Allow,
@@ -552,7 +601,11 @@ fn unavailable_policy_cache_rejects_non_ascii_timestamps_without_panicking() {
         advice: Vec::new(),
         evaluated_at: "2026-06-23T00:00:00Z".to_string(),
         valid_until: Some("123é-01-0T00:00:00Z".to_string()),
-        input_digest: request.clone().with_input_digest().input_digest,
+        input_digest: request
+            .clone()
+            .with_input_digest()
+            .expect("valid policy request hashes")
+            .input_digest,
     };
 
     assert_eq!(
@@ -593,7 +646,12 @@ fn policy_bundle_digest_is_stable_for_rule_content() {
     );
     let same_rules = PolicyBundle::new("bundle-copy", "1.0.0", "graphblocks.declarative@1", [rule]);
 
-    assert!(bundle.content_digest().starts_with("sha256:"));
+    assert!(
+        bundle
+            .content_digest()
+            .expect("valid policy bundle hashes")
+            .starts_with("sha256:")
+    );
     assert_eq!(same_rules.content_digest(), bundle.content_digest());
     assert_eq!(bundle.reference(), "bundle-1@1.0.0");
 }
@@ -626,14 +684,16 @@ fn resolve_policy_snapshot_pins_effective_policy_identity() {
         std::slice::from_ref(&bundle),
         Some(&entitlement),
         "2026-06-22T00:01:00Z",
-    );
+    )
+    .expect("valid policy snapshot resolves");
     let same_snapshot = resolve_policy_snapshot(
         "policy-snapshot-2",
         &profile,
         &[bundle],
         Some(&entitlement),
         "2026-06-22T00:02:00Z",
-    );
+    )
+    .expect("valid policy snapshot resolves");
 
     assert_eq!(snapshot.profile_ref, "profile-1");
     assert_eq!(snapshot.policy_bundle_refs, vec!["bundle-1@1.0.0"]);

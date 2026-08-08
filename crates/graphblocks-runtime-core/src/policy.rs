@@ -1,5 +1,3 @@
-#![allow(clippy::expect_used)] // Guarded by compatibility/rust-production-expect-budget.json.
-
 use std::collections::BTreeMap;
 
 use crate::canonical::canonical_hash;
@@ -532,9 +530,8 @@ impl PolicyBundle {
         })))
     }
 
-    pub fn content_digest(&self) -> String {
+    pub fn content_digest(&self) -> Result<String, PolicyValidationError> {
         self.try_content_digest()
-            .expect("policy bundle must be valid before content digest calculation")
     }
 }
 
@@ -674,17 +671,17 @@ pub fn resolve_policy_snapshot(
     bundles: &[PolicyBundle],
     entitlement: Option<&EntitlementSnapshot>,
     issued_at: impl Into<String>,
-) -> PolicySnapshot {
+) -> Result<PolicySnapshot, PolicyValidationError> {
     let mut ordered_bundles = bundles.iter().collect::<Vec<_>>();
     ordered_bundles.sort_by_key(|bundle| bundle.reference());
     let policy_bundle_refs = ordered_bundles
         .iter()
         .map(|bundle| bundle.reference())
         .collect::<Vec<_>>();
-    let bundle_digests = ordered_bundles
-        .iter()
-        .map(|bundle| json!([bundle.reference(), bundle.content_digest()]))
-        .collect::<Vec<_>>();
+    let mut bundle_digests = Vec::with_capacity(ordered_bundles.len());
+    for bundle in &ordered_bundles {
+        bundle_digests.push(json!([bundle.reference(), bundle.content_digest()?]));
+    }
     let entitlement_digest = entitlement.map(EntitlementSnapshot::content_digest);
     let effective_policy_digest = canonical_hash(&json!({
         "profile": profile.digest_value(),
@@ -694,7 +691,7 @@ pub fn resolve_policy_snapshot(
         "quota_window_ids": Vec::<String>::new(),
     }));
 
-    PolicySnapshot {
+    Ok(PolicySnapshot {
         snapshot_id: snapshot_id.into(),
         effective_policy_digest,
         policy_bundle_refs,
@@ -705,7 +702,7 @@ pub fn resolve_policy_snapshot(
         pricing_revision: None,
         quota_window_ids: Vec::new(),
         valid_until: None,
-    }
+    })
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -880,9 +877,8 @@ impl PolicyRequest {
         Ok(self)
     }
 
-    pub fn with_input_digest(self) -> Self {
+    pub fn with_input_digest(self) -> Result<Self, PolicyValidationError> {
         self.try_with_input_digest()
-            .expect("policy request must be valid before input digest calculation")
     }
 }
 
