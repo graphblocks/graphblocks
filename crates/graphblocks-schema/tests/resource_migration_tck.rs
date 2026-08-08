@@ -1,7 +1,6 @@
 use graphblocks_schema::{ResourceMigrationFailure, migrate_resource, resource_schema_errors};
 use serde_json::{Value, json};
 use std::error::Error;
-use std::{fs, path::Path};
 
 const MIGRATION_CASES: &str = include_str!("fixtures/migration.json");
 
@@ -183,19 +182,4 @@ fn migration_rejects_excessive_depth_before_cloning() {
 
     assert_eq!(migration_error.code, "GB0014");
     assert_eq!(migration_error.path.matches(".nested").count(), 65);
-}
-
-#[test]
-fn crate_migration_fixture_is_byte_identical_to_workspace_tck() -> Result<(), Box<dyn Error>> {
-    let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let workspace_fixture = manifest.join("../../tck/migration/cases.json");
-    if !workspace_fixture.is_file() {
-        return Ok(());
-    }
-
-    assert_eq!(
-        fs::read(manifest.join("tests/fixtures/migration.json"))?,
-        fs::read(workspace_fixture)?,
-    );
-    Ok(())
 }

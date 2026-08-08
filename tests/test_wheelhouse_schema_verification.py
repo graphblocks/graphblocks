@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from copy import deepcopy
 from decimal import Decimal
 import hashlib
 import importlib
@@ -198,18 +199,41 @@ def test_installed_native_binding_handshake_rejects_wrong_schema_id_smoke() -> N
         )
 
 
-def test_installed_native_binding_rejects_wrong_public_facade_evidence() -> None:
+@pytest.mark.parametrize(
+    "target",
+    ("corpus", "resource-validation", "resource-migration"),
+)
+def test_installed_native_binding_rejects_wrong_public_facade_evidence(
+    target: str,
+) -> None:
     module = _load_wheelhouse_module()
     payload = _native_binding_payload()
-    evidence = dict(payload["publicFacadeEvidence"])
-    evidence["corpusDigest"] = "sha256:" + "0" * 64
+    evidence = deepcopy(payload["publicFacadeEvidence"])
+    if target == "corpus":
+        evidence["corpusDigest"] = "sha256:" + "0" * 64
+    elif target == "resource-validation":
+        evidence["resourceValidationCases"][0]["public"]["valid"] = False
+    else:
+        evidence["resourceMigrationCases"][0]["native"]["ok"] = False
     payload["publicFacadeEvidence"] = evidence
 
-    with pytest.raises(RuntimeError, match="public canonical/schema facade"):
+    with pytest.raises(RuntimeError, match="public/native authority facade"):
         module._validate_installed_native_binding(
             payload,
             expected_distribution_version="0.1.0",
         )
+
+
+def test_installed_native_authority_expectations_cover_full_shared_corpora() -> None:
+    module = _load_wheelhouse_module()
+    evidence = module.installed_native_authority_probe_expectations()
+
+    assert evidence["formatVersion"] == 2
+    assert len(evidence["resourceValidationCases"]) == 20
+    assert len(evidence["resourceMigrationCases"]) == 7
+    for owner in ("resourceValidationCases", "resourceMigrationCases"):
+        for case in evidence[owner]:
+            assert case["public"] == case["reference"] == case["native"]
 
 
 def test_installed_native_authority_evidence_binds_runtime_artifact() -> None:
@@ -253,6 +277,22 @@ def test_installed_native_authority_probe_exercises_public_and_reference_paths()
     assert "SchemaId.parse(source)" in source
     assert "SchemaId.parse_reference(source)" in source
     assert "graphblocks_runtime.parse_schema_id(source)" in source
+    assert "resource_schema_errors(deepcopy(document))" in source
+    assert "resource_schema_errors_reference(deepcopy(document))" in source
+    assert "graphblocks_runtime.resource_schema_errors(deepcopy(document))" in source
+    assert "migration_contract(migrate_document, document)" in source
+    assert "migration_contract(migrate_document_reference, document)" in source
+    assert "native_migration_contract(document)" in source
+    compile(source, "<installed-native-authority-probe>", "exec")
+
+
+def test_wheelhouse_runs_native_authority_probe_from_a_script_file() -> None:
+    module = _load_wheelhouse_module()
+    source = Path(module.__file__).read_text(encoding="utf-8")
+
+    assert 'Path(install_root) / "native-authority-probe.py"' in source
+    assert "installed_native_authority_probe_source() + \"\\n\"" in source
+    assert 'str(native_authority_probe),' in source
 
 
 @pytest.mark.parametrize(
@@ -1282,7 +1322,11 @@ def test_wheelhouse_gate_rejects_invalid_installed_schema_manifest(
                 (output_root / f"{wheel_name}-0.1.0-py3-none-any.whl").write_bytes(
                     b"wheel"
                 )
-        if any("native_extension_status" in part for part in command):
+        if any(
+            "native_extension_status" in part
+            or part.endswith("native-authority-probe.py")
+            for part in command
+        ):
             return subprocess.CompletedProcess(
                 command,
                 0,
@@ -1424,7 +1468,11 @@ def test_wheelhouse_gate_uses_pep503_distribution_identity(monkeypatch, tmp_path
             (dependency_root / "jsonschema-4.25.1-py3-none-any.whl").write_bytes(
                 b"dependency"
             )
-        if any("native_extension_status" in part for part in command):
+        if any(
+            "native_extension_status" in part
+            or part.endswith("native-authority-probe.py")
+            for part in command
+        ):
             native_binding_commands.append(command)
             return subprocess.CompletedProcess(
                 command,

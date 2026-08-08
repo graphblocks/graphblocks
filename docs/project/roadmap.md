@@ -26,10 +26,10 @@ Work proceeds in this order:
    services, and repositories; split CLI commands and exact codecs; make
    compiler phases and TCK runners independently testable; reduce the Python
    root surface and import cost; complete the accepted, 1.0-blocking transition
-   from the native-first compiler and canonical/SchemaId utility facades to the
-   remaining broader-schema and production execution authority; and correct the
-   Rust control-plane dependency
-   direction.
+   through the native-first compiler, canonical/SchemaId, and resource
+   validation/migration authority slices, then complete the remaining
+   production execution authority; and correct the Rust control-plane
+   dependency direction.
 4. **Stable-candidate closure.** Reach zero open P0/P1 findings, enforce the
    authorization/adversarial/differential/resource/performance/restart/security
    matrices, complete the separately defined macOS and native-wheel smoke gate,

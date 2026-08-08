@@ -289,9 +289,24 @@ def test_stable_requirement_implementation_roles_match_the_authority_transition(
         ],
     }
     assert authority_slices["resourceSchemaValidationAndMigration"] == {
-        "status": "transition-blocked",
-        "currentClaim": "python-reference-only",
-        "targetAuthority": "rust",
+        "status": "normative",
+        "authority": "rust",
+        "normativeImplementations": [
+            "crates/graphblocks-schema/src/lib.rs",
+            "crates/graphblocks-python/src/lib.rs",
+        ],
+        "pythonFacadeAndReference": [
+            "src/graphblocks/schema.py",
+            "src/graphblocks/migration.py",
+        ],
+        "installedEvidence": [
+            "tools/verify_wheelhouse.py",
+            "tools/release_supply_chain.py",
+            "tests/test_native_resource_schema_differential.py",
+            "tests/test_native_resource_migration_differential.py",
+            "tests/test_wheelhouse_schema_verification.py",
+            "tests/test_release_supply_chain.py",
+        ],
     }
 
     c1_entries = profiles["GB-C1-LOCAL-RUNTIME"]["requirements"]

@@ -439,6 +439,7 @@ def test_rust_packages_declare_publishable_path_versions_and_bundle_local_fixtur
             "tck/sequence/cases.json"
         ),
         "crates/graphblocks-schema/tests/fixtures/cases.json": "tck/schema/cases.json",
+        "crates/graphblocks-schema/tests/fixtures/migration.json": "tck/migration/cases.json",
         "crates/graphblocks-schema/tests/fixtures/resources.json": "tck/schema/resources.json",
         "crates/graphblocks-schema/tests/fixtures/typed-values.json": "tck/schema/typed-values.json",
     }
@@ -1018,6 +1019,7 @@ def test_profile_release_tracks_are_closed_owned_and_independent() -> None:
     assert profiles["GB-C0-SCHEMA"]["authority"] == {
         "activeCompiler": "rust",
         "activeStandaloneCanonicalAndSchemaIdentity": "rust",
+        "activeResourceSchemaValidationAndMigration": "rust",
         "activeAuthoringFacade": "python",
         "referenceOracle": "python",
     }
@@ -2177,15 +2179,18 @@ def test_stable_release_matrix_is_complete_and_machine_readable() -> None:
     assert "production-scheduler-and-durable-authority" in authority[
         "remainingPhases"
     ]
-    assert "broader-resource-schema-validation-and-migration-authority" in authority[
-        "remainingPhases"
-    ]
+    assert "broader-resource-schema-validation-and-migration-authority" not in (
+        authority["remainingPhases"]
+    )
     assert "standalone-canonical-and-schema-facade-authority" not in authority[
         "remainingPhases"
     ]
     assert "standalone-canonical-and-schema-facade-authority" in authority[
         "completedPhases"
     ]
+    assert "broader-resource-schema-validation-and-migration-authority" in (
+        authority["completedPhases"]
+    )
     assert "supported-installed-native-compiler-tck-and-artifact-evidence" not in (
         authority["remainingPhases"]
     )
@@ -2290,8 +2295,12 @@ def test_stable_release_matrix_is_complete_and_machine_readable() -> None:
         not in authority_gate["blockers"]
     )
     assert (
+        "native-resource-schema-validation-and-migration-routing-and-installed-differential"
+        in authority_gate["completedEvidence"]
+    )
+    assert (
         "resource-schema-validation-and-migration-authority-incomplete"
-        in authority_gate["blockers"]
+        not in authority_gate["blockers"]
     )
 
     traceability = yaml.safe_load(
@@ -2303,6 +2312,7 @@ def test_stable_release_matrix_is_complete_and_machine_readable() -> None:
     assert traceability["authorityRoles"] == {
         "graphCompiler": "rust",
         "standaloneCanonicalAndSchemaIdentity": "rust",
+        "standaloneResourceSchemaValidationAndMigration": "rust",
         "productionRuntimeTarget": "rust",
         "python": "authoring-facade-and-explicit-reference-oracle",
         "implicitReferenceFallback": False,

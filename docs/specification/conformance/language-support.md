@@ -5,7 +5,7 @@ release compatibility promise.
 
 | Contract area | Python | Rust |
 | --- | --- | --- |
-| Schema and canonical authoring utilities | Canonical load/dump/hash and `SchemaId.parse` are fail-closed native facades with explicit Python reference oracles; broader resource-schema validation, migration, and schema TCK evidence remain `referenceOracle` | Active authority for canonical serialization/hash and SchemaId identity through the installed binding; broader resource-schema and migration routing remains a selected target |
+| Schema and canonical authoring utilities | Canonical load/dump/hash, `SchemaId.parse`, resource validation, and resource migration are fail-closed native facades with explicit Python reference oracles; the complete schema TCK remains `referenceOracle` for other schema-facing behavior | Active authority for canonical serialization/hash, SchemaId identity, resource validation, and resource migration through the installed binding |
 | Graph compiler and canonical Plan identity | `compile_graph` is a fail-closed native facade; `compile_graph_reference` is the explicit oracle executed beside every installed compiler-TCK case | Normative compiler, exposed through the exact `graphblocks-runtime` wheel and accepted only when its complete Plan contract matches the Python oracle |
 | Cross-file YAML composition authoring | Implemented; materializes an expanded Graph | Does not resolve authoring sources; consumes expanded Graph YAML |
 | Typed code graph authoring | Implemented and mypy-tested for the stdlib RAG vertical slice; catalog-backed and materializes a portable Graph | Implemented and trybuild-tested for the stdlib RAG vertical slice; catalog-backed and materializes a portable Graph |
@@ -33,10 +33,11 @@ read its closed suite claim projection directly and retain the matrix digest,
 language, implementation identity, profile role, comparison mode, and the
 runner-issued executor proof. Rust compiler evidence is
 `exact-native-reference`. Installed platform evidence separately binds a fixed
-public/reference/direct-native corpus for canonical serialization/hash and
-SchemaId identity to the exact runtime wheel. The broader C0 resource-schema
-suite and C1 runtime evidence remain explicitly `reference-only`, so they do
-not promote resource validation/migration or the production scheduler.
+canonical/identity corpus and the complete shared resource-validation and
+migration corpora across public/reference/direct-native paths to the exact
+runtime wheel. The complete C0 schema suite and C1 runtime evidence remain
+explicitly `reference-only`; this preserves the boundary around other
+schema-facing behavior and the production scheduler.
 
 Composition is outside the runtime language boundary. A Python-authored graph
 may be materialized with `graphblocks compose` and then compiled or run by Rust

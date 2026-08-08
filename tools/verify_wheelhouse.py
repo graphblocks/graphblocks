@@ -73,7 +73,7 @@ NATIVE_SCHEMA_ID_SMOKE = {
     "majorVersion": 4_294_967_295,
     "name": "schemas/Message",
 }
-NATIVE_AUTHORITY_EVIDENCE_FORMAT_VERSION = 1
+NATIVE_AUTHORITY_EVIDENCE_FORMAT_VERSION = 2
 NATIVE_CANONICAL_AUTHORITY_SOURCES = (
     '{"b":2,"a":1}',
     '[null,true,false,0,-17,1.25,"snowman ☃"]',
@@ -84,6 +84,8 @@ NATIVE_SCHEMA_ID_AUTHORITY_SOURCES = (
     "schemas/Message@4294967295",
     "graphblocks.ai/PluginManifest@1",
 )
+NATIVE_RESOURCE_VALIDATION_CASES_PATH = ROOT / "tck" / "schema" / "resources.json"
+NATIVE_RESOURCE_MIGRATION_CASES_PATH = ROOT / "tck" / "migration" / "cases.json"
 MAX_SDIST_MEMBER_COUNT = 100_000
 MAX_SDIST_UNPACKED_SIZE = 512 * 1024 * 1024
 WINDOWS_RESERVED_PATH_NAMES = {
@@ -291,7 +293,109 @@ def observe_rustc_identity(
     return parse_rustc_identity(completed.stdout)
 
 
+def _load_native_authority_cases(
+    path: Path,
+    *,
+    owner: str,
+) -> tuple[dict[str, object], ...]:
+    try:
+        payload = canonical_loads(path.read_text(encoding="utf-8"))
+    except (OSError, TypeError, ValueError) as error:
+        raise RuntimeError(f"cannot load {owner} authority cases") from error
+    if type(payload) is not list or not payload:
+        raise RuntimeError(f"{owner} authority cases must be a nonempty array")
+    cases: list[dict[str, object]] = []
+    names: set[str] = set()
+    for index, case in enumerate(payload):
+        if type(case) is not dict or set(case) != {"document", "expected", "name"}:
+            raise RuntimeError(f"{owner} authority case {index} must be closed")
+        name = case["name"]
+        if type(name) is not str or not name or name in names:
+            raise RuntimeError(f"{owner} authority case {index} has an invalid name")
+        if type(case["expected"]) is not dict:
+            raise RuntimeError(f"{owner} authority case {name!r} has invalid fields")
+        names.add(name)
+        cases.append(case)
+    return tuple(cases)
+
+
+def _expected_resource_validation_contract(
+    case: Mapping[str, object],
+) -> dict[str, object]:
+    expected = case["expected"]
+    if type(expected) is not dict or set(expected).difference({"errors", "valid"}):
+        raise RuntimeError("resource validation authority expectation must be closed")
+    valid = expected.get("valid")
+    raw_errors = expected.get("errors", [])
+    if type(valid) is not bool or type(raw_errors) is not list:
+        raise RuntimeError("resource validation authority expectation has invalid fields")
+    errors: list[dict[str, str]] = []
+    error_fields = {"code", "keyword", "path"}
+    for index, error in enumerate(raw_errors):
+        if (
+            type(error) is not dict
+            or set(error) != error_fields
+            or any(type(error[field]) is not str or not error[field] for field in error_fields)
+        ):
+            raise RuntimeError(
+                f"resource validation authority error {index} must be closed"
+            )
+        errors.append({field: error[field] for field in sorted(error_fields)})
+    if valid != (not errors):
+        raise RuntimeError("resource validation authority validity is inconsistent")
+    return {"errors": errors, "valid": valid}
+
+
+def _expected_resource_migration_contract(
+    case: Mapping[str, object],
+) -> dict[str, object]:
+    expected = case["expected"]
+    if type(expected) is not dict:
+        raise RuntimeError("resource migration authority expectation must be an object")
+    if "document" in expected:
+        if set(expected).difference({"document", "normalized"}):
+            raise RuntimeError("resource migration authority success must be closed")
+        document = expected["document"]
+        if type(document) is not dict:
+            raise RuntimeError(
+                "resource migration authority success document must be an object"
+            )
+        return {"document": document, "ok": True}
+    if set(expected) != {"error"} or type(expected["error"]) is not dict:
+        raise RuntimeError("resource migration authority failure must be closed")
+    error = expected["error"]
+    if (
+        set(error) != {"code", "path"}
+        or any(type(error[field]) is not str or not error[field] for field in error)
+    ):
+        raise RuntimeError("resource migration authority error must be closed")
+    return {
+        "error": {"code": error["code"], "path": error["path"]},
+        "ok": False,
+    }
+
+
+def _authority_case_evidence(
+    case: Mapping[str, object],
+    contract: Mapping[str, object],
+) -> dict[str, object]:
+    return {
+        "name": case["name"],
+        "public": canonical_loads(canonical_dumps(contract)),
+        "reference": canonical_loads(canonical_dumps(contract)),
+        "native": canonical_loads(canonical_dumps(contract)),
+    }
+
+
 def installed_native_authority_probe_expectations() -> dict[str, object]:
+    resource_validation_cases = _load_native_authority_cases(
+        NATIVE_RESOURCE_VALIDATION_CASES_PATH,
+        owner="resource validation",
+    )
+    resource_migration_cases = _load_native_authority_cases(
+        NATIVE_RESOURCE_MIGRATION_CASES_PATH,
+        owner="resource migration",
+    )
     canonical_cases: list[dict[str, object]] = []
     for source in NATIVE_CANONICAL_AUTHORITY_SOURCES:
         value = canonical_loads(source)
@@ -329,16 +433,53 @@ def installed_native_authority_probe_expectations() -> dict[str, object]:
             {
                 "canonicalSources": list(NATIVE_CANONICAL_AUTHORITY_SOURCES),
                 "schemaIds": list(NATIVE_SCHEMA_ID_AUTHORITY_SOURCES),
+                "resourceValidationCases": list(resource_validation_cases),
+                "resourceMigrationCases": list(resource_migration_cases),
             }
         ),
         "canonicalCases": canonical_cases,
         "schemaIdCases": schema_id_cases,
+        "resourceValidationCases": [
+            _authority_case_evidence(
+                case,
+                _expected_resource_validation_contract(case),
+            )
+            for case in resource_validation_cases
+        ],
+        "resourceMigrationCases": [
+            _authority_case_evidence(
+                case,
+                _expected_resource_migration_contract(case),
+            )
+            for case in resource_migration_cases
+        ],
     }
 
 
 def installed_native_authority_probe_source() -> str:
+    resource_validation_cases = _load_native_authority_cases(
+        NATIVE_RESOURCE_VALIDATION_CASES_PATH,
+        owner="resource validation",
+    )
+    resource_migration_cases = _load_native_authority_cases(
+        NATIVE_RESOURCE_MIGRATION_CASES_PATH,
+        owner="resource migration",
+    )
+    resource_validation_json = json.dumps(
+        resource_validation_cases,
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    resource_migration_json = json.dumps(
+        resource_migration_cases,
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
     return "\n".join(
         (
+            "from copy import deepcopy",
             "import json",
             "from importlib.metadata import version",
             "import graphblocks_runtime",
@@ -348,9 +489,33 @@ def installed_native_authority_probe_source() -> str:
                 "canonical_hash_reference, canonical_loads, "
                 "canonical_loads_reference"
             ),
-            "from graphblocks.schema import SchemaId",
+            (
+                "from graphblocks.migration import MigrationError, "
+                "migrate_document, migrate_document_reference"
+            ),
+            (
+                "from graphblocks.schema import SchemaId, resource_schema_errors, "
+                "resource_schema_errors_reference"
+            ),
             f"canonical_sources = {NATIVE_CANONICAL_AUTHORITY_SOURCES!r}",
             f"schema_id_sources = {NATIVE_SCHEMA_ID_AUTHORITY_SOURCES!r}",
+            f"resource_validation_cases = json.loads({resource_validation_json!r})",
+            f"resource_migration_cases = json.loads({resource_migration_json!r})",
+            "def validation_contract(errors):",
+            "    return {'errors': [{'code': error.code, 'keyword': error.keyword, 'path': error.path} for error in errors], 'valid': not errors}",
+            "def native_validation_contract(errors):",
+            "    return {'errors': [{'code': error['code'], 'keyword': error['keyword'], 'path': error['path']} for error in errors], 'valid': not errors}",
+            "def migration_contract(function, document):",
+            "    try:",
+            "        migrated = function(deepcopy(document))",
+            "    except MigrationError as error:",
+            "        return {'error': {'code': error.code, 'path': error.path}, 'ok': False}",
+            "    return {'document': migrated, 'ok': True}",
+            "def native_migration_contract(document):",
+            "    result = graphblocks_runtime.migrate_resource(deepcopy(document))",
+            "    if result['ok']:",
+            "        return {'document': result['document'], 'ok': True}",
+            "    return {'error': {'code': result['error']['code'], 'path': result['error']['path']}, 'ok': False}",
             "canonical_cases = []",
             "for source in canonical_sources:",
             "    public_value = canonical_loads(source)",
@@ -361,7 +526,16 @@ def installed_native_authority_probe_source() -> str:
             "    public = SchemaId.parse(source)",
             "    reference = SchemaId.parse_reference(source)",
             "    schema_id_cases.append({'source': source, 'public': {'canonical': public.as_str(), 'majorVersion': public.major_version, 'name': public.name}, 'reference': {'canonical': reference.as_str(), 'majorVersion': reference.major_version, 'name': reference.name}, 'native': graphblocks_runtime.parse_schema_id(source)})",
-            "public_facade_evidence = {'formatVersion': 1, 'corpusDigest': canonical_hash_reference({'canonicalSources': list(canonical_sources), 'schemaIds': list(schema_id_sources)}), 'canonicalCases': canonical_cases, 'schemaIdCases': schema_id_cases}",
+            "resource_validation_evidence = []",
+            "for case in resource_validation_cases:",
+            "    document = case['document']",
+            "    resource_validation_evidence.append({'name': case['name'], 'public': validation_contract(resource_schema_errors(deepcopy(document))), 'reference': validation_contract(resource_schema_errors_reference(deepcopy(document))), 'native': native_validation_contract(graphblocks_runtime.resource_schema_errors(deepcopy(document)))})",
+            "resource_migration_evidence = []",
+            "for case in resource_migration_cases:",
+            "    document = case['document']",
+            "    resource_migration_evidence.append({'name': case['name'], 'public': migration_contract(migrate_document, document), 'reference': migration_contract(migrate_document_reference, document), 'native': native_migration_contract(document)})",
+            "corpus = {'canonicalSources': list(canonical_sources), 'schemaIds': list(schema_id_sources), 'resourceValidationCases': resource_validation_cases, 'resourceMigrationCases': resource_migration_cases}",
+            "public_facade_evidence = {'formatVersion': 2, 'corpusDigest': canonical_hash_reference(corpus), 'canonicalCases': canonical_cases, 'schemaIdCases': schema_id_cases, 'resourceValidationCases': resource_validation_evidence, 'resourceMigrationCases': resource_migration_evidence}",
             "payload = {'canonicalSmoke': {'hash': graphblocks_runtime.canonical_hash_json('{\"b\":2,\"a\":1}'), 'json': graphblocks_runtime.canonicalize_json('{\"b\":2,\"a\":1}')}, 'distributionVersion': version('graphblocks-runtime'), 'publicFacadeEvidence': public_facade_evidence, 'schemaIdSmoke': graphblocks_runtime.parse_schema_id('schemas/Message@4294967295'), 'status': graphblocks_runtime.native_extension_status()}",
             "print(json.dumps(payload, sort_keys=True))",
         )
@@ -471,7 +645,7 @@ def _validate_installed_native_binding(
         installed_native_authority_probe_expectations()
     ):
         raise RuntimeError(
-            "installed public canonical/schema facade evidence does not match"
+            "installed public/native authority facade evidence does not match"
         )
     return dict(status)
 
@@ -486,16 +660,16 @@ def validate_installed_native_authority_evidence(
         "runtimeArtifact",
     }:
         raise RuntimeError(
-            "installed native canonical/schema authority evidence has an invalid envelope"
+            "installed native authority evidence has an invalid envelope"
         )
     if payload["runtimeArtifact"] != dict(expected_runtime_artifact):
         raise RuntimeError(
-            "installed native canonical/schema authority evidence names another runtime artifact"
+            "installed native authority evidence names another runtime artifact"
         )
     runtime_version = expected_runtime_artifact.get("version")
     if not isinstance(runtime_version, str) or not runtime_version:
         raise RuntimeError(
-            "installed native canonical/schema authority evidence has no runtime version"
+            "installed native authority evidence has no runtime version"
         )
     _validate_installed_native_binding(
         payload["probe"],
@@ -1994,11 +2168,15 @@ def main(argv: list[str] | None = None) -> int:
             cwd=ROOT,
             env=install_environment,
         )
+        native_authority_probe = Path(install_root) / "native-authority-probe.py"
+        _write_utf8_lf(
+            native_authority_probe,
+            installed_native_authority_probe_source() + "\n",
+        )
         installed_native_binding = subprocess.run(
             [
                 str(isolated_python),
-                "-c",
-                installed_native_authority_probe_source(),
+                str(native_authority_probe),
             ],
             check=True,
             cwd=install_root,

@@ -3061,7 +3061,7 @@ def test_release_bundle_rejects_platform_contract_binding_substitution(
 @pytest.mark.parametrize(
     ("target", "message"),
     (
-        ("probe", "public canonical/schema facade"),
+        ("probe", "public/native authority facade"),
         ("artifact", "another runtime artifact"),
     ),
 )

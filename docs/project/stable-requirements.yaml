@@ -6,6 +6,7 @@ authorityDecision: docs/specification/decisions/0001-rust-normative-authority.md
 authorityRoles:
   graphCompiler: rust
   standaloneCanonicalAndSchemaIdentity: rust
+  standaloneResourceSchemaValidationAndMigration: rust
   productionRuntimeTarget: rust
   python: authoring-facade-and-explicit-reference-oracle
   implicitReferenceFallback: false
@@ -69,9 +70,21 @@ profiles:
               - tests/test_wheelhouse_schema_verification.py
               - tests/test_release_supply_chain.py
           resourceSchemaValidationAndMigration:
-            status: transition-blocked
-            currentClaim: python-reference-only
-            targetAuthority: rust
+            status: normative
+            authority: rust
+            normativeImplementations:
+              - crates/graphblocks-schema/src/lib.rs
+              - crates/graphblocks-python/src/lib.rs
+            pythonFacadeAndReference:
+              - src/graphblocks/schema.py
+              - src/graphblocks/migration.py
+            installedEvidence:
+              - tools/verify_wheelhouse.py
+              - tools/release_supply_chain.py
+              - tests/test_native_resource_schema_differential.py
+              - tests/test_native_resource_migration_differential.py
+              - tests/test_wheelhouse_schema_verification.py
+              - tests/test_release_supply_chain.py
         schemas:
           - schemas/graphblocks.ai/v1/graph.schema.json
           - schemas/graphblocks.ai/v1/plugin-manifest.schema.json

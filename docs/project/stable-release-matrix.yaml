@@ -134,8 +134,8 @@ authorityTransition:
     - runtime-protocol-capability-handshake
     - packaged-authority-matrix-and-installed-language-claim-validation
     - standalone-canonical-and-schema-facade-authority
-  remainingPhases:
     - broader-resource-schema-validation-and-migration-authority
+  remainingPhases:
     - production-scheduler-and-durable-authority
   targetMilestone: phase-2-before-1.0
   blocksTargetRelease: true
@@ -412,7 +412,7 @@ profiles:
     implementation: rust-native-compiler+python-facade
     tier: stable
     readiness: blocked
-    authority: {activeCompiler: rust, activeStandaloneCanonicalAndSchemaIdentity: rust, activeAuthoringFacade: python, referenceOracle: python}
+    authority: {activeCompiler: rust, activeStandaloneCanonicalAndSchemaIdentity: rust, activeResourceSchemaValidationAndMigration: rust, activeAuthoringFacade: python, referenceOracle: python}
     extends: []
     promotionGate: REL-CORE-PROFILE
     requiredGates: [REL-CORE-PROFILE, REL-WIRE-V1, REL-CLOSED-SCHEMA, REL-CLOSED-WORLD, REL-DIAGNOSTICS, REL-TRACEABILITY, REL-INSTALLED-TCK, REL-NORMATIVE-AUTHORITY]
@@ -1427,7 +1427,7 @@ releaseGates:
     blockers:
       - audited-source-commit-tree-or-archive-digest-unavailable
   - id: REL-NORMATIVE-AUTHORITY
-    description: Rust is the normative Graph compiler and standalone canonical/schema-identity utility authority, and remains the selected target production-runtime authority while Python stays the authoring facade and deterministic reference oracle; this gate tracks the remaining broader-schema evidence and scheduler/durable transition.
+    description: Rust is the normative Graph compiler and standalone canonical/schema-identity and resource validation/migration utility authority, and remains the selected target production-runtime authority while Python stays the authoring facade and deterministic reference oracle; this gate tracks the remaining scheduler/durable transition.
     readiness: blocked
     blocksTargetRelease: true
     decisionStatus: accepted
@@ -1456,8 +1456,8 @@ releaseGates:
       - protocol-capability-and-unsupported-version-handshake
       - native-first-canonical-schema-identity-facade-and-explicit-reference-oracle-without-implicit-fallback
       - supported-installed-native-canonical-schema-identity-differential-and-artifact-identity
+      - native-resource-schema-validation-and-migration-routing-and-installed-differential
     blockers:
-      - resource-schema-validation-and-migration-authority-incomplete
       - production-runtime-authority-transition-incomplete
       - remaining-normative-phase-differential-evidence-incomplete
   - id: REL-PLATFORM-MATRIX

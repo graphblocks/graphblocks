@@ -2,11 +2,11 @@
 
 GraphBlocks is pre-1.0 release-candidate software. Python provides the broad
 authoring and explicit reference surface. Rust is the normative Graph compiler
-and the selected target for production execution authority; the compiler and
-runtime protocol-handshake and standalone canonical/schema-identity facade
-transitions are implemented. Broader resource-schema validation/migration
-evidence and production scheduler/durable authority still block the complete
-authority gate.
+and the selected target for production execution authority. The compiler,
+runtime protocol handshake, standalone canonical/schema-identity facades, and
+resource validation/migration authority transitions are implemented.
+Production scheduler/durable authority still blocks the complete authority
+gate.
 
 The digest-bound 99-finding deep-audit inventory includes 4 P0, 23 P1, 64 P2,
 and 8 P3 findings. The live closure overlay now binds all 99 findings to
