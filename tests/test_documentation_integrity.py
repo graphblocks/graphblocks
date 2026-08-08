@@ -1995,7 +1995,7 @@ def test_stable_release_matrix_is_complete_and_machine_readable() -> None:
     assert "tenant-owner-indexed-run-list-cursor-pagination-with-page-cap" in (
         audit_gate["implementedEvidence"]
     )
-    assert "fourteen-production-module-strict-mypy-and-no-new-ignore-budget" in (
+    assert "eighteen-production-module-strict-mypy-and-no-new-ignore-budget" in (
         audit_gate["implementedEvidence"]
     )
     assert "coded-type-ignore-only-and-zero-uncoded-ignore-budget" in (
@@ -2096,8 +2096,8 @@ def test_stable_release_matrix_is_complete_and_machine_readable() -> None:
         "mode": "strict-no-incremental-follow-imports-silent",
         "packageBudgets": {
             "graphblocks": {
-                "minimumStrictModules": 14,
-                "maximumDebtModules": 92,
+                "minimumStrictModules": 18,
+                "maximumDebtModules": 91,
                 "maximumDiagnostics": 728,
                 "maximumTypeIgnores": 145,
                 "maximumUncodedTypeIgnores": 0,

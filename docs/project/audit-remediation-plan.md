@@ -58,7 +58,7 @@ and 8 P3 findings are bound to ancestor fix commits and executable evidence.
 There are zero open findings in every severity. The remaining deep-audit release
 blockers are candidate-bound independent review and the unavailable audited
 source identity described above, not issue-level remediation work.
-GB-QA-001 is resolved by expanding strict mypy coverage from 2 to 14
+GB-QA-001 is resolved by expanding strict mypy coverage from 2 to 18
 production modules and enforcing non-regression budgets for both strict module
 count and the 145 remaining type-ignore comments.
 GB-QA-002 is resolved by requiring explicit mypy error codes on every
