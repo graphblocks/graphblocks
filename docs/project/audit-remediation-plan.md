@@ -569,6 +569,12 @@ claims are phase-scoped: the bundled stable runtime suite now executes the Rust
 stdlib path with exact native/reference result and lifecycle comparison, while
 the remaining C1 suites stay `reference-only`. This preserves the boundary for
 other schema-facing behavior and the remaining stable C1 transition blockers.
+The stable installed runtime API is now an explicit three-symbol allowlist with
+an exact signature snapshot. Its core execution result is projected to a
+closed checkpoint-free envelope, while persistence and other C4/X3 options use
+a separate preview entry point. Clean-wheel evidence verifies the status
+contract, `runtime.local.v1`, `py.typed`, stable smoke result, and package/native
+bytes before accepting that `local-runtime-api` authority slice.
 This accepted, phase-scoped authority direction resolves `GB-ARCH-020` itself;
 it does not close the C1 authority and correctness blockers required by
 `REL-NORMATIVE-AUTHORITY` and `REL-RUNTIME-CORRECTNESS`. C4 production and X3

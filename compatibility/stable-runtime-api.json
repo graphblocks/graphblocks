@@ -1,0 +1,60 @@
+{
+  "authority": "rust",
+  "exportPolicy": "explicit-stable-allowlist-unlisted-public-exports-preview",
+  "implicitReferenceFallback": false,
+  "nativeExtensionStatusFields": [
+    "available",
+    "binding_crate",
+    "binding_protocol_version",
+    "binding_version",
+    "capabilities",
+    "error",
+    "module"
+  ],
+  "profile": "GB-C1-LOCAL-RUNTIME",
+  "readiness": "candidate",
+  "requiredCapability": "runtime.local.v1",
+  "resultContract": {
+    "excludedPreviewFields": [
+      "checkpoint",
+      "deploymentProvenance"
+    ],
+    "fields": [
+      "runId",
+      "graphHash",
+      "status",
+      "outputs",
+      "journal"
+    ]
+  },
+  "snapshotVersion": 1,
+  "stableExports": [
+    "native_extension_status",
+    "require_native_extension",
+    "run_stdlib_graph"
+  ],
+  "symbols": [
+    {
+      "kind": "function",
+      "path": "graphblocks_runtime.native_extension_status",
+      "profile": "GB-C1-LOCAL-RUNTIME",
+      "signature": "() -> 'dict[str, object]'",
+      "typeReferences": []
+    },
+    {
+      "kind": "function",
+      "path": "graphblocks_runtime.require_native_extension",
+      "profile": "GB-C1-LOCAL-RUNTIME",
+      "signature": "() -> 'None'",
+      "typeReferences": []
+    },
+    {
+      "kind": "function",
+      "path": "graphblocks_runtime.run_stdlib_graph",
+      "profile": "GB-C1-LOCAL-RUNTIME",
+      "signature": "(graph: 'dict[str, object]', inputs: 'dict[str, object]', *, run_id: 'str | None' = None) -> 'dict[str, object]'",
+      "typeReferences": []
+    }
+  ],
+  "targetRelease": "1.0"
+}

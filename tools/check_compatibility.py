@@ -32,6 +32,8 @@ CLI_CASES_PATH = COMPATIBILITY_ROOT / "stable-cli-cases.yaml"
 CLI_SNAPSHOT_PATH = COMPATIBILITY_ROOT / "stable-cli-contracts.json"
 TESTING_SURFACE_PATH = COMPATIBILITY_ROOT / "stable-testing-surface.yaml"
 TESTING_SNAPSHOT_PATH = COMPATIBILITY_ROOT / "stable-testing-api.json"
+RUNTIME_SURFACE_PATH = COMPATIBILITY_ROOT / "stable-runtime-surface.yaml"
+RUNTIME_SNAPSHOT_PATH = COMPATIBILITY_ROOT / "stable-runtime-api.json"
 TESTING_CLI_CASES_PATH = COMPATIBILITY_ROOT / "stable-testing-cli-cases.yaml"
 TESTING_CLI_SNAPSHOT_PATH = COMPATIBILITY_ROOT / "stable-testing-cli-contracts.json"
 TESTING_SOURCE_ROOT = ROOT / "packages" / "graphblocks-testing" / "src"
@@ -313,7 +315,7 @@ def _build_python_snapshot(policy_path: Path, *, package: str) -> dict[str, obje
             unknown_references = sorted(
                 references - STANDARD_ANNOTATION_NAMES - stable_type_names
             )
-            if unknown_references and package == "graphblocks":
+            if unknown_references and package in {"graphblocks", "graphblocks_runtime"}:
                 raise ValueError(
                     f"stable API type alias {path!r} names unlisted public type(s): "
                     + ", ".join(unknown_references)
@@ -356,7 +358,7 @@ def _build_python_snapshot(policy_path: Path, *, package: str) -> dict[str, obje
         unknown_references = sorted(
             references - STANDARD_ANNOTATION_NAMES - stable_type_names
         )
-        if unknown_references and package == "graphblocks":
+        if unknown_references and package in {"graphblocks", "graphblocks_runtime"}:
             raise ValueError(
                 f"stable API symbol {path!r} names unlisted public type(s): "
                 + ", ".join(unknown_references)
@@ -387,6 +389,100 @@ def _build_python_snapshot(policy_path: Path, *, package: str) -> dict[str, obje
 
 def build_python_snapshot() -> dict[str, object]:
     return _build_python_snapshot(PYTHON_SURFACE_PATH, package="graphblocks")
+
+
+def build_runtime_snapshot() -> dict[str, object]:
+    policy = _load_yaml(RUNTIME_SURFACE_PATH)
+    if set(policy) != {
+        "authority",
+        "description",
+        "exportPolicy",
+        "implicitReferenceFallback",
+        "previewHelpers",
+        "profile",
+        "readiness",
+        "requiredCapability",
+        "resultContract",
+        "snapshotVersion",
+        "symbols",
+        "targetRelease",
+    }:
+        raise ValueError("stable-runtime-surface.yaml must use the closed contract")
+    snapshot = _build_python_snapshot(
+        RUNTIME_SURFACE_PATH,
+        package="graphblocks_runtime",
+    )
+    raw_symbols = snapshot.get("symbols")
+    if not isinstance(raw_symbols, list):
+        raise ValueError("stable graphblocks-runtime snapshot has no symbols")
+    stable_exports: list[str] = []
+    for symbol in raw_symbols:
+        if not isinstance(symbol, dict) or not isinstance(symbol.get("path"), str):
+            raise ValueError("stable graphblocks-runtime snapshot has an invalid symbol")
+        stable_exports.append(symbol["path"].rsplit(".", 1)[1])
+    if len(stable_exports) != len(set(stable_exports)):
+        raise ValueError("stable graphblocks-runtime exports must be unique")
+
+    runtime = importlib.import_module("graphblocks_runtime")
+    public_exports = getattr(runtime, "__all__", None)
+    if not isinstance(public_exports, list) or not all(
+        isinstance(name, str) and name for name in public_exports
+    ):
+        raise ValueError("graphblocks-runtime __all__ must enumerate public exports")
+    missing_exports = [name for name in stable_exports if name not in public_exports]
+    if missing_exports:
+        raise ValueError(
+            "graphblocks-runtime is missing stable public exports: "
+            + ", ".join(missing_exports)
+        )
+    observed_stable_exports = [
+        name for name in public_exports if name in set(stable_exports)
+    ]
+    if observed_stable_exports != stable_exports:
+        raise ValueError(
+            "graphblocks-runtime __all__ must preserve stable export order"
+        )
+
+    preview_helpers = policy["previewHelpers"]
+    if (
+        not isinstance(preview_helpers, list)
+        or not preview_helpers
+        or not all(
+            isinstance(path, str)
+            and path.startswith("graphblocks_runtime.")
+            and path.count(".") == 1
+            for path in preview_helpers
+        )
+        or len(preview_helpers) != len(set(preview_helpers))
+    ):
+        raise ValueError("stable graphblocks-runtime preview helpers are invalid")
+    for path in preview_helpers:
+        _resolve_import_path(path, package="graphblocks_runtime")
+    preview_exports = [path.rsplit(".", 1)[1] for path in preview_helpers]
+    promoted_preview_exports = sorted(set(preview_exports) & set(stable_exports))
+    if promoted_preview_exports:
+        raise ValueError(
+            "graphblocks-runtime preview helpers cannot be stable exports: "
+            + ", ".join(promoted_preview_exports)
+        )
+
+    status = runtime.native_extension_status()
+    if not isinstance(status, dict) or not all(
+        isinstance(name, str) and name for name in status
+    ):
+        raise ValueError("graphblocks-runtime native extension status is invalid")
+    snapshot["stableExports"] = stable_exports
+    snapshot["nativeExtensionStatusFields"] = sorted(status)
+    for field in (
+        "authority",
+        "exportPolicy",
+        "implicitReferenceFallback",
+        "profile",
+        "requiredCapability",
+        "resultContract",
+    ):
+        snapshot[field] = policy[field]
+    return snapshot
 
 
 def _enable_testing_source_import() -> None:
@@ -698,12 +794,18 @@ def main(argv: list[str] | None = None) -> int:
     try:
         api_snapshot = build_python_snapshot()
         root_compatibility_snapshot = build_root_compatibility_snapshot()
+        runtime_api_snapshot = build_runtime_snapshot()
         testing_api_snapshot = build_testing_snapshot()
         results = [
             _check_or_update(PYTHON_SNAPSHOT_PATH, api_snapshot, update=args.update),
             _check_or_update(
                 ROOT_COMPATIBILITY_SNAPSHOT_PATH,
                 root_compatibility_snapshot,
+                update=args.update,
+            ),
+            _check_or_update(
+                RUNTIME_SNAPSHOT_PATH,
+                runtime_api_snapshot,
                 update=args.update,
             ),
             _check_or_update(

@@ -79,6 +79,25 @@ def test_stable_owners_and_preview_default_are_explicit() -> None:
     }
 
 
+def test_stable_runtime_companion_surface_and_typing_owner_are_explicit() -> None:
+    boundary = _package_boundary()
+    companions = boundary["companionArtifacts"]
+    assert isinstance(companions, dict)
+    runtime = companions["graphblocks-runtime"]
+    assert runtime == {
+        "stableSurface": "compatibility/stable-runtime-surface.yaml",
+        "stableSnapshot": "compatibility/stable-runtime-api.json",
+        "typingMarker": (
+            "packages/graphblocks-runtime/src/graphblocks_runtime/py.typed"
+        ),
+        "typingContract": "inline-annotations-and-signature-snapshot",
+        "unlistedPublicExportTier": "preview",
+        "installedVerification": "tools/verify_wheelhouse.py",
+    }
+    for field in ("stableSurface", "stableSnapshot", "typingMarker"):
+        assert (ROOT / runtime[field]).is_file()
+
+
 def test_lazy_root_export_catalog_is_exact_and_resolvable() -> None:
     boundary = _package_boundary()
     root_facade = boundary["rootFacade"]

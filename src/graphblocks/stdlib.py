@@ -141,9 +141,9 @@ def run_native_stdlib_graph(
     run_store_path: str | None = None,
     journal_store_path: str | None = None,
 ) -> dict[str, object]:
-    from graphblocks_runtime import run_stdlib_graph
+    from graphblocks_runtime import run_stdlib_graph_with_options
 
-    return run_stdlib_graph(
+    return run_stdlib_graph_with_options(
         graph,
         inputs,
         run_id=run_id,

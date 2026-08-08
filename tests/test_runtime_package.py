@@ -938,8 +938,11 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
         return json.dumps(
             {
                 "runId": "run-native-1",
+                "graphHash": "sha256:" + "1" * 64,
                 "status": "succeeded",
                 "outputs": {"answer": "ok"},
+                "journal": [{"kind": "run_succeeded", "terminal": True}],
+                "checkpoint": None,
             }
         )
 
@@ -1455,7 +1458,7 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
         {"kind": "Graph"}, block_catalog=[{"typeId": "prompt.render"}]
     )
     stdlib = runtime.run_stdlib_graph({"kind": "Graph"}, {"message": {"text": "hi"}})
-    stdlib_requested = runtime.run_stdlib_graph(
+    stdlib_requested = runtime.run_stdlib_graph_with_options(
         {"kind": "Graph"},
         {"message": {"text": "hi"}},
         run_id="run-requested-native-1",
@@ -1472,6 +1475,12 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
             "release_signature_digest": "sha256:signature",
         },
     )
+    with pytest.raises(TypeError, match="run_store_path"):
+        runtime.run_stdlib_graph(
+            {"kind": "Graph"},
+            {"message": {"text": "hi"}},
+            run_store_path="/tmp/not-stable.sqlite3",  # type: ignore[call-arg]
+        )
     test_run = runtime.run_test_graph(
         {"kind": "Graph"}, {"message": "hi"}, {"node": {"value": "ok"}}
     )
@@ -2484,3 +2493,86 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
     assert "validate_worker_advertisement" in runtime.__all__
     assert "validate_worker_protocol_message" in runtime.__all__
     assert "validate_remote_payload" in runtime.__all__
+
+
+def _stable_runtime_native(payload: Mapping[str, object]) -> object:
+    class FakeNative:
+        __version__ = "0.1.0"
+
+        def __getattr__(self, name: str):
+            if name.endswith("_json"):
+                return lambda *args, **kwargs: '{"ok":true}'
+            raise AttributeError(name)
+
+        def binding_version(self) -> str:
+            return self.__version__
+
+        def run_stdlib_graph_json(self, graph_json: str, inputs_json: str) -> str:
+            return json.dumps(payload)
+
+        def run_stdlib_graph_with_options_json(
+            self,
+            graph_json: str,
+            inputs_json: str,
+            options_json: str,
+        ) -> str:
+            return json.dumps(payload)
+
+    return FakeNative()
+
+
+def test_stable_runtime_wrapper_returns_a_closed_checkpoint_free_envelope() -> None:
+    payload = {
+        "checkpoint": None,
+        "graphHash": "sha256:" + "1" * 64,
+        "journal": [{"kind": "run_succeeded", "terminal": True}],
+        "outputs": {"answer": "ok"},
+        "runId": "stable-run-1",
+        "status": "succeeded",
+    }
+    runtime = load_runtime_wrapper(_stable_runtime_native(payload))
+
+    assert runtime.run_stdlib_graph(
+        {"kind": "Graph"},
+        {"message": "hi"},
+        run_id="stable-run-1",
+    ) == {
+        "graphHash": "sha256:" + "1" * 64,
+        "journal": [{"kind": "run_succeeded", "terminal": True}],
+        "outputs": {"answer": "ok"},
+        "runId": "stable-run-1",
+        "status": "succeeded",
+    }
+
+
+@pytest.mark.parametrize(
+    ("change", "message"),
+    (
+        ({"extra": True}, "must be closed"),
+        ({"checkpoint": {"formatVersion": 1}}, "preview checkpoint"),
+        ({"runId": "different-run"}, "changed the requested run id"),
+        ({"graphHash": "sha256:short"}, "invalid graph hash"),
+        ({"journal": [{}]}, "journal is invalid"),
+    ),
+)
+def test_stable_runtime_wrapper_rejects_open_or_preview_results(
+    change: dict[str, object],
+    message: str,
+) -> None:
+    payload = {
+        "checkpoint": None,
+        "graphHash": "sha256:" + "1" * 64,
+        "journal": [{"kind": "run_succeeded", "terminal": True}],
+        "outputs": {},
+        "runId": "stable-run-1",
+        "status": "succeeded",
+        **change,
+    }
+    runtime = load_runtime_wrapper(_stable_runtime_native(payload))
+
+    with pytest.raises((TypeError, ValueError), match=message):
+        runtime.run_stdlib_graph(
+            {"kind": "Graph"},
+            {},
+            run_id="stable-run-1",
+        )

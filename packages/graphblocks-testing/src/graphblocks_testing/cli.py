@@ -216,10 +216,13 @@ def _installed_runtime_from_wheel(
         ):
             native_members.append(relative_path)
     runtime_paths = {relative_path for _member, relative_path in runtime_members}
-    if PurePosixPath("__init__.py") not in runtime_paths or len(native_members) != 1:
+    if (
+        not {PurePosixPath("__init__.py"), PurePosixPath("py.typed")} <= runtime_paths
+        or len(native_members) != 1
+    ):
         raise ValueError(
-            "native compiler wheel must contain the runtime package and exactly "
-            "one native extension"
+            "native compiler wheel must contain the typed runtime package and "
+            "exactly one native extension"
         )
 
     try:
@@ -234,6 +237,25 @@ def _installed_runtime_from_wheel(
     if runtime_root.is_symlink() or not runtime_root.is_dir():
         raise RuntimeError(
             "installed graphblocks-runtime package must be a regular directory"
+        )
+    installed_runtime_paths: set[PurePosixPath] = set()
+    for installed_path in runtime_root.rglob("*"):
+        relative = installed_path.relative_to(runtime_root)
+        relative_path = PurePosixPath(*relative.parts)
+        if "__pycache__" in relative_path.parts or relative_path.suffix == ".pyc":
+            continue
+        if installed_path.is_symlink():
+            raise RuntimeError(
+                "installed graphblocks-runtime package contains a symlink"
+            )
+        if installed_path.is_file():
+            installed_runtime_paths.add(relative_path)
+    unexpected_installed_paths = sorted(installed_runtime_paths - runtime_paths)
+    if unexpected_installed_paths:
+        raise RuntimeError(
+            "installed graphblocks-runtime package contains files outside the "
+            "selected wheel: "
+            + ", ".join(path.as_posix() for path in unexpected_installed_paths)
         )
     graphblocks_runtime: object | None = None
     for verification_phase in range(2):

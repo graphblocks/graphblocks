@@ -14,6 +14,7 @@ import tools.check_compatibility as compatibility_module
 from tools.check_compatibility import (
     _check_or_update,
     _dataclass_contract,
+    build_runtime_snapshot,
     build_testing_snapshot,
 )
 
@@ -45,6 +46,11 @@ def test_api_only_compatibility_check_does_not_execute_cli_contracts(
     monkeypatch.setattr(
         compatibility_module,
         "build_root_compatibility_snapshot",
+        lambda: {"snapshotVersion": 1},
+    )
+    monkeypatch.setattr(
+        compatibility_module,
+        "build_runtime_snapshot",
         lambda: {"snapshotVersion": 1},
     )
     monkeypatch.setattr(
@@ -581,6 +587,70 @@ def test_stable_cli_snapshot_covers_success_failure_json_and_exit_codes() -> Non
         and case["stdoutJson"]["ok"] is False
         and case["stdoutJson"]["diagnostics"][0]["code"] == "GB1056"
         for case in native_unavailable_cases.values()
+    )
+
+
+def test_stable_runtime_surface_is_minimal_native_and_profile_bounded() -> None:
+    import graphblocks_runtime
+
+    policy = yaml.safe_load(
+        (COMPATIBILITY_ROOT / "stable-runtime-surface.yaml").read_text(encoding="utf-8")
+    )
+    snapshot = json.loads(
+        (COMPATIBILITY_ROOT / "stable-runtime-api.json").read_text(encoding="utf-8")
+    )
+
+    assert build_runtime_snapshot() == snapshot
+    assert policy["readiness"] == snapshot["readiness"] == "candidate"
+    assert policy["authority"] == "rust"
+    assert policy["profile"] == "GB-C1-LOCAL-RUNTIME"
+    assert policy["requiredCapability"] == "runtime.local.v1"
+    assert policy["implicitReferenceFallback"] is False
+    assert policy["exportPolicy"] == (
+        "explicit-stable-allowlist-unlisted-public-exports-preview"
+    )
+    stable_paths = [entry["path"] for entry in policy["symbols"]]
+    assert (
+        stable_paths
+        == [entry["path"] for entry in snapshot["symbols"]]
+        == [
+            "graphblocks_runtime.native_extension_status",
+            "graphblocks_runtime.require_native_extension",
+            "graphblocks_runtime.run_stdlib_graph",
+        ]
+    )
+    assert snapshot["stableExports"] == [
+        "native_extension_status",
+        "require_native_extension",
+        "run_stdlib_graph",
+    ]
+    assert set(snapshot["stableExports"]) <= set(graphblocks_runtime.__all__)
+    assert snapshot["nativeExtensionStatusFields"] == [
+        "available",
+        "binding_crate",
+        "binding_protocol_version",
+        "binding_version",
+        "capabilities",
+        "error",
+        "module",
+    ]
+    assert (
+        snapshot["resultContract"]
+        == policy["resultContract"]
+        == {
+            "fields": ["runId", "graphHash", "status", "outputs", "journal"],
+            "excludedPreviewFields": ["checkpoint", "deploymentProvenance"],
+        }
+    )
+    runtime_symbol = snapshot["symbols"][-1]
+    assert runtime_symbol["signature"] == (
+        "(graph: 'dict[str, object]', inputs: 'dict[str, object]', *, "
+        "run_id: 'str | None' = None) -> 'dict[str, object]'"
+    )
+    preview_exports = {path.rsplit(".", 1)[1] for path in policy["previewHelpers"]}
+    assert preview_exports.isdisjoint(snapshot["stableExports"])
+    assert (
+        "graphblocks_runtime.run_stdlib_graph_with_options" in policy["previewHelpers"]
     )
 
 

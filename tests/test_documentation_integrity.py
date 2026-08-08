@@ -2180,7 +2180,6 @@ def test_stable_release_matrix_is_complete_and_machine_readable() -> None:
     assert authority["remainingPhases"] == [
         "stable-c1-requirement-authority",
         "stable-c1-suite-exact-differential",
-        "stable-native-local-runtime-api-contract",
         "fallible-panic-free-rust-public-boundaries",
     ]
     assert authority["coreRuntimeAuthority"] == {
@@ -2190,7 +2189,6 @@ def test_stable_release_matrix_is_complete_and_machine_readable() -> None:
             "outcome",
             "cancellation",
             "local-flow",
-            "local-runtime-api",
         ],
         "remainingExactSuites": [
             "application-events",
@@ -2222,6 +2220,9 @@ def test_stable_release_matrix_is_complete_and_machine_readable() -> None:
         authority["completedPhases"]
     )
     assert "installed-local-runtime-exact-differential" in authority[
+        "completedPhases"
+    ]
+    assert "stable-native-local-runtime-api-contract" in authority[
         "completedPhases"
     ]
     assert "supported-installed-native-compiler-tck-and-artifact-evidence" not in (
@@ -2315,7 +2316,6 @@ def test_stable_release_matrix_is_complete_and_machine_readable() -> None:
     assert authority_gate["blockers"] == [
         "stable-c1-requirement-authority-incomplete",
         "stable-c1-suite-exact-differential-incomplete",
-        "stable-native-local-runtime-api-contract-incomplete",
         "fallible-panic-free-rust-public-boundaries-incomplete",
     ]
     assert "installed-native-compiler-tck-and-artifact-identity-incomplete" not in (
@@ -2357,6 +2357,9 @@ def test_stable_release_matrix_is_complete_and_machine_readable() -> None:
     assert "native-local-runtime-capability-handshake" in authority_gate[
         "completedEvidence"
     ]
+    assert "stable-native-local-runtime-api-snapshot-and-installed-identity" in (
+        authority_gate["completedEvidence"]
+    )
     assert (
         "resource-schema-validation-and-migration-authority-incomplete"
         not in authority_gate["blockers"]
@@ -2412,8 +2415,10 @@ def test_stable_release_matrix_is_complete_and_machine_readable() -> None:
     assert runtime_gate["blockers"] == [
         "stable-c1-requirement-authority-incomplete",
         "stable-c1-suite-exact-differential-incomplete",
-        "stable-native-local-runtime-api-snapshot-incomplete",
         "restart-independent-local-runtime-correctness-incomplete",
+    ]
+    assert "stable-native-local-runtime-api-snapshot" in runtime_gate[
+        "completedEvidence"
     ]
 
     extension_runtime_gate = next(

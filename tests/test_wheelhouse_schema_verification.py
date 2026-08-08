@@ -21,7 +21,11 @@ from graphblocks.canonical import (
     canonical_hash_reference,
 )
 from graphblocks.schema import SchemaManifest
-from tools.verify_wheelhouse import installed_native_authority_probe_expectations
+from tools.verify_wheelhouse import (
+    installed_native_authority_probe_expectations,
+    stable_runtime_api_snapshot,
+    stable_runtime_smoke_expectation,
+)
 
 
 def _load_wheelhouse_module() -> ModuleType:
@@ -112,6 +116,8 @@ def _native_binding_payload(
             "majorVersion": 4_294_967_295,
             "name": "schemas/Message",
         },
+        "stableRuntimeApi": stable_runtime_api_snapshot(),
+        "stableRuntimeSmoke": stable_runtime_smoke_expectation(),
         "status": {
             "available": True,
             "binding_crate": "graphblocks-python",
@@ -203,6 +209,38 @@ def test_installed_native_binding_handshake_rejects_wrong_schema_id_smoke() -> N
 
 @pytest.mark.parametrize(
     "target",
+    ("signature", "status-fields", "runtime-smoke"),
+)
+def test_installed_native_binding_rejects_wrong_stable_runtime_api(
+    target: str,
+) -> None:
+    module = _load_wheelhouse_module()
+    payload = _native_binding_payload()
+    if target == "signature":
+        runtime_api = deepcopy(payload["stableRuntimeApi"])
+        runtime_api["symbols"][-1]["signature"] = "(graph: object) -> object"
+        payload["stableRuntimeApi"] = runtime_api
+        message = "stable runtime API snapshot"
+    elif target == "status-fields":
+        runtime_api = deepcopy(payload["stableRuntimeApi"])
+        runtime_api["nativeExtensionStatusFields"] = ["available"]
+        payload["stableRuntimeApi"] = runtime_api
+        message = "stable runtime API snapshot"
+    else:
+        runtime_smoke = deepcopy(payload["stableRuntimeSmoke"])
+        runtime_smoke["outputs"] = {"prompt": "wrong"}
+        payload["stableRuntimeSmoke"] = runtime_smoke
+        message = "stable runtime API smoke"
+
+    with pytest.raises(RuntimeError, match=message):
+        module._validate_installed_native_binding(
+            payload,
+            expected_distribution_version="0.1.0",
+        )
+
+
+@pytest.mark.parametrize(
+    "target",
     ("corpus", "resource-validation", "resource-migration"),
 )
 def test_installed_native_binding_rejects_wrong_public_facade_evidence(
@@ -285,6 +323,9 @@ def test_installed_native_authority_probe_exercises_public_and_reference_paths()
     assert "migration_contract(migrate_document, document)" in source
     assert "migration_contract(migrate_document_reference, document)" in source
     assert "native_migration_contract(document)" in source
+    assert "graphblocks_runtime.require_native_extension()" in source
+    assert "inspect.signature(value)" in source
+    assert "graphblocks_runtime.run_stdlib_graph(" in source
     compile(source, "<installed-native-authority-probe>", "exec")
 
 

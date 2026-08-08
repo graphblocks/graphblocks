@@ -87,6 +87,24 @@ NATIVE_SCHEMA_ID_AUTHORITY_SOURCES = (
 )
 NATIVE_RESOURCE_VALIDATION_CASES_PATH = ROOT / "tck" / "schema" / "resources.json"
 NATIVE_RESOURCE_MIGRATION_CASES_PATH = ROOT / "tck" / "migration" / "cases.json"
+STABLE_RUNTIME_API_SNAPSHOT_PATH = ROOT / "compatibility" / "stable-runtime-api.json"
+STABLE_RUNTIME_SURFACE_PATH = ROOT / "compatibility" / "stable-runtime-surface.yaml"
+STABLE_RUNTIME_TCK_CASES_PATH = ROOT / "tck" / "runtime" / "cases.json"
+STABLE_RUNTIME_EXPORTS = (
+    "native_extension_status",
+    "require_native_extension",
+    "run_stdlib_graph",
+)
+STABLE_RUNTIME_STATUS_FIELDS = (
+    "available",
+    "binding_crate",
+    "binding_protocol_version",
+    "binding_version",
+    "capabilities",
+    "error",
+    "module",
+)
+STABLE_RUNTIME_SMOKE_RUN_ID = "installed-stable-runtime-api"
 MAX_SDIST_MEMBER_COUNT = 100_000
 MAX_SDIST_UNPACKED_SIZE = 512 * 1024 * 1024
 WINDOWS_RESERVED_PATH_NAMES = {
@@ -457,6 +475,163 @@ def installed_native_authority_probe_expectations() -> dict[str, object]:
     }
 
 
+def stable_runtime_api_snapshot() -> dict[str, object]:
+    try:
+        snapshot = json.loads(
+            STABLE_RUNTIME_API_SNAPSHOT_PATH.read_text(encoding="utf-8")
+        )
+        policy = yaml.safe_load(
+            STABLE_RUNTIME_SURFACE_PATH.read_text(encoding="utf-8")
+        )
+    except (OSError, UnicodeError, json.JSONDecodeError, yaml.YAMLError) as error:
+        raise RuntimeError("stable runtime API compatibility data is invalid") from error
+    if not isinstance(snapshot, dict) or set(snapshot) != {
+        "authority",
+        "exportPolicy",
+        "implicitReferenceFallback",
+        "nativeExtensionStatusFields",
+        "profile",
+        "readiness",
+        "requiredCapability",
+        "resultContract",
+        "snapshotVersion",
+        "stableExports",
+        "symbols",
+        "targetRelease",
+    }:
+        raise RuntimeError("stable runtime API snapshot has an invalid envelope")
+    if not isinstance(policy, dict) or set(policy) != {
+        "authority",
+        "description",
+        "exportPolicy",
+        "implicitReferenceFallback",
+        "previewHelpers",
+        "profile",
+        "readiness",
+        "requiredCapability",
+        "resultContract",
+        "snapshotVersion",
+        "symbols",
+        "targetRelease",
+    }:
+        raise RuntimeError("stable runtime API surface has an invalid envelope")
+    expected_metadata = {
+        "authority": "rust",
+        "exportPolicy": "explicit-stable-allowlist-unlisted-public-exports-preview",
+        "implicitReferenceFallback": False,
+        "profile": "GB-C1-LOCAL-RUNTIME",
+        "readiness": "candidate",
+        "requiredCapability": "runtime.local.v1",
+        "resultContract": {
+            "fields": ["runId", "graphHash", "status", "outputs", "journal"],
+            "excludedPreviewFields": ["checkpoint", "deploymentProvenance"],
+        },
+        "snapshotVersion": 1,
+        "targetRelease": "1.0",
+    }
+    for field, expected in expected_metadata.items():
+        if snapshot.get(field) != expected or policy.get(field) != expected:
+            raise RuntimeError(f"stable runtime API {field} does not match policy")
+    expected_paths = [f"graphblocks_runtime.{name}" for name in STABLE_RUNTIME_EXPORTS]
+    policy_symbols = policy["symbols"]
+    snapshot_symbols = snapshot["symbols"]
+    if (
+        not isinstance(policy_symbols, list)
+        or not isinstance(snapshot_symbols, list)
+        or [
+            entry.get("path") if isinstance(entry, dict) else None
+            for entry in policy_symbols
+        ]
+        != expected_paths
+        or [
+            entry.get("path") if isinstance(entry, dict) else None
+            for entry in snapshot_symbols
+        ]
+        != expected_paths
+    ):
+        raise RuntimeError("stable runtime API symbols do not match policy")
+    for symbol in snapshot_symbols:
+        if not isinstance(symbol, dict) or set(symbol) != {
+            "kind",
+            "path",
+            "profile",
+            "signature",
+            "typeReferences",
+        }:
+            raise RuntimeError("stable runtime API snapshot symbol is invalid")
+        if (
+            symbol["kind"] != "function"
+            or symbol["profile"] != "GB-C1-LOCAL-RUNTIME"
+            or not isinstance(symbol["signature"], str)
+            or not symbol["signature"]
+            or symbol["typeReferences"] != []
+        ):
+            raise RuntimeError("stable runtime API snapshot symbol is invalid")
+    if snapshot["stableExports"] != list(STABLE_RUNTIME_EXPORTS):
+        raise RuntimeError("stable runtime API exports do not match policy")
+    if snapshot["nativeExtensionStatusFields"] != list(
+        STABLE_RUNTIME_STATUS_FIELDS
+    ):
+        raise RuntimeError("stable runtime API status fields do not match policy")
+    preview_helpers = policy["previewHelpers"]
+    if not isinstance(preview_helpers, list) or not all(
+        isinstance(path, str) and path.startswith("graphblocks_runtime.")
+        for path in preview_helpers
+    ):
+        raise RuntimeError("stable runtime API preview helper policy is invalid")
+    if {
+        path.rsplit(".", 1)[1] for path in preview_helpers
+    }.intersection(STABLE_RUNTIME_EXPORTS):
+        raise RuntimeError("stable runtime API preview helper was promoted")
+    return snapshot
+
+
+def _stable_runtime_smoke_case() -> dict[str, object]:
+    try:
+        cases = json.loads(STABLE_RUNTIME_TCK_CASES_PATH.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as error:
+        raise RuntimeError("stable runtime smoke fixture is invalid") from error
+    if not isinstance(cases, list):
+        raise RuntimeError("stable runtime smoke fixture must contain cases")
+    case = next(
+        (
+            value
+            for value in cases
+            if isinstance(value, dict) and value.get("name") == "prompt_render_output"
+        ),
+        None,
+    )
+    if (
+        not isinstance(case, dict)
+        or not isinstance(case.get("document"), dict)
+        or not isinstance(case.get("inputs"), dict)
+        or not isinstance(case.get("expected"), dict)
+    ):
+        raise RuntimeError("stable runtime smoke case is invalid")
+    return case
+
+
+def stable_runtime_smoke_expectation() -> dict[str, object]:
+    expected = _stable_runtime_smoke_case()["expected"]
+    if not isinstance(expected, dict):
+        raise RuntimeError("stable runtime smoke expectation is invalid")
+    status = expected.get("status")
+    outputs = expected.get("outputs")
+    terminal_kind = expected.get("terminal_kind")
+    if (
+        not isinstance(status, str)
+        or not isinstance(outputs, dict)
+        or not isinstance(terminal_kind, str)
+    ):
+        raise RuntimeError("stable runtime smoke expectation is invalid")
+    return {
+        "runId": STABLE_RUNTIME_SMOKE_RUN_ID,
+        "status": status,
+        "outputs": outputs,
+        "terminalKind": terminal_kind,
+    }
+
+
 def installed_native_authority_probe_source() -> str:
     resource_validation_cases = _load_native_authority_cases(
         NATIVE_RESOURCE_VALIDATION_CASES_PATH,
@@ -478,9 +653,29 @@ def installed_native_authority_probe_source() -> str:
         separators=(",", ":"),
         sort_keys=True,
     )
+    runtime_api_json = json.dumps(
+        stable_runtime_api_snapshot(),
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    runtime_smoke_case = _stable_runtime_smoke_case()
+    runtime_smoke_graph_json = json.dumps(
+        runtime_smoke_case["document"],
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    runtime_smoke_inputs_json = json.dumps(
+        runtime_smoke_case["inputs"],
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
     return "\n".join(
         (
             "from copy import deepcopy",
+            "import inspect",
             "import json",
             "from importlib.metadata import version",
             "import graphblocks_runtime",
@@ -502,6 +697,9 @@ def installed_native_authority_probe_source() -> str:
             f"schema_id_sources = {NATIVE_SCHEMA_ID_AUTHORITY_SOURCES!r}",
             f"resource_validation_cases = json.loads({resource_validation_json!r})",
             f"resource_migration_cases = json.loads({resource_migration_json!r})",
+            f"stable_runtime_api = json.loads({runtime_api_json!r})",
+            f"stable_runtime_graph = json.loads({runtime_smoke_graph_json!r})",
+            f"stable_runtime_inputs = json.loads({runtime_smoke_inputs_json!r})",
             "def validation_contract(errors):",
             "    return {'errors': [{'code': error.code, 'keyword': error.keyword, 'path': error.path} for error in errors], 'valid': not errors}",
             "def native_validation_contract(errors):",
@@ -537,7 +735,24 @@ def installed_native_authority_probe_source() -> str:
             "    resource_migration_evidence.append({'name': case['name'], 'public': migration_contract(migrate_document, document), 'reference': migration_contract(migrate_document_reference, document), 'native': native_migration_contract(document)})",
             "corpus = {'canonicalSources': list(canonical_sources), 'schemaIds': list(schema_id_sources), 'resourceValidationCases': resource_validation_cases, 'resourceMigrationCases': resource_migration_cases}",
             "public_facade_evidence = {'formatVersion': 2, 'corpusDigest': canonical_hash_reference(corpus), 'canonicalCases': canonical_cases, 'schemaIdCases': schema_id_cases, 'resourceValidationCases': resource_validation_evidence, 'resourceMigrationCases': resource_migration_evidence}",
-            "payload = {'canonicalSmoke': {'hash': graphblocks_runtime.canonical_hash_json('{\"b\":2,\"a\":1}'), 'json': graphblocks_runtime.canonicalize_json('{\"b\":2,\"a\":1}')}, 'distributionVersion': version('graphblocks-runtime'), 'publicFacadeEvidence': public_facade_evidence, 'schemaIdSmoke': graphblocks_runtime.parse_schema_id('schemas/Message@4294967295'), 'status': graphblocks_runtime.native_extension_status()}",
+            "declared_stable_exports = stable_runtime_api['stableExports']",
+            "observed_stable_symbols = []",
+            "for symbol in stable_runtime_api['symbols']:",
+            "    name = symbol['path'].rsplit('.', 1)[1]",
+            "    value = getattr(graphblocks_runtime, name)",
+            "    observed_symbol = dict(symbol)",
+            "    observed_symbol['kind'] = 'function' if inspect.isfunction(value) else 'callable'",
+            "    observed_symbol['signature'] = str(inspect.signature(value))",
+            "    observed_stable_symbols.append(observed_symbol)",
+            "stable_runtime_api['symbols'] = observed_stable_symbols",
+            "stable_runtime_api['stableExports'] = [name for name in graphblocks_runtime.__all__ if name in declared_stable_exports]",
+            "native_status = graphblocks_runtime.native_extension_status()",
+            "stable_runtime_api['nativeExtensionStatusFields'] = sorted(native_status)",
+            "graphblocks_runtime.require_native_extension()",
+            f"stable_runtime_result = graphblocks_runtime.run_stdlib_graph(stable_runtime_graph, stable_runtime_inputs, run_id={STABLE_RUNTIME_SMOKE_RUN_ID!r})",
+            "stable_runtime_terminal_kind = next((record.get('kind') for record in reversed(stable_runtime_result['journal']) if record.get('terminal') is True), None)",
+            "stable_runtime_smoke = {'runId': stable_runtime_result['runId'], 'status': stable_runtime_result['status'], 'outputs': stable_runtime_result['outputs'], 'terminalKind': stable_runtime_terminal_kind}",
+            "payload = {'canonicalSmoke': {'hash': graphblocks_runtime.canonical_hash_json('{\"b\":2,\"a\":1}'), 'json': graphblocks_runtime.canonicalize_json('{\"b\":2,\"a\":1}')}, 'distributionVersion': version('graphblocks-runtime'), 'publicFacadeEvidence': public_facade_evidence, 'schemaIdSmoke': graphblocks_runtime.parse_schema_id('schemas/Message@4294967295'), 'stableRuntimeApi': stable_runtime_api, 'stableRuntimeSmoke': stable_runtime_smoke, 'status': native_status}",
             "print(json.dumps(payload, sort_keys=True))",
         )
     )
@@ -553,6 +768,8 @@ def _validate_installed_native_binding(
         "distributionVersion",
         "publicFacadeEvidence",
         "schemaIdSmoke",
+        "stableRuntimeApi",
+        "stableRuntimeSmoke",
         "status",
     }:
         raise RuntimeError(
@@ -647,6 +864,14 @@ def _validate_installed_native_binding(
     ):
         raise RuntimeError(
             "installed public/native authority facade evidence does not match"
+        )
+    if payload["stableRuntimeApi"] != stable_runtime_api_snapshot():
+        raise RuntimeError(
+            "installed stable runtime API snapshot does not match"
+        )
+    if payload["stableRuntimeSmoke"] != stable_runtime_smoke_expectation():
+        raise RuntimeError(
+            "installed stable runtime API smoke does not match"
         )
     return dict(status)
 

@@ -62,7 +62,7 @@ readinessAxes:
       targetReleaseClaim: core-c1-local-runtime-authority
       blocksTargetRelease: true
       shippedP0P1RemainBlocking: true
-      claimBoundary: The five remaining C1 requirements, six remaining exact-differential suites, stable native runtime API, and restart-independent local correctness block 1.0; C4/X3 production durability is governed by a separate nonblocking preview-promotion gate.
+      claimBoundary: The four remaining C1 requirements, six remaining exact-differential suites, and restart-independent local correctness block 1.0; the installed native runtime API is frozen, while C4/X3 production durability is governed by a separate nonblocking preview-promotion gate.
     - id: adapters
       label: External adapters
       readiness: contract-only-no-real-adapters
@@ -137,14 +137,14 @@ authorityTransition:
     - broader-resource-schema-validation-and-migration-authority
     - installed-local-runtime-exact-differential
     - native-local-runtime-capability-handshake
+    - stable-native-local-runtime-api-contract
   remainingPhases:
     - stable-c1-requirement-authority
     - stable-c1-suite-exact-differential
-    - stable-native-local-runtime-api-contract
     - fallible-panic-free-rust-public-boundaries
   coreRuntimeAuthority:
     profile: GB-C1-LOCAL-RUNTIME
-    remainingRequirements: [typed-ports, outcome, cancellation, local-flow, local-runtime-api]
+    remainingRequirements: [typed-ports, outcome, cancellation, local-flow]
     remainingExactSuites: [application-events, retry, sequence, tool-execution, tool-lifecycle, tool-result]
     runtimeCorrectnessGate: REL-RUNTIME-CORRECTNESS
     blocksTargetRelease: true
@@ -826,6 +826,8 @@ releaseGates:
     evidence:
       - compatibility/stable-python-surface.yaml
       - compatibility/stable-python-api.json
+      - compatibility/stable-runtime-surface.yaml
+      - compatibility/stable-runtime-api.json
       - compatibility/stable-cli-cases.yaml
       - compatibility/stable-cli-contracts.json
       - compatibility/stable-testing-surface.yaml
@@ -912,7 +914,7 @@ releaseGates:
     readiness: blocked
     scope: core-c1-local-runtime
     blocksTargetRelease: true
-    requirementSelectors: [typed-ports, outcome, cancellation, local-flow, local-runtime-api]
+    requirementSelectors: [typed-ports, outcome, cancellation, local-flow]
     exactSuiteSelectors: [application-events, retry, sequence, tool-execution, tool-lifecycle, tool-result]
     requiredEvidence:
       - deterministic-local-scheduler-and-journal-native-authority
@@ -925,10 +927,10 @@ releaseGates:
     completedEvidence:
       - deterministic-local-scheduler-and-journal-native-authority
       - installed-native-local-runtime-artifact-identity
+      - stable-native-local-runtime-api-snapshot
     blockers:
       - stable-c1-requirement-authority-incomplete
       - stable-c1-suite-exact-differential-incomplete
-      - stable-native-local-runtime-api-snapshot-incomplete
       - restart-independent-local-runtime-correctness-incomplete
   - id: REL-EXTENSION-RUNTIME-AUTHORITY
     description: C4 production and X3 durable-stream profiles require live authority, multi-process recovery, fencing, and durable output/effect boundaries before their separate preview promotion.
@@ -1511,7 +1513,7 @@ releaseGates:
       - native-resource-schema-validation-and-migration-routing-and-installed-differential
       - supported-installed-native-local-runtime-differential-and-artifact-identity
       - native-local-runtime-capability-handshake
-      - stable-c1-typed-ports-outcome-cancellation-local-flow-and-runtime-api-authority
+      - stable-c1-typed-ports-outcome-cancellation-and-local-flow-authority
       - exact-shared-c1-application-events-retry-sequence-tool-execution-tool-lifecycle-and-result-differential
       - stable-native-local-runtime-api-snapshot-and-installed-identity
       - fallible-panic-free-rust-public-boundaries
@@ -1528,10 +1530,10 @@ releaseGates:
       - native-resource-schema-validation-and-migration-routing-and-installed-differential
       - supported-installed-native-local-runtime-differential-and-artifact-identity
       - native-local-runtime-capability-handshake
+      - stable-native-local-runtime-api-snapshot-and-installed-identity
     blockers:
       - stable-c1-requirement-authority-incomplete
       - stable-c1-suite-exact-differential-incomplete
-      - stable-native-local-runtime-api-contract-incomplete
       - fallible-panic-free-rust-public-boundaries-incomplete
   - id: REL-PLATFORM-MATRIX
     description: Install typing and runtime gates pass on every published platform; upgrade is explicitly exempt only for v1.0.0.

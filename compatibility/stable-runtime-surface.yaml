@@ -1,0 +1,27 @@
+snapshotVersion: 1
+targetRelease: '1.0'
+readiness: candidate
+description: >-
+  Minimal installed graphblocks-runtime surface for the stable C1 local runtime.
+  The core entry point accepts only graph, inputs, and an optional run identity.
+  Persistence, checkpoint, callback, deployment, raw JSON, and test-runtime
+  helpers remain preview and are not compatibility promises.
+authority: rust
+profile: GB-C1-LOCAL-RUNTIME
+exportPolicy: explicit-stable-allowlist-unlisted-public-exports-preview
+requiredCapability: runtime.local.v1
+implicitReferenceFallback: false
+resultContract:
+  fields: [runId, graphHash, status, outputs, journal]
+  excludedPreviewFields: [checkpoint, deploymentProvenance]
+previewHelpers:
+  - graphblocks_runtime.run_stdlib_graph_with_options
+  - graphblocks_runtime.run_stdlib_graph_json
+  - graphblocks_runtime.run_stdlib_graph_with_options_json
+  - graphblocks_runtime.run_test_graph
+  - graphblocks_runtime.run_test_graph_json
+  - graphblocks_runtime.run_test_graph_with_options_json
+symbols:
+  - {path: graphblocks_runtime.native_extension_status, profile: GB-C1-LOCAL-RUNTIME}
+  - {path: graphblocks_runtime.require_native_extension, profile: GB-C1-LOCAL-RUNTIME}
+  - {path: graphblocks_runtime.run_stdlib_graph, profile: GB-C1-LOCAL-RUNTIME}

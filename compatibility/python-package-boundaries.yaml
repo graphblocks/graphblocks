@@ -19,6 +19,15 @@ rootFacade:
     explicitNamespaces: defining-leaf-modules
     guidance: import-preview-from-defining-leaf-module
 
+companionArtifacts:
+  graphblocks-runtime:
+    stableSurface: compatibility/stable-runtime-surface.yaml
+    stableSnapshot: compatibility/stable-runtime-api.json
+    typingMarker: packages/graphblocks-runtime/src/graphblocks_runtime/py.typed
+    typingContract: inline-annotations-and-signature-snapshot
+    unlistedPublicExportTier: preview
+    installedVerification: tools/verify_wheelhouse.py
+
 moduleTiers:
   stableSymbolOwnerModules:
     - graphblocks.canonical

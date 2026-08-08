@@ -327,6 +327,9 @@ profiles:
           - GB-GCR-UNTYPED-COMPAT-001
           - GB-GCR-LANGUAGE-BOUNDARY-001
         implementations:
+          normative:
+            - packages/graphblocks-runtime/src/graphblocks_runtime/__init__.py
+            - crates/graphblocks-python/src/lib.rs
           pythonFacadeAndReference:
             - src/graphblocks/__init__.py
             - src/graphblocks/runtime.py
@@ -335,14 +338,19 @@ profiles:
             - packages/graphblocks-testing/src/graphblocks_testing/models.py
             - packages/graphblocks-testing/src/graphblocks_testing/reports.py
             - packages/graphblocks-testing/src/graphblocks_testing/runners.py
-          targetNormative:
-            - packages/graphblocks-runtime/src/graphblocks_runtime/__init__.py
-            - crates/graphblocks-python/src/lib.rs
+        scopeNotes:
+          - The stable installed surface is the explicit three-symbol allowlist in compatibility/stable-runtime-surface.yaml; persistence, checkpoint, callback, deployment, raw JSON, and test-runtime helpers remain preview.
+          - Installed authority evidence verifies the closed status and result contracts, exact signatures, runtime.local.v1 capability, py.typed marker, stable smoke execution, and selected-wheel bytes without an implicit Python fallback.
         schemas: []
         tckSuites: [runtime]
         evidence:
           - compatibility/stable-python-surface.yaml
+          - compatibility/stable-runtime-surface.yaml
+          - compatibility/stable-runtime-api.json
           - compatibility/stable-testing-surface.yaml
+          - tools/verify_wheelhouse.py
           - tests/test_compatibility_snapshots.py
+          - tests/test_runtime_package.py
           - tests/test_testing_package.py
           - tests/test_testing_package_architecture.py
+          - tests/test_wheelhouse_schema_verification.py

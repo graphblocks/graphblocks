@@ -95,7 +95,7 @@ def test_scripted_model_response_is_pickle_safe_and_rejects_wire_ambiguity() -> 
 def test_stdlib_package_lazy_native_runner_delegates_to_runtime(monkeypatch) -> None:
     calls: list[tuple[dict[str, object], dict[str, object], dict[str, object]]] = []
 
-    def run_stdlib_graph(
+    def run_stdlib_graph_with_options(
         graph: dict[str, object],
         inputs: dict[str, object],
         **options: object,
@@ -106,7 +106,7 @@ def test_stdlib_package_lazy_native_runner_delegates_to_runtime(monkeypatch) -> 
     monkeypatch.setitem(
         sys.modules,
         "graphblocks_runtime",
-        SimpleNamespace(run_stdlib_graph=run_stdlib_graph),
+        SimpleNamespace(run_stdlib_graph_with_options=run_stdlib_graph_with_options),
     )
     graphblocks_stdlib = importlib.import_module("graphblocks.stdlib")
 

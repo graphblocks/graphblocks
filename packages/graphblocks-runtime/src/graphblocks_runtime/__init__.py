@@ -791,6 +791,70 @@ def _json_object_result(result_json: str, label: str) -> dict[str, object]:
     return payload
 
 
+def _stable_stdlib_result(
+    result_json: str,
+    *,
+    requested_run_id: str | None,
+) -> dict[str, object]:
+    payload = _json_object_result(result_json, "native stable stdlib runtime result")
+    if set(payload) != {
+        "checkpoint",
+        "graphHash",
+        "journal",
+        "outputs",
+        "runId",
+        "status",
+    }:
+        raise ValueError("native stable stdlib runtime result must be closed")
+    run_id = payload["runId"]
+    graph_hash = payload["graphHash"]
+    status = payload["status"]
+    outputs = payload["outputs"]
+    journal = payload["journal"]
+    checkpoint = payload["checkpoint"]
+    if type(run_id) is not str or not run_id or run_id != run_id.strip():
+        raise ValueError("native stable stdlib runtime result has an invalid run id")
+    if requested_run_id is not None and run_id != requested_run_id:
+        raise ValueError(
+            "native stable stdlib runtime result changed the requested run id"
+        )
+    if (
+        type(graph_hash) is not str
+        or not graph_hash.startswith("sha256:")
+        or len(graph_hash) != 71
+        or any(
+            character not in "0123456789abcdef"
+            for character in graph_hash.removeprefix("sha256:")
+        )
+    ):
+        raise ValueError(
+            "native stable stdlib runtime result has an invalid graph hash"
+        )
+    if status not in {"succeeded", "failed", "cancelled", "waiting_callback"}:
+        raise ValueError("native stable stdlib runtime result has an invalid status")
+    if not isinstance(outputs, dict):
+        raise TypeError("native stable stdlib runtime outputs must be a JSON object")
+    if not isinstance(journal, list) or not all(
+        isinstance(record, dict)
+        and type(record.get("kind")) is str
+        and bool(record["kind"])
+        for record in journal
+    ):
+        raise TypeError("native stable stdlib runtime journal is invalid")
+    if checkpoint is not None:
+        raise ValueError(
+            "native stable stdlib runtime cannot expose a preview checkpoint; "
+            "use run_stdlib_graph_with_options"
+        )
+    return {
+        "runId": run_id,
+        "graphHash": graph_hash,
+        "status": status,
+        "outputs": outputs,
+        "journal": journal,
+    }
+
+
 def parse_schema_id(value: str) -> dict[str, object]:
     if not isinstance(value, str):
         raise TypeError("schema id must be a string")
@@ -904,6 +968,27 @@ def run_stdlib_graph(
     inputs: dict[str, object],
     *,
     run_id: str | None = None,
+) -> dict[str, object]:
+    if run_id is None:
+        return _stable_stdlib_result(
+            run_stdlib_graph_json(_canonical_json(graph), _canonical_json(inputs)),
+            requested_run_id=None,
+        )
+    return _stable_stdlib_result(
+        run_stdlib_graph_with_options_json(
+            _canonical_json(graph),
+            _canonical_json(inputs),
+            _canonical_json({"runId": run_id}),
+        ),
+        requested_run_id=run_id,
+    )
+
+
+def run_stdlib_graph_with_options(
+    graph: dict[str, object],
+    inputs: dict[str, object],
+    *,
+    run_id: str | None = None,
     run_store_path: str | None = None,
     journal_store_path: str | None = None,
     checkpoint_store_path: str | None = None,
@@ -947,10 +1032,7 @@ def run_stdlib_graph(
             ),
             "native stdlib runtime result",
         )
-    return _json_object_result(
-        run_stdlib_graph_json(_canonical_json(graph), _canonical_json(inputs)),
-        "native stdlib runtime result",
-    )
+    return run_stdlib_graph(graph, inputs)
 
 
 def run_test_graph(
@@ -1509,6 +1591,7 @@ __all__ = [
     "require_native_extension",
     "run_stdlib_graph",
     "run_stdlib_graph_json",
+    "run_stdlib_graph_with_options",
     "run_stdlib_graph_with_options_json",
     "run_test_graph",
     "run_test_graph_json",

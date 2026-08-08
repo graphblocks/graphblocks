@@ -333,22 +333,28 @@ def test_stable_requirement_implementation_roles_match_the_authority_transition(
         entry["id"]: entry
         for entry in profiles["GB-C1-LOCAL-RUNTIME"]["requirements"]
     }
-    normative_requirements = {"deterministic-local-scheduler", "journal"}
+    normative_requirements = {
+        "deterministic-local-scheduler",
+        "journal",
+        "local-runtime-api",
+    }
     target_requirements = {
         "typed-ports",
         "outcome",
         "cancellation",
         "local-flow",
-        "local-runtime-api",
     }
     assert set(c1_entries) == normative_requirements | target_requirements
-    for requirement in ("deterministic-local-scheduler", "journal"):
+    for requirement in normative_requirements:
         roles = c1_entries[requirement]["implementations"]
         assert set(roles) == {"normative", "pythonFacadeAndReference"}
         assert all(
             not path.startswith("src/graphblocks/")
             for path in roles["normative"]
         )
+    assert "compatibility/stable-runtime-api.json" in c1_entries[
+        "local-runtime-api"
+    ]["evidence"]
     for requirement in target_requirements:
         entry = c1_entries[requirement]
         roles = entry["implementations"]

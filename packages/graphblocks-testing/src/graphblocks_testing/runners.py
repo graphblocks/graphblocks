@@ -8765,8 +8765,6 @@ class TckRunner:
     def _run_runtime_case(self, case: TckCase) -> TckResult:
         try:
             if self.profile == "native" or self.native_runtime_authority:
-                from graphblocks_runtime import run_stdlib_graph
-
                 run_id = "tck-" + "".join(
                     character if character.isalnum() else "-"
                     for character in case.case_id.strip()
@@ -8784,11 +8782,22 @@ class TckRunner:
                     native_options["run_store_path"] = run_store_path
                 if journal_store_path is not None:
                     native_options["journal_store_path"] = journal_store_path
-                native_result = run_stdlib_graph(
-                    case.graph,
-                    case.inputs,
-                    **native_options,
-                )
+                if run_store_path is None and journal_store_path is None:
+                    from graphblocks_runtime import run_stdlib_graph
+
+                    native_result = run_stdlib_graph(
+                        case.graph,
+                        case.inputs,
+                        run_id=run_id,
+                    )
+                else:
+                    from graphblocks_runtime import run_stdlib_graph_with_options
+
+                    native_result = run_stdlib_graph_with_options(
+                        case.graph,
+                        case.inputs,
+                        **native_options,
+                    )
                 journal = native_result.get("journal", [])
                 journal_records = journal if isinstance(journal, list) else []
                 terminal_kind = next(

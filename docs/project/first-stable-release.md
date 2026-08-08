@@ -64,6 +64,17 @@ These snapshots are candidate-enforced evidence and have been refreshed against
 the stable `v1` wire resources. They still require independent compatibility
 review before the release gate can be declared passed.
 
+The installed C1 runtime compatibility boundary is separately enumerated in
+[`stable-runtime-surface.yaml`](../../compatibility/stable-runtime-surface.yaml)
+and frozen in
+[`stable-runtime-api.json`](../../compatibility/stable-runtime-api.json). It
+contains only native status, fail-closed availability admission, and the
+checkpoint-free `run_stdlib_graph(graph, inputs, *, run_id=None)` entry point.
+The installed-wheel probe checks those exact signatures, the closed status and
+five-field result contracts, `runtime.local.v1`, `py.typed`, smoke execution,
+and package/native bytes from the selected wheel. Persistence, checkpoint,
+callback, deployment, raw JSON, and test-runtime helpers remain preview.
+
 ### Rust and non-Python artifacts
 
 | Artifact | 1.0 tier | Reason |
@@ -231,8 +242,9 @@ over the fixed utility corpus and complete shared resource corpora, then binds
 those results to the exact runtime wheel record. This does not relabel other
 behavior in the broader reference-only schema TCK.
 `REL-NORMATIVE-AUTHORITY` therefore still blocks 1.0 only on the remaining C1
-requirement authority, exact-differential suites, stable native runtime API,
-and panic-free public Rust boundaries. Installed compiler TCK reports execute
+requirement authority, exact-differential suites, and panic-free public Rust
+boundaries. The stable native runtime API and its installed artifact identity
+are now closed. Installed compiler TCK reports execute
 the normative facade and bind the
 `graphblocks-runtime` implementation version plus the exact platform wheel
 record and SHA-256. The evidence runner also compares the installed package and

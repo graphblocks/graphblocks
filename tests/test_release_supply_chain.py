@@ -19,7 +19,11 @@ from graphblocks.canonical import (
     canonical_hash_reference as canonical_hash,
 )
 from tools import stable_security_gates
-from tools.verify_wheelhouse import installed_native_authority_probe_expectations
+from tools.verify_wheelhouse import (
+    installed_native_authority_probe_expectations,
+    stable_runtime_api_snapshot,
+    stable_runtime_smoke_expectation,
+)
 
 
 COMMIT = "1" * 40
@@ -52,6 +56,8 @@ def _native_authority_probe() -> dict[str, object]:
             "majorVersion": 4_294_967_295,
             "name": "schemas/Message",
         },
+        "stableRuntimeApi": stable_runtime_api_snapshot(),
+        "stableRuntimeSmoke": stable_runtime_smoke_expectation(),
         "status": {
             "available": True,
             "binding_crate": "graphblocks-python",

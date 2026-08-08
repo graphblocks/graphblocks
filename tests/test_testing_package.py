@@ -843,9 +843,11 @@ def test_native_compiler_wheel_artifact_binds_installed_binding(
     package_bytes = b"# installed runtime package\n"
     native_bytes = b"installed native extension"
     (runtime_root / "__init__.py").write_bytes(package_bytes)
+    (runtime_root / "py.typed").write_bytes(b"")
     (runtime_root / TEST_NATIVE_EXTENSION_NAME).write_bytes(native_bytes)
     with zipfile.ZipFile(wheel, "w") as archive:
         archive.writestr("graphblocks_runtime/__init__.py", package_bytes)
+        archive.writestr("graphblocks_runtime/py.typed", b"")
         archive.writestr(
             f"graphblocks_runtime/{TEST_NATIVE_EXTENSION_NAME}",
             native_bytes,
@@ -889,6 +891,11 @@ def test_native_compiler_wheel_artifact_binds_installed_binding(
         "version": "0.1.0",
         "artifactType": "wheel",
     }
+    unexpected_installed = runtime_root / "shadow.py"
+    unexpected_installed.write_bytes(b"# not selected\n")
+    with pytest.raises(RuntimeError, match="files outside the selected wheel"):
+        graphblocks_testing._native_compiler_wheel_artifact(wheel)
+    unexpected_installed.unlink()
     runtime_module.binding_version = lambda: "0.2.0"
     with pytest.raises(RuntimeError, match="binding version"):
         graphblocks_testing._native_compiler_wheel_artifact(wheel)
@@ -910,11 +917,13 @@ def test_native_compiler_wheel_artifact_rejects_uninstalled_payload(
     runtime_root = tmp_path / "installed" / "graphblocks_runtime"
     runtime_root.mkdir(parents=True)
     (runtime_root / "__init__.py").write_bytes(b"# selected wheel\n")
+    (runtime_root / "py.typed").write_bytes(b"")
     (runtime_root / TEST_NATIVE_EXTENSION_NAME).write_bytes(
         b"substituted native extension"
     )
     with zipfile.ZipFile(wheel, "w") as archive:
         archive.writestr("graphblocks_runtime/__init__.py", b"# selected wheel\n")
+        archive.writestr("graphblocks_runtime/py.typed", b"")
         archive.writestr(
             f"graphblocks_runtime/{TEST_NATIVE_EXTENSION_NAME}",
             b"selected native extension",
@@ -968,6 +977,7 @@ def test_native_compiler_wheel_artifact_rejects_bytecode_cache(
     wheel = tmp_path / "graphblocks_runtime-0.1.0-cp311-abi3-linux_x86_64.whl"
     with zipfile.ZipFile(wheel, "w") as archive:
         archive.writestr("graphblocks_runtime/__init__.py", b"# runtime\n")
+        archive.writestr("graphblocks_runtime/py.typed", b"")
         archive.writestr(
             f"graphblocks_runtime/{TEST_NATIVE_EXTENSION_NAME}",
             b"native",
@@ -988,6 +998,33 @@ def test_native_compiler_wheel_artifact_rejects_bytecode_cache(
         graphblocks_testing._native_compiler_wheel_artifact(wheel)
 
 
+def test_native_compiler_wheel_artifact_requires_typing_marker(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monkeypatch.syspath_prepend(
+        str(ROOT / "packages" / "graphblocks-testing" / "src")
+    )
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+    wheel = tmp_path / "graphblocks_runtime-0.1.0-cp311-abi3-linux_x86_64.whl"
+    with zipfile.ZipFile(wheel, "w") as archive:
+        archive.writestr("graphblocks_runtime/__init__.py", b"# runtime\n")
+        archive.writestr(
+            f"graphblocks_runtime/{TEST_NATIVE_EXTENSION_NAME}",
+            b"native",
+        )
+    monkeypatch.setattr(
+        graphblocks_testing,
+        "distribution_version",
+        lambda distribution: "0.1.0",
+    )
+    wheel_tags = graphblocks_testing.parse_wheel_filename(wheel.name)[3]
+    monkeypatch.setattr(graphblocks_testing, "sys_tags", lambda: iter(wheel_tags))
+
+    with pytest.raises(ValueError, match="typed runtime package"):
+        graphblocks_testing._native_compiler_wheel_artifact(wheel)
+
+
 def test_native_compiler_wheel_artifact_rejects_unexpected_install_payload(
     tmp_path,
     monkeypatch,
@@ -999,6 +1036,7 @@ def test_native_compiler_wheel_artifact_rejects_unexpected_install_payload(
     wheel = tmp_path / "graphblocks_runtime-0.1.0-cp311-abi3-linux_x86_64.whl"
     with zipfile.ZipFile(wheel, "w") as archive:
         archive.writestr("graphblocks_runtime/__init__.py", b"# runtime\n")
+        archive.writestr("graphblocks_runtime/py.typed", b"")
         archive.writestr(
             f"graphblocks_runtime/{TEST_NATIVE_EXTENSION_NAME}",
             b"native",
@@ -9436,7 +9474,7 @@ def test_testing_package_cli_native_runtime_tck_writes_evidence_paths(tmp_path, 
     monkeypatch.setitem(
         sys.modules,
         "graphblocks_runtime",
-        SimpleNamespace(run_stdlib_graph=run_stdlib_graph),
+        SimpleNamespace(run_stdlib_graph_with_options=run_stdlib_graph),
     )
     evidence_dir = tmp_path / "native-evidence"
 
@@ -9513,7 +9551,7 @@ def test_testing_package_cli_run_all_namespaces_native_tck_evidence(tmp_path, mo
     monkeypatch.setitem(
         sys.modules,
         "graphblocks_runtime",
-        SimpleNamespace(run_stdlib_graph=run_stdlib_graph),
+        SimpleNamespace(run_stdlib_graph_with_options=run_stdlib_graph),
     )
     evidence_dir = tmp_path / "native-evidence"
     tck_root = tmp_path / "tck"

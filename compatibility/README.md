@@ -20,6 +20,11 @@ checkpoint, callback, application, governance, and production experiments.
   runtime alias and its defining owner module without promoting it to stable.
 - `stable-python-api.json` records their exact inspectable signatures and the
   public fields of dataclasses.
+- `stable-runtime-surface.yaml` and `stable-runtime-api.json` freeze the
+  minimal installed `graphblocks-runtime` C1 surface, its closed status and
+  result contracts, and the exact signatures exercised from the selected
+  native wheel. Persistence, checkpoint, callback, deployment, raw JSON, and
+  test-runtime helpers remain preview.
 - `stable-cli-cases.yaml` is the reviewed list of `validate`, `plan`, and `run`
   command scenarios.
 - `stable-cli-contracts.json` records each scenario's exit code and parsed JSON
