@@ -265,3 +265,6 @@ resolved:
   - id: GB-DOC-007
     fixCommits: [9f47e571]
     regression: [tests/test_status_readiness.py, tests/test_stable_security_gates.py, tests/test_documentation_integrity.py]
+  - id: GB-QA-011
+    fixCommits: [fe0e3de5]
+    regression: [tests/test_docs_checker.py, tests/test_documentation_integrity.py]

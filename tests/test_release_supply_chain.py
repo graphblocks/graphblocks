@@ -1954,7 +1954,7 @@ def test_candidate_workflow_derives_and_freezes_audit_closure(
     )
 
     assert frozen.data == module._canonical_json_bytes(payload)
-    assert payload["openBySeverity"] == {"P0": 0, "P1": 0, "P2": 6, "P3": 6}
+    assert payload["openBySeverity"] == {"P0": 0, "P1": 0, "P2": 6, "P3": 5}
     assert payload["reproductions"]["findings"] == 9
     assert payload["reproductions"]["capturedFiles"] == 13
     assert payload["reproductions"]["reconstructedHarnesses"] == 5

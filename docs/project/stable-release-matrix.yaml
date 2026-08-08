@@ -109,8 +109,8 @@ deepAudit:
     authority: docs/project/audit-issue-status.yaml
     inventory: docs/project/audit-issues.json
     checker: tools/check_audit_inventory.py
-    resolved: 87
-    openBySeverity: {P0: 0, P1: 0, P2: 6, P3: 6}
+    resolved: 88
+    openBySeverity: {P0: 0, P1: 0, P2: 6, P3: 5}
   exitPolicy:
     securityFreeze: {maxOpenP0: 0}
     stableRelease: {maxOpenP0: 0, maxOpenP1: 0}
@@ -1079,6 +1079,7 @@ releaseGates:
       - accepted-phase-scoped-rust-authority-and-python-reference-facade
       - fail-closed-notice-only-reserved-rust-and-npm-artifacts
       - independent-supply-chain-api-security-durability-and-adapter-readiness-axes
+      - always-run-bounded-local-links-anchors-and-generated-facts-gate
     evidence:
       - docs/project/audit-issues.json
       - docs/project/audit-issue-status.yaml

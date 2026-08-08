@@ -53,10 +53,10 @@ A finding moves to resolved only when:
 4. the release matrix or profile evidence is updated when the finding changes a
    compatibility or production claim.
 
-The current generated count is 87 resolved findings: all 27 P0/P1 findings,
+The current generated count is 88 resolved findings: all 27 P0/P1 findings,
 the first 11 P2 findings, GB-ARCH-013, and GB-ARCH-015 through GB-ARCH-017.
 GB-COR-005 through GB-COR-009 are also resolved. There are zero open P0/P1,
-6 open P2, and 6 open P3; GB-COR-010 through GB-COR-015, GB-DOC-006, GB-INP-006,
+6 open P2, and 5 open P3; GB-COR-010 through GB-COR-015, GB-DOC-006, GB-INP-006,
 GB-INP-007, GB-INP-008, GB-INP-010, GB-PERF-004, GB-PERF-005, and GB-PERF-008
 are resolved. GB-SEC-011 and GB-SEC-012 are also resolved. GB-ARCH-012
 remains open pending shared-primitives consolidation. GB-PERF-006 is resolved
