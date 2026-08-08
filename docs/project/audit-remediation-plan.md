@@ -90,7 +90,7 @@ matrix.
 GB-QA-012 is resolved by an always-run push/PR quick-feedback job that checks
 repository lint and the progressive format baseline, static stable API
 compatibility, strict typing ownership, the live audit inventory, and a
-native-free 88-test core smoke. It retains logs and JUnit evidence, has a
+bounded native-free core smoke. It retains logs and JUnit evidence, has a
 five-minute hard timeout, completed its first green CI execution in 28 seconds,
 and does not use path filters; the full platform, native, Rust, security, and
 artifact matrix continues in parallel and remains required.
@@ -115,6 +115,16 @@ module, diagnostic, type-ignore, uncoded-ignore, and preview root-alias counts;
 it emits a deterministic per-module strict/debt JSON report that both quick and
 full Python CI retain. The first clean quick execution reproduced the committed
 core/runtime/testing diagnostic ceilings and completed in 47 seconds.
+GB-QA-016 is resolved by a route-manifest-generated authorization harness. It
+executes the complete two-principal by two-tenant identity product across every
+protected HTTP, SSE, and WebSocket endpoint; object-scoped routes run in both
+accepted and running states, non-owner combinations require a non-disclosing
+404, and run listing proves exact owner-and-tenant isolation. The meta-test
+requires every path-scoped protected route to declare a supported resource
+resolver, while principal-scoped routes are included automatically. The same
+three tests are bound to the stable security-gate manifest and always-run quick
+smoke. The first clean matrix-aware quick execution ran 91 tests and completed
+in 52 seconds (CI run 31241231744, job 93062485078).
 This closes the recorded code-and-regression count; it does not replace the
 independent review, candidate attestation, platform, or soak gates.
 

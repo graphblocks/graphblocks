@@ -205,3 +205,6 @@ resolved:
   - id: GB-QA-015
     fixCommits: ['c38eeda0']
     regression: [tests/test_stable_typing_scope.py, tests/test_quick_ci_gate.py]
+  - id: GB-QA-016
+    fixCommits: ['8c74b55e']
+    regression: [tests/test_server_authorization_matrix.py, tests/test_quick_ci_gate.py]
