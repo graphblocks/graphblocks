@@ -274,6 +274,9 @@ def _release_evidence(
                     "native_reference_match": True,
                     "native_contract": {"updates": []},
                     "reference_contract": {"updates": []},
+                    "native_tck_reference_match": True,
+                    "native_tck_contract": {"diagnostics": []},
+                    "reference_tck_contract": {"diagnostics": []},
                 }
         elif suite == "runtime":
             for result in results:

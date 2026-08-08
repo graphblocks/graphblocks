@@ -572,9 +572,11 @@ other schema-facing behavior and the remaining stable C1 transition blockers.
 When a selected native wheel is supplied, the `application-events` report now
 also replays every Python-materialized event through the installed Rust stream
 and compares the closed per-operation accepted/dropped updates, final accepted
-events, and cutoff-response projection. This closes only the materialized-event
-admission slice. Raw fixture operation construction, constructor payload/time
-normalization, and diagnostic differential remain part of the still-blocking
+events, and cutoff-response projection. A private installed conformance adapter
+also executes every raw shared-fixture operation through the Rust constructors
+and compares accepted kinds, normalized metadata, and current fixture
+diagnostics with the Python oracle. Constructor payload/time normalization and
+adversarial diagnostic differential remain part of the still-blocking
 `application-events` suite transition.
 The stable installed runtime API is now an explicit three-symbol allowlist with
 an exact signature snapshot. Its core execution result is projected to a

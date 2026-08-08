@@ -360,12 +360,11 @@ def test_stable_requirement_implementation_roles_match_the_authority_transition(
     ]
     assert application_event_slice["authority"] == "rust"
     assert application_event_slice["scope"] == (
-        "materialized-event-admission-and-projection-only"
+        "raw-fixture-construction-plus-materialized-event-admission-and-projection"
     )
     assert application_event_slice["exclusions"] == [
-        "raw-fixture-operation-construction",
         "constructor-payload-wire-normalization",
-        "diagnostic-differential",
+        "adversarial-diagnostic-differential",
     ]
     for requirement in target_requirements:
         entry = c1_entries[requirement]

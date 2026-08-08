@@ -149,6 +149,31 @@ def _fake_native_application_event_stream(
     }
 
 
+def _fake_native_application_event_tck_case(
+    raw_case: dict[str, object],
+) -> dict[str, object]:
+    import graphblocks_testing
+
+    raw_operations = raw_case["operations"]
+    raw_expected_kinds = raw_case["expectedAcceptedKinds"]
+    assert isinstance(raw_operations, list)
+    assert isinstance(raw_expected_kinds, list)
+    case = graphblocks_testing.TckCase.application_events(
+        case_id=str(raw_case["name"]),
+        operations=tuple(dict(operation) for operation in raw_operations),
+        expected_accepted_kinds=tuple(str(kind) for kind in raw_expected_kinds),
+    )
+    result = graphblocks_testing.TckRunner(
+        graphblocks_testing.stdlib_registry()
+    ).run_cases((case,)).results[0]
+    contract = result.result_contract()
+    return {
+        "ok": contract["status"] == "passed",
+        "diagnostics": contract["diagnostics"],
+        "observed": contract["observed"],
+    }
+
+
 def test_tck_report_requires_nonempty_identified_native_evidence(monkeypatch) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")
@@ -1784,6 +1809,9 @@ def test_application_event_stream_admission_is_exact_native_reference(
         sys.modules,
         "graphblocks_runtime",
         SimpleNamespace(
+            _evaluate_application_event_tck_case=(
+                _fake_native_application_event_tck_case
+            ),
             evaluate_application_event_stream=_fake_native_application_event_stream
         ),
     )
@@ -1803,6 +1831,9 @@ def test_application_event_stream_admission_is_exact_native_reference(
         result.observed["runtime"] == "native"
         and result.observed["native_reference_match"] is True
         and result.observed["native_contract"] == result.observed["reference_contract"]
+        and result.observed["native_tck_reference_match"] is True
+        and result.observed["native_tck_contract"]
+        == result.observed["reference_tck_contract"]
         for result in report.results
     )
     cutoff_events = [
@@ -1817,6 +1848,48 @@ def test_application_event_stream_admission_is_exact_native_reference(
         and type(event["payload"]["occurred_at_unix_ms"]) is int
         for event in cutoff_events
     )
+
+
+def test_application_event_raw_tck_execution_rejects_native_drift(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+    runners = importlib.import_module("graphblocks_testing.runners")
+
+    def drifted_tck_case(raw_case: dict[str, object]) -> dict[str, object]:
+        contract = _fake_native_application_event_tck_case(raw_case)
+        observed = contract["observed"]
+        assert isinstance(observed, dict)
+        observed["accepted_kinds"] = []
+        return contract
+
+    monkeypatch.setitem(
+        sys.modules,
+        "graphblocks_runtime",
+        SimpleNamespace(
+            _evaluate_application_event_tck_case=drifted_tck_case,
+            evaluate_application_event_stream=_fake_native_application_event_stream,
+        ),
+    )
+    case = graphblocks_testing.load_application_event_tck_cases(
+        ROOT / "tck" / "application-events" / "cases.json"
+    )[0]
+
+    report = runners._ApplicationEventStreamDifferentialTckRunner(
+        graphblocks_testing.stdlib_registry(),
+        suite="application-events",
+        implementation="graphblocks-python",
+        implementation_version="1.0.0rc1",
+    ).run_cases((case,))
+
+    assert not report.ok
+    assert report.results[0].diagnostics[-1] == {
+        "code": "GB3004",
+        "message": (
+            "native raw application event TCK execution differs from the Python "
+            "reference oracle"
+        ),
+        "path": "$.observed.reference_tck_contract",
+    }
 
 
 def test_application_event_stream_admission_rejects_native_drift(monkeypatch) -> None:
@@ -1837,7 +1910,12 @@ def test_application_event_stream_admission_rejects_native_drift(monkeypatch) ->
     monkeypatch.setitem(
         sys.modules,
         "graphblocks_runtime",
-        SimpleNamespace(evaluate_application_event_stream=reject_all_events),
+        SimpleNamespace(
+            _evaluate_application_event_tck_case=(
+                _fake_native_application_event_tck_case
+            ),
+            evaluate_application_event_stream=reject_all_events,
+        ),
     )
     case = graphblocks_testing.load_application_event_tck_cases(
         ROOT / "tck" / "application-events" / "cases.json"
@@ -10158,6 +10236,9 @@ def test_testing_package_cli_emits_observed_release_tck_identity(
         sys.modules,
         "graphblocks_runtime",
         SimpleNamespace(
+            _evaluate_application_event_tck_case=(
+                _fake_native_application_event_tck_case
+            ),
             evaluate_application_event_stream=evaluate_application_event_stream,
             run_stdlib_graph=run_stdlib_graph,
         ),

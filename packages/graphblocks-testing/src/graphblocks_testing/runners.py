@@ -275,6 +275,7 @@ class TckRunner:
     authority_comparison = "reference-only"
     authority_reference_implementation = "graphblocks-python"
     native_application_event_authority = False
+    native_application_event_tck_authority = False
     native_runtime_authority = False
 
     registry: RuntimeRegistry
@@ -1416,9 +1417,17 @@ class TckRunner:
                 for event in state.accepted_events
             ],
         }
+        reference_tck_contract = {
+            "ok": not diagnostics,
+            "diagnostics": [dict(diagnostic) for diagnostic in diagnostics],
+            "observed": _runtime_mutable_json_like(observed),
+        }
         if self.native_application_event_authority:
             try:
-                from graphblocks_runtime import evaluate_application_event_stream
+                from graphblocks_runtime import (
+                    _evaluate_application_event_tck_case,
+                    evaluate_application_event_stream,
+                )
 
                 attempted_event_contracts = [
                     _application_event_native_contract(event)
@@ -1519,6 +1528,66 @@ class TckRunner:
                             "path": "$.observed.reference_contract",
                         }
                     )
+                if self.native_application_event_tck_authority:
+                    native_tck_contract = _evaluate_application_event_tck_case(
+                        {
+                            "name": case.case_id,
+                            "operations": [
+                                dict(operation)
+                                for operation in case.application_event_operations
+                            ],
+                            "expectedAcceptedKinds": list(
+                                case.expected_accepted_event_kinds
+                            ),
+                        }
+                    )
+                    if set(native_tck_contract) != {
+                        "diagnostics",
+                        "observed",
+                        "ok",
+                    }:
+                        raise ValueError(
+                            "native application event TCK result must use the closed contract"
+                        )
+                    if type(native_tck_contract["ok"]) is not bool:
+                        raise TypeError(
+                            "native application event TCK result ok must be a boolean"
+                        )
+                    native_tck_diagnostics = native_tck_contract["diagnostics"]
+                    if not isinstance(native_tck_diagnostics, list) or not all(
+                        isinstance(diagnostic, dict)
+                        and set(diagnostic) == {"code", "message", "path"}
+                        and all(type(value) is str for value in diagnostic.values())
+                        for diagnostic in native_tck_diagnostics
+                    ):
+                        raise TypeError(
+                            "native application event TCK diagnostics must use the closed contract"
+                        )
+                    if not isinstance(native_tck_contract["observed"], dict):
+                        raise TypeError(
+                            "native application event TCK observed result must be an object"
+                        )
+                    native_tck_reference_match = (
+                        native_tck_contract == reference_tck_contract
+                    )
+                    observed.update(
+                        {
+                            "native_tck_contract": native_tck_contract,
+                            "reference_tck_contract": reference_tck_contract,
+                            "native_tck_reference_match": native_tck_reference_match,
+                        }
+                    )
+                    if not native_tck_reference_match:
+                        diagnostics.append(
+                            {
+                                "code": "NativeApplicationEventTckMismatch",
+                                "message": (
+                                    "native raw application event TCK execution differs "
+                                    "from the Python reference oracle"
+                                ),
+                                "path": "$.observed.reference_tck_contract",
+                            }
+                        )
             except Exception as error:
                 diagnostics.append(
                     {
@@ -9143,6 +9212,7 @@ class TckRunner:
 class _ApplicationEventStreamDifferentialTckRunner(TckRunner):
     __slots__ = ()
     native_application_event_authority = True
+    native_application_event_tck_authority = True
 
 
 class _NormativeCompilerTckRunner(TckRunner):

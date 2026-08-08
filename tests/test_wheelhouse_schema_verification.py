@@ -458,6 +458,9 @@ def test_release_evidence_binds_native_reports_to_exact_runtime_wheel() -> None:
                                     "native_reference_match": True,
                                     "native_contract": {"updates": []},
                                     "reference_contract": {"updates": []},
+                                    "native_tck_reference_match": True,
+                                    "native_tck_contract": {"diagnostics": []},
+                                    "reference_tck_contract": {"diagnostics": []},
                                 },
                             }
                         ],
@@ -940,6 +943,28 @@ def test_default_tck_output_matches_source_derived_release_expectations(
             },
         }
 
+    def reference_application_event_tck_case_bridge(
+        raw_case: dict[str, object],
+    ) -> dict[str, object]:
+        raw_operations = raw_case["operations"]
+        raw_expected_kinds = raw_case["expectedAcceptedKinds"]
+        assert isinstance(raw_operations, list)
+        assert isinstance(raw_expected_kinds, list)
+        case = graphblocks_testing.TckCase.application_events(
+            case_id=str(raw_case["name"]),
+            operations=tuple(dict(operation) for operation in raw_operations),
+            expected_accepted_kinds=tuple(str(kind) for kind in raw_expected_kinds),
+        )
+        result = graphblocks_testing.TckRunner(
+            graphblocks_testing.stdlib_registry()
+        ).run_cases((case,)).results[0]
+        contract = result.result_contract()
+        return {
+            "ok": contract["status"] == "passed",
+            "diagnostics": contract["diagnostics"],
+            "observed": contract["observed"],
+        }
+
     monkeypatch.setattr(
         graphblocks_runtime,
         "run_stdlib_graph",
@@ -949,6 +974,11 @@ def test_default_tck_output_matches_source_derived_release_expectations(
         graphblocks_runtime,
         "evaluate_application_event_stream",
         reference_application_event_stream_bridge,
+    )
+    monkeypatch.setattr(
+        graphblocks_runtime,
+        "_evaluate_application_event_tck_case",
+        reference_application_event_tck_case_bridge,
     )
 
     exit_code = graphblocks_testing.main(

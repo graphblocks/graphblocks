@@ -268,9 +268,11 @@ Python-materialized attempted event through the selected Rust wheel and exact
 compares the closed accepted/dropped update sequence, final accepted events,
 and cutoff-response projection. The report retains the selected wheel identity
 as supplemental evidence, but its suite claim remains `python-reference`:
-Rust does not yet interpret the raw fixture operations through the installed
-boundary, and constructor payload/time normalization plus diagnostic parity are
-still required before the whole suite can become `exact-native-reference`.
+the installed Rust boundary now also interprets every raw shared-fixture
+operation and exact-compares accepted kinds, normalized metadata, and current
+fixture diagnostics. Constructor payload/time normalization and adversarial
+diagnostic parity are still required before the whole suite can become
+`exact-native-reference`.
 
 ## Release gates
 

@@ -41,9 +41,11 @@ evidence is phase-scoped: the bundled runtime suite is
 With a selected native wheel, the `application-events` report carries a
 supplemental exact differential for materialized-event stream admission:
 per-operation accepted/dropped updates, final accepted events, and cutoff
-responses must match the Python oracle. This does not promote the suite claim;
-raw fixture construction, constructor wire normalization, and diagnostics
-remain `reference-only` transition work.
+responses must match the Python oracle. The installed private conformance
+adapter also executes the raw shared-fixture operations through Rust and exact
+compares accepted kinds, normalized metadata, and current fixture diagnostics.
+This does not promote the suite claim; constructor payload/time normalization
+and adversarial diagnostics remain `reference-only` transition work.
 This preserves the boundary around other schema-facing and stable C1 runtime
 behavior. C4 production and X3 durable-stream durability are preview promotion
 work under `REL-EXTENSION-RUNTIME-AUTHORITY`; their live-authority,

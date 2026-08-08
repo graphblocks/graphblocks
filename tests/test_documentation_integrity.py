@@ -2228,6 +2228,9 @@ def test_stable_release_matrix_is_complete_and_machine_readable() -> None:
     assert "installed-application-event-stream-admission-differential" in authority[
         "completedPhases"
     ]
+    assert "installed-application-event-raw-fixture-differential" in authority[
+        "completedPhases"
+    ]
     assert "supported-installed-native-compiler-tck-and-artifact-evidence" not in (
         authority["remainingPhases"]
     )
@@ -2368,6 +2371,10 @@ def test_stable_release_matrix_is_complete_and_machine_readable() -> None:
         in authority_gate["completedEvidence"]
     )
     assert (
+        "installed-application-event-raw-fixture-differential-and-artifact-identity"
+        in authority_gate["completedEvidence"]
+    )
+    assert (
         "resource-schema-validation-and-migration-authority-incomplete"
         not in authority_gate["blockers"]
     )
@@ -2429,6 +2436,10 @@ def test_stable_release_matrix_is_complete_and_machine_readable() -> None:
     ]
     assert (
         "installed-application-event-stream-admission-differential-and-artifact-identity"
+        in runtime_gate["completedEvidence"]
+    )
+    assert (
+        "installed-application-event-raw-fixture-differential-and-artifact-identity"
         in runtime_gate["completedEvidence"]
     )
 

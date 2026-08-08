@@ -1545,10 +1545,13 @@ def _require_release_evidence(
                             or observed.get("native_reference_match") is not True
                             or observed.get("native_contract")
                             != observed.get("reference_contract")
+                            or observed.get("native_tck_reference_match") is not True
+                            or observed.get("native_tck_contract")
+                            != observed.get("reference_tck_contract")
                         ):
                             raise RuntimeError(
                                 "installed application-event stream evidence is not "
-                                "exact native/reference admission"
+                                "exact native/reference raw construction and admission"
                             )
         if expected_compiler_artifact is not None:
             expected_artifact = dict(expected_compiler_artifact)

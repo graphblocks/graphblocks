@@ -1,3 +1,5 @@
+mod application_event_tck;
+
 use std::collections::{BTreeMap, BTreeSet};
 
 use graphblocks_compiler::canonical::canonical_hash;
@@ -2307,6 +2309,17 @@ fn evaluate_application_event_stream_json(
     serde_json::to_string(&payload).map_err(|error| {
         PyRuntimeError::new_err(format!(
             "failed to serialize application event stream evaluation: {error}"
+        ))
+    })
+}
+
+#[pyfunction]
+fn evaluate_application_event_tck_case_json(case_json: &str) -> PyResult<String> {
+    let case = parse_json_argument(case_json, "application event TCK case")?;
+    let result = application_event_tck::evaluate_case(&case).map_err(PyValueError::new_err)?;
+    serde_json::to_string(&result).map_err(|error| {
+        PyRuntimeError::new_err(format!(
+            "failed to serialize application event TCK result: {error}"
         ))
     })
 }
@@ -9615,6 +9628,10 @@ fn _native(module: &Bound<'_, PyModule>) -> PyResult<()> {
         module
     )?)?;
     module.add_function(wrap_pyfunction!(
+        evaluate_application_event_tck_case_json,
+        module
+    )?)?;
+    module.add_function(wrap_pyfunction!(
         evaluate_application_protocol_stream_json,
         module
     )?)?;
@@ -9661,21 +9678,22 @@ mod tests {
         binding_contract_json, canonical_hash_json, canonicalize_json,
         capture_telemetry_content_json, compile_graph_json, decide_agent_step_json,
         durable_tool_terminal_store_error_code, evaluate_application_event_stream_json,
-        evaluate_application_protocol_log_json, evaluate_application_protocol_stream_json,
-        evaluate_budget_ledger_json, evaluate_cancellation_scope_json,
-        evaluate_connector_capabilities_json, evaluate_declarative_output_policy_json,
-        evaluate_durable_tool_terminal_store_json, evaluate_node_lifecycle_json,
-        evaluate_output_gate_json, evaluate_provider_limit_policy_json, evaluate_readiness_json,
-        evaluate_retry_policy_json, evaluate_scheduler_json, evaluate_sequential_tool_queue_json,
-        evaluate_task_group_json, evaluate_timeout_deadline_json, evaluate_tool_admission_json,
-        evaluate_tool_approval_json, evaluate_tool_execution_plan_json,
-        evaluate_tool_resolution_json, evaluate_tool_result_stream_json,
-        evaluate_usage_ledger_json, finalize_tool_call_json, migrate_resource_json,
-        negotiate_application_protocol_capabilities_json, parse_application_protocol_event_kind,
-        parse_json_argument, parse_resolved_tool, parse_schema_id_json, parse_tool_call,
-        prepare_tool_result_for_model_json, record_tool_effect_audit_event_json,
-        record_tool_effect_precondition_json, resource_schema_errors_json, run_stdlib_graph_json,
-        run_stdlib_graph_with_options_json, run_test_graph_json, run_test_graph_with_options_json,
+        evaluate_application_event_tck_case_json, evaluate_application_protocol_log_json,
+        evaluate_application_protocol_stream_json, evaluate_budget_ledger_json,
+        evaluate_cancellation_scope_json, evaluate_connector_capabilities_json,
+        evaluate_declarative_output_policy_json, evaluate_durable_tool_terminal_store_json,
+        evaluate_node_lifecycle_json, evaluate_output_gate_json,
+        evaluate_provider_limit_policy_json, evaluate_readiness_json, evaluate_retry_policy_json,
+        evaluate_scheduler_json, evaluate_sequential_tool_queue_json, evaluate_task_group_json,
+        evaluate_timeout_deadline_json, evaluate_tool_admission_json, evaluate_tool_approval_json,
+        evaluate_tool_execution_plan_json, evaluate_tool_resolution_json,
+        evaluate_tool_result_stream_json, evaluate_usage_ledger_json, finalize_tool_call_json,
+        migrate_resource_json, negotiate_application_protocol_capabilities_json,
+        parse_application_protocol_event_kind, parse_json_argument, parse_resolved_tool,
+        parse_schema_id_json, parse_tool_call, prepare_tool_result_for_model_json,
+        record_tool_effect_audit_event_json, record_tool_effect_precondition_json,
+        resource_schema_errors_json, run_stdlib_graph_json, run_stdlib_graph_with_options_json,
+        run_test_graph_json, run_test_graph_with_options_json,
         serialize_application_protocol_log_error, validate_remote_payload_json,
         validate_worker_advertisement_json, validate_worker_protocol_message_json,
     };
@@ -12938,6 +12956,33 @@ mod tests {
                 .map(Vec::len),
             Some(1)
         );
+        Ok(())
+    }
+
+    #[test]
+    fn evaluate_application_event_tck_case_json_matches_shared_cases() -> Result<(), String> {
+        let cases = serde_json::from_str::<Value>(include_str!(
+            "../../graphblocks-runtime-core/tests/fixtures/application-events-cases.json"
+        ))
+        .map_err(|error| error.to_string())?;
+        let cases = cases
+            .as_array()
+            .ok_or_else(|| "application-events TCK fixture must be an array".to_owned())?;
+
+        for case in cases {
+            let output = evaluate_application_event_tck_case_json(
+                &serde_json::to_string(case).map_err(|error| error.to_string())?,
+            )
+            .map_err(|error| error.to_string())?;
+            let output =
+                serde_json::from_str::<Value>(&output).map_err(|error| error.to_string())?;
+            assert_eq!(output.get("ok"), Some(&json!(true)));
+            assert_eq!(
+                output.pointer("/observed/accepted_kinds"),
+                case.get("expectedAcceptedKinds")
+            );
+            assert_eq!(output.get("diagnostics"), Some(&json!([])));
+        }
         Ok(())
     }
 
