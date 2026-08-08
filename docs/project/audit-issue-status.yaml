@@ -283,3 +283,9 @@ resolved:
   - id: GB-DOC-010
     fixCommits: [0a2a9166]
     regression: [tests/test_example_integrations.py, tests/test_docs_checker.py]
+  - id: GB-INP-009
+    fixCommits: [33ae890d]
+    regression: [tests/test_mcp_schema_execution.py]
+  - id: GB-PERF-007
+    fixCommits: [33ae890d]
+    regression: [tests/test_mcp_schema_execution.py]
