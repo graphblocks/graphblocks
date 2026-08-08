@@ -1707,8 +1707,8 @@ def test_stable_release_matrix_is_complete_and_machine_readable() -> None:
         "authority": "docs/project/audit-issue-status.yaml",
         "inventory": "docs/project/audit-issues.json",
         "checker": "tools/check_audit_inventory.py",
-        "resolved": 81,
-        "openBySeverity": {"P0": 0, "P1": 0, "P2": 10, "P3": 8},
+        "resolved": 82,
+        "openBySeverity": {"P0": 0, "P1": 0, "P2": 9, "P3": 8},
     }
     rust_debt = audit_gate["rustProductionExpectDebt"]
     assert rust_debt["workspaceLint"] == "clippy::expect_used=deny"
@@ -1812,6 +1812,32 @@ def test_stable_release_matrix_is_complete_and_machine_readable() -> None:
         "policyBranchCoveragePercent": 99,
         "changedLineBranchCoveragePercent": 98.7,
     }
+    assert audit_gate["performanceBudgets"] == {
+        "manifest": "compatibility/python-performance-budgets.yaml",
+        "checker": "tools/check_performance_budgets.py",
+        "canonicalEnvironment": {"platform": "linux", "python": "3.11"},
+        "elapsedProtocol": {
+            "warmupRuns": 1,
+            "measuredRuns": 3,
+            "statistic": "median",
+            "garbageCollection": "collect-before-each-observation",
+        },
+        "benchmarks": {
+            "canonicalDecimalScaling": [2000, 8000, 16000],
+            "journalAppendScaling": [4000, 16000, 64000],
+            "compilerScaling": [50, 200, 800],
+            "serverRetainedMemory": [5, 20],
+        },
+        "enforcement": [
+            "absolute-cap-per-size",
+            "normalized-first-to-last-growth-cap",
+        ],
+        "companionImportGate": (
+            "compatibility/python-package-boundaries.yaml#coldImportBudgets"
+        ),
+        "ciReport": "dist/ci/python-performance-budgets.json",
+        "regression": "tests/test_performance_budgets.py",
+    }
     assert "stable-public-server-error-codes-correlation-and-bounded-internal-audit" in (
         audit_gate["implementedEvidence"]
     )
@@ -1844,6 +1870,10 @@ def test_stable_release_matrix_is_complete_and_machine_readable() -> None:
     )
     assert (
         "common-bounded-json-schema-execution-policy-and-entry-point-corpus"
+        in audit_gate["implementedEvidence"]
+    )
+    assert (
+        "deterministic-canonical-journal-compiler-and-server-memory-budgets"
         in audit_gate["implementedEvidence"]
     )
     assert "signed-candidate-and-final-promotion-audit-closure-binding" in (

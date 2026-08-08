@@ -109,8 +109,8 @@ deepAudit:
     authority: docs/project/audit-issue-status.yaml
     inventory: docs/project/audit-issues.json
     checker: tools/check_audit_inventory.py
-    resolved: 81
-    openBySeverity: {P0: 0, P1: 0, P2: 10, P3: 8}
+    resolved: 82
+    openBySeverity: {P0: 0, P1: 0, P2: 9, P3: 8}
   exitPolicy:
     securityFreeze: {maxOpenP0: 0}
     stableRelease: {maxOpenP0: 0, maxOpenP1: 0}
@@ -1073,6 +1073,7 @@ releaseGates:
       - runtime-and-static-server-mapping-immutability-aligned
       - summary-only-sync-responses-and-bounded-cursor-event-replay
       - common-bounded-json-schema-execution-policy-and-entry-point-corpus
+      - deterministic-canonical-journal-compiler-and-server-memory-budgets
     evidence:
       - docs/project/audit-issues.json
       - docs/project/audit-issue-status.yaml
@@ -1148,6 +1149,10 @@ releaseGates:
       - tests/test_typed_graph_typing.py
       - src/graphblocks/_schema_execution.py
       - tests/test_schema_execution_policy.py
+      - compatibility/python-performance-budgets.yaml
+      - tools/check_performance_budgets.py
+      - tests/test_performance_budgets.py
+      - docs/project/performance-budgets.md
     serverLifecycle:
       states: [running, draining, closed]
       healthAvailableDuringShutdown: true
@@ -1197,6 +1202,24 @@ releaseGates:
       regression: tests/test_schema_execution_policy.py
       policyBranchCoveragePercent: 99
       changedLineBranchCoveragePercent: 98.7
+    performanceBudgets:
+      manifest: compatibility/python-performance-budgets.yaml
+      checker: tools/check_performance_budgets.py
+      canonicalEnvironment: {platform: linux, python: '3.11'}
+      elapsedProtocol:
+        warmupRuns: 1
+        measuredRuns: 3
+        statistic: median
+        garbageCollection: collect-before-each-observation
+      benchmarks:
+        canonicalDecimalScaling: [2000, 8000, 16000]
+        journalAppendScaling: [4000, 16000, 64000]
+        compilerScaling: [50, 200, 800]
+        serverRetainedMemory: [5, 20]
+      enforcement: [absolute-cap-per-size, normalized-first-to-last-growth-cap]
+      companionImportGate: compatibility/python-package-boundaries.yaml#coldImportBudgets
+      ciReport: dist/ci/python-performance-budgets.json
+      regression: tests/test_performance_budgets.py
     quickFeedbackCi:
       workflow: .github/workflows/ci.yml
       job: python-quality

@@ -53,11 +53,12 @@ A finding moves to resolved only when:
 4. the release matrix or profile evidence is updated when the finding changes a
    compatibility or production claim.
 
-The current generated count is 81 resolved findings: all 27 P0/P1 findings,
+The current generated count is 82 resolved findings: all 27 P0/P1 findings,
 the first 11 P2 findings, GB-ARCH-013, and GB-ARCH-015 through GB-ARCH-017.
 GB-COR-005 through GB-COR-009 are also resolved. There are zero open P0/P1,
-10 open P2, and 8 open P3; GB-COR-010 through GB-COR-015, GB-DOC-006, GB-INP-006,
-GB-INP-007, GB-INP-008, GB-INP-010, GB-PERF-004, and GB-PERF-005 are resolved. GB-ARCH-012
+9 open P2, and 8 open P3; GB-COR-010 through GB-COR-015, GB-DOC-006, GB-INP-006,
+GB-INP-007, GB-INP-008, GB-INP-010, GB-PERF-004, GB-PERF-005, and GB-PERF-008
+are resolved. GB-ARCH-012
 remains open pending shared-primitives consolidation. GB-PERF-006 is resolved
 with tenant/owner-scoped indexed run-list cursor pagination and a 10,000-run
 bounded-projection regression.
@@ -326,6 +327,15 @@ lookarounds, and quantified groups. A closed entry-point inventory runs the same
 remote-ref, ReDoS, and oversized-node corpus through MCP, plugin, and OpenAI
 schema ingestion. The policy module is strict-mypy clean with 99% branch
 coverage and 98.7% changed-line branch coverage across the implementation.
+`GB-PERF-008` is resolved by a digest-bound deterministic microbenchmark gate
+on the canonical Linux/Python 3.11 lane. Decimal canonicalization runs through
+16,000 values, append-friendly journals through 64,000 records, the Python
+compiler through 800 nodes, and retained server state through 20 completed
+runs. Every size has an absolute cap and every first-to-last pair has a
+normalized growth cap; elapsed cases use warmup plus three median observations,
+while deterministic reachable server bytes use one observation. The existing
+fresh-process import time/RSS/module budgets remain a named companion gate, and
+CI retains the raw benchmark report with its manifest digest.
 
 Phase 1 exits when every related P1 has executable closure evidence, the durable
 vertical slice passes multi-process crash/restart tests, and resource-budget

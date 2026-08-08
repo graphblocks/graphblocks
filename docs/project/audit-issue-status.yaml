@@ -247,3 +247,6 @@ resolved:
   - id: GB-INP-008
     fixCommits: ['b84ade85']
     regression: [tests/test_schema_execution_policy.py, tests/test_mcp_schema_execution.py, tests/test_plugins.py, tests/test_openai_adapter.py]
+  - id: GB-PERF-008
+    fixCommits: ['75856fad']
+    regression: [tests/test_performance_budgets.py]
