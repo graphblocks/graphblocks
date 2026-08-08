@@ -672,6 +672,23 @@ def test_documentation_integrity_is_a_named_release_gate() -> None:
         "readiness": "candidate-enforced",
         "blocksTargetRelease": True,
         "externalNetworkAvailabilityClaimed": False,
+        "fixedTestCountPolicy": {
+            "documents": [
+                "docs/project/status.md",
+                "docs/project/remaining-work.md",
+            ],
+            "numericClaimsAllowed": False,
+            "authority": "commit-bound-ci-junit",
+            "checker": "tools/check_docs.py",
+            "regression": "tests/test_docs_checker.py",
+            "observedCiEvidence": {
+                "runId": 31246430572,
+                "jobId": 93075701399,
+                "headSha": "5cf1f785b4b5118c60a663620161946c56691847",
+                "conclusion": "success",
+                "durationSeconds": 25,
+            },
+        },
         "evidence": [
             "docs/project/generated-documentation.yaml",
             "tools/check_docs.py",

@@ -84,8 +84,8 @@ deepAudit:
     authority: docs/project/audit-issue-status.yaml
     inventory: docs/project/audit-issues.json
     checker: tools/check_audit_inventory.py
-    resolved: 71
-    openBySeverity: {P0: 0, P1: 0, P2: 20, P3: 8}
+    resolved: 72
+    openBySeverity: {P0: 0, P1: 0, P2: 19, P3: 8}
   exitPolicy:
     securityFreeze: {maxOpenP0: 0}
     stableRelease: {maxOpenP0: 0, maxOpenP1: 0}
@@ -821,6 +821,18 @@ releaseGates:
     readiness: candidate-enforced
     blocksTargetRelease: true
     externalNetworkAvailabilityClaimed: false
+    fixedTestCountPolicy:
+      documents: [docs/project/status.md, docs/project/remaining-work.md]
+      numericClaimsAllowed: false
+      authority: commit-bound-ci-junit
+      checker: tools/check_docs.py
+      regression: tests/test_docs_checker.py
+      observedCiEvidence:
+        runId: 31246430572
+        jobId: 93075701399
+        headSha: 5cf1f785b4b5118c60a663620161946c56691847
+        conclusion: success
+        durationSeconds: 25
     evidence:
       - docs/project/generated-documentation.yaml
       - tools/check_docs.py
@@ -1008,6 +1020,7 @@ releaseGates:
       - artifact-semver-independent-protocol-capability-matrix-and-fail-closed-handshakes
       - package-scoped-preview-typing-diagnostic-module-ignore-and-root-alias-budgets
       - stable-public-server-error-codes-correlation-and-bounded-internal-audit
+      - status-docs-forbid-fixed-test-counts-and-defer-to-commit-bound-ci
     evidence:
       - docs/project/audit-issues.json
       - docs/project/audit-issue-status.yaml
@@ -1054,6 +1067,10 @@ releaseGates:
       - src/graphblocks/server.py
       - tests/_server_error_assertions.py
       - tests/test_server_error_contract.py
+      - docs/project/status.md
+      - docs/project/remaining-work.md
+      - tools/check_docs.py
+      - tests/test_docs_checker.py
     quickFeedbackCi:
       workflow: .github/workflows/ci.yml
       job: python-quality

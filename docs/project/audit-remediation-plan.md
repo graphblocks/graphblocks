@@ -53,10 +53,10 @@ A finding moves to resolved only when:
 4. the release matrix or profile evidence is updated when the finding changes a
    compatibility or production claim.
 
-The current generated count is 71 resolved findings: all 27 P0/P1 findings,
+The current generated count is 72 resolved findings: all 27 P0/P1 findings,
 the first 11 P2 findings, GB-ARCH-013, and GB-ARCH-015 through GB-ARCH-017.
 GB-COR-005 through GB-COR-009 are also resolved. There are zero open P0/P1,
-20 open P2, and 8 open P3; GB-COR-011, GB-COR-012, GB-DOC-006, GB-INP-006,
+19 open P2, and 8 open P3; GB-COR-011, GB-COR-012, GB-DOC-006, GB-INP-006,
 GB-INP-007, GB-INP-010, GB-PERF-004, and GB-PERF-005 are resolved. GB-ARCH-012
 remains open pending shared-primitives consolidation. GB-PERF-006 is resolved
 with tenant/owner-scoped indexed run-list cursor pagination and a 10,000-run
@@ -157,6 +157,13 @@ while the security-critical CI selector enforces at least 90% changed-line
 branch coverage for this server change. The clean Python 3.11 execution,
 including the full suite and coverage gate, passed in CI run 31245606181, job
 93073622856.
+GB-DOC-001 is resolved by removing the stale 2,700/2,625 Python-test totals
+from the status authorities and making revision-bound CI/JUnit evidence the
+only test-count authority. The always-run documentation checker now rejects a
+numeric test-count claim in either `status.md` or `remaining-work.md`, so the
+same drift cannot return through prose. The focused reproduction and the full
+link/generated-facts checker passed in Documentation run 31246430572, job
+93075701399.
 This closes the recorded code-and-regression count; it does not replace the
 independent review, candidate attestation, platform, or soak gates.
 
