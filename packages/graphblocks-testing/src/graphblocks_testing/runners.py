@@ -207,7 +207,6 @@ from .models import (
     _first_mapping_value,
     _string_tuple,
     _tool_execution_error_code,
-    run_native_test_graph,
 )
 from .reports import TckReport, TckResult
 
@@ -8765,104 +8764,102 @@ class TckRunner:
     def _run_runtime_case(self, case: TckCase) -> TckResult:
         try:
             if self.profile == "native":
-                if case.native_node_outputs:
-                    run_id = "tck-" + "".join(
-                        character if character.isalnum() else "-"
-                        for character in case.case_id.strip()
-                    ).strip("-")
-                    run_store_path: str | None = None
-                    journal_store_path: str | None = None
-                    if self.evidence_dir is not None:
-                        self.evidence_dir.mkdir(parents=True, exist_ok=True)
-                        run_store_path = str(
-                            self.evidence_dir / f"{run_id}-runs.sqlite3"
-                        )
-                        journal_store_path = str(
-                            self.evidence_dir / f"{run_id}-journal.sqlite3"
-                        )
-                    try:
-                        native_result = run_native_test_graph(
-                            case.graph,
-                            case.inputs,
-                            case.native_node_outputs,
-                            run_id=run_id,
-                            run_store_path=run_store_path,
-                            journal_store_path=journal_store_path,
-                        )
-                    except (
-                        ImportError,
-                        ModuleNotFoundError,
-                        RuntimeError,
-                    ) as native_error:
-                        message = str(native_error)
-                        if (
-                            isinstance(native_error, (ImportError, ModuleNotFoundError))
-                            or "native extension is not built" in message
-                            or "native extension is not available" in message
-                        ):
-                            result = LocalRuntime(self.registry).run(
-                                case.graph, case.inputs
-                            )
-                            observed = {
-                                "status": result.status,
-                                "outputs": _runtime_mutable_json_like(result.outputs),
-                                "terminal_kind": result.journal.terminal_kind,
-                                "runtime": "local",
-                                "native_fallback_reason": "native_runtime_unavailable",
-                            }
-                        else:
-                            raise
-                    else:
-                        journal = native_result.get("journal", [])
-                        journal_records = journal if isinstance(journal, list) else []
-                        terminal_kind = next(
-                            (
-                                record.get("kind")
-                                for record in reversed(journal_records)
-                                if isinstance(record, Mapping)
-                                and bool(record.get("terminal"))
-                            ),
-                            None,
-                        )
-                        if terminal_kind is None:
-                            terminal_kind = next(
-                                (
-                                    record.get("kind")
-                                    for record in reversed(journal_records)
-                                    if isinstance(record, Mapping)
-                                    and isinstance(record.get("kind"), str)
-                                    and str(record.get("kind")).startswith("run_")
-                                ),
-                                None,
-                            )
-                        observed = {
-                            "status": native_result.get("status"),
-                            "outputs": native_result.get("outputs", {}),
-                            "terminal_kind": terminal_kind,
-                            "run_id": native_result.get(
-                                "runId", native_result.get("run_id", run_id)
-                            ),
-                            "runtime": "native",
-                            "journal_kinds": [
-                                record["kind"]
-                                for record in journal_records
-                                if isinstance(record, Mapping)
-                                and isinstance(record.get("kind"), str)
-                            ],
-                        }
-                        if run_store_path is not None:
-                            observed["run_store_path"] = run_store_path
-                        if journal_store_path is not None:
-                            observed["journal_store_path"] = journal_store_path
-                else:
-                    result = LocalRuntime(self.registry).run(case.graph, case.inputs)
-                    observed = {
-                        "status": result.status,
-                        "outputs": _runtime_mutable_json_like(result.outputs),
-                        "terminal_kind": result.journal.terminal_kind,
-                        "runtime": "local",
-                        "native_fallback_reason": "missing_native_node_outputs",
-                    }
+                from graphblocks_runtime import run_stdlib_graph
+
+                run_id = "tck-" + "".join(
+                    character if character.isalnum() else "-"
+                    for character in case.case_id.strip()
+                ).strip("-")
+                run_store_path: str | None = None
+                journal_store_path: str | None = None
+                if self.evidence_dir is not None:
+                    self.evidence_dir.mkdir(parents=True, exist_ok=True)
+                    run_store_path = str(self.evidence_dir / f"{run_id}-runs.sqlite3")
+                    journal_store_path = str(
+                        self.evidence_dir / f"{run_id}-journal.sqlite3"
+                    )
+                native_options: dict[str, object] = {"run_id": run_id}
+                if run_store_path is not None:
+                    native_options["run_store_path"] = run_store_path
+                if journal_store_path is not None:
+                    native_options["journal_store_path"] = journal_store_path
+                native_result = run_stdlib_graph(
+                    case.graph,
+                    case.inputs,
+                    **native_options,
+                )
+                journal = native_result.get("journal", [])
+                journal_records = journal if isinstance(journal, list) else []
+                terminal_kind = next(
+                    (
+                        record.get("kind")
+                        for record in reversed(journal_records)
+                        if isinstance(record, Mapping) and bool(record.get("terminal"))
+                    ),
+                    None,
+                )
+                if terminal_kind is None:
+                    terminal_kind = next(
+                        (
+                            record.get("kind")
+                            for record in reversed(journal_records)
+                            if isinstance(record, Mapping)
+                            and isinstance(record.get("kind"), str)
+                            and str(record.get("kind")).startswith("run_")
+                        ),
+                        None,
+                    )
+                native_journal_kinds = [
+                    record["kind"]
+                    for record in journal_records
+                    if isinstance(record, Mapping)
+                    and isinstance(record.get("kind"), str)
+                ]
+                normalized_native_journal_kinds = [
+                    "node_succeeded" if kind == "node_completed" else kind
+                    for kind in native_journal_kinds
+                ]
+                reference_result = LocalRuntime(self.registry).run(
+                    case.graph,
+                    case.inputs,
+                    run_id,
+                )
+                if not isinstance(reference_result, LocalRunResult) or not isinstance(
+                    reference_result.journal, LocalExecutionJournal
+                ):
+                    raise RuntimeError(
+                        "native runtime comparison requires the stable C1 reference facade"
+                    )
+                native_contract = {
+                    "run_id": native_result.get(
+                        "runId", native_result.get("run_id", run_id)
+                    ),
+                    "status": native_result.get("status"),
+                    "outputs": native_result.get("outputs", {}),
+                    "terminal_kind": terminal_kind,
+                    "journal_kinds": normalized_native_journal_kinds,
+                }
+                reference_contract = {
+                    "run_id": reference_result.run_id,
+                    "status": reference_result.status,
+                    "outputs": _runtime_mutable_json_like(reference_result.outputs),
+                    "terminal_kind": reference_result.journal.terminal_kind,
+                    "journal_kinds": [
+                        record.kind for record in reference_result.journal.records
+                    ],
+                }
+                observed = {
+                    **native_contract,
+                    "runtime": "native",
+                    "journal_kinds": native_journal_kinds,
+                    "normalized_journal_kinds": normalized_native_journal_kinds,
+                    "reference_contract": reference_contract,
+                    "native_reference_match": native_contract == reference_contract,
+                }
+                if run_store_path is not None:
+                    observed["run_store_path"] = run_store_path
+                if journal_store_path is not None:
+                    observed["journal_store_path"] = journal_store_path
             else:
                 result = LocalRuntime(self.registry).run(case.graph, case.inputs)
                 if not isinstance(result, LocalRunResult) or not isinstance(
@@ -8889,6 +8886,14 @@ class TckRunner:
                 "message": str(error),
             }
         diagnostics: list[dict[str, str]] = []
+        if observed.get("native_reference_match") is False:
+            diagnostics.append(
+                {
+                    "code": "NativeReferenceMismatch",
+                    "message": "native runtime result differs from the Python reference oracle",
+                    "path": "$.observed.reference_contract",
+                }
+            )
         if observed.get("status") != case.expected_status:
             diagnostics.append(
                 {

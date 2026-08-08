@@ -11,7 +11,7 @@ import pickle
 import subprocess
 import sys
 import tarfile
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 import zipfile
 
 import pytest
@@ -22,6 +22,34 @@ ROOT = Path(__file__).parents[1]
 TEST_NATIVE_EXTENSION_NAME = (
     "_native.abi3.pyd" if sys.platform == "win32" else "_native.abi3.so"
 )
+
+
+def _fake_native_stdlib_result(
+    module: ModuleType,
+    graph: dict[str, object],
+    inputs: dict[str, object],
+    options: dict[str, object],
+) -> dict[str, object]:
+    from graphblocks.runtime import LocalRuntime
+
+    run_id = str(options["run_id"])
+    result = LocalRuntime(module.stdlib_registry()).run(graph, inputs, run_id)
+    journal = [
+        {
+            "kind": (
+                "node_completed" if record.kind == "node_succeeded" else record.kind
+            ),
+            "terminal": record.kind
+            in {"run_succeeded", "run_failed", "run_cancelled"},
+        }
+        for record in result.journal.records
+    ]
+    return {
+        "runId": run_id,
+        "status": result.status,
+        "outputs": result.outputs,
+        "journal": journal,
+    }
 
 
 def test_tck_report_requires_nonempty_identified_native_evidence(monkeypatch) -> None:
@@ -1016,15 +1044,14 @@ def test_testing_package_loads_shared_runtime_tck_cases_with_terminal_expectatio
 
 def test_testing_package_native_profile_runs_runtime_tck_case_through_native_bridge(monkeypatch) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
-    calls: list[tuple[dict[str, object], dict[str, object], dict[str, object], dict[str, object]]] = []
+    calls: list[tuple[dict[str, object], dict[str, object], dict[str, object]]] = []
 
-    def run_test_graph(
+    def run_stdlib_graph(
         graph: dict[str, object],
         inputs: dict[str, object],
-        node_outputs: dict[str, object],
         **options: object,
     ) -> dict[str, object]:
-        calls.append((graph, inputs, node_outputs, options))
+        calls.append((graph, inputs, options))
         return {
             "runId": options["run_id"],
             "status": "succeeded",
@@ -1040,7 +1067,7 @@ def test_testing_package_native_profile_runs_runtime_tck_case_through_native_bri
     monkeypatch.setitem(
         sys.modules,
         "graphblocks_runtime",
-        SimpleNamespace(run_test_graph=run_test_graph),
+        SimpleNamespace(run_stdlib_graph=run_stdlib_graph),
     )
     graphblocks_testing = importlib.import_module("graphblocks_testing")
     graph = {
@@ -1051,6 +1078,7 @@ def test_testing_package_native_profile_runs_runtime_tck_case_through_native_bri
             "nodes": {
                 "render": {
                     "block": "prompt.render@1",
+                    "config": {"template": "Native {message.text}"},
                     "inputs": {"message": "$input.message"},
                     "outputs": {"prompt": "$output.prompt"},
                 }
@@ -1069,27 +1097,110 @@ def test_testing_package_native_profile_runs_runtime_tck_case_through_native_bri
     report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry(), profile="native").run_cases((case,))
 
     assert report.ok
-    assert report.results[0].observed == {
-        "status": "succeeded",
-        "outputs": {"prompt": "Native Ada"},
-        "terminal_kind": "run_succeeded",
-        "run_id": "tck-runtime-native-profile",
-        "runtime": "native",
-        "journal_kinds": ["run_started", "node_started", "node_completed", "run_succeeded"],
-    }
+    observed = report.results[0].observed
+    assert observed["status"] == "succeeded"
+    assert observed["outputs"] == {"prompt": "Native Ada"}
+    assert observed["terminal_kind"] == "run_succeeded"
+    assert observed["run_id"] == "tck-runtime-native-profile"
+    assert observed["runtime"] == "native"
+    assert observed["native_reference_match"] is True
+    assert observed["journal_kinds"] == [
+        "run_started",
+        "node_started",
+        "node_completed",
+        "run_succeeded",
+    ]
     assert calls == [
         (
             graph,
             {"message": {"text": "Ada"}},
-            {"render": {"prompt": "Native Ada"}},
             {"run_id": "tck-runtime-native-profile"},
         )
     ]
 
 
-def test_testing_package_native_profile_falls_back_for_unannotated_runtime_case(monkeypatch) -> None:
+def test_testing_package_native_profile_rejects_reference_divergence(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+
+    def run_stdlib_graph(
+        _graph: dict[str, object],
+        _inputs: dict[str, object],
+        **options: object,
+    ) -> dict[str, object]:
+        return {
+            "runId": options["run_id"],
+            "status": "succeeded",
+            "outputs": {"prompt": "Wrong Ada"},
+            "journal": [
+                {"kind": "run_started"},
+                {"kind": "node_started"},
+                {"kind": "node_completed"},
+                {"kind": "run_succeeded", "terminal": True},
+            ],
+        }
+
+    monkeypatch.setitem(
+        sys.modules,
+        "graphblocks_runtime",
+        SimpleNamespace(run_stdlib_graph=run_stdlib_graph),
+    )
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "native-runtime-divergence"},
+        "spec": {
+            "nodes": {
+                "render": {
+                    "block": "prompt.render@1",
+                    "config": {"template": "Reference {message.text}"},
+                    "inputs": {"message": "$input.message"},
+                    "outputs": {"prompt": "$output.prompt"},
+                }
+            }
+        },
+    }
+    case = graphblocks_testing.TckCase.runtime(
+        case_id="runtime/native-divergence",
+        graph=graph,
+        inputs={"message": {"text": "Ada"}},
+        expected_outputs={"prompt": "Wrong Ada"},
+        expected_terminal_kind="run_succeeded",
+    )
+
+    report = graphblocks_testing.TckRunner(
+        graphblocks_testing.stdlib_registry(),
+        profile="native",
+    ).run_cases((case,))
+
+    assert not report.ok
+    assert report.results[0].observed["native_reference_match"] is False
+    assert [diagnostic["message"] for diagnostic in report.results[0].diagnostics] == [
+        "native runtime result differs from the Python reference oracle"
+    ]
+
+
+def test_testing_package_native_profile_runs_unannotated_case_without_fallback(monkeypatch) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")
+
+    def run_stdlib_graph(
+        graph: dict[str, object],
+        inputs: dict[str, object],
+        **options: object,
+    ) -> dict[str, object]:
+        return _fake_native_stdlib_result(
+            graphblocks_testing,
+            graph,
+            inputs,
+            options,
+        )
+
+    monkeypatch.setitem(
+        sys.modules,
+        "graphblocks_runtime",
+        SimpleNamespace(run_stdlib_graph=run_stdlib_graph),
+    )
     graph = {
         "apiVersion": "graphblocks.ai/v1alpha3",
         "kind": "Graph",
@@ -1115,26 +1226,23 @@ def test_testing_package_native_profile_falls_back_for_unannotated_runtime_case(
 
     report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry(), profile="native").run_cases((case,))
 
-    assert not report.ok
-    assert report.results[0].observed == {
-        "status": "succeeded",
-        "outputs": {"prompt": "Fallback Ada"},
-        "terminal_kind": "run_succeeded",
-        "runtime": "local",
-        "native_fallback_reason": "missing_native_node_outputs",
-    }
+    assert report.ok
+    observed = report.results[0].observed
+    assert observed["runtime"] == "native"
+    assert observed["native_reference_match"] is True
+    assert "native_fallback_reason" not in observed
 
 
-def test_testing_package_native_profile_falls_back_when_native_runtime_unavailable(monkeypatch) -> None:
+def test_testing_package_native_profile_fails_closed_when_native_runtime_unavailable(monkeypatch) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
 
-    def run_test_graph(*_args: object, **_options: object) -> dict[str, object]:
+    def run_stdlib_graph(*_args: object, **_options: object) -> dict[str, object]:
         raise ModuleNotFoundError("No module named 'graphblocks_runtime'")
 
     monkeypatch.setitem(
         sys.modules,
         "graphblocks_runtime",
-        SimpleNamespace(run_test_graph=run_test_graph),
+        SimpleNamespace(run_stdlib_graph=run_stdlib_graph),
     )
     graphblocks_testing = importlib.import_module("graphblocks_testing")
     graph = {
@@ -1165,11 +1273,9 @@ def test_testing_package_native_profile_falls_back_when_native_runtime_unavailab
 
     assert not report.ok
     assert report.results[0].observed == {
-        "status": "succeeded",
-        "outputs": {"prompt": "Unavailable Ada"},
-        "terminal_kind": "run_succeeded",
-        "runtime": "local",
-        "native_fallback_reason": "native_runtime_unavailable",
+        "status": "error",
+        "error": "ModuleNotFoundError",
+        "message": "No module named 'graphblocks_runtime'",
     }
 
 
@@ -9268,31 +9374,43 @@ def test_testing_package_run_all_rejects_non_runtime_native_suite(
     }
 
 
-def test_testing_package_cli_runs_runtime_tck_native_profile_with_fallback_metadata(monkeypatch, capsys) -> None:
+def test_testing_package_cli_runs_runtime_tck_native_profile_without_fallback(monkeypatch, capsys) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")
+
+    def run_stdlib_graph(
+        graph: dict[str, object],
+        inputs: dict[str, object],
+        **options: object,
+    ) -> dict[str, object]:
+        return _fake_native_stdlib_result(
+            graphblocks_testing,
+            graph,
+            inputs,
+            options,
+        )
+
+    monkeypatch.setitem(
+        sys.modules,
+        "graphblocks_runtime",
+        SimpleNamespace(run_stdlib_graph=run_stdlib_graph),
+    )
 
     exit_code = graphblocks_testing.main(
         ["run", "runtime", str(ROOT / "tck" / "runtime" / "cases.json"), "--profile", "native", "--json"]
     )
 
-    assert exit_code == 1
+    assert exit_code == 0
     payload = json.loads(capsys.readouterr().out)
-    assert payload["ok"] is False
+    assert payload["ok"] is True
     assert payload["profile"] == "native"
     assert {result["kind"] for result in payload["results"]} == {"runtime"}
     observed = {result["case_id"]: result["observed"] for result in payload["results"]}
-    for case_id in (
-        "prompt_render_output",
-        "control_map_renders_each_item",
-        "control_select_treats_null_as_present",
-        "tools_resolve_feeds_scripted_agent",
-    ):
-        assert observed[case_id]["runtime"] in {"native", "local"}
-        assert observed[case_id]["runtime"] == "native" or observed[case_id][
-            "native_fallback_reason"
-        ] == "native_runtime_unavailable"
-    assert observed["policy_stopped_turn_rejects_commit"]["native_fallback_reason"] == "missing_native_node_outputs"
+    assert len(observed) == 7
+    assert all(result["runtime"] == "native" for result in observed.values())
+    assert all(result["native_reference_match"] is True for result in observed.values())
+    assert payload["native_evidence"]["native_case_count"] == 7
+    assert payload["native_evidence"]["fallback_case_count"] == 0
     assert payload["contentDigest"].startswith("sha256:")
 
 
@@ -9300,41 +9418,26 @@ def test_testing_package_cli_native_runtime_tck_writes_evidence_paths(tmp_path, 
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     calls: list[dict[str, object]] = []
 
-    def run_test_graph(
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+
+    def run_stdlib_graph(
         graph: dict[str, object],
-        _inputs: dict[str, object],
-        node_outputs: dict[str, object],
+        inputs: dict[str, object],
         **options: object,
     ) -> dict[str, object]:
         calls.append(options)
-        graph_name = graph["metadata"]["name"]  # type: ignore[index]
-        if graph_name == "runtime-prompt-render":
-            outputs = {"prompt": node_outputs["render"]["prompt"]}  # type: ignore[index]
-        elif graph_name == "runtime-control-map":
-            outputs = {"values": node_outputs["map"]["values"]}  # type: ignore[index]
-        elif graph_name == "runtime-control-select":
-            outputs = {
-                "selected": node_outputs["select"]["selected"],  # type: ignore[index]
-                "value": node_outputs["select"]["value"],  # type: ignore[index]
-            }
-        else:
-            outputs = {"candidate": node_outputs["agent"]["candidate"]}  # type: ignore[index]
-        return {
-            "runId": options["run_id"],
-            "status": "succeeded",
-            "outputs": outputs,
-            "journal": [
-                {"kind": "run_started", "runId": options["run_id"]},
-                {"kind": "run_succeeded", "runId": options["run_id"], "terminal": True},
-            ],
-        }
+        return _fake_native_stdlib_result(
+            graphblocks_testing,
+            graph,
+            inputs,
+            options,
+        )
 
     monkeypatch.setitem(
         sys.modules,
         "graphblocks_runtime",
-        SimpleNamespace(run_test_graph=run_test_graph),
+        SimpleNamespace(run_stdlib_graph=run_stdlib_graph),
     )
-    graphblocks_testing = importlib.import_module("graphblocks_testing")
     evidence_dir = tmp_path / "native-evidence"
 
     exit_code = graphblocks_testing.main(
@@ -9350,9 +9453,9 @@ def test_testing_package_cli_native_runtime_tck_writes_evidence_paths(tmp_path, 
         ]
     )
 
-    assert exit_code == 1
+    assert exit_code == 0
     payload = json.loads(capsys.readouterr().out)
-    assert payload["ok"] is False
+    assert payload["ok"] is True
     observed = {result["case_id"]: result["observed"] for result in payload["results"]}
     prompt_observed = observed["prompt_render_output"]
     assert prompt_observed["runtime"] == "native"
@@ -9364,20 +9467,26 @@ def test_testing_package_cli_native_runtime_tck_writes_evidence_paths(tmp_path, 
         "run_store_path": str(evidence_dir / "tck-prompt-render-output-runs.sqlite3"),
     }
     assert payload["native_evidence"] == {
-        "fallback_case_count": 3,
-        "fallback_reasons": {"missing_native_node_outputs": 3},
+        "fallback_case_count": 0,
+        "fallback_reasons": {},
         "journal_store_paths": [
             str(evidence_dir / "tck-control-map-renders-each-item-journal.sqlite3"),
             str(evidence_dir / "tck-control-select-treats-null-as-present-journal.sqlite3"),
+            str(evidence_dir / "tck-policy-stopped-turn-rejects-commit-journal.sqlite3"),
             str(evidence_dir / "tck-prompt-render-output-journal.sqlite3"),
             str(evidence_dir / "tck-tools-resolve-feeds-scripted-agent-journal.sqlite3"),
+            str(evidence_dir / "tck-tools-resolve-rejects-blank-scope-tool-name-journal.sqlite3"),
+            str(evidence_dir / "tck-tools-resolve-rejects-non-string-definition-tag-journal.sqlite3"),
         ],
-        "native_case_count": 4,
+        "native_case_count": 7,
         "run_store_paths": [
             str(evidence_dir / "tck-control-map-renders-each-item-runs.sqlite3"),
             str(evidence_dir / "tck-control-select-treats-null-as-present-runs.sqlite3"),
+            str(evidence_dir / "tck-policy-stopped-turn-rejects-commit-runs.sqlite3"),
             str(evidence_dir / "tck-prompt-render-output-runs.sqlite3"),
             str(evidence_dir / "tck-tools-resolve-feeds-scripted-agent-runs.sqlite3"),
+            str(evidence_dir / "tck-tools-resolve-rejects-blank-scope-tool-name-runs.sqlite3"),
+            str(evidence_dir / "tck-tools-resolve-rejects-non-string-definition-tag-runs.sqlite3"),
         ],
     }
 
@@ -9386,38 +9495,26 @@ def test_testing_package_cli_run_all_namespaces_native_tck_evidence(tmp_path, mo
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     calls: list[dict[str, object]] = []
 
-    def run_test_graph(
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+
+    def run_stdlib_graph(
         graph: dict[str, object],
-        _inputs: dict[str, object],
-        node_outputs: dict[str, object],
+        inputs: dict[str, object],
         **options: object,
     ) -> dict[str, object]:
         calls.append(options)
-        graph_name = graph["metadata"]["name"]  # type: ignore[index]
-        if graph_name == "runtime-prompt-render":
-            outputs = {"prompt": node_outputs["render"]["prompt"]}  # type: ignore[index]
-        elif graph_name == "runtime-control-map":
-            outputs = {"values": node_outputs["map"]["values"]}  # type: ignore[index]
-        elif graph_name == "runtime-control-select":
-            outputs = {
-                "selected": node_outputs["select"]["selected"],  # type: ignore[index]
-                "value": node_outputs["select"]["value"],  # type: ignore[index]
-            }
-        else:
-            outputs = {"candidate": node_outputs["agent"]["candidate"]}  # type: ignore[index]
-        return {
-            "runId": options["run_id"],
-            "status": "succeeded",
-            "outputs": outputs,
-            "journal": [{"kind": "run_succeeded", "runId": options["run_id"], "terminal": True}],
-        }
+        return _fake_native_stdlib_result(
+            graphblocks_testing,
+            graph,
+            inputs,
+            options,
+        )
 
     monkeypatch.setitem(
         sys.modules,
         "graphblocks_runtime",
-        SimpleNamespace(run_test_graph=run_test_graph),
+        SimpleNamespace(run_stdlib_graph=run_stdlib_graph),
     )
-    graphblocks_testing = importlib.import_module("graphblocks_testing")
     evidence_dir = tmp_path / "native-evidence"
     tck_root = tmp_path / "tck"
     runtime_dir = tck_root / "runtime"
@@ -9428,9 +9525,9 @@ def test_testing_package_cli_run_all_namespaces_native_tck_evidence(tmp_path, mo
         ["run-all", str(tck_root), "--profile", "native", "--evidence-dir", str(evidence_dir), "--json"]
     )
 
-    assert exit_code == 1
+    assert exit_code == 0
     payload = json.loads(capsys.readouterr().out)
-    assert payload["ok"] is False
+    assert payload["ok"] is True
     runtime_report = payload["reports"]["runtime"]
     prompt_observed = {
         result["case_id"]: result["observed"] for result in runtime_report["results"]
