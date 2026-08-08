@@ -4,8 +4,8 @@ mypyMode: strict-no-incremental-follow-imports-silent
 packages:
   - distribution: graphblocks
     sourceRoot: src/graphblocks
-    minimumStrictModuleCount: 14
-    maximumDebtModuleCount: 92
+    minimumStrictModuleCount: 18
+    maximumDebtModuleCount: 91
     maximumDiagnosticCount: 728
     maximumTypeIgnoreCommentCount: 145
     maximumUncodedTypeIgnoreCommentCount: 0
