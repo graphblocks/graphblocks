@@ -274,3 +274,6 @@ resolved:
   - id: GB-DOC-004
     fixCommits: [e685ee9d, 69f4ee00]
     regression: [tests/test_version_compatibility.py, tests/test_package_layout.py, tests/test_quick_ci_gate.py]
+  - id: GB-DOC-008
+    fixCommits: [194da57c]
+    regression: [tests/test_documentation_integrity.py, tests/test_docs_checker.py]
