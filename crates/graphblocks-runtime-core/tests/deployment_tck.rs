@@ -413,7 +413,10 @@ fn deployment_tck_cases_match_runtime_core() {
                                 }
                             })
                             .collect::<Vec<_>>();
-                        profile.evaluate_slo_reports(reports).condition_contract()
+                        profile
+                            .evaluate_slo_reports(reports)
+                            .expect("static SLO condition is valid")
+                            .condition_contract()
                     })
                     .collect::<Vec<_>>();
                 json!({ "conditions": conditions })

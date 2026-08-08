@@ -465,7 +465,8 @@ fn helm_renderer_projects_target_set_to_stable_values() {
         .with_effects(["network"])
         .with_package_lock("locks/control.lock")
         .with_default_replicas(2),
-    ]);
+    ])
+    .expect("deployment target set is valid");
     let images = BTreeMap::from([
         (
             "document-cpu".to_owned(),
@@ -525,7 +526,8 @@ fn helm_renderer_rejects_missing_or_mutable_target_images() {
         ExecutionTargetKind::Service,
         "rust",
     )
-    .expect("profile is valid")]);
+    .expect("profile is valid")])
+    .expect("deployment target set is valid");
     let renderer = HelmTargetRenderer::new("gb-prod", "graphblocks");
 
     assert!(
@@ -685,7 +687,8 @@ fn callback_ingress_submit_async_callback_route_requires_operation_id_binding() 
 
 #[test]
 fn deployment_target_coverage_reports_missing_image_role() {
-    let target_set = DeploymentTargetProfileSet::new([]);
+    let target_set =
+        DeploymentTargetProfileSet::new([]).expect("empty deployment target set is valid");
 
     let coverage = target_set.coverage_for_required_image_roles(["control-plane"]);
 
@@ -699,6 +702,31 @@ fn deployment_target_coverage_reports_missing_image_role() {
             "path": "$.spec.targets",
             "message": "required production image role has no deployment target profile",
         })]
+    );
+}
+
+#[test]
+fn deployment_target_profile_set_new_rejects_duplicate_targets() {
+    let first = DeploymentTargetProfile::new(
+        "control",
+        "control-plane",
+        ExecutionTargetKind::Service,
+        "rust",
+    )
+    .expect("deployment target profile is valid");
+    let duplicate = DeploymentTargetProfile::new(
+        "control",
+        "control-shadow",
+        ExecutionTargetKind::Service,
+        "rust",
+    )
+    .expect("deployment target profile is valid");
+
+    assert!(
+        DeploymentTargetProfileSet::new([first, duplicate])
+            .expect_err("duplicate target ids are rejected")
+            .to_string()
+            .contains("duplicate deployment target id")
     );
 }
 
@@ -1503,10 +1531,12 @@ fn rollout_gate_aborts_without_automatic_rollback_for_non_reversible_effects() {
 fn deployment_slo_profile_evaluates_slo_within_budget_condition() {
     let profile = DeploymentSloProfile::new("rag-production", ["availability", "p95-latency"]);
 
-    let condition = profile.evaluate_slo_reports([
-        DeploymentSloReport::passed("availability"),
-        DeploymentSloReport::failed("p95-latency"),
-    ]);
+    let condition = profile
+        .evaluate_slo_reports([
+            DeploymentSloReport::passed("availability"),
+            DeploymentSloReport::failed("p95-latency"),
+        ])
+        .expect("static SLO condition is valid");
 
     assert_eq!(
         condition,
@@ -1525,7 +1555,9 @@ fn deployment_slo_profile_evaluates_slo_within_budget_condition() {
 fn deployment_slo_profile_reports_missing_or_no_data_as_unknown() {
     let profile = DeploymentSloProfile::new("rag-production", ["availability", "p95-latency"]);
 
-    let condition = profile.evaluate_slo_reports([DeploymentSloReport::no_data("availability")]);
+    let condition = profile
+        .evaluate_slo_reports([DeploymentSloReport::no_data("availability")])
+        .expect("static SLO condition is valid");
 
     assert_eq!(condition.condition_type, "SLOWithinBudget");
     assert_eq!(condition.status, "unknown");
@@ -1545,8 +1577,12 @@ fn deployment_recovery_profile_evaluates_restore_test_freshness() {
         .with_regional_failover("active_passive")
         .with_max_restore_test_age_seconds(86_400);
 
-    let current = profile.evaluate_restore_test(Some(1_000), 80_000, true);
-    let stale = profile.evaluate_restore_test(Some(1_000), 90_000, true);
+    let current = profile
+        .evaluate_restore_test(Some(1_000), 80_000, true)
+        .expect("static recovery condition is valid");
+    let stale = profile
+        .evaluate_restore_test(Some(1_000), 90_000, true)
+        .expect("static recovery condition is valid");
 
     assert_eq!(
         current,

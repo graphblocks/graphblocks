@@ -1,5 +1,3 @@
-#![allow(clippy::expect_used)] // Guarded by compatibility/rust-production-expect-budget.json.
-
 use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt;
@@ -1033,7 +1031,10 @@ impl DeploymentSloProfile {
         }
     }
 
-    pub fn evaluate_slo_reports<I>(&self, reports: I) -> DeploymentCondition
+    pub fn evaluate_slo_reports<I>(
+        &self,
+        reports: I,
+    ) -> Result<DeploymentCondition, DeploymentConditionError>
     where
         I: IntoIterator<Item = DeploymentSloReport>,
     {
@@ -1059,8 +1060,7 @@ impl DeploymentSloProfile {
                 "false",
                 "slo_failed",
                 format!("failed SLO objectives: {}", failed.join(", ")),
-            )
-            .expect("static SLO condition must be valid");
+            );
         }
         if !missing_or_no_data.is_empty() {
             return DeploymentCondition::new(
@@ -1071,11 +1071,9 @@ impl DeploymentSloProfile {
                     "missing or no-data SLO objectives: {}",
                     missing_or_no_data.join(", ")
                 ),
-            )
-            .expect("static SLO condition must be valid");
+            );
         }
         DeploymentCondition::new("SLOWithinBudget", "true", "slo_within_budget", "")
-            .expect("static SLO condition must be valid")
     }
 
     pub fn profile_contract(&self) -> Value {
@@ -1198,15 +1196,14 @@ impl DeploymentRecoveryProfile {
         tested_at_unix_seconds: Option<u64>,
         now_unix_seconds: u64,
         passed: bool,
-    ) -> DeploymentCondition {
+    ) -> Result<DeploymentCondition, DeploymentConditionError> {
         if !passed {
             return DeploymentCondition::new(
                 "RecoveryTestCurrent",
                 "false",
                 "restore_test_failed",
                 "",
-            )
-            .expect("static recovery condition must be valid");
+            );
         }
         let Some(tested_at_unix_seconds) = tested_at_unix_seconds else {
             return DeploymentCondition::new(
@@ -1214,8 +1211,7 @@ impl DeploymentRecoveryProfile {
                 "unknown",
                 "restore_test_missing",
                 "",
-            )
-            .expect("static recovery condition must be valid");
+            );
         };
         let Some(age_seconds) = now_unix_seconds.checked_sub(tested_at_unix_seconds) else {
             return DeploymentCondition::new(
@@ -1223,8 +1219,7 @@ impl DeploymentRecoveryProfile {
                 "unknown",
                 "restore_test_in_future",
                 "",
-            )
-            .expect("static recovery condition must be valid");
+            );
         };
         if self
             .max_restore_test_age_seconds
@@ -1236,11 +1231,9 @@ impl DeploymentRecoveryProfile {
                 "false",
                 "restore_test_stale",
                 format!("last restore test age {age_seconds}s exceeds {max_age}s"),
-            )
-            .expect("static recovery condition must be valid");
+            );
         }
         DeploymentCondition::new("RecoveryTestCurrent", "true", "restore_test_current", "")
-            .expect("static recovery condition must be valid")
     }
 
     pub fn recovery_contract(&self) -> Value {
@@ -2863,13 +2856,13 @@ pub struct DeploymentTargetProfileSet {
 }
 
 impl DeploymentTargetProfileSet {
-    pub fn new<I>(targets: I) -> Self
+    pub fn new<I>(targets: I) -> Result<Self, DeploymentTargetProfileError>
     where
         I: IntoIterator<Item = DeploymentTargetProfile>,
     {
         let targets = targets.into_iter().collect::<Vec<_>>();
-        assert_unique_deployment_targets(&targets).expect("deployment target set must be valid");
-        Self { targets }
+        assert_unique_deployment_targets(&targets)?;
+        Ok(Self { targets })
     }
 
     pub fn from_document(document: &Value) -> Result<Self, DeploymentTargetProfileError> {
