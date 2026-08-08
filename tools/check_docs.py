@@ -60,6 +60,16 @@ GENERATED_MARKER = re.compile(
 )
 UNRESOLVED_REFERENCE_PREFIX = "graphblocks-unresolved-reference:"
 ISSUE_ID_SHORTCUT_LABEL = re.compile(r"[A-Z][A-Z0-9_-]*-[0-9]+")
+FIXED_TEST_COUNT = re.compile(
+    r"\b[0-9][0-9,]*(?:\+)?\s+(?:Python\s+)?tests?\b",
+    re.IGNORECASE,
+)
+FIXED_TEST_COUNT_DOCUMENTS = frozenset(
+    {
+        "docs/project/status.md",
+        "docs/project/remaining-work.md",
+    }
+)
 GFM_ALERT_LINE = re.compile(
     r"\s*(?:>\s*)+\[!(?:NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]\s*"
 )
@@ -830,6 +840,13 @@ def _check_loaded_documents(
         anchors, anchor_failures = _document_anchors(document)
         anchors_by_path[document.path] = anchors
         failures.extend(anchor_failures)
+        if document.relative_path in FIXED_TEST_COUNT_DOCUMENTS:
+            for line_number, line in enumerate(document.text.splitlines(), start=1):
+                if FIXED_TEST_COUNT.search(line) is not None:
+                    failures.append(
+                        f"{document.relative_path}:{line_number}: fixed test counts "
+                        "must remain in commit-bound CI evidence"
+                    )
 
     local_links_checked = 0
     external_links_skipped = 0

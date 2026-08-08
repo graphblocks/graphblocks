@@ -91,6 +91,35 @@ def test_document_reader_rejects_descriptor_change_while_reading(
         )
 
 
+@pytest.mark.parametrize(
+    ("relative_path", "claim"),
+    (
+        (
+            "docs/project/status.md",
+            "The checkout passes more than 2,700 Python tests.",
+        ),
+        (
+            "docs/project/remaining-work.md",
+            "The complete suite passes with 2,625 tests.",
+        ),
+    ),
+)
+def test_markdown_checker_rejects_fixed_test_counts_in_status_documents(
+    tmp_path: Path,
+    relative_path: str,
+    claim: str,
+) -> None:
+    document = tmp_path / relative_path
+    document.parent.mkdir(parents=True)
+    document.write_text(f"# Status\n\n{claim}\n", encoding="utf-8")
+
+    failures = check_markdown_documents(tmp_path, (document,))
+
+    assert failures == [
+        f"{relative_path}:3: fixed test counts must remain in commit-bound CI evidence"
+    ]
+
+
 def test_markdown_checker_accepts_commonmark_links_and_github_heading_anchors(
     tmp_path: Path,
 ) -> None:
