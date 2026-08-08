@@ -1325,7 +1325,7 @@ def _validate_graph_contracts(context: _ValidationContext) -> _ValidationContext
                         )
                         continue
                     try:
-                        SchemaId.parse(schema_id)
+                        SchemaId.parse_reference(schema_id)
                     except SchemaIdError as error:
                         diagnostics.append(
                             Diagnostic(
@@ -2331,7 +2331,7 @@ def _validate_tool_bindings(context: _ValidationContext) -> _ValidationContext:
                     )
                 else:
                     try:
-                        SchemaId.parse(input_schema)
+                        SchemaId.parse_reference(input_schema)
                     except SchemaIdError as error:
                         diagnostics.append(
                             Diagnostic(
@@ -2345,7 +2345,7 @@ def _validate_tool_bindings(context: _ValidationContext) -> _ValidationContext:
                 )
                 if isinstance(output_schema, str) and output_schema.strip():
                     try:
-                        SchemaId.parse(output_schema)
+                        SchemaId.parse_reference(output_schema)
                     except SchemaIdError as error:
                         diagnostics.append(
                             Diagnostic(

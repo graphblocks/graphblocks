@@ -1677,7 +1677,7 @@ def _validate_interface(interface: object, source: str, owner: str) -> None:
                     source=source,
                 )
             try:
-                SchemaId.parse(schema_id)
+                SchemaId.parse_reference(schema_id)
             except SchemaIdError as error:
                 raise CompositionError(
                     "CompositionInterfaceMismatch",

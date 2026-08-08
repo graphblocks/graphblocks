@@ -247,7 +247,7 @@ class GraphBuilder:
         _validate_name(name, "graph input")
         if not isinstance(port_type, PortType):
             raise TypeError("graph input port_type must be a PortType")
-        SchemaId.parse(port_type.schema)
+        SchemaId.parse_reference(port_type.schema)
         if name in self._inputs:
             raise ValueError(f"graph input {name!r} is already declared")
         self._inputs[name] = port_type
@@ -259,7 +259,7 @@ class GraphBuilder:
         _validate_name(name, "graph output")
         if not isinstance(port_type, PortType):
             raise TypeError("graph output port_type must be a PortType")
-        SchemaId.parse(port_type.schema)
+        SchemaId.parse_reference(port_type.schema)
         if name in self._outputs:
             raise ValueError(f"graph output {name!r} is already declared")
         self._outputs[name] = port_type
@@ -426,7 +426,7 @@ def _validate_port_type_ref(value: str, nesting_depth: int = 0) -> None:
     if value in _PRIMITIVE_TYPE_REFS:
         return
     if "<" not in value and ">" not in value:
-        SchemaId.parse(value)
+        SchemaId.parse_reference(value)
         return
     match = re.fullmatch(r"([A-Za-z][A-Za-z0-9_]*)<(.*)>", value)
     if match is None or match.group(1) not in _TYPE_CONSTRUCTOR_ARITY:

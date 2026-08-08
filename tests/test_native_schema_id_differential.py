@@ -26,8 +26,10 @@ def test_native_schema_id_matches_python_reference(
     major_version: int,
 ) -> None:
     raw = f"{name}@{major_version}"
-    reference = SchemaId.parse(raw)
+    reference = SchemaId.parse_reference(raw)
+    public = SchemaId.parse(raw)
 
+    assert public == reference
     assert graphblocks_runtime.parse_schema_id(raw) == {
         "canonical": reference.as_str(),
         "majorVersion": reference.major_version,
@@ -53,6 +55,8 @@ def test_native_schema_id_matches_python_reference(
     ),
 )
 def test_native_schema_id_rejects_python_reference_rejections(raw: str) -> None:
+    with pytest.raises(SchemaIdError):
+        SchemaId.parse_reference(raw)
     with pytest.raises(SchemaIdError):
         SchemaId.parse(raw)
     with pytest.raises((TypeError, UnicodeError, ValueError)):

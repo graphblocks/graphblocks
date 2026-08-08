@@ -507,7 +507,7 @@ class ToolSchemaRegistry:
                     "schema root must be a JsonSchemaNode"
                 )
             try:
-                SchemaId.parse(schema.schema_id)
+                SchemaId.parse_reference(schema.schema_id)
             except SchemaIdError as error:
                 raise ToolSchemaRegistryError(f"invalid schema id {schema.schema_id}: {error}") from error
             if schema.schema_id in schemas_by_id:
@@ -1144,14 +1144,14 @@ class ToolCatalog:
         definitions_by_name: dict[str, ToolDefinition] = {}
         for definition in definitions:
             try:
-                SchemaId.parse(definition.input_schema)
+                SchemaId.parse_reference(definition.input_schema)
             except SchemaIdError as error:
                 raise ToolResolutionError(
                     f"tool {definition.name} has invalid schema id {definition.input_schema}: {error}"
                 ) from error
             if definition.output_schema is not None:
                 try:
-                    SchemaId.parse(definition.output_schema)
+                    SchemaId.parse_reference(definition.output_schema)
                 except SchemaIdError as error:
                     raise ToolResolutionError(
                         f"tool {definition.name} has invalid schema id {definition.output_schema}: {error}"

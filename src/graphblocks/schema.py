@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from copy import deepcopy
 from dataclasses import dataclass, field
 from decimal import Decimal
@@ -9,7 +9,7 @@ from importlib.resources.abc import Traversable
 import math
 from pathlib import Path, PurePosixPath
 import re
-from typing import Any
+from typing import Any, cast
 
 from jsonschema import Draft202012Validator, validators
 from jsonschema.exceptions import SchemaError, ValidationError
@@ -107,6 +107,110 @@ RESOURCE_SCHEMA_PATHS: Mapping[tuple[str, str], str] = {
 }
 
 
+class NativeSchemaUnavailableError(RuntimeError):
+    """Raised when the normative native schema boundary is unavailable."""
+
+
+class NativeSchemaContractError(RuntimeError):
+    """Raised when the native schema boundary returns an invalid result."""
+
+
+def _native_schema_unavailable(
+    detail: object | None = None,
+) -> NativeSchemaUnavailableError:
+    message = (
+        "native GraphBlocks schema identity is unavailable; install "
+        "graphblocks[runtime] or call SchemaId.parse_reference explicitly"
+    )
+    if detail is not None and str(detail).strip():
+        message = f"{message}: {detail}"
+    return NativeSchemaUnavailableError(message)
+
+
+def _native_schema_callable(name: str) -> Callable[..., object]:
+    try:
+        import graphblocks_runtime
+    except ImportError as error:
+        raise _native_schema_unavailable(error) from error
+
+    native_extension_available = getattr(
+        graphblocks_runtime,
+        "native_extension_available",
+        None,
+    )
+    if callable(native_extension_available):
+        try:
+            available = native_extension_available()
+        except Exception as error:
+            raise _native_schema_unavailable(
+                "native extension availability check failed"
+            ) from error
+    else:
+        available = True
+    if available is not True:
+        detail = None
+        native_extension_status = getattr(
+            graphblocks_runtime,
+            "native_extension_status",
+            None,
+        )
+        if callable(native_extension_status):
+            try:
+                status = native_extension_status()
+            except Exception as error:
+                raise _native_schema_unavailable(
+                    "native extension status check failed"
+                ) from error
+            if isinstance(status, Mapping):
+                detail = status.get("error")
+        raise _native_schema_unavailable(detail)
+
+    native_function = getattr(graphblocks_runtime, name, None)
+    if not callable(native_function):
+        raise _native_schema_unavailable(
+            f"graphblocks_runtime does not expose {name}"
+        )
+    return cast(Callable[..., object], native_function)
+
+
+def _schema_id_reference_parts(raw: object) -> tuple[str, int, int]:
+    if not isinstance(raw, str):
+        raise SchemaIdError("schema id must be a string")
+    normalized = str.__str__(raw)
+    if normalized == "":
+        raise SchemaIdError("schema id must not be empty")
+    if _has_unicode_surrogate(normalized):
+        raise SchemaIdError(
+            "schema id must contain only Unicode scalar values"
+        )
+    if normalized.strip() != normalized:
+        raise SchemaIdError("schema id name is not canonical")
+    if any(character.isspace() for character in normalized):
+        raise SchemaIdError("schema id name is not canonical")
+
+    name, separator, version = normalized.rpartition("@")
+    if separator == "":
+        raise SchemaIdError("schema id must include a major version suffix")
+    if name == "":
+        raise SchemaIdError("schema id name must not be empty")
+    if "@" in name:
+        raise SchemaIdError("schema id name is not canonical")
+    if version == "" or not all("0" <= char <= "9" for char in version):
+        raise SchemaIdError("schema id major version must be a positive integer")
+    if len(version) > 1 and version.startswith("0"):
+        raise SchemaIdError("schema id major version must not use leading zeroes")
+    if len(version) > len(_U32_MAX_DECIMAL) or (
+        len(version) == len(_U32_MAX_DECIMAL)
+        and version > _U32_MAX_DECIMAL
+    ):
+        raise SchemaIdError("schema id major version must be a positive integer")
+
+    major_version = int(version)
+    if major_version == 0:
+        raise SchemaIdError("schema id major version must be a positive integer")
+    return normalized, len(name), major_version
+
+
 @dataclass(frozen=True, slots=True, order=True)
 class SchemaId:
     raw: str
@@ -114,47 +218,70 @@ class SchemaId:
     _major_version: int = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
-        raw = self.raw
-        if not isinstance(raw, str):
+        if not isinstance(self.raw, str):
             raise SchemaIdError("schema id must be a string")
-        if raw == "":
-            raise SchemaIdError("schema id must not be empty")
-        if _has_unicode_surrogate(raw):
-            raise SchemaIdError(
-                "schema id must contain only Unicode scalar values"
+        raw = str.__str__(self.raw)
+        native_parse = _native_schema_callable("parse_schema_id")
+        try:
+            payload = native_parse(raw)
+        except Exception as native_error:
+            try:
+                _schema_id_reference_parts(raw)
+            except SchemaIdError as reference_error:
+                raise reference_error from native_error
+            raise NativeSchemaContractError(
+                "native parse_schema_id rejected a reference-valid identity"
+            ) from native_error
+        if type(payload) is not dict or set(payload) != {
+            "canonical",
+            "majorVersion",
+            "name",
+        }:
+            raise NativeSchemaContractError(
+                "native parse_schema_id result must be a closed identity object"
             )
-        if raw.strip() != raw:
-            raise SchemaIdError("schema id name is not canonical")
-        if any(character.isspace() for character in raw):
-            raise SchemaIdError("schema id name is not canonical")
-
-        name, separator, version = raw.rpartition("@")
-        if separator == "":
-            raise SchemaIdError("schema id must include a major version suffix")
-        if name == "":
-            raise SchemaIdError("schema id name must not be empty")
-        if "@" in name:
-            raise SchemaIdError("schema id name is not canonical")
-        if version == "" or not all("0" <= char <= "9" for char in version):
-            raise SchemaIdError("schema id major version must be a positive integer")
-        if len(version) > 1 and version.startswith("0"):
-            raise SchemaIdError("schema id major version must not use leading zeroes")
-        if len(version) > len(_U32_MAX_DECIMAL) or (
-            len(version) == len(_U32_MAX_DECIMAL)
-            and version > _U32_MAX_DECIMAL
+        canonical = payload["canonical"]
+        major_version = payload["majorVersion"]
+        name = payload["name"]
+        if (
+            type(canonical) is not str
+            or type(name) is not str
+            or type(major_version) is not int
+            or major_version <= 0
+            or canonical != f"{name}@{major_version}"
         ):
-            raise SchemaIdError("schema id major version must be a positive integer")
-
-        major_version = int(version)
-        if major_version == 0:
-            raise SchemaIdError("schema id major version must be a positive integer")
-
+            raise NativeSchemaContractError(
+                "native parse_schema_id result has invalid identity fields"
+            )
+        reference_raw, reference_separator, reference_major = (
+            _schema_id_reference_parts(raw)
+        )
+        if (
+            canonical != reference_raw
+            or name != reference_raw[:reference_separator]
+            or major_version != reference_major
+        ):
+            raise NativeSchemaContractError(
+                "native parse_schema_id result differs from the reference oracle"
+            )
+        object.__setattr__(self, "raw", canonical)
         object.__setattr__(self, "_version_separator", len(name))
         object.__setattr__(self, "_major_version", major_version)
 
     @classmethod
     def parse(cls, raw: str) -> SchemaId:
         return cls(raw)
+
+    @classmethod
+    def parse_reference(cls, raw: str) -> SchemaId:
+        normalized, version_separator, major_version = (
+            _schema_id_reference_parts(raw)
+        )
+        schema_id = object.__new__(cls)
+        object.__setattr__(schema_id, "raw", normalized)
+        object.__setattr__(schema_id, "_version_separator", version_separator)
+        object.__setattr__(schema_id, "_major_version", major_version)
+        return schema_id
 
     def as_str(self) -> str:
         return self.raw
@@ -194,7 +321,7 @@ class TypedValue:
     @classmethod
     def new(cls, schema_id: str | SchemaId, value: object) -> TypedValue:
         if not isinstance(schema_id, SchemaId):
-            schema_id = SchemaId.parse(schema_id)
+            schema_id = SchemaId.parse_reference(schema_id)
         return cls(schema_id=schema_id, value=value)
 
     @classmethod

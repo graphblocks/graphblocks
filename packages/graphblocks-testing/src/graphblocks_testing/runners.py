@@ -472,7 +472,7 @@ class TckRunner:
         if case.schema_case_type == "typed_value":
             return self._run_schema_typed_value_case(case)
         try:
-            schema_id = SchemaId.parse(case.schema_id or "")
+            schema_id = SchemaId.parse_reference(case.schema_id or "")
             observed = {
                 "valid": True,
                 "canonical": schema_id.as_str(),

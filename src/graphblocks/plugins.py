@@ -175,7 +175,7 @@ def _validate_type_ref(type_ref: object, *, nesting_depth: int = 0) -> str:
         return type_ref
     if "<" not in type_ref and ">" not in type_ref:
         try:
-            SchemaId.parse(type_ref)
+            SchemaId.parse_reference(type_ref)
         except SchemaIdError as error:
             raise ValueError(str(error)) from error
         return type_ref
@@ -221,7 +221,7 @@ def _validate_resource_type_ref(type_ref: object) -> str:
         raise ValueError("resource type reference must be non-empty and contain no whitespace")
     if "@" in type_ref or "/" in type_ref:
         try:
-            SchemaId.parse(type_ref)
+            SchemaId.parse_reference(type_ref)
         except SchemaIdError as error:
             raise ValueError(str(error)) from error
     elif re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]*(?:\.[A-Za-z][A-Za-z0-9_-]*)+", type_ref) is None:
