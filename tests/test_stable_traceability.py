@@ -308,6 +308,18 @@ def test_stable_requirement_implementation_roles_match_the_authority_transition(
             "tests/test_release_supply_chain.py",
         ],
     }
+    plugin_roles = c0["plugin-manifest-validation"]["implementations"]
+    assert set(plugin_roles) == {"normative", "pythonFacadeAndReference"}
+    assert "crates/graphblocks-schema/src/lib.rs" in plugin_roles["normative"]
+    migration = c0["migration-reader"]
+    migration_roles = migration["implementations"]
+    assert set(migration_roles) == {"normative", "pythonFacadeAndReference"}
+    assert "crates/graphblocks-schema/src/lib.rs" in migration_roles["normative"]
+    assert migration["scopeNotes"] == [
+        "Graph compiler migration and standalone Graph/PluginManifest migration route "
+        "through fail-closed Rust authority; explicit Python reference entry points "
+        "remain available as the oracle."
+    ]
 
     c1_entries = profiles["GB-C1-LOCAL-RUNTIME"]["requirements"]
     for entry in c1_entries:

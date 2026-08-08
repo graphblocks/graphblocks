@@ -146,11 +146,13 @@ profiles:
           - GB-PKG-PORT-TYPES-001
           - GB-PKG-PLUGIN-AUTHORITY-001
         implementations:
+          normative:
+            - crates/graphblocks-schema/src/lib.rs
+            - crates/graphblocks-python/src/lib.rs
+            - packages/graphblocks-runtime/src/graphblocks_runtime/__init__.py
           pythonFacadeAndReference:
             - src/graphblocks/plugins.py
             - src/graphblocks/schema.py
-          targetNormative:
-            - crates/graphblocks-schema/src/lib.rs
         schemas:
           - schemas/graphblocks.ai/v1/plugin-manifest.schema.json
         tckSuites: []
@@ -158,6 +160,10 @@ profiles:
           - tests/test_plugins.py
           - tests/test_descriptor_validation.py
           - tests/test_resource_schema_validation.py
+          - tests/test_native_resource_schema_differential.py
+          - tests/test_resource_validation_native_facade.py
+          - tests/test_wheelhouse_schema_verification.py
+          - tck/schema/resources.json
       - id: migration-reader
         clauses:
           - GB-CDM-MIGRATION-001
@@ -168,10 +174,13 @@ profiles:
         implementations:
           normative:
             - crates/graphblocks-compiler/src/graph.rs
+            - crates/graphblocks-schema/src/lib.rs
+            - crates/graphblocks-python/src/lib.rs
+            - packages/graphblocks-runtime/src/graphblocks_runtime/__init__.py
           pythonFacadeAndReference:
             - src/graphblocks/migration.py
         scopeNotes:
-          - Rust normative coverage currently applies to Graph migration through the public compiler; standalone and PluginManifest migration routing remains blocked.
+          - Graph compiler migration and standalone Graph/PluginManifest migration route through fail-closed Rust authority; explicit Python reference entry points remain available as the oracle.
         schemas:
           - schemas/graphblocks.ai/v1/graph.schema.json
           - schemas/graphblocks.ai/v1/plugin-manifest.schema.json
@@ -179,6 +188,10 @@ profiles:
         evidence:
           - tests/test_migration.py
           - tests/test_plugins.py
+          - tests/test_native_resource_migration_differential.py
+          - tests/test_migration_native_facade.py
+          - tests/test_wheelhouse_schema_verification.py
+          - tck/migration/cases.json
   GB-C1-LOCAL-RUNTIME:
     status: normative
     extends:
