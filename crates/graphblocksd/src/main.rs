@@ -1,5 +1,3 @@
-#![allow(clippy::expect_used)] // Guarded by compatibility/rust-production-expect-budget.json.
-
 use std::io::{self, Read};
 
 use graphblocks_control_plane::{DaemonConfig, DaemonStatus, WorkerRegistry, WorkerRegistryError};
@@ -697,30 +695,31 @@ fn run_submit_async_callback(args: Vec<String>) -> Result<Value, CliError> {
         submission = submission.with_provider_operation_id(provider_operation_id);
     }
 
-    let resume_gate_count = [
-        resume_policy_decision_id.is_some(),
-        resume_budget_reservation_id.is_some(),
-        resume_compatible_release_id.is_some(),
-        resume_ownership_fence_token.is_some(),
-    ]
-    .into_iter()
-    .filter(|provided| *provided)
-    .count();
-    let resume_decision = if resume_gate_count == 0 {
-        AsyncCallbackResumeDecision::PauseAuthorizationRequired
-    } else if resume_gate_count == 4 {
-        AsyncCallbackResumeDecision::ResumeAuthorized {
+    let resume_decision = match (
+        resume_policy_decision_id,
+        resume_budget_reservation_id,
+        resume_compatible_release_id,
+        resume_ownership_fence_token,
+    ) {
+        (None, None, None, None) => AsyncCallbackResumeDecision::PauseAuthorizationRequired,
+        (
+            Some(policy_decision_id),
+            Some(budget_reservation_id),
+            Some(compatible_release_id),
+            Some(ownership_fence_token),
+        ) => AsyncCallbackResumeDecision::ResumeAuthorized {
             authentication_verified,
-            policy_decision_id: resume_policy_decision_id.expect("gate count checked"),
-            budget_reservation_id: resume_budget_reservation_id.expect("gate count checked"),
-            compatible_release_id: resume_compatible_release_id.expect("gate count checked"),
-            ownership_fence_token: resume_ownership_fence_token.expect("gate count checked"),
+            policy_decision_id,
+            budget_reservation_id,
+            compatible_release_id,
+            ownership_fence_token,
+        },
+        _ => {
+            return Err(CliError::Usage(
+                "callback resume requires all of --resume-policy-decision-id, --resume-budget-reservation-id, --resume-compatible-release-id, and --resume-ownership-fence-token"
+                    .to_owned(),
+            ));
         }
-    } else {
-        return Err(CliError::Usage(
-            "callback resume requires all of --resume-policy-decision-id, --resume-budget-reservation-id, --resume-compatible-release-id, and --resume-ownership-fence-token"
-                .to_owned(),
-        ));
     };
 
     let store =
@@ -1424,27 +1423,29 @@ fn run_redrive_callback_delivery(args: Vec<String>) -> Result<Value, CliError> {
     let existing_delivery = delivery_store
         .get_delivery(&redriven.delivery_id)
         .map_err(CliError::CallbackDelivery)?;
-    let already_scheduled = existing_delivery.as_ref().is_some_and(|existing| {
-        existing.delivery_id == redriven.delivery_id
-            && existing.subscription_id == redriven.subscription_id
-            && existing.event_id == redriven.event_id
-            && existing.run_id == redriven.run_id
-            && existing.sequence == redriven.sequence
-            && existing.cursor == redriven.cursor
-            && existing.attempt == redriven.attempt
-            && existing.idempotency_key == redriven.idempotency_key
-            && existing.failure_policy == redriven.failure_policy
-            && existing.redrive_count == redriven.redrive_count
-            && existing.last_redrive_operator == redriven.last_redrive_operator
-            && existing.last_redrive_reason == redriven.last_redrive_reason
-    });
-    let persisted_delivery = if already_scheduled {
-        existing_delivery.expect("matching existing callback delivery was present")
-    } else {
-        delivery_store
-            .upsert_delivery(redriven.clone())
-            .map_err(CliError::CallbackDelivery)?;
-        redriven.clone()
+    let persisted_delivery = match existing_delivery {
+        Some(existing)
+            if existing.delivery_id == redriven.delivery_id
+                && existing.subscription_id == redriven.subscription_id
+                && existing.event_id == redriven.event_id
+                && existing.run_id == redriven.run_id
+                && existing.sequence == redriven.sequence
+                && existing.cursor == redriven.cursor
+                && existing.attempt == redriven.attempt
+                && existing.idempotency_key == redriven.idempotency_key
+                && existing.failure_policy == redriven.failure_policy
+                && existing.redrive_count == redriven.redrive_count
+                && existing.last_redrive_operator == redriven.last_redrive_operator
+                && existing.last_redrive_reason == redriven.last_redrive_reason =>
+        {
+            existing
+        }
+        _ => {
+            delivery_store
+                .upsert_delivery(redriven.clone())
+                .map_err(CliError::CallbackDelivery)?;
+            redriven.clone()
+        }
     };
     dead_letter.redrive_count = redriven.redrive_count;
     dead_letter.attempt_history.push(redriven.attempt);
