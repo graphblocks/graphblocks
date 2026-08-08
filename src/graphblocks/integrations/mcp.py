@@ -4,7 +4,6 @@ from collections.abc import Iterable, Mapping
 from copy import deepcopy
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
-import json
 
 from jsonschema import Draft202012Validator
 from jsonschema.exceptions import SchemaError, ValidationError
@@ -32,7 +31,11 @@ from graphblocks.tools import (
     validate_tool_result_for_model,
 )
 
-from ._wire import find_non_local_schema_reference
+from ._wire import (
+    find_non_local_schema_reference,
+    snapshot_wire_json,
+    thaw_wire_json,
+)
 
 
 class McpToolAdapterError(RuntimeError):
@@ -78,6 +81,7 @@ class McpInlineSchemaRegistry:
         if not isinstance(schemas, Mapping):
             raise McpToolAdapterError("MCP inline schemas must be a mapping")
         documents: dict[str, dict[str, object]] = {}
+        validators: dict[str, Draft202012Validator] = {}
         for schema_ref, schema in schemas.items():
             try:
                 normalized_schema_ref = _stable_string(
@@ -132,11 +136,13 @@ class McpInlineSchemaRegistry:
                     f"{regular_expression_keyword!r} is disabled"
                 )
             documents[schema_ref] = document
+            validators[schema_ref] = Draft202012Validator(document)
         self._schemas = documents
+        self._validators = validators
 
     def validate(self, schema_id: str, value: object) -> None:
-        schema = self._schemas.get(schema_id)
-        if schema is None:
+        validator = self._validators.get(schema_id)
+        if validator is None:
             raise ToolSchemaValidationError(f"schema {schema_id} is not registered")
         try:
             normalized = canonical_loads(canonical_dumps(value))
@@ -145,7 +151,7 @@ class McpInlineSchemaRegistry:
                 f"schema {schema_id} requires a strict JSON value"
             ) from error
         try:
-            Draft202012Validator(schema).validate(normalized)
+            validator.validate(normalized)
         except ValidationError as error:
             raise ToolSchemaValidationError(
                 f"schema {schema_id} rejected value at {error.json_path}"
@@ -156,7 +162,7 @@ McpSchemaRegistry = ToolSchemaRegistry | McpInlineSchemaRegistry
 
 
 class McpToolDiscovery(tuple[ToolDefinition, ...]):
-    _schema_documents: tuple[tuple[str, str], ...]
+    _schema_documents: tuple[tuple[str, Mapping[str, object]], ...]
 
     def __new__(
         cls,
@@ -164,7 +170,24 @@ class McpToolDiscovery(tuple[ToolDefinition, ...]):
         schema_documents: Iterable[tuple[str, str]] = (),
     ) -> McpToolDiscovery:
         instance = super().__new__(cls, definitions)
-        instance._schema_documents = tuple(schema_documents)
+        parsed_documents: list[tuple[str, Mapping[str, object]]] = []
+        for schema_ref, document in schema_documents:
+            try:
+                parsed = canonical_loads(document)
+                snapshot = snapshot_wire_json(
+                    parsed,
+                    field_name=f"MCP discovery schema {schema_ref!r}",
+                )
+            except (TypeError, ValueError) as error:
+                raise McpToolAdapterError(
+                    f"MCP discovery schema {schema_ref!r} must be strict JSON"
+                ) from error
+            if not isinstance(snapshot, Mapping):
+                raise McpToolAdapterError(
+                    f"MCP discovery schema {schema_ref!r} must be an object"
+                )
+            parsed_documents.append((schema_ref, snapshot))
+        instance._schema_documents = tuple(parsed_documents)
         return instance
 
     @property
@@ -173,7 +196,15 @@ class McpToolDiscovery(tuple[ToolDefinition, ...]):
 
     @property
     def schemas(self) -> dict[str, dict[str, object]]:
-        return {schema_ref: json.loads(document) for schema_ref, document in self._schema_documents}
+        projections: dict[str, dict[str, object]] = {}
+        for schema_ref, document in self._schema_documents:
+            projection = thaw_wire_json(document)
+            if not isinstance(projection, dict):
+                raise McpToolAdapterError(
+                    f"MCP discovery schema {schema_ref!r} must be an object"
+                )
+            projections[schema_ref] = projection
+        return projections
 
     @property
     def inline_schemas(self) -> dict[str, dict[str, object]]:
