@@ -4337,6 +4337,7 @@ fn sqlite_i64_to_u64(value: i64, label: &'static str) -> Result<u64, AsyncOperat
 }
 
 #[cfg(test)]
+#[allow(clippy::panic)]
 mod tests {
     use std::panic::{AssertUnwindSafe, catch_unwind};
 
