@@ -173,6 +173,27 @@ adapter past its deadline and prove that a late return cannot publish a result,
 record success, commit an effect under stale authority, or overwrite the
 terminal timeout/cancellation outcome.
 
+### Clock domains
+
+GraphBlocks keeps three clock domains distinct. Process-local waits and
+deadlines use monotonic seconds and MUST NOT derive remaining time from a wall
+timestamp. Persistent admission, lease expiry, reclaim, and fencing decisions
+use authority-wall epoch milliseconds. Human-facing event and audit timestamps
+use timezone-aware wall time and carry no deadline or lease authority.
+
+`AuthorityWallClock` compares authority-wall progress with elapsed monotonic
+time. A rollback or forward jump beyond its explicit skew allowance fails
+closed; an allowed small rollback is clamped so observed authority time never
+moves backwards. `InMemoryLeasePool(authority_clock=...)` derives omitted
+acquisition, renewal, availability, and reap observations from that policy.
+Explicit numeric lease times are treated as already-authorized repository or
+fixture inputs. A durable repository MUST read its deployment-owned authority
+clock inside the same transaction that validates and commits the lease/fence.
+Audit timestamps MUST NOT be substituted for either clock.
+Values decoded by the duration codec are relative quantities, not instants;
+process code converts them to `MonotonicDeadline`, while a repository may add
+them to its freshly read authority-wall time inside the lease transaction.
+
 ### Durable accepted-run HTTP boundary (preview)
 
 `DurableAcceptedRunServerApp` is the repository-authoritative HTTP boundary for

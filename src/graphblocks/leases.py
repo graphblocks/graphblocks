@@ -8,8 +8,13 @@ from threading import RLock
 from types import MappingProxyType
 from typing import ParamSpec, TypeAlias, TypeVar, cast
 
+from .clocks import AuthorityWallClock
 
-LeaseTime: TypeAlias = int | float
+
+# Lease timestamps are persistent authority-wall milliseconds. They are never
+# process-monotonic deadlines or human-facing audit timestamps.
+AuthorityWallMilliseconds: TypeAlias = int | float
+LeaseTime: TypeAlias = AuthorityWallMilliseconds
 _MAX_U64 = (1 << 64) - 1
 _MIN_JSON_INTEGER = -(1 << 63)
 _MAX_LEASE_JSON_DEPTH = 64
@@ -267,7 +272,12 @@ class Lease:
     def expires_at(self) -> LeaseTime | None:
         return self.pool.expires_at(self.lease_id)
 
-    def renew(self, *, expires_at: LeaseTime, renewed_at: LeaseTime = 0) -> int:
+    def renew(
+        self,
+        *,
+        expires_at: LeaseTime,
+        renewed_at: LeaseTime | None = None,
+    ) -> int:
         self.fencing_token = self.pool.renew(
             self.lease_id,
             self.fencing_token,
@@ -296,9 +306,17 @@ class InMemoryLeasePool:
     active: dict[str, ActiveLease] = field(default_factory=dict)
     next_id: int = 1
     next_fencing_token: int = 1
+    authority_clock: AuthorityWallClock | None = None
     _lock: RLock = field(default_factory=RLock, init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
+        if self.authority_clock is not None and not isinstance(
+            self.authority_clock,
+            AuthorityWallClock,
+        ):
+            raise InvalidLeaseRequestError(
+                "lease authority_clock must be an AuthorityWallClock or null"
+            )
         if not isinstance(self.capacities, Mapping):
             raise InvalidLeaseRequestError("lease capacities must be a mapping")
         try:
@@ -393,7 +411,7 @@ class InMemoryLeasePool:
         now: LeaseTime | None = None,
     ) -> int:
         capacity = self._capacity(resource)
-        if now is not None:
+        if now is not None or self.authority_clock is not None:
             self.reap_expired(now)
         used = sum(active.units for active in self.active.values() if active.resource == resource)
         return capacity - used
@@ -407,13 +425,13 @@ class InMemoryLeasePool:
         units: int = 1,
         attributes: dict[str, object] | None = None,
         expires_at: LeaseTime | None = None,
-        acquired_at: LeaseTime = 0,
+        acquired_at: LeaseTime | None = None,
     ) -> Lease:
-        self._capacity(resource)
+        capacity = self._capacity(resource)
         owner = _validate_non_empty_string("owner", owner)
         if not isinstance(units, int) or isinstance(units, bool) or units <= 0:
             raise InvalidLeaseRequestError("lease units must be a positive integer")
-        acquired_at = _validate_time("acquired_at", acquired_at)
+        acquired_at = self._resolve_authority_time("acquired_at", acquired_at)
         expires_at = _validate_optional_time("expires_at", expires_at)
         if expires_at is not None and expires_at <= acquired_at:
             raise InvalidLeaseRequestError("lease expires_at must be after acquisition")
@@ -422,7 +440,12 @@ class InMemoryLeasePool:
         )
 
         self.reap_expired(acquired_at)
-        available = self.available(resource)
+        used = sum(
+            active.units
+            for active in self.active.values()
+            if active.resource == resource
+        )
+        available = capacity - used
         if units > available:
             raise LeaseUnavailableError(
                 f"no lease available for {resource}: requested {units}, "
@@ -472,9 +495,9 @@ class InMemoryLeasePool:
         fencing_token: int,
         *,
         expires_at: LeaseTime,
-        renewed_at: LeaseTime = 0,
+        renewed_at: LeaseTime | None = None,
     ) -> int:
-        renewed_at = _validate_time("renewed_at", renewed_at)
+        renewed_at = self._resolve_authority_time("renewed_at", renewed_at)
         expires_at = _validate_time("expires_at", expires_at)
         fencing_token = _validate_non_negative_integer("fencing_token", fencing_token)
         if expires_at <= renewed_at:
@@ -521,8 +544,8 @@ class InMemoryLeasePool:
         return self._active_lease(lease_id).expires_at
 
     @_with_lease_pool_lock
-    def reap_expired(self, now: LeaseTime) -> int:
-        now = _validate_time("now", now)
+    def reap_expired(self, now: LeaseTime | None = None) -> int:
+        now = self._resolve_authority_time("now", now)
         expired_ids = [
             lease_id
             for lease_id, active in self.active.items()
@@ -571,6 +594,20 @@ class InMemoryLeasePool:
         except KeyError as error:
             raise LeaseUnavailableError(f"unknown lease resource {resource}") from error
 
+    def _resolve_authority_time(
+        self,
+        field_name: str,
+        value: LeaseTime | None,
+    ) -> LeaseTime:
+        if value is not None:
+            return _validate_time(field_name, value)
+        if self.authority_clock is None:
+            return 0
+        return _validate_time(
+            field_name,
+            self.authority_clock.now_milliseconds(),
+        )
+
     def _allocate_lease_id(self) -> str:
         lease_number = self.next_id
         lease_id = f"lease-{lease_number:06d}"
@@ -606,6 +643,7 @@ class InMemoryLeasePool:
 
 __all__ = [
     "ActiveLease",
+    "AuthorityWallMilliseconds",
     "InMemoryLeasePool",
     "InvalidLeaseRequestError",
     "Lease",

@@ -11,7 +11,7 @@ import hashlib
 import json
 import math
 from threading import Condition, get_ident, Lock, TIMEOUT_MAX
-from time import monotonic, time
+from time import monotonic
 from types import MappingProxyType
 from typing import Literal, Protocol
 from urllib.parse import quote, unquote
@@ -40,6 +40,11 @@ from .application_event import (
     ApplicationProtocolLog,
 )
 from .canonical import canonical_dumps, canonical_hash
+from .clocks import (
+    AuthorityWallClock,
+    MonotonicDeadline,
+    system_audit_wall_timestamp,
+)
 from .compiler import compile_graph
 from .policy import PrincipalRef, ResourceRef
 from .runtime import (
@@ -349,7 +354,7 @@ _SERVER_AUTHORIZATION_RESOURCE_POLICIES = MappingProxyType(
 
 
 def _utc_now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+    return system_audit_wall_timestamp()
 
 
 def _canonical_json_size_bytes(value: object) -> int:
@@ -3552,7 +3557,7 @@ class GraphBlocksServerApp:
     accepted_run_executor: Executor | None = None
     admission_ticket_queue: AdmissionTicketQueue | None = None
     admission_clock: Callable[[], int] = field(
-        default=lambda: int(time() * 1_000),
+        default_factory=AuthorityWallClock,
         repr=False,
     )
     async_callback_resume_admission_hook: ServerAsyncCallbackResumeAdmissionHook | None = None
@@ -3622,7 +3627,7 @@ class GraphBlocksServerApp:
         DEFAULT_TERMINAL_RUN_COLLECTION_BATCH_SIZE
     )
     terminal_run_collection_clock: Callable[[], str] = field(
-        default=_utc_now_iso,
+        default=system_audit_wall_timestamp,
         repr=False,
     )
     reference_tenant_id: str | None = None
@@ -3647,6 +3652,10 @@ class GraphBlocksServerApp:
         repr=False,
     )
     owns_accepted_run_executor: bool = False
+    monotonic_clock: Callable[[], float] = field(
+        default=monotonic,
+        repr=False,
+    )
     _effective_reference_tenant_id: str | None = field(
         default=None,
         init=False,
@@ -4059,6 +4068,8 @@ class GraphBlocksServerApp:
             raise ValueError(
                 "server-owned accepted run executor requires accepted_run_executor"
             )
+        if not callable(self.monotonic_clock):
+            raise ValueError("server monotonic_clock must be callable")
         if not isinstance(
             self.allow_process_local_accepted_runs_dev,
             bool,
@@ -4118,10 +4129,9 @@ class GraphBlocksServerApp:
         """Stop new work and wait for accepted requests and runs to finish."""
 
         timeout_seconds = _validate_server_lifecycle_timeout(timeout)
-        deadline = (
-            None
-            if timeout_seconds is None
-            else monotonic() + timeout_seconds
+        deadline = MonotonicDeadline.after(
+            timeout_seconds,
+            clock=self.monotonic_clock,
         )
         with self._accepted_run_condition:
             if self._lifecycle_state == "closed":
@@ -4129,10 +4139,10 @@ class GraphBlocksServerApp:
             self._lifecycle_state = "draining"
             self._accepted_run_condition.notify_all()
             while self._has_lifecycle_work_locked():
-                if deadline is None:
+                remaining = deadline.remaining_seconds()
+                if remaining is None:
                     self._accepted_run_condition.wait()
                     continue
-                remaining = deadline - monotonic()
                 if remaining <= 0:
                     return False
                 self._accepted_run_condition.wait(remaining)
@@ -9189,7 +9199,10 @@ class GraphBlocksServerApp:
                 raise ValueError(
                     "server accepted run worker timeout must be a finite non-negative number"
                 )
-        deadline = None if timeout_seconds is None else monotonic() + timeout_seconds
+        deadline = MonotonicDeadline.after(
+            timeout_seconds,
+            clock=self.monotonic_clock,
+        )
         with self._accepted_run_condition:
             while True:
                 stored_result = self._accepted_run_results_by_run_id.get(run_id)
@@ -9240,9 +9253,7 @@ class GraphBlocksServerApp:
                     and run_id not in self._advancing_accepted_runs_by_run_id
                 ):
                     raise ValueError(f"accepted run worker {run_id!r} not found")
-                remaining = (
-                    None if deadline is None else max(0.0, deadline - monotonic())
-                )
+                remaining = deadline.remaining_seconds()
                 if remaining == 0.0:
                     raise TimeoutError()
                 self._accepted_run_condition.wait(remaining)

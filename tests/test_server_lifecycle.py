@@ -357,3 +357,11 @@ def test_server_executor_ownership_requires_an_executor() -> None:
             allow_unauthenticated_dev=True,
             owns_accepted_run_executor=True,
         )
+
+
+def test_server_lifecycle_requires_a_callable_monotonic_clock() -> None:
+    with pytest.raises(ValueError, match="monotonic_clock must be callable"):
+        GraphBlocksServerApp(
+            allow_unauthenticated_dev=True,
+            monotonic_clock=object(),  # type: ignore[arg-type]
+        )

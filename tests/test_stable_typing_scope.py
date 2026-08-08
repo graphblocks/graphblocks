@@ -62,7 +62,7 @@ def test_repository_mypy_scope_silences_only_transitive_diagnostics() -> None:
     assert budget == {
         "version": 1,
         "productionSourceRoot": "src/graphblocks",
-        "minimumStrictModuleCount": 14,
+        "minimumStrictModuleCount": 15,
         "maximumTypeIgnoreCommentCount": 145,
         "maximumUncodedTypeIgnoreCommentCount": 0,
     }
@@ -364,7 +364,7 @@ def test_stable_typing_checker_runs_outside_repository_root(
     assert packages["graphblocks"]["moduleCount"] == len(
         packages["graphblocks"]["modules"]
     )
-    assert packages["graphblocks"]["strictModuleCount"] == 14
+    assert packages["graphblocks"]["strictModuleCount"] == 15
     assert packages["graphblocks"]["previewCompatibilityAliasCount"] == 606
     assert all(package["modules"] for package in packages.values())
 

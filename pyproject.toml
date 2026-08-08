@@ -80,6 +80,7 @@ files = [
   "src/graphblocks/_validation.py",
   "src/graphblocks/_version.py",
   "src/graphblocks/admission.py",
+  "src/graphblocks/clocks.py",
   "src/graphblocks/conformance.py",
   "src/graphblocks/durable_registry.py",
   "src/graphblocks/leases.py",

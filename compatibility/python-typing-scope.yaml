@@ -1,5 +1,5 @@
 version: 1
 productionSourceRoot: src/graphblocks
-minimumStrictModuleCount: 14
+minimumStrictModuleCount: 15
 maximumTypeIgnoreCommentCount: 145
 maximumUncodedTypeIgnoreCommentCount: 0
