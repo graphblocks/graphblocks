@@ -4,6 +4,7 @@ from bisect import bisect_left, bisect_right, insort
 from collections import deque
 from collections.abc import Callable, Mapping
 from concurrent.futures import Executor, Future
+from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
 import hashlib
@@ -186,6 +187,24 @@ MAX_SERVER_AUTH_AUDIT_FAILURE_TYPE_BYTES = 256
 MAX_SERVER_ERROR_CODE_BYTES = 256
 MAX_SERVER_ERROR_CORRELATION_ID_BYTES = 256
 MAX_SERVER_ERROR_FAILURE_DETAIL_BYTES = 4_096
+
+
+def _validate_server_lifecycle_timeout(timeout: float | None) -> float | None:
+    if timeout is None:
+        return None
+    if isinstance(timeout, bool) or not isinstance(timeout, (int, float)):
+        raise ValueError("server lifecycle timeout must be a finite non-negative number")
+    try:
+        timeout_seconds = float(timeout)
+    except OverflowError as error:
+        raise ValueError(
+            "server lifecycle timeout must be a finite non-negative number"
+        ) from error
+    if not math.isfinite(timeout_seconds) or timeout_seconds < 0:
+        raise ValueError("server lifecycle timeout must be a finite non-negative number")
+    return timeout_seconds
+
+
 _ServerOperationHandlerKey = Literal[
     "system",
     "run_lifecycle",
@@ -3627,6 +3646,7 @@ class GraphBlocksServerApp:
         default=lambda: str(uuid4()),
         repr=False,
     )
+    owns_accepted_run_executor: bool = False
     _effective_reference_tenant_id: str | None = field(
         default=None,
         init=False,
@@ -3854,6 +3874,27 @@ class GraphBlocksServerApp:
         init=False,
         repr=False,
     )
+    _lifecycle_state: Literal["running", "draining", "closed"] = field(
+        default="running",
+        init=False,
+        repr=False,
+    )
+    _active_server_requests: int = field(default=0, init=False, repr=False)
+    _tracked_accepted_run_futures: set[Future[object]] = field(
+        default_factory=set,
+        init=False,
+        repr=False,
+    )
+    _close_drained: bool | None = field(default=None, init=False, repr=False)
+    _owned_executor_shutdown: bool = field(default=False, init=False, repr=False)
+    _request_lifecycle_admitted: ContextVar[bool] = field(
+        default_factory=lambda: ContextVar(
+            "graphblocks_server_request_lifecycle_admitted",
+            default=False,
+        ),
+        init=False,
+        repr=False,
+    )
 
     def __post_init__(self) -> None:
         if not isinstance(self.allow_unauthenticated_dev, bool):
@@ -4010,6 +4051,14 @@ class GraphBlocksServerApp:
             raise ValueError("server anti_enumerate_async_callbacks must be a boolean")
         if not isinstance(self.defer_accepted_runs, bool):
             raise ValueError("server defer_accepted_runs must be a boolean")
+        if not isinstance(self.owns_accepted_run_executor, bool):
+            raise ValueError(
+                "server owns_accepted_run_executor must be a boolean"
+            )
+        if self.owns_accepted_run_executor and self.accepted_run_executor is None:
+            raise ValueError(
+                "server-owned accepted run executor requires accepted_run_executor"
+            )
         if not isinstance(
             self.allow_process_local_accepted_runs_dev,
             bool,
@@ -4029,6 +4078,199 @@ class GraphBlocksServerApp:
             raise ValueError(
                 "server terminal_run_collection_clock must be callable"
             )
+
+    @property
+    def lifecycle_state(self) -> Literal["running", "draining", "closed"]:
+        with self._accepted_run_condition:
+            return self._lifecycle_state
+
+    def start(self) -> GraphBlocksServerApp:
+        """Confirm the app is running and return it for context-manager use."""
+
+        with self._accepted_run_condition:
+            if self._lifecycle_state == "closed":
+                raise RuntimeError("closed server app cannot be restarted")
+            if self._lifecycle_state == "draining":
+                raise RuntimeError("draining server app cannot be restarted")
+            return self
+
+    def __enter__(self) -> GraphBlocksServerApp:
+        return self.start()
+
+    def __exit__(
+        self,
+        exception_type: type[BaseException] | None,
+        exception: BaseException | None,
+        traceback: object | None,
+    ) -> None:
+        self.close()
+
+    def _has_lifecycle_work_locked(self) -> bool:
+        return bool(
+            self._active_server_requests
+            or self._tracked_accepted_run_futures
+            or self._accepted_run_reservations_by_run_id
+            or self._advancing_accepted_runs_by_run_id
+            or self._pending_accepted_runs_by_run_id
+        )
+
+    def drain(self, *, timeout: float | None = None) -> bool:
+        """Stop new work and wait for accepted requests and runs to finish."""
+
+        timeout_seconds = _validate_server_lifecycle_timeout(timeout)
+        deadline = (
+            None
+            if timeout_seconds is None
+            else monotonic() + timeout_seconds
+        )
+        with self._accepted_run_condition:
+            if self._lifecycle_state == "closed":
+                return bool(self._close_drained)
+            self._lifecycle_state = "draining"
+            self._accepted_run_condition.notify_all()
+            while self._has_lifecycle_work_locked():
+                if deadline is None:
+                    self._accepted_run_condition.wait()
+                    continue
+                remaining = deadline - monotonic()
+                if remaining <= 0:
+                    return False
+                self._accepted_run_condition.wait(remaining)
+            return True
+
+    def _force_cancel_lifecycle_work_locked(self) -> None:
+        reason = "server shutdown deadline exceeded"
+        for execution in self._accepted_run_executions_by_run_id.values():
+            execution.cancellation_token.cancel(reason)
+        for token in self._advancing_accepted_runs_by_run_id.values():
+            token.cancel(reason)
+        for future in tuple(self._tracked_accepted_run_futures):
+            future.cancel()
+        occurred_at = _utc_now_iso()
+        for run_id in tuple(self._pending_accepted_runs_by_run_id):
+            events = tuple(
+                _response_json_object(event)
+                for event in self._events_by_run_id.get(run_id, ())
+            )
+            self._run_control_response(
+                run_id,
+                "cancel_run",
+                events,
+                {"reason": reason},
+                occurred_at,
+                None,
+            )
+        self._accepted_run_condition.notify_all()
+
+    def close(self, *, timeout: float | None = None) -> bool:
+        """Drain, force-cancel on timeout, and close an owned executor once."""
+
+        timeout_seconds = _validate_server_lifecycle_timeout(timeout)
+        with self._accepted_run_condition:
+            if self._lifecycle_state == "closed":
+                return bool(self._close_drained)
+        drained = self.drain(timeout=timeout_seconds)
+        executor_to_shutdown: Executor | None = None
+        with self._accepted_run_condition:
+            if not drained:
+                self._force_cancel_lifecycle_work_locked()
+            self._lifecycle_state = "closed"
+            self._close_drained = drained
+            if (
+                self.owns_accepted_run_executor
+                and not self._owned_executor_shutdown
+            ):
+                executor_to_shutdown = self.accepted_run_executor
+                self._owned_executor_shutdown = True
+            self._accepted_run_condition.notify_all()
+        if executor_to_shutdown is not None:
+            executor_to_shutdown.shutdown(
+                wait=drained,
+                cancel_futures=not drained,
+            )
+        return drained
+
+    def _begin_server_request(self, operation: str) -> bool | None:
+        with self._accepted_run_condition:
+            if operation == "health":
+                return False
+            if self._lifecycle_state != "running":
+                return None
+            self._active_server_requests += 1
+            return True
+
+    def _finish_server_request(self) -> None:
+        with self._accepted_run_condition:
+            if self._active_server_requests < 1:
+                raise RuntimeError("server request lifecycle counter underflow")
+            self._active_server_requests -= 1
+            self._accepted_run_condition.notify_all()
+
+    def _lifecycle_unavailable_response(self) -> ServerResponse:
+        with self._accepted_run_condition:
+            lifecycle_state = self._lifecycle_state
+        return ServerResponse.json(
+            503,
+            {
+                "ok": False,
+                "errorCode": "server.lifecycle.unavailable",
+                "message": "The server is not accepting new requests.",
+                "lifecycleState": lifecycle_state,
+            },
+        )
+
+    def _accepted_run_task_done(self, future: Future[object]) -> None:
+        with self._accepted_run_condition:
+            self._tracked_accepted_run_futures.discard(future)
+            self._accepted_run_condition.notify_all()
+
+    def _accepted_run_resume_done_callback(
+        self,
+        run_id: str,
+    ) -> Callable[[Future[object]], None]:
+        def callback(future: Future[object]) -> None:
+            self._accepted_run_resume_dispatch_done(run_id, future)
+
+        return callback
+
+    def _submit_accepted_run_task(
+        self,
+        function: Callable[..., object],
+        /,
+        *args: object,
+        done_callback: Callable[[Future[object]], None] | None = None,
+        **kwargs: object,
+    ) -> Future[object]:
+        with self._accepted_run_condition:
+            if self._lifecycle_state != "running" and not (
+                self._lifecycle_state == "draining"
+                and self._request_lifecycle_admitted.get()
+            ):
+                raise RuntimeError("server app is not accepting accepted-run work")
+            executor = self.accepted_run_executor
+            if executor is None:
+                raise RuntimeError("accepted run executor is unavailable")
+            future = executor.submit(function, *args, **kwargs)
+            self._tracked_accepted_run_futures.add(future)
+            if done_callback is not None:
+                future.add_done_callback(done_callback)
+            future.add_done_callback(self._accepted_run_task_done)
+            return future
+
+    def _submit_accepted_run(
+        self,
+        run_id: str,
+        *,
+        done_callback: Callable[[Future[object]], None] | None = None,
+        **kwargs: object,
+    ) -> Future[object]:
+        return self._submit_accepted_run_task(
+            self.advance_accepted_run,
+            run_id,
+            done_callback=done_callback,
+            _lifecycle_admitted=True,
+            **kwargs,
+        )
 
     def auth_audit_events(self) -> tuple[ServerAuthAuditEvent, ...]:
         return tuple(self._auth_audit_events)
@@ -4767,27 +5009,47 @@ class GraphBlocksServerApp:
                 exact_size=True,
             )
 
-        authentication = self._authenticate_request(
-            request,
-            route_match,
-        )
-        if isinstance(authentication, ServerResponse):
-            return authentication
-        auth_decision = authentication.decision
+        return self._handle_admitted_request(request, route_match)
 
-        authorization_failure = self._authorize_request(
-            request,
-            route_match,
-            authentication,
+    def _handle_admitted_request(
+        self,
+        request: ServerRequest,
+        route_match: ServerRouteMatch,
+    ) -> ServerResponse:
+        request_tracked = self._begin_server_request(
+            route_match.endpoint.operation
         )
-        if authorization_failure is not None:
-            return authorization_failure
+        if request_tracked is None:
+            return self._lifecycle_unavailable_response()
+        lifecycle_admission = self._request_lifecycle_admitted.set(
+            bool(request_tracked)
+        )
+        try:
+            authentication = self._authenticate_request(
+                request,
+                route_match,
+            )
+            if isinstance(authentication, ServerResponse):
+                return authentication
+            auth_decision = authentication.decision
 
-        return self._dispatch_operation(
-            request,
-            route_match,
-            auth_decision,
-        )
+            authorization_failure = self._authorize_request(
+                request,
+                route_match,
+                authentication,
+            )
+            if authorization_failure is not None:
+                return authorization_failure
+
+            return self._dispatch_operation(
+                request,
+                route_match,
+                auth_decision,
+            )
+        finally:
+            self._request_lifecycle_admitted.reset(lifecycle_admission)
+            if request_tracked:
+                self._finish_server_request()
 
     def _dispatch_operation(
         self,
@@ -5896,7 +6158,7 @@ class GraphBlocksServerApp:
                         self._dispatch_admitted_tickets((admission_ticket,))
                 elif deferred and self.accepted_run_executor is not None:
                     try:
-                        executor_probe = self.accepted_run_executor.submit(
+                        executor_probe = self._submit_accepted_run_task(
                             get_ident
                         )
                     except Exception as error:
@@ -5933,8 +6195,7 @@ class GraphBlocksServerApp:
                                 },
                             )
                     try:
-                        self.accepted_run_executor.submit(
-                            self.advance_accepted_run,
+                        self._submit_accepted_run(
                             run_id,
                             _expected_admission_reservation_id=(
                                 accepted_run_execution.admission_reservation_id
@@ -6030,6 +6291,7 @@ class GraphBlocksServerApp:
                     completion = self.advance_accepted_run(
                         run_id,
                         completed_at=occurred_at,
+                        _lifecycle_admitted=True,
                     )
                 if response_mode in {"accepted", "background"}:
                     route_run_id = quote(run_id, safe="")
@@ -7477,19 +7739,13 @@ class GraphBlocksServerApp:
                 ):
                     resumable_execution.resume_dispatch_pending = True
                     try:
-                        resume_future = self.accepted_run_executor.submit(
-                            self.advance_accepted_run,
+                        resume_future = self._submit_accepted_run(
                             submission.run_id,
+                            done_callback=self._accepted_run_resume_done_callback(
+                                submission.run_id
+                            ),
                         )
                         resumable_execution.resume_future = resume_future
-                        resume_future.add_done_callback(
-                            lambda completed_future, dispatched_run_id=submission.run_id: (
-                                self._accepted_run_resume_dispatch_done(
-                                    str(dispatched_run_id),
-                                    completed_future,
-                                )
-                            )
-                        )
                     except Exception as error:
                         resumable_execution.resume_dispatch_pending = False
                         correlation_id = self._record_server_error(
@@ -8894,8 +9150,7 @@ class GraphBlocksServerApp:
             if ticket.state != "admitted":
                 continue
             try:
-                self.accepted_run_executor.submit(
-                    self.advance_accepted_run,
+                self._submit_accepted_run(
                     ticket.run_id,
                 )
             except RuntimeError:
@@ -9100,7 +9355,15 @@ class GraphBlocksServerApp:
         *,
         completed_at: str | None = None,
         _expected_admission_reservation_id: str | None = None,
+        _lifecycle_admitted: bool = False,
     ) -> dict[str, object]:
+        if not isinstance(_lifecycle_admitted, bool):
+            raise TypeError(
+                "server accepted run lifecycle admission must be a boolean"
+            )
+        with self._accepted_run_condition:
+            if not _lifecycle_admitted and self._lifecycle_state != "running":
+                raise RuntimeError("server app is not accepting accepted-run work")
         run_id = _validate_exact_non_empty_string(
             "server pending accepted run",
             "run_id",
@@ -10574,20 +10837,14 @@ class GraphBlocksServerApp:
                     )
                 checkpoint_execution.resume_dispatch_pending = True
             try:
-                resume_future = self.accepted_run_executor.submit(
-                    self.advance_accepted_run,
+                resume_future = self._submit_accepted_run(
                     run_id,
+                    done_callback=self._accepted_run_resume_done_callback(
+                        run_id
+                    ),
                 )
                 if checkpoint_execution is not None:
                     checkpoint_execution.resume_future = resume_future
-                    resume_future.add_done_callback(
-                        lambda completed_future, dispatched_run_id=run_id: (
-                            self._accepted_run_resume_dispatch_done(
-                                dispatched_run_id,
-                                completed_future,
-                            )
-                        )
-                    )
             except Exception as error:
                 if checkpoint_execution is not None:
                     checkpoint_execution.resume_dispatch_pending = False

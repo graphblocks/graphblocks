@@ -255,6 +255,19 @@ commits a fresh state version and fencing epoch. A remote-worker production
 claim still requires a durable runtime implementation and deployment-level
 lease/fence evidence.
 
+The process-local app starts in `running` state and exposes idempotent `start`,
+`drain`, and `close` operations plus a synchronous context manager. Draining
+rejects every new non-health request and direct worker claim, then waits for
+admitted requests, reservations, executor tasks, active workers, and pending
+runs. `close(timeout=...)` force-cancels their tokens and queued futures when
+that deadline expires; its Boolean result records whether closure was graceful,
+and repeated closure returns the same result. An injected executor remains
+caller-owned by default. The app invokes `shutdown` exactly once only when
+`owns_accepted_run_executor=True`; ownership without an executor is invalid.
+Health remains observable while draining or closed so an adapter can expose the
+lifecycle transition. A network adapter MUST stop admitting connections and
+request bodies before invoking this app-level drain contract.
+
 The native stdlib runtime provides a preview, local-filesystem SQLite
 continuation through `checkpointStorePath`. Cooperating processes that resume
 the same run through the same checkpoint store are serialized by a lock file

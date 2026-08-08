@@ -3929,6 +3929,7 @@ def test_ci_primes_offline_rust_inputs_and_retains_failure_diagnostics() -> None
         "github.event.pull_request.base.sha || github.event.before }}"
     )
     coverage_command = coverage_step["run"]
+    assert "tests/test_server_lifecycle.py" in coverage_command
     for module, threshold in (
         ("server.py", 80),
         ("policy.py", 65),
