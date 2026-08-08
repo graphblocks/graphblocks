@@ -295,3 +295,6 @@ resolved:
   - id: GB-QA-004
     fixCommits: [0eac118e]
     regression: [tests/test_python_boundary_safety.py, tests/test_quick_ci_gate.py]
+  - id: GB-ARCH-012
+    fixCommits: [3355ba1d]
+    regression: [tests/test_shared_primitives.py, tests/test_approval_model.py, tests/test_review_core.py, tests/test_client_package.py, tests/test_tool_adapters.py]
