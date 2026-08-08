@@ -250,3 +250,6 @@ resolved:
   - id: GB-PERF-008
     fixCommits: ['75856fad']
     regression: [tests/test_performance_budgets.py]
+  - id: GB-SEC-011
+    fixCommits: ['a89557c7']
+    regression: [tests/test_server_field_limits.py]

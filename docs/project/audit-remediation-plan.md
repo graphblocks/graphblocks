@@ -53,12 +53,12 @@ A finding moves to resolved only when:
 4. the release matrix or profile evidence is updated when the finding changes a
    compatibility or production claim.
 
-The current generated count is 82 resolved findings: all 27 P0/P1 findings,
+The current generated count is 83 resolved findings: all 27 P0/P1 findings,
 the first 11 P2 findings, GB-ARCH-013, and GB-ARCH-015 through GB-ARCH-017.
 GB-COR-005 through GB-COR-009 are also resolved. There are zero open P0/P1,
-9 open P2, and 8 open P3; GB-COR-010 through GB-COR-015, GB-DOC-006, GB-INP-006,
+8 open P2, and 8 open P3; GB-COR-010 through GB-COR-015, GB-DOC-006, GB-INP-006,
 GB-INP-007, GB-INP-008, GB-INP-010, GB-PERF-004, GB-PERF-005, and GB-PERF-008
-are resolved. GB-ARCH-012
+are resolved. GB-SEC-011 is also resolved. GB-ARCH-012
 remains open pending shared-primitives consolidation. GB-PERF-006 is resolved
 with tenant/owner-scoped indexed run-list cursor pagination and a 10,000-run
 bounded-projection regression.
@@ -336,6 +336,17 @@ normalized growth cap; elapsed cases use warmup plus three median observations,
 while deterministic reachable server bytes use one observation. The existing
 fresh-process import time/RSS/module budgets remain a named companion gate, and
 CI retains the raw benchmark report with its manifest digest.
+`GB-SEC-011` is resolved by a closed server field policy. Identifier-shaped
+fields require NFC-normalized printable ASCII without surrounding whitespace
+and are capped at 4,096 UTF-8 bytes. Reasons are NFC-normalized, capped at
+4,096 bytes, and reject control, format/directional, surrogate, and Unicode
+line-separator categories. Timestamps are capped at 128 bytes, general free
+text and route paths are bounded at 128 KiB, unsafe exception details are
+hashed before entering the audit journal, and the request-body budget rejects
+multi-megabyte identifiers before JSON materialization. The regression corpus
+covers exact boundaries, NUL/CRLF/bidi characters, normalization variants,
+unsafe detach reasons, callback diagnostics, and non-reflecting public errors;
+the implementation has 97.8% changed-line branch coverage.
 
 Phase 1 exits when every related P1 has executable closure evidence, the durable
 vertical slice passes multi-process crash/restart tests, and resource-budget

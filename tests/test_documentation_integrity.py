@@ -1707,8 +1707,8 @@ def test_stable_release_matrix_is_complete_and_machine_readable() -> None:
         "authority": "docs/project/audit-issue-status.yaml",
         "inventory": "docs/project/audit-issues.json",
         "checker": "tools/check_audit_inventory.py",
-        "resolved": 82,
-        "openBySeverity": {"P0": 0, "P1": 0, "P2": 9, "P3": 8},
+        "resolved": 83,
+        "openBySeverity": {"P0": 0, "P1": 0, "P2": 8, "P3": 8},
     }
     rust_debt = audit_gate["rustProductionExpectDebt"]
     assert rust_debt["workspaceLint"] == "clippy::expect_used=deny"
@@ -1838,6 +1838,22 @@ def test_stable_release_matrix_is_complete_and_machine_readable() -> None:
         "ciReport": "dist/ci/python-performance-budgets.json",
         "regression": "tests/test_performance_budgets.py",
     }
+    assert audit_gate["serverFieldLimits"] == {
+        "identifiers": {
+            "maxUtf8Bytes": 4096,
+            "normalization": "NFC",
+            "characters": "printable-ascii-no-whitespace",
+        },
+        "reasons": {"maxUtf8Bytes": 4096, "normalization": "NFC"},
+        "timestamps": {"maxUtf8Bytes": 128, "normalization": "NFC"},
+        "generalFreeText": {"maxUtf8Bytes": 131072, "normalization": "NFC"},
+        "routePaths": {"maxUtf8Bytes": 131072, "normalization": "NFC"},
+        "rejectedUnicodeCategories": ["Cc", "Cf", "Cs", "Zl", "Zp"],
+        "unsafeAuditDetails": "sha256-digest",
+        "oversizedRequestStatus": 413,
+        "regression": "tests/test_server_field_limits.py",
+        "changedLineBranchCoveragePercent": 97.8,
+    }
     assert "stable-public-server-error-codes-correlation-and-bounded-internal-audit" in (
         audit_gate["implementedEvidence"]
     )
@@ -1874,6 +1890,10 @@ def test_stable_release_matrix_is_complete_and_machine_readable() -> None:
     )
     assert (
         "deterministic-canonical-journal-compiler-and-server-memory-budgets"
+        in audit_gate["implementedEvidence"]
+    )
+    assert (
+        "normalized-and-bounded-server-identifiers-reasons-and-timestamps"
         in audit_gate["implementedEvidence"]
     )
     assert "signed-candidate-and-final-promotion-audit-closure-binding" in (

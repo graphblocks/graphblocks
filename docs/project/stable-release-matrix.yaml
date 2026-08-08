@@ -109,8 +109,8 @@ deepAudit:
     authority: docs/project/audit-issue-status.yaml
     inventory: docs/project/audit-issues.json
     checker: tools/check_audit_inventory.py
-    resolved: 82
-    openBySeverity: {P0: 0, P1: 0, P2: 9, P3: 8}
+    resolved: 83
+    openBySeverity: {P0: 0, P1: 0, P2: 8, P3: 8}
   exitPolicy:
     securityFreeze: {maxOpenP0: 0}
     stableRelease: {maxOpenP0: 0, maxOpenP1: 0}
@@ -1074,6 +1074,7 @@ releaseGates:
       - summary-only-sync-responses-and-bounded-cursor-event-replay
       - common-bounded-json-schema-execution-policy-and-entry-point-corpus
       - deterministic-canonical-journal-compiler-and-server-memory-budgets
+      - normalized-and-bounded-server-identifiers-reasons-and-timestamps
     evidence:
       - docs/project/audit-issues.json
       - docs/project/audit-issue-status.yaml
@@ -1153,6 +1154,8 @@ releaseGates:
       - tools/check_performance_budgets.py
       - tests/test_performance_budgets.py
       - docs/project/performance-budgets.md
+      - src/graphblocks/server.py
+      - tests/test_server_field_limits.py
     serverLifecycle:
       states: [running, draining, closed]
       healthAvailableDuringShutdown: true
@@ -1220,6 +1223,22 @@ releaseGates:
       companionImportGate: compatibility/python-package-boundaries.yaml#coldImportBudgets
       ciReport: dist/ci/python-performance-budgets.json
       regression: tests/test_performance_budgets.py
+    serverFieldLimits:
+      identifiers:
+        maxUtf8Bytes: 4096
+        normalization: NFC
+        characters: printable-ascii-no-whitespace
+      reasons:
+        maxUtf8Bytes: 4096
+        normalization: NFC
+      timestamps: {maxUtf8Bytes: 128, normalization: NFC}
+      generalFreeText: {maxUtf8Bytes: 131072, normalization: NFC}
+      routePaths: {maxUtf8Bytes: 131072, normalization: NFC}
+      rejectedUnicodeCategories: [Cc, Cf, Cs, Zl, Zp]
+      unsafeAuditDetails: sha256-digest
+      oversizedRequestStatus: 413
+      regression: tests/test_server_field_limits.py
+      changedLineBranchCoveragePercent: 97.8
     quickFeedbackCi:
       workflow: .github/workflows/ci.yml
       job: python-quality
