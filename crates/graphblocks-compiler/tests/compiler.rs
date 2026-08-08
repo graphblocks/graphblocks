@@ -597,7 +597,8 @@ fn compile_graph_orders_config_errors_by_rendered_diagnostic_path() -> Result<()
             "type": "object",
             "properties": {
                 "a-b": {"type": "integer"},
-                "b": {"type": "integer"}
+                "b": {"type": "integer"},
+                "quote\"slash\\": {"type": "integer"}
             },
             "additionalProperties": false
         }
@@ -610,7 +611,11 @@ fn compile_graph_orders_config_errors_by_rendered_diagnostic_path() -> Result<()
             "nodes": {
                 "configured": {
                     "block": "test.error-order@1",
-                    "config": {"a-b": "invalid", "b": "invalid"}
+                    "config": {
+                        "a-b": "invalid",
+                        "b": "invalid",
+                        "quote\"slash\\": "invalid"
+                    }
                 }
             }
         }
@@ -628,6 +633,7 @@ fn compile_graph_orders_config_errors_by_rendered_diagnostic_path() -> Result<()
         vec![
             "$.spec.nodes.configured.config.b",
             "$.spec.nodes.configured.config[\"a-b\"]",
+            "$.spec.nodes.configured.config[\"quote\\\"slash\\\\\"]",
         ]
     );
     Ok(())

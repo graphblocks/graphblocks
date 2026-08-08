@@ -1,5 +1,3 @@
-#![allow(clippy::expect_used)] // Guarded by compatibility/rust-production-expect-budget.json.
-
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
@@ -519,7 +517,9 @@ fn parse_output_requiredness(
     if object.len() != 1 {
         return Err("requiredWhen must contain exactly one predicate operator".to_owned());
     }
-    let (operator, operand) = object.iter().next().expect("one predicate operator");
+    let Some((operator, operand)) = object.iter().next() else {
+        return Err("requiredWhen must contain exactly one predicate operator".to_owned());
+    };
     match operator.as_str() {
         "configEquals" => {
             let operand = operand
@@ -4695,7 +4695,7 @@ fn config_diagnostic_path(node_name: &str, pointer: &str) -> String {
             path.push(']');
         } else {
             path.push('[');
-            path.push_str(&serde_json::to_string(&segment).expect("string JSON serialization"));
+            path.push_str(&Value::String(segment).to_string());
             path.push(']');
         }
     }
