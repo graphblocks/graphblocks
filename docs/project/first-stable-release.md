@@ -238,6 +238,14 @@ record and SHA-256. The evidence runner also compares the installed package and
 loaded native-module bytes with that wheel, while release assembly rechecks the
 artifact identity against retained artifacts.
 
+The bundled stable C1 runtime suite now follows the same artifact rule. Every
+case executes the Rust stdlib scheduler/journal path without fallback, compares
+status, outputs, terminal state, and normalized lifecycle order with the Python
+oracle, and binds the runtime report to the exact `graphblocks-runtime` wheel.
+This promotes only the named local scheduler/journal slice; production
+suspension, crash/restart, lease/fence, and durable effect boundaries remain
+blocked.
+
 ## Release gates
 
 The first stable release is blocked until all of these statements are evidenced

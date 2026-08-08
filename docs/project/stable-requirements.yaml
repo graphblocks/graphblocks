@@ -202,16 +202,21 @@ profiles:
           - GB-GCR-SCHEDULING-001
           - GB-GCR-CONDITIONAL-EXECUTION-001
         implementations:
-          pythonFacadeAndReference:
-            - src/graphblocks/runtime.py
-          targetNormative:
+          normative:
             - crates/graphblocks-runtime-core/src/scheduler.rs
             - crates/graphblocks-runtime-core/src/stdlib_runtime.rs
+            - crates/graphblocks-python/src/lib.rs
+            - packages/graphblocks-runtime/src/graphblocks_runtime/__init__.py
+          pythonFacadeAndReference:
+            - src/graphblocks/runtime.py
         schemas: []
         tckSuites: [runtime]
         evidence:
           - tests/test_runtime.py
           - tests/test_stdlib_runtime_contracts.py
+          - tests/test_testing_package.py
+          - packages/graphblocks-testing/src/graphblocks_testing/runners.py
+          - packages/graphblocks-testing/src/graphblocks_testing/fixtures/tck/runtime/cases.json
           - tck/runtime/cases.json
       - id: typed-ports
         clauses:
@@ -274,15 +279,20 @@ profiles:
           - GB-GCR-SCHEDULING-001
           - GB-GCR-CONDITIONAL-EXECUTION-001
         implementations:
+          normative:
+            - crates/graphblocks-runtime-core/src/journal.rs
+            - crates/graphblocks-python/src/lib.rs
+            - packages/graphblocks-runtime/src/graphblocks_runtime/__init__.py
           pythonFacadeAndReference:
             - src/graphblocks/runtime.py
-          targetNormative:
-            - crates/graphblocks-runtime-core/src/journal.rs
         schemas: []
         tckSuites: [runtime]
         evidence:
           - tests/test_runtime.py
           - tests/test_runtime_package.py
+          - tests/test_testing_package.py
+          - packages/graphblocks-testing/src/graphblocks_testing/runners.py
+          - packages/graphblocks-testing/src/graphblocks_testing/fixtures/tck/runtime/cases.json
           - tck/runtime/cases.json
       - id: local-flow
         clauses:

@@ -9880,6 +9880,7 @@ def test_testing_package_cli_emits_observed_release_tck_identity(
         "artifactType": "wheel",
     }
     native_calls: list[str] = []
+    native_runtime_calls: list[str] = []
     reference_compile = graphblocks_testing.compile_graph
 
     def normative_compile(
@@ -9893,6 +9894,19 @@ def test_testing_package_cli_emits_observed_release_tck_identity(
             document,
             block_catalog=block_catalog,
             allow_unknown_blocks=allow_unknown_blocks,
+        )
+
+    def run_stdlib_graph(
+        graph: dict[str, object],
+        inputs: dict[str, object],
+        **options: object,
+    ) -> dict[str, object]:
+        native_runtime_calls.append(str(graph["metadata"]["name"]))  # type: ignore[index]
+        return _fake_native_stdlib_result(
+            graphblocks_testing,
+            graph,
+            inputs,
+            options,
         )
 
     monkeypatch.setattr(
@@ -9909,6 +9923,11 @@ def test_testing_package_cli_emits_observed_release_tck_identity(
         graphblocks_testing,
         "_native_compiler_version",
         lambda: "0.1.0",
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "graphblocks_runtime",
+        SimpleNamespace(run_stdlib_graph=run_stdlib_graph),
     )
 
     exit_code = graphblocks_testing.main(
@@ -9970,6 +9989,20 @@ def test_testing_package_cli_emits_observed_release_tck_identity(
         "1.0.0rc1"
     )
     assert len(native_calls) == len(compiler_report["results"])
+    runtime_report = payload["reports"]["runtime"]
+    assert runtime_report["evidence"]["implementation"] == "graphblocks-runtime"
+    assert runtime_report["evidence"]["implementation_version"] == "0.1.0"
+    assert runtime_report["evidence"]["implementation_artifact"] == compiler_artifact
+    assert runtime_report["evidence"]["authority_claim"]["comparison"] == (
+        "exact-native-reference"
+    )
+    assert runtime_report["evidence"]["execution_claim"]["executor_id"] == (
+        "rust-runtime-exact-differential"
+    )
+    assert runtime_report["evidence"]["reference_implementation_version"] == (
+        "1.0.0rc1"
+    )
+    assert len(native_runtime_calls) == len(runtime_report["results"])
     assert payload["contentDigest"] == graphblocks_testing.canonical_hash(
         {key: value for key, value in payload.items() if key != "contentDigest"}
     )

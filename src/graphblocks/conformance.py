@@ -264,21 +264,33 @@ class ConformanceAuthorityMatrix:
         }
         if len(executors) != len(raw_executors):
             raise ValueError("authority TCK executor ids must be unique")
-        executors_by_implementation: dict[str, _TckExecutor] = {}
+        executors_by_implementation: dict[str, list[_TckExecutor]] = {}
         for executor in executors.values():
-            if executor.implementation in executors_by_implementation:
-                raise ValueError(
-                    "authority TCK executor implementations must be unique"
-                )
-            executors_by_implementation[executor.implementation] = executor
-        for executor in executors.values():
-            reference_executor = executors_by_implementation.get(
-                executor.reference_implementation
+            implementation_executors = executors_by_implementation.setdefault(
+                executor.implementation,
+                [],
             )
+            if any(
+                set(prior.allowed_suites).intersection(executor.allowed_suites)
+                for prior in implementation_executors
+            ):
+                raise ValueError(
+                    "authority TCK executors for one implementation must own "
+                    "disjoint suites"
+                )
+            implementation_executors.append(executor)
+        for executor in executors.values():
+            reference_executors = [
+                candidate
+                for candidate in executors_by_implementation.get(
+                    executor.reference_implementation,
+                    (),
+                )
+                if candidate.language == "python"
+                and candidate.comparison == "reference-only"
+            ]
             if (
-                reference_executor is None
-                or reference_executor.language != "python"
-                or reference_executor.comparison != "reference-only"
+                len(reference_executors) != 1
             ):
                 raise ValueError(
                     f"authority executor {executor.executor_id!r} must name a "

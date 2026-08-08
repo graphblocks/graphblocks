@@ -217,6 +217,7 @@ class TckRunner:
     authority_language = "python"
     authority_comparison = "reference-only"
     authority_reference_implementation = "graphblocks-python"
+    native_runtime_authority = False
 
     registry: RuntimeRegistry
     profile: str = "local"
@@ -8763,7 +8764,7 @@ class TckRunner:
 
     def _run_runtime_case(self, case: TckCase) -> TckResult:
         try:
-            if self.profile == "native":
+            if self.profile == "native" or self.native_runtime_authority:
                 from graphblocks_runtime import run_stdlib_graph
 
                 run_id = "tck-" + "".join(
@@ -8967,3 +8968,12 @@ class _NormativeCompilerTckRunner(TckRunner):
                 "normative compiler result differs from the Python reference oracle"
             )
         return normative_plan
+
+
+class _NormativeRuntimeTckRunner(TckRunner):
+    __slots__ = ()
+    authority_executor_id = "rust-runtime-exact-differential"
+    authority_language = "rust"
+    authority_comparison = "exact-native-reference"
+    authority_reference_implementation = "graphblocks-python"
+    native_runtime_authority = True

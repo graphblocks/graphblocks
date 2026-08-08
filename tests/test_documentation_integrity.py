@@ -1025,6 +1025,7 @@ def test_profile_release_tracks_are_closed_owned_and_independent() -> None:
     }
     assert profiles["GB-C1-LOCAL-RUNTIME"]["authority"] == {
         "activeCompiler": "rust",
+        "activeLocalRuntime": "rust",
         "activeReferenceInterpreter": "python",
         "targetProductionScheduler": "rust-transition-blocked",
         "inheritedAuthorityFrom": "extends",
@@ -2191,6 +2192,9 @@ def test_stable_release_matrix_is_complete_and_machine_readable() -> None:
     assert "broader-resource-schema-validation-and-migration-authority" in (
         authority["completedPhases"]
     )
+    assert "installed-local-runtime-exact-differential" in authority[
+        "completedPhases"
+    ]
     assert "supported-installed-native-compiler-tck-and-artifact-evidence" not in (
         authority["remainingPhases"]
     )
@@ -2221,6 +2225,7 @@ def test_stable_release_matrix_is_complete_and_machine_readable() -> None:
     )
     assert matrix_profiles["GB-C1-LOCAL-RUNTIME"]["authority"] == {
         "activeCompiler": "rust",
+        "activeLocalRuntime": "rust",
         "activeReferenceInterpreter": "python",
         "targetProductionScheduler": "rust-transition-blocked",
         "inheritedAuthorityFrom": "extends",
@@ -2296,6 +2301,10 @@ def test_stable_release_matrix_is_complete_and_machine_readable() -> None:
     )
     assert (
         "native-resource-schema-validation-and-migration-routing-and-installed-differential"
+        in authority_gate["completedEvidence"]
+    )
+    assert (
+        "supported-installed-native-local-runtime-differential-and-artifact-identity"
         in authority_gate["completedEvidence"]
     )
     assert (

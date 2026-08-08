@@ -66,10 +66,19 @@ def test_authority_matrix_binds_stable_profile_suite_language_claims() -> None:
         "comparison": "reference-only",
         "reference_implementation": "graphblocks-python",
     }
+    assert suite_claims["runtime"] == {
+        "executor_id": "rust-runtime-exact-differential",
+        "implementation": "graphblocks-runtime",
+        "language": "rust",
+        "profile_id": "GB-C1-LOCAL-RUNTIME",
+        "authority_role": "activeLocalRuntime",
+        "comparison": "exact-native-reference",
+        "reference_implementation": "graphblocks-python",
+    }
     assert {
         claim["language"]
         for suite, claim in suite_claims.items()
-        if suite != "compiler"
+        if suite not in {"compiler", "runtime"}
     } == {"python"}
 
 
@@ -171,13 +180,8 @@ def test_authority_matrix_rejects_suite_or_executor_drift() -> None:
         "profile": "GB-C1-LOCAL-RUNTIME",
         "authorityRole": "activeCompiler",
     }
-    relabeled_matrix = ConformanceAuthorityMatrix.from_document(coordinated_relabel)
-    with pytest.raises(ValueError, match="executor"):
-        relabeled_matrix.validate_tck_claims(
-            claimed_profiles=relabeled_matrix.claimed_profiles,
-            declared_suites_by_profile=declared_suites,
-            observed_execution_claims=observed_execution_claims,
-        )
+    with pytest.raises(ValueError, match="disjoint suites"):
+        ConformanceAuthorityMatrix.from_document(coordinated_relabel)
 
     with pytest.raises(ValueError, match="profiles"):
         matrix.validate_tck_claims(

@@ -37,7 +37,7 @@ The transition is phase-scoped:
 | Python graph builders, typed authoring, YAML composition, and ergonomic schema APIs | Python | Supported authoring surface; materializes portable resources for the normative compiler |
 | Reference compiler and local reference interpreter | Python | Explicit oracle through `graphblocks.compiler.compile_graph_reference` and reference-runtime/TCK imports; never an implicit production fallback |
 | Standalone canonical/schema-identity and resource validation/migration utility authority | Rust | Implemented through fail-closed public canonical, `SchemaId.parse`, resource validation, and migration facades; supported installed-wheel evidence binds public, reference, and direct-native results over the complete shared resource corpora to the exact runtime artifact |
-| Runtime protocol and production scheduler | Rust | Runtime protocol handshake is implemented and candidate-enforced; scheduler, suspension, crash/restart, and fencing evidence still block the release gate |
+| Runtime protocol and production scheduler | Rust | Runtime protocol handshake and the installed stable C1 local scheduler/journal slice are exact native/reference evidence; suspension, crash/restart, fencing, and the wider production scheduler still block the release gate |
 | AI application, governance, durable stream, voice, deployment, observability, and integrations | Profile-specific | No authority or stability is implied until the named extension profile passes its own gates |
 
 The Python API follows these rules:
@@ -102,7 +102,10 @@ Rust implementation crates remain internal APIs unless separately promoted.
    the complete schema TCK.
 4. Move the production scheduler and durable authority checks behind the Rust
    runtime protocol while retaining the Python local runtime as a reference
-   interpreter.
+   interpreter. The installed stable C1 local scheduler/journal slice now runs
+   through the Rust stdlib runtime, fails closed without it, and compares the
+   complete stable result/lifecycle contract with the Python oracle. Wider
+   production suspension and durability evidence remains incomplete.
 5. Extract the reusable control-plane library so language bindings do not
    depend on an executable/control-plane layer. This step is implemented:
    `graphblocks-python` and the one-shot `graphblocks-control` CLI both consume
@@ -122,6 +125,10 @@ plane as stable.
   reference fallback.
 - Installed-wheel tests must execute the same native compiler artifact that is
   named in release evidence.
+- Installed stable runtime tests execute the Rust stdlib scheduler and journal
+  on every bundled C1 runtime case, reject implicit fallback, compare the
+  stable result and normalized lifecycle contract with the Python oracle, and
+  bind both compiler and runtime reports to the same exact native wheel.
 - Installed-wheel tests execute public canonical, SchemaId, resource
   validation, and resource migration facades beside the explicit Python
   references and direct native functions. They bind the complete shared

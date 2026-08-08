@@ -256,13 +256,20 @@ def _release_evidence(
             evidence["reference_implementation_version"] = expectation[
                 "reference_implementation_version"
             ]
+        results = [
+            {"case_id": case_id, "status": "passed"}
+            for case_id in expectation["case_ids"]
+        ]
+        if suite == "runtime":
+            for result in results:
+                result["observed"] = {
+                    "runtime": "native",
+                    "native_reference_match": True,
+                }
         reports[suite] = {
             "ok": True,
             "evidence": evidence,
-            "results": [
-                {"case_id": case_id, "status": "passed"}
-                for case_id in expectation["case_ids"]
-            ],
+            "results": results,
         }
     tck = _with_content_digest(
         {
@@ -396,6 +403,9 @@ def _write_platform_input(
         and record["artifactType"] == "wheel"
     )
     tck["reports"]["compiler"]["evidence"]["implementation_artifact"] = dict(
+        native_compiler_artifact
+    )
+    tck["reports"]["runtime"]["evidence"]["implementation_artifact"] = dict(
         native_compiler_artifact
     )
     tck.pop("contentDigest")

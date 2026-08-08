@@ -365,7 +365,7 @@ def test_release_evidence_gate_requires_nonempty_identity_bound_tck_reports() ->
         module._require_release_evidence(invalid, kind="TCK")
 
 
-def test_release_evidence_binds_compiler_report_to_exact_runtime_wheel() -> None:
+def test_release_evidence_binds_compiler_and_runtime_reports_to_exact_runtime_wheel() -> None:
     module = _load_wheelhouse_module()
     artifact = {
         "filename": "graphblocks_runtime-0.1.0-cp311-abi3-linux_x86_64.whl",
@@ -394,7 +394,27 @@ def test_release_evidence_binds_compiler_report_to_exact_runtime_wheel() -> None
                         "results": [
                             {"case_id": "compiler/native", "status": "passed"}
                         ],
-                    }
+                    },
+                    "runtime": {
+                        "ok": True,
+                        "evidence": {
+                            "fixture_digest": "sha256:" + "c" * 64,
+                            "implementation": "graphblocks-runtime",
+                            "implementation_version": "0.1.0",
+                            "implementation_artifact": observed_artifact,
+                            "suite": "runtime",
+                        },
+                        "results": [
+                            {
+                                "case_id": "runtime/native",
+                                "status": "passed",
+                                "observed": {
+                                    "runtime": "native",
+                                    "native_reference_match": True,
+                                },
+                            }
+                        ],
+                    },
                 },
             },
         )
@@ -421,7 +441,7 @@ def test_release_evidence_binds_compiler_report_to_exact_runtime_wheel() -> None
             kind="TCK",
             expected_compiler_artifact=artifact,
         )
-    with pytest.raises(RuntimeError, match="require an exact compiler artifact"):
+    with pytest.raises(RuntimeError, match="require an exact native artifact"):
         module._require_release_evidence(
             valid,
             kind="TCK",
@@ -981,10 +1001,29 @@ def test_stable_tck_expectations_bind_bundled_c0_c1_profiles_and_contract_digest
     assert expectations["suites"]["compiler"][
         "reference_implementation_version"
     ] == "1.0.0rc1"
+    assert expectations["suites"]["runtime"]["implementation"] == (
+        "graphblocks-runtime"
+    )
+    assert expectations["suites"]["runtime"]["implementation_version"] == (
+        "0.1.0"
+    )
+    assert expectations["suites"]["runtime"][
+        "implementation_artifact_distribution"
+    ] == "graphblocks-runtime"
+    assert expectations["suites"]["runtime"]["execution_claim"] == {
+        "executor_id": "rust-runtime-exact-differential",
+        "implementation": "graphblocks-runtime",
+        "language": "rust",
+        "comparison": "exact-native-reference",
+        "reference_implementation": "graphblocks-python",
+    }
+    assert expectations["suites"]["runtime"][
+        "reference_implementation_version"
+    ] == "1.0.0rc1"
     assert {
         expectation["implementation"]
         for suite, expectation in expectations["suites"].items()
-        if suite != "compiler"
+        if suite not in {"compiler", "runtime"}
     } == {"graphblocks-python"}
 
 

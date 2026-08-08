@@ -48,7 +48,11 @@ from .fixture_loading import (
 from .models import _BUNDLED_TCK_SUITES, _STABLE_RELEASE_PROFILES
 from .profiles import ConformanceProfileSet, check_tck_suite_coverage
 from .reports import TckReport
-from .runners import TckRunner, _NormativeCompilerTckRunner
+from .runners import (
+    TckRunner,
+    _NormativeCompilerTckRunner,
+    _NormativeRuntimeTckRunner,
+)
 
 
 def _native_compiler_version() -> str:
@@ -462,7 +466,7 @@ def main(argv: list[str] | None = None) -> int:
     run_all_parser.add_argument(
         "--native-compiler-wheel",
         type=Path,
-        help="bind compiler TCK evidence to an exact installed runtime wheel",
+        help="bind compiler and local-runtime TCK evidence to an exact installed runtime wheel",
     )
     run_all_parser.add_argument("--json", action="store_true", help="emit JSON")
     acceptance_parser = subparsers.add_parser(
@@ -612,6 +616,10 @@ def main(argv: list[str] | None = None) -> int:
                 raise ValueError(
                     "--native-compiler-wheel requires the compiler TCK suite"
                 )
+            if not any(manifest.suite_id == "runtime" for manifest in manifests):
+                raise ValueError(
+                    "--native-compiler-wheel requires the runtime TCK suite"
+                )
             artifact_loader = facade_dependency(
                 "_native_compiler_wheel_artifact",
                 _native_compiler_wheel_artifact,
@@ -652,6 +660,19 @@ def main(argv: list[str] | None = None) -> int:
                         _native_compiler_version,
                     )(),
                 )
+            elif manifest.suite_id == "runtime" and compiler_artifact is not None:
+                runner = _NormativeRuntimeTckRunner(
+                    _tck_registry(manifest.suite_id),
+                    profile=args.profile,
+                    evidence_dir=evidence_dir,
+                    suite=manifest.suite_id,
+                    fixture_digest=manifest.fixture_digest,
+                    implementation="graphblocks-runtime",
+                    implementation_version=facade_dependency(
+                        "_native_compiler_version",
+                        _native_compiler_version,
+                    )(),
+                )
             else:
                 runner = TckRunner(
                     _tck_registry(manifest.suite_id),
@@ -669,7 +690,9 @@ def main(argv: list[str] | None = None) -> int:
                 {"case_ids": list(manifest.case_ids)}
             )
             evidence["suite_manifest_digest"] = manifest.content_digest()
-            if manifest.suite_id == "compiler" and compiler_artifact is not None:
+            if manifest.suite_id in {"compiler", "runtime"} and (
+                compiler_artifact is not None
+            ):
                 evidence["implementation_artifact"] = dict(compiler_artifact)
             observed_execution_claims[manifest.suite_id] = {
                 "executor_id": runner.authority_executor_id,

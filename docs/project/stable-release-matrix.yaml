@@ -135,6 +135,7 @@ authorityTransition:
     - packaged-authority-matrix-and-installed-language-claim-validation
     - standalone-canonical-and-schema-facade-authority
     - broader-resource-schema-validation-and-migration-authority
+    - installed-local-runtime-exact-differential
   remainingPhases:
     - production-scheduler-and-durable-authority
   targetMilestone: phase-2-before-1.0
@@ -154,7 +155,6 @@ authorityTransition:
         allowedSuites:
           - application-events
           - retry
-          - runtime
           - schema
           - sequence
           - tool-execution
@@ -166,6 +166,12 @@ authorityTransition:
         comparison: exact-native-reference
         referenceImplementation: graphblocks-python
         allowedSuites: [compiler]
+      rust-runtime-exact-differential:
+        implementation: graphblocks-runtime
+        language: rust
+        comparison: exact-native-reference
+        referenceImplementation: graphblocks-python
+        allowedSuites: [runtime]
     suiteClaims:
       application-events:
         executor: python-reference
@@ -180,9 +186,9 @@ authorityTransition:
         profile: GB-C1-LOCAL-RUNTIME
         authorityRole: activeReferenceInterpreter
       runtime:
-        executor: python-reference
+        executor: rust-runtime-exact-differential
         profile: GB-C1-LOCAL-RUNTIME
-        authorityRole: activeReferenceInterpreter
+        authorityRole: activeLocalRuntime
       schema:
         executor: python-reference
         profile: GB-C0-SCHEMA
@@ -425,7 +431,7 @@ profiles:
     implementation: rust-native-runtime-target+python-reference-oracle
     tier: stable
     readiness: blocked
-    authority: {activeCompiler: rust, activeReferenceInterpreter: python, targetProductionScheduler: rust-transition-blocked, inheritedAuthorityFrom: extends}
+    authority: {activeCompiler: rust, activeLocalRuntime: rust, activeReferenceInterpreter: python, targetProductionScheduler: rust-transition-blocked, inheritedAuthorityFrom: extends}
     promotionGate: REL-CORE-PROFILE
     extends: [GB-C0-SCHEMA]
     requiredGates: [REL-CORE-PROFILE, REL-WIRE-V1, REL-CLOSED-SCHEMA, REL-CLOSED-WORLD, REL-DIAGNOSTICS, REL-TRACEABILITY, REL-INSTALLED-TCK, REL-NORMATIVE-AUTHORITY, REL-API-SNAPSHOT, REL-RUNTIME-CORRECTNESS]
@@ -1445,6 +1451,7 @@ releaseGates:
       - native-first-canonical-schema-identity-facade-and-explicit-reference-oracle-without-implicit-fallback
       - supported-installed-native-canonical-schema-identity-differential-and-artifact-identity
       - native-resource-schema-validation-and-migration-routing-and-installed-differential
+      - supported-installed-native-local-runtime-differential-and-artifact-identity
       - fallible-panic-free-rust-public-boundaries
     completedEvidence:
       - accepted-authority-transition-adr
@@ -1457,6 +1464,7 @@ releaseGates:
       - native-first-canonical-schema-identity-facade-and-explicit-reference-oracle-without-implicit-fallback
       - supported-installed-native-canonical-schema-identity-differential-and-artifact-identity
       - native-resource-schema-validation-and-migration-routing-and-installed-differential
+      - supported-installed-native-local-runtime-differential-and-artifact-identity
     blockers:
       - production-runtime-authority-transition-incomplete
       - remaining-normative-phase-differential-evidence-incomplete

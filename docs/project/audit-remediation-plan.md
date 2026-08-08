@@ -563,8 +563,11 @@ runs the selected Rust wheel and Python oracle and compares the complete Plan
 contract before the Rust result is accepted. A separate installed platform
 record proves the active canonical/SchemaId and resource
 validation/migration utility slices. The complete schema and C1 runtime suite
-claims remain `reference-only`, preserving the boundary for other
-schema-facing behavior and the transition blocker for the production scheduler.
+claims are phase-scoped: the bundled stable runtime suite now executes the Rust
+stdlib path with exact native/reference result and lifecycle comparison, while
+the remaining C1 suites stay `reference-only`. This preserves the boundary for
+other schema-facing behavior and the transition blocker for the production
+scheduler.
 This accepted, phase-scoped authority direction resolves `GB-ARCH-020` itself;
 it does not close the separately tracked production scheduler transition
 blocker required by `REL-NORMATIVE-AUTHORITY`.

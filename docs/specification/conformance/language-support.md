@@ -9,7 +9,7 @@ release compatibility promise.
 | Graph compiler and canonical Plan identity | `compile_graph` is a fail-closed native facade; `compile_graph_reference` is the explicit oracle executed beside every installed compiler-TCK case | Normative compiler, exposed through the exact `graphblocks-runtime` wheel and accepted only when its complete Plan contract matches the Python oracle |
 | Cross-file YAML composition authoring | Implemented; materializes an expanded Graph | Does not resolve authoring sources; consumes expanded Graph YAML |
 | Typed code graph authoring | Implemented and mypy-tested for the stdlib RAG vertical slice; catalog-backed and materializes a portable Graph | Implemented and trybuild-tested for the stdlib RAG vertical slice; catalog-backed and materializes a portable Graph |
-| Local runtime, cancellation, tools, budget core | Implemented reference interpreter | Implemented target core; normative scheduler promotion remains blocked on protocol and durability evidence |
+| Local runtime, cancellation, tools, budget core | Implemented reference interpreter and exact oracle for the bundled stable runtime suite | Active authority for the installed stable local scheduler/journal slice; wider cancellation, tool, budget, suspension, and production scheduler promotion remains blocked on durability evidence |
 | Documents, RAG, conversation reference APIs | Implemented | Selected core models/TCK behavior |
 | Accepted runs and callback resume | Reference server; process-local checkpoint continuation | Preview single-process/single-worker SQLite continuation plus core async/callback records and TCK behavior; consumes trusted pre-admission assertions and does not query policy/budget/schema/lease authorities or verify lease freshness |
 | Registered-secret signed webhook dispatch | Implemented in `graphblocks.callbacks` | Implemented in runtime-core with HMAC signing, replay verification, and egress-bound delivery hooks |
@@ -35,9 +35,11 @@ runner-issued executor proof. Rust compiler evidence is
 `exact-native-reference`. Installed platform evidence separately binds a fixed
 canonical/identity corpus and the complete shared resource-validation and
 migration corpora across public/reference/direct-native paths to the exact
-runtime wheel. The complete C0 schema suite and C1 runtime evidence remain
-explicitly `reference-only`; this preserves the boundary around other
-schema-facing behavior and the production scheduler.
+runtime wheel. The complete C0 schema suite remains `reference-only`. C1
+evidence is phase-scoped: the bundled runtime suite is
+`exact-native-reference`, while the other C1 suites remain `reference-only`.
+This preserves the boundary around other schema-facing and production
+scheduler behavior.
 
 Composition is outside the runtime language boundary. A Python-authored graph
 may be materialized with `graphblocks compose` and then compiled or run by Rust

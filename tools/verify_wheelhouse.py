@@ -879,11 +879,13 @@ def _tck_expectations(
         case_ids_digest = canonical_hash({"case_ids": case_ids})
         contracts.append(contract)
         suite_implementation = (
-            "graphblocks-runtime" if suite == "compiler" else implementation
+            "graphblocks-runtime"
+            if suite in {"compiler", "runtime"}
+            else implementation
         )
         suite_implementation_version = (
             native_compiler_version
-            if suite == "compiler"
+            if suite in {"compiler", "runtime"}
             else implementation_version
         )
         suites[suite] = {
@@ -894,7 +896,7 @@ def _tck_expectations(
             "implementation_version": suite_implementation_version,
             "suite_manifest_digest": suite_manifest_digest,
         }
-        if suite == "compiler":
+        if suite in {"compiler", "runtime"}:
             suites[suite]["implementation_artifact_distribution"] = (
                 "graphblocks-runtime"
             )
@@ -976,13 +978,19 @@ def _tck_expectations(
                 "executor_id": (
                     "rust-compiler-exact-differential"
                     if suite == "compiler"
-                    else "python-reference"
+                    else (
+                        "rust-runtime-exact-differential"
+                        if suite == "runtime"
+                        else "python-reference"
+                    )
                 ),
                 "implementation": expectation["implementation"],
-                "language": "rust" if suite == "compiler" else "python",
+                "language": (
+                    "rust" if suite in {"compiler", "runtime"} else "python"
+                ),
                 "comparison": (
                     "exact-native-reference"
-                    if suite == "compiler"
+                    if suite in {"compiler", "runtime"}
                     else "reference-only"
                 ),
                 "reference_implementation": "graphblocks-python",
@@ -1136,27 +1144,29 @@ def _require_release_evidence(
             expected_tck.get("suites") if isinstance(expected_tck, Mapping) else None
         )
         if expected_tck is not None:
-            compiler_expectation = (
-                raw_expected_suites.get("compiler")
-                if isinstance(raw_expected_suites, Mapping)
-                else None
-            )
-            required_artifact_distribution = (
-                compiler_expectation.get("implementation_artifact_distribution")
-                if isinstance(compiler_expectation, Mapping)
-                else None
-            )
-            if required_artifact_distribution is not None:
+            required_artifact_distributions = {
+                expectation["implementation_artifact_distribution"]
+                for expectation in (
+                    raw_expected_suites.values()
+                    if isinstance(raw_expected_suites, Mapping)
+                    else ()
+                )
+                if isinstance(expectation, Mapping)
+                and isinstance(
+                    expectation.get("implementation_artifact_distribution"),
+                    str,
+                )
+            }
+            if required_artifact_distributions:
                 if expected_compiler_artifact is None:
                     raise RuntimeError(
-                        "checked-in TCK expectations require an exact compiler artifact"
+                        "checked-in TCK expectations require an exact native artifact"
                     )
-                if (
+                if required_artifact_distributions != {
                     expected_compiler_artifact.get("distribution")
-                    != required_artifact_distribution
-                ):
+                }:
                     raise RuntimeError(
-                        "expected compiler artifact names another distribution"
+                        "expected native artifact names another distribution"
                     )
             if payload.get("profile") != "local":
                 raise RuntimeError("installed TCK evidence does not use the stable local profile")
@@ -1278,34 +1288,50 @@ def _require_release_evidence(
                     raise RuntimeError(
                         f"installed TCK suite {suite!r} cases do not match checked-in expectations"
                     )
+                execution_claim = expectation.get("execution_claim")
+                if (
+                    suite == "runtime"
+                    and isinstance(execution_claim, Mapping)
+                    and execution_claim.get("comparison")
+                    == "exact-native-reference"
+                ):
+                    for result in results:
+                        observed = result.get("observed")
+                        if (
+                            not isinstance(observed, Mapping)
+                            or observed.get("runtime") != "native"
+                            or observed.get("native_reference_match") is not True
+                        ):
+                            raise RuntimeError(
+                                "installed runtime TCK evidence is not exact native/reference execution"
+                            )
         if expected_compiler_artifact is not None:
-            compiler_report = reports.get("compiler")
-            compiler_evidence = (
-                compiler_report.get("evidence")
-                if isinstance(compiler_report, Mapping)
-                else None
-            )
-            observed_artifact = (
-                compiler_evidence.get("implementation_artifact")
-                if isinstance(compiler_evidence, Mapping)
-                else None
-            )
             expected_artifact = dict(expected_compiler_artifact)
-            if observed_artifact != expected_artifact:
-                raise RuntimeError(
-                    "installed compiler TCK evidence does not bind the exact "
-                    "graphblocks-runtime wheel"
+            for suite in ("compiler", "runtime"):
+                report = reports.get(suite)
+                evidence = (
+                    report.get("evidence") if isinstance(report, Mapping) else None
                 )
-            if (
-                compiler_evidence.get("implementation")
-                != expected_artifact.get("distribution")
-                or compiler_evidence.get("implementation_version")
-                != expected_artifact.get("version")
-            ):
-                raise RuntimeError(
-                    "installed compiler TCK implementation identity does not "
-                    "match its wheel artifact"
-                )
+                if not isinstance(evidence, Mapping):
+                    raise RuntimeError(
+                        f"installed {suite} TCK evidence has no artifact identity"
+                    )
+                observed_artifact = evidence.get("implementation_artifact")
+                if observed_artifact != expected_artifact:
+                    raise RuntimeError(
+                        f"installed {suite} TCK evidence does not bind the exact "
+                        "graphblocks-runtime wheel"
+                    )
+                if (
+                    evidence.get("implementation")
+                    != expected_artifact.get("distribution")
+                    or evidence.get("implementation_version")
+                    != expected_artifact.get("version")
+                ):
+                    raise RuntimeError(
+                        f"installed {suite} TCK implementation identity does not "
+                        "match its wheel artifact"
+                    )
     elif kind == "acceptance":
         manifest_digest = _require_canonical_sha256(
             payload.get("manifest_digest"),

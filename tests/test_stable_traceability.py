@@ -321,8 +321,20 @@ def test_stable_requirement_implementation_roles_match_the_authority_transition(
         "remain available as the oracle."
     ]
 
-    c1_entries = profiles["GB-C1-LOCAL-RUNTIME"]["requirements"]
-    for entry in c1_entries:
+    c1_entries = {
+        entry["id"]: entry
+        for entry in profiles["GB-C1-LOCAL-RUNTIME"]["requirements"]
+    }
+    for requirement in ("deterministic-local-scheduler", "journal"):
+        roles = c1_entries[requirement]["implementations"]
+        assert set(roles) == {"normative", "pythonFacadeAndReference"}
+        assert all(
+            not path.startswith("src/graphblocks/")
+            for path in roles["normative"]
+        )
+    for requirement, entry in c1_entries.items():
+        if requirement in {"deterministic-local-scheduler", "journal"}:
+            continue
         roles = entry["implementations"]
         assert "normative" not in roles, entry["id"]
         assert set(roles) == {"pythonFacadeAndReference", "targetNormative"}
