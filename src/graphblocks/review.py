@@ -7,8 +7,8 @@ from functools import wraps
 from threading import RLock
 from typing import ParamSpec, Protocol, TypeVar, cast
 
-from .canonical import MAX_CANONICAL_JSON_DEPTH, canonical_dumps, canonical_hash
-from .documents import FrozenDict
+from ._immutability import freeze_json_mapping, thaw_json_value
+from .canonical import canonical_hash
 from .evaluation import ResourceSnapshotRef, ReviewDecision, ReviewRecord
 from .policy import PrincipalRef
 
@@ -60,98 +60,25 @@ def _validate_string_tuple(owner: str, field_name: str, values: object) -> tuple
     return tuple(sorted(set(normalized)))
 
 
-def _freeze_metadata(
-    owner: str,
-    value: object,
-    *,
-    active_containers: set[int] | None = None,
-    depth: int = 0,
-) -> Mapping[str, object]:
-    if not isinstance(value, Mapping):
-        raise ValueError(f"{owner} metadata must be a mapping")
-    if depth > MAX_CANONICAL_JSON_DEPTH:
+def _validate_metadata_key(owner: str, value: object) -> str:
+    if not isinstance(value, str):
+        raise ValueError(f"{owner} metadata keys must be strings")
+    if not value.strip():
+        raise ValueError(f"{owner} metadata key must not be empty")
+    if value != value.strip():
         raise ValueError(
-            f"{owner} metadata nesting must not exceed {MAX_CANONICAL_JSON_DEPTH} levels"
+            f"{owner} metadata key must not contain surrounding whitespace"
         )
-    active = set() if active_containers is None else active_containers
-    identity = id(value)
-    if identity in active:
-        raise ValueError(f"{owner} metadata must not contain cyclic values")
-    active.add(identity)
-    metadata = dict(value)
-    try:
-        for key in metadata:
-            if not isinstance(key, str):
-                raise ValueError(f"{owner} metadata keys must be strings")
-            if not key.strip():
-                raise ValueError(f"{owner} metadata key must not be empty")
-            if key != key.strip():
-                raise ValueError(f"{owner} metadata key must not contain surrounding whitespace")
-        return FrozenDict(
-            {
-                key: _freeze_metadata_value(
-                    owner,
-                    item,
-                    active_containers=active,
-                    depth=depth + 1,
-                )
-                for key, item in metadata.items()
-            }
-        )
-    finally:
-        active.remove(identity)
-
-
-def _freeze_metadata_value(
-    owner: str,
-    value: object,
-    *,
-    active_containers: set[int],
-    depth: int,
-) -> object:
-    if depth > MAX_CANONICAL_JSON_DEPTH:
-        raise ValueError(
-            f"{owner} metadata nesting must not exceed {MAX_CANONICAL_JSON_DEPTH} levels"
-        )
-    if isinstance(value, Mapping):
-        return _freeze_metadata(
-            owner,
-            value,
-            active_containers=active_containers,
-            depth=depth,
-        )
-    if isinstance(value, (list, tuple)):
-        identity = id(value)
-        if identity in active_containers:
-            raise ValueError(f"{owner} metadata must not contain cyclic values")
-        active_containers.add(identity)
-        try:
-            return tuple(
-                _freeze_metadata_value(
-                    owner,
-                    item,
-                    active_containers=active_containers,
-                    depth=depth + 1,
-                )
-                for item in value
-            )
-        finally:
-            active_containers.remove(identity)
-    try:
-        canonical_dumps(value)
-    except (TypeError, ValueError) as error:
-        raise ValueError(
-            f"{owner} metadata must contain strict canonical JSON"
-        ) from error
     return value
 
 
-def _thaw_metadata_value(value: object) -> object:
-    if isinstance(value, Mapping):
-        return {key: _thaw_metadata_value(item) for key, item in value.items()}
-    if isinstance(value, tuple):
-        return [_thaw_metadata_value(item) for item in value]
-    return value
+def _freeze_metadata(owner: str, metadata: object) -> Mapping[str, object]:
+    return freeze_json_mapping(
+        owner,
+        "metadata",
+        metadata,
+        key_validator=_validate_metadata_key,
+    )
 
 
 def _parse_review_datetime(value: object, *, owner: str, field_name: str) -> datetime:
@@ -228,17 +155,17 @@ class ReviewRequest:
                     "digest": self.subject.digest,
                     "resource_kind": self.subject.resource_kind,
                     "uri": self.subject.uri,
-                    "metadata": _thaw_metadata_value(self.subject.metadata),
+                    "metadata": thaw_json_value(self.subject.metadata),
                 },
                 "requested_by": {
                     "principal_id": self.requested_by.principal_id,
                     "tenant_id": self.requested_by.tenant_id,
                     "groups": tuple(sorted(self.requested_by.groups)),
                     "roles": tuple(sorted(self.requested_by.roles)),
-                    "attributes": _thaw_metadata_value(self.requested_by.attributes),
+                    "attributes": thaw_json_value(self.requested_by.attributes),
                 },
                 "required_scopes": self.required_scopes,
-                "metadata": _thaw_metadata_value(self.metadata),
+                "metadata": thaw_json_value(self.metadata),
             }
         )
 

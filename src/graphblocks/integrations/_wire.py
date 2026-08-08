@@ -12,6 +12,30 @@ from graphblocks.canonical import _canonical_dumps, canonical_loads
 _ValueT = TypeVar("_ValueT")
 
 
+def stable_string(
+    value: object,
+    *,
+    owner: str,
+    field_name: str,
+    error_type: type[Exception] = ValueError,
+) -> str:
+    """Normalize an integration identity through one strict string contract."""
+
+    if not isinstance(value, str) or not value.strip():
+        raise error_type(f"{owner} requires non-empty string {field_name}")
+    normalized = value.strip()
+    if any(
+        ord(character) < 0x20
+        or ord(character) == 0x7F
+        or "\ud800" <= character <= "\udfff"
+        for character in normalized
+    ):
+        raise error_type(
+            f"{owner} {field_name} must not contain control characters"
+        )
+    return normalized
+
+
 class FrozenWireJsonObject(Mapping[str, _ValueT], Generic[_ValueT]):
     """An immutable mapping-backed JSON object snapshot."""
 
@@ -135,5 +159,6 @@ __all__ = [
     "FrozenWireJsonObject",
     "find_non_local_schema_reference",
     "snapshot_wire_json",
+    "stable_string",
     "thaw_wire_json",
 ]

@@ -5,8 +5,8 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from typing import Literal
 
-from .canonical import MAX_CANONICAL_JSON_DEPTH, canonical_dumps, canonical_hash
-from .documents import FrozenDict
+from ._immutability import freeze_json_mapping
+from .canonical import canonical_hash
 from .evaluation import ResourceSnapshotRef
 from .policy import PrincipalRef
 
@@ -42,89 +42,25 @@ def _validate_exact_non_empty_string(owner: str, field_name: str, value: object)
     return value
 
 
-def _freeze_metadata(
-    owner: str,
-    metadata: object,
-    *,
-    active_containers: set[int] | None = None,
-    depth: int = 0,
-) -> FrozenDict:
-    if not isinstance(metadata, Mapping):
-        raise ValueError(f"{owner} metadata must be a mapping")
-    if depth > MAX_CANONICAL_JSON_DEPTH:
+def _validate_metadata_key(owner: str, value: object) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{owner} metadata keys must be non-empty strings")
+    if value != value.strip():
         raise ValueError(
-            f"{owner} metadata nesting must not exceed {MAX_CANONICAL_JSON_DEPTH} levels"
+            f"{owner} metadata keys must not contain surrounding whitespace"
         )
-    active = set() if active_containers is None else active_containers
-    identity = id(metadata)
-    if identity in active:
-        raise ValueError(f"{owner} metadata must not contain cyclic values")
-    active.add(identity)
-    metadata_copy = dict(metadata)
-    try:
-        if any(not isinstance(key, str) or not key.strip() for key in metadata_copy):
-            raise ValueError(f"{owner} metadata keys must be non-empty strings")
-        if any(key != key.strip() for key in metadata_copy):
-            raise ValueError(f"{owner} metadata keys must not contain surrounding whitespace")
-        if any(_contains_forbidden_control(key) for key in metadata_copy):
-            raise ValueError(f"{owner} metadata keys must not contain control characters")
-        return FrozenDict(
-            {
-                key: _freeze_metadata_value(
-                    owner,
-                    value,
-                    active_containers=active,
-                    depth=depth + 1,
-                )
-                for key, value in metadata_copy.items()
-            }
-        )
-    finally:
-        active.remove(identity)
-
-
-def _freeze_metadata_value(
-    owner: str,
-    value: object,
-    *,
-    active_containers: set[int],
-    depth: int,
-) -> object:
-    if depth > MAX_CANONICAL_JSON_DEPTH:
-        raise ValueError(
-            f"{owner} metadata nesting must not exceed {MAX_CANONICAL_JSON_DEPTH} levels"
-        )
-    if isinstance(value, Mapping):
-        return _freeze_metadata(
-            owner,
-            value,
-            active_containers=active_containers,
-            depth=depth,
-        )
-    if isinstance(value, (list, tuple)):
-        identity = id(value)
-        if identity in active_containers:
-            raise ValueError(f"{owner} metadata must not contain cyclic values")
-        active_containers.add(identity)
-        try:
-            return tuple(
-                _freeze_metadata_value(
-                    owner,
-                    item,
-                    active_containers=active_containers,
-                    depth=depth + 1,
-                )
-                for item in value
-            )
-        finally:
-            active_containers.remove(identity)
-    try:
-        canonical_dumps(value)
-    except (TypeError, ValueError) as error:
-        raise ValueError(
-            f"{owner} metadata must contain strict canonical JSON"
-        ) from error
+    if _contains_forbidden_control(value):
+        raise ValueError(f"{owner} metadata keys must not contain control characters")
     return value
+
+
+def _freeze_metadata(owner: str, metadata: object) -> Mapping[str, object]:
+    return freeze_json_mapping(
+        owner,
+        "metadata",
+        metadata,
+        key_validator=_validate_metadata_key,
+    )
 
 
 def _parse_datetime(value: str) -> datetime:

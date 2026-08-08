@@ -4,6 +4,7 @@ from collections.abc import Iterable, Mapping
 from copy import deepcopy
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
+from functools import partial
 
 from jsonschema import Draft202012Validator
 from jsonschema.exceptions import SchemaError, ValidationError
@@ -14,6 +15,7 @@ from graphblocks._schema_execution import (
     enforce_schema_execution_policy,
     find_regular_expression_keyword,
 )
+from graphblocks._tool_definition import create_tool_definition
 from graphblocks.canonical import canonical_dumps, canonical_hash, canonical_loads
 from graphblocks.conversation import ContentPart
 from graphblocks.documents import ArtifactRef
@@ -34,12 +36,16 @@ from graphblocks.tools import (
 from ._wire import (
     find_non_local_schema_reference,
     snapshot_wire_json,
+    stable_string,
     thaw_wire_json,
 )
 
 
 class McpToolAdapterError(RuntimeError):
     pass
+
+
+_stable_string = partial(stable_string, error_type=McpToolAdapterError)
 
 
 def _alias_value(
@@ -58,22 +64,6 @@ def _alias_value(
     if not present:
         return default
     return value[present[0]]
-
-
-def _stable_string(value: object, *, owner: str, field_name: str) -> str:
-    if not isinstance(value, str) or not value.strip():
-        raise McpToolAdapterError(f"{owner} requires non-empty string {field_name}")
-    normalized = value.strip()
-    if any(
-        ord(character) < 0x20
-        or ord(character) == 0x7F
-        or "\ud800" <= character <= "\udfff"
-        for character in normalized
-    ):
-        raise McpToolAdapterError(
-            f"{owner} {field_name} must not contain control characters"
-        )
-    return normalized
 
 
 class McpInlineSchemaRegistry:
@@ -335,12 +325,12 @@ def define_mcp_tool(
     tags: Iterable[str] = (),
     version: str | None = None,
 ) -> ToolDefinition:
-    return ToolDefinition(
+    return create_tool_definition(
         name=name,
         description=description,
         input_schema=input_schema,
         output_schema=output_schema,
-        tags=frozenset(tags),
+        tags=tags,
         version=version,
     )
 

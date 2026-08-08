@@ -4,7 +4,9 @@ from collections.abc import Iterable, Mapping
 from copy import deepcopy
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
+from functools import partial
 
+from graphblocks._tool_definition import create_tool_definition
 from graphblocks.canonical import canonical_dumps, canonical_hash, canonical_loads
 from graphblocks.conversation import ContentPart
 from graphblocks.documents import ArtifactRef
@@ -22,9 +24,14 @@ from graphblocks.tools import (
     validate_tool_result_for_model,
 )
 
+from ._wire import stable_string
+
 
 class OpenApiToolAdapterError(RuntimeError):
     pass
+
+
+_stable_string = partial(stable_string, error_type=OpenApiToolAdapterError)
 
 
 def _alias_value(
@@ -43,24 +50,6 @@ def _alias_value(
     if not present:
         return default
     return value[present[0]]
-
-
-def _stable_string(value: object, *, owner: str, field_name: str) -> str:
-    if not isinstance(value, str) or not value.strip():
-        raise OpenApiToolAdapterError(
-            f"{owner} requires non-empty string {field_name}"
-        )
-    normalized = value.strip()
-    if any(
-        ord(character) < 0x20
-        or ord(character) == 0x7F
-        or "\ud800" <= character <= "\udfff"
-        for character in normalized
-    ):
-        raise OpenApiToolAdapterError(
-            f"{owner} {field_name} must not contain control characters"
-        )
-    return normalized
 
 
 def evaluate_native_connector_capabilities(
@@ -184,12 +173,12 @@ def define_openapi_tool(
     tags: Iterable[str] = (),
     version: str | None = None,
 ) -> ToolDefinition:
-    return ToolDefinition(
+    return create_tool_definition(
         name=name,
         description=description,
         input_schema=input_schema,
         output_schema=output_schema,
-        tags=frozenset(tags),
+        tags=tags,
         version=version,
     )
 

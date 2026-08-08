@@ -16,6 +16,7 @@ from urllib.request import HTTPRedirectHandler, Request, build_opener
 from graphblocks._json import (
     reject_duplicate_json_keys as _reject_duplicate_json_keys,
 )
+from graphblocks._tool_definition import create_tool_definition
 from graphblocks.canonical import canonical_dumps, canonical_hash, canonical_loads
 from graphblocks.conversation import ContentPart
 from graphblocks.documents import ArtifactRef
@@ -587,12 +588,12 @@ def define_remote_tool(
     tags: Iterable[str] = (),
     version: str | None = None,
 ) -> ToolDefinition:
-    return ToolDefinition(
+    return create_tool_definition(
         name=name,
         description=description,
         input_schema=input_schema,
         output_schema=output_schema,
-        tags=frozenset(tags),
+        tags=tags,
         version=version,
     )
 
