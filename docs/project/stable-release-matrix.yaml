@@ -84,8 +84,8 @@ deepAudit:
     authority: docs/project/audit-issue-status.yaml
     inventory: docs/project/audit-issues.json
     checker: tools/check_audit_inventory.py
-    resolved: 72
-    openBySeverity: {P0: 0, P1: 0, P2: 19, P3: 8}
+    resolved: 73
+    openBySeverity: {P0: 0, P1: 0, P2: 18, P3: 8}
   exitPolicy:
     securityFreeze: {maxOpenP0: 0}
     stableRelease: {maxOpenP0: 0, maxOpenP1: 0}
@@ -833,12 +833,31 @@ releaseGates:
         headSha: 5cf1f785b4b5118c60a663620161946c56691847
         conclusion: success
         durationSeconds: 25
+    v1WireRoadmapPolicy:
+      documents: [docs/project/roadmap.md, docs/project/remaining-work.md]
+      wireVersions: [graphblocks.ai/v1:Graph, graphblocks.ai/v1:PluginManifest]
+      schemas:
+        - schemas/graphblocks.ai/v1/graph.schema.json
+        - schemas/graphblocks.ai/v1/plugin-manifest.schema.json
+      requiredGates: [REL-WIRE-V1, REL-CLOSED-SCHEMA]
+      compatibilityClaimRequiresAllApplicableGates: true
+      regression: tests/test_documentation_integrity.py
+      observedCiEvidence:
+        runId: 31246722408
+        jobId: 93076456592
+        headSha: 9a3ba62e459b9d1de058b8caab507880b93fbbe4
+        conclusion: success
     evidence:
       - docs/project/generated-documentation.yaml
       - tools/check_docs.py
       - tools/generate_status_readiness.py
       - tools/generate_stdlib_inventory.py
       - tests/test_docs_checker.py
+      - tests/test_documentation_integrity.py
+      - docs/project/roadmap.md
+      - docs/project/remaining-work.md
+      - schemas/graphblocks.ai/v1/graph.schema.json
+      - schemas/graphblocks.ai/v1/plugin-manifest.schema.json
       - pyproject.toml
       - .github/workflows/docs.yml
   - {id: REL-RUNTIME-CORRECTNESS, description: C1 lifecycle cancellation journal bounded-flow and tool gates pass.}
@@ -1021,6 +1040,7 @@ releaseGates:
       - package-scoped-preview-typing-diagnostic-module-ignore-and-root-alias-budgets
       - stable-public-server-error-codes-correlation-and-bounded-internal-audit
       - status-docs-forbid-fixed-test-counts-and-defer-to-commit-bound-ci
+      - roadmap-v1-wire-state-bound-to-schema-and-release-gates
     evidence:
       - docs/project/audit-issues.json
       - docs/project/audit-issue-status.yaml
@@ -1071,6 +1091,9 @@ releaseGates:
       - docs/project/remaining-work.md
       - tools/check_docs.py
       - tests/test_docs_checker.py
+      - tests/test_documentation_integrity.py
+      - schemas/graphblocks.ai/v1/graph.schema.json
+      - schemas/graphblocks.ai/v1/plugin-manifest.schema.json
     quickFeedbackCi:
       workflow: .github/workflows/ci.yml
       job: python-quality

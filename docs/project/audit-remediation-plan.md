@@ -53,10 +53,10 @@ A finding moves to resolved only when:
 4. the release matrix or profile evidence is updated when the finding changes a
    compatibility or production claim.
 
-The current generated count is 72 resolved findings: all 27 P0/P1 findings,
+The current generated count is 73 resolved findings: all 27 P0/P1 findings,
 the first 11 P2 findings, GB-ARCH-013, and GB-ARCH-015 through GB-ARCH-017.
 GB-COR-005 through GB-COR-009 are also resolved. There are zero open P0/P1,
-19 open P2, and 8 open P3; GB-COR-011, GB-COR-012, GB-DOC-006, GB-INP-006,
+18 open P2, and 8 open P3; GB-COR-011, GB-COR-012, GB-DOC-006, GB-INP-006,
 GB-INP-007, GB-INP-010, GB-PERF-004, and GB-PERF-005 are resolved. GB-ARCH-012
 remains open pending shared-primitives consolidation. GB-PERF-006 is resolved
 with tenant/owner-scoped indexed run-list cursor pagination and a 10,000-run
@@ -164,6 +164,13 @@ numeric test-count claim in either `status.md` or `remaining-work.md`, so the
 same drift cannot return through prose. The focused reproduction and the full
 link/generated-facts checker passed in Documentation run 31246430572, job
 93075701399.
+GB-DOC-002 is resolved by replacing the obsolete future-promotion wording with
+the actual remaining release boundary: the closed v1 Graph and PluginManifest
+resources are candidate-enforced, while their compatibility promise still
+depends on every applicable release gate. An executable documentation contract
+now binds both statements to the two checked-in closed schemas, their exact
+wire declarations, and the `REL-WIRE-V1` and `REL-CLOSED-SCHEMA` gates. The
+clean documentation gate passed in run 31246722408, job 93076456592.
 This closes the recorded code-and-regression count; it does not replace the
 independent review, candidate attestation, platform, or soak gates.
 

@@ -1649,8 +1649,8 @@ def test_stable_release_matrix_is_complete_and_machine_readable() -> None:
         "authority": "docs/project/audit-issue-status.yaml",
         "inventory": "docs/project/audit-issues.json",
         "checker": "tools/check_audit_inventory.py",
-        "resolved": 72,
-        "openBySeverity": {"P0": 0, "P1": 0, "P2": 19, "P3": 8},
+        "resolved": 73,
+        "openBySeverity": {"P0": 0, "P1": 0, "P2": 18, "P3": 8},
     }
     rust_debt = audit_gate["rustProductionExpectDebt"]
     assert rust_debt["workspaceLint"] == "clippy::expect_used=deny"
@@ -1681,6 +1681,9 @@ def test_stable_release_matrix_is_complete_and_machine_readable() -> None:
         audit_gate["implementedEvidence"]
     )
     assert "status-docs-forbid-fixed-test-counts-and-defer-to-commit-bound-ci" in (
+        audit_gate["implementedEvidence"]
+    )
+    assert "roadmap-v1-wire-state-bound-to-schema-and-release-gates" in (
         audit_gate["implementedEvidence"]
     )
     assert "signed-candidate-and-final-promotion-audit-closure-binding" in (

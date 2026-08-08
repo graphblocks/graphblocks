@@ -220,3 +220,6 @@ resolved:
   - id: GB-DOC-001
     fixCommits: ['cb032d4a', '5cf1f785']
     regression: [tests/test_docs_checker.py]
+  - id: GB-DOC-002
+    fixCommits: ['cb032d4a', '9a3ba62e']
+    regression: [tests/test_documentation_integrity.py]
