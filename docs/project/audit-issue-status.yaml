@@ -235,3 +235,6 @@ resolved:
   - id: GB-COR-010
     fixCommits: ['e449ffb8']
     regression: [tests/test_server_lifecycle.py]
+  - id: GB-COR-013
+    fixCommits: ['3935c82c']
+    regression: [tests/test_clock_domains.py, tests/test_leases.py, tests/test_server_lifecycle.py]

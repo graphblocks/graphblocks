@@ -53,10 +53,10 @@ A finding moves to resolved only when:
 4. the release matrix or profile evidence is updated when the finding changes a
    compatibility or production claim.
 
-The current generated count is 77 resolved findings: all 27 P0/P1 findings,
+The current generated count is 78 resolved findings: all 27 P0/P1 findings,
 the first 11 P2 findings, GB-ARCH-013, and GB-ARCH-015 through GB-ARCH-017.
 GB-COR-005 through GB-COR-009 are also resolved. There are zero open P0/P1,
-14 open P2, and 8 open P3; GB-COR-010 through GB-COR-012, GB-DOC-006, GB-INP-006,
+13 open P2, and 8 open P3; GB-COR-010 through GB-COR-013, GB-DOC-006, GB-INP-006,
 GB-INP-007, GB-INP-010, GB-PERF-004, and GB-PERF-005 are resolved. GB-ARCH-012
 remains open pending shared-primitives consolidation. GB-PERF-006 is resolved
 with tenant/owner-scoped indexed run-list cursor pagination and a 10,000-run
@@ -295,6 +295,15 @@ idempotent close, and opt-in executor ownership. Health remains observable
 during shutdown, already-admitted requests may finish scheduling their work,
 and direct submit after drain fails closed. Thirteen lifecycle regressions are
 included in the security-critical changed-line branch-coverage gate.
+`GB-COR-013` is resolved by distinct process-monotonic deadlines,
+skew-checked authority-wall epoch milliseconds for admission and leases, and
+timezone-aware audit wall timestamps with no scheduling authority. The
+authority clock detects rollback, forward skew, and monotonic rollback; small
+allowed rollback is clamped. The in-memory lease pool consumes that authority
+for omitted observations, while explicit inputs are treated as already
+repository-authorized. The new clock module is strict-mypy-owned with complete
+branch coverage, and server clock changes meet 100% changed-line branch
+coverage.
 
 Phase 1 exits when every related P1 has executable closure evidence, the durable
 vertical slice passes multi-process crash/restart tests, and resource-budget

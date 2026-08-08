@@ -109,8 +109,8 @@ deepAudit:
     authority: docs/project/audit-issue-status.yaml
     inventory: docs/project/audit-issues.json
     checker: tools/check_audit_inventory.py
-    resolved: 77
-    openBySeverity: {P0: 0, P1: 0, P2: 14, P3: 8}
+    resolved: 78
+    openBySeverity: {P0: 0, P1: 0, P2: 13, P3: 8}
   exitPolicy:
     securityFreeze: {maxOpenP0: 0}
     stableRelease: {maxOpenP0: 0, maxOpenP1: 0}
@@ -1069,6 +1069,7 @@ releaseGates:
       - artifact-specific-maturity-and-security-support-policy
       - core-c0-c1-and-independently-promoted-extension-profile-tracks
       - explicit-server-running-draining-closed-lifecycle-and-executor-ownership
+      - explicit-monotonic-authority-wall-and-audit-clock-domains
     evidence:
       - docs/project/audit-issues.json
       - docs/project/audit-issue-status.yaml
@@ -1136,6 +1137,10 @@ releaseGates:
       - tests/test_wheelhouse_schema_verification.py
       - docs/specification/operations/applications-async-callbacks.md
       - tests/test_server_lifecycle.py
+      - src/graphblocks/clocks.py
+      - src/graphblocks/leases.py
+      - tests/test_clock_domains.py
+      - docs/specification/core/graph-compilation-runtime.md
     serverLifecycle:
       states: [running, draining, closed]
       healthAvailableDuringShutdown: true
@@ -1146,6 +1151,16 @@ releaseGates:
       ownedExecutorShutdownExactlyOnce: true
       regression: tests/test_server_lifecycle.py
       changedLineBranchCoverageMinimumPercent: 90
+    clockDomains:
+      processDeadline: monotonic-seconds
+      persistentAuthority: wall-epoch-milliseconds-with-skew-policy
+      auditTimestamp: timezone-aware-wall-time-without-scheduling-authority
+      allowedSmallRollback: clamp-to-last-authority-observation
+      excessiveRollbackOrForwardSkew: fail-closed
+      strictTypingModule: src/graphblocks/clocks.py
+      regressions: [tests/test_clock_domains.py, tests/test_leases.py, tests/test_server_lifecycle.py]
+      clockBranchCoveragePercent: 100
+      serverChangedLineBranchCoveragePercent: 100
     quickFeedbackCi:
       workflow: .github/workflows/ci.yml
       job: python-quality

@@ -1707,8 +1707,8 @@ def test_stable_release_matrix_is_complete_and_machine_readable() -> None:
         "authority": "docs/project/audit-issue-status.yaml",
         "inventory": "docs/project/audit-issues.json",
         "checker": "tools/check_audit_inventory.py",
-        "resolved": 77,
-        "openBySeverity": {"P0": 0, "P1": 0, "P2": 14, "P3": 8},
+        "resolved": 78,
+        "openBySeverity": {"P0": 0, "P1": 0, "P2": 13, "P3": 8},
     }
     rust_debt = audit_gate["rustProductionExpectDebt"]
     assert rust_debt["workspaceLint"] == "clippy::expect_used=deny"
@@ -1751,6 +1751,21 @@ def test_stable_release_matrix_is_complete_and_machine_readable() -> None:
         "regression": "tests/test_server_lifecycle.py",
         "changedLineBranchCoverageMinimumPercent": 90,
     }
+    assert audit_gate["clockDomains"] == {
+        "processDeadline": "monotonic-seconds",
+        "persistentAuthority": "wall-epoch-milliseconds-with-skew-policy",
+        "auditTimestamp": "timezone-aware-wall-time-without-scheduling-authority",
+        "allowedSmallRollback": "clamp-to-last-authority-observation",
+        "excessiveRollbackOrForwardSkew": "fail-closed",
+        "strictTypingModule": "src/graphblocks/clocks.py",
+        "regressions": [
+            "tests/test_clock_domains.py",
+            "tests/test_leases.py",
+            "tests/test_server_lifecycle.py",
+        ],
+        "clockBranchCoveragePercent": 100,
+        "serverChangedLineBranchCoveragePercent": 100,
+    }
     assert "stable-public-server-error-codes-correlation-and-bounded-internal-audit" in (
         audit_gate["implementedEvidence"]
     )
@@ -1770,6 +1785,9 @@ def test_stable_release_matrix_is_complete_and_machine_readable() -> None:
         audit_gate["implementedEvidence"]
     )
     assert "explicit-server-running-draining-closed-lifecycle-and-executor-ownership" in (
+        audit_gate["implementedEvidence"]
+    )
+    assert "explicit-monotonic-authority-wall-and-audit-clock-domains" in (
         audit_gate["implementedEvidence"]
     )
     assert "signed-candidate-and-final-promotion-audit-closure-binding" in (
