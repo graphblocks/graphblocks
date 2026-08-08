@@ -11,7 +11,7 @@ import time
 from typing import Any, Callable, Literal, ParamSpec, Protocol, TypeVar, cast
 
 from .async_operation import VALID_ASYNC_OPERATION_KINDS
-from .canonical import canonical_dumps, canonical_hash, canonical_loads
+from ._canonical_reference import canonical_dumps, canonical_hash, canonical_loads
 from .compiler import (
     MAX_NODE_RETRY_ATTEMPTS,
     STATE_CHANGING_TOOL_EFFECTS,

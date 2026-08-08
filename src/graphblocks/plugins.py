@@ -16,7 +16,7 @@ from jsonschema import Draft202012Validator
 from jsonschema.exceptions import SchemaError
 import yaml
 
-from .canonical import (
+from ._canonical_reference import (
     MAX_CANONICAL_JSON_DEPTH,
     _reject_duplicate_keys,
     canonical_dumps,

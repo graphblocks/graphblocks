@@ -12,7 +12,7 @@ from ._validation import (
     validate_non_empty_string as _validate_non_empty_string,
     validate_optional_non_empty_string as _validate_optional_non_empty_string,
 )
-from .canonical import _has_unicode_surrogate, canonical_dumps, canonical_hash
+from ._canonical_reference import _has_unicode_surrogate, canonical_dumps, canonical_hash
 from .evaluation import ChangeSet, CheckResult, GateResult, ResourceSnapshotRef, ReviewRecord
 from .orchestration import LeaseGrant
 from .policy import PrincipalRef

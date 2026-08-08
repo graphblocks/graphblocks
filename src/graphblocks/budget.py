@@ -11,7 +11,7 @@ from threading import RLock
 from typing import TYPE_CHECKING, Literal, ParamSpec, TypeVar, cast, get_args
 
 from ._lazy_exports import resolve_lazy_export as _resolve_lazy_export
-from .canonical import canonical_dumps, canonical_loads
+from ._canonical_reference import canonical_dumps, canonical_loads
 from .documents import FrozenDict
 from .policy import ResourceRef
 

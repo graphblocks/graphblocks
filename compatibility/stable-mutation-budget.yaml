@@ -10,9 +10,13 @@ mutants:
     source: src/graphblocks/canonical.py
     description: canonical_hash must compute a SHA-256 digest
     find: |
-      return "sha256:" + hashlib.sha256(canonical_dumps(value).encode("utf-8")).hexdigest()
+      return "sha256:" + hashlib.sha256(
+              canonical_dumps_reference(value).encode("utf-8")
+          ).hexdigest()
     replace: |
-      return "sha256:" + hashlib.sha1(canonical_dumps(value).encode("utf-8")).hexdigest()
+      return "sha256:" + hashlib.sha1(
+              canonical_dumps_reference(value).encode("utf-8")
+          ).hexdigest()
     tests:
       - tests/test_mutation_targets.py::test_canonical_hash_uses_sha256
   - id: policy-explicit-deny-precedence

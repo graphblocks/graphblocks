@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from typing import Literal
 
 from .budget import BudgetPermit, UsageAmount
-from .canonical import canonical_hash
+from ._canonical_reference import canonical_hash
 from .policy import ResourceRef
 from .worker import WorkerAdvertisement, select_worker_for_block
 

@@ -5,7 +5,7 @@ from dataclasses import dataclass, field, fields, is_dataclass, replace
 from datetime import datetime, timezone
 from typing import Literal, get_args
 
-from .canonical import MAX_CANONICAL_JSON_DEPTH, canonical_dumps, canonical_hash
+from ._canonical_reference import MAX_CANONICAL_JSON_DEPTH, canonical_dumps, canonical_hash
 from .documents import FrozenDict
 
 

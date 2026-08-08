@@ -12,7 +12,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Generic, Literal, TypeAlias, TypeVar
 
-from .canonical import canonical_dumps, canonical_loads
+from ._canonical_reference import canonical_dumps, canonical_loads
 from .documents import FrozenDict, FrozenList
 from .typed import BoundBlock, InputRef, NodeOutput, PortType
 

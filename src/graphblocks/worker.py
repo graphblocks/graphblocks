@@ -6,7 +6,7 @@ import hashlib
 from types import MappingProxyType
 from typing import Literal
 
-from .canonical import canonical_dumps, canonical_loads
+from ._canonical_reference import canonical_dumps, canonical_loads
 
 
 WORKER_PROTOCOL_VERSION = 1

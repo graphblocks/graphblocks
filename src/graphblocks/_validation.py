@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
-from .canonical import _has_unicode_surrogate
+from ._canonical_reference import _has_unicode_surrogate
 
 
 def snapshot_collection(

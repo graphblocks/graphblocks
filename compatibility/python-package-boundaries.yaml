@@ -97,4 +97,4 @@ stableFirstAccessBudgets:
     maxElapsedSeconds: 5.0
     maxRssIncreaseBytes: 100663296
     maxLoadedModuleIncrease: 340
-    maxGraphblocksModules: 26
+    maxGraphblocksModules: 27

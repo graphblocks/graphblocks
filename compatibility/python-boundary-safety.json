@@ -6,7 +6,7 @@
     "productionAsserts": "Production asserts are reviewed only as side-effect-free internal invariants, exhaustive branch proofs, or type narrowing after explicit validation. Public boundary behavior must also pass the optimized-mode shard with asserts disabled."
   },
   "broadExceptionHandlers": {
-    "total": 119,
+    "total": 124,
     "files": [
       {
         "path": "src/graphblocks/_schema_execution.py",
@@ -35,6 +35,13 @@
         "semanticDigest": "sha256:60fe0aea28df3837e45fe9f8e33afd00794fed59d5768d482e2a496150924ed4",
         "classifications": ["persistence-transaction-boundary", "external-callback-boundary"],
         "rationale": "Budget ledgers call pluggable repositories and policy hooks while preserving rollback and stable domain failure semantics."
+      },
+      {
+        "path": "src/graphblocks/canonical.py",
+        "count": 5,
+        "semanticDigest": "sha256:d029b261ca75a8f6a8b2d3100597a6915e22fb3755adc220be7ec422d11b4d78",
+        "classifications": ["external-callback-boundary", "optional-dependency-boundary"],
+        "rationale": "The public canonical facade isolates native extension handshake and invocation failures while preserving explicit reference-oracle errors and fail-closed authority semantics."
       },
       {
         "path": "src/graphblocks/compiler.py",

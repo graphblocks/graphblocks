@@ -9,7 +9,7 @@ from pathlib import Path
 
 
 from graphblocks.canonical import (
-    canonical_hash,
+    canonical_hash_reference as canonical_hash,
 )
 from graphblocks.runtime import (
     core_stdlib_registry,

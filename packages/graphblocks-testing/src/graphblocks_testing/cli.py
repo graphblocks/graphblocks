@@ -24,8 +24,8 @@ from packaging.tags import sys_tags
 from packaging.utils import canonicalize_name, parse_wheel_filename
 
 from graphblocks.canonical import (
-    canonical_dumps,
-    canonical_hash,
+    canonical_dumps_reference as canonical_dumps,
+    canonical_hash_reference as canonical_hash,
 )
 from graphblocks._version import __version__ as GRAPHBLOCKS_VERSION
 from graphblocks.conformance import ConformanceAuthorityMatrix

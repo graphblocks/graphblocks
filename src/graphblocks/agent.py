@@ -4,7 +4,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from typing import Literal
 
-from .canonical import canonical_dumps, canonical_loads
+from ._canonical_reference import canonical_dumps, canonical_loads
 from .documents import ArtifactRef, FrozenDict, FrozenList
 
 

@@ -11,7 +11,7 @@ from threading import RLock
 from typing import Literal, ParamSpec, TypeVar, cast
 
 from .budget import UsageAmount
-from .canonical import MAX_CANONICAL_JSON_DEPTH, canonical_dumps, canonical_loads
+from ._canonical_reference import MAX_CANONICAL_JSON_DEPTH, canonical_dumps, canonical_loads
 from .documents import FrozenDict
 
 UsageSource = Literal[

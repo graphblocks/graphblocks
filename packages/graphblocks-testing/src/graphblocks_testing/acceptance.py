@@ -17,8 +17,8 @@ from tempfile import TemporaryDirectory
 import yaml
 
 from graphblocks.canonical import (
-    canonical_dumps,
-    canonical_hash,
+    canonical_dumps_reference as canonical_dumps,
+    canonical_hash_reference as canonical_hash,
 )
 from graphblocks.cli import main as graphblocks_cli_main
 from graphblocks.conversation import (

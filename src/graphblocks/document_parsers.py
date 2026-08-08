@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from pathlib import PurePosixPath
 from types import MappingProxyType
 
-from .canonical import canonical_dumps
+from ._canonical_reference import canonical_dumps
 from .documents import AssetRevision, ParsedDocument, SourceAsset, parse_plain_text_document
 from .documents import ArtifactRef
 

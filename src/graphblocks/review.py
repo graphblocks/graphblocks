@@ -8,7 +8,7 @@ from threading import RLock
 from typing import ParamSpec, Protocol, TypeVar, cast
 
 from ._immutability import freeze_json_mapping, thaw_json_value
-from .canonical import canonical_hash
+from ._canonical_reference import canonical_hash
 from .evaluation import ResourceSnapshotRef, ReviewDecision, ReviewRecord
 from .policy import PrincipalRef
 

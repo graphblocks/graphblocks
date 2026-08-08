@@ -4,7 +4,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Literal
 
-from .canonical import canonical_dumps, canonical_hash, canonical_loads
+from ._canonical_reference import canonical_dumps, canonical_hash, canonical_loads
 from .compiler import compile_graph_reference
 from .durable_registry import durable_intent_registry
 from .isolated_worker import ProcessWorkerProtocolError, ProcessWorkerTarget

@@ -8,7 +8,7 @@ from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Literal
 
 from ._lazy_exports import resolve_lazy_export as _resolve_lazy_export
-from .canonical import canonical_dumps
+from ._canonical_reference import canonical_dumps
 
 if TYPE_CHECKING:
     from .blob_store import (

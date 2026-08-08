@@ -8,7 +8,7 @@ import math
 from types import MappingProxyType
 from typing import Literal
 
-from .canonical import canonical_hash
+from ._canonical_reference import canonical_hash
 from .tools import ToolEffectOutcome, VALID_TOOL_EFFECT_OUTCOMES
 
 

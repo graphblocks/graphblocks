@@ -16,7 +16,7 @@ from typing import Literal
 from packaging.tags import sys_tags
 from packaging.utils import parse_wheel_filename
 
-from graphblocks.canonical import canonical_hash
+from graphblocks.canonical import canonical_hash_reference as canonical_hash
 from graphblocks.compiler import (
     compile_graph as _compile_graph_normative,
     compile_graph_reference as compile_graph,

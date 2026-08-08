@@ -9,7 +9,7 @@ import math
 import re
 from typing import Literal, TypeAlias
 
-from .canonical import canonical_dumps, canonical_hash
+from ._canonical_reference import canonical_dumps, canonical_hash
 from .documents import (
     DocumentChunk,
     DocumentSpan,

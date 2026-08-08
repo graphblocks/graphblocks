@@ -7,7 +7,7 @@ from threading import RLock
 from types import MappingProxyType
 from typing import Literal, ParamSpec, TypeVar, cast
 
-from .canonical import _has_unicode_surrogate, canonical_dumps, canonical_loads
+from ._canonical_reference import _has_unicode_surrogate, canonical_dumps, canonical_loads
 from .output_policy import (
     VALID_DRAFT_DISPOSITIONS,
     VALID_TERMINAL_REASONS,

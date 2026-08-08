@@ -15,7 +15,7 @@ from packaging.utils import InvalidName, canonicalize_name
 from packaging.version import InvalidVersion, Version
 import yaml
 
-from .canonical import canonical_dumps, canonical_hash, canonical_loads
+from ._canonical_reference import canonical_dumps, canonical_hash, canonical_loads
 from .diagnostics import Diagnostic, DiagnosticSet
 from .loader import _DuplicateKeySafeLoader
 

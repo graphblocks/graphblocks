@@ -16,7 +16,7 @@ from ._validation import (
     validate_non_empty_string as _validate_non_empty_string,
     validate_optional_non_empty_string as _validate_optional_non_empty_string,
 )
-from .canonical import _has_unicode_surrogate
+from ._canonical_reference import _has_unicode_surrogate
 from .evaluation import ModelVisibleToolRef
 
 

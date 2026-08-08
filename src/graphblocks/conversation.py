@@ -12,7 +12,7 @@ from ._validation import (
     validate_non_empty_string as _validate_non_empty_string,
     validate_optional_non_empty_string as _validate_optional_non_empty_string,
 )
-from .canonical import MAX_CANONICAL_JSON_DEPTH, _has_unicode_surrogate, canonical_dumps
+from ._canonical_reference import MAX_CANONICAL_JSON_DEPTH, _has_unicode_surrogate, canonical_dumps
 from .documents import ArtifactRef
 
 MessageRole = Literal["system", "developer", "user", "assistant", "tool"]

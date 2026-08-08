@@ -10,7 +10,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
-from .canonical import canonical_hash
+from ._canonical_reference import canonical_hash
 
 
 _PROFILE_CATALOG_PATH = "src/graphblocks/data/conformance-profiles.yaml"

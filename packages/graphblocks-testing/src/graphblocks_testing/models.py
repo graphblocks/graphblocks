@@ -13,7 +13,7 @@ from typing import Literal, get_args
 
 
 from graphblocks.canonical import (
-    canonical_loads,
+    canonical_loads_reference as canonical_loads,
 )
 from graphblocks.tools import (
     ToolExecutionPlanError,

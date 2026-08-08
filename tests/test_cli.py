@@ -18,9 +18,9 @@ import graphblocks.cli as cli_module
 import graphblocks.plugins as plugins_module
 from graphblocks.cli import _loads_strict_json, main
 from graphblocks.canonical import (
-    canonical_dumps,
-    canonical_hash,
-    canonical_loads,
+    canonical_dumps_reference as canonical_dumps,
+    canonical_hash_reference as canonical_hash,
+    canonical_loads_reference as canonical_loads,
     normalize_graph,
 )
 from graphblocks.compiler import compile_graph_reference

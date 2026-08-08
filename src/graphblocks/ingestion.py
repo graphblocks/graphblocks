@@ -7,7 +7,7 @@ from functools import wraps
 from threading import RLock
 from typing import Literal, ParamSpec, TypeVar, cast
 
-from .canonical import canonical_dumps
+from ._canonical_reference import canonical_dumps
 from .documents import ArtifactRef, AssetRevision, SourceAsset
 
 

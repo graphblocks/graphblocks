@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from typing import Literal
 
 from ._immutability import freeze_json_mapping
-from .canonical import canonical_hash
+from ._canonical_reference import canonical_hash
 from .evaluation import ResourceSnapshotRef
 from .policy import PrincipalRef
 

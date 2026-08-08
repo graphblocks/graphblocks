@@ -6,7 +6,7 @@ from decimal import Decimal
 from types import MappingProxyType
 from typing import Any
 
-from .canonical import (
+from ._canonical_reference import (
     MAX_CANONICAL_JSON_DEPTH,
     canonical_dumps,
     canonical_hash,

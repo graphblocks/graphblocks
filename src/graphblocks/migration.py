@@ -81,7 +81,7 @@ def _migrate_document(
     # Import lazily to avoid the canonical/migration module cycle. The
     # round-trip gives all later migration steps one bounded, trusted snapshot
     # instead of retaining caller-owned or stateful containers.
-    from .canonical import canonical_dumps, canonical_loads
+    from ._canonical_reference import canonical_dumps, canonical_loads
 
     try:
         migrated = canonical_loads(canonical_dumps(document))

@@ -13,7 +13,7 @@ from typing import Any
 
 import yaml
 
-from .canonical import (
+from ._canonical_reference import (
     _has_unicode_surrogate,
     _normalize_graph_unchecked,
     canonical_dumps,

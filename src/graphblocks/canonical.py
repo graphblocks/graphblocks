@@ -1,13 +1,13 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from decimal import Decimal
 import hashlib
 import json
 import math
 import sys as _sys
 from copy import deepcopy
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from ._lazy_exports import resolve_lazy_export as _resolve_lazy_export
 
@@ -38,6 +38,72 @@ _INTEGER_CHUNK_BASE = 1_000_000_000
 _INTEGER_CHUNK_DIGITS = 9
 _MAX_CANONICAL_INTEGER_MAGNITUDE = 10**MAX_CANONICAL_INTEGER_DIGITS
 _MIN_CANONICAL_INTEGER_MAGNITUDE = -_MAX_CANONICAL_INTEGER_MAGNITUDE
+
+
+class NativeCanonicalUnavailableError(RuntimeError):
+    """Raised when the normative native canonical boundary is unavailable."""
+
+
+class NativeCanonicalContractError(RuntimeError):
+    """Raised when the native canonical boundary returns an invalid result."""
+
+
+def _native_canonical_unavailable(
+    detail: object | None = None,
+) -> NativeCanonicalUnavailableError:
+    message = (
+        "native GraphBlocks canonical identity is unavailable; install "
+        "graphblocks[runtime] or call the explicit canonical_*_reference APIs"
+    )
+    if detail is not None and str(detail).strip():
+        message = f"{message}: {detail}"
+    return NativeCanonicalUnavailableError(message)
+
+
+def _native_canonical_callable(name: str) -> Callable[..., object]:
+    try:
+        import graphblocks_runtime
+    except ImportError as error:
+        raise _native_canonical_unavailable(error) from error
+
+    native_extension_available = getattr(
+        graphblocks_runtime,
+        "native_extension_available",
+        None,
+    )
+    if callable(native_extension_available):
+        try:
+            available = native_extension_available()
+        except Exception as error:
+            raise _native_canonical_unavailable(
+                "native extension availability check failed"
+            ) from error
+    else:
+        available = True
+    if available is not True:
+        detail = None
+        native_extension_status = getattr(
+            graphblocks_runtime,
+            "native_extension_status",
+            None,
+        )
+        if callable(native_extension_status):
+            try:
+                status = native_extension_status()
+            except Exception as error:
+                raise _native_canonical_unavailable(
+                    "native extension status check failed"
+                ) from error
+            if isinstance(status, Mapping):
+                detail = status.get("error")
+        raise _native_canonical_unavailable(detail)
+
+    native_function = getattr(graphblocks_runtime, name, None)
+    if not callable(native_function):
+        raise _native_canonical_unavailable(
+            f"graphblocks_runtime does not expose {name}"
+        )
+    return cast(Callable[..., object], native_function)
 
 
 def _depth_error() -> ValueError:
@@ -217,7 +283,34 @@ def canonical_loads_reference(value: str | bytes | bytearray) -> Any:
 
 
 def canonical_loads(value: str | bytes | bytearray) -> Any:
-    return canonical_loads_reference(value)
+    if isinstance(value, str):
+        source = str.__str__(value)
+    elif isinstance(value, bytes | bytearray):
+        source = bytes(value).decode("utf-8")
+    else:
+        raise TypeError("canonical JSON input must be str, bytes, or bytearray")
+    native_canonicalize = _native_canonical_callable("canonicalize_json")
+    try:
+        result = native_canonicalize(source)
+    except Exception as native_error:
+        try:
+            canonical_loads_reference(value)
+        except (TypeError, UnicodeError, ValueError) as reference_error:
+            raise reference_error from native_error
+        raise NativeCanonicalContractError(
+            "native canonicalize_json rejected reference-valid JSON"
+        ) from native_error
+    if type(result) is not str:
+        raise NativeCanonicalContractError(
+            "native canonicalize_json must return a string"
+        )
+    reference_value = canonical_loads_reference(value)
+    reference = canonical_dumps_reference(reference_value)
+    if result != reference:
+        raise NativeCanonicalContractError(
+            "native canonicalize_json result differs from the reference oracle"
+        )
+    return reference_value
 
 
 def _canonical_dumps(value: Any, *, reject_tuples: bool) -> str:
@@ -368,7 +461,23 @@ def canonical_dumps_reference(value: Any) -> str:
 
 
 def canonical_dumps(value: Any) -> str:
-    return canonical_dumps_reference(value)
+    reference = canonical_dumps_reference(value)
+    native_canonicalize = _native_canonical_callable("canonicalize_json")
+    try:
+        result = native_canonicalize(reference)
+    except Exception as error:
+        raise NativeCanonicalContractError(
+            "native canonicalize_json rejected reference-valid JSON"
+        ) from error
+    if type(result) is not str:
+        raise NativeCanonicalContractError(
+            "native canonicalize_json must return a string"
+        )
+    if result != reference:
+        raise NativeCanonicalContractError(
+            "native canonicalize_json result differs from the reference oracle"
+        )
+    return result
 
 
 def canonical_hash_reference(value: Any) -> str:
@@ -378,7 +487,29 @@ def canonical_hash_reference(value: Any) -> str:
 
 
 def canonical_hash(value: Any) -> str:
-    return canonical_hash_reference(value)
+    reference = canonical_dumps_reference(value)
+    expected = "sha256:" + hashlib.sha256(reference.encode("utf-8")).hexdigest()
+    native_hash = _native_canonical_callable("canonical_hash_json")
+    try:
+        result = native_hash(reference)
+    except Exception as error:
+        raise NativeCanonicalContractError(
+            "native canonical_hash_json rejected reference-valid JSON"
+        ) from error
+    if (
+        type(result) is not str
+        or not result.startswith("sha256:")
+        or len(result) != len("sha256:") + 64
+        or any(character not in "0123456789abcdef" for character in result[7:])
+    ):
+        raise NativeCanonicalContractError(
+            "native canonical_hash must return a canonical sha256 digest"
+        )
+    if result != expected:
+        raise NativeCanonicalContractError(
+            "native canonical_hash result differs from the reference oracle"
+        )
+    return result
 
 
 def normalize_graph(document: dict[str, Any]) -> dict[str, Any]:

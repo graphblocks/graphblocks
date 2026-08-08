@@ -4,7 +4,7 @@ from collections.abc import Callable, Mapping, Sequence
 from types import MappingProxyType
 from typing import Any
 
-from .canonical import canonical_hash
+from ._canonical_reference import canonical_hash
 from .documents import DocumentSpan, SourceRef
 from .rag import (
     Abstention,

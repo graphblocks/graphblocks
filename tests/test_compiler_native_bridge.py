@@ -11,7 +11,7 @@ from types import SimpleNamespace
 import pytest
 
 from graphblocks import compiler as compiler_module
-from graphblocks.canonical import canonical_hash
+from graphblocks.canonical import canonical_hash_reference
 from graphblocks.compiler import (
     NativeCompilerContractError,
     NativeCompilerUnavailableError,
@@ -36,7 +36,7 @@ def _valid_native_result() -> dict[str, object]:
     return {
         "diagnostics": [],
         "graph": NORMALIZED_GRAPH,
-        "hash": canonical_hash(NORMALIZED_GRAPH),
+        "hash": canonical_hash_reference(NORMALIZED_GRAPH),
         "ok": True,
     }
 

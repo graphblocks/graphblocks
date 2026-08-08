@@ -7,7 +7,7 @@ from referencing import Registry
 from referencing.exceptions import Unresolvable
 from referencing.jsonschema import DRAFT202012
 
-from .canonical import canonical_dumps
+from ._canonical_reference import canonical_dumps
 
 
 @dataclass(frozen=True, slots=True)

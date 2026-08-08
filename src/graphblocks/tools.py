@@ -9,7 +9,7 @@ import math
 from types import MappingProxyType
 from typing import Literal
 
-from .canonical import canonical_hash
+from ._canonical_reference import canonical_hash
 from .conversation import ContentPart
 from .documents import ArtifactRef, FrozenDict, FrozenList
 from .output_policy import PendingToolCallsDisposition

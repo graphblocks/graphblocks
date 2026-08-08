@@ -40,7 +40,7 @@ from .application_event import (
     ApplicationProtocolEventMetadata,
     ApplicationProtocolLog,
 )
-from .canonical import canonical_dumps, canonical_hash
+from ._canonical_reference import canonical_dumps, canonical_hash
 from .clocks import (
     AuthorityWallClock,
     MonotonicDeadline,

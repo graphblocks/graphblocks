@@ -8,7 +8,7 @@ from decimal import Decimal
 import math
 from typing import Literal
 
-from .canonical import canonical_dumps, canonical_hash
+from ._canonical_reference import canonical_dumps, canonical_hash
 from .diagnostics import Diagnostic
 from .documents import ArtifactRef
 from .policy import PrincipalRef

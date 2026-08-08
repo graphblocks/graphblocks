@@ -5,7 +5,7 @@ from dataclasses import dataclass, field, replace
 from typing import Protocol
 from urllib.parse import quote
 
-from .canonical import canonical_dumps, canonical_hash, canonical_loads
+from ._canonical_reference import canonical_dumps, canonical_hash, canonical_loads
 from .compiler import Plan, compile_graph, compile_graph_reference
 from .durable_worker import (
     DEFAULT_DURABLE_WORKER_TARGET,

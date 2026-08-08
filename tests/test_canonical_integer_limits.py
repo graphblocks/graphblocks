@@ -4,17 +4,20 @@ import pytest
 
 from graphblocks.canonical import (
     MAX_CANONICAL_INTEGER_DIGITS,
-    canonical_dumps,
-    canonical_loads,
+    canonical_dumps_reference,
+    canonical_loads_reference,
 )
 
 
 def test_canonical_integer_limit_accepts_exact_decimal_boundary() -> None:
     digits = "9" * MAX_CANONICAL_INTEGER_DIGITS
 
-    assert canonical_dumps(canonical_loads(digits)) == digits
-    assert canonical_dumps(canonical_loads(f"-{digits}")) == f"-{digits}"
-    assert canonical_dumps(10 ** (MAX_CANONICAL_INTEGER_DIGITS - 1)) == (
+    assert canonical_dumps_reference(canonical_loads_reference(digits)) == digits
+    assert (
+        canonical_dumps_reference(canonical_loads_reference(f"-{digits}"))
+        == f"-{digits}"
+    )
+    assert canonical_dumps_reference(10 ** (MAX_CANONICAL_INTEGER_DIGITS - 1)) == (
         "1" + "0" * (MAX_CANONICAL_INTEGER_DIGITS - 1)
     )
 
@@ -30,7 +33,7 @@ def test_canonical_loads_rejects_oversized_integer_tokens(
         ValueError,
         match=f"must not exceed {MAX_CANONICAL_INTEGER_DIGITS} decimal digits",
     ):
-        canonical_loads("9" * digit_count)
+        canonical_loads_reference("9" * digit_count)
 
 
 def test_canonical_dumps_rejects_oversized_python_integers() -> None:
@@ -40,9 +43,9 @@ def test_canonical_dumps_rejects_oversized_python_integers() -> None:
         ValueError,
         match=f"must not exceed {MAX_CANONICAL_INTEGER_DIGITS} decimal digits",
     ):
-        canonical_dumps(oversized)
+        canonical_dumps_reference(oversized)
     with pytest.raises(
         ValueError,
         match=f"must not exceed {MAX_CANONICAL_INTEGER_DIGITS} decimal digits",
     ):
-        canonical_dumps(-oversized)
+        canonical_dumps_reference(-oversized)

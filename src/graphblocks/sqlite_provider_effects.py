@@ -6,7 +6,7 @@ from pathlib import Path
 import secrets
 import sqlite3
 
-from .canonical import canonical_dumps, canonical_hash, canonical_loads
+from ._canonical_reference import canonical_dumps, canonical_hash, canonical_loads
 from .provider_effects import (
     ProviderCancellation,
     ProviderCapabilitySnapshot,

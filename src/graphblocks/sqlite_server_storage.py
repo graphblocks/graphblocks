@@ -9,7 +9,7 @@ import time
 from typing import TypeVar
 import uuid
 
-from .canonical import canonical_dumps, canonical_hash, canonical_loads
+from ._canonical_reference import canonical_dumps, canonical_hash, canonical_loads
 from .server_storage import (
     CHECKPOINT_FORMAT_VERSION,
     AcceptedRunAdmission,

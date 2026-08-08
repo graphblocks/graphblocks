@@ -10,7 +10,7 @@ from multiprocessing.process import BaseProcess
 import time
 from typing import cast
 
-from .canonical import canonical_dumps, canonical_loads
+from ._canonical_reference import canonical_dumps, canonical_loads
 from .worker import (
     WorkerInvokeRequest,
     WorkerInvokeResult,

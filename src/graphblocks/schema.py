@@ -14,7 +14,7 @@ from typing import Any
 from jsonschema import Draft202012Validator, validators
 from jsonschema.exceptions import SchemaError, ValidationError
 
-from .canonical import (
+from ._canonical_reference import (
     _MANUAL_INTEGER_BIT_LENGTH,
     _canonical_dumps,
     _has_unicode_surrogate,

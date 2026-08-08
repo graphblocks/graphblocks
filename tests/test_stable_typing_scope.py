@@ -364,7 +364,7 @@ def test_stable_typing_checker_runs_outside_repository_root(
     assert packages["graphblocks"]["moduleCount"] == len(
         packages["graphblocks"]["modules"]
     )
-    assert packages["graphblocks"]["strictModuleCount"] == 18
+    assert packages["graphblocks"]["strictModuleCount"] == 19
     assert packages["graphblocks"]["previewCompatibilityAliasCount"] == 606
     assert all(package["modules"] for package in packages.values())
 

@@ -9,7 +9,7 @@ from typing import Literal
 
 
 from graphblocks.canonical import (
-    canonical_hash,
+    canonical_hash_reference as canonical_hash,
 )
 
 

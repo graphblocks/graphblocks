@@ -12,7 +12,7 @@ from dataclasses import dataclass, fields, is_dataclass
 from enum import StrEnum
 from typing import NoReturn, Protocol, SupportsIndex
 
-from .canonical import canonical_dumps, canonical_hash, canonical_loads
+from ._canonical_reference import canonical_dumps, canonical_hash, canonical_loads
 
 
 PROVIDER_CAPABILITY_SNAPSHOT_FORMAT_VERSION = (

@@ -15,7 +15,7 @@ from types import MappingProxyType
 import yaml
 
 from ._version import __version__
-from .canonical import canonical_dumps, canonical_hash, canonical_loads, normalize_graph
+from ._canonical_reference import canonical_dumps, canonical_hash, canonical_loads, normalize_graph
 from .compiler import NativeCompilerUnavailableError, compile_graph
 from .composition import CompositionError, compose_documents
 from .deployment import (

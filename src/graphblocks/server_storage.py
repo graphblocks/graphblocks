@@ -6,7 +6,7 @@ import re
 import time
 from typing import Protocol
 
-from .canonical import (
+from ._canonical_reference import (
     _has_unicode_surrogate,
     canonical_dumps,
     canonical_hash,

@@ -14,7 +14,7 @@ import re
 from types import MappingProxyType
 from typing import Any, Generic, TypeVar
 
-from .canonical import canonical_dumps, canonical_loads, normalize_graph
+from ._canonical_reference import canonical_dumps, canonical_loads, normalize_graph
 from .migration import GRAPH_API_VERSION
 from .plugins import BlockCatalog, builtin_block_catalog
 from .schema import SchemaId

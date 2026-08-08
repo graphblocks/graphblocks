@@ -8,7 +8,7 @@ from jsonschema import Draft202012Validator
 from jsonschema.exceptions import ValidationError
 from referencing.exceptions import Unresolvable
 
-from .canonical import (
+from ._canonical_reference import (
     PSEUDO_NODES,
     _MANUAL_INTEGER_BIT_LENGTH,
     _normalize_graph_unchecked,

@@ -5,7 +5,7 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import Literal
 
-from .canonical import canonical_hash
+from ._canonical_reference import canonical_hash
 from .conversation import ContentPart
 from .documents import FrozenDict
 

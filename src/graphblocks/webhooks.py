@@ -13,7 +13,7 @@ from types import MappingProxyType
 from typing import Protocol
 from urllib.parse import urlparse
 
-from .canonical import MAX_CANONICAL_JSON_DEPTH, canonical_dumps, canonical_hash
+from ._canonical_reference import MAX_CANONICAL_JSON_DEPTH, canonical_dumps, canonical_hash
 from .documents import ArtifactRef
 from .server import ServerCallbackDeliveryResult, ServerCallbackRegistration
 from .url_validation import validate_webhook_url

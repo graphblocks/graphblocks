@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 
 
 from graphblocks.canonical import (
-    canonical_hash,
+    canonical_hash_reference as canonical_hash,
 )
 
 from .acceptance_models import (
