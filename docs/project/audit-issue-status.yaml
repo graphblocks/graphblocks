@@ -271,3 +271,6 @@ resolved:
   - id: GB-QA-018
     fixCommits: [d7f7c8d5, 5d69fb02, 1235660d, '19941251']
     regression: [tests/test_testing_package_architecture.py, tests/test_durable_tck_dispatch.py, tests/test_mutation_coverage.py, tests/test_mutation_targets.py]
+  - id: GB-DOC-004
+    fixCommits: [e685ee9d, 69f4ee00]
+    regression: [tests/test_version_compatibility.py, tests/test_package_layout.py, tests/test_quick_ci_gate.py]
