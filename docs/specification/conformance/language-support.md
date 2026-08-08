@@ -44,10 +44,11 @@ per-operation accepted/dropped updates, final accepted events, and cutoff
 responses must match the Python oracle. The installed private conformance
 adapter also executes the raw shared-fixture operations through Rust and exact
 compares normalized metadata/payloads, operation-level emission and admission,
-accepted events, and current fixture diagnostics. Numeric `*UnixMs` fields are
-authoritative over legacy display timestamps. This does not promote the suite
-claim; an adversarial diagnostic corpus remains `reference-only` transition
-work.
+accepted events, and structured diagnostics. Numeric `*UnixMs` fields are
+authoritative over legacy display timestamps. The shared adversarial corpus
+includes boolean numeric coercion and unknown-operation cases with exact code,
+message, and path comparison. The release matrix still declares the suite
+`python-reference`; its claim promotion remains a separate release decision.
 This preserves the boundary around other schema-facing and stable C1 runtime
 behavior. C4 production and X3 durable-stream durability are preview promotion
 work under `REL-EXTENSION-RUNTIME-AUTHORITY`; their live-authority,

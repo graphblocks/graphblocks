@@ -964,35 +964,25 @@ def test_default_tck_output_matches_source_derived_release_expectations(
     ) -> dict[str, object]:
         raw_operations = raw_case["operations"]
         raw_expected_kinds = raw_case["expectedAcceptedKinds"]
+        raw_expected_diagnostics = raw_case.get("expectedDiagnostics", [])
         assert isinstance(raw_operations, list)
         assert isinstance(raw_expected_kinds, list)
+        assert isinstance(raw_expected_diagnostics, list)
         case = graphblocks_testing.TckCase.application_events(
             case_id=str(raw_case["name"]),
             operations=tuple(dict(operation) for operation in raw_operations),
             expected_accepted_kinds=tuple(str(kind) for kind in raw_expected_kinds),
+            expected_diagnostics=tuple(
+                dict(diagnostic) for diagnostic in raw_expected_diagnostics
+            ),
         )
         result = graphblocks_testing.TckRunner(
             graphblocks_testing.stdlib_registry()
         ).run_cases((case,)).results[0]
-        contract = result.result_contract()
-        observed = contract["observed"]
-        assert isinstance(observed, dict)
-        accepted_metadata = observed["accepted_metadata"]
-        accepted_events = observed["accepted_events"]
-        assert isinstance(accepted_metadata, list)
-        assert isinstance(accepted_events, list)
-        for metadata, event in zip(accepted_metadata, accepted_events, strict=True):
-            assert isinstance(metadata, dict)
-            assert isinstance(event, dict)
-            event_metadata = event["metadata"]
-            assert isinstance(event_metadata, dict)
-            metadata.pop("occurred_at")
-            metadata["occurred_at_unix_ms"] = event_metadata["occurredAtUnixMs"]
-        return {
-            "ok": contract["status"] == "passed",
-            "diagnostics": contract["diagnostics"],
-            "observed": observed,
-        }
+        assert result.status == "passed"
+        reference_tck_contract = result.observed["reference_tck_contract"]
+        assert isinstance(reference_tck_contract, dict)
+        return json.loads(json.dumps(reference_tck_contract))
 
     monkeypatch.setattr(
         graphblocks_runtime,

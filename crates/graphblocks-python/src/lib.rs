@@ -12976,12 +12976,17 @@ mod tests {
             .map_err(|error| error.to_string())?;
             let output =
                 serde_json::from_str::<Value>(&output).map_err(|error| error.to_string())?;
-            assert_eq!(output.get("ok"), Some(&json!(true)));
+            let expected_diagnostics = case
+                .get("expectedDiagnostics")
+                .cloned()
+                .unwrap_or_else(|| json!([]));
+            let expected_ok = expected_diagnostics.as_array().is_some_and(Vec::is_empty);
+            assert_eq!(output.get("ok"), Some(&json!(expected_ok)));
             assert_eq!(
                 output.pointer("/observed/accepted_kinds"),
                 case.get("expectedAcceptedKinds")
             );
-            assert_eq!(output.get("diagnostics"), Some(&json!([])));
+            assert_eq!(output.get("diagnostics"), Some(&expected_diagnostics));
         }
         Ok(())
     }

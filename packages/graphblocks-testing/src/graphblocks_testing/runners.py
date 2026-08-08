@@ -1519,11 +1519,28 @@ class TckRunner:
             metadata_contract["occurred_at_unix_ms"] = event_metadata.get(
                 "occurredAtUnixMs"
             )
+        reference_diagnostics = [dict(diagnostic) for diagnostic in diagnostics]
         reference_tck_contract = {
-            "ok": not diagnostics,
-            "diagnostics": [dict(diagnostic) for diagnostic in diagnostics],
+            "ok": not reference_diagnostics,
+            "diagnostics": reference_diagnostics,
             "observed": reference_tck_observed,
         }
+        observed["reference_tck_contract"] = reference_tck_contract
+        diagnostics = []
+        expected_diagnostics = [
+            dict(diagnostic)
+            for diagnostic in case.expected_application_event_diagnostics
+        ]
+        if reference_diagnostics != expected_diagnostics:
+            diagnostics.append(
+                {
+                    "code": "ApplicationEventDiagnosticsMismatch",
+                    "message": (
+                        "application event diagnostics did not match expected diagnostics"
+                    ),
+                    "path": "$.expectedDiagnostics",
+                }
+            )
         if self.native_application_event_authority:
             try:
                 from graphblocks_runtime import (
@@ -1641,6 +1658,10 @@ class TckRunner:
                             "expectedAcceptedKinds": list(
                                 case.expected_accepted_event_kinds
                             ),
+                            "expectedDiagnostics": [
+                                dict(diagnostic)
+                                for diagnostic in case.expected_application_event_diagnostics
+                            ],
                         }
                     )
                     if set(native_tck_contract) != {

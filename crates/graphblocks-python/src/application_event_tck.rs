@@ -202,7 +202,7 @@ pub(crate) fn evaluate_case(case: &Value) -> Result<Value, String> {
             other => {
                 diagnostics.push(diagnostic(
                     "ApplicationEventOperationUnknown",
-                    &format!("application event TCK operation {other:?} is not supported"),
+                    &format!("application event TCK operation '{other}' is not supported"),
                     &format!("$.operations[{index}].op"),
                 ));
             }

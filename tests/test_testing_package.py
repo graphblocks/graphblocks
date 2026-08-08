@@ -156,35 +156,25 @@ def _fake_native_application_event_tck_case(
 
     raw_operations = raw_case["operations"]
     raw_expected_kinds = raw_case["expectedAcceptedKinds"]
+    raw_expected_diagnostics = raw_case.get("expectedDiagnostics", [])
     assert isinstance(raw_operations, list)
     assert isinstance(raw_expected_kinds, list)
+    assert isinstance(raw_expected_diagnostics, list)
     case = graphblocks_testing.TckCase.application_events(
         case_id=str(raw_case["name"]),
         operations=tuple(dict(operation) for operation in raw_operations),
         expected_accepted_kinds=tuple(str(kind) for kind in raw_expected_kinds),
+        expected_diagnostics=tuple(
+            dict(diagnostic) for diagnostic in raw_expected_diagnostics
+        ),
     )
     result = graphblocks_testing.TckRunner(
         graphblocks_testing.stdlib_registry()
     ).run_cases((case,)).results[0]
-    contract = result.result_contract()
-    observed = contract["observed"]
-    assert isinstance(observed, dict)
-    accepted_metadata = observed["accepted_metadata"]
-    accepted_events = observed["accepted_events"]
-    assert isinstance(accepted_metadata, list)
-    assert isinstance(accepted_events, list)
-    for metadata, event in zip(accepted_metadata, accepted_events, strict=True):
-        assert isinstance(metadata, dict)
-        assert isinstance(event, dict)
-        event_metadata = event["metadata"]
-        assert isinstance(event_metadata, dict)
-        metadata.pop("occurred_at")
-        metadata["occurred_at_unix_ms"] = event_metadata["occurredAtUnixMs"]
-    return {
-        "ok": contract["status"] == "passed",
-        "diagnostics": contract["diagnostics"],
-        "observed": observed,
-    }
+    assert result.status == "passed"
+    reference_tck_contract = result.observed["reference_tck_contract"]
+    assert isinstance(reference_tck_contract, dict)
+    return json.loads(json.dumps(reference_tck_contract))
 
 
 def test_tck_report_requires_nonempty_identified_native_evidence(monkeypatch) -> None:
@@ -1767,7 +1757,7 @@ def test_testing_package_loads_shared_application_event_tck_cases(monkeypatch) -
     )
     report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry()).run_cases(cases)
 
-    assert [case.kind for case in cases] == ["application-events"] * 8
+    assert [case.kind for case in cases] == ["application-events"] * 10
     assert report.ok
     assert {tuple(result.observed["accepted_kinds"]) for result in report.results} == {
         (
@@ -1807,9 +1797,82 @@ def test_testing_package_loads_shared_application_event_tck_cases(monkeypatch) -
             "ToolResultFailed",
             "ToolResultDenied",
         ),
-            ("RunSucceeded", "RunSucceeded"),
-        }
+        ("RunSucceeded", "RunSucceeded"),
+        (),
+    }
+    assert [
+        result.observed["reference_tck_contract"]["diagnostics"]
+        for result in report.results[-2:]
+    ] == [
+        [
+            {
+                "code": "ApplicationEventGenerationSequenceInvalid",
+                "message": "generation chunk sequence must be an integer",
+                "path": "$.operations[0].sequence",
+            }
+        ],
+        [
+            {
+                "code": "ApplicationEventOperationUnknown",
+                "message": "application event TCK operation 'unsupported' is not supported",
+                "path": "$.operations[0].op",
+            }
+        ],
+    ]
     assert "load_application_event_tck_cases" in graphblocks_testing.__all__
+
+
+@pytest.mark.parametrize(
+    ("expected_diagnostics", "error"),
+    [
+        (
+            [
+                {
+                    "code": "ApplicationEventOperationUnknown",
+                    "message": "unsupported operation",
+                    "path": "$.operations[0].op",
+                    "extra": "not closed",
+                }
+            ],
+            "must contain exactly code, message, and path",
+        ),
+        (
+            [
+                {
+                    "code": "ApplicationEventOperationUnknown",
+                    "message": 1,
+                    "path": "$.operations[0].op",
+                }
+            ],
+            "values must be non-empty strings",
+        ),
+    ],
+)
+def test_application_event_tck_expected_diagnostics_are_exactly_decoded(
+    monkeypatch,
+    tmp_path: Path,
+    expected_diagnostics: list[dict[str, object]],
+    error: str,
+) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+    fixture = tmp_path / "cases.json"
+    fixture.write_text(
+        json.dumps(
+            [
+                {
+                    "name": "invalid-diagnostic",
+                    "operations": [{"op": "unsupported"}],
+                    "expectedAcceptedKinds": [],
+                    "expectedDiagnostics": expected_diagnostics,
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match=error):
+        graphblocks_testing.load_application_event_tck_cases(fixture)
 
 
 def test_application_event_stream_admission_is_exact_native_reference(
@@ -2012,7 +2075,7 @@ def test_testing_package_application_event_tck_preserves_authoritative_event_met
             "cursor": "evt_000123",
             "release_id": "release-metadata",
             "policy_snapshot_id": "policy-metadata",
-            "occurred_at": "2026-06-23T00:00:00Z",
+            "occurred_at": "1970-01-01T00:28:20Z",
             "graph_id": "graph-metadata",
             "node_id": "node-metadata",
             "operation_id": "operation-metadata",
@@ -8742,6 +8805,8 @@ def test_testing_package_discovers_all_shared_tck_suite_manifests(monkeypatch) -
         "terminal_tool_result_events_preserve_partial_status",
         "failed_and_denied_tool_result_events_are_terminal",
         "stream_rejects_conflicting_duplicate_ids_and_nonmonotonic_sequences",
+        "boolean_generation_sequence_has_structured_diagnostic",
+        "unknown_operation_has_structured_diagnostic",
     )
     assert by_suite["application-protocol"].case_ids == (
         "application_protocol_kind_sets_match_contract",
@@ -9272,7 +9337,7 @@ def test_testing_package_cli_lists_tck_suite_manifests(monkeypatch, capsys) -> N
     payload = json.loads(capsys.readouterr().out)
     assert payload["suiteCount"] == 23
     assert payload["suites"][0]["suite_id"] == "application-events"
-    assert payload["suites"][0]["case_count"] == 8
+    assert payload["suites"][0]["case_count"] == 10
     assert payload["contentDigest"].startswith("sha256:")
     assert "main" in graphblocks_testing.__all__
 

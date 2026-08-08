@@ -322,6 +322,7 @@ _TCK_CASE_EVIDENCE_FIELDS = frozenset(
         "policy_operations",
         "expected_gate_state",
         "application_event_operations",
+        "expected_application_event_diagnostics",
         "application_protocol_fixture",
         "sequence_operations",
         "exhaustion_fixture",
@@ -379,6 +380,9 @@ class TckCase:
         default_factory=tuple
     )
     expected_accepted_event_kinds: tuple[str, ...] = field(default_factory=tuple)
+    expected_application_event_diagnostics: tuple[dict[str, str], ...] = field(
+        default_factory=tuple
+    )
     application_protocol_fixture: dict[str, object] = field(default_factory=dict)
     sequence_capacity: int | None = None
     sequence_operations: tuple[dict[str, object], ...] = field(default_factory=tuple)
@@ -489,6 +493,39 @@ class TckCase:
             self,
             "expected_accepted_event_kinds",
             tuple(self.expected_accepted_event_kinds),
+        )
+        decoded_application_event_diagnostics: list[dict[str, str]] = []
+        for diagnostic_index, diagnostic in enumerate(
+            self.expected_application_event_diagnostics
+        ):
+            if not isinstance(diagnostic, Mapping) or set(diagnostic) != {
+                "code",
+                "message",
+                "path",
+            }:
+                raise TypeError(
+                    "TCK expected application event diagnostic "
+                    f"{diagnostic_index} must contain exactly code, message, and path"
+                )
+            if not all(
+                type(diagnostic[key]) is str and bool(diagnostic[key])
+                for key in ("code", "message", "path")
+            ):
+                raise TypeError(
+                    "TCK expected application event diagnostic "
+                    f"{diagnostic_index} values must be non-empty strings"
+                )
+            decoded_application_event_diagnostics.append(
+                {
+                    "code": diagnostic["code"],
+                    "message": diagnostic["message"],
+                    "path": diagnostic["path"],
+                }
+            )
+        object.__setattr__(
+            self,
+            "expected_application_event_diagnostics",
+            tuple(decoded_application_event_diagnostics),
         )
         object.__setattr__(
             self,
@@ -743,12 +780,14 @@ class TckCase:
         case_id: str,
         operations: tuple[dict[str, object], ...],
         expected_accepted_kinds: tuple[str, ...],
+        expected_diagnostics: tuple[dict[str, str], ...] = (),
     ) -> TckCase:
         return cls(
             case_id=case_id,
             kind="application-events",
             application_event_operations=operations,
             expected_accepted_event_kinds=expected_accepted_kinds,
+            expected_application_event_diagnostics=expected_diagnostics,
         )
 
     @classmethod

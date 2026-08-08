@@ -615,5 +615,39 @@
       "RunSucceeded",
       "RunSucceeded"
     ]
+  },
+  {
+    "name": "boolean_generation_sequence_has_structured_diagnostic",
+    "operations": [
+      {
+        "op": "output_policy_evaluation_started",
+        "sequence": true,
+        "inputDigest": "sha256:boolean-sequence"
+      }
+    ],
+    "expectedAcceptedKinds": [],
+    "expectedDiagnostics": [
+      {
+        "code": "ApplicationEventGenerationSequenceInvalid",
+        "message": "generation chunk sequence must be an integer",
+        "path": "$.operations[0].sequence"
+      }
+    ]
+  },
+  {
+    "name": "unknown_operation_has_structured_diagnostic",
+    "operations": [
+      {
+        "op": "unsupported"
+      }
+    ],
+    "expectedAcceptedKinds": [],
+    "expectedDiagnostics": [
+      {
+        "code": "ApplicationEventOperationUnknown",
+        "message": "application event TCK operation 'unsupported' is not supported",
+        "path": "$.operations[0].op"
+      }
+    ]
   }
 ]

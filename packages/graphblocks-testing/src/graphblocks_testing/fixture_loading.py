@@ -218,6 +218,37 @@ def load_application_event_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
             raise ValueError(
                 f"application-events TCK case {case_id} expectedAcceptedKinds must be strings"
             )
+        expected_diagnostics = raw_case.get("expectedDiagnostics", [])
+        if not isinstance(expected_diagnostics, list):
+            raise ValueError(
+                f"application-events TCK case {case_id} expectedDiagnostics must be a list"
+            )
+        decoded_diagnostics: list[dict[str, str]] = []
+        for diagnostic_index, diagnostic in enumerate(expected_diagnostics):
+            if not isinstance(diagnostic, Mapping) or set(diagnostic) != {
+                "code",
+                "message",
+                "path",
+            }:
+                raise ValueError(
+                    f"application-events TCK case {case_id} expectedDiagnostics[{diagnostic_index}] "
+                    "must contain exactly code, message, and path"
+                )
+            if not all(
+                type(diagnostic[key]) is str and bool(diagnostic[key])
+                for key in ("code", "message", "path")
+            ):
+                raise ValueError(
+                    f"application-events TCK case {case_id} expectedDiagnostics[{diagnostic_index}] "
+                    "values must be non-empty strings"
+                )
+            decoded_diagnostics.append(
+                {
+                    "code": diagnostic["code"],
+                    "message": diagnostic["message"],
+                    "path": diagnostic["path"],
+                }
+            )
         operations_with_defaults = []
         for operation in operations:
             operation_with_defaults = dict(operation)
@@ -237,6 +268,7 @@ def load_application_event_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
                 case_id=case_id,
                 operations=tuple(operations_with_defaults),
                 expected_accepted_kinds=tuple(expected),
+                expected_diagnostics=tuple(decoded_diagnostics),
             )
         )
     return tuple(cases)

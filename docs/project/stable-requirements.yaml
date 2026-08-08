@@ -256,7 +256,7 @@ profiles:
           applicationEventStreamAdmission:
             status: normative
             authority: rust
-            scope: normalized-raw-construction-operation-trace-plus-materialized-admission-and-projection
+            scope: normalized-raw-construction-operation-trace-structured-diagnostics-plus-materialized-admission-and-projection
             normativeImplementations:
               - crates/graphblocks-runtime-core/src/application_event.rs
               - crates/graphblocks-python/src/application_event_tck.rs
@@ -269,8 +269,7 @@ profiles:
               - packages/graphblocks-testing/src/graphblocks_testing/cli.py
               - tests/test_testing_package.py
               - tests/test_release_supply_chain.py
-            exclusions:
-              - adversarial-diagnostic-differential
+            exclusions: []
         schemas: []
         tckSuites: [application-events, tool-result]
         evidence:

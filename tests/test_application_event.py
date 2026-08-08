@@ -2486,6 +2486,8 @@ def test_application_event_stream_state_matches_shared_tck_cases() -> None:
     )
 
     for case in cases:
+        if case.get("expectedDiagnostics"):
+            continue
         state = ApplicationEventStreamState()
         case_name = case["name"]
         for sequence, operation in enumerate(case["operations"], start=1):

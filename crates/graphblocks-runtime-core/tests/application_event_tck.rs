@@ -33,6 +33,7 @@ fn run_case(case: &Value) -> Result<(), String> {
     let case_name = required_str(case, "name")?;
     let default_response_id = optional_str(case, "responseId").unwrap_or("response-1");
     let mut state = ApplicationEventStreamState::default();
+    let mut diagnostics = Vec::new();
     let operations = case
         .get("operations")
         .and_then(Value::as_array)
@@ -81,14 +82,22 @@ fn run_case(case: &Value) -> Result<(), String> {
 
         match op {
             "output_policy_evaluation_started" => {
+                let generation_sequence = optional_u64(operation, "sequence")
+                    .or_else(|| optional_u64(operation, "chunkSequence"));
+                let Some(generation_sequence) = generation_sequence else {
+                    diagnostics.push(json!({
+                        "code": "ApplicationEventGenerationSequenceInvalid",
+                        "message": "generation chunk sequence must be an integer",
+                        "path": format!("$.operations[{index}].sequence"),
+                    }));
+                    continue;
+                };
                 let chunk = GenerationChunk::text(
                     optional_str(operation, "streamId")
                         .or_else(|| optional_str(case, "streamId"))
                         .unwrap_or("stream-1"),
                     response_id,
-                    optional_u64(operation, "sequence")
-                        .or_else(|| optional_u64(operation, "chunkSequence"))
-                        .unwrap_or(1),
+                    generation_sequence,
                     optional_str(operation, "text").unwrap_or(""),
                 );
                 let event = ApplicationEvent::output_policy_evaluation_started(
@@ -472,9 +481,13 @@ fn run_case(case: &Value) -> Result<(), String> {
                 );
             }
             other => {
-                return Err(format!(
-                    "application-events TCK case {case_name} has unknown operation {other}"
-                ));
+                diagnostics.push(json!({
+                    "code": "ApplicationEventOperationUnknown",
+                    "message": format!(
+                        "application event TCK operation '{other}' is not supported"
+                    ),
+                    "path": format!("$.operations[{index}].op"),
+                }));
             }
         }
     }
@@ -498,6 +511,12 @@ fn run_case(case: &Value) -> Result<(), String> {
         })
         .collect::<Result<Vec<_>, _>>()?;
     assert_eq!(actual_kinds, expected_kinds, "{case_name}");
+    let expected_diagnostics = case
+        .get("expectedDiagnostics")
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or(&[]);
+    assert_eq!(diagnostics, expected_diagnostics, "{case_name}");
     Ok(())
 }
 

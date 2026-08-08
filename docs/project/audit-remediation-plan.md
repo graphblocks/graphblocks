@@ -575,10 +575,12 @@ and compares the closed per-operation accepted/dropped updates, final accepted
 events, and cutoff-response projection. A private installed conformance adapter
 also executes every raw shared-fixture operation through the Rust constructors
 and compares normalized metadata and payloads, per-operation emission/admission
-traces, accepted events, and current fixture diagnostics with the Python
-oracle. Numeric `*UnixMs` fixture fields are authoritative over legacy display
-timestamps. An adversarial diagnostic corpus remains part of the still-blocking
-`application-events` suite transition.
+traces, accepted events, and structured diagnostics with the Python oracle.
+Numeric `*UnixMs` fixture fields are authoritative over legacy display
+timestamps. The shared adversarial corpus now covers boolean numeric coercion
+and unknown operations with exact code, message, and path comparison. The
+release matrix still keeps `application-events` at `python-reference` until its
+claim is promoted separately.
 The stable installed runtime API is now an explicit three-symbol allowlist with
 an exact signature snapshot. Its core execution result is projected to a
 closed checkpoint-free envelope, while persistence and other C4/X3 options use
