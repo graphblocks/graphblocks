@@ -1278,7 +1278,8 @@ fn declarative_output_policy_rules_reject_invalid_contracts() {
 }
 
 #[test]
-fn declarative_output_policy_evaluator_allows_unmatched_chunk() {
+fn declarative_output_policy_evaluator_allows_unmatched_chunk()
+-> Result<(), DeclarativeOutputPolicyRuleError> {
     let evaluator = DeclarativeOutputPolicyEvaluator::new([DeclarativeOutputPolicyRule::new(
         "blocked-secret",
         "secret",
@@ -1287,7 +1288,7 @@ fn declarative_output_policy_evaluator_allows_unmatched_chunk() {
     let decision = evaluator.evaluate_chunk(
         &GenerationChunk::text("stream-1", "response-1", 3, "safe response"),
         1_000,
-    );
+    )?;
 
     assert_eq!(decision.disposition, OutputDisposition::Allow);
     assert_eq!(decision.accepted_through_sequence, Some(3));
@@ -1295,6 +1296,7 @@ fn declarative_output_policy_evaluator_allows_unmatched_chunk() {
     assert_eq!(decision.evaluated_at_unix_ms, Some(1_000));
     assert!(decision.reason_codes.is_empty());
     assert!(decision.policy_refs.is_empty());
+    Ok(())
 }
 
 #[test]
@@ -1319,7 +1321,8 @@ fn declarative_output_policy_evaluator_rejects_zero_evaluation_timestamp() {
 }
 
 #[test]
-fn declarative_output_policy_evaluator_redacts_literal_match() {
+fn declarative_output_policy_evaluator_redacts_literal_match()
+-> Result<(), DeclarativeOutputPolicyRuleError> {
     let evaluator = DeclarativeOutputPolicyEvaluator::new([DeclarativeOutputPolicyRule::new(
         "redact-secret",
         "secret",
@@ -1331,7 +1334,7 @@ fn declarative_output_policy_evaluator_redacts_literal_match() {
     let decision = evaluator.evaluate_chunk(
         &GenerationChunk::text("stream-1", "response-1", 4, "safe secret suffix"),
         1_010,
-    );
+    )?;
 
     assert_eq!(decision.disposition, OutputDisposition::Redact);
     assert_eq!(decision.accepted_through_sequence, Some(4));
@@ -1350,20 +1353,23 @@ fn declarative_output_policy_evaluator_redacts_literal_match() {
         vec!["policy/output-standard#redact-secret"]
     );
     assert_eq!(decision.evaluated_at_unix_ms, Some(1_010));
+    Ok(())
 }
 
 #[test]
-fn output_redaction_offsets_are_character_positions() -> Result<(), OutputGateError> {
+fn output_redaction_offsets_are_character_positions() -> Result<(), String> {
     let evaluator = DeclarativeOutputPolicyEvaluator::new([DeclarativeOutputPolicyRule::new(
         "redact-secret",
         "secret",
         OutputDisposition::Redact,
     )
     .with_replacement("[redacted]")]);
-    let decision = evaluator.evaluate_chunk(
-        &GenerationChunk::text("stream-1", "response-1", 1, "safe 🔐 secret suffix"),
-        1_010,
-    );
+    let decision = evaluator
+        .evaluate_chunk(
+            &GenerationChunk::text("stream-1", "response-1", 1, "safe 🔐 secret suffix"),
+            1_010,
+        )
+        .map_err(|error| format!("{error:?}"))?;
 
     assert_eq!(
         decision.redactions,
@@ -1381,9 +1387,12 @@ fn output_redaction_offsets_are_character_positions() -> Result<(), OutputGateEr
         "response-1",
         1,
         "safe 🔐 secret suffix",
-    ))?;
+    ))
+    .map_err(|error| format!("{error:?}"))?;
 
-    let update = gate.apply_decision(decision, 1_020)?;
+    let update = gate
+        .apply_decision(decision, 1_020)
+        .map_err(|error| format!("{error:?}"))?;
 
     assert_eq!(
         update
@@ -1397,7 +1406,8 @@ fn output_redaction_offsets_are_character_positions() -> Result<(), OutputGateEr
 }
 
 #[test]
-fn declarative_output_policy_evaluator_aborts_on_blocked_literal() {
+fn declarative_output_policy_evaluator_aborts_on_blocked_literal()
+-> Result<(), DeclarativeOutputPolicyRuleError> {
     let evaluator = DeclarativeOutputPolicyEvaluator::new([DeclarativeOutputPolicyRule::new(
         "blocked-secret",
         "secret",
@@ -1407,7 +1417,7 @@ fn declarative_output_policy_evaluator_aborts_on_blocked_literal() {
     let decision = evaluator.evaluate_chunk(
         &GenerationChunk::text("stream-1", "response-1", 5, "unsafe secret"),
         1_020,
-    );
+    )?;
 
     assert_eq!(decision.disposition, OutputDisposition::AbortResponse);
     assert_eq!(decision.accepted_through_sequence, None);
@@ -1419,6 +1429,7 @@ fn declarative_output_policy_evaluator_aborts_on_blocked_literal() {
     assert_eq!(decision.reason_codes, vec!["secret.detected"]);
     assert_eq!(decision.policy_refs, vec!["blocked-secret"]);
     assert_eq!(decision.evaluated_at_unix_ms, Some(1_020));
+    Ok(())
 }
 
 #[test]

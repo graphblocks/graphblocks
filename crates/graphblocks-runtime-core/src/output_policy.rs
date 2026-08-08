@@ -1,5 +1,3 @@
-#![allow(clippy::expect_used)] // Guarded by compatibility/rust-production-expect-budget.json.
-
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::canonical::canonical_hash;
@@ -802,9 +800,8 @@ impl DeclarativeOutputPolicyEvaluator {
         &self,
         chunk: &GenerationChunk,
         evaluated_at_unix_ms: u64,
-    ) -> OutputPolicyDecision {
+    ) -> Result<OutputPolicyDecision, DeclarativeOutputPolicyRuleError> {
         self.evaluate_chunk_checked(chunk, evaluated_at_unix_ms)
-            .expect("declarative output policy rules must be valid")
     }
 
     pub fn evaluate_chunk_checked(
