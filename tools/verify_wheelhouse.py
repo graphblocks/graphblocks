@@ -30,11 +30,12 @@ import yaml
 from graphblocks.canonical import (
     canonical_dumps_reference as canonical_dumps,
     canonical_hash_reference as canonical_hash,
+    canonical_loads_reference as canonical_loads,
 )
 from graphblocks.conformance import ConformanceAuthorityMatrix
 from graphblocks.loader import load_documents
 from graphblocks.packages import build_wheel_matrix, load_package_catalog
-from graphblocks.schema import SchemaManifest
+from graphblocks.schema import SchemaId, SchemaManifest
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -70,6 +71,17 @@ NATIVE_SCHEMA_ID_SMOKE = {
     "majorVersion": 4_294_967_295,
     "name": "schemas/Message",
 }
+NATIVE_AUTHORITY_EVIDENCE_FORMAT_VERSION = 1
+NATIVE_CANONICAL_AUTHORITY_SOURCES = (
+    '{"b":2,"a":1}',
+    '[null,true,false,0,-17,1.25,"snowman ☃"]',
+    '{"nested":{"z":[3,2,1],"a":"é"}}',
+)
+NATIVE_SCHEMA_ID_AUTHORITY_SOURCES = (
+    "schemas/Message@1",
+    "schemas/Message@4294967295",
+    "graphblocks.ai/PluginManifest@1",
+)
 MAX_SDIST_MEMBER_COUNT = 100_000
 MAX_SDIST_UNPACKED_SIZE = 512 * 1024 * 1024
 WINDOWS_RESERVED_PATH_NAMES = {
@@ -277,6 +289,83 @@ def observe_rustc_identity(
     return parse_rustc_identity(completed.stdout)
 
 
+def installed_native_authority_probe_expectations() -> dict[str, object]:
+    canonical_cases: list[dict[str, object]] = []
+    for source in NATIVE_CANONICAL_AUTHORITY_SOURCES:
+        value = canonical_loads(source)
+        result = {
+            "json": canonical_dumps(value),
+            "hash": canonical_hash(value),
+        }
+        canonical_cases.append(
+            {
+                "source": source,
+                "public": dict(result),
+                "reference": dict(result),
+                "native": dict(result),
+            }
+        )
+    schema_id_cases: list[dict[str, object]] = []
+    for source in NATIVE_SCHEMA_ID_AUTHORITY_SOURCES:
+        schema_id = SchemaId.parse_reference(source)
+        identity = {
+            "canonical": schema_id.as_str(),
+            "majorVersion": schema_id.major_version,
+            "name": schema_id.name,
+        }
+        schema_id_cases.append(
+            {
+                "source": source,
+                "public": dict(identity),
+                "reference": dict(identity),
+                "native": dict(identity),
+            }
+        )
+    return {
+        "formatVersion": NATIVE_AUTHORITY_EVIDENCE_FORMAT_VERSION,
+        "corpusDigest": canonical_hash(
+            {
+                "canonicalSources": list(NATIVE_CANONICAL_AUTHORITY_SOURCES),
+                "schemaIds": list(NATIVE_SCHEMA_ID_AUTHORITY_SOURCES),
+            }
+        ),
+        "canonicalCases": canonical_cases,
+        "schemaIdCases": schema_id_cases,
+    }
+
+
+def installed_native_authority_probe_source() -> str:
+    return "\n".join(
+        (
+            "import json",
+            "from importlib.metadata import version",
+            "import graphblocks_runtime",
+            (
+                "from graphblocks.canonical import canonical_dumps, "
+                "canonical_dumps_reference, canonical_hash, "
+                "canonical_hash_reference, canonical_loads, "
+                "canonical_loads_reference"
+            ),
+            "from graphblocks.schema import SchemaId",
+            f"canonical_sources = {NATIVE_CANONICAL_AUTHORITY_SOURCES!r}",
+            f"schema_id_sources = {NATIVE_SCHEMA_ID_AUTHORITY_SOURCES!r}",
+            "canonical_cases = []",
+            "for source in canonical_sources:",
+            "    public_value = canonical_loads(source)",
+            "    reference_value = canonical_loads_reference(source)",
+            "    canonical_cases.append({'source': source, 'public': {'json': canonical_dumps(public_value), 'hash': canonical_hash(public_value)}, 'reference': {'json': canonical_dumps_reference(reference_value), 'hash': canonical_hash_reference(reference_value)}, 'native': {'json': graphblocks_runtime.canonicalize_json(source), 'hash': graphblocks_runtime.canonical_hash_json(source)}})",
+            "schema_id_cases = []",
+            "for source in schema_id_sources:",
+            "    public = SchemaId.parse(source)",
+            "    reference = SchemaId.parse_reference(source)",
+            "    schema_id_cases.append({'source': source, 'public': {'canonical': public.as_str(), 'majorVersion': public.major_version, 'name': public.name}, 'reference': {'canonical': reference.as_str(), 'majorVersion': reference.major_version, 'name': reference.name}, 'native': graphblocks_runtime.parse_schema_id(source)})",
+            "public_facade_evidence = {'formatVersion': 1, 'corpusDigest': canonical_hash_reference({'canonicalSources': list(canonical_sources), 'schemaIds': list(schema_id_sources)}), 'canonicalCases': canonical_cases, 'schemaIdCases': schema_id_cases}",
+            "payload = {'canonicalSmoke': {'hash': graphblocks_runtime.canonical_hash_json('{\"b\":2,\"a\":1}'), 'json': graphblocks_runtime.canonicalize_json('{\"b\":2,\"a\":1}')}, 'distributionVersion': version('graphblocks-runtime'), 'publicFacadeEvidence': public_facade_evidence, 'schemaIdSmoke': graphblocks_runtime.parse_schema_id('schemas/Message@4294967295'), 'status': graphblocks_runtime.native_extension_status()}",
+            "print(json.dumps(payload, sort_keys=True))",
+        )
+    )
+
+
 def _validate_installed_native_binding(
     payload: object,
     *,
@@ -285,6 +374,7 @@ def _validate_installed_native_binding(
     if not isinstance(payload, dict) or set(payload) != {
         "canonicalSmoke",
         "distributionVersion",
+        "publicFacadeEvidence",
         "schemaIdSmoke",
         "status",
     }:
@@ -375,7 +465,41 @@ def _validate_installed_native_binding(
         raise RuntimeError(
             "installed native binding schema id smoke does not match"
         )
+    if payload["publicFacadeEvidence"] != (
+        installed_native_authority_probe_expectations()
+    ):
+        raise RuntimeError(
+            "installed public canonical/schema facade evidence does not match"
+        )
     return dict(status)
+
+
+def validate_installed_native_authority_evidence(
+    payload: object,
+    *,
+    expected_runtime_artifact: Mapping[str, object],
+) -> dict[str, object]:
+    if not isinstance(payload, dict) or set(payload) != {
+        "probe",
+        "runtimeArtifact",
+    }:
+        raise RuntimeError(
+            "installed native canonical/schema authority evidence has an invalid envelope"
+        )
+    if payload["runtimeArtifact"] != dict(expected_runtime_artifact):
+        raise RuntimeError(
+            "installed native canonical/schema authority evidence names another runtime artifact"
+        )
+    runtime_version = expected_runtime_artifact.get("version")
+    if not isinstance(runtime_version, str) or not runtime_version:
+        raise RuntimeError(
+            "installed native canonical/schema authority evidence has no runtime version"
+        )
+    _validate_installed_native_binding(
+        payload["probe"],
+        expected_distribution_version=runtime_version,
+    )
+    return dict(payload)
 
 
 def _require_canonical_sha256(value: object, *, owner: str) -> str:
@@ -1872,21 +1996,7 @@ def main(argv: list[str] | None = None) -> int:
             [
                 str(isolated_python),
                 "-c",
-                (
-                    "import json; "
-                    "from importlib.metadata import version; "
-                    "import graphblocks_runtime; "
-                    "print(json.dumps({"
-                    "'canonicalSmoke': {"
-                    "'hash': graphblocks_runtime.canonical_hash_json('{\"b\":2,\"a\":1}'), "
-                    "'json': graphblocks_runtime.canonicalize_json('{\"b\":2,\"a\":1}')"
-                    "}, "
-                    "'distributionVersion': version('graphblocks-runtime'), "
-                    "'schemaIdSmoke': graphblocks_runtime.parse_schema_id("
-                    "'schemas/Message@4294967295'), "
-                    "'status': graphblocks_runtime.native_extension_status()"
-                    "}, sort_keys=True))"
-                ),
+                installed_native_authority_probe_source(),
             ],
             check=True,
             cwd=install_root,
@@ -2068,6 +2178,10 @@ def main(argv: list[str] | None = None) -> int:
                     "schemaManifestDigest": evidence_expectations["TCK"][
                         "schema_manifest_digest"
                     ],
+                },
+                "nativeCanonicalSchemaAuthority": {
+                    "runtimeArtifact": dict(native_compiler_artifact),
+                    "probe": installed_native_binding_payload,
                 },
             }
             platform_evidence["contentDigest"] = canonical_hash(platform_evidence)

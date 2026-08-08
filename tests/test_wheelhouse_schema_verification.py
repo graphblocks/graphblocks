@@ -20,6 +20,7 @@ from graphblocks.canonical import (
     canonical_hash_reference,
 )
 from graphblocks.schema import SchemaManifest
+from tools.verify_wheelhouse import installed_native_authority_probe_expectations
 
 
 def _load_wheelhouse_module() -> ModuleType:
@@ -101,6 +102,7 @@ def _native_binding_payload(
             "json": '{"a":1,"b":2}',
         },
         "distributionVersion": distribution_version,
+        "publicFacadeEvidence": installed_native_authority_probe_expectations(),
         "schemaIdSmoke": {
             "canonical": "schemas/Message@4294967295",
             "majorVersion": 4_294_967_295,
@@ -190,6 +192,63 @@ def test_installed_native_binding_handshake_rejects_wrong_schema_id_smoke() -> N
             payload,
             expected_distribution_version="0.1.0",
         )
+
+
+def test_installed_native_binding_rejects_wrong_public_facade_evidence() -> None:
+    module = _load_wheelhouse_module()
+    payload = _native_binding_payload()
+    evidence = dict(payload["publicFacadeEvidence"])
+    evidence["corpusDigest"] = "sha256:" + "0" * 64
+    payload["publicFacadeEvidence"] = evidence
+
+    with pytest.raises(RuntimeError, match="public canonical/schema facade"):
+        module._validate_installed_native_binding(
+            payload,
+            expected_distribution_version="0.1.0",
+        )
+
+
+def test_installed_native_authority_evidence_binds_runtime_artifact() -> None:
+    module = _load_wheelhouse_module()
+    runtime_artifact = {
+        "filename": "graphblocks_runtime-0.1.0-cp311-abi3-manylinux.whl",
+        "sha256": "1" * 64,
+        "size": 123,
+        "distribution": "graphblocks-runtime",
+        "version": "0.1.0",
+        "artifactType": "wheel",
+    }
+    evidence = {
+        "runtimeArtifact": dict(runtime_artifact),
+        "probe": _native_binding_payload(),
+    }
+
+    assert module.validate_installed_native_authority_evidence(
+        evidence,
+        expected_runtime_artifact=runtime_artifact,
+    ) == evidence
+
+    tampered = dict(evidence)
+    tampered["runtimeArtifact"] = {
+        **runtime_artifact,
+        "sha256": "2" * 64,
+    }
+    with pytest.raises(RuntimeError, match="another runtime artifact"):
+        module.validate_installed_native_authority_evidence(
+            tampered,
+            expected_runtime_artifact=runtime_artifact,
+        )
+
+
+def test_installed_native_authority_probe_exercises_public_and_reference_paths() -> None:
+    module = _load_wheelhouse_module()
+    source = module.installed_native_authority_probe_source()
+
+    assert "canonical_loads(source)" in source
+    assert "canonical_loads_reference(source)" in source
+    assert "SchemaId.parse(source)" in source
+    assert "SchemaId.parse_reference(source)" in source
+    assert "graphblocks_runtime.parse_schema_id(source)" in source
 
 
 @pytest.mark.parametrize(

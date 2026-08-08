@@ -59,6 +59,7 @@ try:
         PINNED_RUSTC_VERSION,
         parse_rustc_identity,
         release_evidence_expectations,
+        validate_installed_native_authority_evidence,
         validate_release_evidence_payloads,
     )
 except ModuleNotFoundError:  # Direct `python tools/release_supply_chain.py` execution.
@@ -79,6 +80,7 @@ except ModuleNotFoundError:  # Direct `python tools/release_supply_chain.py` exe
         PINNED_RUSTC_VERSION,
         parse_rustc_identity,
         release_evidence_expectations,
+        validate_installed_native_authority_evidence,
         validate_release_evidence_payloads,
     )
 
@@ -4769,14 +4771,19 @@ def _verify_platform_evidence(
             raise ReleaseBundleError(
                 "retained platform evidence omits a first-party wheel or sdist"
             )
+        native_runtime_artifact = _native_compiler_wheel_record(
+            observed_records
+        )
         try:
+            validate_installed_native_authority_evidence(
+                platform_payload.get("nativeCanonicalSchemaAuthority"),
+                expected_runtime_artifact=native_runtime_artifact,
+            )
             validate_release_evidence_payloads(
                 tck_payload=tck_payload,
                 acceptance_payload=acceptance_payload,
                 expectations=expectations,
-                expected_compiler_artifact=_native_compiler_wheel_record(
-                    observed_records
-                ),
+                expected_compiler_artifact=native_runtime_artifact,
             )
         except RuntimeError as error:
             raise ReleaseBundleError(

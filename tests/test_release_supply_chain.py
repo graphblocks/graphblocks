@@ -19,6 +19,7 @@ from graphblocks.canonical import (
     canonical_hash_reference as canonical_hash,
 )
 from tools import stable_security_gates
+from tools.verify_wheelhouse import installed_native_authority_probe_expectations
 
 
 COMMIT = "1" * 40
@@ -36,6 +37,37 @@ PROMOTION_INTEGRATED_TIME = 1781568000
 PROMOTION_INTEGRATED_AT = datetime.fromtimestamp(
     PROMOTION_INTEGRATED_TIME, timezone.utc
 )
+
+
+def _native_authority_probe() -> dict[str, object]:
+    return {
+        "canonicalSmoke": {
+            "hash": "sha256:43258cff783fe7036d8a43033f830adfc60ec037382473548ac742b888292777",
+            "json": '{"a":1,"b":2}',
+        },
+        "distributionVersion": "0.1.0",
+        "publicFacadeEvidence": installed_native_authority_probe_expectations(),
+        "schemaIdSmoke": {
+            "canonical": "schemas/Message@4294967295",
+            "majorVersion": 4_294_967_295,
+            "name": "schemas/Message",
+        },
+        "status": {
+            "available": True,
+            "binding_crate": "graphblocks-python",
+            "binding_version": "0.1.0",
+            "binding_protocol_version": 1,
+            "capabilities": [
+                "canonical.json.v1",
+                "compiler.graph.v1",
+                "protocol.application.v1",
+                "protocol.worker.v1",
+                "schema.identity.v1",
+            ],
+            "module": "graphblocks_runtime._native",
+            "error": None,
+        },
+    }
 
 
 def test_release_tooling_uses_reference_canonical_oracle() -> None:
@@ -500,6 +532,10 @@ def _write_platform_input(
                     "matrix_digest"
                 ],
                 "schemaManifestDigest": expectations["TCK"]["schema_manifest_digest"],
+            },
+            "nativeCanonicalSchemaAuthority": {
+                "runtimeArtifact": dict(native_compiler_artifact),
+                "probe": _native_authority_probe(),
             },
         }
     )
@@ -3010,6 +3046,47 @@ def test_release_bundle_rejects_platform_contract_binding_substitution(
     )
 
     with pytest.raises(module.ReleaseBundleError, match="stable conformance contracts"):
+        module.assemble_release_bundle(
+            platform_inputs_dir=inputs,
+            output_dir=tmp_path / "bundle",
+            git_commit=COMMIT,
+            release_ref=RELEASE_REF,
+            builder_id=BUILDER_ID,
+            invocation_id=INVOCATION_ID,
+        )
+
+
+@pytest.mark.parametrize(
+    ("target", "message"),
+    (
+        ("probe", "public canonical/schema facade"),
+        ("artifact", "another runtime artifact"),
+    ),
+)
+def test_release_bundle_rejects_native_authority_evidence_substitution(
+    tmp_path: Path,
+    target: str,
+    message: str,
+) -> None:
+    module = _load_module()
+    inputs = _inputs(module, tmp_path)
+    platform_path = next(inputs.iterdir()) / "platform-evidence" / "platform.json"
+    platform = json.loads(platform_path.read_text(encoding="utf-8"))
+    authority = platform["nativeCanonicalSchemaAuthority"]
+    if target == "probe":
+        authority["probe"]["publicFacadeEvidence"]["corpusDigest"] = (
+            "sha256:" + "f" * 64
+        )
+    else:
+        authority["runtimeArtifact"]["sha256"] = "f" * 64
+    platform.pop("contentDigest")
+    platform["contentDigest"] = canonical_hash(platform)
+    platform_path.write_text(
+        json.dumps(platform, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(module.ReleaseBundleError, match=message):
         module.assemble_release_bundle(
             platform_inputs_dir=inputs,
             output_dir=tmp_path / "bundle",
