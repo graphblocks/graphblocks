@@ -234,7 +234,14 @@ def test_ci_enforces_documented_rust_quality_and_packaging_gates() -> None:
     wheelhouse_gate = (ROOT / "tools" / "verify_wheelhouse.py").read_text(encoding="utf-8")
 
     assert "cargo fmt --all -- --check" in workflow
-    assert "cargo clippy --workspace --all-targets --locked -- -D warnings" in workflow
+    assert "python3 tools/check_rust_lint_debt.py" in workflow
+    assert "--report dist/ci/rust-lint-debt.json" in workflow
+    assert "cargo clippy --workspace --lib --bins --locked -- -D warnings" in workflow
+    assert (
+        "cargo clippy --workspace --tests --examples --benches --locked --"
+        in workflow
+    )
+    assert "-D warnings -A clippy::expect_used" in workflow
     assert "cargo test --workspace --all-targets --locked" in workflow
     assert "cargo package" in workflow
     assert "patch_config=.cargo/config.toml" in workflow

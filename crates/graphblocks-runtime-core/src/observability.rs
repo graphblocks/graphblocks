@@ -1,3 +1,5 @@
+#![allow(clippy::expect_used)] // Guarded by compatibility/rust-production-expect-budget.json.
+
 use std::collections::{BTreeMap, VecDeque};
 use std::error::Error;
 use std::fmt;

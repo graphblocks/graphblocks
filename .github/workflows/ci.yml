@@ -798,12 +798,26 @@ jobs:
         run: |
           set -o pipefail
           cargo fmt --all -- --check 2>&1 | tee dist/ci/rust-fmt.log
-      - name: Run Clippy
+      - name: Check production Rust expect debt
         shell: bash
         run: |
           set -o pipefail
-          cargo clippy --workspace --all-targets --locked -- -D warnings \
-            2>&1 | tee dist/ci/rust-clippy.log
+          python3 tools/check_rust_lint_debt.py \
+            --report dist/ci/rust-lint-debt.json \
+            2>&1 | tee dist/ci/rust-lint-debt.log
+      - name: Run production Clippy
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo clippy --workspace --lib --bins --locked -- -D warnings \
+            2>&1 | tee dist/ci/rust-clippy-production.log
+      - name: Run test-target Clippy
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo clippy --workspace --tests --examples --benches --locked -- \
+            -D warnings -A clippy::expect_used \
+            2>&1 | tee dist/ci/rust-clippy-tests.log
       - name: Run checkpoint recovery Loom model
         shell: bash
         run: |

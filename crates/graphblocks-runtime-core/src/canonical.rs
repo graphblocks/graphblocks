@@ -1,3 +1,5 @@
+#![allow(clippy::expect_used)] // Guarded by compatibility/rust-production-expect-budget.json.
+
 use serde_json::Value;
 
 pub(crate) fn canonical_hash(value: &Value) -> String {

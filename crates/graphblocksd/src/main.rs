@@ -1,3 +1,5 @@
+#![allow(clippy::expect_used)] // Guarded by compatibility/rust-production-expect-budget.json.
+
 use std::io::{self, Read};
 
 use graphblocks_control_plane::{DaemonConfig, DaemonStatus, WorkerRegistry, WorkerRegistryError};

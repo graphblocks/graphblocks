@@ -1,3 +1,5 @@
+#![allow(clippy::expect_used)] // Guarded by compatibility/rust-production-expect-budget.json.
+
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::canonical::canonical_hash;

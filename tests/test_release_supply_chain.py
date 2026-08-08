@@ -4026,7 +4026,9 @@ def test_ci_retains_each_rust_gate_log_on_failure() -> None:
 
     expected_logs = {
         "Check Rust formatting": "dist/ci/rust-fmt.log",
-        "Run Clippy": "dist/ci/rust-clippy.log",
+        "Check production Rust expect debt": "dist/ci/rust-lint-debt.log",
+        "Run production Clippy": "dist/ci/rust-clippy-production.log",
+        "Run test-target Clippy": "dist/ci/rust-clippy-tests.log",
         "Run checkpoint recovery Loom model": "dist/ci/rust-checkpoint-loom.log",
         "Run Rust tests": "dist/ci/rust-tests.log",
         "Verify Rust packages": "dist/ci/rust-packages.log",
@@ -4035,6 +4037,9 @@ def test_ci_retains_each_rust_gate_log_on_failure() -> None:
         command = rust_steps[step_name]["run"]
         assert "set -o pipefail" in command
         assert f"2>&1 | tee {log_path}" in command
+
+    debt_command = rust_steps["Check production Rust expect debt"]["run"]
+    assert "--report dist/ci/rust-lint-debt.json" in debt_command
 
     diagnostics = rust_steps["Retain Rust CI diagnostics"]
     assert diagnostics["if"] == "always()"

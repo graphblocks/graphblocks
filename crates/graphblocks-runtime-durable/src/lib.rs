@@ -1,3 +1,5 @@
+#![allow(clippy::expect_used)] // Guarded by compatibility/rust-production-expect-budget.json.
+
 use std::cell::Cell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;

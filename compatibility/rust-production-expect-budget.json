@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "lint": "clippy::expect_used",
+  "toolchain": "1.94.0",
+  "scope": [
+    "--workspace",
+    "--lib",
+    "--bins",
+    "--locked"
+  ],
+  "total": 119,
+  "files": {
+    "crates/graphblocks-compiler/src/compiler.rs": 2,
+    "crates/graphblocks-flow/src/ticket.rs": 4,
+    "crates/graphblocks-runtime-core/src/async_operation.rs": 16,
+    "crates/graphblocks-runtime-core/src/budget.rs": 24,
+    "crates/graphblocks-runtime-core/src/callback_delivery.rs": 2,
+    "crates/graphblocks-runtime-core/src/canonical.rs": 2,
+    "crates/graphblocks-runtime-core/src/deployment.rs": 9,
+    "crates/graphblocks-runtime-core/src/observability.rs": 1,
+    "crates/graphblocks-runtime-core/src/output_policy.rs": 1,
+    "crates/graphblocks-runtime-core/src/policy.rs": 2,
+    "crates/graphblocks-runtime-core/src/rag.rs": 5,
+    "crates/graphblocks-runtime-core/src/run_store.rs": 1,
+    "crates/graphblocks-runtime-core/src/stdlib_runtime.rs": 40,
+    "crates/graphblocks-runtime-core/src/usage.rs": 2,
+    "crates/graphblocks-runtime-durable/src/lib.rs": 3,
+    "crates/graphblocksd/src/main.rs": 5
+  }
+}

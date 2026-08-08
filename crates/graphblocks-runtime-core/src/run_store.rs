@@ -1,3 +1,5 @@
+#![allow(clippy::expect_used)] // Guarded by compatibility/rust-production-expect-budget.json.
+
 use std::{collections::BTreeMap, path::Path};
 
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
