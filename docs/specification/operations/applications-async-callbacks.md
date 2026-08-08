@@ -17,6 +17,13 @@ numbers MUST increase monotonically. Replaying the same event identity and
 content is idempotent; a duplicate identity with different content or a
 non-increasing new sequence MUST fail.
 
+A synchronous invocation response is summary-only: outputs, retained event
+count, last cursor, and bounded replay endpoints. It MUST NOT inline retained
+event envelopes. Clients retrieve events through the cursor-based event or
+WebSocket projection, whose `maxEvents` and serialized `maxBytes` ceilings
+apply independently of total run history. Attach and subscription replay use
+the same bounded-page rule and expose continuation when more events remain.
+
 The `ApplicationEventStream` is authoritative. SSE, WebSocket, long polling,
 CLI/TUI attachment, local callbacks, and webhooks are projections. Run
 correctness MUST NOT depend on projection delivery success, and exactly-once

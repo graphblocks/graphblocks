@@ -2434,8 +2434,28 @@ def test_server_app_handles_health_auth_and_run_requests() -> None:
     assert payload["runId"] == "run-server-1"
     assert payload["status"] == "succeeded"
     assert payload["outputs"] == {"prompt": "Server ok"}
-    assert [event["kind"] for event in payload["events"]] == ["RunStarted", "RunSucceeded"]
-    assert payload["events"][0]["metadata"]["responseId"] == "response-server-1"
+    assert payload["eventCount"] == 2
+    assert payload["lastCursor"] == "run-server-1:2"
+    assert payload["eventStream"] == "/runs/run-server-1/events"
+    assert payload["websocket"] == "/runs/run-server-1/ws"
+    assert "events" not in payload
+    event_response = app.handle(
+        ServerRequest(
+            method="GET",
+            path=payload["eventStream"],
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+        )
+    )
+    event_payload = json.loads(event_response.body.decode("utf-8"))
+    assert [event["kind"] for event in event_payload["events"]] == [
+        "RunStarted",
+        "RunSucceeded",
+    ]
+    assert event_payload["events"][0]["metadata"]["responseId"] == (
+        "response-server-1"
+    )
     assert graphblocks.GraphBlocksServerApp is GraphBlocksServerApp
     assert graphblocks.ServerRequestHead is ServerRequestHead
     assert "ServerRequestHead" not in graphblocks.__all__
@@ -2470,7 +2490,19 @@ def test_server_app_generates_unique_run_and_response_ids_when_omitted(
     payloads = tuple(json.loads(response.body) for response in responses)
     run_ids = tuple(str(payload["runId"]) for payload in payloads)
     response_ids = tuple(
-        str(payload["events"][0]["metadata"]["responseId"])
+        str(
+            json.loads(
+                app.handle(
+                    ServerRequest(
+                        method="GET",
+                        path=str(payload["eventStream"]),
+                        headers={},
+                        query={},
+                        cookies={},
+                    )
+                ).body
+            )["events"][0]["metadata"]["responseId"]
+        )
         for payload in payloads
     )
 
@@ -2479,6 +2511,69 @@ def test_server_app_generates_unique_run_and_response_ids_when_omitted(
     assert len(set(response_ids)) == 2
     assert all(run_id.startswith("run-") for run_id in run_ids)
     assert all(response_id.startswith("response-") for response_id in response_ids)
+
+
+def test_server_sync_response_stays_summary_only_with_large_retained_history() -> None:
+    synthetic_event_count = 20_000
+
+    class EventHeavyServerApp(GraphBlocksServerApp):
+        def advance_accepted_run(
+            self,
+            run_id: str,
+            *,
+            completed_at: str | None = None,
+            _expected_admission_reservation_id: str | None = None,
+            _lifecycle_admitted: bool = False,
+        ) -> dict[str, object]:
+            completion = super().advance_accepted_run(
+                run_id,
+                completed_at=completed_at,
+                _expected_admission_reservation_id=(
+                    _expected_admission_reservation_id
+                ),
+                _lifecycle_admitted=_lifecycle_admitted,
+            )
+            retained = self._events_by_run_id[run_id]
+            self._events_by_run_id[run_id] = retained + tuple(
+                {
+                    "kind": "SyntheticProgress",
+                    "metadata": {"sequence": sequence},
+                    "payload": {},
+                }
+                for sequence in range(
+                    len(retained) + 1,
+                    len(retained) + synthetic_event_count + 1,
+                )
+            )
+            return completion
+
+    app = EventHeavyServerApp(allow_unauthenticated_dev=True)
+    response = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs",
+            headers={},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "graph": _server_capacity_graph(),
+                    "inputs": {"message": {"text": "bounded summary"}},
+                    "runId": "run-large-sync-summary",
+                }
+            ).encode("utf-8"),
+        )
+    )
+
+    payload = json.loads(response.body)
+    assert response.status_code == 200
+    assert "events" not in payload
+    assert payload["eventCount"] == synthetic_event_count + 2
+    assert payload["lastCursor"] == (
+        f"run-large-sync-summary:{synthetic_event_count + 2}"
+    )
+    assert payload["eventStream"] == "/runs/run-large-sync-summary/events"
+    assert len(response.body) < 1_024
 
 
 def test_server_app_hides_run_scoped_resources_from_other_principals_and_tenants() -> None:

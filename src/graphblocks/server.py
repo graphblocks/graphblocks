@@ -6334,16 +6334,20 @@ class GraphBlocksServerApp:
                         accepted_payload,
                     )
                 assert completion is not None
+                route_run_id = quote(run_id, safe="")
+                retained_events = self._events_by_run_id[run_id]
                 return ServerResponse.json(
                     200,
                     {
                         "runId": run_id,
                         "status": completion["status"],
                         "outputs": completion["outputs"],
-                        "events": [
-                            _response_json_object(event)
-                            for event in self._events_by_run_id[run_id]
-                        ],
+                        "eventCount": len(retained_events),
+                        "lastCursor": (
+                            f"{run_id}:{self._last_event_sequence(retained_events)}"
+                        ),
+                        "eventStream": f"/runs/{route_run_id}/events",
+                        "websocket": f"/runs/{route_run_id}/ws",
                     },
                 )
             except (KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
