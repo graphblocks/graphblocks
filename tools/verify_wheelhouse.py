@@ -1539,6 +1539,16 @@ def _require_release_evidence(
                 if suite == "application-events":
                     for result in results:
                         observed = result.get("observed")
+                        native_tck_contract = (
+                            observed.get("native_tck_contract")
+                            if isinstance(observed, Mapping)
+                            else None
+                        )
+                        native_tck_observed = (
+                            native_tck_contract.get("observed")
+                            if isinstance(native_tck_contract, Mapping)
+                            else None
+                        )
                         if (
                             not isinstance(observed, Mapping)
                             or observed.get("runtime") != "native"
@@ -1548,10 +1558,19 @@ def _require_release_evidence(
                             or observed.get("native_tck_reference_match") is not True
                             or observed.get("native_tck_contract")
                             != observed.get("reference_tck_contract")
+                            or not isinstance(native_tck_observed, Mapping)
+                            or not isinstance(
+                                native_tck_observed.get("accepted_events"), list
+                            )
+                            or not isinstance(
+                                native_tck_observed.get("operation_results"), list
+                            )
+                            or not native_tck_observed.get("operation_results")
                         ):
                             raise RuntimeError(
                                 "installed application-event stream evidence is not "
-                                "exact native/reference raw construction and admission"
+                                "exact native/reference normalized construction, operation "
+                                "trace, and admission"
                             )
         if expected_compiler_artifact is not None:
             expected_artifact = dict(expected_compiler_artifact)

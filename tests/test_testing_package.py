@@ -167,10 +167,23 @@ def _fake_native_application_event_tck_case(
         graphblocks_testing.stdlib_registry()
     ).run_cases((case,)).results[0]
     contract = result.result_contract()
+    observed = contract["observed"]
+    assert isinstance(observed, dict)
+    accepted_metadata = observed["accepted_metadata"]
+    accepted_events = observed["accepted_events"]
+    assert isinstance(accepted_metadata, list)
+    assert isinstance(accepted_events, list)
+    for metadata, event in zip(accepted_metadata, accepted_events, strict=True):
+        assert isinstance(metadata, dict)
+        assert isinstance(event, dict)
+        event_metadata = event["metadata"]
+        assert isinstance(event_metadata, dict)
+        metadata.pop("occurred_at")
+        metadata["occurred_at_unix_ms"] = event_metadata["occurredAtUnixMs"]
     return {
         "ok": contract["status"] == "passed",
         "diagnostics": contract["diagnostics"],
-        "observed": contract["observed"],
+        "observed": observed,
     }
 
 
@@ -1848,6 +1861,30 @@ def test_application_event_stream_admission_is_exact_native_reference(
         and type(event["payload"]["occurred_at_unix_ms"]) is int
         for event in cutoff_events
     )
+    tool_tck_observed = report.results[0].observed["native_tck_contract"][
+        "observed"
+    ]
+    assert tool_tck_observed["accepted_events"][0]["metadata"][
+        "occurredAtUnixMs"
+    ] == 1_700_000
+    assert tool_tck_observed["accepted_events"][0]["payload"][
+        "created_at_unix_ms"
+    ] == 1_700_000
+    assert tool_tck_observed["operation_results"][1]["emissions"] == [
+        {
+            "emissionIndex": None,
+            "emission": "none",
+            "admission": "not_applicable",
+            "event": None,
+        }
+    ]
+    cutoff_tck_observed = report.results[1].observed["native_tck_contract"][
+        "observed"
+    ]
+    assert [
+        emission["admission"]
+        for emission in cutoff_tck_observed["operation_results"][0]["emissions"]
+    ] == ["accepted", "accepted"]
 
 
 def test_application_event_raw_tck_execution_rejects_native_drift(monkeypatch) -> None:

@@ -459,8 +459,24 @@ def test_release_evidence_binds_native_reports_to_exact_runtime_wheel() -> None:
                                     "native_contract": {"updates": []},
                                     "reference_contract": {"updates": []},
                                     "native_tck_reference_match": True,
-                                    "native_tck_contract": {"diagnostics": []},
-                                    "reference_tck_contract": {"diagnostics": []},
+                                    "native_tck_contract": {
+                                        "diagnostics": [],
+                                        "observed": {
+                                            "accepted_events": [],
+                                            "operation_results": [
+                                                {"operationIndex": 0}
+                                            ],
+                                        },
+                                    },
+                                    "reference_tck_contract": {
+                                        "diagnostics": [],
+                                        "observed": {
+                                            "accepted_events": [],
+                                            "operation_results": [
+                                                {"operationIndex": 0}
+                                            ],
+                                        },
+                                    },
                                 },
                             }
                         ],
@@ -959,10 +975,23 @@ def test_default_tck_output_matches_source_derived_release_expectations(
             graphblocks_testing.stdlib_registry()
         ).run_cases((case,)).results[0]
         contract = result.result_contract()
+        observed = contract["observed"]
+        assert isinstance(observed, dict)
+        accepted_metadata = observed["accepted_metadata"]
+        accepted_events = observed["accepted_events"]
+        assert isinstance(accepted_metadata, list)
+        assert isinstance(accepted_events, list)
+        for metadata, event in zip(accepted_metadata, accepted_events, strict=True):
+            assert isinstance(metadata, dict)
+            assert isinstance(event, dict)
+            event_metadata = event["metadata"]
+            assert isinstance(event_metadata, dict)
+            metadata.pop("occurred_at")
+            metadata["occurred_at_unix_ms"] = event_metadata["occurredAtUnixMs"]
         return {
             "ok": contract["status"] == "passed",
             "diagnostics": contract["diagnostics"],
-            "observed": contract["observed"],
+            "observed": observed,
         }
 
     monkeypatch.setattr(

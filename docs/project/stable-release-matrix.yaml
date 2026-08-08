@@ -62,7 +62,7 @@ readinessAxes:
       targetReleaseClaim: core-c1-local-runtime-authority
       blocksTargetRelease: true
       shippedP0P1RemainBlocking: true
-      claimBoundary: The four remaining C1 requirements, six remaining exact-differential suites, and restart-independent local correctness block 1.0; the installed native runtime API, raw application-event fixture construction, and materialized event admission slice are frozen, while C4/X3 production durability is governed by a separate nonblocking preview-promotion gate.
+      claimBoundary: The four remaining C1 requirements, six remaining exact-differential suites, and restart-independent local correctness block 1.0; the installed native runtime API plus normalized raw and materialized application-event construction/admission slices are frozen, while C4/X3 production durability is governed by a separate nonblocking preview-promotion gate.
     - id: adapters
       label: External adapters
       readiness: contract-only-no-real-adapters
@@ -140,6 +140,7 @@ authorityTransition:
     - stable-native-local-runtime-api-contract
     - installed-application-event-stream-admission-differential
     - installed-application-event-raw-fixture-differential
+    - installed-application-event-constructor-payload-and-operation-trace-differential
   remainingPhases:
     - stable-c1-requirement-authority
     - stable-c1-suite-exact-differential
@@ -923,6 +924,7 @@ releaseGates:
       - installed-native-local-runtime-artifact-identity
       - installed-application-event-stream-admission-differential-and-artifact-identity
       - installed-application-event-raw-fixture-differential-and-artifact-identity
+      - installed-application-event-constructor-payload-and-operation-trace-differential
       - all-stable-c1-requirements-normative
       - all-stable-c1-suites-exact-native-reference
       - stable-native-local-runtime-api-snapshot
@@ -933,6 +935,7 @@ releaseGates:
       - installed-native-local-runtime-artifact-identity
       - installed-application-event-stream-admission-differential-and-artifact-identity
       - installed-application-event-raw-fixture-differential-and-artifact-identity
+      - installed-application-event-constructor-payload-and-operation-trace-differential
       - stable-native-local-runtime-api-snapshot
     blockers:
       - stable-c1-requirement-authority-incomplete
@@ -1522,6 +1525,7 @@ releaseGates:
       - stable-c1-typed-ports-outcome-cancellation-and-local-flow-authority
       - installed-application-event-stream-admission-differential-and-artifact-identity
       - installed-application-event-raw-fixture-differential-and-artifact-identity
+      - installed-application-event-constructor-payload-and-operation-trace-differential
       - exact-shared-c1-application-events-retry-sequence-tool-execution-tool-lifecycle-and-result-differential
       - stable-native-local-runtime-api-snapshot-and-installed-identity
       - fallible-panic-free-rust-public-boundaries
@@ -1540,6 +1544,7 @@ releaseGates:
       - native-local-runtime-capability-handshake
       - installed-application-event-stream-admission-differential-and-artifact-identity
       - installed-application-event-raw-fixture-differential-and-artifact-identity
+      - installed-application-event-constructor-payload-and-operation-trace-differential
       - stable-native-local-runtime-api-snapshot-and-installed-identity
     blockers:
       - stable-c1-requirement-authority-incomplete

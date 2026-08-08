@@ -275,8 +275,20 @@ def _release_evidence(
                     "native_contract": {"updates": []},
                     "reference_contract": {"updates": []},
                     "native_tck_reference_match": True,
-                    "native_tck_contract": {"diagnostics": []},
-                    "reference_tck_contract": {"diagnostics": []},
+                    "native_tck_contract": {
+                        "diagnostics": [],
+                        "observed": {
+                            "accepted_events": [],
+                            "operation_results": [{"operationIndex": 0}],
+                        },
+                    },
+                    "reference_tck_contract": {
+                        "diagnostics": [],
+                        "observed": {
+                            "accepted_events": [],
+                            "operation_results": [{"operationIndex": 0}],
+                        },
+                    },
                 }
         elif suite == "runtime":
             for result in results:

@@ -269,9 +269,10 @@ compares the closed accepted/dropped update sequence, final accepted events,
 and cutoff-response projection. The report retains the selected wheel identity
 as supplemental evidence, but its suite claim remains `python-reference`:
 the installed Rust boundary now also interprets every raw shared-fixture
-operation and exact-compares accepted kinds, normalized metadata, and current
-fixture diagnostics. Constructor payload/time normalization and adversarial
-diagnostic parity are still required before the whole suite can become
+operation and exact-compares normalized metadata/payloads, per-operation
+emission/admission traces, accepted events, and current fixture diagnostics.
+Numeric `*UnixMs` fields are the cross-language time authority. An adversarial
+diagnostic corpus is still required before the whole suite can become
 `exact-native-reference`.
 
 ## Release gates

@@ -1,5 +1,3 @@
-use std::collections::BTreeMap;
-
 use graphblocks_runtime_core::application_event::{
     ApplicationEvent, ApplicationEventKind, ApplicationEventMetadata, ApplicationEventStreamState,
     ApplicationEventVisibility,
@@ -15,8 +13,6 @@ use graphblocks_runtime_core::tool_result::{
 };
 use serde_json::{Map, Value, json};
 
-const DEFAULT_OCCURRED_AT: &str = "2026-06-23T00:00:00Z";
-
 pub(crate) fn evaluate_case(case: &Value) -> Result<Value, String> {
     let case_name = required_str(case, "name")?;
     let operations = case
@@ -27,13 +23,24 @@ pub(crate) fn evaluate_case(case: &Value) -> Result<Value, String> {
         format!("application-events TCK case {case_name} is missing expectedAcceptedKinds")
     })?;
     let mut state = ApplicationEventStreamState::default();
-    let mut occurred_at_by_event_id = BTreeMap::new();
     let mut diagnostics = Vec::new();
+    let mut operation_results = (0..operations.len())
+        .map(|operation_index| {
+            json!({
+                "operationIndex": operation_index,
+                "emissions": [{
+                    "emissionIndex": null,
+                    "emission": "none",
+                    "admission": "not_applicable",
+                    "event": null,
+                }],
+            })
+        })
+        .collect::<Vec<_>>();
 
     for (index, operation) in operations.iter().enumerate() {
         let op = required_str(operation, "op")?;
         let response_id = optional_str(operation, "responseId").unwrap_or("response-1");
-        let occurred_at = optional_str(operation, "occurredAt").unwrap_or(DEFAULT_OCCURRED_AT);
         let metadata = ApplicationEventMetadata {
             event_id: optional_str(operation, "eventId")
                 .map(str::to_owned)
@@ -93,21 +100,17 @@ pub(crate) fn evaluate_case(case: &Value) -> Result<Value, String> {
                     required_str(operation, "inputDigest")?,
                 )
                 .map_err(|error| format!("{case_name}: {error:?}"))?;
-                let accepted =
-                    accept_event(&mut state, event, occurred_at, &mut occurred_at_by_event_id);
+                let accepted = accept_event(&mut state, event, index, 0, &mut operation_results)?;
                 record_acceptance_mismatch(operation, index, accepted.is_some(), &mut diagnostics);
             }
             "output_policy_decision" => {
                 let decision = output_policy_decision(operation)?;
                 let event = ApplicationEvent::output_policy_decision(metadata, &decision)
                     .map_err(|error| format!("{case_name}: {error:?}"))?;
-                let accepted =
-                    accept_event(&mut state, event, occurred_at, &mut occurred_at_by_event_id);
+                let accepted = accept_event(&mut state, event, index, 0, &mut operation_results)?;
                 record_acceptance_mismatch(operation, index, accepted.is_some(), &mut diagnostics);
             }
             "output_cutoff" => {
-                let cutoff_occurred_at =
-                    optional_str(operation, "occurredAt").unwrap_or("2026-06-23T00:00:00Z");
                 let cutoff = OutputCutoff {
                     stream_id: optional_str(operation, "streamId")
                         .unwrap_or("stream-1")
@@ -135,13 +138,14 @@ pub(crate) fn evaluate_case(case: &Value) -> Result<Value, String> {
                 };
                 let events = ApplicationEvent::output_cutoff(metadata, &cutoff)
                     .map_err(|error| format!("{case_name}: {error:?}"))?;
-                for event in events {
+                for (emission_index, event) in events.into_iter().enumerate() {
                     if accept_event(
                         &mut state,
                         event,
-                        cutoff_occurred_at,
-                        &mut occurred_at_by_event_id,
-                    )
+                        index,
+                        emission_index,
+                        &mut operation_results,
+                    )?
                     .is_none()
                     {
                         diagnostics.push(diagnostic(
@@ -162,15 +166,17 @@ pub(crate) fn evaluate_case(case: &Value) -> Result<Value, String> {
                     }),
                 )
                 .map_err(|error| format!("{case_name}: {error:?}"))?;
-                let accepted =
-                    accept_event(&mut state, event, occurred_at, &mut occurred_at_by_event_id);
+                let accepted = accept_event(&mut state, event, index, 0, &mut operation_results)?;
                 record_acceptance_mismatch(operation, index, accepted.is_some(), &mut diagnostics);
             }
             "tool_call_state" => {
                 let event = tool_call_state_event(operation, metadata, response_id, case_name)?;
-                let accepted = event.and_then(|event| {
-                    accept_event(&mut state, event, occurred_at, &mut occurred_at_by_event_id)
-                });
+                let accepted = match event {
+                    Some(event) => {
+                        accept_event(&mut state, event, index, 0, &mut operation_results)?
+                    }
+                    None => None,
+                };
                 record_acceptance_mismatch(operation, index, accepted.is_some(), &mut diagnostics);
             }
             "tool_result_started"
@@ -185,9 +191,12 @@ pub(crate) fn evaluate_case(case: &Value) -> Result<Value, String> {
                 let result_event = tool_result_event(operation, op, case_name)?;
                 let event = ApplicationEvent::tool_result_event(metadata, &result_event)
                     .map_err(|error| format!("{case_name}: {error:?}"))?;
-                let accepted = event.and_then(|event| {
-                    accept_event(&mut state, event, occurred_at, &mut occurred_at_by_event_id)
-                });
+                let accepted = match event {
+                    Some(event) => {
+                        accept_event(&mut state, event, index, 0, &mut operation_results)?
+                    }
+                    None => None,
+                };
                 record_acceptance_mismatch(operation, index, accepted.is_some(), &mut diagnostics);
             }
             other => {
@@ -226,10 +235,7 @@ pub(crate) fn evaluate_case(case: &Value) -> Result<Value, String> {
                 "cursor": metadata.cursor,
                 "release_id": metadata.release_id,
                 "policy_snapshot_id": metadata.policy_snapshot_id,
-                "occurred_at": occurred_at_by_event_id
-                    .get(&metadata.event_id)
-                    .map(String::as_str)
-                    .unwrap_or(DEFAULT_OCCURRED_AT),
+                "occurred_at_unix_ms": metadata.occurred_at_unix_ms,
                 "graph_id": metadata.graph_id,
                 "node_id": metadata.node_id,
                 "operation_id": metadata.operation_id,
@@ -237,29 +243,85 @@ pub(crate) fn evaluate_case(case: &Value) -> Result<Value, String> {
             })
         })
         .collect::<Vec<_>>();
+    let accepted_events = state
+        .accepted_events()
+        .iter()
+        .map(serialize_application_event)
+        .collect::<Result<Vec<_>, _>>()?;
     Ok(json!({
         "ok": diagnostics.is_empty(),
         "diagnostics": diagnostics,
         "observed": {
             "accepted_kinds": accepted_kinds,
             "accepted_metadata": accepted_metadata,
+            "accepted_events": accepted_events,
+            "operation_results": operation_results,
         },
+    }))
+}
+
+fn serialize_application_event(event: &ApplicationEvent) -> Result<Value, String> {
+    let metadata = &event.metadata;
+    let mut payload = event.payload.clone();
+    let payload_object = payload
+        .as_object_mut()
+        .ok_or_else(|| "application event payload must be an object".to_owned())?;
+    if let Some(replacement_chunk_count) = payload_object.remove("replacement_chunk_count")
+        && payload_object.get("replacement_part_count") != Some(&replacement_chunk_count)
+    {
+        return Err("application event replacement part and chunk counts must match".to_owned());
+    }
+    Ok(json!({
+        "kind": event.kind.as_str(),
+        "metadata": {
+            "eventId": metadata.event_id,
+            "runId": metadata.run_id,
+            "responseId": metadata.response_id,
+            "turnId": metadata.turn_id,
+            "cursor": metadata.cursor,
+            "graphId": metadata.graph_id,
+            "nodeId": metadata.node_id,
+            "operationId": metadata.operation_id,
+            "sequence": metadata.sequence,
+            "releaseId": metadata.release_id,
+            "policySnapshotId": metadata.policy_snapshot_id,
+            "occurredAtUnixMs": metadata.occurred_at_unix_ms,
+            "visibility": metadata.visibility.as_str(),
+        },
+        "toolCallId": event.tool_call_id,
+        "payload": payload,
     }))
 }
 
 fn accept_event(
     state: &mut ApplicationEventStreamState,
     event: ApplicationEvent,
-    occurred_at: &str,
-    occurred_at_by_event_id: &mut BTreeMap<String, String>,
-) -> Option<ApplicationEvent> {
+    operation_index: usize,
+    emission_index: usize,
+    operation_results: &mut [Value],
+) -> Result<Option<ApplicationEvent>, String> {
+    let attempted_event = serialize_application_event(&event)?;
     let accepted = state.accept(event);
-    if let Some(event) = &accepted {
-        occurred_at_by_event_id
-            .entry(event.metadata.event_id.clone())
-            .or_insert_with(|| occurred_at.to_owned());
+    let event_contract = match &accepted {
+        Some(event) => serialize_application_event(event)?,
+        None => attempted_event,
+    };
+    let emissions = operation_results
+        .get_mut(operation_index)
+        .and_then(Value::as_object_mut)
+        .and_then(|operation| operation.get_mut("emissions"))
+        .and_then(Value::as_array_mut)
+        .ok_or_else(|| "application event operation result must contain emissions".to_owned())?;
+    if emission_index == 0 {
+        emissions.clear();
     }
-    accepted
+    emissions.push(json!({
+        "emissionIndex": emission_index,
+        "emission": "event",
+        "admission": if accepted.is_some() { "accepted" } else { "dropped" },
+        "event": event_contract,
+    }));
+    Ok(accepted)
 }
 
 fn record_acceptance_mismatch(

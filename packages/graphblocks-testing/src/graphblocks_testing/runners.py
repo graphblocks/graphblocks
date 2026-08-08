@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from copy import deepcopy
 from dataclasses import dataclass, replace
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 import importlib
 import hashlib
@@ -225,27 +225,36 @@ def _application_event_native_contract(
     if occurred_at_unix_ms < 0:
         raise ValueError("application event occurred_at must not predate the Unix epoch")
     payload = _runtime_mutable_json_like(event.payload)
-    if event.kind == "OutputCutoff":
-        if not isinstance(payload, dict):
-            raise TypeError("output cutoff payload must be an object")
-        cutoff_occurred_at = payload.pop("occurred_at", None)
-        if not isinstance(cutoff_occurred_at, str):
-            raise TypeError("output cutoff occurred_at must be an ISO timestamp")
-        parsed_cutoff_occurred_at = datetime.fromisoformat(
-            cutoff_occurred_at.removesuffix("Z") + "+00:00"
-            if cutoff_occurred_at.endswith("Z")
-            else cutoff_occurred_at
+    if not isinstance(payload, dict):
+        raise TypeError("application event payload must be an object")
+    for timestamp_field in (
+        "admitted_at",
+        "completed_at",
+        "created_at",
+        "evaluated_at",
+        "occurred_at",
+        "started_at",
+    ):
+        if timestamp_field not in payload:
+            continue
+        timestamp = payload.pop(timestamp_field)
+        unix_ms_field = f"{timestamp_field}_unix_ms"
+        if timestamp is None:
+            payload[unix_ms_field] = None
+            continue
+        if not isinstance(timestamp, str):
+            raise TypeError(f"{timestamp_field} must be an ISO timestamp")
+        parsed_timestamp = datetime.fromisoformat(
+            timestamp.removesuffix("Z") + "+00:00"
+            if timestamp.endswith("Z")
+            else timestamp
         )
-        if parsed_cutoff_occurred_at.tzinfo is None:
-            raise ValueError("output cutoff occurred_at must include a UTC offset")
-        cutoff_occurred_at_unix_ms = int(
-            parsed_cutoff_occurred_at.timestamp() * 1000
-        )
-        if cutoff_occurred_at_unix_ms < 0:
-            raise ValueError(
-                "output cutoff occurred_at must not predate the Unix epoch"
-            )
-        payload["occurred_at_unix_ms"] = cutoff_occurred_at_unix_ms
+        if parsed_timestamp.tzinfo is None:
+            raise ValueError(f"{timestamp_field} must include a UTC offset")
+        timestamp_unix_ms = int(parsed_timestamp.timestamp() * 1000)
+        if timestamp_unix_ms < 0:
+            raise ValueError(f"{timestamp_field} must not predate the Unix epoch")
+        payload[unix_ms_field] = timestamp_unix_ms
     return {
         "kind": event.kind,
         "metadata": {
@@ -727,8 +736,25 @@ class TckRunner:
         diagnostics: list[dict[str, str]] = []
         attempted_events: list[ApplicationEvent] = []
         reference_updates: list[tuple[int, str, ApplicationEvent]] = []
+        reference_operation_results: list[dict[str, object]] = [
+            {
+                "operationIndex": operation_index,
+                "emissions": [
+                    {
+                        "emissionIndex": None,
+                        "emission": "none",
+                        "admission": "not_applicable",
+                        "event": None,
+                    }
+                ],
+            }
+            for operation_index in range(len(case.application_event_operations))
+        ]
+        source_operation_index = 0
+        source_emission_index = 0
 
         def accept_event(event: ApplicationEvent) -> ApplicationEvent | None:
+            nonlocal source_emission_index
             operation_index = len(attempted_events)
             attempted_events.append(event)
             accepted = state.accept(event)
@@ -739,11 +765,51 @@ class TckRunner:
                     accepted if accepted is not None else event,
                 )
             )
+            operation_result = reference_operation_results[source_operation_index]
+            emissions = operation_result["emissions"]
+            if not isinstance(emissions, list):
+                raise TypeError("application event operation emissions must be a list")
+            if source_emission_index == 0:
+                emissions.clear()
+            emissions.append(
+                {
+                    "emissionIndex": source_emission_index,
+                    "emission": "event",
+                    "admission": "accepted" if accepted is not None else "dropped",
+                    "event": _application_event_native_contract(
+                        accepted if accepted is not None else event
+                    ),
+                }
+            )
+            source_emission_index += 1
             return accepted
 
         for sequence, operation in enumerate(
             case.application_event_operations, start=1
         ):
+            source_operation_index = sequence - 1
+            source_emission_index = 0
+            operation = dict(operation)
+            operation_time_aliases = (
+                ("admittedAtUnixMs", "admittedAt"),
+                ("completedAtUnixMs", "completedAt"),
+                ("createdAtUnixMs", "createdAt"),
+                ("evaluatedAtUnixMs", "evaluatedAt"),
+                ("startedAtUnixMs", "startedAt"),
+            )
+            for unix_ms_field, timestamp_field in operation_time_aliases:
+                raw_unix_ms = operation.get(unix_ms_field)
+                if type(raw_unix_ms) is int and raw_unix_ms >= 0:
+                    operation[timestamp_field] = (
+                        datetime(1970, 1, 1, tzinfo=timezone.utc)
+                        + timedelta(milliseconds=raw_unix_ms)
+                    ).isoformat().replace("+00:00", "Z")
+            raw_occurred_at_unix_ms = operation.get("occurredAtUnixMs", 1_700_000)
+            if type(raw_occurred_at_unix_ms) is int and raw_occurred_at_unix_ms >= 0:
+                operation["occurredAt"] = (
+                    datetime(1970, 1, 1, tzinfo=timezone.utc)
+                    + timedelta(milliseconds=raw_occurred_at_unix_ms)
+                ).isoformat().replace("+00:00", "Z")
             response_id = str(operation.get("responseId", "response-1"))
             metadata = ApplicationEventMetadata(
                 event_id=str(operation.get("eventId", f"{case.case_id}:{sequence}")),
@@ -1398,6 +1464,10 @@ class TckRunner:
             )
         observed: dict[str, object] = {
             "accepted_kinds": accepted_kinds,
+            "accepted_events": [
+                _application_event_native_contract(event)
+                for event in state.accepted_events
+            ],
             "accepted_metadata": [
                 {
                     "event_id": event.metadata.event_id,
@@ -1416,11 +1486,43 @@ class TckRunner:
                 }
                 for event in state.accepted_events
             ],
+            "operation_results": reference_operation_results,
         }
+        reference_tck_observed = _runtime_mutable_json_like(observed)
+        if not isinstance(reference_tck_observed, dict):
+            raise TypeError("application event reference observation must be an object")
+        reference_tck_metadata = reference_tck_observed.get("accepted_metadata")
+        reference_tck_events = reference_tck_observed.get("accepted_events")
+        if not isinstance(reference_tck_metadata, list) or not isinstance(
+            reference_tck_events, list
+        ) or len(reference_tck_metadata) != len(reference_tck_events):
+            raise TypeError(
+                "application event reference metadata must align with accepted events"
+            )
+        for metadata_contract, event_contract in zip(
+            reference_tck_metadata,
+            reference_tck_events,
+            strict=True,
+        ):
+            if not isinstance(metadata_contract, dict) or not isinstance(
+                event_contract, dict
+            ):
+                raise TypeError(
+                    "application event reference contracts must contain objects"
+                )
+            event_metadata = event_contract.get("metadata")
+            if not isinstance(event_metadata, dict):
+                raise TypeError(
+                    "application event reference event metadata must be an object"
+                )
+            metadata_contract.pop("occurred_at", None)
+            metadata_contract["occurred_at_unix_ms"] = event_metadata.get(
+                "occurredAtUnixMs"
+            )
         reference_tck_contract = {
             "ok": not diagnostics,
             "diagnostics": [dict(diagnostic) for diagnostic in diagnostics],
-            "observed": _runtime_mutable_json_like(observed),
+            "observed": reference_tck_observed,
         }
         if self.native_application_event_authority:
             try:
