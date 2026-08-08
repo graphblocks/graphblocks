@@ -15,8 +15,8 @@ from graphblocks.schema import (
     ResourceValidationError,
     SchemaManifestError,
     load_resource_schema,
-    resource_schema_errors,
-    validate_resource,
+    resource_schema_errors_reference as resource_schema_errors,
+    validate_resource_reference as validate_resource,
 )
 
 
@@ -24,8 +24,10 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_resource_validation_api_is_available_from_supported_package_facade() -> None:
-    assert graphblocks.resource_schema_errors is resource_schema_errors
-    assert graphblocks.validate_resource is validate_resource
+    assert graphblocks.resource_schema_errors is schema_module.resource_schema_errors
+    assert graphblocks.validate_resource is schema_module.validate_resource
+    assert schema_module.resource_schema_errors_reference is resource_schema_errors
+    assert schema_module.validate_resource_reference is validate_resource
     assert graphblocks.RESOURCE_SCHEMA_PATHS is RESOURCE_SCHEMA_PATHS
 
 

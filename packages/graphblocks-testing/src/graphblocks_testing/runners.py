@@ -159,7 +159,7 @@ from graphblocks.schema import (
     SchemaId,
     SchemaIdError,
     TypedValue,
-    resource_schema_errors,
+    resource_schema_errors_reference as resource_schema_errors,
 )
 from graphblocks.server import (
     ApplicationProtocolCapabilities,

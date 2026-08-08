@@ -19,8 +19,8 @@ def test_checked_in_boundary_inventory_is_closed_and_matches_source() -> None:
 
     assert report["passed"] is True
     assert report["broadExceptionHandlers"] == {
-        "reviewed": 130,
-        "observed": 130,
+        "reviewed": 131,
+        "observed": 131,
         "files": 30,
     }
     assert report["productionAsserts"] == {

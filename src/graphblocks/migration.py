@@ -63,7 +63,7 @@ def _require_valid_migration_target(
 ) -> None:
     # Imported lazily because schema loading depends on the canonical module,
     # which in turn exposes this migration API.
-    from .schema import resource_schema_errors
+    from .schema import resource_schema_errors_reference as resource_schema_errors
 
     violations = resource_schema_errors(document)
     if not violations:

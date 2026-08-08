@@ -6,7 +6,7 @@
     "productionAsserts": "Production asserts are reviewed only as side-effect-free internal invariants, exhaustive branch proofs, or type narrowing after explicit validation. Public boundary behavior must also pass the optimized-mode shard with asserts disabled."
   },
   "broadExceptionHandlers": {
-    "total": 130,
+    "total": 131,
     "files": [
       {
         "path": "src/graphblocks/_schema_execution.py",
@@ -143,10 +143,10 @@
       },
       {
         "path": "src/graphblocks/schema.py",
-        "count": 3,
-        "semanticDigest": "sha256:cd4fa3cadb6149a2218b9c2bd897cc4c199ec072aaee1f09b4bc26fe372e0a9b",
+        "count": 4,
+        "semanticDigest": "sha256:da239312d03a788508c3a167157eb0393e5de887e8ff7403065fc1542ade9618",
         "classifications": ["external-callback-boundary", "optional-dependency-boundary"],
-        "rationale": "The public SchemaId facade isolates native-extension discovery, handshake, and invocation failures while preserving a fail-closed authority boundary and explicit reference oracle."
+        "rationale": "The public SchemaId and resource-validation facades isolate native-extension discovery, handshake, and invocation failures while preserving fail-closed authority boundaries and explicit reference oracles."
       },
       {
         "path": "src/graphblocks/server.py",

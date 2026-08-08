@@ -13,9 +13,9 @@ from graphblocks import (
     SchemaManifestError,
     TypedValue,
     compile_graph,
-    resource_schema_errors,
 )
 from graphblocks.canonical import canonical_hash, canonical_loads
+from graphblocks.schema import resource_schema_errors_reference as resource_schema_errors
 
 
 def test_schema_id_accepts_canonical_major_version_reference() -> None:

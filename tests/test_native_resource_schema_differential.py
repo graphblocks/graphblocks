@@ -7,7 +7,7 @@ import pytest
 
 import graphblocks_runtime
 from graphblocks.schema import (
-    resource_schema_errors as resource_schema_errors_reference,
+    resource_schema_errors_reference,
 )
 
 

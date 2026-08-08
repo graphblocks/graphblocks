@@ -11,7 +11,7 @@ from graphblocks import canonical_hash, compile_graph, migrate_document, normali
 from graphblocks.canonical import canonical_loads
 from graphblocks.cli import main
 from graphblocks.migration import GRAPH_API_VERSION, MigrationError
-from graphblocks.schema import validate_resource
+from graphblocks.schema import validate_resource_reference as validate_resource
 
 
 ROOT = Path(__file__).resolve().parents[1]

@@ -40,7 +40,7 @@ from .schema import (
     ResourceSchemaViolation,
     SchemaId,
     SchemaIdError,
-    resource_schema_errors,
+    resource_schema_errors_reference as resource_schema_errors,
 )
 from .tools import (
     VALID_TOOL_APPROVALS,

@@ -115,6 +115,14 @@ class NativeSchemaContractError(RuntimeError):
     """Raised when the native schema boundary returns an invalid result."""
 
 
+class NativeResourceValidationUnavailableError(RuntimeError):
+    """Raised when normative native resource validation is unavailable."""
+
+
+class NativeResourceValidationContractError(RuntimeError):
+    """Raised when native resource validation returns an invalid result."""
+
+
 def _native_schema_unavailable(
     detail: object | None = None,
 ) -> NativeSchemaUnavailableError:
@@ -127,11 +135,27 @@ def _native_schema_unavailable(
     return NativeSchemaUnavailableError(message)
 
 
-def _native_schema_callable(name: str) -> Callable[..., object]:
+def _native_resource_validation_unavailable(
+    detail: object | None = None,
+) -> NativeResourceValidationUnavailableError:
+    message = (
+        "native GraphBlocks resource validation is unavailable; install "
+        "graphblocks[runtime] or call resource_schema_errors_reference explicitly"
+    )
+    if detail is not None and str(detail).strip():
+        message = f"{message}: {detail}"
+    return NativeResourceValidationUnavailableError(message)
+
+
+def _native_schema_callable(
+    name: str,
+    *,
+    unavailable: Callable[[object | None], RuntimeError] = _native_schema_unavailable,
+) -> Callable[..., object]:
     try:
         import graphblocks_runtime
     except ImportError as error:
-        raise _native_schema_unavailable(error) from error
+        raise unavailable(error) from error
 
     native_extension_available = getattr(
         graphblocks_runtime,
@@ -142,7 +166,7 @@ def _native_schema_callable(name: str) -> Callable[..., object]:
         try:
             available = native_extension_available()
         except Exception as error:
-            raise _native_schema_unavailable(
+            raise unavailable(
                 "native extension availability check failed"
             ) from error
     else:
@@ -158,16 +182,16 @@ def _native_schema_callable(name: str) -> Callable[..., object]:
             try:
                 status = native_extension_status()
             except Exception as error:
-                raise _native_schema_unavailable(
+                raise unavailable(
                     "native extension status check failed"
                 ) from error
             if isinstance(status, Mapping):
                 detail = status.get("error")
-        raise _native_schema_unavailable(detail)
+        raise unavailable(detail)
 
     native_function = getattr(graphblocks_runtime, name, None)
     if not callable(native_function):
-        raise _native_schema_unavailable(
+        raise unavailable(
             f"graphblocks_runtime does not expose {name}"
         )
     return cast(Callable[..., object], native_function)
@@ -662,7 +686,7 @@ def _schema_violation(error: ValidationError) -> ResourceSchemaViolation:
     )
 
 
-def resource_schema_errors(
+def resource_schema_errors_reference(
     document: object,
     *,
     schema_root: str | Path | None = None,
@@ -887,12 +911,89 @@ def resource_schema_errors(
     )
 
 
-def validate_resource(
+def validate_resource_reference(
     document: object,
     *,
     schema_root: str | Path | None = None,
 ) -> None:
     """Validate a resource against its exact ``apiVersion``/``kind`` schema."""
+
+    violations = resource_schema_errors_reference(document, schema_root=schema_root)
+    if violations:
+        raise ResourceValidationError(violations)
+
+
+def resource_schema_errors(
+    document: object,
+    *,
+    schema_root: str | Path | None = None,
+) -> tuple[ResourceSchemaViolation, ...]:
+    """Return normative native violations for a versioned resource."""
+
+    if schema_root is not None:
+        raise ValueError(
+            "schema_root is supported only by resource_schema_errors_reference"
+        )
+    native_validation = _native_schema_callable(
+        "resource_schema_errors",
+        unavailable=_native_resource_validation_unavailable,
+    )
+    try:
+        payload = native_validation(document)
+    except Exception as error:
+        raise NativeResourceValidationContractError(
+            "native resource validation invocation failed"
+        ) from error
+    if type(payload) is not tuple:
+        raise NativeResourceValidationContractError(
+            "native resource validation result must be a tuple"
+        )
+
+    expected_fields = {"code", "keyword", "message", "path", "schemaPath"}
+    violations: list[ResourceSchemaViolation] = []
+    for index, item in enumerate(payload):
+        if (
+            type(item) is not dict
+            or set(item) != expected_fields
+            or any(type(item[field]) is not str for field in expected_fields)
+            or any(not item[field] for field in expected_fields)
+        ):
+            raise NativeResourceValidationContractError(
+                f"native resource validation error {index} must be closed"
+            )
+        violations.append(
+            ResourceSchemaViolation(
+                code=item["code"],
+                path=item["path"],
+                keyword=item["keyword"],
+                message=item["message"],
+                schema_path=item["schemaPath"],
+            )
+        )
+    result = tuple(violations)
+    if result != tuple(
+        sorted(
+            result,
+            key=lambda violation: (
+                violation.path,
+                violation.schema_path,
+                violation.keyword,
+                violation.message,
+            ),
+        )
+    ):
+        raise NativeResourceValidationContractError(
+            "native resource validation errors must be deterministically ordered"
+        )
+    return result
+
+
+def validate_resource(
+    document: object,
+    *,
+    schema_root: str | Path | None = None,
+) -> None:
+    """Validate a resource through the normative native schema authority."""
 
     violations = resource_schema_errors(document, schema_root=schema_root)
     if violations:
