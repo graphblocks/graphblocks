@@ -262,3 +262,6 @@ resolved:
   - id: GB-ARCH-018
     fixCommits: [3b769f1c]
     regression: [tests/test_reserved_artifacts.py, crates/graphblocks/src/lib.rs, packages/graphblocks-npm/smoke.cjs]
+  - id: GB-DOC-007
+    fixCommits: [9f47e571]
+    regression: [tests/test_status_readiness.py, tests/test_stable_security_gates.py, tests/test_documentation_integrity.py]

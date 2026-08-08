@@ -109,8 +109,8 @@ deepAudit:
     authority: docs/project/audit-issue-status.yaml
     inventory: docs/project/audit-issues.json
     checker: tools/check_audit_inventory.py
-    resolved: 86
-    openBySeverity: {P0: 0, P1: 0, P2: 6, P3: 7}
+    resolved: 87
+    openBySeverity: {P0: 0, P1: 0, P2: 6, P3: 6}
   exitPolicy:
     securityFreeze: {maxOpenP0: 0}
     stableRelease: {maxOpenP0: 0, maxOpenP1: 0}
@@ -1078,6 +1078,7 @@ releaseGates:
       - framework-neutral-server-adapter-resource-limit-contract
       - accepted-phase-scoped-rust-authority-and-python-reference-facade
       - fail-closed-notice-only-reserved-rust-and-npm-artifacts
+      - independent-supply-chain-api-security-durability-and-adapter-readiness-axes
     evidence:
       - docs/project/audit-issues.json
       - docs/project/audit-issue-status.yaml
@@ -1168,6 +1169,10 @@ releaseGates:
       - tests/test_conformance_authority.py
       - tests/test_wheelhouse_schema_verification.py
       - crates/graphblocksd/tests/control_plane.rs
+      - tools/generate_status_readiness.py
+      - tests/test_status_readiness.py
+      - docs/project/stable-security-gates.yaml
+      - tests/test_stable_security_gates.py
     serverLifecycle:
       states: [running, draining, closed]
       healthAvailableDuringShutdown: true
