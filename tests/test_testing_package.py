@@ -8776,6 +8776,24 @@ def test_testing_package_loads_shared_retry_tck_cases(monkeypatch) -> None:
     }
     assert timeout_success.observed["nodeCommitCount"] == 1
     assert timeout_success.observed["attemptIds"] == ["attempt-1", "attempt-2"]
+    assert timeout_success.observed["executionContexts"] == [
+        {
+            "runId": "run-000001",
+            "nodeId": "worker",
+            "attempt": 1,
+            "attemptId": "attempt-1",
+            "idempotencyKey": "slow-write:request-1",
+            "deadlinePresent": True,
+        },
+        {
+            "runId": "run-000001",
+            "nodeId": "worker",
+            "attempt": 2,
+            "attemptId": "attempt-2",
+            "idempotencyKey": "slow-write:request-1",
+            "deadlinePresent": True,
+        },
+    ]
     assert timeout_success.observed["commitAttemptIds"] == ["attempt-2"]
     assert (
         timeout_success.observed["committedOutputValue"]
@@ -8909,7 +8927,11 @@ def test_retry_tck_rejects_native_drift(monkeypatch) -> None:
 
     def drifted_retry_case(raw_case: dict[str, object]) -> dict[str, object]:
         contract = _fake_native_retry_tck_case(raw_case)
-        contract["attempts"] = 0
+        contexts = contract["executionContexts"]
+        assert isinstance(contexts, list)
+        first_context = contexts[0]
+        assert isinstance(first_context, dict)
+        first_context["attemptId"] = "attempt-drifted"
         return contract
 
     monkeypatch.setitem(

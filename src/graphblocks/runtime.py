@@ -2247,7 +2247,9 @@ class InProcessRuntime:
                         attempt_context = {
                             **context,
                             "node": node_name,
+                            "node_id": node_name,
                             "attempt": attempt,
+                            "attempt_id": f"attempt-{attempt}",
                             "deadline_monotonic": deadline,
                             "cancellation_token": attempt_token,
                         }

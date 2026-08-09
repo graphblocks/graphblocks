@@ -11,7 +11,7 @@ use graphblocks_runtime_core::outcome::{
 use graphblocks_runtime_core::readiness::PortRef;
 use graphblocks_runtime_core::scheduler::{ScheduledNode, StartedNode};
 use graphblocks_runtime_core::stdlib_runtime::runtime_with_graph_flow_for_conformance;
-use graphblocks_runtime_core::test_runtime::{NodeExecutor, TestRunStatus};
+use graphblocks_runtime_core::test_runtime::{NodeExecutionContext, NodeExecutor, TestRunStatus};
 use serde_json::{Value, json};
 
 struct FixtureExecutor {
@@ -21,10 +21,32 @@ struct FixtureExecutor {
     token: Option<CancellationToken>,
     output_value: Value,
     attempt_output_values: Vec<Value>,
+    executor_contexts: Vec<Value>,
 }
 
 impl NodeExecutor for FixtureExecutor {
     fn execute(&mut self, node: StartedNode) -> Result<Vec<(PortRef, Outcome<Value>)>, BlockError> {
+        Err(BlockError::new(
+            format!("{}.missing_execution_context", node.node_id),
+            ErrorCategory::Internal,
+            "retry TCK executor requires an execution context",
+            false,
+        ))
+    }
+
+    fn execute_with_context(
+        &mut self,
+        node: StartedNode,
+        context: &NodeExecutionContext,
+    ) -> Result<Vec<(PortRef, Outcome<Value>)>, BlockError> {
+        self.executor_contexts.push(json!({
+            "runId": context.run_id(),
+            "nodeId": context.node_id(),
+            "attempt": context.attempt(),
+            "attemptId": context.attempt_id(),
+            "idempotencyKey": context.idempotency_key(),
+            "deadlinePresent": context.deadline().is_some(),
+        }));
         self.attempts += 1;
         if self.cancel_on_attempt == Some(self.attempts)
             && let Some(token) = &self.token
@@ -158,6 +180,7 @@ fn rust_retry_matches_shared_tck_cases() {
             token: token.clone(),
             output_value,
             attempt_output_values,
+            executor_contexts: Vec::new(),
         };
         let result = if let Some(token) = &token {
             runtime
@@ -295,6 +318,7 @@ fn rust_retry_matches_shared_tck_cases() {
                 "retryIdempotencyKeys" => Value::Array(retry_idempotency_keys.clone()),
                 "startedIdempotencyKeys" => Value::Array(started_idempotency_keys.clone()),
                 "attemptIds" => Value::Array(attempt_ids.clone()),
+                "executionContexts" => Value::Array(executor.executor_contexts.clone()),
                 "commitAttemptIds" => Value::Array(commit_attempt_ids.clone()),
                 "committedOutputValue" => committed_output_value.clone(),
                 "journalKinds" => Value::Array(journal_kinds.clone()),

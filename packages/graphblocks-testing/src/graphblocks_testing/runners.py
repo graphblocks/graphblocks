@@ -6403,6 +6403,7 @@ class TckRunner:
             )
 
         attempts = {"count": 0}
+        executor_contexts: list[dict[str, object]] = []
         registry = RuntimeRegistry(allow_untyped=True)
         block_id = str(fixture.get("block", "test.flaky_write@1"))
         node_id = str(fixture.get("nodeId", fixture.get("node_id", "write")))
@@ -6450,6 +6451,16 @@ class TckRunner:
         ) -> dict[str, object]:
             attempts["count"] += 1
             attempt_index = attempts["count"] - 1
+            executor_contexts.append(
+                {
+                    "runId": context.get("run_id"),
+                    "nodeId": context.get("node_id"),
+                    "attempt": context.get("attempt"),
+                    "attemptId": context.get("attempt_id"),
+                    "idempotencyKey": context.get("idempotency_key"),
+                    "deadlinePresent": context.get("deadline_monotonic") is not None,
+                }
+            )
             if (
                 isinstance(cancel_on_attempt, int)
                 and not isinstance(cancel_on_attempt, bool)
@@ -6561,6 +6572,7 @@ class TckRunner:
                 "retryIdempotencyKeys": retry_idempotency_keys,
                 "startedIdempotencyKeys": started_idempotency_keys,
                 "attemptIds": attempt_ids,
+                "executionContexts": executor_contexts,
                 "commitAttemptIds": commit_attempt_ids,
                 "committedOutputValue": result.outputs.get("value"),
                 "outputs": result.outputs,
@@ -6589,6 +6601,7 @@ class TckRunner:
                 "retryIdempotencyKeys": [],
                 "startedIdempotencyKeys": [],
                 "attemptIds": [],
+                "executionContexts": executor_contexts,
                 "commitAttemptIds": [],
                 "committedOutputValue": None,
                 "outputs": {},
@@ -6609,6 +6622,7 @@ class TckRunner:
                 "retryIdempotencyKeys",
                 "startedIdempotencyKeys",
                 "attemptIds",
+                "executionContexts",
                 "commitAttemptIds",
                 "committedOutputValue",
                 "journalKinds",
@@ -6670,6 +6684,27 @@ class TckRunner:
                             "commitAttemptIds",
                             "journalKinds",
                         )
+                    )
+                    or not isinstance(native_contract.get("executionContexts"), list)
+                    or any(
+                        not isinstance(context, dict)
+                        or set(context)
+                        != {
+                            "runId",
+                            "nodeId",
+                            "attempt",
+                            "attemptId",
+                            "idempotencyKey",
+                            "deadlinePresent",
+                        }
+                        or type(context.get("runId")) is not str
+                        or type(context.get("nodeId")) is not str
+                        or type(context.get("attempt")) is not int
+                        or type(context.get("attemptId")) is not str
+                        or context.get("idempotencyKey") is not None
+                        and type(context.get("idempotencyKey")) is not str
+                        or type(context.get("deadlinePresent")) is not bool
+                        for context in native_contract["executionContexts"]
                     )
                     or native_contract.get("committedOutputValue") is not None
                     and type(native_contract.get("committedOutputValue")) is not str

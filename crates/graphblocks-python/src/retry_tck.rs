@@ -9,7 +9,7 @@ use graphblocks_runtime_core::outcome::{
 use graphblocks_runtime_core::readiness::PortRef;
 use graphblocks_runtime_core::scheduler::{ScheduledNode, StartedNode};
 use graphblocks_runtime_core::stdlib_runtime::runtime_with_graph_flow_for_conformance;
-use graphblocks_runtime_core::test_runtime::{NodeExecutor, TestRunStatus};
+use graphblocks_runtime_core::test_runtime::{NodeExecutionContext, NodeExecutor, TestRunStatus};
 use graphblocks_schema::parse_duration_milliseconds;
 use serde_json::{Value, json};
 
@@ -20,10 +20,32 @@ struct FixtureExecutor {
     token: Option<CancellationToken>,
     output_value: Value,
     attempt_output_values: Vec<Value>,
+    executor_contexts: Vec<Value>,
 }
 
 impl NodeExecutor for FixtureExecutor {
     fn execute(&mut self, node: StartedNode) -> Result<Vec<(PortRef, Outcome<Value>)>, BlockError> {
+        Err(BlockError::new(
+            format!("{}.missing_execution_context", node.node_id),
+            ErrorCategory::Internal,
+            "retry TCK executor requires an execution context",
+            false,
+        ))
+    }
+
+    fn execute_with_context(
+        &mut self,
+        node: StartedNode,
+        context: &NodeExecutionContext,
+    ) -> Result<Vec<(PortRef, Outcome<Value>)>, BlockError> {
+        self.executor_contexts.push(json!({
+            "runId": context.run_id(),
+            "nodeId": context.node_id(),
+            "attempt": context.attempt(),
+            "attemptId": context.attempt_id(),
+            "idempotencyKey": context.idempotency_key(),
+            "deadlinePresent": context.deadline().is_some(),
+        }));
         self.attempts = self.attempts.checked_add(1).ok_or_else(|| {
             BlockError::new(
                 "retry.attempt_overflow",
@@ -346,7 +368,7 @@ pub(crate) fn evaluate_case(case: &Value) -> Result<Value, String> {
         vec![ScheduledNode::new(node_id, [])],
         &nodes,
         &json!({}),
-        &format!("retry-tck-{case_name}"),
+        "run-000001",
     )
     .map_err(|error| format!("retry TCK case {case_name}: {error:?}"))?;
     if !attempt_durations_ms.is_empty() {
@@ -366,6 +388,7 @@ pub(crate) fn evaluate_case(case: &Value) -> Result<Value, String> {
         token: token.clone(),
         output_value,
         attempt_output_values,
+        executor_contexts: Vec::new(),
     };
     let result = if let Some(token) = &token {
         runtime.run_with_cancellation(token, &mut executor)
@@ -496,6 +519,7 @@ pub(crate) fn evaluate_case(case: &Value) -> Result<Value, String> {
         "retryIdempotencyKeys": retry_idempotency_keys,
         "startedIdempotencyKeys": started_idempotency_keys,
         "attemptIds": attempt_ids,
+        "executionContexts": executor.executor_contexts,
         "commitAttemptIds": commit_attempt_ids,
         "committedOutputValue": committed_output_value,
         "journalKinds": journal_kinds,
