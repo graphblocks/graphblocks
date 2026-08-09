@@ -493,15 +493,20 @@ fn native_callback_resume_does_not_duplicate_guard_skip_journal_records() -> Res
 
     let resumed = run_graph(&path, &graph, Some(callback_receipt(&waiting, true)))?;
     assert_eq!(resumed["status"], "succeeded", "{resumed:#}");
-    for kind in ["node_started", "node_completed"] {
-        let count = resumed["journal"]
-            .as_array()
-            .expect("journal is an array")
-            .iter()
-            .filter(|record| record["kind"] == kind && record["nodeId"] == "bGuarded")
-            .count();
-        assert_eq!(count, 1, "{kind} should appear once: {resumed:#}");
-    }
+    let guarded_records = resumed["journal"]
+        .as_array()
+        .expect("journal is an array")
+        .iter()
+        .filter(|record| record["nodeId"] == "bGuarded")
+        .collect::<Vec<_>>();
+    assert_eq!(
+        guarded_records.len(),
+        1,
+        "guard skip should emit one lifecycle record: {resumed:#}"
+    );
+    assert_eq!(guarded_records[0]["kind"], "node_completed");
+    assert_eq!(guarded_records[0]["payload"]["skipped"], true);
+    assert_eq!(guarded_records[0]["payload"]["reason"], "condition_false");
     let _ = std::fs::remove_file(path);
     Ok(())
 }
