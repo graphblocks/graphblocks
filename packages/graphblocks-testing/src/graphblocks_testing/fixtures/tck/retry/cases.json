@@ -19,7 +19,7 @@
       "nodeCommitCount": 1,
       "terminalCount": 1,
       "postTerminalCancellation": "not_requested",
-      "contextIdempotencyKeys": [
+      "startedIdempotencyKeys": [
         "ticket-create:request-1",
         "ticket-create:request-1",
         "ticket-create:request-1"
@@ -27,6 +27,25 @@
       "retryIdempotencyKeys": [
         "ticket-create:request-1",
         "ticket-create:request-1"
+      ],
+      "attemptIds": [
+        "attempt-1",
+        "attempt-2",
+        "attempt-3"
+      ],
+      "commitAttemptIds": [
+        "attempt-3"
+      ],
+      "committedOutputValue": "committed",
+      "journalKinds": [
+        "run_started",
+        "node_started",
+        "node_retry",
+        "node_started",
+        "node_retry",
+        "node_started",
+        "node_succeeded",
+        "run_succeeded"
       ]
     }
   },
@@ -49,12 +68,26 @@
       "nodeCommitCount": 0,
       "terminalCount": 1,
       "postTerminalCancellation": "not_requested",
-      "contextIdempotencyKeys": [
+      "startedIdempotencyKeys": [
         "ticket-create:request-2",
         "ticket-create:request-2"
       ],
       "retryIdempotencyKeys": [
         "ticket-create:request-2"
+      ],
+      "attemptIds": [
+        "attempt-1",
+        "attempt-2"
+      ],
+      "commitAttemptIds": [],
+      "committedOutputValue": null,
+      "journalKinds": [
+        "run_started",
+        "node_started",
+        "node_retry",
+        "node_started",
+        "node_failed",
+        "run_failed"
       ]
     }
   },
@@ -78,7 +111,7 @@
       "nodeCommitCount": 1,
       "terminalCount": 1,
       "postTerminalCancellation": "not_requested",
-      "contextIdempotencyKeys": [
+      "startedIdempotencyKeys": [
         "file-write:request-1",
         "file-write:request-1",
         "file-write:request-1"
@@ -86,6 +119,25 @@
       "retryIdempotencyKeys": [
         "file-write:request-1",
         "file-write:request-1"
+      ],
+      "attemptIds": [
+        "attempt-1",
+        "attempt-2",
+        "attempt-3"
+      ],
+      "commitAttemptIds": [
+        "attempt-3"
+      ],
+      "committedOutputValue": "written",
+      "journalKinds": [
+        "run_started",
+        "node_started",
+        "node_retry",
+        "node_started",
+        "node_retry",
+        "node_started",
+        "node_succeeded",
+        "run_succeeded"
       ]
     }
   },
@@ -110,10 +162,20 @@
       "nodeCommitCount": 0,
       "terminalCount": 1,
       "postTerminalCancellation": "not_requested",
-      "contextIdempotencyKeys": [
+      "startedIdempotencyKeys": [
         "ticket-create:request-3"
       ],
-      "retryIdempotencyKeys": []
+      "retryIdempotencyKeys": [],
+      "attemptIds": [
+        "attempt-1"
+      ],
+      "commitAttemptIds": [],
+      "committedOutputValue": null,
+      "journalKinds": [
+        "run_started",
+        "node_started",
+        "run_cancelled"
+      ]
     }
   },
   {
@@ -135,10 +197,20 @@
       "terminalKind": "run_cancelled",
       "attempts": 1,
       "retryCount": 0,
-      "contextIdempotencyKeys": [
+      "startedIdempotencyKeys": [
         "ticket-create:request-4"
       ],
       "retryIdempotencyKeys": [],
+      "attemptIds": [
+        "attempt-1"
+      ],
+      "commitAttemptIds": [],
+      "committedOutputValue": null,
+      "journalKinds": [
+        "run_started",
+        "node_started",
+        "run_cancelled"
+      ],
       "nodeCommitCount": 0,
       "terminalCount": 1,
       "postTerminalCancellation": "not_requested"
@@ -158,8 +230,15 @@
       "terminalKind": "run_cancelled",
       "attempts": 0,
       "retryCount": 0,
-      "contextIdempotencyKeys": [],
+      "startedIdempotencyKeys": [],
       "retryIdempotencyKeys": [],
+      "attemptIds": [],
+      "commitAttemptIds": [],
+      "committedOutputValue": null,
+      "journalKinds": [
+        "run_started",
+        "run_cancelled"
+      ],
       "nodeCommitCount": 0,
       "terminalCount": 1,
       "postTerminalCancellation": "not_requested"
@@ -179,11 +258,118 @@
       "terminalKind": "run_succeeded",
       "attempts": 1,
       "retryCount": 0,
-      "contextIdempotencyKeys": [null],
+      "startedIdempotencyKeys": [null],
       "retryIdempotencyKeys": [],
+      "attemptIds": [
+        "attempt-1"
+      ],
+      "commitAttemptIds": [
+        "attempt-1"
+      ],
+      "committedOutputValue": "committed",
+      "journalKinds": [
+        "run_started",
+        "node_started",
+        "node_succeeded",
+        "run_succeeded"
+      ],
       "nodeCommitCount": 1,
       "terminalCount": 1,
       "postTerminalCancellation": "unchanged"
+    }
+  },
+  {
+    "contractVersion": "graphblocks.retry-flow.tck.v1",
+    "name": "timeout_retry_discards_late_output",
+    "kind": "timeout_retry",
+    "block": "test.slow_then_fast@1",
+    "nodeId": "worker",
+    "maxAttempts": 2,
+    "failuresBeforeSuccess": 0,
+    "timeout": "100ms",
+    "attemptDurationsMs": [110, 0],
+    "attemptOutputValues": [
+      "stale-first-attempt",
+      "committed-on-second-attempt"
+    ],
+    "idempotencyKey": "slow-write:request-1",
+    "expected": {
+      "status": "succeeded",
+      "terminalKind": "run_succeeded",
+      "attempts": 2,
+      "retryCount": 1,
+      "nodeCommitCount": 1,
+      "terminalCount": 1,
+      "postTerminalCancellation": "not_requested",
+      "startedIdempotencyKeys": [
+        "slow-write:request-1",
+        "slow-write:request-1"
+      ],
+      "retryIdempotencyKeys": [
+        "slow-write:request-1"
+      ],
+      "attemptIds": [
+        "attempt-1",
+        "attempt-2"
+      ],
+      "commitAttemptIds": [
+        "attempt-2"
+      ],
+      "committedOutputValue": "committed-on-second-attempt",
+      "journalKinds": [
+        "run_started",
+        "node_started",
+        "node_retry",
+        "node_started",
+        "node_succeeded",
+        "run_succeeded"
+      ]
+    }
+  },
+  {
+    "contractVersion": "graphblocks.retry-flow.tck.v1",
+    "name": "timeout_retry_exhaustion_commits_nothing",
+    "kind": "timeout_exhaustion",
+    "block": "test.always_slow@1",
+    "nodeId": "worker",
+    "maxAttempts": 2,
+    "failuresBeforeSuccess": 0,
+    "timeout": "100ms",
+    "attemptDurationsMs": [110, 110],
+    "attemptOutputValues": [
+      "stale-first-attempt",
+      "stale-second-attempt"
+    ],
+    "idempotencyKey": "slow-write:request-2",
+    "expected": {
+      "status": "failed",
+      "terminalKind": "run_failed",
+      "attempts": 2,
+      "retryCount": 1,
+      "nodeCommitCount": 0,
+      "terminalCount": 1,
+      "postTerminalCancellation": "not_requested",
+      "startedIdempotencyKeys": [
+        "slow-write:request-2",
+        "slow-write:request-2"
+      ],
+      "retryIdempotencyKeys": [
+        "slow-write:request-2"
+      ],
+      "attemptIds": [
+        "attempt-1",
+        "attempt-2"
+      ],
+      "commitAttemptIds": [],
+      "committedOutputValue": null,
+      "journalKinds": [
+        "run_started",
+        "node_started",
+        "node_retry",
+        "node_started",
+        "node_failed",
+        "run_failed"
+      ]
     }
   }
 ]

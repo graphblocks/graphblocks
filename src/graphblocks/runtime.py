@@ -17,7 +17,8 @@ from .compiler import (
     STATE_CHANGING_TOOL_EFFECTS,
     compile_graph_reference as compile_graph,
 )
-from .duration import parse_duration_seconds
+from .duration import parse_duration_milliseconds
+from .duration import parse_duration_seconds as parse_duration_seconds
 from .documents import FrozenDict, FrozenList
 from .leases import InMemoryLeasePool
 from .plugins import (
@@ -2163,10 +2164,15 @@ class InProcessRuntime:
                 block_id = str(node["block"])
                 flow = node.get("flow", {})
                 retry = flow.get("retry", {}) if isinstance(flow, dict) else {}
-                timeout_seconds = (
-                    parse_duration_seconds(flow.get("timeout"))
+                timeout_milliseconds = (
+                    parse_duration_milliseconds(flow.get("timeout"))
                     if isinstance(flow, dict)
                     else None
+                )
+                timeout_seconds = (
+                    None
+                    if timeout_milliseconds is None
+                    else timeout_milliseconds / 1_000
                 )
                 max_attempts = 1
                 idempotency_key = None
@@ -2492,7 +2498,11 @@ class InProcessRuntime:
                     output_values = projected_output_values
                     journal.append(
                         "node_succeeded",
-                        {"node": node_name, "outputs": sorted(result)},
+                        {
+                            "node": node_name,
+                            "outputs": sorted(result),
+                            "attempt": attempt,
+                        },
                     )
                 except Exception as exc:
                     journal.append(

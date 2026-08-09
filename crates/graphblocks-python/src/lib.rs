@@ -13297,8 +13297,13 @@ mod tests {
             .ok_or_else(|| "retry TCK fixture must be an array".to_owned())?;
 
         for case in cases {
+            let mut request = case.clone();
+            request
+                .as_object_mut()
+                .ok_or_else(|| "retry TCK case must be an object".to_owned())?
+                .remove("expected");
             let output = evaluate_retry_tck_case_json(
-                &serde_json::to_string(case).map_err(|error| error.to_string())?,
+                &serde_json::to_string(&request).map_err(|error| error.to_string())?,
             )
             .map_err(|error| error.to_string())?;
             let output =

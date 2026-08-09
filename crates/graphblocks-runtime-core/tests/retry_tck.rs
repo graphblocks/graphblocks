@@ -12,6 +12,8 @@ use graphblocks_runtime_core::scheduler::{ScheduledNode, StartedNode};
 use graphblocks_runtime_core::test_runtime::{
     InProcessTestRuntime, NodeExecutor, NodeRetryBoundary, TestRunStatus,
 };
+use graphblocks_runtime_core::timeout::TimeoutPolicy;
+use graphblocks_schema::parse_duration_milliseconds;
 use serde_json::{Value, json};
 
 struct FixtureExecutor {
@@ -20,6 +22,7 @@ struct FixtureExecutor {
     cancel_on_attempt: Option<usize>,
     token: Option<CancellationToken>,
     output_value: Value,
+    attempt_output_values: Vec<Value>,
 }
 
 impl NodeExecutor for FixtureExecutor {
@@ -38,9 +41,14 @@ impl NodeExecutor for FixtureExecutor {
                 true,
             ));
         }
+        let output_value = self
+            .attempt_output_values
+            .get(self.attempts.saturating_sub(1))
+            .unwrap_or(&self.output_value)
+            .clone();
         Ok(vec![(
             PortRef::new(node.node_id, "value"),
-            Outcome::Value(self.output_value.clone()),
+            Outcome::Value(output_value),
         )])
     }
 }
@@ -92,8 +100,34 @@ fn rust_retry_matches_shared_tck_cases() {
             .get("outputValue")
             .cloned()
             .unwrap_or_else(|| json!("committed"));
+        let timeout_ms = case.get("timeout").map(|value| {
+            parse_duration_milliseconds(value).expect("timeout should be a valid duration")
+        });
+        let attempt_durations_ms = case
+            .get("attemptDurationsMs")
+            .and_then(Value::as_array)
+            .map(|durations| {
+                durations
+                    .iter()
+                    .map(|duration| {
+                        duration
+                            .as_u64()
+                            .expect("attempt duration should be a non-negative integer")
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        let attempt_output_values = case
+            .get("attemptOutputValues")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
 
-        let policy = RetryPolicy::new(max_attempts).retry_on([ErrorCategory::Transient]);
+        let policy = RetryPolicy::new(max_attempts).retry_on([
+            ErrorCategory::Transient,
+            ErrorCategory::Timeout,
+            ErrorCategory::RateLimit,
+        ]);
         let mut boundary = NodeRetryBoundary::new(policy);
         if let Some(effect) =
             effects
@@ -117,6 +151,15 @@ fn rust_retry_matches_shared_tck_cases() {
             InProcessTestRuntime::new("run-000001", [ScheduledNode::new(node_id, [])])
                 .expect("runtime should be created")
                 .with_retry_boundary(node_id, boundary);
+        if let Some(timeout_ms) = timeout_ms {
+            runtime = runtime.with_timeout_policy(
+                node_id,
+                TimeoutPolicy::new(timeout_ms).expect("timeout should be positive"),
+            );
+        }
+        if !attempt_durations_ms.is_empty() {
+            runtime = runtime.with_node_attempt_durations_ms(node_id, attempt_durations_ms);
+        }
         let token = (cancel_on_attempt.is_some() || cancel_before_start || cancel_after_terminal)
             .then(|| {
                 CancellationToken::new(CancellationScope::Run, CancellationGuarantee::Cooperative)
@@ -130,6 +173,7 @@ fn rust_retry_matches_shared_tck_cases() {
             cancel_on_attempt,
             token: token.clone(),
             output_value,
+            attempt_output_values,
         };
         let result = if let Some(token) = &token {
             runtime
@@ -177,7 +221,7 @@ fn rust_retry_matches_shared_tck_cases() {
                     .unwrap_or(Value::Null)
             })
             .collect::<Vec<_>>();
-        let context_idempotency_keys = result
+        let started_idempotency_keys = result
             .journal
             .records()
             .iter()
@@ -191,12 +235,57 @@ fn rust_retry_matches_shared_tck_cases() {
                     .unwrap_or(Value::Null)
             })
             .collect::<Vec<_>>();
+        let attempt_ids = result
+            .journal
+            .records()
+            .iter()
+            .filter(|record| record.kind == "node_started")
+            .map(|record| {
+                record
+                    .attempt_id
+                    .as_ref()
+                    .map_or(Value::Null, |attempt_id| Value::from(attempt_id.clone()))
+            })
+            .collect::<Vec<_>>();
+        let commit_attempt_ids = result
+            .journal
+            .records()
+            .iter()
+            .filter(|record| record.kind == "node_completed")
+            .map(|record| {
+                record
+                    .attempt_id
+                    .as_ref()
+                    .map_or(Value::Null, |attempt_id| Value::from(attempt_id.clone()))
+            })
+            .collect::<Vec<_>>();
+        let journal_kinds = result
+            .journal
+            .records()
+            .iter()
+            .map(|record| {
+                Value::from(if record.kind == "node_completed" {
+                    "node_succeeded"
+                } else {
+                    record.kind.as_str()
+                })
+            })
+            .collect::<Vec<_>>();
         let node_commit_count = result
             .journal
             .records()
             .iter()
             .filter(|record| record.kind == "node_completed")
             .count();
+        let committed_output_value = if node_commit_count == 1 {
+            executor
+                .attempt_output_values
+                .get(executor.attempts.saturating_sub(1))
+                .unwrap_or(&executor.output_value)
+                .clone()
+        } else {
+            Value::Null
+        };
         let terminal_count = result
             .journal
             .records()
@@ -220,7 +309,11 @@ fn rust_retry_matches_shared_tck_cases() {
                 "attempts" => json!(executor.attempts),
                 "retryCount" => json!(retry_idempotency_keys.len()),
                 "retryIdempotencyKeys" => Value::Array(retry_idempotency_keys.clone()),
-                "contextIdempotencyKeys" => Value::Array(context_idempotency_keys.clone()),
+                "startedIdempotencyKeys" => Value::Array(started_idempotency_keys.clone()),
+                "attemptIds" => Value::Array(attempt_ids.clone()),
+                "commitAttemptIds" => Value::Array(commit_attempt_ids.clone()),
+                "committedOutputValue" => committed_output_value.clone(),
+                "journalKinds" => Value::Array(journal_kinds.clone()),
                 "nodeCommitCount" => json!(node_commit_count),
                 "terminalCount" => json!(terminal_count),
                 "postTerminalCancellation" => json!(post_terminal_cancellation),

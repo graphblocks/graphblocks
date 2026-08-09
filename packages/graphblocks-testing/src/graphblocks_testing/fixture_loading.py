@@ -11,6 +11,8 @@ from pathlib import Path
 from graphblocks.canonical import (
     canonical_hash_reference as canonical_hash,
 )
+from graphblocks.compiler import MAX_NODE_RETRY_ATTEMPTS
+from graphblocks.duration import parse_duration_milliseconds
 from graphblocks.runtime import (
     core_stdlib_registry,
     RuntimeRegistry,
@@ -597,6 +599,8 @@ def load_retry_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
             "cancelled_before_commit",
             "cancelled_before_start",
             "cancelled_after_terminal",
+            "timeout_retry",
+            "timeout_exhaustion",
         }:
             raise ValueError(
                 f"retry TCK case {case_id} has unsupported kind {case_kind!r}"
@@ -626,6 +630,110 @@ def load_retry_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
             if field_name in raw_case and type(raw_case[field_name]) is not bool:
                 raise ValueError(
                     f"retry TCK case {case_id} {field_name} must be a boolean"
+                )
+        if case_kind in {"timeout_retry", "timeout_exhaustion"}:
+            allowed_fields = {
+                "contractVersion",
+                "name",
+                "kind",
+                "block",
+                "nodeId",
+                "maxAttempts",
+                "failuresBeforeSuccess",
+                "timeout",
+                "attemptDurationsMs",
+                "attemptOutputValues",
+                "idempotencyKey",
+                "expected",
+            }
+            unknown_fields = sorted(set(raw_case) - allowed_fields)
+            if unknown_fields:
+                raise ValueError(
+                    f"retry TCK case {case_id} has unknown field {unknown_fields[0]}"
+                )
+            if raw_case.get("contractVersion") != "graphblocks.retry-flow.tck.v1":
+                raise ValueError(
+                    f"retry TCK case {case_id} requires contractVersion graphblocks.retry-flow.tck.v1"
+                )
+            for field_name, max_bytes in (
+                ("name", 256),
+                ("block", 256),
+                ("nodeId", 256),
+                ("idempotencyKey", 1_024),
+            ):
+                value = raw_case.get(field_name)
+                if (
+                    not isinstance(value, str)
+                    or not value
+                    or value != value.strip()
+                    or len(value.encode("utf-8")) > max_bytes
+                ):
+                    raise ValueError(
+                        f"retry TCK case {case_id} {field_name} must be an exact non-empty bounded string"
+                    )
+            if max_attempts > MAX_NODE_RETRY_ATTEMPTS:
+                raise ValueError(
+                    f"retry TCK case {case_id} maxAttempts exceeds {MAX_NODE_RETRY_ATTEMPTS}"
+                )
+            if failures_before_success != 0:
+                raise ValueError(
+                    f"retry TCK case {case_id} failuresBeforeSuccess must be zero"
+                )
+            timeout = raw_case.get("timeout")
+            if not isinstance(timeout, str):
+                raise ValueError(
+                    f"retry TCK case {case_id} timeout must be a duration string"
+                )
+            timeout_ms = parse_duration_milliseconds(timeout)
+            if timeout_ms is None or timeout_ms > 1_000:
+                raise ValueError(
+                    f"retry TCK case {case_id} requires a timeout of at most 1000 milliseconds"
+                )
+            attempt_durations_ms = raw_case.get("attemptDurationsMs")
+            if (
+                not isinstance(attempt_durations_ms, list)
+                or len(attempt_durations_ms) != max_attempts
+                or any(
+                    isinstance(duration, bool)
+                    or not isinstance(duration, int)
+                    or duration < 0
+                    or duration > 1_000
+                    for duration in attempt_durations_ms
+                )
+            ):
+                raise ValueError(
+                    f"retry TCK case {case_id} attemptDurationsMs must match maxAttempts and contain 0..1000 millisecond integers"
+                )
+            if sum(attempt_durations_ms) > 2_000:
+                raise ValueError(
+                    f"retry TCK case {case_id} total attempt duration exceeds 2000 milliseconds"
+                )
+            attempt_output_values = raw_case.get("attemptOutputValues")
+            if (
+                not isinstance(attempt_output_values, list)
+                or len(attempt_output_values) != max_attempts
+                or any(
+                    not isinstance(output, str)
+                    or not output
+                    or len(output.encode("utf-8")) > 4_096
+                    for output in attempt_output_values
+                )
+            ):
+                raise ValueError(
+                    f"retry TCK case {case_id} attemptOutputValues must match maxAttempts and contain bounded strings"
+                )
+            if case_kind == "timeout_retry":
+                if (
+                    any(duration < timeout_ms for duration in attempt_durations_ms[:-1])
+                    or attempt_durations_ms[-1] >= timeout_ms
+                    or attempt_output_values[0] == attempt_output_values[-1]
+                ):
+                    raise ValueError(
+                        f"retry TCK case {case_id} must time out stale attempts before a distinct final output"
+                    )
+            elif any(duration < timeout_ms for duration in attempt_durations_ms):
+                raise ValueError(
+                    f"retry TCK case {case_id} must time out every attempt"
                 )
         expected = raw_case.get("expected")
         if not isinstance(expected, Mapping):

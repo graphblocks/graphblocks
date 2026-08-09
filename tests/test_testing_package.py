@@ -8695,10 +8695,14 @@ def test_testing_package_loads_shared_retry_tck_cases(monkeypatch) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")
 
-    cases = graphblocks_testing.load_retry_tck_cases(ROOT / "tck" / "retry" / "cases.json")
-    report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry()).run_cases(cases)
+    cases = graphblocks_testing.load_retry_tck_cases(
+        ROOT / "tck" / "retry" / "cases.json"
+    )
+    report = graphblocks_testing.TckRunner(
+        graphblocks_testing.stdlib_registry()
+    ).run_cases(cases)
 
-    assert [case.kind for case in cases] == ["retry"] * 7
+    assert [case.kind for case in cases] == ["retry"] * 9
     assert report.ok
     assert {case.case_id for case in cases} == {
         "effect_retry_preserves_idempotency_key",
@@ -8708,19 +8712,33 @@ def test_testing_package_loads_shared_retry_tck_cases(monkeypatch) -> None:
         "cancelled_success_attempt_does_not_commit",
         "pre_cancelled_run_starts_no_attempt",
         "post_terminal_cancellation_does_not_rewrite_success",
+        "timeout_retry_discards_late_output",
+        "timeout_retry_exhaustion_commits_nothing",
     }
-    assert {tuple(result.observed["retryIdempotencyKeys"]) for result in report.results} == {
+    assert {
+        tuple(result.observed["retryIdempotencyKeys"]) for result in report.results
+    } == {
         ("ticket-create:request-1", "ticket-create:request-1"),
         ("ticket-create:request-2",),
         ("file-write:request-1", "file-write:request-1"),
+        ("slow-write:request-1",),
+        ("slow-write:request-2",),
         (),
     }
-    assert {tuple(result.observed["contextIdempotencyKeys"]) for result in report.results} == {
-        ("ticket-create:request-1", "ticket-create:request-1", "ticket-create:request-1"),
+    assert {
+        tuple(result.observed["startedIdempotencyKeys"]) for result in report.results
+    } == {
+        (
+            "ticket-create:request-1",
+            "ticket-create:request-1",
+            "ticket-create:request-1",
+        ),
         ("ticket-create:request-2", "ticket-create:request-2"),
         ("file-write:request-1", "file-write:request-1", "file-write:request-1"),
         ("ticket-create:request-3",),
         ("ticket-create:request-4",),
+        ("slow-write:request-1", "slow-write:request-1"),
+        ("slow-write:request-2", "slow-write:request-2"),
         (),
         (None,),
     }
@@ -8748,7 +8766,110 @@ def test_testing_package_loads_shared_retry_tck_cases(monkeypatch) -> None:
         if result.case_id == "post_terminal_cancellation_does_not_rewrite_success"
     )
     assert after_terminal.observed["postTerminalCancellation"] == "unchanged"
+    timeout_success = next(
+        result
+        for result in report.results
+        if result.case_id == "timeout_retry_discards_late_output"
+    )
+    assert timeout_success.observed["outputs"] == {
+        "value": "committed-on-second-attempt"
+    }
+    assert timeout_success.observed["nodeCommitCount"] == 1
+    assert timeout_success.observed["attemptIds"] == ["attempt-1", "attempt-2"]
+    assert timeout_success.observed["commitAttemptIds"] == ["attempt-2"]
+    assert (
+        timeout_success.observed["committedOutputValue"]
+        == "committed-on-second-attempt"
+    )
+    timeout_exhaustion = next(
+        result
+        for result in report.results
+        if result.case_id == "timeout_retry_exhaustion_commits_nothing"
+    )
+    assert timeout_exhaustion.observed["outputs"] == {}
+    assert timeout_exhaustion.observed["nodeCommitCount"] == 0
+    assert timeout_exhaustion.observed["terminalCount"] == 1
+    assert timeout_exhaustion.observed["commitAttemptIds"] == []
+    assert timeout_exhaustion.observed["committedOutputValue"] is None
     assert "load_retry_tck_cases" in graphblocks_testing.__all__
+
+
+def test_testing_package_rejects_unbounded_timeout_retry_tck_fixtures(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+    shared_cases = json.loads((ROOT / "tck" / "retry" / "cases.json").read_text())
+    base_case = shared_cases[-2]
+
+    unknown = json.loads(json.dumps(base_case))
+    unknown["expectedInjection"] = {}
+    boolean_duration = json.loads(json.dumps(base_case))
+    boolean_duration["attemptDurationsMs"] = [True, 0]
+    repeated_output = json.loads(json.dumps(base_case))
+    repeated_output["attemptOutputValues"] = ["same", "same"]
+    excessive_total = json.loads(json.dumps(shared_cases[-1]))
+    excessive_total["maxAttempts"] = 3
+    excessive_total["attemptDurationsMs"] = [1_000, 1_000, 1_000]
+    excessive_total["attemptOutputValues"] = ["first", "second", "third"]
+
+    for index, (fixture, message) in enumerate(
+        (
+            (unknown, "unknown field expectedInjection"),
+            (boolean_duration, "attemptDurationsMs must match maxAttempts"),
+            (repeated_output, "distinct final output"),
+            (excessive_total, "total attempt duration exceeds 2000"),
+        )
+    ):
+        fixture_path = tmp_path / f"invalid-retry-{index}.json"
+        fixture_path.write_text(json.dumps([fixture]), encoding="utf-8")
+        with pytest.raises(ValueError, match=message):
+            graphblocks_testing.load_retry_tck_cases(fixture_path)
+
+
+def test_retry_tck_native_request_excludes_oracle_expectations(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+    runners = importlib.import_module("graphblocks_testing.runners")
+    requests: list[dict[str, object]] = []
+
+    def evaluate_retry(raw_case: dict[str, object]) -> dict[str, object]:
+        requests.append(dict(raw_case))
+        return _fake_native_retry_tck_case(raw_case)
+
+    monkeypatch.setitem(
+        sys.modules,
+        "graphblocks_runtime",
+        SimpleNamespace(_evaluate_retry_tck_case=evaluate_retry),
+    )
+    case = graphblocks_testing.load_retry_tck_cases(
+        ROOT / "tck" / "retry" / "cases.json"
+    )[-2]
+
+    report = runners._RetryDifferentialTckRunner(
+        graphblocks_testing.stdlib_registry(),
+        suite="retry",
+        implementation="graphblocks-runtime",
+        implementation_version="0.1.0",
+    ).run_cases((case,))
+
+    assert report.ok
+    assert len(requests) == 1
+    assert "expected" not in requests[0]
+    assert set(requests[0]) == {
+        "contractVersion",
+        "name",
+        "kind",
+        "block",
+        "nodeId",
+        "maxAttempts",
+        "failuresBeforeSuccess",
+        "timeout",
+        "attemptDurationsMs",
+        "attemptOutputValues",
+        "idempotencyKey",
+    }
 
 
 def test_retry_tck_is_exact_native_reference(monkeypatch) -> None:
@@ -8834,12 +8955,14 @@ def test_testing_package_retry_tck_ignores_boolean_cancel_attempt(monkeypatch) -
                 "terminalKind": "run_succeeded",
                 "attempts": 1,
                 "retryCount": 0,
-                "contextIdempotencyKeys": ["ticket-create:boolean-cancel"],
+                "startedIdempotencyKeys": ["ticket-create:boolean-cancel"],
             },
         },
     )
 
-    report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry()).run_cases((case,))
+    report = graphblocks_testing.TckRunner(
+        graphblocks_testing.stdlib_registry()
+    ).run_cases((case,))
 
     assert report.ok
     assert report.results[0].observed["status"] == "succeeded"
@@ -11758,6 +11881,12 @@ def test_testing_package_runs_runtime_tck_case_and_reports_output_mismatch(monke
         "status": "succeeded",
         "outputs": {"prompt": "Hello Ada"},
         "terminal_kind": "run_succeeded",
+        "normalized_journal_kinds": (
+            "run_started",
+            "node_started",
+            "node_succeeded",
+            "run_succeeded",
+        ),
         "runtime": "local",
         "runtime_facade": "LocalRuntime",
         "result_facade": "LocalRunResult",

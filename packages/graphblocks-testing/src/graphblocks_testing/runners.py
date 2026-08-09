@@ -11,6 +11,7 @@ import importlib
 import hashlib
 import json
 from pathlib import Path
+import time
 
 
 from graphblocks.application_event import (
@@ -6402,7 +6403,6 @@ class TckRunner:
             )
 
         attempts = {"count": 0}
-        seen_idempotency_keys: list[str | None] = []
         registry = RuntimeRegistry(allow_untyped=True)
         block_id = str(fixture.get("block", "test.flaky_write@1"))
         node_id = str(fixture.get("nodeId", fixture.get("node_id", "write")))
@@ -6425,6 +6425,23 @@ class TckRunner:
             "cancelAfterTerminal", fixture.get("cancel_after_terminal", False)
         )
         idempotency_key = fixture.get("idempotencyKey", fixture.get("idempotency_key"))
+        timeout = fixture.get("timeout")
+        raw_attempt_durations_ms = fixture.get(
+            "attemptDurationsMs", fixture.get("attempt_durations_ms", [])
+        )
+        attempt_durations_ms = (
+            list(raw_attempt_durations_ms)
+            if isinstance(raw_attempt_durations_ms, list)
+            else []
+        )
+        raw_attempt_output_values = fixture.get(
+            "attemptOutputValues", fixture.get("attempt_output_values", [])
+        )
+        attempt_output_values = (
+            list(raw_attempt_output_values)
+            if isinstance(raw_attempt_output_values, list)
+            else []
+        )
 
         def retry_block(
             inputs: dict[str, object],
@@ -6432,11 +6449,7 @@ class TckRunner:
             context: dict[str, object],
         ) -> dict[str, object]:
             attempts["count"] += 1
-            seen_idempotency_keys.append(
-                str(context.get("idempotency_key"))
-                if context.get("idempotency_key") is not None
-                else None
-            )
+            attempt_index = attempts["count"] - 1
             if (
                 isinstance(cancel_on_attempt, int)
                 and not isinstance(cancel_on_attempt, bool)
@@ -6447,11 +6460,16 @@ class TckRunner:
                     token.cancel(cancel_reason)
             if attempts["count"] <= failures_before_success:
                 raise RuntimeError(str(fixture.get("error", "temporary failure")))
-            return {
-                "value": fixture.get(
-                    "outputValue", fixture.get("output_value", "committed")
-                )
-            }
+            if attempt_index < len(attempt_durations_ms):
+                duration_ms = attempt_durations_ms[attempt_index]
+                if isinstance(duration_ms, int) and not isinstance(duration_ms, bool):
+                    time.sleep(duration_ms / 1_000)
+            output_value = fixture.get(
+                "outputValue", fixture.get("output_value", "committed")
+            )
+            if attempt_index < len(attempt_output_values):
+                output_value = attempt_output_values[attempt_index]
+            return {"value": output_value}
 
         registry.register(block_id, retry_block)
         retry_config: dict[str, object] = {"maxAttempts": max_attempts}
@@ -6460,8 +6478,11 @@ class TckRunner:
         raw_effects = fixture.get("effects", [])
         if isinstance(raw_effects, str):
             raw_effects = [raw_effects]
+        flow: dict[str, object] = {"retry": retry_config}
+        if timeout is not None:
+            flow["timeout"] = timeout
         graph = {
-            "apiVersion": "graphblocks.ai/v1alpha3",
+            "apiVersion": "graphblocks.ai/v1",
             "kind": "Graph",
             "metadata": {
                 "name": "retry-tck-"
@@ -6477,7 +6498,7 @@ class TckRunner:
                         "effects": list(raw_effects)
                         if isinstance(raw_effects, list)
                         else [],
-                        "flow": {"retry": retry_config},
+                        "flow": flow,
                         "outputs": {"value": "$output.value"},
                     }
                 }
@@ -6517,18 +6538,35 @@ class TckRunner:
                 for record in result.journal.records
                 if record.kind == "node_retry"
             ]
+            started_idempotency_keys = [
+                record.payload.get("idempotencyKey")
+                for record in result.journal.records
+                if record.kind == "node_started"
+            ]
+            attempt_ids = [
+                f"attempt-{record.payload['attempt']}"
+                for record in result.journal.records
+                if record.kind == "node_started"
+            ]
+            commit_attempt_ids = [
+                f"attempt-{record.payload['attempt']}"
+                for record in result.journal.records
+                if record.kind == "node_succeeded"
+            ]
             observed: dict[str, object] = {
                 "status": result.status,
                 "terminalKind": result.journal.terminal_kind,
                 "attempts": attempts["count"],
                 "retryCount": len(retry_idempotency_keys),
                 "retryIdempotencyKeys": retry_idempotency_keys,
-                "contextIdempotencyKeys": seen_idempotency_keys,
+                "startedIdempotencyKeys": started_idempotency_keys,
+                "attemptIds": attempt_ids,
+                "commitAttemptIds": commit_attempt_ids,
+                "committedOutputValue": result.outputs.get("value"),
                 "outputs": result.outputs,
                 "journalKinds": [record.kind for record in result.journal.records],
                 "nodeCommitCount": sum(
-                    record.kind == "node_succeeded"
-                    for record in result.journal.records
+                    record.kind == "node_succeeded" for record in result.journal.records
                 ),
                 "terminalCount": sum(
                     record.kind
@@ -6549,7 +6587,10 @@ class TckRunner:
                 "attempts": attempts["count"],
                 "retryCount": 0,
                 "retryIdempotencyKeys": [],
-                "contextIdempotencyKeys": seen_idempotency_keys,
+                "startedIdempotencyKeys": [],
+                "attemptIds": [],
+                "commitAttemptIds": [],
+                "committedOutputValue": None,
                 "outputs": {},
                 "journalKinds": [],
                 "nodeCommitCount": 0,
@@ -6566,7 +6607,11 @@ class TckRunner:
                 "attempts",
                 "retryCount",
                 "retryIdempotencyKeys",
-                "contextIdempotencyKeys",
+                "startedIdempotencyKeys",
+                "attemptIds",
+                "commitAttemptIds",
+                "committedOutputValue",
+                "journalKinds",
                 "nodeCommitCount",
                 "terminalCount",
                 "postTerminalCancellation",
@@ -6577,7 +6622,31 @@ class TckRunner:
             try:
                 from graphblocks_runtime import _evaluate_retry_tck_case
 
-                native_contract = _evaluate_retry_tck_case(dict(fixture))
+                native_request = {
+                    key: fixture[key]
+                    for key in (
+                        "contractVersion",
+                        "name",
+                        "kind",
+                        "block",
+                        "nodeId",
+                        "effects",
+                        "maxAttempts",
+                        "failuresBeforeSuccess",
+                        "cancelOnAttempt",
+                        "cancelBeforeStart",
+                        "cancelAfterTerminal",
+                        "cancelReason",
+                        "idempotencyKey",
+                        "outputValue",
+                        "error",
+                        "timeout",
+                        "attemptDurationsMs",
+                        "attemptOutputValues",
+                    )
+                    if key in fixture
+                }
+                native_contract = _evaluate_retry_tck_case(native_request)
                 if set(native_contract) != set(reference_contract):
                     raise ValueError(
                         "native retry TCK result must use the closed contract"
@@ -6596,9 +6665,14 @@ class TckRunner:
                         )
                         for key in (
                             "retryIdempotencyKeys",
-                            "contextIdempotencyKeys",
+                            "startedIdempotencyKeys",
+                            "attemptIds",
+                            "commitAttemptIds",
+                            "journalKinds",
                         )
                     )
+                    or native_contract.get("committedOutputValue") is not None
+                    and type(native_contract.get("committedOutputValue")) is not str
                     or type(native_contract.get("nodeCommitCount")) is not int
                     or type(native_contract.get("terminalCount")) is not int
                     or native_contract.get("postTerminalCancellation")
@@ -6647,6 +6721,8 @@ class TckRunner:
             "cancelled_before_commit",
             "cancelled_before_start",
             "cancelled_after_terminal",
+            "timeout_retry",
+            "timeout_exhaustion",
         }:
             diagnostics.append(
                 {

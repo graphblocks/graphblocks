@@ -75,13 +75,19 @@ def test_runtime_provides_timeout_deadline_to_block_context() -> None:
     assert isinstance(seen_deadline["value"], float)
 
 
-def test_runtime_fails_node_that_exceeds_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize("timeout", ("1ms", 1))
+def test_runtime_fails_node_that_exceeds_exact_millisecond_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+    timeout: object,
+) -> None:
     now = {"value": 100.0}
     monkeypatch.setattr(runtime_module.time, "monotonic", lambda: 100.0)
     monkeypatch.setattr(runtime_module.time, "perf_counter", lambda: now["value"])
     registry = RuntimeRegistry(allow_untyped=True)
 
-    def slow_block(inputs: dict[str, Any], config: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
+    def slow_block(
+        inputs: dict[str, Any], config: dict[str, Any], context: dict[str, Any]
+    ) -> dict[str, Any]:
         now["value"] += 0.002
         return {"value": "late"}
 
@@ -94,7 +100,7 @@ def test_runtime_fails_node_that_exceeds_timeout(monkeypatch: pytest.MonkeyPatch
             "nodes": {
                 "slow": {
                     "block": "test.slow@1",
-                    "flow": {"timeout": "1ms"},
+                    "flow": {"timeout": timeout},
                     "outputs": {"value": "$output.value"},
                 }
             }
