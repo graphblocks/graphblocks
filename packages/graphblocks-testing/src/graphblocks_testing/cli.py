@@ -57,6 +57,7 @@ from .runners import (
     _SequenceDifferentialTckRunner,
     _ToolExecutionDifferentialTckRunner,
     _ToolLifecycleDifferentialTckRunner,
+    _ToolResultDifferentialTckRunner,
 )
 
 
@@ -771,6 +772,19 @@ def main(argv: list[str] | None = None) -> int:
                         _native_compiler_version,
                     )(),
                 )
+            elif manifest.suite_id == "tool-result" and compiler_artifact is not None:
+                runner = _ToolResultDifferentialTckRunner(
+                    _tck_registry(manifest.suite_id),
+                    profile=args.profile,
+                    evidence_dir=evidence_dir,
+                    suite=manifest.suite_id,
+                    fixture_digest=manifest.fixture_digest,
+                    implementation="graphblocks-runtime",
+                    implementation_version=facade_dependency(
+                        "_native_compiler_version",
+                        _native_compiler_version,
+                    )(),
+                )
             else:
                 runner = TckRunner(
                     _tck_registry(manifest.suite_id),
@@ -798,6 +812,7 @@ def main(argv: list[str] | None = None) -> int:
                     "sequence",
                     "tool-execution",
                     "tool-lifecycle",
+                    "tool-result",
                 }
                 and compiler_artifact is not None
             ):

@@ -242,9 +242,9 @@ over the fixed utility corpus and complete shared resource corpora, then binds
 those results to the exact runtime wheel record. This does not relabel other
 behavior in the broader reference-only schema TCK.
 `REL-NORMATIVE-AUTHORITY` therefore still blocks 1.0 only on the remaining C1
-requirement authority, exact-differential suites, and panic-free public Rust
-boundaries. The stable native runtime API and its installed artifact identity
-are now closed. Installed compiler TCK reports execute
+requirement authority and panic-free public Rust boundaries. The stable native
+runtime API, all stable C1 exact-differential suites, and their installed
+artifact identities are now closed. Installed compiler TCK reports execute
 the normative facade and bind the
 `graphblocks-runtime` implementation version plus the exact platform wheel
 record and SHA-256. The evidence runner also compares the installed package and
@@ -260,8 +260,7 @@ suspension, multi-worker crash recovery, lease/fence, and durable effect
 boundaries remain preview promotion work under
 `REL-EXTENSION-RUNTIME-AUTHORITY`, which does not block the first C0/C1 release.
 `REL-RUNTIME-CORRECTNESS` separately continues to block 1.0 on the remaining
-C1 requirements and suites plus restart-independent local store/journal
-evidence.
+C1 requirements plus restart-independent local store/journal evidence.
 
 The installed `application-events` report additionally runs each
 Python-materialized attempted event through the selected Rust wheel and exact
@@ -287,8 +286,11 @@ errors, per-operation results, and final call states through
 `rust-tool-execution-exact-differential`. The installed `tool-lifecycle` report
 executes all 18 shared argument, admission-order, approval, and idempotency
 fixtures in Rust and exact-compares their closed result flags through
-`rust-tool-lifecycle-exact-differential`. One other C1 suite remains
-`reference-only` transition work.
+`rust-tool-lifecycle-exact-differential`. The installed `tool-result` report
+executes all six shared preparation and stream-state fixtures in Rust and
+exact-compares their closed result contracts through
+`rust-tool-result-exact-differential`. All stable C1 suites now have exact
+native/reference coverage.
 
 ## Release gates
 

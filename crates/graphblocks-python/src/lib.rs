@@ -3,6 +3,7 @@ mod retry_tck;
 mod sequence_tck;
 mod tool_execution_tck;
 mod tool_lifecycle_tck;
+mod tool_result_tck;
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -2369,6 +2370,17 @@ fn evaluate_tool_lifecycle_tck_case_json(case_json: &str) -> PyResult<String> {
 }
 
 #[pyfunction]
+fn evaluate_tool_result_tck_case_json(case_json: &str) -> PyResult<String> {
+    let case = parse_json_argument(case_json, "tool-result TCK case")?;
+    let result = tool_result_tck::evaluate_case(&case).map_err(PyValueError::new_err)?;
+    serde_json::to_string(&result).map_err(|error| {
+        PyRuntimeError::new_err(format!(
+            "failed to serialize tool-result TCK result: {error}"
+        ))
+    })
+}
+
+#[pyfunction]
 fn evaluate_application_protocol_stream_json(
     state_json: &str,
     operations_json: &str,
@@ -4613,6 +4625,14 @@ fn parse_tool_effect_outcome(value: Option<&Value>, label: &str) -> PyResult<Too
 }
 
 fn parse_tool_result(value: &Value, label: &str) -> PyResult<ToolResult> {
+    let result = parse_tool_result_unchecked(value, label)?;
+    result
+        .validate()
+        .map_err(|error| PyValueError::new_err(format!("invalid {label}: {error:?}")))?;
+    Ok(result)
+}
+
+fn parse_tool_result_unchecked(value: &Value, label: &str) -> PyResult<ToolResult> {
     let object = json_object(value, label)?;
     let output = alias_value(object, "output", "output")
         .map(|value| {
@@ -4703,9 +4723,6 @@ fn parse_tool_result(value: &Value, label: &str) -> PyResult<ToolResult> {
             &format!("{label}.effectOutcome"),
         )?,
     };
-    result
-        .validate()
-        .map_err(|error| PyValueError::new_err(format!("invalid {label}: {error:?}")))?;
     Ok(result)
 }
 
@@ -4815,7 +4832,7 @@ fn parse_final_tool_result_event(
     label: &str,
     build: impl FnOnce(String, u64, ToolResult) -> ToolResultEvent,
 ) -> PyResult<ToolResultEvent> {
-    let result = parse_tool_result(
+    let result = parse_tool_result_unchecked(
         object
             .get("result")
             .ok_or_else(|| PyValueError::new_err(format!("{label}.result is required")))?,
@@ -9686,6 +9703,10 @@ fn _native(module: &Bound<'_, PyModule>) -> PyResult<()> {
         module
     )?)?;
     module.add_function(wrap_pyfunction!(
+        evaluate_tool_result_tck_case_json,
+        module
+    )?)?;
+    module.add_function(wrap_pyfunction!(
         evaluate_application_protocol_stream_json,
         module
     )?)?;
@@ -9743,13 +9764,13 @@ mod tests {
         evaluate_timeout_deadline_json, evaluate_tool_admission_json, evaluate_tool_approval_json,
         evaluate_tool_execution_plan_json, evaluate_tool_execution_tck_case_json,
         evaluate_tool_lifecycle_tck_case_json, evaluate_tool_resolution_json,
-        evaluate_tool_result_stream_json, evaluate_usage_ledger_json, finalize_tool_call_json,
-        migrate_resource_json, negotiate_application_protocol_capabilities_json,
-        parse_application_protocol_event_kind, parse_json_argument, parse_resolved_tool,
-        parse_schema_id_json, parse_tool_call, prepare_tool_result_for_model_json,
-        record_tool_effect_audit_event_json, record_tool_effect_precondition_json,
-        resource_schema_errors_json, run_stdlib_graph_json, run_stdlib_graph_with_options_json,
-        run_test_graph_json, run_test_graph_with_options_json,
+        evaluate_tool_result_stream_json, evaluate_tool_result_tck_case_json,
+        evaluate_usage_ledger_json, finalize_tool_call_json, migrate_resource_json,
+        negotiate_application_protocol_capabilities_json, parse_application_protocol_event_kind,
+        parse_json_argument, parse_resolved_tool, parse_schema_id_json, parse_tool_call,
+        prepare_tool_result_for_model_json, record_tool_effect_audit_event_json,
+        record_tool_effect_precondition_json, resource_schema_errors_json, run_stdlib_graph_json,
+        run_stdlib_graph_with_options_json, run_test_graph_json, run_test_graph_with_options_json,
         serialize_application_protocol_log_error, validate_remote_payload_json,
         validate_worker_advertisement_json, validate_worker_protocol_message_json,
     };
@@ -13181,6 +13202,63 @@ mod tests {
                     assert_eq!(output.get(key), Some(expected_value));
                 }
             }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn evaluate_tool_result_tck_case_json_matches_shared_cases() -> Result<(), String> {
+        pyo3::Python::initialize();
+        let cases = serde_json::from_str::<Value>(include_str!(
+            "../../graphblocks-runtime-core/tests/fixtures/tool-result-cases.json"
+        ))
+        .map_err(|error| error.to_string())?;
+        let cases = cases
+            .as_array()
+            .ok_or_else(|| "tool-result TCK fixture must be an array".to_owned())?;
+
+        for case in cases {
+            let output = evaluate_tool_result_tck_case_json(
+                &serde_json::to_string(case).map_err(|error| error.to_string())?,
+            )
+            .map_err(|error| error.to_string())?;
+            let output =
+                serde_json::from_str::<Value>(&output).map_err(|error| error.to_string())?;
+            let expected = case
+                .get("expected")
+                .and_then(Value::as_object)
+                .ok_or_else(|| "tool-result TCK case requires expected".to_owned())?;
+            assert_eq!(
+                output.as_object().map(|contract| contract.len()),
+                Some(
+                    expected
+                        .keys()
+                        .filter(|key| key.as_str() != "errorContains")
+                        .count()
+                        + usize::from(expected.contains_key("errorContains"))
+                )
+            );
+            for (key, expected_value) in expected {
+                if key != "errorContains" {
+                    assert_eq!(output.get(key), Some(expected_value));
+                }
+            }
+            let expected_error_category = match case.get("name").and_then(Value::as_str) {
+                Some("invalid_json_output_schema_is_rejected_before_model_return") => {
+                    Some("output_schema_invalid")
+                }
+                Some("stale_output_digest_is_rejected_before_model_return") => {
+                    Some("output_digest_mismatch")
+                }
+                Some("artifact_reference_mode_rejects_inline_output") => {
+                    Some("inline_output_forbidden_for_artifact_reference")
+                }
+                _ => None,
+            };
+            assert_eq!(
+                output.get("errorCategory").and_then(Value::as_str),
+                expected_error_category
+            );
         }
         Ok(())
     }

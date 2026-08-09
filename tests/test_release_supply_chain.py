@@ -322,6 +322,14 @@ def _release_evidence(
                     "native_contract": {"admitted": False},
                     "reference_contract": {"admitted": False},
                 }
+        elif suite == "tool-result":
+            for result in results:
+                result["observed"] = {
+                    "runtime": "native",
+                    "native_reference_match": True,
+                    "native_contract": {"ok": True},
+                    "reference_contract": {"ok": True},
+                }
         elif suite == "runtime":
             for result in results:
                 result["observed"] = {
@@ -480,6 +488,9 @@ def _write_platform_input(
         "implementation_artifact"
     ] = dict(native_compiler_artifact)
     tck["reports"]["tool-lifecycle"]["evidence"][
+        "implementation_artifact"
+    ] = dict(native_compiler_artifact)
+    tck["reports"]["tool-result"]["evidence"][
         "implementation_artifact"
     ] = dict(native_compiler_artifact)
     tck["reports"]["runtime"]["evidence"]["implementation_artifact"] = dict(

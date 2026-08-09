@@ -2179,7 +2179,6 @@ def test_stable_release_matrix_is_complete_and_machine_readable() -> None:
     assert authority["implicitReferenceFallback"] is False
     assert authority["remainingPhases"] == [
         "stable-c1-requirement-authority",
-        "stable-c1-suite-exact-differential",
         "fallible-panic-free-rust-public-boundaries",
     ]
     assert authority["coreRuntimeAuthority"] == {
@@ -2190,9 +2189,7 @@ def test_stable_release_matrix_is_complete_and_machine_readable() -> None:
             "cancellation",
             "local-flow",
         ],
-        "remainingExactSuites": [
-            "tool-result",
-        ],
+        "remainingExactSuites": [],
         "runtimeCorrectnessGate": "REL-RUNTIME-CORRECTNESS",
         "blocksTargetRelease": True,
     }
@@ -2320,7 +2317,6 @@ def test_stable_release_matrix_is_complete_and_machine_readable() -> None:
     assert "authority-transition-adr-not-accepted" not in authority_gate["blockers"]
     assert authority_gate["blockers"] == [
         "stable-c1-requirement-authority-incomplete",
-        "stable-c1-suite-exact-differential-incomplete",
         "fallible-panic-free-rust-public-boundaries-incomplete",
     ]
     assert "installed-native-compiler-tck-and-artifact-identity-incomplete" not in (
@@ -2432,6 +2428,7 @@ def test_stable_release_matrix_is_complete_and_machine_readable() -> None:
             "sequence",
             "tool-execution",
             "tool-lifecycle",
+            "tool-result",
         }
     }
     assert set(runtime_gate["completedEvidence"]) <= set(
@@ -2439,7 +2436,6 @@ def test_stable_release_matrix_is_complete_and_machine_readable() -> None:
     )
     assert runtime_gate["blockers"] == [
         "stable-c1-requirement-authority-incomplete",
-        "stable-c1-suite-exact-differential-incomplete",
         "restart-independent-local-runtime-correctness-incomplete",
     ]
     assert "stable-native-local-runtime-api-snapshot" in runtime_gate[

@@ -289,6 +289,7 @@ class TckRunner:
     native_sequence_tck_authority = False
     native_tool_execution_tck_authority = False
     native_tool_lifecycle_tck_authority = False
+    native_tool_result_tck_authority = False
     native_runtime_authority = False
 
     registry: RuntimeRegistry
@@ -7349,6 +7350,49 @@ class TckRunner:
                         "path": "$.observed.error",
                     }
                 )
+            reference_contract = {
+                str(key): observed.get(str(key)) for key in expected
+            }
+            observed["reference_contract"] = reference_contract
+            if self.native_tool_result_tck_authority:
+                try:
+                    from graphblocks_runtime import _evaluate_tool_result_tck_case
+
+                    native_contract = _evaluate_tool_result_tck_case(dict(fixture))
+                    if set(native_contract) != set(reference_contract):
+                        raise ValueError(
+                            "native tool-result TCK result must use the closed contract"
+                        )
+                    native_reference_match = native_contract == reference_contract
+                    observed.update(
+                        {
+                            "runtime": "native",
+                            "native_contract": native_contract,
+                            "native_reference_match": native_reference_match,
+                        }
+                    )
+                    if not native_reference_match:
+                        diagnostics.append(
+                            {
+                                "code": "NativeToolResultMismatch",
+                                "message": (
+                                    "native tool-result differs from the Python "
+                                    "reference oracle"
+                                ),
+                                "path": "$.observed.reference_contract",
+                            }
+                        )
+                except Exception as error:
+                    diagnostics.append(
+                        {
+                            "code": "NativeToolResultError",
+                            "message": str(error),
+                            "path": "$",
+                        }
+                    )
+                    observed.update(
+                        {"runtime": "native", "native_reference_match": False}
+                    )
             return TckResult(
                 case_id=case.case_id,
                 kind=case.kind,
@@ -7528,10 +7572,20 @@ class TckRunner:
                 ],
             }
         except Exception as error:
+            error_message = str(error)
+            if "output digest does not match" in error_message:
+                error_category = "output_digest_mismatch"
+            elif "artifact_reference mode" in error_message:
+                error_category = (
+                    "inline_output_forbidden_for_artifact_reference"
+                )
+            else:
+                error_category = "output_schema_invalid"
             observed = {
                 "ok": False,
-                "error": str(error),
+                "error": error_message,
                 "errorType": type(error).__name__,
+                "errorCategory": error_category,
             }
 
         for key, expected_value in expected.items():
@@ -7563,6 +7617,53 @@ class TckRunner:
                     "path": "$.observed.error",
                 }
             )
+        reference_contract = {
+            str(key): observed.get(str(key))
+            for key in expected
+            if key != "errorContains"
+        }
+        if observed.get("ok") is False:
+            reference_contract["errorCategory"] = observed.get("errorCategory")
+        observed["reference_contract"] = reference_contract
+        if self.native_tool_result_tck_authority:
+            try:
+                from graphblocks_runtime import _evaluate_tool_result_tck_case
+
+                native_contract = _evaluate_tool_result_tck_case(dict(fixture))
+                if set(native_contract) != set(reference_contract):
+                    raise ValueError(
+                        "native tool-result TCK result must use the closed contract"
+                    )
+                native_reference_match = native_contract == reference_contract
+                observed.update(
+                    {
+                        "runtime": "native",
+                        "native_contract": native_contract,
+                        "native_reference_match": native_reference_match,
+                    }
+                )
+                if not native_reference_match:
+                    diagnostics.append(
+                        {
+                            "code": "NativeToolResultMismatch",
+                            "message": (
+                                "native tool-result differs from the Python "
+                                "reference oracle"
+                            ),
+                            "path": "$.observed.reference_contract",
+                        }
+                    )
+            except Exception as error:
+                diagnostics.append(
+                    {
+                        "code": "NativeToolResultError",
+                        "message": str(error),
+                        "path": "$",
+                    }
+                )
+                observed.update(
+                    {"runtime": "native", "native_reference_match": False}
+                )
         return TckResult(
             case_id=case.case_id,
             kind=case.kind,
@@ -9735,6 +9836,15 @@ class _ToolLifecycleDifferentialTckRunner(TckRunner):
     authority_comparison = "exact-native-reference"
     authority_reference_implementation = "graphblocks-python"
     native_tool_lifecycle_tck_authority = True
+
+
+class _ToolResultDifferentialTckRunner(TckRunner):
+    __slots__ = ()
+    authority_executor_id = "rust-tool-result-exact-differential"
+    authority_language = "rust"
+    authority_comparison = "exact-native-reference"
+    authority_reference_implementation = "graphblocks-python"
+    native_tool_result_tck_authority = True
 
 
 class _NormativeCompilerTckRunner(TckRunner):
