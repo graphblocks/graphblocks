@@ -2092,7 +2092,7 @@ def test_stable_release_matrix_is_complete_and_machine_readable() -> None:
         "packageSemverEqualsContractVersion": False,
         "unsupportedCombinationBehavior": "fail-closed-before-operation",
         "artifactTrains": {
-            "pypiCore": "1.0.0rc3",
+            "pypiCore": "1.0.0rc4",
             "nativeAndRust": "0.1.0",
             "reservedNames": "0.0.2",
         },
