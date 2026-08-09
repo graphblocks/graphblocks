@@ -6418,6 +6418,12 @@ class TckRunner:
         cancel_reason = str(
             fixture.get("cancelReason", fixture.get("cancel_reason", "policy_stop"))
         )
+        cancel_before_start = fixture.get(
+            "cancelBeforeStart", fixture.get("cancel_before_start", False)
+        )
+        cancel_after_terminal = fixture.get(
+            "cancelAfterTerminal", fixture.get("cancel_after_terminal", False)
+        )
         idempotency_key = fixture.get("idempotencyKey", fixture.get("idempotency_key"))
 
         def retry_block(
@@ -6478,8 +6484,34 @@ class TckRunner:
             },
         }
 
+        cancellation_token = CancellationToken()
+        if cancel_before_start is True:
+            cancellation_token.cancel(cancel_reason)
+        post_terminal_cancellation = "not_requested"
         try:
-            result = InProcessRuntime(registry).run(graph, {})
+            result = InProcessRuntime(
+                registry,
+                cancellation_token=cancellation_token,
+            ).run(graph, {})
+            if cancel_after_terminal is True:
+                before_cancellation = (
+                    result.status,
+                    result.outputs,
+                    result.journal.records,
+                    result.journal.terminal_kind,
+                )
+                cancellation_token.cancel(cancel_reason)
+                after_cancellation = (
+                    result.status,
+                    result.outputs,
+                    result.journal.records,
+                    result.journal.terminal_kind,
+                )
+                post_terminal_cancellation = (
+                    "unchanged"
+                    if after_cancellation == before_cancellation
+                    else "changed"
+                )
             retry_idempotency_keys = [
                 record.payload.get("idempotencyKey")
                 for record in result.journal.records
@@ -6494,6 +6526,20 @@ class TckRunner:
                 "contextIdempotencyKeys": seen_idempotency_keys,
                 "outputs": result.outputs,
                 "journalKinds": [record.kind for record in result.journal.records],
+                "nodeCommitCount": sum(
+                    record.kind == "node_succeeded"
+                    for record in result.journal.records
+                ),
+                "terminalCount": sum(
+                    record.kind
+                    in {
+                        "run_succeeded",
+                        "run_failed",
+                        "run_cancelled",
+                    }
+                    for record in result.journal.records
+                ),
+                "postTerminalCancellation": post_terminal_cancellation,
                 "compileError": None,
             }
         except ValueError as error:
@@ -6506,6 +6552,9 @@ class TckRunner:
                 "contextIdempotencyKeys": seen_idempotency_keys,
                 "outputs": {},
                 "journalKinds": [],
+                "nodeCommitCount": 0,
+                "terminalCount": 0,
+                "postTerminalCancellation": post_terminal_cancellation,
                 "compileError": str(error),
             }
 
@@ -6518,6 +6567,9 @@ class TckRunner:
                 "retryCount",
                 "retryIdempotencyKeys",
                 "contextIdempotencyKeys",
+                "nodeCommitCount",
+                "terminalCount",
+                "postTerminalCancellation",
             )
         }
         observed["reference_contract"] = reference_contract
@@ -6547,6 +6599,10 @@ class TckRunner:
                             "contextIdempotencyKeys",
                         )
                     )
+                    or type(native_contract.get("nodeCommitCount")) is not int
+                    or type(native_contract.get("terminalCount")) is not int
+                    or native_contract.get("postTerminalCancellation")
+                    not in {"not_requested", "unchanged", "changed"}
                 ):
                     raise TypeError(
                         "native retry TCK result contains invalid field values"
@@ -6585,7 +6641,13 @@ class TckRunner:
                     }
                 )
 
-        if kind not in {"node_retry", "cancelled_before_retry"}:
+        if kind not in {
+            "node_retry",
+            "cancelled_before_retry",
+            "cancelled_before_commit",
+            "cancelled_before_start",
+            "cancelled_after_terminal",
+        }:
             diagnostics.append(
                 {
                     "code": "RetryKindUnknown",

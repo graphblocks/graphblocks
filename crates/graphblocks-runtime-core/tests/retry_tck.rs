@@ -74,6 +74,14 @@ fn rust_retry_matches_shared_tck_cases() {
             .get("cancelOnAttempt")
             .and_then(Value::as_u64)
             .map(|attempt| attempt as usize);
+        let cancel_before_start = case
+            .get("cancelBeforeStart")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let cancel_after_terminal = case
+            .get("cancelAfterTerminal")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
         let idempotency_key = case.get("idempotencyKey").and_then(Value::as_str);
         let effects = case
             .get("effects")
@@ -109,9 +117,13 @@ fn rust_retry_matches_shared_tck_cases() {
             InProcessTestRuntime::new("run-000001", [ScheduledNode::new(node_id, [])])
                 .expect("runtime should be created")
                 .with_retry_boundary(node_id, boundary);
-        let token = cancel_on_attempt.map(|_| {
-            CancellationToken::new(CancellationScope::Run, CancellationGuarantee::Cooperative)
-        });
+        let token = (cancel_on_attempt.is_some() || cancel_before_start || cancel_after_terminal)
+            .then(|| {
+                CancellationToken::new(CancellationScope::Run, CancellationGuarantee::Cooperative)
+            });
+        if cancel_before_start && let Some(token) = &token {
+            token.cancel(CancelReason::new(CancelCode::UserCancel));
+        }
         let mut executor = FixtureExecutor {
             attempts: 0,
             failures_before_success,
@@ -125,6 +137,19 @@ fn rust_retry_matches_shared_tck_cases() {
                 .expect("runtime should run")
         } else {
             runtime.run(&mut executor).expect("runtime should run")
+        };
+        let post_terminal_cancellation = if cancel_after_terminal {
+            let snapshot = result.clone();
+            if let Some(token) = &token {
+                token.cancel(CancelReason::new(CancelCode::UserCancel));
+            }
+            if result == snapshot {
+                "unchanged"
+            } else {
+                "changed"
+            }
+        } else {
+            "not_requested"
         };
 
         let observed_status = match result.status {
@@ -143,12 +168,13 @@ fn rust_retry_matches_shared_tck_cases() {
             .records()
             .iter()
             .filter(|record| record.kind == "node_retry")
-            .filter_map(|record| {
+            .map(|record| {
                 record
                     .payload
                     .as_ref()
                     .and_then(|payload| payload.get("idempotencyKey"))
                     .cloned()
+                    .unwrap_or(Value::Null)
             })
             .collect::<Vec<_>>();
         let context_idempotency_keys = result
@@ -156,14 +182,32 @@ fn rust_retry_matches_shared_tck_cases() {
             .records()
             .iter()
             .filter(|record| record.kind == "node_started")
-            .filter_map(|record| {
+            .map(|record| {
                 record
                     .payload
                     .as_ref()
                     .and_then(|payload| payload.get("idempotencyKey"))
                     .cloned()
+                    .unwrap_or(Value::Null)
             })
             .collect::<Vec<_>>();
+        let node_commit_count = result
+            .journal
+            .records()
+            .iter()
+            .filter(|record| record.kind == "node_completed")
+            .count();
+        let terminal_count = result
+            .journal
+            .records()
+            .iter()
+            .filter(|record| {
+                matches!(
+                    record.kind.as_str(),
+                    "run_succeeded" | "run_failed" | "run_cancelled"
+                )
+            })
+            .count();
         let expected = case
             .get("expected")
             .and_then(Value::as_object)
@@ -177,6 +221,9 @@ fn rust_retry_matches_shared_tck_cases() {
                 "retryCount" => json!(retry_idempotency_keys.len()),
                 "retryIdempotencyKeys" => Value::Array(retry_idempotency_keys.clone()),
                 "contextIdempotencyKeys" => Value::Array(context_idempotency_keys.clone()),
+                "nodeCommitCount" => json!(node_commit_count),
+                "terminalCount" => json!(terminal_count),
+                "postTerminalCancellation" => json!(post_terminal_cancellation),
                 unsupported => panic!("{case_name}: unsupported retry expectation {unsupported}"),
             };
             assert_eq!(

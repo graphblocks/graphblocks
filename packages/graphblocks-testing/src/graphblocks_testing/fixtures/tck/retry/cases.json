@@ -16,6 +16,9 @@
       "terminalKind": "run_succeeded",
       "attempts": 3,
       "retryCount": 2,
+      "nodeCommitCount": 1,
+      "terminalCount": 1,
+      "postTerminalCancellation": "not_requested",
       "contextIdempotencyKeys": [
         "ticket-create:request-1",
         "ticket-create:request-1",
@@ -43,6 +46,9 @@
       "terminalKind": "run_failed",
       "attempts": 2,
       "retryCount": 1,
+      "nodeCommitCount": 0,
+      "terminalCount": 1,
+      "postTerminalCancellation": "not_requested",
       "contextIdempotencyKeys": [
         "ticket-create:request-2",
         "ticket-create:request-2"
@@ -69,6 +75,9 @@
       "terminalKind": "run_succeeded",
       "attempts": 3,
       "retryCount": 2,
+      "nodeCommitCount": 1,
+      "terminalCount": 1,
+      "postTerminalCancellation": "not_requested",
       "contextIdempotencyKeys": [
         "file-write:request-1",
         "file-write:request-1",
@@ -98,10 +107,83 @@
       "terminalKind": "run_cancelled",
       "attempts": 1,
       "retryCount": 0,
+      "nodeCommitCount": 0,
+      "terminalCount": 1,
+      "postTerminalCancellation": "not_requested",
       "contextIdempotencyKeys": [
         "ticket-create:request-3"
       ],
       "retryIdempotencyKeys": []
+    }
+  },
+  {
+    "name": "cancelled_success_attempt_does_not_commit",
+    "kind": "cancelled_before_commit",
+    "block": "test.cancelled_success@1",
+    "nodeId": "write",
+    "effects": [
+      "external_write"
+    ],
+    "maxAttempts": 3,
+    "failuresBeforeSuccess": 0,
+    "cancelOnAttempt": 1,
+    "cancelReason": "policy_stop",
+    "idempotencyKey": "ticket-create:request-4",
+    "outputValue": "must-not-commit",
+    "expected": {
+      "status": "cancelled",
+      "terminalKind": "run_cancelled",
+      "attempts": 1,
+      "retryCount": 0,
+      "contextIdempotencyKeys": [
+        "ticket-create:request-4"
+      ],
+      "retryIdempotencyKeys": [],
+      "nodeCommitCount": 0,
+      "terminalCount": 1,
+      "postTerminalCancellation": "not_requested"
+    }
+  },
+  {
+    "name": "pre_cancelled_run_starts_no_attempt",
+    "kind": "cancelled_before_start",
+    "block": "test.pre_cancelled@1",
+    "nodeId": "write",
+    "maxAttempts": 1,
+    "failuresBeforeSuccess": 0,
+    "cancelBeforeStart": true,
+    "cancelReason": "user_cancel",
+    "expected": {
+      "status": "cancelled",
+      "terminalKind": "run_cancelled",
+      "attempts": 0,
+      "retryCount": 0,
+      "contextIdempotencyKeys": [],
+      "retryIdempotencyKeys": [],
+      "nodeCommitCount": 0,
+      "terminalCount": 1,
+      "postTerminalCancellation": "not_requested"
+    }
+  },
+  {
+    "name": "post_terminal_cancellation_does_not_rewrite_success",
+    "kind": "cancelled_after_terminal",
+    "block": "test.completed_before_cancel@1",
+    "nodeId": "write",
+    "maxAttempts": 1,
+    "failuresBeforeSuccess": 0,
+    "cancelAfterTerminal": true,
+    "outputValue": "committed",
+    "expected": {
+      "status": "succeeded",
+      "terminalKind": "run_succeeded",
+      "attempts": 1,
+      "retryCount": 0,
+      "contextIdempotencyKeys": [null],
+      "retryIdempotencyKeys": [],
+      "nodeCommitCount": 1,
+      "terminalCount": 1,
+      "postTerminalCancellation": "unchanged"
     }
   }
 ]

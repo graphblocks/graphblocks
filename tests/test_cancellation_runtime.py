@@ -68,9 +68,14 @@ def test_runtime_stops_before_next_node_after_cancellation() -> None:
     result = InProcessRuntime(registry, cancellation_token=CancellationToken()).run(graph, {})
 
     assert result.status == "cancelled"
-    assert result.outputs == {"value": "cancelled"}
+    assert result.outputs == {}
     assert calls == ["cancel"]
     assert result.journal.terminal_kind == "run_cancelled"
+    assert [record.kind for record in result.journal.records] == [
+        "run_started",
+        "node_started",
+        "run_cancelled",
+    ]
 
 
 def test_cancellation_token_cancel_is_idempotent() -> None:

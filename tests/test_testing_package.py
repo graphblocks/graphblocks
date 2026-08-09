@@ -8687,13 +8687,16 @@ def test_testing_package_loads_shared_retry_tck_cases(monkeypatch) -> None:
     cases = graphblocks_testing.load_retry_tck_cases(ROOT / "tck" / "retry" / "cases.json")
     report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry()).run_cases(cases)
 
-    assert [case.kind for case in cases] == ["retry"] * 4
+    assert [case.kind for case in cases] == ["retry"] * 7
     assert report.ok
     assert {case.case_id for case in cases} == {
         "effect_retry_preserves_idempotency_key",
         "effect_retry_exhaustion_preserves_idempotency_key",
         "filesystem_write_retry_preserves_idempotency_key",
         "cancelled_effect_attempt_does_not_retry",
+        "cancelled_success_attempt_does_not_commit",
+        "pre_cancelled_run_starts_no_attempt",
+        "post_terminal_cancellation_does_not_rewrite_success",
     }
     assert {tuple(result.observed["retryIdempotencyKeys"]) for result in report.results} == {
         ("ticket-create:request-1", "ticket-create:request-1"),
@@ -8706,8 +8709,34 @@ def test_testing_package_loads_shared_retry_tck_cases(monkeypatch) -> None:
         ("ticket-create:request-2", "ticket-create:request-2"),
         ("file-write:request-1", "file-write:request-1", "file-write:request-1"),
         ("ticket-create:request-3",),
+        ("ticket-create:request-4",),
+        (),
+        (None,),
     }
     assert any(result.observed["status"] == "cancelled" for result in report.results)
+    cancelled_success = next(
+        result
+        for result in report.results
+        if result.case_id == "cancelled_success_attempt_does_not_commit"
+    )
+    assert cancelled_success.observed["outputs"] == {}
+    assert cancelled_success.observed["journalKinds"] == [
+        "run_started",
+        "node_started",
+        "run_cancelled",
+    ]
+    pre_cancelled = next(
+        result
+        for result in report.results
+        if result.case_id == "pre_cancelled_run_starts_no_attempt"
+    )
+    assert pre_cancelled.observed["attempts"] == 0
+    after_terminal = next(
+        result
+        for result in report.results
+        if result.case_id == "post_terminal_cancellation_does_not_rewrite_success"
+    )
+    assert after_terminal.observed["postTerminalCancellation"] == "unchanged"
     assert "load_retry_tck_cases" in graphblocks_testing.__all__
 
 
@@ -10102,6 +10131,9 @@ def test_testing_package_discovers_all_shared_tck_suite_manifests(monkeypatch) -
         "effect_retry_exhaustion_preserves_idempotency_key",
         "filesystem_write_retry_preserves_idempotency_key",
         "cancelled_effect_attempt_does_not_retry",
+        "cancelled_success_attempt_does_not_commit",
+        "pre_cancelled_run_starts_no_attempt",
+        "post_terminal_cancellation_does_not_rewrite_success",
     )
     assert by_suite["rag"].case_ids == (
         "grounded_answer_accepts_current_context_source",

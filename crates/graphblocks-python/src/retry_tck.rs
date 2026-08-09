@@ -62,7 +62,14 @@ pub(crate) fn evaluate_case(case: &Value) -> Result<Value, String> {
         .get("kind")
         .and_then(Value::as_str)
         .ok_or_else(|| format!("retry TCK case {case_name} requires kind"))?;
-    if !matches!(kind, "node_retry" | "cancelled_before_retry") {
+    if !matches!(
+        kind,
+        "node_retry"
+            | "cancelled_before_retry"
+            | "cancelled_before_commit"
+            | "cancelled_before_start"
+            | "cancelled_after_terminal"
+    ) {
         return Err(format!(
             "retry TCK case {case_name} has unknown kind {kind}"
         ));
@@ -87,6 +94,18 @@ pub(crate) fn evaluate_case(case: &Value) -> Result<Value, String> {
         .map(usize::try_from)
         .transpose()
         .map_err(|_| format!("retry TCK case {case_name} cancelOnAttempt is too large"))?;
+    let cancel_before_start = match case_object.get("cancelBeforeStart") {
+        Some(value) => value.as_bool().ok_or_else(|| {
+            format!("retry TCK case {case_name} cancelBeforeStart must be a boolean")
+        })?,
+        None => false,
+    };
+    let cancel_after_terminal = match case_object.get("cancelAfterTerminal") {
+        Some(value) => value.as_bool().ok_or_else(|| {
+            format!("retry TCK case {case_name} cancelAfterTerminal must be a boolean")
+        })?,
+        None => false,
+    };
     let idempotency_key = match case_object.get("idempotencyKey") {
         Some(value) => Some(value.as_str().ok_or_else(|| {
             format!("retry TCK case {case_name} idempotencyKey must be a string")
@@ -136,9 +155,13 @@ pub(crate) fn evaluate_case(case: &Value) -> Result<Value, String> {
     )
     .map_err(|error| format!("retry TCK case {case_name}: {error:?}"))?
     .with_retry_boundary(node_id, boundary);
-    let token = cancel_on_attempt.map(|_| {
-        CancellationToken::new(CancellationScope::Run, CancellationGuarantee::Cooperative)
-    });
+    let token =
+        (cancel_on_attempt.is_some() || cancel_before_start || cancel_after_terminal).then(|| {
+            CancellationToken::new(CancellationScope::Run, CancellationGuarantee::Cooperative)
+        });
+    if cancel_before_start && let Some(token) = &token {
+        token.cancel(CancelReason::new(CancelCode::UserCancel));
+    }
     let mut executor = FixtureExecutor {
         attempts: 0,
         failures_before_success,
@@ -152,6 +175,19 @@ pub(crate) fn evaluate_case(case: &Value) -> Result<Value, String> {
         runtime.run(&mut executor)
     }
     .map_err(|error| format!("retry TCK case {case_name}: {error:?}"))?;
+    let post_terminal_cancellation = if cancel_after_terminal {
+        let snapshot = result.clone();
+        if let Some(token) = &token {
+            token.cancel(CancelReason::new(CancelCode::UserCancel));
+        }
+        if result == snapshot {
+            "unchanged"
+        } else {
+            "changed"
+        }
+    } else {
+        "not_requested"
+    };
 
     let status = match result.status {
         TestRunStatus::Succeeded => "succeeded",
@@ -169,12 +205,13 @@ pub(crate) fn evaluate_case(case: &Value) -> Result<Value, String> {
         .records()
         .iter()
         .filter(|record| record.kind == "node_retry")
-        .filter_map(|record| {
+        .map(|record| {
             record
                 .payload
                 .as_ref()
                 .and_then(|payload| payload.get("idempotencyKey"))
                 .cloned()
+                .unwrap_or(Value::Null)
         })
         .collect::<Vec<_>>();
     let context_idempotency_keys = result
@@ -182,14 +219,32 @@ pub(crate) fn evaluate_case(case: &Value) -> Result<Value, String> {
         .records()
         .iter()
         .filter(|record| record.kind == "node_started")
-        .filter_map(|record| {
+        .map(|record| {
             record
                 .payload
                 .as_ref()
                 .and_then(|payload| payload.get("idempotencyKey"))
                 .cloned()
+                .unwrap_or(Value::Null)
         })
         .collect::<Vec<_>>();
+    let node_commit_count = result
+        .journal
+        .records()
+        .iter()
+        .filter(|record| record.kind == "node_completed")
+        .count();
+    let terminal_count = result
+        .journal
+        .records()
+        .iter()
+        .filter(|record| {
+            matches!(
+                record.kind.as_str(),
+                "run_succeeded" | "run_failed" | "run_cancelled"
+            )
+        })
+        .count();
     Ok(json!({
         "status": status,
         "terminalKind": terminal_kind,
@@ -197,5 +252,8 @@ pub(crate) fn evaluate_case(case: &Value) -> Result<Value, String> {
         "retryCount": retry_idempotency_keys.len(),
         "retryIdempotencyKeys": retry_idempotency_keys,
         "contextIdempotencyKeys": context_idempotency_keys,
+        "nodeCommitCount": node_commit_count,
+        "terminalCount": terminal_count,
+        "postTerminalCancellation": post_terminal_cancellation,
     }))
 }

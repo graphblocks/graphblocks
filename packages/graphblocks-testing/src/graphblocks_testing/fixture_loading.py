@@ -575,7 +575,13 @@ def load_retry_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
         if not isinstance(case_id, str) or not case_id.strip():
             raise ValueError(f"retry TCK case {index} requires name")
         case_kind = raw_case.get("kind")
-        if case_kind not in {"node_retry", "cancelled_before_retry"}:
+        if case_kind not in {
+            "node_retry",
+            "cancelled_before_retry",
+            "cancelled_before_commit",
+            "cancelled_before_start",
+            "cancelled_after_terminal",
+        }:
             raise ValueError(
                 f"retry TCK case {case_id} has unsupported kind {case_kind!r}"
             )
@@ -600,6 +606,11 @@ def load_retry_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
             raise ValueError(
                 f"retry TCK case {case_id} requires non-negative integer failuresBeforeSuccess"
             )
+        for field_name in ("cancelBeforeStart", "cancelAfterTerminal"):
+            if field_name in raw_case and type(raw_case[field_name]) is not bool:
+                raise ValueError(
+                    f"retry TCK case {case_id} {field_name} must be a boolean"
+                )
         expected = raw_case.get("expected")
         if not isinstance(expected, Mapping):
             raise ValueError(f"retry TCK case {case_id} requires expected result")

@@ -8,7 +8,12 @@ import pytest
 import graphblocks.runtime as runtime_module
 from graphblocks.compiler import compile_graph
 from graphblocks.plugins import BlockCatalog
-from graphblocks.runtime import InProcessRuntime, RuntimeRegistry, parse_duration_seconds
+from graphblocks.runtime import (
+    CancellationToken,
+    InProcessRuntime,
+    RuntimeRegistry,
+    parse_duration_seconds,
+)
 
 
 def test_parse_duration_seconds_supports_common_units() -> None:
@@ -102,6 +107,60 @@ def test_runtime_fails_node_that_exceeds_timeout(monkeypatch: pytest.MonkeyPatch
     assert result.outputs == {}
     assert result.journal.terminal_kind == "run_failed"
     assert "timeout" in result.journal.records[-1].payload["error"]
+
+
+def test_runtime_cancellation_observed_with_timeout_wins_before_retry_or_commit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    now = {"value": 100.0}
+    monkeypatch.setattr(runtime_module.time, "monotonic", lambda: 100.0)
+    monkeypatch.setattr(runtime_module.time, "perf_counter", lambda: now["value"])
+    attempts = 0
+    registry = RuntimeRegistry(allow_untyped=True)
+
+    def cancel_after_deadline(
+        inputs: dict[str, Any],
+        config: dict[str, Any],
+        context: dict[str, Any],
+    ) -> dict[str, Any]:
+        nonlocal attempts
+        attempts += 1
+        now["value"] += 0.002
+        context["cancellation_token"].cancel("shutdown")
+        return {"value": "must-not-commit"}
+
+    registry.register("test.cancel-after-deadline@1", cancel_after_deadline)
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "cancellation-timeout-precedence"},
+        "spec": {
+            "nodes": {
+                "work": {
+                    "block": "test.cancel-after-deadline@1",
+                    "flow": {
+                        "timeout": "1ms",
+                        "retry": {"maxAttempts": 3},
+                    },
+                    "outputs": {"value": "$output.value"},
+                }
+            }
+        },
+    }
+
+    result = InProcessRuntime(
+        registry,
+        cancellation_token=CancellationToken(),
+    ).run(graph, {})
+
+    assert result.status == "cancelled"
+    assert result.outputs == {}
+    assert attempts == 1
+    assert [record.kind for record in result.journal.records] == [
+        "run_started",
+        "node_started",
+        "run_cancelled",
+    ]
 
 
 def test_runtime_exposes_expired_timeout_through_attempt_cancellation_token(

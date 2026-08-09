@@ -468,12 +468,37 @@ fn in_process_test_runtime_stops_before_dependent_work_after_cancellation() {
             .iter()
             .map(|record| record.kind.as_str())
             .collect::<Vec<_>>(),
-        vec![
-            "run_started",
-            "node_started",
-            "node_completed",
-            "run_cancelled",
-        ],
+        vec!["run_started", "node_started", "run_cancelled",],
+    );
+}
+
+#[test]
+fn in_process_test_runtime_cancellation_wins_before_timeout_retry_or_commit() {
+    let token = CancellationToken::new(CancellationScope::Run, CancellationGuarantee::Cooperative);
+    let mut runtime = InProcessTestRuntime::new("run-000001", [ScheduledNode::new("render", [])])
+        .expect("runtime should be created")
+        .with_retry_policy("render", RetryPolicy::default_model_read())
+        .with_timeout_policy("render", TimeoutPolicy::new(10).expect("valid timeout"))
+        .with_node_duration_ms("render", 11);
+    let mut executor = CancellingExecutor {
+        token: token.clone(),
+        starts: Vec::new(),
+    };
+
+    let result = runtime
+        .run_with_cancellation(&token, &mut executor)
+        .expect("runtime should run");
+
+    assert_eq!(result.status, TestRunStatus::Cancelled);
+    assert_eq!(executor.starts, vec!["render".to_owned()]);
+    assert_eq!(
+        result
+            .journal
+            .records()
+            .iter()
+            .map(|record| record.kind.as_str())
+            .collect::<Vec<_>>(),
+        vec!["run_started", "node_started", "run_cancelled"],
     );
 }
 
