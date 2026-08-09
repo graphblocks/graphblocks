@@ -73,7 +73,10 @@ use graphblocks_runtime_core::retry::{
     Backoff, EffectKind, PartialOutputPolicy, ProviderLimitDecision, ProviderLimitIncident,
     ProviderLimitKind, ProviderLimitPolicy, RetryDecision, RetryPolicy, RetryRequest,
 };
-use graphblocks_runtime_core::run_store::{RunDeploymentProvenance, RunStatus, SqliteRunStore};
+use graphblocks_runtime_core::run_store::{
+    PatchOperation, RunDeploymentProvenance, RunInvocationMode, RunStatus, RunStoreError,
+    SqliteRunStore, StatePatch,
+};
 use graphblocks_runtime_core::scheduler::{
     LocalScheduler, NodeExecutionState, ScheduledNode, SchedulerError, StartedNode,
 };
@@ -6977,6 +6980,219 @@ fn inspect_runtime_evidence_json(
     })
 }
 
+#[pyfunction(name = "_evaluate_runtime_fence_reopen_json")]
+fn evaluate_runtime_fence_reopen_json(run_store_path: &str) -> PyResult<String> {
+    let (run_id, first, second) = {
+        let mut store = SqliteRunStore::open(run_store_path).map_err(|error| {
+            PyRuntimeError::new_err(format!(
+                "failed to open SQLite fenced run store evidence: {error:?}"
+            ))
+        })?;
+        let record = store
+            .create_run_with_invocation_mode(
+                format!("sha256:{}", "1".repeat(64)),
+                json!({"requestId": "installed-fence-1"}),
+                RunInvocationMode::Background,
+            )
+            .map_err(|error| {
+                PyRuntimeError::new_err(format!(
+                    "failed to create fenced run store evidence: {error:?}"
+                ))
+            })?;
+        let first = store
+            .acquire_ownership_lease(&record.run_id, "coordinator-a", 1_000, 1_500)
+            .map_err(|error| {
+                PyRuntimeError::new_err(format!(
+                    "failed to acquire first fenced run lease: {error:?}"
+                ))
+            })?;
+        let second = store
+            .acquire_ownership_lease(&record.run_id, "coordinator-b", 1_501, 2_000)
+            .map_err(|error| {
+                PyRuntimeError::new_err(format!(
+                    "failed to acquire replacement fenced run lease: {error:?}"
+                ))
+            })?;
+        (record.run_id, first, second)
+    };
+
+    let mut store = SqliteRunStore::open(run_store_path).map_err(|error| {
+        PyRuntimeError::new_err(format!(
+            "failed to reopen SQLite fenced run store evidence: {error:?}"
+        ))
+    })?;
+    let (patch_expected, patch_actual) = match store.patch_state_with_ownership_lease(
+        &run_id,
+        StatePatch::new(Some(0)).with(PatchOperation::set(["stale"], json!(true))),
+        "coordinator-a",
+        &first.lease_id,
+        first.fencing_epoch,
+        1_600,
+    ) {
+        Err(RunStoreError::RunOwnershipLeaseMismatch {
+            run_id: error_run_id,
+            expected,
+            actual,
+        }) if error_run_id == run_id => (expected, actual),
+        Err(error) => {
+            return Err(PyRuntimeError::new_err(format!(
+                "stale fenced run mutation returned the wrong error: {error:?}"
+            )));
+        }
+        Ok(record) => {
+            return Err(PyRuntimeError::new_err(format!(
+                "stale fenced run mutation unexpectedly committed revision {}",
+                record.state_revision,
+            )));
+        }
+    };
+    let (status_expected, status_actual) = match store.set_status_with_ownership_lease(
+        &run_id,
+        RunStatus::Failed,
+        "coordinator-a",
+        &first.lease_id,
+        first.fencing_epoch,
+        1_600,
+    ) {
+        Err(RunStoreError::RunOwnershipLeaseMismatch {
+            run_id: error_run_id,
+            expected,
+            actual,
+        }) if error_run_id == run_id => (expected, actual),
+        Err(error) => {
+            return Err(PyRuntimeError::new_err(format!(
+                "stale fenced run status returned the wrong error: {error:?}"
+            )));
+        }
+        Ok(record) => {
+            return Err(PyRuntimeError::new_err(format!(
+                "stale fenced run status unexpectedly committed {:?}",
+                record.status.as_str(),
+            )));
+        }
+    };
+    let after_stale_attempts = store.get_run(&run_id).map_err(|error| {
+        PyRuntimeError::new_err(format!(
+            "failed to reload run after stale fenced attempts: {error:?}"
+        ))
+    })?;
+    let patched = store
+        .patch_state_with_ownership_lease(
+            &run_id,
+            StatePatch::new(Some(0)).with(PatchOperation::set(["owner"], json!("coordinator-b"))),
+            "coordinator-b",
+            &second.lease_id,
+            second.fencing_epoch,
+            1_700,
+        )
+        .map_err(|error| {
+            PyRuntimeError::new_err(format!(
+                "authoritative fenced run mutation failed: {error:?}"
+            ))
+        })?;
+    let running = store
+        .set_status_with_ownership_lease(
+            &run_id,
+            RunStatus::Running,
+            "coordinator-b",
+            &second.lease_id,
+            second.fencing_epoch,
+            1_700,
+        )
+        .map_err(|error| {
+            PyRuntimeError::new_err(format!("authoritative fenced run status failed: {error:?}"))
+        })?;
+    drop(store);
+    let reopened_store = SqliteRunStore::open(run_store_path).map_err(|error| {
+        PyRuntimeError::new_err(format!(
+            "failed to reopen authoritative fenced run store: {error:?}"
+        ))
+    })?;
+    let reopened = reopened_store.get_run(&run_id).map_err(|error| {
+        PyRuntimeError::new_err(format!(
+            "failed to reload authoritative fenced run: {error:?}"
+        ))
+    })?;
+    if reopened.state.get("stale").is_some() {
+        return Err(PyRuntimeError::new_err(
+            "stale fenced run mutation leaked into authoritative state",
+        ));
+    }
+
+    serde_json::to_string(&json!({
+        "runId": run_id,
+        "firstLease": {
+            "owner": first.owner,
+            "leaseId": first.lease_id,
+            "fencingEpoch": first.fencing_epoch,
+            "acquiredAtUnixMs": first.acquired_at_unix_ms,
+            "expiresAtUnixMs": first.expires_at_unix_ms,
+        },
+        "secondLease": {
+            "owner": second.owner,
+            "leaseId": second.lease_id,
+            "fencingEpoch": second.fencing_epoch,
+            "acquiredAtUnixMs": second.acquired_at_unix_ms,
+            "expiresAtUnixMs": second.expires_at_unix_ms,
+        },
+        "stalePatch": {
+            "accepted": false,
+            "errorCode": "run_ownership_lease_mismatch",
+            "expectedLease": {
+                "owner": patch_expected.owner,
+                "leaseId": patch_expected.lease_id,
+                "fencingEpoch": patch_expected.fencing_epoch,
+            },
+            "actualLease": {
+                "owner": patch_actual.owner,
+                "leaseId": patch_actual.lease_id,
+                "fencingEpoch": patch_actual.fencing_epoch,
+            },
+        },
+        "staleStatus": {
+            "accepted": false,
+            "attemptedStatus": "failed",
+            "errorCode": "run_ownership_lease_mismatch",
+            "expectedLease": {
+                "owner": status_expected.owner,
+                "leaseId": status_expected.lease_id,
+                "fencingEpoch": status_expected.fencing_epoch,
+            },
+            "actualLease": {
+                "owner": status_actual.owner,
+                "leaseId": status_actual.lease_id,
+                "fencingEpoch": status_actual.fencing_epoch,
+            },
+        },
+        "afterStaleAttempts": {
+            "state": after_stale_attempts.state,
+            "stateRevision": after_stale_attempts.state_revision,
+            "status": after_stale_attempts.status.as_str(),
+        },
+        "authoritativePatch": {
+            "accepted": true,
+            "state": patched.state,
+            "stateRevision": patched.state_revision,
+            "status": patched.status.as_str(),
+        },
+        "authoritativeStatus": {
+            "accepted": true,
+            "stateRevision": running.state_revision,
+            "status": running.status.as_str(),
+        },
+        "reopened": {
+            "state": reopened.state,
+            "stateRevision": reopened.state_revision,
+            "status": reopened.status.as_str(),
+        },
+    }))
+    .map_err(|error| {
+        PyRuntimeError::new_err(format!(
+            "failed to serialize fenced run store evidence: {error}"
+        ))
+    })
+}
+
 fn project_runtime_output_value(
     output_values: &mut Value,
     source_value: &Value,
@@ -9827,6 +10043,10 @@ fn _native(module: &Bound<'_, PyModule>) -> PyResult<()> {
         module
     )?)?;
     module.add_function(wrap_pyfunction!(inspect_runtime_evidence_json, module)?)?;
+    module.add_function(wrap_pyfunction!(
+        evaluate_runtime_fence_reopen_json,
+        module
+    )?)?;
     module.add_function(wrap_pyfunction!(decide_agent_step_json, module)?)?;
     module.add_function(wrap_pyfunction!(admit_exhaustion_work_json, module)?)?;
     module.add_function(wrap_pyfunction!(
@@ -9909,19 +10129,19 @@ mod tests {
         evaluate_declarative_output_policy_json, evaluate_durable_tool_terminal_store_json,
         evaluate_node_lifecycle_json, evaluate_outcome_tck_case_json, evaluate_output_gate_json,
         evaluate_provider_limit_policy_json, evaluate_readiness_json, evaluate_retry_policy_json,
-        evaluate_retry_tck_case_json, evaluate_scheduler_json, evaluate_sequence_tck_case_json,
-        evaluate_sequential_tool_queue_json, evaluate_task_group_json,
-        evaluate_timeout_deadline_json, evaluate_tool_admission_json, evaluate_tool_approval_json,
-        evaluate_tool_execution_plan_json, evaluate_tool_execution_tck_case_json,
-        evaluate_tool_lifecycle_tck_case_json, evaluate_tool_resolution_json,
-        evaluate_tool_result_stream_json, evaluate_tool_result_tck_case_json,
-        evaluate_usage_ledger_json, finalize_tool_call_json, inspect_runtime_evidence_json,
-        migrate_resource_json, negotiate_application_protocol_capabilities_json,
-        parse_application_protocol_event_kind, parse_json_argument, parse_resolved_tool,
-        parse_schema_id_json, parse_tool_call, prepare_tool_result_for_model_json,
-        record_tool_effect_audit_event_json, record_tool_effect_precondition_json,
-        resource_schema_errors_json, run_stdlib_graph_json, run_stdlib_graph_with_options_json,
-        run_test_graph_json, run_test_graph_with_options_json,
+        evaluate_retry_tck_case_json, evaluate_runtime_fence_reopen_json, evaluate_scheduler_json,
+        evaluate_sequence_tck_case_json, evaluate_sequential_tool_queue_json,
+        evaluate_task_group_json, evaluate_timeout_deadline_json, evaluate_tool_admission_json,
+        evaluate_tool_approval_json, evaluate_tool_execution_plan_json,
+        evaluate_tool_execution_tck_case_json, evaluate_tool_lifecycle_tck_case_json,
+        evaluate_tool_resolution_json, evaluate_tool_result_stream_json,
+        evaluate_tool_result_tck_case_json, evaluate_usage_ledger_json, finalize_tool_call_json,
+        inspect_runtime_evidence_json, migrate_resource_json,
+        negotiate_application_protocol_capabilities_json, parse_application_protocol_event_kind,
+        parse_json_argument, parse_resolved_tool, parse_schema_id_json, parse_tool_call,
+        prepare_tool_result_for_model_json, record_tool_effect_audit_event_json,
+        record_tool_effect_precondition_json, resource_schema_errors_json, run_stdlib_graph_json,
+        run_stdlib_graph_with_options_json, run_test_graph_json, run_test_graph_with_options_json,
         serialize_application_protocol_log_error, validate_remote_payload_json,
         validate_worker_advertisement_json, validate_worker_protocol_message_json,
     };
@@ -16612,6 +16832,94 @@ mod tests {
 
         let _ = std::fs::remove_file(run_store_path);
         let _ = std::fs::remove_file(journal_store_path);
+        Ok(())
+    }
+
+    #[test]
+    fn evaluate_runtime_fence_reopen_json_rejects_stale_commit() -> Result<(), String> {
+        pyo3::Python::initialize();
+        let run_store_path = unique_sqlite_path("installed-fence-reopen");
+        let evidence_json = evaluate_runtime_fence_reopen_json(
+            run_store_path
+                .to_str()
+                .ok_or_else(|| "run store path must be UTF-8".to_owned())?,
+        )
+        .map_err(|error| error.to_string())?;
+        let evidence =
+            serde_json::from_str::<Value>(&evidence_json).map_err(|error| error.to_string())?;
+
+        assert_eq!(
+            evidence,
+            json!({
+                "runId": "run-000001",
+                "firstLease": {
+                    "owner": "coordinator-a",
+                    "leaseId": "run-000001:1",
+                    "fencingEpoch": 1,
+                    "acquiredAtUnixMs": 1000,
+                    "expiresAtUnixMs": 1500,
+                },
+                "secondLease": {
+                    "owner": "coordinator-b",
+                    "leaseId": "run-000001:2",
+                    "fencingEpoch": 2,
+                    "acquiredAtUnixMs": 1501,
+                    "expiresAtUnixMs": 2000,
+                },
+                "stalePatch": {
+                    "accepted": false,
+                    "errorCode": "run_ownership_lease_mismatch",
+                    "expectedLease": {
+                        "owner": "coordinator-b",
+                        "leaseId": "run-000001:2",
+                        "fencingEpoch": 2,
+                    },
+                    "actualLease": {
+                        "owner": "coordinator-a",
+                        "leaseId": "run-000001:1",
+                        "fencingEpoch": 1,
+                    },
+                },
+                "staleStatus": {
+                    "accepted": false,
+                    "attemptedStatus": "failed",
+                    "errorCode": "run_ownership_lease_mismatch",
+                    "expectedLease": {
+                        "owner": "coordinator-b",
+                        "leaseId": "run-000001:2",
+                        "fencingEpoch": 2,
+                    },
+                    "actualLease": {
+                        "owner": "coordinator-a",
+                        "leaseId": "run-000001:1",
+                        "fencingEpoch": 1,
+                    },
+                },
+                "afterStaleAttempts": {
+                    "state": {},
+                    "stateRevision": 0,
+                    "status": "created",
+                },
+                "authoritativePatch": {
+                    "accepted": true,
+                    "state": {"owner": "coordinator-b"},
+                    "stateRevision": 1,
+                    "status": "created",
+                },
+                "authoritativeStatus": {
+                    "accepted": true,
+                    "stateRevision": 1,
+                    "status": "running",
+                },
+                "reopened": {
+                    "state": {"owner": "coordinator-b"},
+                    "stateRevision": 1,
+                    "status": "running",
+                },
+            })
+        );
+
+        let _ = std::fs::remove_file(run_store_path);
         Ok(())
     }
 

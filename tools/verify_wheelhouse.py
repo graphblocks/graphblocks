@@ -105,7 +105,7 @@ STABLE_RUNTIME_STATUS_FIELDS = (
     "module",
 )
 STABLE_RUNTIME_SMOKE_RUN_ID = "installed-stable-runtime-api"
-NATIVE_RUNTIME_REOPEN_EVIDENCE_FORMAT_VERSION = 1
+NATIVE_RUNTIME_REOPEN_EVIDENCE_FORMAT_VERSION = 2
 NATIVE_RUNTIME_REOPEN_RUN_ID = "installed-native-runtime-reopen"
 MAX_SDIST_MEMBER_COUNT = 100_000
 MAX_SDIST_UNPACKED_SIZE = 512 * 1024 * 1024
@@ -691,6 +691,25 @@ def installed_native_runtime_reopen_reader_source() -> str:
     )
 
 
+def installed_native_runtime_fence_source() -> str:
+    return "\n".join(
+        (
+            "from hashlib import sha256",
+            "from importlib.metadata import version",
+            "import json",
+            "from pathlib import Path",
+            "import sys",
+            "import graphblocks_runtime",
+            "import graphblocks_runtime._native as native_extension",
+            "contract = graphblocks_runtime._evaluate_runtime_fence_reopen(run_store_path=sys.argv[1])",
+            "extension_path = Path(native_extension.__file__).resolve()",
+            "artifact = {'filename': extension_path.name, 'sha256': sha256(extension_path.read_bytes()).hexdigest(), 'size': extension_path.stat().st_size, 'distributionVersion': version('graphblocks-runtime')}",
+            "payload = {'artifact': artifact, 'contract': contract, 'referencePackageImported': 'graphblocks' in sys.modules}",
+            "print(json.dumps(payload, sort_keys=True))",
+        )
+    )
+
+
 def installed_native_authority_probe_source() -> str:
     resource_validation_cases = _load_native_authority_cases(
         NATIVE_RESOURCE_VALIDATION_CASES_PATH,
@@ -733,6 +752,7 @@ def installed_native_authority_probe_source() -> str:
     )
     runtime_reopen_writer_source = installed_native_runtime_reopen_writer_source()
     runtime_reopen_reader_source = installed_native_runtime_reopen_reader_source()
+    runtime_fence_source = installed_native_runtime_fence_source()
     return "\n".join(
         (
             "from copy import deepcopy",
@@ -819,12 +839,15 @@ def installed_native_authority_probe_source() -> str:
             "stable_runtime_smoke = {'runId': stable_runtime_result['runId'], 'status': stable_runtime_result['status'], 'outputs': stable_runtime_result['outputs'], 'terminalKind': stable_runtime_terminal_kind}",
             f"runtime_reopen_writer_source = {runtime_reopen_writer_source!r}",
             f"runtime_reopen_reader_source = {runtime_reopen_reader_source!r}",
+            f"runtime_fence_source = {runtime_fence_source!r}",
             "with TemporaryDirectory(prefix='graphblocks-native-reopen-') as runtime_reopen_root_text:",
             "    runtime_reopen_root = Path(runtime_reopen_root_text)",
             "    writer_script = runtime_reopen_root / 'writer.py'",
             "    reader_script = runtime_reopen_root / 'reader.py'",
+            "    fence_script = runtime_reopen_root / 'fence.py'",
             "    writer_script.write_text(runtime_reopen_writer_source + '\\n', encoding='utf-8', newline='\\n')",
             "    reader_script.write_text(runtime_reopen_reader_source + '\\n', encoding='utf-8', newline='\\n')",
+            "    fence_script.write_text(runtime_fence_source + '\\n', encoding='utf-8', newline='\\n')",
             "    run_store_path = runtime_reopen_root / 'runs.sqlite3'",
             "    journal_store_path = runtime_reopen_root / 'journal.sqlite3'",
             "    writer_process = subprocess.run([sys.executable, str(writer_script), str(run_store_path), str(journal_store_path)], check=True, cwd=runtime_reopen_root, capture_output=True, text=True)",
@@ -834,7 +857,9 @@ def installed_native_authority_probe_source() -> str:
                 f"{NATIVE_RUNTIME_REOPEN_RUN_ID!r}], check=True, "
                 "cwd=runtime_reopen_root, capture_output=True, text=True)"
             ),
-            f"    runtime_persistence = {{'formatVersion': {NATIVE_RUNTIME_REOPEN_EVIDENCE_FORMAT_VERSION}, 'writer': json.loads(writer_process.stdout), 'reader': json.loads(reader_process.stdout)}}",
+            "    fence_store_path = runtime_reopen_root / 'fence.sqlite3'",
+            "    fence_process = subprocess.run([sys.executable, str(fence_script), str(fence_store_path)], check=True, cwd=runtime_reopen_root, capture_output=True, text=True)",
+            f"    runtime_persistence = {{'formatVersion': {NATIVE_RUNTIME_REOPEN_EVIDENCE_FORMAT_VERSION}, 'writer': json.loads(writer_process.stdout), 'reader': json.loads(reader_process.stdout), 'fence': json.loads(fence_process.stdout)}}",
             "payload = {'canonicalSmoke': {'hash': graphblocks_runtime.canonical_hash_json('{\"b\":2,\"a\":1}'), 'json': graphblocks_runtime.canonicalize_json('{\"b\":2,\"a\":1}')}, 'distributionVersion': version('graphblocks-runtime'), 'publicFacadeEvidence': public_facade_evidence, 'runtimePersistence': runtime_persistence, 'schemaIdSmoke': graphblocks_runtime.parse_schema_id('schemas/Message@4294967295'), 'stableRuntimeApi': stable_runtime_api, 'stableRuntimeSmoke': stable_runtime_smoke, 'status': native_status}",
             "print(json.dumps(payload, sort_keys=True))",
         )
@@ -847,6 +872,7 @@ def validate_installed_native_runtime_reopen_evidence(
     expected_distribution_version: str,
 ) -> dict[str, object]:
     if not isinstance(payload, dict) or set(payload) != {
+        "fence",
         "formatVersion",
         "reader",
         "writer",
@@ -856,7 +882,7 @@ def validate_installed_native_runtime_reopen_evidence(
         raise RuntimeError(
             "installed native runtime reopen evidence version is unsupported"
         )
-    for role in ("writer", "reader"):
+    for role in ("writer", "reader", "fence"):
         process = payload[role]
         if not isinstance(process, dict) or set(process) != {
             "artifact",
@@ -897,7 +923,12 @@ def validate_installed_native_runtime_reopen_evidence(
             raise RuntimeError(
                 f"installed native runtime reopen {role} artifact identity is invalid"
             )
-        contract = process["contract"]
+        if not isinstance(process["contract"], dict):
+            raise RuntimeError(
+                f"installed native runtime reopen {role} contract must be an object"
+            )
+    for role in ("writer", "reader"):
+        contract = payload[role]["contract"]
         if not isinstance(contract, dict) or set(contract) != {
             "graphHash",
             "inputs",
@@ -913,7 +944,8 @@ def validate_installed_native_runtime_reopen_evidence(
             )
     writer = payload["writer"]
     reader = payload["reader"]
-    if writer["artifact"] != reader["artifact"]:
+    fence = payload["fence"]
+    if not (writer["artifact"] == reader["artifact"] == fence["artifact"]):
         raise RuntimeError(
             "installed native runtime reopen processes loaded different native artifacts"
         )
@@ -945,6 +977,75 @@ def validate_installed_native_runtime_reopen_evidence(
         or any(character not in "0123456789abcdef" for character in graph_hash[7:])
     ):
         raise RuntimeError("installed native runtime reopen contract is invalid")
+    expected_fence_contract = {
+        "runId": "run-000001",
+        "firstLease": {
+            "owner": "coordinator-a",
+            "leaseId": "run-000001:1",
+            "fencingEpoch": 1,
+            "acquiredAtUnixMs": 1_000,
+            "expiresAtUnixMs": 1_500,
+        },
+        "secondLease": {
+            "owner": "coordinator-b",
+            "leaseId": "run-000001:2",
+            "fencingEpoch": 2,
+            "acquiredAtUnixMs": 1_501,
+            "expiresAtUnixMs": 2_000,
+        },
+        "stalePatch": {
+            "accepted": False,
+            "errorCode": "run_ownership_lease_mismatch",
+            "expectedLease": {
+                "owner": "coordinator-b",
+                "leaseId": "run-000001:2",
+                "fencingEpoch": 2,
+            },
+            "actualLease": {
+                "owner": "coordinator-a",
+                "leaseId": "run-000001:1",
+                "fencingEpoch": 1,
+            },
+        },
+        "staleStatus": {
+            "accepted": False,
+            "attemptedStatus": "failed",
+            "errorCode": "run_ownership_lease_mismatch",
+            "expectedLease": {
+                "owner": "coordinator-b",
+                "leaseId": "run-000001:2",
+                "fencingEpoch": 2,
+            },
+            "actualLease": {
+                "owner": "coordinator-a",
+                "leaseId": "run-000001:1",
+                "fencingEpoch": 1,
+            },
+        },
+        "afterStaleAttempts": {
+            "state": {},
+            "stateRevision": 0,
+            "status": "created",
+        },
+        "authoritativePatch": {
+            "accepted": True,
+            "state": {"owner": "coordinator-b"},
+            "stateRevision": 1,
+            "status": "created",
+        },
+        "authoritativeStatus": {
+            "accepted": True,
+            "stateRevision": 1,
+            "status": "running",
+        },
+        "reopened": {
+            "state": {"owner": "coordinator-b"},
+            "stateRevision": 1,
+            "status": "running",
+        },
+    }
+    if fence["contract"] != expected_fence_contract:
+        raise RuntimeError("installed native runtime fence contract is invalid")
     return payload
 
 

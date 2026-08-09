@@ -68,6 +68,74 @@ def _native_authority_probe() -> dict[str, object]:
         },
         "referencePackageImported": False,
     }
+    fence = json.loads(json.dumps(process))
+    fence["contract"] = {
+        "runId": "run-000001",
+        "firstLease": {
+            "owner": "coordinator-a",
+            "leaseId": "run-000001:1",
+            "fencingEpoch": 1,
+            "acquiredAtUnixMs": 1_000,
+            "expiresAtUnixMs": 1_500,
+        },
+        "secondLease": {
+            "owner": "coordinator-b",
+            "leaseId": "run-000001:2",
+            "fencingEpoch": 2,
+            "acquiredAtUnixMs": 1_501,
+            "expiresAtUnixMs": 2_000,
+        },
+        "stalePatch": {
+            "accepted": False,
+            "errorCode": "run_ownership_lease_mismatch",
+            "expectedLease": {
+                "owner": "coordinator-b",
+                "leaseId": "run-000001:2",
+                "fencingEpoch": 2,
+            },
+            "actualLease": {
+                "owner": "coordinator-a",
+                "leaseId": "run-000001:1",
+                "fencingEpoch": 1,
+            },
+        },
+        "staleStatus": {
+            "accepted": False,
+            "attemptedStatus": "failed",
+            "errorCode": "run_ownership_lease_mismatch",
+            "expectedLease": {
+                "owner": "coordinator-b",
+                "leaseId": "run-000001:2",
+                "fencingEpoch": 2,
+            },
+            "actualLease": {
+                "owner": "coordinator-a",
+                "leaseId": "run-000001:1",
+                "fencingEpoch": 1,
+            },
+        },
+        "afterStaleAttempts": {
+            "state": {},
+            "stateRevision": 0,
+            "status": "created",
+        },
+        "authoritativePatch": {
+            "accepted": True,
+            "state": {"owner": "coordinator-b"},
+            "stateRevision": 1,
+            "status": "created",
+        },
+        "authoritativeStatus": {
+            "accepted": True,
+            "stateRevision": 1,
+            "status": "running",
+        },
+        "reopened": {
+            "state": {"owner": "coordinator-b"},
+            "stateRevision": 1,
+            "status": "running",
+        },
+    }
     return {
         "canonicalSmoke": {
             "hash": "sha256:43258cff783fe7036d8a43033f830adfc60ec037382473548ac742b888292777",
@@ -76,9 +144,10 @@ def _native_authority_probe() -> dict[str, object]:
         "distributionVersion": "0.1.0",
         "publicFacadeEvidence": installed_native_authority_probe_expectations(),
         "runtimePersistence": {
-            "formatVersion": 1,
+            "formatVersion": 2,
             "writer": json.loads(json.dumps(process)),
             "reader": json.loads(json.dumps(process)),
+            "fence": fence,
         },
         "schemaIdSmoke": {
             "canonical": "schemas/Message@4294967295",

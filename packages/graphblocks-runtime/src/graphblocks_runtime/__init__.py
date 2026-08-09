@@ -153,6 +153,7 @@ _NATIVE_BINDING_CAPABILITIES: tuple[str, ...] = ()
 try:
     from ._native import (
         __version__,
+        _evaluate_runtime_fence_reopen_json,
         _inspect_runtime_evidence_json,
         admit_exhaustion_work_json,
         admit_worker_message_json,
@@ -473,6 +474,9 @@ except Exception as error:
         journal_store_path: str,
         run_id: str,
     ) -> str:
+        require_native_extension()
+
+    def _evaluate_runtime_fence_reopen_json(run_store_path: str) -> str:
         require_native_extension()
 else:
 
@@ -1056,6 +1060,16 @@ def _inspect_runtime_evidence(
             run_id,
         ),
         "native runtime persistence evidence",
+    )
+
+
+def _evaluate_runtime_fence_reopen(
+    *,
+    run_store_path: str,
+) -> dict[str, object]:
+    return _json_object_result(
+        _evaluate_runtime_fence_reopen_json(run_store_path),
+        "native runtime fence reopen evidence",
     )
 
 

@@ -114,10 +114,79 @@ def _native_runtime_persistence_payload() -> dict[str, object]:
         },
         "referencePackageImported": False,
     }
+    fence = deepcopy(process)
+    fence["contract"] = {
+        "runId": "run-000001",
+        "firstLease": {
+            "owner": "coordinator-a",
+            "leaseId": "run-000001:1",
+            "fencingEpoch": 1,
+            "acquiredAtUnixMs": 1_000,
+            "expiresAtUnixMs": 1_500,
+        },
+        "secondLease": {
+            "owner": "coordinator-b",
+            "leaseId": "run-000001:2",
+            "fencingEpoch": 2,
+            "acquiredAtUnixMs": 1_501,
+            "expiresAtUnixMs": 2_000,
+        },
+        "stalePatch": {
+            "accepted": False,
+            "errorCode": "run_ownership_lease_mismatch",
+            "expectedLease": {
+                "owner": "coordinator-b",
+                "leaseId": "run-000001:2",
+                "fencingEpoch": 2,
+            },
+            "actualLease": {
+                "owner": "coordinator-a",
+                "leaseId": "run-000001:1",
+                "fencingEpoch": 1,
+            },
+        },
+        "staleStatus": {
+            "accepted": False,
+            "attemptedStatus": "failed",
+            "errorCode": "run_ownership_lease_mismatch",
+            "expectedLease": {
+                "owner": "coordinator-b",
+                "leaseId": "run-000001:2",
+                "fencingEpoch": 2,
+            },
+            "actualLease": {
+                "owner": "coordinator-a",
+                "leaseId": "run-000001:1",
+                "fencingEpoch": 1,
+            },
+        },
+        "afterStaleAttempts": {
+            "state": {},
+            "stateRevision": 0,
+            "status": "created",
+        },
+        "authoritativePatch": {
+            "accepted": True,
+            "state": {"owner": "coordinator-b"},
+            "stateRevision": 1,
+            "status": "created",
+        },
+        "authoritativeStatus": {
+            "accepted": True,
+            "stateRevision": 1,
+            "status": "running",
+        },
+        "reopened": {
+            "state": {"owner": "coordinator-b"},
+            "stateRevision": 1,
+            "status": "running",
+        },
+    }
     return {
-        "formatVersion": 1,
+        "formatVersion": 2,
         "writer": deepcopy(process),
         "reader": deepcopy(process),
+        "fence": fence,
     }
 
 
@@ -363,27 +432,31 @@ def test_installed_native_authority_probe_exercises_public_and_reference_paths()
     compile(source, "<installed-native-authority-probe>", "exec")
 
 
-def test_installed_native_runtime_reopen_probe_uses_two_fresh_native_processes(
+def test_installed_native_runtime_reopen_probe_uses_three_fresh_native_processes(
 ) -> None:
     module = _load_wheelhouse_module()
     writer_source = module.installed_native_runtime_reopen_writer_source()
     reader_source = module.installed_native_runtime_reopen_reader_source()
+    fence_source = module.installed_native_runtime_fence_source()
     authority_source = module.installed_native_authority_probe_source()
 
     assert "graphblocks_runtime.run_stdlib_graph_with_options(" in writer_source
     assert "graphblocks_runtime._inspect_runtime_evidence(" in reader_source
+    assert "graphblocks_runtime._evaluate_runtime_fence_reopen(" in fence_source
     assert "'graphblocks' in sys.modules" in writer_source
     assert "'graphblocks' in sys.modules" in reader_source
     assert "writer_process = subprocess.run(" in authority_source
     assert "reader_process = subprocess.run(" in authority_source
+    assert "fence_process = subprocess.run(" in authority_source
     compile(writer_source, "<installed-native-runtime-writer>", "exec")
     compile(reader_source, "<installed-native-runtime-reader>", "exec")
+    compile(fence_source, "<installed-native-runtime-fence>", "exec")
     compile(authority_source, "<installed-native-authority-probe>", "exec")
 
 
 @pytest.mark.parametrize(
     "target",
-    ("artifact", "contract", "reference-import", "sequence", "envelope"),
+    ("artifact", "contract", "fence", "reference-import", "sequence", "envelope"),
 )
 def test_installed_native_runtime_reopen_evidence_fails_closed(target: str) -> None:
     module = _load_wheelhouse_module()
@@ -394,6 +467,9 @@ def test_installed_native_runtime_reopen_evidence_fails_closed(target: str) -> N
     elif target == "contract":
         payload["reader"]["contract"]["stateRevision"] = 3
         message = "differs from the writer contract"
+    elif target == "fence":
+        payload["fence"]["contract"]["stalePatch"]["accepted"] = True
+        message = "fence contract is invalid"
     elif target == "reference-import":
         payload["reader"]["referencePackageImported"] = True
         message = "imported the reference package"

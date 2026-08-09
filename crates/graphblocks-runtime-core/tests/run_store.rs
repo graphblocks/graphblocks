@@ -1247,6 +1247,29 @@ fn sqlite_run_store_fenced_mutations_reject_stale_coordinator_after_reopen() -> 
             second.lease_id, second.fencing_epoch, first.lease_id, first.fencing_epoch
         ))
     );
+    assert_eq!(
+        store
+            .set_status_with_ownership_lease(
+                &run_id,
+                RunStatus::Failed,
+                "coordinator-a",
+                &first.lease_id,
+                first.fencing_epoch,
+                1_600,
+            )
+            .map_err(|error| format!("{error:?}")),
+        Err(format!(
+            "RunOwnershipLeaseMismatch {{ run_id: \"{run_id}\", expected: RunOwnershipLeaseIdentity {{ owner: \"coordinator-b\", lease_id: \"{}\", fencing_epoch: {} }}, actual: RunOwnershipLeaseIdentity {{ owner: \"coordinator-a\", lease_id: \"{}\", fencing_epoch: {} }} }}",
+            second.lease_id, second.fencing_epoch, first.lease_id, first.fencing_epoch
+        ))
+    );
+    let after_stale_attempts = store
+        .get_run(&run_id)
+        .map_err(|error| format!("{error:?}"))?;
+    assert_eq!(after_stale_attempts.state, json!({}));
+    assert_eq!(after_stale_attempts.state_revision, 0);
+    assert_eq!(after_stale_attempts.status, RunStatus::Created);
+
     let patched = store
         .patch_state_with_ownership_lease(
             &run_id,
@@ -1270,14 +1293,14 @@ fn sqlite_run_store_fenced_mutations_reject_stale_coordinator_after_reopen() -> 
 
     assert_eq!(patched.state["owner"], json!("coordinator-b"));
     assert_eq!(running.status, RunStatus::Running);
-    assert_eq!(
-        store
-            .get_run(&run_id)
-            .map_err(|error| format!("{error:?}"))?
-            .state
-            .get("stale"),
-        None
-    );
+    drop(store);
+    let reopened = SqliteRunStore::open(&path).map_err(|error| format!("{error:?}"))?;
+    let stored = reopened
+        .get_run(&run_id)
+        .map_err(|error| format!("{error:?}"))?;
+    assert_eq!(stored.state, json!({"owner": "coordinator-b"}));
+    assert_eq!(stored.state_revision, 1);
+    assert_eq!(stored.status, RunStatus::Running);
 
     let _ = std::fs::remove_file(&path);
     Ok(())
