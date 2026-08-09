@@ -1498,5 +1498,151 @@
       "scenario": "evaluate_readiness",
       "errorCategory": "invalid_identifier"
     }
+  },
+  {
+    "name": "local_terminal_value_succeeds",
+    "scenario": "execute_local_terminal",
+    "outcome": {"status": "value", "value": {"answer": "done"}},
+    "expected": {
+      "contractVersion": "graphblocks.outcome.tck.v1",
+      "ok": true,
+      "scenario": "execute_local_terminal",
+      "run": {
+        "status": "succeeded",
+        "terminalKind": "run_succeeded",
+        "terminalCount": 1,
+        "journalKinds": ["run_started", "node_started", "node_completed", "run_succeeded"]
+      }
+    }
+  },
+  {
+    "name": "local_terminal_failure_fails",
+    "scenario": "execute_local_terminal",
+    "outcome": {
+      "status": "failed",
+      "error": {
+        "code": "node.failed",
+        "category": "permanent",
+        "message": "node failed",
+        "retryable": false,
+        "details": {},
+        "causeChain": []
+      }
+    },
+    "expected": {
+      "contractVersion": "graphblocks.outcome.tck.v1",
+      "ok": true,
+      "scenario": "execute_local_terminal",
+      "run": {
+        "status": "failed",
+        "terminalKind": "run_failed",
+        "terminalCount": 1,
+        "journalKinds": ["run_started", "node_started", "node_failed", "run_failed"]
+      }
+    }
+  },
+  {
+    "name": "local_terminal_cancellation_cancels",
+    "scenario": "execute_local_terminal",
+    "outcome": {
+      "status": "cancelled",
+      "reason": {
+        "code": "user_cancel",
+        "message": "cancelled",
+        "requestedBy": "user-1",
+        "policyDecisionRef": null
+      }
+    },
+    "expected": {
+      "contractVersion": "graphblocks.outcome.tck.v1",
+      "ok": true,
+      "scenario": "execute_local_terminal",
+      "run": {
+        "status": "cancelled",
+        "terminalKind": "run_cancelled",
+        "terminalCount": 1,
+        "journalKinds": ["run_started", "node_started", "run_cancelled"]
+      }
+    }
+  },
+  {
+    "name": "local_terminal_denial_rejects",
+    "scenario": "execute_local_terminal",
+    "outcome": {"status": "denied", "decisionId": "decision-1"},
+    "expected": {
+      "contractVersion": "graphblocks.outcome.tck.v1",
+      "ok": true,
+      "scenario": "execute_local_terminal",
+      "run": {
+        "status": "rejected",
+        "terminalKind": "run_rejected",
+        "terminalCount": 1,
+        "journalKinds": ["run_started", "node_started", "run_rejected"]
+      }
+    }
+  },
+  {
+    "name": "local_terminal_pause_pauses",
+    "scenario": "execute_local_terminal",
+    "outcome": {"status": "paused", "code": "approval_required", "message": "approval required"},
+    "expected": {
+      "contractVersion": "graphblocks.outcome.tck.v1",
+      "ok": true,
+      "scenario": "execute_local_terminal",
+      "run": {
+        "status": "paused",
+        "terminalKind": "run_paused",
+        "terminalCount": 1,
+        "journalKinds": ["run_started", "node_started", "run_paused"]
+      }
+    }
+  },
+  {
+    "name": "local_terminal_budget_exhaustion_exhausts",
+    "scenario": "execute_local_terminal",
+    "outcome": {"status": "budget_exhausted", "code": "budget.limit", "message": "budget exhausted"},
+    "expected": {
+      "contractVersion": "graphblocks.outcome.tck.v1",
+      "ok": true,
+      "scenario": "execute_local_terminal",
+      "run": {
+        "status": "exhausted",
+        "terminalKind": "run_exhausted",
+        "terminalCount": 1,
+        "journalKinds": ["run_started", "node_started", "run_exhausted"]
+      }
+    }
+  },
+  {
+    "name": "local_terminal_absent_fails_closed",
+    "scenario": "execute_local_terminal",
+    "outcome": {"status": "absent"},
+    "expected": {
+      "contractVersion": "graphblocks.outcome.tck.v1",
+      "ok": true,
+      "scenario": "execute_local_terminal",
+      "run": {
+        "status": "failed",
+        "terminalKind": "run_failed",
+        "terminalCount": 1,
+        "journalKinds": ["run_started", "node_started", "node_failed", "run_failed"]
+      }
+    }
+  },
+  {
+    "name": "local_terminal_skipped_fails_closed",
+    "scenario": "execute_local_terminal",
+    "outcome": {"status": "skipped", "reason": {"code": "condition_false", "message": null}},
+    "expected": {
+      "contractVersion": "graphblocks.outcome.tck.v1",
+      "ok": true,
+      "scenario": "execute_local_terminal",
+      "run": {
+        "status": "failed",
+        "terminalKind": "run_failed",
+        "terminalCount": 1,
+        "journalKinds": ["run_started", "node_started", "node_failed", "run_failed"]
+      }
+    }
   }
 ]

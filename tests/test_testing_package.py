@@ -9259,7 +9259,7 @@ def test_testing_package_loads_shared_outcome_tck_cases(monkeypatch) -> None:
         graphblocks_testing.stdlib_registry()
     ).run_cases(cases)
 
-    assert [case.kind for case in cases] == ["outcome"] * 72
+    assert [case.kind for case in cases] == ["outcome"] * 80
     assert report.ok
     assert all(
         result.observed["reference_contract"]
@@ -9342,7 +9342,23 @@ def test_outcome_tck_is_exact_native_reference_without_expected_input(
     ).run_cases(cases)
 
     assert report.ok
-    assert len(report.results) == 72
+    assert len(report.results) == 80
+    terminal_results = [
+        result.observed["reference_contract"]["run"]
+        for result in report.results
+        if result.observed["reference_contract"].get("scenario")
+        == "execute_local_terminal"
+    ]
+    assert len(terminal_results) == 8
+    assert {result["status"] for result in terminal_results} == {
+        "succeeded",
+        "failed",
+        "cancelled",
+        "rejected",
+        "paused",
+        "exhausted",
+    }
+    assert all(result["terminalCount"] == 1 for result in terminal_results)
     assert all(
         result.observed["runtime"] == "native"
         and result.observed["native_reference_match"] is True
@@ -10026,6 +10042,14 @@ def test_testing_package_discovers_all_shared_tck_suite_manifests(monkeypatch) -
         "invalid_error_code_precedes_all_later_fields",
         "invalid_cancel_code_precedes_later_reason_fields",
         "invalid_dependency_input_precedes_source_and_mode",
+        "local_terminal_value_succeeds",
+        "local_terminal_failure_fails",
+        "local_terminal_cancellation_cancels",
+        "local_terminal_denial_rejects",
+        "local_terminal_pause_pauses",
+        "local_terminal_budget_exhaustion_exhausts",
+        "local_terminal_absent_fails_closed",
+        "local_terminal_skipped_fails_closed",
     )
     assert by_suite["retry"].case_ids == (
         "effect_retry_preserves_idempotency_key",

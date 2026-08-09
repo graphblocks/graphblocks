@@ -7,6 +7,10 @@ use graphblocks_runtime_core::outcome::{
 use graphblocks_runtime_core::readiness::{
     InputDependency, PortRef, Readiness, ReadinessTracker, ReadinessValidationError, ResolvedInput,
 };
+use graphblocks_runtime_core::scheduler::{ScheduledNode, StartedNode};
+use graphblocks_runtime_core::test_runtime::{
+    InProcessTestRuntime, OutcomeNodeExecutor, OutcomeRunStatus,
+};
 use serde_json::{Map, Value, json};
 
 const CONTRACT_VERSION: &str = "graphblocks.outcome.tck.v1";
@@ -56,12 +60,87 @@ pub(crate) fn evaluate_case(case: &Value) -> Value {
     let result = match scenario {
         "normalize_outcome" => evaluate_normalize_outcome(case),
         "evaluate_readiness" => evaluate_readiness(case),
+        "execute_local_terminal" => evaluate_local_terminal(case),
         _ => Err(DecodeCategory::UnsupportedScenario),
     };
     match result {
         Ok(result) => result,
         Err(category) => rejection(scenario, category),
     }
+}
+
+#[derive(Clone, Debug)]
+struct FixedOutcomeExecutor {
+    outcome: Outcome<Vec<(PortRef, Outcome<Value>)>>,
+}
+
+impl OutcomeNodeExecutor for FixedOutcomeExecutor {
+    fn execute(&mut self, _node: StartedNode) -> Outcome<Vec<(PortRef, Outcome<Value>)>> {
+        self.outcome.clone()
+    }
+}
+
+fn evaluate_local_terminal(case: &Map<String, Value>) -> Result<Value, DecodeCategory> {
+    ensure_closed_object(case, &["name", "scenario", "outcome"], &[])?;
+    validate_case_name(case)?;
+    let outcome = decode_outcome(required(case, "outcome")?)?;
+    let execution_outcome = match outcome {
+        Outcome::Value(value) => {
+            Outcome::Value(vec![(PortRef::new("node", "value"), Outcome::Value(value))])
+        }
+        Outcome::Absent => Outcome::Absent,
+        Outcome::Skipped(reason) => Outcome::Skipped(reason),
+        Outcome::Denied(decision) => Outcome::Denied(decision),
+        Outcome::BudgetExhausted(reason) => Outcome::BudgetExhausted(reason),
+        Outcome::Paused(reason) => Outcome::Paused(reason),
+        Outcome::Failed(error) => Outcome::Failed(error),
+        Outcome::Cancelled(reason) => Outcome::Cancelled(reason),
+    };
+    let mut runtime =
+        InProcessTestRuntime::new("run-outcome-tck", [ScheduledNode::new("node", [])])
+            .map_err(|_| DecodeCategory::InvalidOutcome)?;
+    let mut executor = FixedOutcomeExecutor {
+        outcome: execution_outcome,
+    };
+    let result = runtime
+        .run_with_outcomes(&mut executor)
+        .map_err(|_| DecodeCategory::InvalidOutcome)?;
+    let status = match result.status {
+        OutcomeRunStatus::Succeeded => "succeeded",
+        OutcomeRunStatus::Failed => "failed",
+        OutcomeRunStatus::Cancelled => "cancelled",
+        OutcomeRunStatus::Rejected => "rejected",
+        OutcomeRunStatus::Paused => "paused",
+        OutcomeRunStatus::Exhausted => "exhausted",
+    };
+    let terminal_kind = result
+        .journal
+        .terminal_kind()
+        .ok_or(DecodeCategory::InvalidOutcome)?;
+    let journal_kinds = result
+        .journal
+        .records()
+        .iter()
+        .map(|record| record.kind.as_str())
+        .collect::<Vec<_>>();
+    let terminal_count = result
+        .journal
+        .records()
+        .iter()
+        .filter(|record| record.terminal)
+        .count();
+
+    Ok(json!({
+        "contractVersion": CONTRACT_VERSION,
+        "ok": true,
+        "scenario": "execute_local_terminal",
+        "run": {
+            "status": status,
+            "terminalKind": terminal_kind,
+            "terminalCount": terminal_count,
+            "journalKinds": journal_kinds,
+        },
+    }))
 }
 
 fn validate_case_name(case: &Map<String, Value>) -> Result<(), DecodeCategory> {

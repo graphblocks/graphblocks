@@ -1,4 +1,4 @@
-"""Deterministic Python reference oracle for the closed outcome Phase A TCK."""
+"""Deterministic Python reference oracle for the closed outcome TCK."""
 
 from __future__ import annotations
 
@@ -513,6 +513,46 @@ def _evaluate_readiness(case: Mapping[str, object]) -> dict[str, object]:
     )
 
 
+def _evaluate_local_terminal(case: Mapping[str, object]) -> dict[str, object]:
+    decoded = _decode_outcome(case["outcome"])
+    status = decoded.wire["status"]
+    status_contract = {
+        "value": ("succeeded", "run_succeeded"),
+        "failed": ("failed", "run_failed"),
+        "cancelled": ("cancelled", "run_cancelled"),
+        "denied": ("rejected", "run_rejected"),
+        "paused": ("paused", "run_paused"),
+        "budget_exhausted": ("exhausted", "run_exhausted"),
+        "absent": ("failed", "run_failed"),
+        "skipped": ("failed", "run_failed"),
+    }
+    if not isinstance(status, str) or status not in status_contract:
+        raise _error("invalid_outcome", "local terminal outcome is invalid")
+    run_status, terminal_kind = status_contract[status]
+    if status == "value":
+        journal_kinds = [
+            "run_started",
+            "node_started",
+            "node_completed",
+            terminal_kind,
+        ]
+    elif status in {"failed", "absent", "skipped"}:
+        journal_kinds = [
+            "run_started",
+            "node_started",
+            "node_failed",
+            terminal_kind,
+        ]
+    else:
+        journal_kinds = ["run_started", "node_started", terminal_kind]
+    return {
+        "status": run_status,
+        "terminalKind": terminal_kind,
+        "terminalCount": 1,
+        "journalKinds": journal_kinds,
+    }
+
+
 def _decode_case(case: object) -> tuple[Mapping[str, object], str]:
     mapping = _mapping(case, owner="case", invalid_category="invalid_outcome")
     if "scenario" not in mapping:
@@ -524,6 +564,8 @@ def _decode_case(case: object) -> tuple[Mapping[str, object], str]:
         required = frozenset({"name", "scenario", "outcome"})
     elif scenario == "evaluate_readiness":
         required = frozenset({"name", "scenario", "signals", "dependencies"})
+    elif scenario == "execute_local_terminal":
+        required = frozenset({"name", "scenario", "outcome"})
     else:
         raise _error("unsupported_scenario", "case scenario is not supported")
     return (
@@ -533,7 +575,7 @@ def _decode_case(case: object) -> tuple[Mapping[str, object], str]:
 
 
 def evaluate_outcome_tck_case_reference(case: object) -> dict[str, object]:
-    """Evaluate one closed Phase A outcome fixture without consulting expected output."""
+    """Evaluate one closed outcome fixture without consulting expected output."""
 
     scenario_value = case.get("scenario") if isinstance(case, Mapping) else None
     scenario = scenario_value if type(scenario_value) is str else ""
@@ -550,6 +592,12 @@ def evaluate_outcome_tck_case_reference(case: object) -> dict[str, object]:
         if scenario == "normalize_outcome":
             decoded = _decode_outcome(normalized_case["outcome"])
             return {**base, "ok": True, "outcome": decoded.wire}
+        if scenario == "execute_local_terminal":
+            return {
+                **base,
+                "ok": True,
+                "run": _evaluate_local_terminal(normalized_case),
+            }
         return {
             **base,
             "ok": True,
