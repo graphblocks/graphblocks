@@ -4,7 +4,7 @@
     {
       "kind": "type-alias",
       "path": "graphblocks_testing.TckCaseKind",
-      "value": "typing.Literal['compiler', 'runtime', 'schema', 'policy', 'approval-review', 'application-events', 'application-protocol', 'sequence', 'exhaustion', 'budget-race', 'conversation', 'documents', 'deployment', 'durable', 'migration', 'orchestration', 'rag', 'retry', 'tool-lifecycle', 'tool-execution', 'tool-result', 'usage', 'voice']"
+      "value": "typing.Literal['compiler', 'runtime', 'schema', 'policy', 'approval-review', 'application-events', 'application-protocol', 'sequence', 'exhaustion', 'budget-race', 'conversation', 'documents', 'deployment', 'durable', 'migration', 'orchestration', 'outcome', 'rag', 'retry', 'tool-lifecycle', 'tool-execution', 'tool-result', 'typed-ports', 'usage', 'voice']"
     },
     {
       "kind": "type-alias",
