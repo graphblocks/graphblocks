@@ -13,6 +13,8 @@ use graphblocks_runtime_core::test_runtime::{
 };
 use serde_json::{Map, Value, json};
 
+use crate::run_test_graph_json;
+
 const CONTRACT_VERSION: &str = "graphblocks.outcome.tck.v1";
 const MAX_JSON_DEPTH: usize = 64;
 
@@ -61,6 +63,7 @@ pub(crate) fn evaluate_case(case: &Value) -> Value {
         "normalize_outcome" => evaluate_normalize_outcome(case),
         "evaluate_readiness" => evaluate_readiness(case),
         "execute_local_terminal" => evaluate_local_terminal(case),
+        "execute_output_projection" => evaluate_output_projection(case),
         _ => Err(DecodeCategory::UnsupportedScenario),
     };
     match result {
@@ -129,6 +132,13 @@ fn evaluate_local_terminal(case: &Map<String, Value>) -> Result<Value, DecodeCat
         .iter()
         .filter(|record| record.terminal)
         .count();
+    let terminal_payload = result
+        .journal
+        .records()
+        .iter()
+        .find(|record| record.terminal)
+        .and_then(|record| record.payload.clone())
+        .unwrap_or_else(|| json!({}));
 
     Ok(json!({
         "contractVersion": CONTRACT_VERSION,
@@ -138,6 +148,99 @@ fn evaluate_local_terminal(case: &Map<String, Value>) -> Result<Value, DecodeCat
             "status": status,
             "terminalKind": terminal_kind,
             "terminalCount": terminal_count,
+            "terminalPayload": terminal_payload,
+            "journalKinds": journal_kinds,
+        },
+    }))
+}
+
+fn evaluate_output_projection(case: &Map<String, Value>) -> Result<Value, DecodeCategory> {
+    ensure_closed_object(case, &["name", "scenario", "projection"], &[])?;
+    validate_case_name(case)?;
+    let projection = required(case, "projection")?
+        .as_object()
+        .ok_or(DecodeCategory::InvalidOutcome)?;
+    ensure_closed_object(projection, &["outputs", "nodeOutputs"], &[])?;
+    let outputs = required(projection, "outputs")?
+        .as_object()
+        .ok_or(DecodeCategory::InvalidOutcome)?;
+    let node_outputs = required(projection, "nodeOutputs")?
+        .as_object()
+        .ok_or(DecodeCategory::InvalidOutcome)?;
+    validate_json_value(required(projection, "nodeOutputs")?, 0)?;
+
+    let mut interface_outputs = Map::new();
+    let mut edges = Vec::with_capacity(outputs.len());
+    for (target, source) in outputs {
+        validate_identifier_text(target)?;
+        let source = source.as_str().ok_or(DecodeCategory::InvalidIdentifier)?;
+        validate_identifier_text(source)?;
+        interface_outputs.insert(
+            target.clone(),
+            Value::String("graphblocks.ai/Any@1".to_owned()),
+        );
+        edges.push(json!({
+            "from": format!("generate.{source}"),
+            "to": format!("$output.{target}"),
+        }));
+    }
+
+    let graph = json!({
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "outcome-tck-output-projection"},
+        "spec": {
+            "interface": {"inputs": {}, "outputs": interface_outputs},
+            "nodes": {"generate": {"block": "model.structured_generate@1"}},
+            "edges": edges,
+        },
+    });
+    let graph_json = serde_json::to_string(&graph).map_err(|_| DecodeCategory::InvalidOutcome)?;
+    let node_outputs_json = serde_json::to_string(&json!({"generate": node_outputs}))
+        .map_err(|_| DecodeCategory::InvalidOutcome)?;
+    let result_json = run_test_graph_json(&graph_json, "{}", &node_outputs_json)
+        .map_err(|_| DecodeCategory::InvalidOutcome)?;
+    let result =
+        serde_json::from_str::<Value>(&result_json).map_err(|_| DecodeCategory::InvalidOutcome)?;
+    let result = result.as_object().ok_or(DecodeCategory::InvalidOutcome)?;
+    let journal = required(result, "journal")?
+        .as_array()
+        .ok_or(DecodeCategory::InvalidOutcome)?;
+    let terminal = journal
+        .iter()
+        .filter_map(Value::as_object)
+        .find(|record| record.get("terminal").and_then(Value::as_bool) == Some(true))
+        .ok_or(DecodeCategory::InvalidOutcome)?;
+    let journal_kinds = journal
+        .iter()
+        .map(|record| {
+            record
+                .get("kind")
+                .and_then(Value::as_str)
+                .map(ToOwned::to_owned)
+                .ok_or(DecodeCategory::InvalidOutcome)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let terminal_count = journal
+        .iter()
+        .filter(|record| record.get("terminal").and_then(Value::as_bool) == Some(true))
+        .count();
+    let terminal_payload = terminal
+        .get("payload")
+        .filter(|payload| !payload.is_null())
+        .cloned()
+        .unwrap_or_else(|| json!({}));
+
+    Ok(json!({
+        "contractVersion": CONTRACT_VERSION,
+        "ok": true,
+        "scenario": "execute_output_projection",
+        "run": {
+            "status": required_str(result, "status")?,
+            "outputs": required(result, "outputs")?,
+            "terminalKind": required_str(terminal, "kind")?,
+            "terminalCount": terminal_count,
+            "terminalPayload": terminal_payload,
             "journalKinds": journal_kinds,
         },
     }))
@@ -828,6 +931,31 @@ mod tests {
             );
         }
         Ok(())
+    }
+
+    #[test]
+    fn output_projection_shape_errors_fail_closed() {
+        for (projection, category) in [
+            (json!({"outputs": [], "nodeOutputs": {}}), "invalid_outcome"),
+            (
+                json!({"outputs": {"answer": 1}, "nodeOutputs": {}}),
+                "invalid_identifier",
+            ),
+            (
+                json!({"outputs": {}, "nodeOutputs": {}, "extra": true}),
+                "unknown_field",
+            ),
+        ] {
+            let result = evaluate_case(&json!({
+                "name": "invalid-output-projection",
+                "scenario": "execute_output_projection",
+                "projection": projection,
+            }));
+            assert_eq!(
+                result.get("errorCategory").and_then(Value::as_str),
+                Some(category)
+            );
+        }
     }
 
     #[test]

@@ -9287,7 +9287,7 @@ def test_testing_package_loads_shared_outcome_tck_cases(monkeypatch) -> None:
         graphblocks_testing.stdlib_registry()
     ).run_cases(cases)
 
-    assert [case.kind for case in cases] == ["outcome"] * 80
+    assert [case.kind for case in cases] == ["outcome"] * 82
     assert report.ok
     assert all(
         result.observed["reference_contract"]
@@ -9370,7 +9370,7 @@ def test_outcome_tck_is_exact_native_reference_without_expected_input(
     ).run_cases(cases)
 
     assert report.ok
-    assert len(report.results) == 80
+    assert len(report.results) == 82
     terminal_results = [
         result.observed["reference_contract"]["run"]
         for result in report.results
@@ -9387,6 +9387,23 @@ def test_outcome_tck_is_exact_native_reference_without_expected_input(
         "exhausted",
     }
     assert all(result["terminalCount"] == 1 for result in terminal_results)
+    assert all("terminalPayload" in result for result in terminal_results)
+    projection_results = {
+        result.case_id: result.observed["reference_contract"]["run"]
+        for result in report.results
+        if result.observed["reference_contract"].get("scenario")
+        == "execute_output_projection"
+    }
+    assert projection_results["output_projection_commits_before_success"][
+        "outputs"
+    ] == {"answer": {"text": "done", "citations": ["source-1"]}}
+    failed_projection = projection_results[
+        "output_projection_failure_terminalizes_without_partial_outputs"
+    ]
+    assert failed_projection["status"] == "failed"
+    assert failed_projection["outputs"] == {}
+    assert failed_projection["terminalKind"] == "run_failed"
+    assert "run_succeeded" not in failed_projection["journalKinds"]
     assert all(
         result.observed["runtime"] == "native"
         and result.observed["native_reference_match"] is True

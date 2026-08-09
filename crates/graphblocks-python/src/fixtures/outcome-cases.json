@@ -1511,6 +1511,7 @@
         "status": "succeeded",
         "terminalKind": "run_succeeded",
         "terminalCount": 1,
+        "terminalPayload": {},
         "journalKinds": ["run_started", "node_started", "node_completed", "run_succeeded"]
       }
     }
@@ -1537,6 +1538,7 @@
         "status": "failed",
         "terminalKind": "run_failed",
         "terminalCount": 1,
+        "terminalPayload": {"code": "node.failed", "category": "Permanent", "message": "node failed"},
         "journalKinds": ["run_started", "node_started", "node_failed", "run_failed"]
       }
     }
@@ -1561,6 +1563,7 @@
         "status": "cancelled",
         "terminalKind": "run_cancelled",
         "terminalCount": 1,
+        "terminalPayload": {"code": "UserCancel", "message": "cancelled", "requestedBy": "user-1", "policyDecisionRef": null},
         "journalKinds": ["run_started", "node_started", "run_cancelled"]
       }
     }
@@ -1577,6 +1580,7 @@
         "status": "rejected",
         "terminalKind": "run_rejected",
         "terminalCount": 1,
+        "terminalPayload": {"decisionId": "decision-1"},
         "journalKinds": ["run_started", "node_started", "run_rejected"]
       }
     }
@@ -1593,6 +1597,7 @@
         "status": "paused",
         "terminalKind": "run_paused",
         "terminalCount": 1,
+        "terminalPayload": {"code": "approval_required", "message": "approval required"},
         "journalKinds": ["run_started", "node_started", "run_paused"]
       }
     }
@@ -1609,6 +1614,7 @@
         "status": "exhausted",
         "terminalKind": "run_exhausted",
         "terminalCount": 1,
+        "terminalPayload": {"code": "budget.limit", "message": "budget exhausted"},
         "journalKinds": ["run_started", "node_started", "run_exhausted"]
       }
     }
@@ -1625,6 +1631,7 @@
         "status": "failed",
         "terminalKind": "run_failed",
         "terminalCount": 1,
+        "terminalPayload": {"code": "runtime.invalid_absent_node_outcome", "category": "Internal", "message": "node execution returned absent as a run-level outcome"},
         "journalKinds": ["run_started", "node_started", "node_failed", "run_failed"]
       }
     }
@@ -1641,6 +1648,53 @@
         "status": "failed",
         "terminalKind": "run_failed",
         "terminalCount": 1,
+        "terminalPayload": {"code": "runtime.invalid_skipped_node_outcome", "category": "Internal", "message": "node execution returned skipped as a run-level outcome", "skipCode": "condition_false", "skipMessage": null},
+        "journalKinds": ["run_started", "node_started", "node_failed", "run_failed"]
+      }
+    }
+  },
+  {
+    "name": "output_projection_commits_before_success",
+    "scenario": "execute_output_projection",
+    "projection": {
+      "outputs": {"answer": "value"},
+      "nodeOutputs": {"value": {"text": "done", "citations": ["source-1"]}}
+    },
+    "expected": {
+      "contractVersion": "graphblocks.outcome.tck.v1",
+      "ok": true,
+      "scenario": "execute_output_projection",
+      "run": {
+        "status": "succeeded",
+        "outputs": {"answer": {"text": "done", "citations": ["source-1"]}},
+        "terminalKind": "run_succeeded",
+        "terminalCount": 1,
+        "terminalPayload": {},
+        "journalKinds": ["run_started", "node_started", "node_completed", "run_succeeded"]
+      }
+    }
+  },
+  {
+    "name": "output_projection_failure_terminalizes_without_partial_outputs",
+    "scenario": "execute_output_projection",
+    "projection": {
+      "outputs": {"first": "value", "second": "response"},
+      "nodeOutputs": {"value": "must-not-leak"}
+    },
+    "expected": {
+      "contractVersion": "graphblocks.outcome.tck.v1",
+      "ok": true,
+      "scenario": "execute_output_projection",
+      "run": {
+        "status": "failed",
+        "outputs": {},
+        "terminalKind": "run_failed",
+        "terminalCount": 1,
+        "terminalPayload": {
+          "code": "generate.output_projection",
+          "category": "Internal",
+          "message": "output edge source \"generate.response\" is missing path segment \"response\""
+        },
         "journalKinds": ["run_started", "node_started", "node_failed", "run_failed"]
       }
     }

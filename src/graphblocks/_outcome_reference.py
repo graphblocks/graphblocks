@@ -529,6 +529,7 @@ def _evaluate_local_terminal(case: Mapping[str, object]) -> dict[str, object]:
     if not isinstance(status, str) or status not in status_contract:
         raise _error("invalid_outcome", "local terminal outcome is invalid")
     run_status, terminal_kind = status_contract[status]
+    terminal_payload: dict[str, object]
     if status == "value":
         journal_kinds = [
             "run_started",
@@ -536,6 +537,7 @@ def _evaluate_local_terminal(case: Mapping[str, object]) -> dict[str, object]:
             "node_completed",
             terminal_kind,
         ]
+        terminal_payload = {}
     elif status in {"failed", "absent", "skipped"}:
         journal_kinds = [
             "run_started",
@@ -543,13 +545,122 @@ def _evaluate_local_terminal(case: Mapping[str, object]) -> dict[str, object]:
             "node_failed",
             terminal_kind,
         ]
+        if status == "failed":
+            error = decoded.wire["error"]
+            if not isinstance(error, Mapping):  # pragma: no cover - decoded above
+                raise _error("invalid_outcome", "failed outcome error is invalid")
+            category = _identifier(error["category"], owner="outcome.error.category")
+            terminal_payload = {
+                "code": error["code"],
+                "category": "".join(part.title() for part in category.split("_")),
+                "message": error["message"],
+            }
+        elif status == "absent":
+            terminal_payload = {
+                "code": "runtime.invalid_absent_node_outcome",
+                "category": "Internal",
+                "message": "node execution returned absent as a run-level outcome",
+            }
+        else:
+            reason = decoded.wire["reason"]
+            if not isinstance(reason, Mapping):  # pragma: no cover - decoded above
+                raise _error("invalid_outcome", "skipped outcome reason is invalid")
+            terminal_payload = {
+                "code": "runtime.invalid_skipped_node_outcome",
+                "category": "Internal",
+                "message": "node execution returned skipped as a run-level outcome",
+                "skipCode": reason["code"],
+                "skipMessage": reason["message"],
+            }
     else:
         journal_kinds = ["run_started", "node_started", terminal_kind]
+        if status == "cancelled":
+            reason = decoded.wire["reason"]
+            if not isinstance(reason, Mapping):  # pragma: no cover - decoded above
+                raise _error("invalid_outcome", "cancelled outcome reason is invalid")
+            code = _identifier(reason["code"], owner="outcome.reason.code")
+            terminal_payload = {
+                "code": "".join(part.title() for part in code.split("_")),
+                "message": reason["message"],
+                "requestedBy": reason["requestedBy"],
+                "policyDecisionRef": reason["policyDecisionRef"],
+            }
+        elif status == "denied":
+            terminal_payload = {"decisionId": decoded.wire["decisionId"]}
+        else:
+            terminal_payload = {
+                "code": decoded.wire["code"],
+                "message": decoded.wire["message"],
+            }
     return {
         "status": run_status,
         "terminalKind": terminal_kind,
         "terminalCount": 1,
+        "terminalPayload": terminal_payload,
         "journalKinds": journal_kinds,
+    }
+
+
+def _evaluate_output_projection(case: Mapping[str, object]) -> dict[str, object]:
+    projection = _closed_mapping(
+        case["projection"],
+        owner="projection",
+        required=frozenset({"outputs", "nodeOutputs"}),
+    )
+    outputs = _mapping(
+        projection["outputs"],
+        owner="projection.outputs",
+        invalid_category="invalid_outcome",
+    )
+    node_outputs_value = _json_value(
+        projection["nodeOutputs"], owner="projection.nodeOutputs"
+    )
+    if not isinstance(node_outputs_value, Mapping):
+        raise _error("invalid_outcome", "projection.nodeOutputs must be an object")
+
+    projected: dict[str, object] = {}
+    for raw_target, raw_source in outputs.items():
+        target = _identifier(raw_target, owner="projection.outputs target")
+        source = _identifier(
+            raw_source, owner=f"projection.outputs.{target} source"
+        )
+        if source not in node_outputs_value:
+            message = (
+                f'output edge source "generate.{source}" is missing path segment '
+                f'"{source}"'
+            )
+            payload = {
+                "code": "generate.output_projection",
+                "category": "Internal",
+                "message": message,
+            }
+            return {
+                "status": "failed",
+                "outputs": {},
+                "terminalKind": "run_failed",
+                "terminalCount": 1,
+                "terminalPayload": payload,
+                "journalKinds": [
+                    "run_started",
+                    "node_started",
+                    "node_failed",
+                    "run_failed",
+                ],
+            }
+        projected[target] = node_outputs_value[source]
+
+    return {
+        "status": "succeeded",
+        "outputs": projected,
+        "terminalKind": "run_succeeded",
+        "terminalCount": 1,
+        "terminalPayload": {},
+        "journalKinds": [
+            "run_started",
+            "node_started",
+            "node_completed",
+            "run_succeeded",
+        ],
     }
 
 
@@ -566,6 +677,8 @@ def _decode_case(case: object) -> tuple[Mapping[str, object], str]:
         required = frozenset({"name", "scenario", "signals", "dependencies"})
     elif scenario == "execute_local_terminal":
         required = frozenset({"name", "scenario", "outcome"})
+    elif scenario == "execute_output_projection":
+        required = frozenset({"name", "scenario", "projection"})
     else:
         raise _error("unsupported_scenario", "case scenario is not supported")
     return (
@@ -597,6 +710,12 @@ def evaluate_outcome_tck_case_reference(case: object) -> dict[str, object]:
                 **base,
                 "ok": True,
                 "run": _evaluate_local_terminal(normalized_case),
+            }
+        if scenario == "execute_output_projection":
+            return {
+                **base,
+                "ok": True,
+                "run": _evaluate_output_projection(normalized_case),
             }
         return {
             **base,

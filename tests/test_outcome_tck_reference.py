@@ -196,3 +196,32 @@ def test_outcome_reference_closes_canonical_admission_failures(value: object) ->
         "scenario": "normalize_outcome",
         "errorCategory": "invalid_outcome",
     }
+
+
+@pytest.mark.parametrize(
+    ("projection", "error_category"),
+    (
+        ({"outputs": [], "nodeOutputs": {}}, "invalid_outcome"),
+        ({"outputs": {"answer": 1}, "nodeOutputs": {}}, "invalid_identifier"),
+        (
+            {"outputs": {}, "nodeOutputs": {}, "extra": True},
+            "unknown_field",
+        ),
+    ),
+)
+def test_outcome_reference_rejects_invalid_output_projection_shapes(
+    projection: dict[str, object],
+    error_category: str,
+) -> None:
+    assert outcome_reference.evaluate_outcome_tck_case_reference(
+        {
+            "name": "invalid-output-projection",
+            "scenario": "execute_output_projection",
+            "projection": projection,
+        }
+    ) == {
+        "contractVersion": "graphblocks.outcome.tck.v1",
+        "ok": False,
+        "scenario": "execute_output_projection",
+        "errorCategory": error_category,
+    }

@@ -777,6 +777,12 @@ def load_outcome_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
             "expected",
         },
         "execute_local_terminal": {"name", "scenario", "outcome", "expected"},
+        "execute_output_projection": {
+            "name",
+            "scenario",
+            "projection",
+            "expected",
+        },
     }
     for index, raw_case in enumerate(raw_cases):
         if not isinstance(raw_case, Mapping):
