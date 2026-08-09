@@ -2,14 +2,16 @@ use graphblocks_runtime_core::cancellation::{
     CancellationGuarantee, CancellationScope, CancellationToken,
 };
 use graphblocks_runtime_core::outcome::{
-    BlockError, CancelCode, CancelReason, ErrorCategory, Outcome,
+    BlockError, BudgetExhaustion, CancelCode, CancelReason, ErrorCategory, Outcome, PauseReason,
+    PolicyDecisionRef, SkipReason,
 };
 use graphblocks_runtime_core::readiness::{InputDependency, PortRef, ResolvedInput};
 use graphblocks_runtime_core::retry::{EffectKind, RetryPolicy, RetryPolicyError};
 use graphblocks_runtime_core::run_store::{InMemoryRunStore, RunStatus, RunStoreError};
 use graphblocks_runtime_core::scheduler::{ScheduledNode, StartedNode};
 use graphblocks_runtime_core::test_runtime::{
-    InProcessTestRuntime, NodeExecutor, NodeRetryBoundary, TestRunStatus, TestRuntimeError,
+    InProcessTestRuntime, NodeExecutor, NodeRetryBoundary, OutcomeNodeExecutor, OutcomeRunStatus,
+    TestRunStatus, TestRuntimeError,
 };
 use graphblocks_runtime_core::timeout::TimeoutPolicy;
 use serde_json::{Value, json};
@@ -45,6 +47,97 @@ impl NodeExecutor for RecordingExecutor {
         };
         self.starts.push(node);
         Ok(outputs)
+    }
+}
+
+#[derive(Clone)]
+struct FixedOutcomeExecutor {
+    outcome: Outcome<Vec<(PortRef, Outcome<Value>)>>,
+}
+
+impl OutcomeNodeExecutor for FixedOutcomeExecutor {
+    fn execute(&mut self, _node: StartedNode) -> Outcome<Vec<(PortRef, Outcome<Value>)>> {
+        self.outcome.clone()
+    }
+}
+
+#[test]
+fn outcome_executor_maps_every_run_level_outcome_to_one_terminal_record() {
+    let cases = [
+        (
+            Outcome::Value(vec![(
+                PortRef::new("node", "value"),
+                Outcome::Value(json!("done")),
+            )]),
+            OutcomeRunStatus::Succeeded,
+            "run_succeeded",
+        ),
+        (
+            Outcome::Failed(BlockError::new(
+                "node.failed",
+                ErrorCategory::Permanent,
+                "node failed",
+                false,
+            )),
+            OutcomeRunStatus::Failed,
+            "run_failed",
+        ),
+        (
+            Outcome::Cancelled(CancelReason::new(CancelCode::UserCancel)),
+            OutcomeRunStatus::Cancelled,
+            "run_cancelled",
+        ),
+        (
+            Outcome::Denied(PolicyDecisionRef::new("decision-1")),
+            OutcomeRunStatus::Rejected,
+            "run_rejected",
+        ),
+        (
+            Outcome::Paused(PauseReason::new("approval_required")),
+            OutcomeRunStatus::Paused,
+            "run_paused",
+        ),
+        (
+            Outcome::BudgetExhausted(BudgetExhaustion::new("budget.limit")),
+            OutcomeRunStatus::Exhausted,
+            "run_exhausted",
+        ),
+        (Outcome::Absent, OutcomeRunStatus::Failed, "run_failed"),
+        (
+            Outcome::Skipped(SkipReason::new("condition_false")),
+            OutcomeRunStatus::Failed,
+            "run_failed",
+        ),
+    ];
+
+    for (outcome, expected_status, expected_terminal) in cases {
+        let mut runtime = InProcessTestRuntime::new("run-000001", [ScheduledNode::new("node", [])])
+            .expect("runtime should be created");
+        let mut executor = FixedOutcomeExecutor { outcome };
+
+        let result = runtime
+            .run_with_outcomes(&mut executor)
+            .expect("runtime should run");
+
+        assert_eq!(result.status, expected_status);
+        assert_eq!(result.journal.terminal_kind(), Some(expected_terminal));
+        assert_eq!(
+            result
+                .journal
+                .records()
+                .iter()
+                .filter(|record| record.terminal)
+                .count(),
+            1,
+        );
+        assert_eq!(
+            result
+                .journal
+                .records()
+                .last()
+                .map(|record| record.kind.as_str()),
+            Some(expected_terminal),
+        );
     }
 }
 

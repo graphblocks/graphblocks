@@ -17,6 +17,32 @@ pub trait NodeExecutor {
     fn execute(&mut self, node: StartedNode) -> Result<Vec<(PortRef, Outcome<Value>)>, BlockError>;
 }
 
+pub trait OutcomeNodeExecutor {
+    fn execute(&mut self, node: StartedNode) -> Outcome<Vec<(PortRef, Outcome<Value>)>>;
+}
+
+pub struct LegacyNodeExecutorAdapter<'a, E: ?Sized> {
+    executor: &'a mut E,
+}
+
+impl<'a, E: ?Sized> LegacyNodeExecutorAdapter<'a, E> {
+    pub fn new(executor: &'a mut E) -> Self {
+        Self { executor }
+    }
+}
+
+impl<E> OutcomeNodeExecutor for LegacyNodeExecutorAdapter<'_, E>
+where
+    E: NodeExecutor + ?Sized,
+{
+    fn execute(&mut self, node: StartedNode) -> Outcome<Vec<(PortRef, Outcome<Value>)>> {
+        match self.executor.execute(node) {
+            Ok(outputs) => Outcome::Value(outputs),
+            Err(error) => Outcome::Failed(error),
+        }
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct NodeRetryBoundary {
     policy: RetryPolicy,
@@ -56,6 +82,41 @@ pub struct TestRunResult {
     pub run_id: String,
     pub status: TestRunStatus,
     pub journal: ExecutionJournal,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum OutcomeRunStatus {
+    Succeeded,
+    Failed,
+    Cancelled,
+    Rejected,
+    Paused,
+    Exhausted,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct OutcomeRunResult {
+    pub run_id: String,
+    pub status: OutcomeRunStatus,
+    pub journal: ExecutionJournal,
+}
+
+impl OutcomeRunResult {
+    fn into_legacy(self) -> TestRunResult {
+        let status = match self.status {
+            OutcomeRunStatus::Succeeded => TestRunStatus::Succeeded,
+            OutcomeRunStatus::Cancelled => TestRunStatus::Cancelled,
+            OutcomeRunStatus::Failed
+            | OutcomeRunStatus::Rejected
+            | OutcomeRunStatus::Paused
+            | OutcomeRunStatus::Exhausted => TestRunStatus::Failed,
+        };
+        TestRunResult {
+            run_id: self.run_id,
+            status,
+            journal: self.journal,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -173,7 +234,9 @@ impl InProcessTestRuntime {
         E: NodeExecutor,
     {
         self.validate_retry_boundaries()?;
-        self.run_with_cancellation_state(None, executor)
+        let mut executor = LegacyNodeExecutorAdapter::new(executor);
+        self.run_with_cancellation_state(None, &mut executor)
+            .map(OutcomeRunResult::into_legacy)
     }
 
     pub fn run_with_cancellation<E>(
@@ -185,7 +248,20 @@ impl InProcessTestRuntime {
         E: NodeExecutor,
     {
         self.validate_retry_boundaries()?;
-        self.run_with_cancellation_state(Some(cancellation_token), executor)
+        let mut executor = LegacyNodeExecutorAdapter::new(executor);
+        self.run_with_cancellation_state(Some(cancellation_token), &mut executor)
+            .map(OutcomeRunResult::into_legacy)
+    }
+
+    pub fn run_with_outcomes<E>(
+        &mut self,
+        executor: &mut E,
+    ) -> Result<OutcomeRunResult, TestRuntimeError>
+    where
+        E: OutcomeNodeExecutor,
+    {
+        self.validate_retry_boundaries()?;
+        self.run_with_cancellation_state(None, executor)
     }
 
     fn validate_retry_boundaries(&self) -> Result<(), RetryPolicyError> {
@@ -199,9 +275,9 @@ impl InProcessTestRuntime {
         &mut self,
         cancellation_token: Option<&CancellationToken>,
         executor: &mut E,
-    ) -> Result<TestRunResult, TestRuntimeError>
+    ) -> Result<OutcomeRunResult, TestRuntimeError>
     where
-        E: NodeExecutor,
+        E: OutcomeNodeExecutor,
     {
         self.journal
             .append_with_metadata("run_started", JournalMetadata::new(), None)?;
@@ -218,9 +294,9 @@ impl InProcessTestRuntime {
                     "policyDecisionRef": reason.policy_decision_ref,
                 })),
             )?;
-            return Ok(TestRunResult {
+            return Ok(OutcomeRunResult {
                 run_id: self.journal.run_id().to_owned(),
-                status: TestRunStatus::Cancelled,
+                status: OutcomeRunStatus::Cancelled,
                 journal: self.journal.clone(),
             });
         }
@@ -240,9 +316,9 @@ impl InProcessTestRuntime {
                         "policyDecisionRef": reason.policy_decision_ref,
                     })),
                 )?;
-                return Ok(TestRunResult {
+                return Ok(OutcomeRunResult {
                     run_id: self.journal.run_id().to_owned(),
-                    status: TestRunStatus::Cancelled,
+                    status: OutcomeRunStatus::Cancelled,
                     journal: self.journal.clone(),
                 });
             }
@@ -337,9 +413,9 @@ impl InProcessTestRuntime {
                                         metadata,
                                         Some(payload),
                                     )?;
-                                    return Ok(TestRunResult {
+                                    return Ok(OutcomeRunResult {
                                         run_id: self.journal.run_id().to_owned(),
-                                        status: TestRunStatus::Failed,
+                                        status: OutcomeRunStatus::Failed,
                                         journal: self.journal.clone(),
                                     });
                                 }
@@ -362,16 +438,16 @@ impl InProcessTestRuntime {
                             metadata,
                             Some(payload),
                         )?;
-                        return Ok(TestRunResult {
+                        return Ok(OutcomeRunResult {
                             run_id: self.journal.run_id().to_owned(),
-                            status: TestRunStatus::Failed,
+                            status: OutcomeRunStatus::Failed,
                             journal: self.journal.clone(),
                         });
                     }
                 }
 
                 match execution_result {
-                    Ok(outputs) => {
+                    Outcome::Value(outputs) => {
                         let skipped = if !outputs.is_empty()
                             && outputs
                                 .iter()
@@ -402,7 +478,112 @@ impl InProcessTestRuntime {
                         }
                         break;
                     }
-                    Err(error) => {
+                    Outcome::Cancelled(reason) => {
+                        self.journal.append_terminal_with_metadata(
+                            "run_cancelled",
+                            metadata,
+                            Some(json!({
+                                "code": format!("{:?}", reason.code),
+                                "message": reason.message,
+                                "requestedBy": reason.requested_by,
+                                "policyDecisionRef": reason.policy_decision_ref,
+                            })),
+                        )?;
+                        return Ok(OutcomeRunResult {
+                            run_id: self.journal.run_id().to_owned(),
+                            status: OutcomeRunStatus::Cancelled,
+                            journal: self.journal.clone(),
+                        });
+                    }
+                    Outcome::Denied(decision) => {
+                        self.journal.append_terminal_with_metadata(
+                            "run_rejected",
+                            metadata,
+                            Some(json!({"decisionId": decision.decision_id})),
+                        )?;
+                        return Ok(OutcomeRunResult {
+                            run_id: self.journal.run_id().to_owned(),
+                            status: OutcomeRunStatus::Rejected,
+                            journal: self.journal.clone(),
+                        });
+                    }
+                    Outcome::Paused(reason) => {
+                        self.journal.append_terminal_with_metadata(
+                            "run_paused",
+                            metadata,
+                            Some(json!({
+                                "code": reason.code,
+                                "message": reason.message,
+                            })),
+                        )?;
+                        return Ok(OutcomeRunResult {
+                            run_id: self.journal.run_id().to_owned(),
+                            status: OutcomeRunStatus::Paused,
+                            journal: self.journal.clone(),
+                        });
+                    }
+                    Outcome::BudgetExhausted(reason) => {
+                        self.journal.append_terminal_with_metadata(
+                            "run_exhausted",
+                            metadata,
+                            Some(json!({
+                                "code": reason.code,
+                                "message": reason.message,
+                            })),
+                        )?;
+                        return Ok(OutcomeRunResult {
+                            run_id: self.journal.run_id().to_owned(),
+                            status: OutcomeRunStatus::Exhausted,
+                            journal: self.journal.clone(),
+                        });
+                    }
+                    Outcome::Absent => {
+                        let payload = json!({
+                            "code": "runtime.invalid_absent_node_outcome",
+                            "category": "Internal",
+                            "message": "node execution returned absent as a run-level outcome",
+                        });
+                        self.journal.append_with_metadata(
+                            "node_failed",
+                            metadata.clone(),
+                            Some(payload.clone()),
+                        )?;
+                        self.journal.append_terminal_with_metadata(
+                            "run_failed",
+                            metadata,
+                            Some(payload),
+                        )?;
+                        return Ok(OutcomeRunResult {
+                            run_id: self.journal.run_id().to_owned(),
+                            status: OutcomeRunStatus::Failed,
+                            journal: self.journal.clone(),
+                        });
+                    }
+                    Outcome::Skipped(reason) => {
+                        let payload = json!({
+                            "code": "runtime.invalid_skipped_node_outcome",
+                            "category": "Internal",
+                            "message": "node execution returned skipped as a run-level outcome",
+                            "skipCode": reason.code,
+                            "skipMessage": reason.message,
+                        });
+                        self.journal.append_with_metadata(
+                            "node_failed",
+                            metadata.clone(),
+                            Some(payload.clone()),
+                        )?;
+                        self.journal.append_terminal_with_metadata(
+                            "run_failed",
+                            metadata,
+                            Some(payload),
+                        )?;
+                        return Ok(OutcomeRunResult {
+                            run_id: self.journal.run_id().to_owned(),
+                            status: OutcomeRunStatus::Failed,
+                            journal: self.journal.clone(),
+                        });
+                    }
+                    Outcome::Failed(error) => {
                         if let Some(token) = cancellation_token
                             && let Some(reason) = token.reason()
                         {
@@ -416,9 +597,9 @@ impl InProcessTestRuntime {
                                     "policyDecisionRef": reason.policy_decision_ref,
                                 })),
                             )?;
-                            return Ok(TestRunResult {
+                            return Ok(OutcomeRunResult {
                                 run_id: self.journal.run_id().to_owned(),
-                                status: TestRunStatus::Cancelled,
+                                status: OutcomeRunStatus::Cancelled,
                                 journal: self.journal.clone(),
                             });
                         }
@@ -473,9 +654,9 @@ impl InProcessTestRuntime {
                                         metadata,
                                         Some(payload),
                                     )?;
-                                    return Ok(TestRunResult {
+                                    return Ok(OutcomeRunResult {
                                         run_id: self.journal.run_id().to_owned(),
-                                        status: TestRunStatus::Failed,
+                                        status: OutcomeRunStatus::Failed,
                                         journal: self.journal.clone(),
                                     });
                                 }
@@ -497,9 +678,9 @@ impl InProcessTestRuntime {
                             metadata,
                             Some(payload),
                         )?;
-                        return Ok(TestRunResult {
+                        return Ok(OutcomeRunResult {
                             run_id: self.journal.run_id().to_owned(),
-                            status: TestRunStatus::Failed,
+                            status: OutcomeRunStatus::Failed,
                             journal: self.journal.clone(),
                         });
                     }
@@ -519,9 +700,9 @@ impl InProcessTestRuntime {
                 JournalMetadata::new(),
                 None,
             )?;
-            return Ok(TestRunResult {
+            return Ok(OutcomeRunResult {
                 run_id: self.journal.run_id().to_owned(),
-                status: TestRunStatus::Succeeded,
+                status: OutcomeRunStatus::Succeeded,
                 journal: self.journal.clone(),
             });
         }
@@ -539,9 +720,9 @@ impl InProcessTestRuntime {
                     .collect::<Vec<_>>(),
             })),
         )?;
-        Ok(TestRunResult {
+        Ok(OutcomeRunResult {
             run_id: self.journal.run_id().to_owned(),
-            status: TestRunStatus::Failed,
+            status: OutcomeRunStatus::Failed,
             journal: self.journal.clone(),
         })
     }
@@ -594,7 +775,10 @@ impl InProcessTestRuntime {
         let run = store.create_run(graph_hash, inputs)?;
         store.set_status(&run.run_id, RunStatus::Running)?;
         self.journal = ExecutionJournal::new(run.run_id);
-        let result = self.run_with_cancellation_state(cancellation_token, executor)?;
+        let mut executor = LegacyNodeExecutorAdapter::new(executor);
+        let result = self
+            .run_with_cancellation_state(cancellation_token, &mut executor)?
+            .into_legacy();
         let status = match result.status {
             TestRunStatus::Succeeded => RunStatus::Completed,
             TestRunStatus::Failed => RunStatus::Failed,
