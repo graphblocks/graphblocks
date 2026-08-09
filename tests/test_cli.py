@@ -26,6 +26,7 @@ from graphblocks.canonical import (
 from graphblocks.compiler import compile_graph_reference
 from graphblocks.diagnostics import Diagnostic, DiagnosticSet
 from graphblocks.loader import InputBudget
+from graphblocks.migration import migrate_document_reference
 from graphblocks.plugins import PluginRegistry
 from graphblocks.runtime import SQLiteExecutionJournal
 from graphblocks.run_store import SQLiteRunStore
@@ -364,8 +365,8 @@ def test_compiler_backed_cli_fails_closed_without_native_compiler(
         sys.modules,
         "graphblocks_runtime",
         SimpleNamespace(
-            native_extension_available=lambda: False,
-            native_extension_status=lambda: {"error": "extension missing"},
+            native_extension_available=lambda: True,
+            resource_schema_errors=lambda _document: (),
         ),
     )
 
@@ -1219,6 +1220,10 @@ def test_run_cli_can_delegate_to_native_runtime_bridge(tmp_path, capsys, monkeyp
         sys.modules,
         "graphblocks_runtime",
         SimpleNamespace(
+            migrate_resource=lambda document: {
+                "document": migrate_document_reference(document),
+                "ok": True,
+            },
             native_extension_available=lambda: True,
             run_stdlib_graph_json=run_stdlib_graph_json,
         ),
@@ -1326,6 +1331,10 @@ def test_run_cli_passes_requested_run_id_to_native_runtime_bridge(tmp_path, caps
             compile_graph=lambda document, **_kwargs: compile_graph_reference(
                 document
             ).to_dict(),
+            migrate_resource=lambda document: {
+                "document": migrate_document_reference(document),
+                "ok": True,
+            },
             native_extension_available=lambda: True,
             run_stdlib_graph_with_options_json=run_stdlib_graph_with_options_json,
         ),

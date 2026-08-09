@@ -1529,6 +1529,8 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
 
     fake_native = SimpleNamespace(
         __version__="0.1.0",
+        _evaluate_runtime_fence_reopen_json=lambda _run_store_path: "{}",
+        _inspect_runtime_evidence_json=lambda *_args: "{}",
         admit_exhaustion_work_json=admit_exhaustion_work_json,
         admit_worker_message_json=admit_worker_message_json,
         binding_version=lambda: "0.1.0",
