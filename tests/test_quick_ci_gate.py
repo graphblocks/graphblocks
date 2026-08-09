@@ -12,7 +12,11 @@ WORKFLOW_PATH = ROOT / ".github" / "workflows" / "ci.yml"
 def test_push_and_pull_request_cannot_bypass_full_or_quick_gates_by_path() -> None:
     workflow = yaml.safe_load(WORKFLOW_PATH.read_text(encoding="utf-8"))
 
-    assert workflow[True] == {"push": None, "pull_request": None}
+    assert workflow[True] == {
+        "push": None,
+        "pull_request": None,
+        "workflow_dispatch": None,
+    }
     required = workflow["jobs"]["required-gates"]
     assert required["needs"] == [
         "python-quality",
