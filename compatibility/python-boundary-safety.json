@@ -6,7 +6,7 @@
     "productionAsserts": "Production asserts are reviewed only as side-effect-free internal invariants, exhaustive branch proofs, or type narrowing after explicit validation. Public boundary behavior must also pass the optimized-mode shard with asserts disabled."
   },
   "broadExceptionHandlers": {
-    "total": 131,
+    "total": 132,
     "files": [
       {
         "path": "src/graphblocks/_schema_execution.py",
@@ -136,10 +136,10 @@
       },
       {
         "path": "src/graphblocks/runtime.py",
-        "count": 9,
-        "semanticDigest": "sha256:b3d21efb103496b25a8a47e7bc6e6297a26a6580ae55a65a6c284ab612ece3fa",
+        "count": 10,
+        "semanticDigest": "sha256:06e4fc8e6456199b4c31135c00dcb34753beeeb5bfbb55ef73f4aec3627a5991",
         "classifications": ["external-callback-boundary", "best-effort-cleanup"],
-        "rationale": "Runtime blocks, handlers, and compensations are pluggable code whose failures become deterministic runtime events."
+        "rationale": "Runtime blocks, handlers, compensations, and transactional output projections isolate pluggable or shape-dependent failures as deterministic runtime events without committing partial outputs."
       },
       {
         "path": "src/graphblocks/schema.py",
@@ -221,7 +221,7 @@
     ]
   },
   "productionAsserts": {
-    "total": 94,
+    "total": 97,
     "files": [
       {
         "path": "src/graphblocks/admission.py",
@@ -337,10 +337,10 @@
       },
       {
         "path": "src/graphblocks/runtime.py",
-        "count": 5,
-        "semanticDigest": "sha256:2c2015d4753b60acbd03979eb75dfcc7f782a0f0bd64344c55d12a0b87aea255",
+        "count": 8,
+        "semanticDigest": "sha256:342539007766264c22f9e24cbe077a56da1b284d26115d1aabd8d5f8cdbec39f",
         "classifications": ["internal-state-invariant", "validated-type-narrowing"],
-        "rationale": "Callback, checkpoint, and output values follow explicit state and shape validation."
+        "rationale": "Callback, checkpoint, and output values follow explicit state and shape validation; transactional projections assert only the object shape returned by the internal mutable-JSON copier."
       },
       {
         "path": "src/graphblocks/server.py",
