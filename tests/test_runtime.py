@@ -215,10 +215,12 @@ def test_runtime_waits_for_a_true_when_guard_dependency() -> None:
 
 def test_runtime_skips_a_false_when_guard_without_invoking_the_block() -> None:
     calls: list[str] = []
+    committed_effects: list[str] = []
     registry = RuntimeRegistry(block_catalog=BlockCatalog({}), allow_untyped=True)
 
     def branch(inputs, config, context):
         calls.append("branch")
+        committed_effects.append("external_write")
         return {"value": "must-not-run"}
 
     def condition(inputs, config, context):
@@ -236,6 +238,13 @@ def test_runtime_skips_a_false_when_guard_without_invoking_the_block() -> None:
             "nodes": {
                 "aBranch": {
                     "block": "test.branch@1",
+                    "effects": ["external_write"],
+                    "flow": {
+                        "retry": {
+                            "maxAttempts": 1,
+                            "idempotencyKey": "conditional-write:request-1",
+                        }
+                    },
                     "when": "zCondition.enabled",
                 },
                 "zCondition": {
@@ -251,6 +260,7 @@ def test_runtime_skips_a_false_when_guard_without_invoking_the_block() -> None:
     assert result.status == "succeeded"
     assert result.outputs == {"enabled": False}
     assert calls == ["condition"]
+    assert committed_effects == []
     skipped = [
         record
         for record in result.journal.records

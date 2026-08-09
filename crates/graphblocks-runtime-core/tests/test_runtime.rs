@@ -12,8 +12,9 @@ use graphblocks_runtime_core::retry::{EffectKind, RetryPolicy, RetryPolicyError}
 use graphblocks_runtime_core::run_store::{InMemoryRunStore, RunStatus, RunStoreError};
 use graphblocks_runtime_core::scheduler::{ScheduledNode, StartedNode};
 use graphblocks_runtime_core::test_runtime::{
-    InProcessTestRuntime, NodeExecutionCancellationToken, NodeExecutionContext, NodeExecutor,
-    NodeRetryBoundary, OutcomeNodeExecutor, OutcomeRunStatus, TestRunStatus, TestRuntimeError,
+    InProcessTestRuntime, NodeExecutionCancellationToken, NodeExecutionContext,
+    NodeExecutionPreflight, NodeExecutor, NodeRetryBoundary, OutcomeNodeExecutor, OutcomeRunStatus,
+    TestRunStatus, TestRuntimeError,
 };
 use graphblocks_runtime_core::timeout::TimeoutPolicy;
 use serde_json::{Value, json};
@@ -290,6 +291,69 @@ fn in_process_test_runtime_executes_nodes_in_dependency_order() {
             "node_completed",
             "run_succeeded",
         ],
+    );
+}
+
+#[derive(Default)]
+struct SkippedEffectExecutor {
+    execute_calls: usize,
+    committed_effects: Vec<String>,
+}
+
+impl NodeExecutor for SkippedEffectExecutor {
+    fn preflight(&mut self, node: &StartedNode) -> Option<NodeExecutionPreflight> {
+        Some(NodeExecutionPreflight::Skipped {
+            reason: SkipReason::new("condition_false"),
+            outputs: vec![(
+                PortRef::new(node.node_id.clone(), "value"),
+                Outcome::Skipped(SkipReason::new("condition_false")),
+            )],
+        })
+    }
+
+    fn execute(&mut self, node: StartedNode) -> Result<Vec<(PortRef, Outcome<Value>)>, BlockError> {
+        self.execute_calls += 1;
+        self.committed_effects.push("external_write".to_owned());
+        Ok(vec![(
+            PortRef::new(node.node_id, "value"),
+            Outcome::Value(json!("must-not-commit")),
+        )])
+    }
+}
+
+#[test]
+fn preflight_skip_prevents_state_changing_executor_commit() {
+    let mut runtime = InProcessTestRuntime::new("run-000001", [ScheduledNode::new("write", [])])
+        .expect("runtime should be created")
+        .with_retry_boundary(
+            "write",
+            NodeRetryBoundary::new(RetryPolicy::new(1))
+                .with_effect(EffectKind::ExternalWrite)
+                .with_idempotency_key("conditional-write:request-1"),
+        );
+    let mut executor = SkippedEffectExecutor::default();
+
+    let result = runtime.run(&mut executor).expect("runtime should run");
+
+    assert_eq!(result.status, TestRunStatus::Succeeded);
+    assert_eq!(executor.execute_calls, 0);
+    assert!(executor.committed_effects.is_empty());
+    assert_eq!(
+        result
+            .journal
+            .records()
+            .iter()
+            .map(|record| record.kind.as_str())
+            .collect::<Vec<_>>(),
+        vec!["run_started", "node_completed", "run_succeeded"],
+    );
+    assert_eq!(
+        result.journal.records()[1]
+            .payload
+            .as_ref()
+            .and_then(|payload| payload.get("reason"))
+            .and_then(Value::as_str),
+        Some("condition_false"),
     );
 }
 

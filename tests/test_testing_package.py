@@ -1325,14 +1325,33 @@ def test_testing_package_loads_shared_runtime_tck_cases_with_terminal_expectatio
     assert any(case.expected_terminal_kind == "run_failed" for case in cases)
     assert sum(1 for case in cases if case.native_node_outputs) == 4
     cases_by_id = {case.case_id: case for case in cases}
-    assert cases_by_id[
-        "conditional_input_guard_false_skips_node"
-    ].expected_journal_kinds == (
+    false_guard_case = cases_by_id["conditional_input_guard_false_skips_node"]
+    assert false_guard_case.graph["spec"]["nodes"]["render"]["effects"] == [
+        "external_write"
+    ]
+    assert false_guard_case.graph["spec"]["nodes"]["render"]["flow"] == {
+        "retry": {
+            "maxAttempts": 1,
+            "idempotencyKey": "conditional-write:request-1",
+        }
+    }
+    assert false_guard_case.expected_journal_kinds == (
         "run_started",
         "node_succeeded",
         "run_succeeded",
     )
     assert report.ok
+    false_guard_result = next(
+        result
+        for result in report.results
+        if result.case_id == "conditional_input_guard_false_skips_node"
+    )
+    assert false_guard_result.observed["normalized_journal_kinds"] == [
+        "run_started",
+        "node_succeeded",
+        "run_succeeded",
+    ]
+    assert "node_started" not in false_guard_result.observed["normalized_journal_kinds"]
     assert {result.observed["terminal_kind"] for result in report.results} == {
         "run_failed",
         "run_succeeded",

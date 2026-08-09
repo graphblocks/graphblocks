@@ -126,6 +126,15 @@
         "nodes": {
           "render": {
             "block": "prompt.render@1",
+            "effects": [
+              "external_write"
+            ],
+            "flow": {
+              "retry": {
+                "maxAttempts": 1,
+                "idempotencyKey": "conditional-write:request-1"
+              }
+            },
             "when": "$input.enabled",
             "config": {
               "template": "Conditional {message.text}"
