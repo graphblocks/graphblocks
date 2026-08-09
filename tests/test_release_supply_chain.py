@@ -4461,7 +4461,10 @@ def test_release_candidate_tag_workflow_only_tags_green_main_sha() -> None:
         "${{ needs.admit-green-sha.outputs.candidate_ref }}"
     )
     assert "candidate_tag=${CANDIDATE_REF#refs/tags/}" in dispatch_step["run"]
-    assert 'gh workflow run ci.yml --ref "$candidate_tag"' in dispatch_step["run"]
+    assert (
+        'gh workflow run ci.yml --repo "$GITHUB_REPOSITORY" --ref "$candidate_tag"'
+        in dispatch_step["run"]
+    )
 
 
 def test_candidate_promotion_report_workflow_freezes_before_isolated_signing() -> None:

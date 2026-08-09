@@ -149,4 +149,4 @@ jobs:
           CANDIDATE_REF: ${{ needs.admit-green-sha.outputs.candidate_ref }}
         run: |
           candidate_tag=${CANDIDATE_REF#refs/tags/}
-          gh workflow run ci.yml --ref "$candidate_tag"
+          gh workflow run ci.yml --repo "$GITHUB_REPOSITORY" --ref "$candidate_tag"
