@@ -3436,7 +3436,15 @@ def test_release_bundle_rejects_sbom_without_dependency_graph(tmp_path: Path) ->
         )
 
 
-@pytest.mark.parametrize("mutation", ("missing-runtime-row", "extra-testing-edge"))
+@pytest.mark.parametrize(
+    "mutation",
+    (
+        "missing-runtime-row",
+        "missing-graphblocks-runtime-edge",
+        "missing-testing-runtime-edge",
+        "extra-testing-edge",
+    ),
+)
 def test_release_bundle_requires_exact_first_party_sbom_dependency_rows(
     tmp_path: Path,
     mutation: str,
@@ -3452,6 +3460,22 @@ def test_release_bundle_requires_exact_first_party_sbom_dependency_rows(
             if row["ref"] != "pkg:pypi/graphblocks-runtime@0.1.0"
         ]
         message = "omits installed distribution rows"
+    elif mutation == "missing-graphblocks-runtime-edge":
+        graphblocks_row = next(
+            row
+            for row in sbom["dependencies"]
+            if row["ref"].startswith("pkg:pypi/graphblocks@")
+        )
+        graphblocks_row["dependsOn"].remove("pkg:pypi/graphblocks-runtime@0.1.0")
+        message = "exact graphblocks runtime edges"
+    elif mutation == "missing-testing-runtime-edge":
+        testing_row = next(
+            row
+            for row in sbom["dependencies"]
+            if row["ref"].startswith("pkg:pypi/graphblocks-testing@")
+        )
+        testing_row["dependsOn"].remove("pkg:pypi/graphblocks-runtime@0.1.0")
+        message = "exact graphblocks-testing runtime edges"
     else:
         testing_row = next(
             row
