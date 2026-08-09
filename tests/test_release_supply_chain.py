@@ -3918,7 +3918,10 @@ def test_release_evidence_snapshot_uses_binary_mode_when_supported(
 def test_ci_enforces_pinned_platform_aggregation_and_isolated_release_signing() -> None:
     root = Path(__file__).parents[1]
     workflow = yaml.safe_load((root / ".github" / "workflows" / "ci.yml").read_text())
+    triggers = workflow.get("on", workflow.get(True))
     jobs = workflow["jobs"]
+
+    assert set(triggers) == {"pull_request", "push", "workflow_dispatch"}
 
     for job in jobs.values():
         for step in job.get("steps", []):
@@ -3990,6 +3993,8 @@ def test_ci_enforces_pinned_platform_aggregation_and_isolated_release_signing() 
 
     ref_gate = jobs["release-ref-gate"]
     assert ref_gate["permissions"] == {}
+    assert "github.event_name == 'push'" in ref_gate["if"]
+    assert "github.event_name == 'workflow_dispatch'" in ref_gate["if"]
     assert "github.repository == 'graphblocks/graphblocks'" in ref_gate["if"]
     assert "startsWith(github.ref, 'refs/tags/v1.0.0')" in ref_gate["if"]
     release_ref_pattern = ref_gate["env"]["RELEASE_REF_PATTERN"]
@@ -4440,7 +4445,7 @@ def test_release_candidate_tag_workflow_only_tags_green_main_sha() -> None:
 
     creation = jobs["create-candidate-tag"]
     assert creation["needs"] == ["admit-green-sha"]
-    assert creation["permissions"] == {"contents": "write"}
+    assert creation["permissions"] == {"actions": "write", "contents": "write"}
     assert "needs.admit-green-sha.outputs.candidate_ref" in creation["if"]
     creation_step = creation["steps"][0]
     assert creation_step["env"]["CANDIDATE_REF"] == (
@@ -4451,6 +4456,12 @@ def test_release_candidate_tag_workflow_only_tags_green_main_sha() -> None:
     )
     assert "git/refs" in creation_step["run"]
     assert '"sha": $sha' in creation_step["run"]
+    dispatch_step = creation["steps"][1]
+    assert dispatch_step["env"]["CANDIDATE_REF"] == (
+        "${{ needs.admit-green-sha.outputs.candidate_ref }}"
+    )
+    assert "candidate_tag=${CANDIDATE_REF#refs/tags/}" in dispatch_step["run"]
+    assert 'gh workflow run ci.yml --ref "$candidate_tag"' in dispatch_step["run"]
 
 
 def test_candidate_promotion_report_workflow_freezes_before_isolated_signing() -> None:

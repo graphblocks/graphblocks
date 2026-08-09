@@ -124,6 +124,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
+      actions: write
       contents: write
     steps:
       - name: Create the admitted candidate ref
@@ -139,5 +140,13 @@ jobs:
             --arg sha "$CANDIDATE_SHA" \
             '{"ref": $ref, "sha": $sha}' \
             | gh api --method POST \
-                "repos/$GITHUB_REPOSITORY/git/refs" \
-                --input -
+              "repos/$GITHUB_REPOSITORY/git/refs" \
+              --input -
+      - name: Dispatch release evidence CI for the immutable candidate tag
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CANDIDATE_REF: ${{ needs.admit-green-sha.outputs.candidate_ref }}
+        run: |
+          candidate_tag=${CANDIDATE_REF#refs/tags/}
+          gh workflow run ci.yml --ref "$candidate_tag"

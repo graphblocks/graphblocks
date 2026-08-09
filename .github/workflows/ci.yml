@@ -3,6 +3,7 @@ name: CI
 on:
   push:
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -626,7 +627,7 @@ jobs:
   release-ref-gate:
     name: Validate stable release ref
     if: >-
-      github.event_name == 'push' &&
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
       github.repository == 'graphblocks/graphblocks' &&
       startsWith(github.ref, 'refs/tags/v1.0.0')
     runs-on: ubuntu-latest
