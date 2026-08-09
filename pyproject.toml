@@ -78,6 +78,7 @@ files = [
   "src/graphblocks/_immutability.py",
   "src/graphblocks/_json.py",
   "src/graphblocks/_lazy_exports.py",
+  "src/graphblocks/_outcome_reference.py",
   "src/graphblocks/_root_compat.py",
   "src/graphblocks/_tool_definition.py",
   "src/graphblocks/_validation.py",
