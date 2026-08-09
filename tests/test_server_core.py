@@ -6203,8 +6203,18 @@ def test_server_app_deferred_advance_waits_for_resume_after_pause() -> None:
 def test_server_app_records_runtime_exception_as_terminal_failure(
     response_mode: str,
     expected_status_code: int,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     run_id = f"run-runtime-exception-{response_mode}"
+
+    def raise_runtime_exception(*_args: object, **_kwargs: object) -> None:
+        raise KeyError("missing")
+
+    monkeypatch.setattr(
+        graphblocks_server.InProcessRuntime,
+        "run",
+        raise_runtime_exception,
+    )
     app = GraphBlocksServerApp(
         allow_unauthenticated_dev=True,
         allow_process_local_accepted_runs_dev=True,
@@ -6224,12 +6234,7 @@ def test_server_app_records_runtime_exception_as_terminal_failure(
                         "metadata": {"name": f"runtime-exception-{response_mode}"},
                         "spec": {
                             "nodes": {},
-                            "edges": [
-                                {
-                                    "from": "$input.missing.value",
-                                    "to": "$output.x",
-                                }
-                            ],
+                            "edges": [],
                         },
                     },
                     "runId": run_id,
