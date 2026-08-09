@@ -102,11 +102,27 @@ def test_authority_matrix_binds_stable_profile_suite_language_claims() -> None:
         "comparison": "exact-native-reference",
         "reference_implementation": "graphblocks-python",
     }
+    assert suite_claims["tool-execution"] == {
+        "executor_id": "rust-tool-execution-exact-differential",
+        "implementation": "graphblocks-runtime",
+        "language": "rust",
+        "profile_id": "GB-C1-LOCAL-RUNTIME",
+        "authority_role": "activeLocalRuntime",
+        "comparison": "exact-native-reference",
+        "reference_implementation": "graphblocks-python",
+    }
     assert {
         claim["language"]
         for suite, claim in suite_claims.items()
         if suite
-        not in {"application-events", "compiler", "retry", "runtime", "sequence"}
+        not in {
+            "application-events",
+            "compiler",
+            "retry",
+            "runtime",
+            "sequence",
+            "tool-execution",
+        }
     } == {"python"}
 
 

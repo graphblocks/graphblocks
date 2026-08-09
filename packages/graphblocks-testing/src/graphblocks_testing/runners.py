@@ -287,6 +287,7 @@ class TckRunner:
     native_application_event_tck_authority = False
     native_retry_tck_authority = False
     native_sequence_tck_authority = False
+    native_tool_execution_tck_authority = False
     native_runtime_authority = False
 
     registry: RuntimeRegistry
@@ -7633,6 +7634,56 @@ class TckRunner:
                         "path": "$.expectedCreationError",
                     }
                 )
+            reference_contract = dict(observed)
+            observed["reference_contract"] = reference_contract
+            if self.native_tool_execution_tck_authority:
+                try:
+                    from graphblocks_runtime import (
+                        _evaluate_tool_execution_tck_case,
+                    )
+
+                    native_contract = _evaluate_tool_execution_tck_case(dict(fixture))
+                    if set(native_contract) != set(reference_contract):
+                        raise ValueError(
+                            "native tool-execution TCK result must use the closed contract"
+                        )
+                    if (
+                        type(native_contract.get("creationError")) is not str
+                        or native_contract.get("operations") != []
+                    ):
+                        raise TypeError(
+                            "native tool-execution creation result contains invalid field values"
+                        )
+                    native_reference_match = native_contract == reference_contract
+                    observed.update(
+                        {
+                            "runtime": "native",
+                            "native_contract": native_contract,
+                            "native_reference_match": native_reference_match,
+                        }
+                    )
+                    if not native_reference_match:
+                        diagnostics.append(
+                            {
+                                "code": "NativeToolExecutionMismatch",
+                                "message": (
+                                    "native tool-execution differs from the Python "
+                                    "reference oracle"
+                                ),
+                                "path": "$.observed.reference_contract",
+                            }
+                        )
+                except Exception as native_error:
+                    diagnostics.append(
+                        {
+                            "code": "NativeToolExecutionError",
+                            "message": str(native_error),
+                            "path": "$",
+                        }
+                    )
+                    observed.update(
+                        {"runtime": "native", "native_reference_match": False}
+                    )
             return TckResult(
                 case_id=case.case_id,
                 kind=case.kind,
@@ -7957,6 +8008,108 @@ class TckRunner:
             )
         observed["operations"] = operation_observations
         observed["states"] = observed_states
+        normalized_operations: list[dict[str, object]] = []
+        for operation_index, operation in enumerate(operation_observations):
+            op = str(operation.get("op", ""))
+            if op == "ready":
+                normalized_operations.append(
+                    {
+                        "index": operation_index,
+                        "op": op,
+                        "ready": operation.get("ready", []),
+                    }
+                )
+            elif op == "policy_stop":
+                normalized_operations.append(
+                    {
+                        "index": operation_index,
+                        "op": op,
+                        "affected": operation.get("affected", []),
+                    }
+                )
+            else:
+                normalized_operations.append(
+                    {
+                        "index": operation_index,
+                        "op": op,
+                        "error": operation.get("error"),
+                    }
+                )
+        reference_contract = {
+            "creationError": None,
+            "operations": normalized_operations,
+            "states": observed_states,
+        }
+        observed["reference_contract"] = reference_contract
+        if self.native_tool_execution_tck_authority:
+            try:
+                from graphblocks_runtime import _evaluate_tool_execution_tck_case
+
+                native_contract = _evaluate_tool_execution_tck_case(dict(fixture))
+                if set(native_contract) != set(reference_contract):
+                    raise ValueError(
+                        "native tool-execution TCK result must use the closed contract"
+                    )
+                native_operations = native_contract.get("operations")
+                native_states = native_contract.get("states")
+                if (
+                    native_contract.get("creationError") is not None
+                    or not isinstance(native_operations, list)
+                    or not isinstance(native_states, Mapping)
+                    or not all(
+                        isinstance(key, str) and isinstance(value, str)
+                        for key, value in native_states.items()
+                    )
+                ):
+                    raise TypeError(
+                        "native tool-execution TCK result contains invalid field values"
+                    )
+                for operation_index, operation in enumerate(native_operations):
+                    if not isinstance(operation, Mapping):
+                        raise TypeError(
+                            "native tool-execution operation must be a mapping"
+                        )
+                    op = operation.get("op")
+                    expected_keys = {
+                        "ready": {"index", "op", "ready"},
+                        "policy_stop": {"index", "op", "affected"},
+                    }.get(str(op), {"index", "op", "error"})
+                    if (
+                        set(operation) != expected_keys
+                        or operation.get("index") != operation_index
+                        or type(op) is not str
+                    ):
+                        raise TypeError(
+                            "native tool-execution operation contains invalid field values"
+                        )
+                native_reference_match = native_contract == reference_contract
+                observed.update(
+                    {
+                        "runtime": "native",
+                        "native_contract": native_contract,
+                        "native_reference_match": native_reference_match,
+                    }
+                )
+                if not native_reference_match:
+                    diagnostics.append(
+                        {
+                            "code": "NativeToolExecutionMismatch",
+                            "message": (
+                                "native tool-execution differs from the Python "
+                                "reference oracle"
+                            ),
+                            "path": "$.observed.reference_contract",
+                        }
+                    )
+            except Exception as error:
+                diagnostics.append(
+                    {
+                        "code": "NativeToolExecutionError",
+                        "message": str(error),
+                        "path": "$",
+                    }
+                )
+                observed.update({"runtime": "native", "native_reference_match": False})
         return TckResult(
             case_id=case.case_id,
             kind=case.kind,
@@ -9518,6 +9671,15 @@ class _SequenceDifferentialTckRunner(TckRunner):
     authority_comparison = "exact-native-reference"
     authority_reference_implementation = "graphblocks-python"
     native_sequence_tck_authority = True
+
+
+class _ToolExecutionDifferentialTckRunner(TckRunner):
+    __slots__ = ()
+    authority_executor_id = "rust-tool-execution-exact-differential"
+    authority_language = "rust"
+    authority_comparison = "exact-native-reference"
+    authority_reference_implementation = "graphblocks-python"
+    native_tool_execution_tck_authority = True
 
 
 class _NormativeCompilerTckRunner(TckRunner):

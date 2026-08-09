@@ -1358,6 +1358,18 @@ def _evaluate_sequence_tck_case(case: dict[str, object]) -> dict[str, object]:
     )
 
 
+def _evaluate_tool_execution_tck_case(
+    case: dict[str, object],
+) -> dict[str, object]:
+    require_native_extension()
+    from . import _native
+
+    return _json_object_result(
+        _native.evaluate_tool_execution_tck_case_json(_canonical_json(case)),
+        "native tool-execution TCK result",
+    )
+
+
 def evaluate_application_protocol_log(
     state: dict[str, object],
     operations: object,

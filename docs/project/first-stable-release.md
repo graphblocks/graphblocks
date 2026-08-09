@@ -281,7 +281,10 @@ runtime and exact-compares its closed result with the Python oracle. Its claim
 is bound to `rust-retry-exact-differential` and the selected runtime wheel.
 The installed `sequence` report now exact-compares bounded FIFO operation
 results, buffer lengths, terminal state, and invalid-capacity creation through
-`rust-sequence-exact-differential`. Three other C1 suites remain
+`rust-sequence-exact-differential`. The installed `tool-execution` report runs
+all 19 shared execution-plan fixtures through Rust and exact-compares creation
+errors, per-operation results, and final call states through
+`rust-tool-execution-exact-differential`. Two other C1 suites remain
 `reference-only` transition work.
 
 ## Release gates
