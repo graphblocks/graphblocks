@@ -617,12 +617,14 @@ remote-boundary policy remain preview.
 The installed `outcome` report exact-compares the closed outcome.v1 wire for
 all eight variants plus readiness resolution, invalid identities, and duplicate
 inputs/signals through `rust-outcome-exact-differential`, bound to the same
-runtime wheel. Exact comparison begins after the shared canonical JSON envelope
-admission, which fails invalid envelopes closed before evaluation. This
-promotes only the outcome wire/readiness authority slice.
-Python-only metadata and looser facade compatibility remain reference-only;
-six distinct run terminals, exactly-one terminal enforcement, and
-output-projection-before-terminal-success remain target-normative work.
+runtime wheel. It also exact-compares eight local-terminal cases covering six
+terminal states, their journal payloads, and exactly-one terminal enforcement,
+plus native graph-bridge cases proving committed success outputs and fail-closed
+projection ordering without partial output leakage. Exact comparison begins
+after the shared canonical JSON envelope admission, which fails invalid
+envelopes closed before evaluation. This promotes the complete outcome
+requirement. Python-only metadata and looser facade compatibility remain
+reference-only.
 The stable installed runtime API is now an explicit three-symbol allowlist with
 an exact signature snapshot. Its core execution result is projected to a
 closed checkpoint-free envelope, while persistence and other C4/X3 options use

@@ -342,10 +342,10 @@ def test_stable_requirement_implementation_roles_match_the_authority_transition(
         "deterministic-local-scheduler",
         "journal",
         "local-runtime-api",
+        "outcome",
         "typed-ports",
     }
     target_requirements = {
-        "outcome",
         "cancellation",
         "local-flow",
     }
@@ -426,18 +426,26 @@ def test_stable_requirement_implementation_roles_match_the_authority_transition(
         "tool-result",
     ]
     assert outcome["scopeNotes"] == [
-        "The compiler, runtime, application-events, and tool-result suites are "
-        "auxiliary evidence for output typing, local execution, stream admission, "
-        "and tool-result distinctions; they do not complete the excluded "
-        "run-terminal and projection semantics."
+        "The outcome suite exact-compares all eight wire variants, readiness, six "
+        "terminal states and payloads, exactly-one terminal enforcement, committed "
+        "success outputs, and fail-closed projection ordering through the installed "
+        "Rust wheel. The application-events suite separately proves lossless "
+        "six-state raw event projection and post-terminal admission. Compiler, "
+        "runtime, and tool-result evidence remains auxiliary to this completed "
+        "requirement."
     ]
-    assert outcome["authoritySlices"]["outcomeWireAndReadiness"] == {
+    assert set(outcome["implementations"]) == {"normative", "pythonFacadeAndReference"}
+    assert outcome["authoritySlices"]["outcomeRuntimeSemantics"] == {
         "status": "normative",
         "authority": "rust",
-        "scope": "closed-outcome-v1-eight-variant-wire-and-readiness-resolution",
+        "scope": (
+            "closed-outcome-v1-wire-readiness-six-terminal-payloads-and-"
+            "output-projection-ordering"
+        ),
         "normativeImplementations": [
             "crates/graphblocks-runtime-core/src/outcome.rs",
             "crates/graphblocks-runtime-core/src/readiness.rs",
+            "crates/graphblocks-runtime-core/src/test_runtime.rs",
             "crates/graphblocks-python/src/outcome_tck.rs",
             "crates/graphblocks-python/src/lib.rs",
         ],
@@ -460,8 +468,6 @@ def test_stable_requirement_implementation_roles_match_the_authority_transition(
             "Unicode, and non-JSON requests fail closed before evaluation.",
             "Python-only metadata and looser facade compatibility outside the "
             "closed outcome.v1 wire contract remain reference-only.",
-            "Six distinct run terminals, exactly-one terminal enforcement, and "
-            "output-projection-before-terminal-success remain target-normative work.",
         ],
     }
     for requirement in target_requirements:

@@ -9,7 +9,7 @@ release compatibility promise.
 | Graph compiler and canonical Plan identity | `compile_graph` is a fail-closed native facade; `compile_graph_reference` is the explicit oracle executed beside every installed compiler-TCK case | Normative compiler, exposed through the exact `graphblocks-runtime` wheel and accepted only when its complete Plan contract matches the Python oracle |
 | Cross-file YAML composition authoring | Implemented; materializes an expanded Graph | Does not resolve authoring sources; consumes expanded Graph YAML |
 | Typed code graph authoring | Implemented and mypy-tested for the stdlib RAG vertical slice; catalog-backed and materializes a portable Graph | Implemented and trybuild-tested for the stdlib RAG vertical slice; catalog-backed and materializes a portable Graph |
-| Local runtime, cancellation, tools, budget core | Implemented reference interpreter and exact oracle for every bundled stable C1 suite | Active authority for every bundled stable C1 exact-differential suite, the typed-port requirement, and the outcome.v1 wire/readiness slice; outcome run-terminal/projection semantics, cancellation, and local flow still block complete C1 authority |
+| Local runtime, cancellation, tools, budget core | Implemented reference interpreter and exact oracle for every bundled stable C1 suite | Active authority for every bundled stable C1 exact-differential suite plus the complete typed-port and outcome requirements; cancellation and local flow still block complete C1 authority |
 | Documents, RAG, conversation reference APIs | Implemented | Selected core models/TCK behavior |
 | Accepted runs and callback resume | Reference server; process-local checkpoint continuation | Preview single-process/single-worker SQLite continuation plus core async/callback records and TCK behavior; consumes trusted pre-admission assertions and does not query policy/budget/schema/lease authorities or verify lease freshness |
 | Registered-secret signed webhook dispatch | Implemented in `graphblocks.callbacks` | Implemented in runtime-core with HMAC signing, replay verification, and egress-bound delivery hooks |
@@ -82,12 +82,13 @@ included in this requirement slice.
 The installed `outcome` report exact-compares the closed outcome.v1 wire across
 all eight variants, readiness resolution, and invalid/duplicate identity
 handling with Python. Its evidence is assigned to
-`rust-outcome-exact-differential` and bound to that exact wheel. This is a
-phase-scoped authority slice over requests admitted by the shared canonical
-JSON envelope boundary: Python-only metadata and looser facade
-compatibility remain reference-only, while six distinct run terminals,
-exactly-one terminal enforcement, and output-projection-before-terminal-success
-remain target-normative work.
+`rust-outcome-exact-differential` and bound to that exact wheel. The same suite
+executes eight local-terminal cases covering all six terminal states and exact
+journal payloads, enforces one terminal per run, and runs native graph-bridge
+cases proving output commit before success and no partial output on projection
+failure. This promotes the complete outcome requirement over requests admitted
+by the shared canonical JSON envelope boundary. Python-only metadata and looser
+facade compatibility remain reference-only.
 This preserves the boundary around other schema-facing and stable C1 runtime
 behavior. C4 production and X3 durable-stream durability are preview promotion
 work under `REL-EXTENSION-RUNTIME-AUTHORITY`; their live-authority,

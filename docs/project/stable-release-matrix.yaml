@@ -62,7 +62,7 @@ readinessAxes:
       targetReleaseClaim: core-c1-local-runtime-authority
       blocksTargetRelease: true
       shippedP0P1RemainBlocking: true
-      claimBoundary: The three remaining C1 requirements and restart-independent local correctness block 1.0; the installed native runtime API, typed-ports requirement, outcome.v1 wire/readiness slice, and all stable C1 exact-differential suites are frozen, while the remaining outcome run-terminal/projection semantics and C4/X3 production durability retain their separate blockers.
+      claimBoundary: The two remaining C1 requirements and restart-independent local correctness block 1.0; the installed native runtime API, typed-ports requirement, complete outcome requirement, and all stable C1 exact-differential suites are frozen, while cancellation, local flow, and C4/X3 production durability retain their separate blockers.
     - id: adapters
       label: External adapters
       readiness: contract-only-no-real-adapters
@@ -157,12 +157,13 @@ authorityTransition:
     - exact-shared-typed-ports-differential
     - installed-outcome-exact-differential-and-artifact-identity
     - exact-shared-outcome-differential
+    - stable-c1-outcome-requirement-authority
   remainingPhases:
     - stable-c1-requirement-authority
     - fallible-panic-free-rust-public-boundaries
   coreRuntimeAuthority:
     profile: GB-C1-LOCAL-RUNTIME
-    remainingRequirements: [outcome, cancellation, local-flow]
+    remainingRequirements: [cancellation, local-flow]
     remainingExactSuites: []
     runtimeCorrectnessGate: REL-RUNTIME-CORRECTNESS
     blocksTargetRelease: true
@@ -982,7 +983,7 @@ releaseGates:
     readiness: blocked
     scope: core-c1-local-runtime
     blocksTargetRelease: true
-    requirementSelectors: [outcome, cancellation, local-flow]
+    requirementSelectors: [cancellation, local-flow]
     exactSuiteSelectors: []
     requiredEvidence:
       - deterministic-local-scheduler-and-journal-native-authority

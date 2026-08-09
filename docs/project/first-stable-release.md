@@ -295,14 +295,17 @@ nominal identity, requiredness, and nested-root validation; the installed
 typed-boundary rejection, and local-runtime port preservation through
 `rust-typed-ports-exact-differential`. The installed `outcome` report
 exact-compares all eight closed outcome.v1 variants, readiness resolution, and
-invalid/duplicate identity handling through
-`rust-outcome-exact-differential`, bound to the same runtime wheel. All stable
-C1 suites now have exact native/reference coverage. The comparison begins only
-after the shared canonical JSON envelope admission; invalid envelopes fail
-closed before either evaluator. Outcome remains a direct
-requirement-authority blocker for six distinct run terminals, exactly-one
-terminal enforcement, and output-projection ordering; cancellation and local
-flow remain direct requirement-authority work as well.
+invalid/duplicate identity handling, plus eight local-terminal cases covering
+six distinct terminal states, exact terminal payloads, and exactly-one terminal
+enforcement. Two additional cases execute the native graph bridge to prove
+that projected outputs commit before `run_succeeded` and that projection
+failure emits one `run_failed` terminal with no partial outputs. This evidence
+runs through `rust-outcome-exact-differential`, bound to the same runtime wheel.
+All stable C1 suites now have exact native/reference coverage. The comparison
+begins only after the shared canonical JSON envelope admission; invalid
+envelopes fail closed before either evaluator. The outcome requirement is now
+Rust-authoritative; cancellation and local flow remain direct
+requirement-authority work.
 
 ## Release gates
 

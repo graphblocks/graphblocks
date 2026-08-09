@@ -2190,7 +2190,6 @@ def test_stable_release_matrix_is_complete_and_machine_readable() -> None:
     assert authority["coreRuntimeAuthority"] == {
         "profile": "GB-C1-LOCAL-RUNTIME",
         "remainingRequirements": [
-            "outcome",
             "cancellation",
             "local-flow",
         ],
@@ -2236,6 +2235,9 @@ def test_stable_release_matrix_is_complete_and_machine_readable() -> None:
         "completedPhases"
     ]
     assert "exact-shared-outcome-differential" in authority["completedPhases"]
+    assert "stable-c1-outcome-requirement-authority" in authority[
+        "completedPhases"
+    ]
     assert "supported-installed-native-compiler-tck-and-artifact-evidence" not in (
         authority["remainingPhases"]
     )
