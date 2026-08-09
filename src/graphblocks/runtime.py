@@ -1616,26 +1616,37 @@ class InProcessRuntime:
         output_values: dict[str, Any] = {}
         remaining = set(nodes)
         if checkpoint is None:
-            for edge in edges:
-                if not (
-                    isinstance(edge, dict)
-                    and isinstance(edge.get("from"), str)
-                    and isinstance(edge.get("to"), str)
-                    and edge["from"].startswith("$input.")
-                    and edge["to"].startswith("$output.")
-                ):
-                    continue
-                value: Any = inputs
-                for part in edge["from"].partition(".")[2].split("."):
-                    value = value[part]
-                current = output_values
-                parts = edge["to"].partition(".")[2].split(".")
-                for part in parts[:-1]:
-                    nested = current.setdefault(part, {})
-                    if not isinstance(nested, dict):
-                        raise RuntimeError(f"output path conflict at {edge['to']}")
-                    current = nested
-                current[parts[-1]] = value
+            try:
+                projected_output_values = _mutable_json_like(output_values)
+                assert isinstance(projected_output_values, dict)
+                for edge in edges:
+                    if not (
+                        isinstance(edge, dict)
+                        and isinstance(edge.get("from"), str)
+                        and isinstance(edge.get("to"), str)
+                        and edge["from"].startswith("$input.")
+                        and edge["to"].startswith("$output.")
+                    ):
+                        continue
+                    value: Any = inputs
+                    for part in edge["from"].partition(".")[2].split("."):
+                        value = value[part]
+                    current = projected_output_values
+                    parts = edge["to"].partition(".")[2].split(".")
+                    for part in parts[:-1]:
+                        nested = current.setdefault(part, {})
+                        if not isinstance(nested, dict):
+                            raise RuntimeError(f"output path conflict at {edge['to']}")
+                        current = nested
+                    current[parts[-1]] = value
+                output_values = projected_output_values
+            except Exception as exc:
+                journal.append_terminal("run_failed", {"error": str(exc)})
+                if self.run_store is not None:
+                    self.run_store.set_status(run_id, "failed")
+                if self.lease_pool is not None:
+                    self.lease_pool.release_all(run_id)
+                return RunResult(run_id, "failed", output_values, journal)
         context = {
             "run_id": run_id,
             "turn_id": "turn-000001",
@@ -1919,7 +1930,8 @@ class InProcessRuntime:
                             "async.await_callback@1 omitted required output(s): "
                             + ", ".join(missing_outputs)
                         )
-                node_outputs[checkpoint.wait_node] = wait_result
+                projected_output_values = _mutable_json_like(output_values)
+                assert isinstance(projected_output_values, dict)
                 for edge in edges:
                     if not (
                         isinstance(edge, dict)
@@ -1935,7 +1947,7 @@ class InProcessRuntime:
                         for part in source_path.split("."):
                             value = value[part]
                     target_path = edge["to"].partition(".")[2]
-                    current = output_values
+                    current = projected_output_values
                     parts = target_path.split(".")
                     for part in parts[:-1]:
                         nested = current.setdefault(part, {})
@@ -1943,6 +1955,8 @@ class InProcessRuntime:
                             raise RuntimeError(f"output path conflict at {edge['to']}")
                         current = nested
                     current[parts[-1]] = value
+                node_outputs[checkpoint.wait_node] = wait_result
+                output_values = projected_output_values
             except Exception as exc:
                 journal.append(
                     "node_failed",
@@ -2429,8 +2443,9 @@ class InProcessRuntime:
                             self.lease_pool.release_all(run_id)
                         return RunResult(run_id, "failed", output_values, journal)
 
-                node_outputs[node_name] = result
                 try:
+                    projected_output_values = _mutable_json_like(output_values)
+                    assert isinstance(projected_output_values, dict)
                     for edge in edges:
                         if not (
                             isinstance(edge, dict)
@@ -2446,7 +2461,7 @@ class InProcessRuntime:
                             for part in source_path.split("."):
                                 value = value[part]
                         target_path = edge["to"].partition(".")[2]
-                        current = output_values
+                        current = projected_output_values
                         parts = target_path.split(".")
                         for part in parts[:-1]:
                             nested = current.setdefault(part, {})
@@ -2456,6 +2471,8 @@ class InProcessRuntime:
                                 )
                             current = nested
                         current[parts[-1]] = value
+                    node_outputs[node_name] = result
+                    output_values = projected_output_values
                     journal.append(
                         "node_succeeded",
                         {"node": node_name, "outputs": sorted(result)},

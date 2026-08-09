@@ -2668,15 +2668,13 @@ fn negotiate_application_protocol_capabilities_json(
 
 struct JsonNodeExecutor {
     outputs_by_node: BTreeMap<String, Value>,
+    output_projections_by_node: BTreeMap<String, Vec<RuntimeOutputProjection>>,
+    output_values: Value,
 }
 
 impl NodeExecutor for JsonNodeExecutor {
     fn execute(&mut self, node: StartedNode) -> Result<Vec<(PortRef, Outcome<Value>)>, BlockError> {
-        let Some(outputs) = self
-            .outputs_by_node
-            .get(&node.node_id)
-            .and_then(Value::as_object)
-        else {
+        let Some(output_value) = self.outputs_by_node.get(&node.node_id) else {
             return Err(BlockError::new(
                 format!("{}.missing_fixture", node.node_id),
                 ErrorCategory::Configuration,
@@ -2684,6 +2682,34 @@ impl NodeExecutor for JsonNodeExecutor {
                 false,
             ));
         };
+        let Some(outputs) = output_value.as_object() else {
+            return Err(BlockError::new(
+                format!("{}.missing_fixture", node.node_id),
+                ErrorCategory::Configuration,
+                "node output fixture must be an object",
+                false,
+            ));
+        };
+
+        let mut projected_output_values = self.output_values.clone();
+        if let Some(projections) = self.output_projections_by_node.get(&node.node_id) {
+            for projection in projections {
+                project_runtime_output_value(
+                    &mut projected_output_values,
+                    output_value,
+                    projection,
+                )
+                .map_err(|message| {
+                    BlockError::new(
+                        format!("{}.output_projection", node.node_id),
+                        ErrorCategory::Internal,
+                        message,
+                        false,
+                    )
+                })?;
+            }
+        }
+        self.output_values = projected_output_values;
 
         Ok(outputs
             .iter()
@@ -2697,9 +2723,18 @@ impl NodeExecutor for JsonNodeExecutor {
     }
 }
 
+#[derive(Clone, Debug)]
+struct RuntimeOutputProjection {
+    source: String,
+    source_path: String,
+    target: String,
+    target_path: String,
+}
+
 struct RuntimeBridgePlan {
     graph_hash: String,
-    edges: Vec<Value>,
+    input_output_projections: Vec<RuntimeOutputProjection>,
+    output_projections_by_node: BTreeMap<String, Vec<RuntimeOutputProjection>>,
     scheduled_nodes: Vec<ScheduledNode>,
 }
 
@@ -6632,6 +6667,8 @@ fn build_runtime_bridge_plan(graph: &Value) -> PyResult<RuntimeBridgePlan> {
         .keys()
         .map(|node_id| (node_id.clone(), Vec::new()))
         .collect::<BTreeMap<_, _>>();
+    let mut input_output_projections = Vec::new();
+    let mut output_projections_by_node = BTreeMap::<String, Vec<RuntimeOutputProjection>>::new();
 
     for edge in &edges {
         let Some(edge) = edge.as_object() else {
@@ -6645,6 +6682,23 @@ fn build_runtime_bridge_plan(graph: &Value) -> PyResult<RuntimeBridgePlan> {
         };
         let (source_owner, source_path) = source.split_once('.').unwrap_or((source, ""));
         let (target_owner, target_path) = target.split_once('.').unwrap_or((target, ""));
+        if target_owner == "$output" {
+            let projection = RuntimeOutputProjection {
+                source: source.to_owned(),
+                source_path: source_path.to_owned(),
+                target: target.to_owned(),
+                target_path: target_path.to_owned(),
+            };
+            if source_owner == "$input" {
+                input_output_projections.push(projection);
+            } else if !source_owner.starts_with('$') {
+                output_projections_by_node
+                    .entry(source_owner.to_owned())
+                    .or_default()
+                    .push(projection);
+            }
+            continue;
+        }
         if target_owner.starts_with('$') {
             continue;
         }
@@ -6687,7 +6741,8 @@ fn build_runtime_bridge_plan(graph: &Value) -> PyResult<RuntimeBridgePlan> {
 
     Ok(RuntimeBridgePlan {
         graph_hash: plan.graph_hash,
-        edges,
+        input_output_projections,
+        output_projections_by_node,
         scheduled_nodes,
     })
 }
@@ -6836,75 +6891,45 @@ fn persist_test_runtime_evidence(
     Ok(())
 }
 
-fn collect_output_values(
-    edges: &[Value],
-    inputs: &Value,
-    outputs_by_node: &BTreeMap<String, Value>,
-    status: TestRunStatus,
-) -> PyResult<Value> {
-    let mut output_values = json!({});
-
-    if status == TestRunStatus::Succeeded {
-        for edge in edges {
-            let Some(edge) = edge.as_object() else {
-                continue;
-            };
-            let (Some(source), Some(target)) = (
-                edge.get("from").and_then(Value::as_str),
-                edge.get("to").and_then(Value::as_str),
-            ) else {
-                continue;
-            };
-            let (source_owner, source_path) = source.split_once('.').unwrap_or((source, ""));
-            let (target_owner, target_path) = target.split_once('.').unwrap_or((target, ""));
-            if target_owner != "$output" {
-                continue;
-            }
-            let mut value = if source_owner == "$input" {
-                inputs.clone()
-            } else {
-                outputs_by_node.get(source_owner).cloned().ok_or_else(|| {
-                    PyRuntimeError::new_err(format!(
-                        "output edge references missing node output {source_owner:?}"
-                    ))
-                })?
-            };
-            if !source_path.is_empty() {
-                for part in source_path.split('.') {
-                    value = value.get(part).cloned().ok_or_else(|| {
-                        PyRuntimeError::new_err(format!(
-                            "output edge source {source:?} is missing path segment {part:?}"
-                        ))
-                    })?;
-                }
-            }
-            let target_parts = target_path.split('.').collect::<Vec<_>>();
-            if target_parts.is_empty() || target_parts.iter().any(|part| part.is_empty()) {
-                return Err(PyValueError::new_err(format!(
-                    "output edge target {target:?} must include an output path"
-                )));
-            }
-            let mut current = &mut output_values;
-            for part in &target_parts[..target_parts.len() - 1] {
-                let Some(current_object) = current.as_object_mut() else {
-                    return Err(PyRuntimeError::new_err(format!(
-                        "output path conflict at {target:?}"
-                    )));
-                };
-                current = current_object
-                    .entry((*part).to_owned())
-                    .or_insert_with(|| json!({}));
-            }
-            let Some(current_object) = current.as_object_mut() else {
-                return Err(PyRuntimeError::new_err(format!(
-                    "output path conflict at {target:?}"
-                )));
-            };
-            current_object.insert(target_parts[target_parts.len() - 1].to_owned(), value);
+fn project_runtime_output_value(
+    output_values: &mut Value,
+    source_value: &Value,
+    projection: &RuntimeOutputProjection,
+) -> Result<(), String> {
+    let mut value = source_value.clone();
+    if !projection.source_path.is_empty() {
+        for part in projection.source_path.split('.') {
+            value = value.get(part).cloned().ok_or_else(|| {
+                format!(
+                    "output edge source {:?} is missing path segment {:?}",
+                    projection.source, part
+                )
+            })?;
         }
     }
-
-    Ok(output_values)
+    let target_parts = projection.target_path.split('.').collect::<Vec<_>>();
+    if target_parts.is_empty() || target_parts.iter().any(|part| part.is_empty()) {
+        return Err(format!(
+            "output edge target {:?} must include an output path",
+            projection.target
+        ));
+    }
+    let mut current = output_values;
+    for part in &target_parts[..target_parts.len() - 1] {
+        let Some(current_object) = current.as_object_mut() else {
+            return Err(format!("output path conflict at {:?}", projection.target));
+        };
+        current = current_object
+            .entry((*part).to_owned())
+            .or_insert_with(|| json!({}));
+    }
+    let Some(current_object) = current.as_object_mut() else {
+        return Err(format!("output path conflict at {:?}", projection.target));
+    };
+    if let Some(target_name) = target_parts.last() {
+        current_object.insert((*target_name).to_owned(), value);
+    }
+    Ok(())
 }
 
 fn serialize_runtime_result(
@@ -7001,26 +7026,37 @@ fn run_test_graph_with_options_json(
             "node outputs JSON must be an object keyed by node id",
         ));
     };
-    let bridge_plan = build_runtime_bridge_plan(&graph)?;
-    let mut runtime = runtime_with_inputs(bridge_plan.scheduled_nodes, &inputs, run_id)?;
+    let RuntimeBridgePlan {
+        graph_hash,
+        input_output_projections,
+        output_projections_by_node,
+        scheduled_nodes,
+    } = build_runtime_bridge_plan(&graph)?;
+    let mut output_values = json!({});
+    for projection in &input_output_projections {
+        project_runtime_output_value(&mut output_values, &inputs, projection)
+            .map_err(PyValueError::new_err)?;
+    }
+    let mut runtime = runtime_with_inputs(scheduled_nodes, &inputs, run_id)?;
     let mut executor = JsonNodeExecutor {
         outputs_by_node: node_outputs
             .iter()
             .map(|(node_id, outputs)| (node_id.clone(), outputs.clone()))
             .collect(),
+        output_projections_by_node,
+        output_values,
     };
     let result = runtime.run(&mut executor).map_err(|error| {
         PyRuntimeError::new_err(format!("test runtime execution failed: {error:?}"))
     })?;
-    let output_values = collect_output_values(
-        &bridge_plan.edges,
-        &inputs,
-        &executor.outputs_by_node,
-        result.status,
-    )?;
+    let output_values = if result.status == TestRunStatus::Succeeded {
+        executor.output_values
+    } else {
+        json!({})
+    };
     persist_test_runtime_evidence(
         &result,
-        &bridge_plan.graph_hash,
+        &graph_hash,
         &inputs,
         run_store_path,
         journal_store_path,
@@ -7028,7 +7064,7 @@ fn run_test_graph_with_options_json(
     )?;
     serialize_runtime_result(
         result,
-        bridge_plan.graph_hash,
+        graph_hash,
         output_values,
         deployment_provenance.as_ref(),
     )
@@ -12728,6 +12764,158 @@ mod tests {
             Some("generated")
         );
         assert_eq!(completed_nodes, vec!["render", "model"]);
+
+        Ok(())
+    }
+
+    #[test]
+    fn run_test_graph_json_terminalizes_projection_failure_before_success() -> Result<(), String> {
+        pyo3::Python::initialize();
+        let run_store_path = unique_sqlite_path("projection-failure-run-store");
+        let journal_store_path = unique_sqlite_path("projection-failure-journal-store");
+        let graph = json!({
+            "apiVersion": "graphblocks.ai/v1alpha3",
+            "kind": "Graph",
+            "metadata": {"name": "native-runtime-projection-failure"},
+            "spec": {
+                "interface": {
+                    "inputs": {"message": "graphblocks.ai/Any@1"},
+                    "outputs": {
+                        "first": "graphblocks.ai/Any@1",
+                        "second": "graphblocks.ai/Any@1"
+                    }
+                },
+                "nodes": {
+                    "generate": {"block": "model.structured_generate@1"}
+                },
+                "edges": [
+                    {"from": "generate.value", "to": "$output.first"},
+                    {"from": "generate.response", "to": "$output.second"}
+                ]
+            }
+        });
+        let node_outputs = json!({"generate": {"value": "must-not-leak"}});
+        let options = json!({
+            "runStorePath": run_store_path.to_string_lossy(),
+            "journalStorePath": journal_store_path.to_string_lossy(),
+        });
+
+        let graph_json = serde_json::to_string(&graph).map_err(|error| error.to_string())?;
+        let node_outputs_json =
+            serde_json::to_string(&node_outputs).map_err(|error| error.to_string())?;
+        let options_json = serde_json::to_string(&options).map_err(|error| error.to_string())?;
+        let result_json = run_test_graph_with_options_json(
+            &graph_json,
+            r#"{"message":"hello"}"#,
+            &node_outputs_json,
+            &options_json,
+        )
+        .map_err(|error| error.to_string())?;
+        let result =
+            serde_json::from_str::<Value>(&result_json).map_err(|error| error.to_string())?;
+        let journal = result
+            .get("journal")
+            .and_then(Value::as_array)
+            .ok_or_else(|| "runtime bridge result is missing journal".to_owned())?;
+        let journal_kinds = journal
+            .iter()
+            .filter_map(|record| record.get("kind").and_then(Value::as_str))
+            .collect::<Vec<_>>();
+
+        assert_eq!(result.get("status").and_then(Value::as_str), Some("failed"));
+        assert_eq!(result.get("outputs"), Some(&json!({})));
+        assert_eq!(
+            journal_kinds,
+            vec!["run_started", "node_started", "node_failed", "run_failed"]
+        );
+        assert_eq!(
+            journal
+                .iter()
+                .filter(|record| record.get("terminal").and_then(Value::as_bool) == Some(true))
+                .count(),
+            1
+        );
+        assert!(
+            !journal
+                .iter()
+                .any(|record| record.get("kind").and_then(Value::as_str) == Some("run_succeeded"))
+        );
+        assert_eq!(journal[2]["payload"]["code"], "generate.output_projection");
+
+        let store = graphblocks_runtime_core::run_store::SqliteRunStore::open(&run_store_path)
+            .map_err(|error| format!("run store reopens: {error:?}"))?;
+        let run = store
+            .get_run("run-000001")
+            .map_err(|error| format!("failed run record is persisted: {error:?}"))?;
+        assert_eq!(
+            run.status,
+            graphblocks_runtime_core::run_store::RunStatus::Failed
+        );
+        let persisted_journal = graphblocks_runtime_core::journal::SqliteExecutionJournal::open(
+            &journal_store_path,
+            "run-000001",
+        )
+        .map_err(|error| format!("journal reopens: {error:?}"))?;
+        assert_eq!(
+            persisted_journal
+                .terminal_kind()
+                .map_err(|error| format!("terminal loads: {error:?}"))?
+                .as_deref(),
+            Some("run_failed")
+        );
+
+        let _ = std::fs::remove_file(run_store_path);
+        let _ = std::fs::remove_file(journal_store_path);
+
+        Ok(())
+    }
+
+    #[test]
+    fn run_test_graph_json_rejects_input_projection_before_admission() -> Result<(), String> {
+        pyo3::Python::initialize();
+        let run_store_path = unique_sqlite_path("input-projection-run-store");
+        let journal_store_path = unique_sqlite_path("input-projection-journal-store");
+        let graph = json!({
+            "apiVersion": "graphblocks.ai/v1alpha3",
+            "kind": "Graph",
+            "metadata": {"name": "native-runtime-input-projection-failure"},
+            "spec": {
+                "interface": {
+                    "inputs": {
+                        "a": "graphblocks.ai/Any@1",
+                        "zMissing": "graphblocks.ai/Any@1"
+                    },
+                    "outputs": {
+                        "first": "graphblocks.ai/Any@1",
+                        "second": "graphblocks.ai/Any@1"
+                    }
+                },
+                "nodes": {},
+                "edges": [
+                    {"from": "$input.a", "to": "$output.first"},
+                    {"from": "$input.zMissing", "to": "$output.second"}
+                ]
+            }
+        });
+        let options = json!({
+            "runStorePath": run_store_path.to_string_lossy(),
+            "journalStorePath": journal_store_path.to_string_lossy(),
+        });
+
+        let graph_json = serde_json::to_string(&graph).map_err(|error| error.to_string())?;
+        let options_json = serde_json::to_string(&options).map_err(|error| error.to_string())?;
+        let error = run_test_graph_with_options_json(
+            &graph_json,
+            r#"{"a":"must-not-leak"}"#,
+            "{}",
+            &options_json,
+        )
+        .expect_err("input projection failure must reject before runtime admission")
+        .to_string();
+
+        assert!(error.contains("zMissing"), "unexpected error: {error}");
+        assert!(!run_store_path.exists());
+        assert!(!journal_store_path.exists());
 
         Ok(())
     }

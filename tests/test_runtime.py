@@ -133,6 +133,48 @@ def test_runtime_projects_input_to_output_passthrough_edges() -> None:
     assert result.journal.records[-1].payload["outputs"] == result.outputs
 
 
+def test_runtime_terminalizes_input_output_projection_batches_atomically() -> None:
+    store = InMemoryRunStore()
+    registry = RuntimeRegistry(block_catalog=BlockCatalog({}), allow_untyped=True)
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "input-output-projection-failure"},
+        "spec": {
+            "interface": {
+                "inputs": {
+                    "a": "graphblocks.ai/Any@1",
+                    "zMissing": "graphblocks.ai/Any@1",
+                },
+                "outputs": {
+                    "first": "graphblocks.ai/Any@1",
+                    "second": "graphblocks.ai/Any@1",
+                },
+            },
+            "nodes": {},
+            "edges": [
+                {"from": "$input.a", "to": "$output.first"},
+                {"from": "$input.zMissing", "to": "$output.second"},
+            ],
+        },
+    }
+
+    result = InProcessRuntime(registry, run_store=store).run(
+        graph,
+        {"a": "must-not-leak"},
+        run_id="run-input-output-projection-failure",
+    )
+
+    assert result.status == "failed"
+    assert result.outputs == {}
+    assert result.journal.terminal_kind == "run_failed"
+    assert [record.kind for record in result.journal.records] == [
+        "run_started",
+        "run_failed",
+    ]
+    assert store.get_run(result.run_id).status == "failed"
+
+
 def test_runtime_waits_for_a_true_when_guard_dependency() -> None:
     calls: list[str] = []
     registry = RuntimeRegistry(block_catalog=BlockCatalog({}), allow_untyped=True)
@@ -436,7 +478,7 @@ def test_runtime_converts_output_projection_errors_to_terminal_failure() -> None
 
     def produce(inputs, config, context):
         context["lease_pool"].acquire("model", owner=context["run_id"])
-        return {"value": "ok"}
+        return {"a": "must-not-leak"}
 
     registry.register("test.produce@1", produce)
     graph = {
@@ -444,10 +486,16 @@ def test_runtime_converts_output_projection_errors_to_terminal_failure() -> None
         "kind": "Graph",
         "metadata": {"name": "projection-failure"},
         "spec": {
-            "interface": {"outputs": {"value": "graphblocks.ai/Text@1"}},
+            "interface": {
+                "outputs": {
+                    "first": "graphblocks.ai/Text@1",
+                    "second": "graphblocks.ai/Text@1",
+                }
+            },
             "nodes": {"produce": {"block": "test.produce@1"}},
             "edges": [
-                {"from": "produce.missing", "to": "$output.value"}
+                {"from": "produce.a", "to": "$output.first"},
+                {"from": "produce.zMissing", "to": "$output.second"},
             ],
         },
     }
@@ -459,12 +507,17 @@ def test_runtime_converts_output_projection_errors_to_terminal_failure() -> None
     ).run(graph, {}, run_id="run-projection-failure")
 
     assert result.status == "failed"
+    assert result.outputs == {}
     assert result.journal.terminal_kind == "run_failed"
     assert store.get_run(result.run_id).status == "failed"
     assert pool.available("model") == 1
     failed = [record for record in result.journal.records if record.kind == "node_failed"]
     assert failed[0].payload["node"] == "produce"
-    assert "missing" in failed[0].payload["error"]
+    assert "zMissing" in failed[0].payload["error"]
+    assert all(
+        record.kind not in {"node_succeeded", "run_succeeded"}
+        for record in result.journal.records
+    )
 
 
 def test_runtime_converts_checkpoint_serialization_errors_to_terminal_failure() -> None:
@@ -657,7 +710,12 @@ def test_runtime_terminalizes_callback_resume_projection_errors() -> None:
         "kind": "Graph",
         "metadata": {"name": "resume-projection-failure"},
         "spec": {
-            "interface": {"outputs": {"result": "graphblocks.ai/Any@1"}},
+            "interface": {
+                "outputs": {
+                    "accepted": "graphblocks.ai/Any@1",
+                    "result": "graphblocks.ai/Any@1",
+                }
+            },
             "nodes": {
                 "wait": {
                     "block": "async.await_callback@1",
@@ -675,7 +733,10 @@ def test_runtime_terminalizes_callback_resume_projection_errors() -> None:
                     },
                 }
             },
-            "edges": [{"from": "wait.missing", "to": "$output.result"}],
+            "edges": [
+                {"from": "wait.callback", "to": "$output.accepted"},
+                {"from": "wait.zMissing", "to": "$output.result"},
+            ],
         },
     }
     journals: dict[str, ExecutionJournal] = {}
@@ -726,6 +787,7 @@ def test_runtime_terminalizes_callback_resume_projection_errors() -> None:
     )
 
     assert result.status == "failed"
+    assert result.outputs == waiting.outputs
     assert result.journal.terminal_kind == "run_failed"
     assert store.get_run(run_id).status == "failed"
     assert pool.available("callback") == 1
@@ -733,7 +795,7 @@ def test_runtime_terminalizes_callback_resume_projection_errors() -> None:
         record for record in result.journal.records if record.kind == "node_failed"
     )
     assert failure.payload["node"] == "wait"
-    assert "missing" in failure.payload["error"]
+    assert "zMissing" in failure.payload["error"]
     with pytest.raises(
         ValueError,
         match="runtime checkpoint state does not match the issuing runtime",
