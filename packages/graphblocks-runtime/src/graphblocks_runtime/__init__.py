@@ -1406,6 +1406,29 @@ def _evaluate_typed_ports_tck_case(
     )
 
 
+def _evaluate_outcome_tck_case(
+    case: object,
+) -> dict[str, object]:
+    require_native_extension()
+    from . import _native
+
+    try:
+        case_json = _canonical_json(case)
+    except (OverflowError, TypeError, ValueError):
+        scenario_value = case.get("scenario") if isinstance(case, Mapping) else None
+        scenario = scenario_value if type(scenario_value) is str else ""
+        return {
+            "contractVersion": "graphblocks.outcome.tck.v1",
+            "ok": False,
+            "scenario": scenario,
+            "errorCategory": "invalid_outcome",
+        }
+    return _json_object_result(
+        _native.evaluate_outcome_tck_case_json(case_json),
+        "native outcome TCK result",
+    )
+
+
 def evaluate_application_protocol_log(
     state: dict[str, object],
     operations: object,

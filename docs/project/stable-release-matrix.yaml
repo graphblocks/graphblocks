@@ -62,7 +62,7 @@ readinessAxes:
       targetReleaseClaim: core-c1-local-runtime-authority
       blocksTargetRelease: true
       shippedP0P1RemainBlocking: true
-      claimBoundary: The three remaining C1 requirements and restart-independent local correctness block 1.0; the installed native runtime API plus the typed-ports requirement and all stable C1 exact-differential suites are frozen, while C4/X3 production durability is governed by a separate nonblocking preview-promotion gate.
+      claimBoundary: The three remaining C1 requirements and restart-independent local correctness block 1.0; the installed native runtime API, typed-ports requirement, outcome.v1 wire/readiness slice, and all stable C1 exact-differential suites are frozen, while the remaining outcome run-terminal/projection semantics and C4/X3 production durability retain their separate blockers.
     - id: adapters
       label: External adapters
       readiness: contract-only-no-real-adapters
@@ -155,6 +155,8 @@ authorityTransition:
     - exact-shared-tool-result-differential
     - installed-typed-ports-exact-differential-and-artifact-identity
     - exact-shared-typed-ports-differential
+    - installed-outcome-exact-differential-and-artifact-identity
+    - exact-shared-outcome-differential
   remainingPhases:
     - stable-c1-requirement-authority
     - fallible-panic-free-rust-public-boundaries
@@ -197,6 +199,12 @@ authorityTransition:
         comparison: exact-native-reference
         referenceImplementation: graphblocks-python
         allowedSuites: [compiler]
+      rust-outcome-exact-differential:
+        implementation: graphblocks-runtime
+        language: rust
+        comparison: exact-native-reference
+        referenceImplementation: graphblocks-python
+        allowedSuites: [outcome]
       rust-retry-exact-differential:
         implementation: graphblocks-runtime
         language: rust
@@ -248,6 +256,10 @@ authorityTransition:
         executor: rust-compiler-exact-differential
         profile: GB-C0-SCHEMA
         authorityRole: activeCompiler
+      outcome:
+        executor: rust-outcome-exact-differential
+        profile: GB-C1-LOCAL-RUNTIME
+        authorityRole: activeLocalRuntime
       retry:
         executor: rust-retry-exact-differential
         profile: GB-C1-LOCAL-RUNTIME
@@ -992,6 +1004,8 @@ releaseGates:
       - exact-shared-tool-result-differential
       - installed-typed-ports-exact-differential-and-artifact-identity
       - exact-shared-typed-ports-differential
+      - installed-outcome-exact-differential-and-artifact-identity
+      - exact-shared-outcome-differential
       - all-stable-c1-requirements-normative
       - all-stable-c1-suites-exact-native-reference
       - stable-native-local-runtime-api-snapshot
@@ -1017,6 +1031,8 @@ releaseGates:
       - exact-shared-tool-result-differential
       - installed-typed-ports-exact-differential-and-artifact-identity
       - exact-shared-typed-ports-differential
+      - installed-outcome-exact-differential-and-artifact-identity
+      - exact-shared-outcome-differential
       - all-stable-c1-suites-exact-native-reference
       - stable-native-local-runtime-api-snapshot
     blockers:
@@ -1621,6 +1637,8 @@ releaseGates:
       - exact-shared-tool-result-differential
       - installed-typed-ports-exact-differential-and-artifact-identity
       - exact-shared-typed-ports-differential
+      - installed-outcome-exact-differential-and-artifact-identity
+      - exact-shared-outcome-differential
       - exact-shared-c1-application-events-retry-sequence-tool-execution-tool-lifecycle-and-result-differential
       - stable-native-local-runtime-api-snapshot-and-installed-identity
       - fallible-panic-free-rust-public-boundaries
@@ -1654,6 +1672,8 @@ releaseGates:
       - exact-shared-tool-result-differential
       - installed-typed-ports-exact-differential-and-artifact-identity
       - exact-shared-typed-ports-differential
+      - installed-outcome-exact-differential-and-artifact-identity
+      - exact-shared-outcome-differential
       - exact-shared-c1-application-events-retry-sequence-tool-execution-tool-lifecycle-and-result-differential
       - stable-native-local-runtime-api-snapshot-and-installed-identity
     blockers:

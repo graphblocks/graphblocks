@@ -633,6 +633,35 @@ def test_release_evidence_binds_native_reports_to_exact_runtime_wheel() -> None:
                             }
                         ],
                     },
+                    "outcome": {
+                        "ok": True,
+                        "evidence": {
+                            "fixture_digest": "sha256:" + "5" * 64,
+                            "implementation": "graphblocks-runtime",
+                            "implementation_version": "0.1.0",
+                            "implementation_artifact": observed_artifact,
+                            "suite": "outcome",
+                            "execution_claim": {
+                                "executor_id": "rust-outcome-exact-differential",
+                                "implementation": "graphblocks-runtime",
+                                "language": "rust",
+                                "comparison": "exact-native-reference",
+                                "reference_implementation": "graphblocks-python",
+                            },
+                        },
+                        "results": [
+                            {
+                                "case_id": "outcome/native",
+                                "status": "passed",
+                                "observed": {
+                                    "runtime": "native",
+                                    "native_reference_match": True,
+                                    "native_contract": {"ok": True},
+                                    "reference_contract": {"ok": True},
+                                },
+                            }
+                        ],
+                    },
                     "runtime": {
                         "ok": True,
                         "evidence": {
@@ -673,6 +702,19 @@ def test_release_evidence_binds_native_reports_to_exact_runtime_wheel() -> None:
     with pytest.raises(RuntimeError, match="typed-ports TCK evidence is not exact"):
         module._require_release_evidence(
             mismatched,
+            kind="TCK",
+            expected_compiler_artifact=artifact,
+        )
+
+    mismatched_outcome = payload(dict(artifact))
+    mismatched_outcome["reports"]["outcome"]["results"][0]["observed"][
+        "native_contract"
+    ] = {"ok": False}
+    mismatched_outcome.pop("contentDigest")
+    mismatched_outcome = _with_content_digest(module, mismatched_outcome)
+    with pytest.raises(RuntimeError, match="outcome TCK evidence is not exact"):
+        module._require_release_evidence(
+            mismatched_outcome,
             kind="TCK",
             expected_compiler_artifact=artifact,
         )
@@ -1004,6 +1046,9 @@ def test_default_tck_output_matches_source_derived_release_expectations(
     )
     testing_cli = importlib.import_module("graphblocks_testing.cli")
     runtime_module = importlib.import_module("graphblocks.runtime")
+    outcome_reference_module = importlib.import_module(
+        "graphblocks._outcome_reference"
+    )
 
     def reference_runtime_bridge(
         graph: Mapping[str, object],
@@ -1283,6 +1328,12 @@ def test_default_tck_output_matches_source_derived_release_expectations(
         reference_typed_ports_tck_case_bridge,
         raising=False,
     )
+    monkeypatch.setattr(
+        graphblocks_runtime,
+        "_evaluate_outcome_tck_case",
+        outcome_reference_module.evaluate_outcome_tck_case_reference,
+        raising=False,
+    )
 
     exit_code = graphblocks_testing.main(
         ["run-all", "--native-compiler-wheel", str(wheel), "--json"]
@@ -1498,6 +1549,7 @@ def test_stable_tck_expectations_bind_bundled_c0_c1_profiles_and_contract_digest
     assert set(expectations["suites"]) == {
         "application-events",
         "compiler",
+        "outcome",
         "retry",
         "runtime",
         "schema",
@@ -1552,6 +1604,25 @@ def test_stable_tck_expectations_bind_bundled_c0_c1_profiles_and_contract_digest
         "reference_implementation": "graphblocks-python",
     }
     assert expectations["suites"]["application-events"][
+        "reference_implementation_version"
+    ] == "1.0.0rc1"
+    assert expectations["suites"]["outcome"]["implementation"] == (
+        "graphblocks-runtime"
+    )
+    assert expectations["suites"]["outcome"]["implementation_version"] == (
+        "0.1.0"
+    )
+    assert expectations["suites"]["outcome"][
+        "implementation_artifact_distribution"
+    ] == "graphblocks-runtime"
+    assert expectations["suites"]["outcome"]["execution_claim"] == {
+        "executor_id": "rust-outcome-exact-differential",
+        "implementation": "graphblocks-runtime",
+        "language": "rust",
+        "comparison": "exact-native-reference",
+        "reference_implementation": "graphblocks-python",
+    }
+    assert expectations["suites"]["outcome"][
         "reference_implementation_version"
     ] == "1.0.0rc1"
     assert expectations["suites"]["retry"]["implementation"] == (
@@ -1694,6 +1765,7 @@ def test_stable_tck_expectations_bind_bundled_c0_c1_profiles_and_contract_digest
         not in {
             "application-events",
             "compiler",
+            "outcome",
             "retry",
             "runtime",
             "sequence",

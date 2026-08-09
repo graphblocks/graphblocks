@@ -99,6 +99,7 @@ from graphblocks.migration import (
     MigrationError,
     migrate_document_reference as migrate_document,
 )
+from graphblocks._outcome_reference import evaluate_outcome_tck_case_reference
 from graphblocks.output_policy import (
     GenerationChunk,
     OutputDeliveryGate,
@@ -292,6 +293,7 @@ class TckRunner:
     native_tool_lifecycle_tck_authority = False
     native_tool_result_tck_authority = False
     native_typed_ports_tck_authority = False
+    native_outcome_tck_authority = False
     native_runtime_authority = False
 
     registry: RuntimeRegistry
@@ -352,6 +354,8 @@ class TckRunner:
                 results.append(self._run_tool_result_case(case))
             elif case.kind == "typed-ports":
                 results.append(self._run_typed_ports_case(case))
+            elif case.kind == "outcome":
+                results.append(self._run_outcome_case(case))
             elif case.kind == "usage":
                 results.append(self._run_usage_case(case))
             elif case.kind == "voice":
@@ -7920,6 +7924,83 @@ class TckRunner:
             observed=observed,
         )
 
+    def _run_outcome_case(self, case: TckCase) -> TckResult:
+        diagnostics: list[dict[str, str]] = []
+        fixture = case.outcome_fixture
+        expected = fixture.get("expected", {})
+        if not isinstance(expected, Mapping):
+            expected = {}
+            diagnostics.append(
+                {
+                    "code": "OutcomeExpectedInvalid",
+                    "message": "outcome TCK expected result must be a mapping",
+                    "path": "$.expected",
+                }
+            )
+        if "request" in fixture:
+            execution_case = deepcopy(fixture["request"])
+        else:
+            execution_case = {
+                str(key): deepcopy(value)
+                for key, value in fixture.items()
+                if key != "expected"
+            }
+        reference_contract = evaluate_outcome_tck_case_reference(execution_case)
+        observed: dict[str, object] = {"reference_contract": reference_contract}
+        if reference_contract != dict(expected):
+            diagnostics.append(
+                {
+                    "code": "OutcomeExpectedMismatch",
+                    "message": "outcome reference contract did not match expected result",
+                    "path": "$.expected",
+                }
+            )
+        if self.native_outcome_tck_authority:
+            try:
+                from graphblocks_runtime import _evaluate_outcome_tck_case
+
+                native_contract = _evaluate_outcome_tck_case(execution_case)
+                if set(native_contract) != set(reference_contract):
+                    raise ValueError(
+                        "native outcome TCK result must use the closed contract"
+                    )
+                native_reference_match = native_contract == reference_contract
+                observed.update(
+                    {
+                        "runtime": "native",
+                        "native_contract": native_contract,
+                        "native_reference_match": native_reference_match,
+                    }
+                )
+                if not native_reference_match:
+                    diagnostics.append(
+                        {
+                            "code": "NativeOutcomeMismatch",
+                            "message": (
+                                "native outcome differs from the Python reference oracle"
+                            ),
+                            "path": "$.observed.reference_contract",
+                        }
+                    )
+            except Exception as error:
+                diagnostics.append(
+                    {
+                        "code": "NativeOutcomeError",
+                        "message": str(error),
+                        "path": "$",
+                    }
+                )
+                observed.update(
+                    {"runtime": "native", "native_reference_match": False}
+                )
+        return TckResult(
+            case_id=case.case_id,
+            kind=case.kind,
+            status="passed" if not diagnostics else "failed",
+            diagnostics=tuple(diagnostics),
+            observed=observed,
+        )
+
     def _run_tool_execution_case(self, case: TckCase) -> TckResult:
         diagnostics: list[dict[str, str]] = []
         fixture = case.tool_execution_fixture
@@ -10102,6 +10183,15 @@ class _TypedPortsDifferentialTckRunner(TckRunner):
     authority_comparison = "exact-native-reference"
     authority_reference_implementation = "graphblocks-python"
     native_typed_ports_tck_authority = True
+
+
+class _OutcomeDifferentialTckRunner(TckRunner):
+    __slots__ = ()
+    authority_executor_id = "rust-outcome-exact-differential"
+    authority_language = "rust"
+    authority_comparison = "exact-native-reference"
+    authority_reference_implementation = "graphblocks-python"
+    native_outcome_tck_authority = True
 
 
 class _NormativeCompilerTckRunner(TckRunner):

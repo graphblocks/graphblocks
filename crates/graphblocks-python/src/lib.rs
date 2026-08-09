@@ -1,4 +1,5 @@
 mod application_event_tck;
+mod outcome_tck;
 mod retry_tck;
 mod sequence_tck;
 mod tool_execution_tck;
@@ -2336,6 +2337,15 @@ fn evaluate_retry_tck_case_json(case_json: &str) -> PyResult<String> {
     let result = retry_tck::evaluate_case(&case).map_err(PyValueError::new_err)?;
     serde_json::to_string(&result).map_err(|error| {
         PyRuntimeError::new_err(format!("failed to serialize retry TCK result: {error}"))
+    })
+}
+
+#[pyfunction]
+fn evaluate_outcome_tck_case_json(case_json: &str) -> PyResult<String> {
+    let case = parse_json_argument(case_json, "outcome TCK case")?;
+    let result = outcome_tck::evaluate_case(&case);
+    serde_json::to_string(&result).map_err(|error| {
+        PyRuntimeError::new_err(format!("failed to serialize outcome TCK result: {error}"))
     })
 }
 
@@ -9705,6 +9715,7 @@ fn _native(module: &Bound<'_, PyModule>) -> PyResult<()> {
         module
     )?)?;
     module.add_function(wrap_pyfunction!(evaluate_retry_tck_case_json, module)?)?;
+    module.add_function(wrap_pyfunction!(evaluate_outcome_tck_case_json, module)?)?;
     module.add_function(wrap_pyfunction!(evaluate_sequence_tck_case_json, module)?)?;
     module.add_function(wrap_pyfunction!(
         evaluate_tool_execution_tck_case_json,
@@ -9773,7 +9784,7 @@ mod tests {
         evaluate_application_protocol_stream_json, evaluate_budget_ledger_json,
         evaluate_cancellation_scope_json, evaluate_connector_capabilities_json,
         evaluate_declarative_output_policy_json, evaluate_durable_tool_terminal_store_json,
-        evaluate_node_lifecycle_json, evaluate_output_gate_json,
+        evaluate_node_lifecycle_json, evaluate_outcome_tck_case_json, evaluate_output_gate_json,
         evaluate_provider_limit_policy_json, evaluate_readiness_json, evaluate_retry_policy_json,
         evaluate_retry_tck_case_json, evaluate_scheduler_json, evaluate_sequence_tck_case_json,
         evaluate_sequential_tool_queue_json, evaluate_task_group_json,
@@ -13218,6 +13229,58 @@ mod tests {
                     assert_eq!(output.get(key), Some(expected_value));
                 }
             }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn evaluate_outcome_tck_case_json_forwards_the_closed_request() -> Result<(), String> {
+        let output = evaluate_outcome_tck_case_json(
+            r#"{"name":"absent","scenario":"normalize_outcome","outcome":{"status":"absent"}}"#,
+        )
+        .map_err(|error| error.to_string())?;
+        let output = serde_json::from_str::<Value>(&output).map_err(|error| error.to_string())?;
+        assert_eq!(
+            output,
+            json!({
+                "contractVersion": "graphblocks.outcome.tck.v1",
+                "ok": true,
+                "scenario": "normalize_outcome",
+                "outcome": {"status": "absent"},
+            })
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn evaluate_outcome_tck_case_json_closes_valid_json_shape_errors() -> Result<(), String> {
+        for (request, scenario, category) in [
+            ("null", "", "invalid_outcome"),
+            (r#"{"name":"missing-scenario"}"#, "", "missing_field"),
+            (
+                r#"{"name":"invalid-scenario","scenario":1}"#,
+                "",
+                "invalid_outcome",
+            ),
+            (
+                r#"{"name":"future","scenario":"future"}"#,
+                "future",
+                "unsupported_scenario",
+            ),
+        ] {
+            let output =
+                evaluate_outcome_tck_case_json(request).map_err(|error| error.to_string())?;
+            let output =
+                serde_json::from_str::<Value>(&output).map_err(|error| error.to_string())?;
+            assert_eq!(output.get("ok").and_then(Value::as_bool), Some(false));
+            assert_eq!(
+                output.get("scenario").and_then(Value::as_str),
+                Some(scenario)
+            );
+            assert_eq!(
+                output.get("errorCategory").and_then(Value::as_str),
+                Some(category)
+            );
         }
         Ok(())
     }

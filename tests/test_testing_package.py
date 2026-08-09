@@ -292,6 +292,15 @@ def _fake_native_typed_ports_tck_case(
     return json.loads(json.dumps(reference_contract))
 
 
+def _fake_native_outcome_tck_case(
+    raw_case: object,
+) -> dict[str, object]:
+    from graphblocks._outcome_reference import evaluate_outcome_tck_case_reference
+
+    assert not isinstance(raw_case, dict) or "expected" not in raw_case
+    return evaluate_outcome_tck_case_reference(raw_case)
+
+
 def test_tck_report_requires_nonempty_identified_native_evidence(monkeypatch) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")
@@ -9239,6 +9248,143 @@ def test_typed_ports_tck_rejects_native_drift(monkeypatch) -> None:
     }
 
 
+def test_testing_package_loads_shared_outcome_tck_cases(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+
+    cases = graphblocks_testing.load_outcome_tck_cases(
+        ROOT / "tck" / "outcome" / "cases.json"
+    )
+    report = graphblocks_testing.TckRunner(
+        graphblocks_testing.stdlib_registry()
+    ).run_cases(cases)
+
+    assert [case.kind for case in cases] == ["outcome"] * 72
+    assert report.ok
+    assert all(
+        result.observed["reference_contract"]
+        == next(
+            case.outcome_fixture["expected"]
+            for case in cases
+            if case.case_id == result.case_id
+        )
+        for result in report.results
+    )
+    assert "load_outcome_tck_cases" in graphblocks_testing.__all__
+
+
+def test_outcome_tck_loader_rejects_noncanonical_case_shape(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+    cases_path = tmp_path / "cases.json"
+    cases_path.write_text(
+        json.dumps(
+            [
+                {
+                    "name": "extra-field",
+                    "scenario": "normalize_outcome",
+                    "outcome": {"status": "absent"},
+                    "expected": {},
+                    "unexpected": True,
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="must contain exactly"):
+        graphblocks_testing.load_outcome_tck_cases(cases_path)
+
+    cases_path.write_text(
+        json.dumps(
+            [
+                {
+                    "name": "extra-wrapper-field",
+                    "request": {
+                        "name": "request",
+                        "scenario": "normalize_outcome",
+                        "outcome": {"status": "absent"},
+                    },
+                    "expected": {},
+                    "unexpected": True,
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="wrapper must contain exactly"):
+        graphblocks_testing.load_outcome_tck_cases(cases_path)
+
+
+def test_outcome_tck_is_exact_native_reference_without_expected_input(
+    monkeypatch,
+) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+    runners = importlib.import_module("graphblocks_testing.runners")
+    monkeypatch.setitem(
+        sys.modules,
+        "graphblocks_runtime",
+        SimpleNamespace(_evaluate_outcome_tck_case=_fake_native_outcome_tck_case),
+    )
+    cases = graphblocks_testing.load_outcome_tck_cases(
+        ROOT / "tck" / "outcome" / "cases.json"
+    )
+
+    report = runners._OutcomeDifferentialTckRunner(
+        graphblocks_testing.stdlib_registry(),
+        suite="outcome",
+        implementation="graphblocks-runtime",
+        implementation_version="0.1.0",
+    ).run_cases(cases)
+
+    assert report.ok
+    assert len(report.results) == 72
+    assert all(
+        result.observed["runtime"] == "native"
+        and result.observed["native_reference_match"] is True
+        and result.observed["native_contract"] == result.observed["reference_contract"]
+        for result in report.results
+    )
+
+
+def test_outcome_tck_rejects_native_drift(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+    runners = importlib.import_module("graphblocks_testing.runners")
+
+    def drifted_outcome_case(raw_case: object) -> dict[str, object]:
+        contract = _fake_native_outcome_tck_case(raw_case)
+        contract["ok"] = not contract["ok"]
+        return contract
+
+    monkeypatch.setitem(
+        sys.modules,
+        "graphblocks_runtime",
+        SimpleNamespace(_evaluate_outcome_tck_case=drifted_outcome_case),
+    )
+    case = graphblocks_testing.load_outcome_tck_cases(
+        ROOT / "tck" / "outcome" / "cases.json"
+    )[0]
+
+    report = runners._OutcomeDifferentialTckRunner(
+        graphblocks_testing.stdlib_registry(),
+        suite="outcome",
+        implementation="graphblocks-runtime",
+        implementation_version="0.1.0",
+    ).run_cases((case,))
+
+    assert not report.ok
+    assert report.results[0].diagnostics[-1] == {
+        "code": "GB3011",
+        "message": "native outcome differs from the Python reference oracle",
+        "path": "$.observed.reference_contract",
+    }
+
+
 def test_testing_package_loads_shared_usage_tck_cases(monkeypatch) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")
@@ -9307,6 +9453,7 @@ def test_testing_package_discovers_all_shared_tck_suite_manifests(monkeypatch) -
         "exhaustion",
         "migration",
         "orchestration",
+        "outcome",
         "policy",
         "rag",
         "retry",
@@ -9806,6 +9953,80 @@ def test_testing_package_discovers_all_shared_tck_suite_manifests(monkeypatch) -
         "noncanonical_interface_schema_is_rejected",
         "catalog_output_type_mismatch_is_rejected",
     )
+    assert by_suite["outcome"].case_ids == (
+        "normalize_value_outcome",
+        "normalize_absent_outcome",
+        "normalize_skipped_outcome",
+        "normalize_denied_outcome",
+        "normalize_budget_exhausted_outcome",
+        "normalize_paused_outcome",
+        "normalize_failed_outcome",
+        "normalize_cancelled_outcome",
+        "unknown_outcome_status_is_rejected",
+        "missing_failed_error_is_rejected",
+        "forbidden_absent_value_is_rejected",
+        "unknown_outcome_field_is_rejected",
+        "blank_outcome_code_is_rejected",
+        "blank_human_message_is_rejected",
+        "control_character_in_cause_chain_is_rejected",
+        "noncanonical_denied_alias_is_rejected",
+        "empty_dependencies_are_ready",
+        "missing_dependencies_preserve_input_order",
+        "null_value_is_ready",
+        "absent_value_dependency_is_blocked",
+        "outcome_mode_preserves_terminal_outcome",
+        "duplicate_dependency_input_is_rejected",
+        "duplicate_signal_port_is_rejected",
+        "blank_signal_identifier_is_rejected",
+        "missing_value_field_is_rejected",
+        "outcome_kind_alias_is_rejected",
+        "value_payload_alias_is_rejected",
+        "absent_payload_alias_is_forbidden",
+        "failed_cause_chain_alias_is_rejected",
+        "cancelled_requested_by_alias_is_rejected",
+        "wrong_level_requested_by_is_unknown",
+        "signal_port_ref_alias_is_rejected",
+        "signal_wrong_level_node_is_unknown",
+        "dependency_source_path_is_unknown",
+        "missing_scenario_is_rejected",
+        "non_string_scenario_is_rejected",
+        "unsupported_scenario_is_rejected",
+        "non_array_signals_are_rejected",
+        "non_array_dependencies_are_rejected",
+        "invalid_dependency_mode_is_rejected",
+        "non_string_request_name_is_rejected",
+        "unknown_field_precedes_non_string_name",
+        "forbidden_decision_precedes_missing_skipped_reason",
+        "nested_reason_missing_field_is_rejected",
+        "nested_reason_unknown_field_is_rejected",
+        "nested_reason_wrong_type_is_rejected",
+        "nested_error_missing_field_is_rejected",
+        "nested_error_unknown_field_is_rejected",
+        "nested_error_wrong_type_is_rejected",
+        "non_object_signal_is_invalid_readiness",
+        "non_object_dependency_is_invalid_readiness",
+        "non_object_signal_port_is_invalid_readiness",
+        "non_string_signal_port_identifier_is_rejected",
+        "non_string_dependency_input_is_rejected",
+        "non_string_dependency_mode_is_invalid_readiness",
+        "duplicate_signal_precedes_malformed_outcome",
+        "duplicate_dependency_precedes_malformed_source_and_mode",
+        "invalid_status_precedes_kind_alias",
+        "non_string_skipped_code_is_invalid_identifier",
+        "non_string_decision_id_is_invalid_identifier",
+        "non_string_budget_code_is_invalid_identifier",
+        "non_string_pause_code_is_invalid_identifier",
+        "non_string_error_code_is_invalid_identifier",
+        "non_string_cancel_code_is_invalid_identifier",
+        "non_string_requested_by_is_invalid_identifier",
+        "non_string_policy_decision_ref_is_invalid_identifier",
+        "invalid_skipped_code_precedes_malformed_message",
+        "invalid_budget_code_precedes_malformed_message",
+        "invalid_pause_code_precedes_malformed_message",
+        "invalid_error_code_precedes_all_later_fields",
+        "invalid_cancel_code_precedes_later_reason_fields",
+        "invalid_dependency_input_precedes_source_and_mode",
+    )
     assert by_suite["retry"].case_ids == (
         "effect_retry_preserves_idempotency_key",
         "effect_retry_exhaustion_preserves_idempotency_key",
@@ -9915,7 +10136,7 @@ def test_testing_package_cli_lists_tck_suite_manifests(monkeypatch, capsys) -> N
     assert graphblocks_testing.main(["list", str(ROOT / "tck"), "--json"]) == 0
 
     payload = json.loads(capsys.readouterr().out)
-    assert payload["suiteCount"] == 24
+    assert payload["suiteCount"] == 25
     assert payload["suites"][0]["suite_id"] == "application-events"
     assert payload["suites"][0]["case_count"] == 10
     assert payload["contentDigest"].startswith("sha256:")
@@ -9932,6 +10153,7 @@ def test_testing_package_bundled_c0_c1_helpers_and_cli_need_no_external_path(
     expected_suites = (
         "application-events",
         "compiler",
+        "outcome",
         "retry",
         "runtime",
         "schema",
@@ -10069,6 +10291,7 @@ def test_graphblocks_testing_wheel_and_sdist_ship_runnable_c0_c1_fixtures(
     expected_fixture_paths = {
         "application-events/cases.json",
         "compiler/cases.json",
+        "outcome/cases.json",
         "retry/cases.json",
         "runtime/cases.json",
         "schema/cases.json",
@@ -10161,6 +10384,7 @@ def test_graphblocks_testing_wheel_and_sdist_ship_runnable_c0_c1_fixtures(
         "suites": [
             "application-events",
             "compiler",
+            "outcome",
             "retry",
             "runtime",
             "schema",
@@ -10256,6 +10480,7 @@ def test_testing_package_cli_checks_tck_suite_coverage(monkeypatch, capsys) -> N
         "budget-race",
         "compiler",
         "exhaustion",
+        "outcome",
         "policy",
         "retry",
         "runtime",
@@ -10796,6 +11021,21 @@ def test_testing_package_cli_runs_typed_ports_tck_suite(monkeypatch, capsys) -> 
     assert payload["contentDigest"].startswith("sha256:")
 
 
+def test_testing_package_cli_runs_outcome_tck_suite(monkeypatch, capsys) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+
+    exit_code = graphblocks_testing.main(
+        ["run", "outcome", str(ROOT / "tck" / "outcome" / "cases.json"), "--json"]
+    )
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert {result["kind"] for result in payload["results"]} == {"outcome"}
+    assert payload["contentDigest"].startswith("sha256:")
+
+
 def test_testing_package_cli_runs_usage_tck_suite(monkeypatch, capsys) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")
@@ -10848,6 +11088,7 @@ def test_testing_package_cli_runs_all_supported_tck_suites(monkeypatch, capsys) 
         "exhaustion",
         "migration",
         "orchestration",
+        "outcome",
         "policy",
         "rag",
         "retry",
@@ -10893,6 +11134,7 @@ def test_testing_package_cli_emits_observed_release_tck_identity(
     native_tool_lifecycle_calls: list[str] = []
     native_tool_result_calls: list[str] = []
     native_typed_ports_calls: list[str] = []
+    native_outcome_calls: list[object] = []
     native_runtime_calls: list[str] = []
     reference_compile = graphblocks_testing.compile_graph
 
@@ -10966,6 +11208,12 @@ def test_testing_package_cli_emits_observed_release_tck_identity(
         native_typed_ports_calls.append(str(raw_case["name"]))
         return _fake_native_typed_ports_tck_case(raw_case)
 
+    def evaluate_outcome_tck_case(
+        raw_case: object,
+    ) -> dict[str, object]:
+        native_outcome_calls.append(raw_case)
+        return _fake_native_outcome_tck_case(raw_case)
+
     monkeypatch.setattr(
         graphblocks_testing,
         "_native_compiler_wheel_artifact",
@@ -10998,6 +11246,7 @@ def test_testing_package_cli_emits_observed_release_tck_identity(
             ),
             _evaluate_tool_result_tck_case=evaluate_tool_result_tck_case,
             _evaluate_typed_ports_tck_case=evaluate_typed_ports_tck_case,
+            _evaluate_outcome_tck_case=evaluate_outcome_tck_case,
             evaluate_application_event_stream=evaluate_application_event_stream,
             run_stdlib_graph=run_stdlib_graph,
         ),
@@ -11190,6 +11439,24 @@ def test_testing_package_cli_emits_observed_release_tck_identity(
     assert native_typed_ports_calls == [
         result["case_id"] for result in typed_ports_report["results"]
     ]
+    outcome_report = payload["reports"]["outcome"]
+    assert outcome_report["evidence"]["implementation"] == "graphblocks-runtime"
+    assert outcome_report["evidence"]["implementation_version"] == "0.1.0"
+    assert outcome_report["evidence"]["implementation_artifact"] == compiler_artifact
+    assert outcome_report["evidence"]["authority_claim"]["comparison"] == (
+        "exact-native-reference"
+    )
+    assert outcome_report["evidence"]["execution_claim"]["executor_id"] == (
+        "rust-outcome-exact-differential"
+    )
+    assert outcome_report["evidence"]["reference_implementation_version"] == (
+        "1.0.0rc1"
+    )
+    assert len(native_outcome_calls) == len(outcome_report["results"])
+    assert all(
+        not isinstance(raw_case, dict) or "expected" not in raw_case
+        for raw_case in native_outcome_calls
+    )
     compiler_report = payload["reports"]["compiler"]
     assert compiler_report["evidence"]["implementation"] == "graphblocks-runtime"
     assert compiler_report["evidence"]["implementation_version"] == "0.1.0"

@@ -186,6 +186,91 @@ def test_runtime_wrapper_calls_exported_typed_ports_tck_symbol() -> None:
     assert calls == ['{"name":"case-1"}']
 
 
+def test_runtime_wrapper_calls_exported_outcome_tck_symbol() -> None:
+    calls: list[str] = []
+
+    class FakeNative:
+        __version__ = "0.1.0"
+
+        def __getattr__(self, name: str):
+            if name.endswith("_json"):
+                return lambda *args, **kwargs: '{"ok":true}'
+            raise AttributeError(name)
+
+        def binding_version(self) -> str:
+            return self.__version__
+
+        def evaluate_outcome_tck_case_json(self, case_json: str) -> str:
+            calls.append(case_json)
+            return '{"ok":true}'
+
+    fake_native = FakeNative()
+    runtime = load_runtime_wrapper(fake_native)
+    sys.modules[runtime.__name__] = runtime
+    sys.modules[f"{runtime.__name__}._native"] = fake_native
+    try:
+        assert runtime._evaluate_outcome_tck_case({"name": "case-1"}) == {
+            "ok": True
+        }
+    finally:
+        sys.modules.pop(runtime.__name__, None)
+        sys.modules.pop(f"{runtime.__name__}._native", None)
+    assert calls == ['{"name":"case-1"}']
+
+
+@pytest.mark.parametrize("invalid_kind", ("depth", "integer", "surrogate"))
+def test_runtime_wrapper_closes_outcome_canonical_admission_failures(
+    invalid_kind: str,
+) -> None:
+    calls: list[str] = []
+
+    class FakeNative:
+        __version__ = "0.1.0"
+
+        def __getattr__(self, name: str):
+            if name.endswith("_json"):
+                return lambda *args, **kwargs: '{"ok":true}'
+            raise AttributeError(name)
+
+        def binding_version(self) -> str:
+            return self.__version__
+
+        def evaluate_outcome_tck_case_json(self, case_json: str) -> str:
+            calls.append(case_json)
+            return '{"ok":true}'
+
+    value: object = None
+    if invalid_kind == "depth":
+        for _ in range(63):
+            value = [value]
+    elif invalid_kind == "integer":
+        value = 10**10_000
+    else:
+        value = "\ud800"
+
+    fake_native = FakeNative()
+    runtime = load_runtime_wrapper(fake_native)
+    sys.modules[runtime.__name__] = runtime
+    sys.modules[f"{runtime.__name__}._native"] = fake_native
+    try:
+        assert runtime._evaluate_outcome_tck_case(
+            {
+                "name": "canonical-admission-failure",
+                "scenario": "normalize_outcome",
+                "outcome": {"status": "value", "value": value},
+            }
+        ) == {
+            "contractVersion": "graphblocks.outcome.tck.v1",
+            "ok": False,
+            "scenario": "normalize_outcome",
+            "errorCategory": "invalid_outcome",
+        }
+    finally:
+        sys.modules.pop(runtime.__name__, None)
+        sys.modules.pop(f"{runtime.__name__}._native", None)
+    assert calls == []
+
+
 @pytest.mark.parametrize(
     ("contract_json", "message"),
     (

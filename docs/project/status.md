@@ -6,7 +6,11 @@ and the selected target for production execution authority. The compiler,
 runtime protocol handshake, standalone canonical/schema-identity facades, and
 resource validation/migration authority transitions are implemented. The
 installed stable C1 local scheduler/journal slice also executes exact
-native/reference evidence without fallback. Wider production scheduler,
+native/reference evidence without fallback. The closed outcome.v1 wire and
+readiness slice is likewise Rust-authoritative through exact installed-wheel
+evidence; six run-terminal distinctions, exactly-one terminal enforcement,
+and projection ordering remain part of the incomplete outcome requirement.
+Wider production scheduler,
 suspension, and durable authority still block the complete authority gate.
 
 The digest-bound 99-finding deep-audit inventory includes 4 P0, 23 P1, 64 P2,
@@ -40,7 +44,7 @@ regenerate this page instead of changing the table by hand.
 | Supply chain (`supply-chain`) | `promotion-contract-enforced-external-evidence-absent` | `release-wide-artifact-supply-chain`; blocks target release | `REL-SUPPLY-CHAIN` | Artifact integrity, provenance, signing, and promotion only; this does not imply runtime security, durability, or adapter readiness. |
 | API and portable contract (`api`) | `candidate-contract-review-blocked` | `core-c0-c1-only`; blocks target release | `REL-CORE-PROFILE`, `REL-API-SNAPSHOT`, `REL-WIRE-V1`, `REL-CLOSED-SCHEMA` | C0/C1 compatibility candidate only; preview modules and production-operation behavior remain outside this claim. |
 | Runtime security (`runtime-security`) | `code-closure-enforced-external-evidence-blocked` | `release-wide-shipped-code`; blocks target release | `REL-AUDIT-REMEDIATION`, `REL-OBJECT-AUTHORIZATION-REVIEW`, `REL-ADVERSARIAL-RESOURCE-TESTS` | The reference server is not a production-ready multi-tenant authority boundary; object authorization and adversarial resource evidence remain mandatory. |
-| Durability and recovery (`durability`) | `core-c1-runtime-authority-and-correctness-blocked-production-preview` | `core-c1-local-runtime-authority`; blocks target release | `REL-AUDIT-REMEDIATION`, `REL-NORMATIVE-AUTHORITY`, `REL-RUNTIME-CORRECTNESS` | The three remaining C1 requirements and restart-independent local correctness block 1.0; the installed native runtime API plus the typed-ports requirement and all stable C1 exact-differential suites are frozen, while C4/X3 production durability is governed by a separate nonblocking preview-promotion gate. |
+| Durability and recovery (`durability`) | `core-c1-runtime-authority-and-correctness-blocked-production-preview` | `core-c1-local-runtime-authority`; blocks target release | `REL-AUDIT-REMEDIATION`, `REL-NORMATIVE-AUTHORITY`, `REL-RUNTIME-CORRECTNESS` | The three remaining C1 requirements and restart-independent local correctness block 1.0; the installed native runtime API, typed-ports requirement, outcome.v1 wire/readiness slice, and all stable C1 exact-differential suites are frozen, while the remaining outcome run-terminal/projection semantics and C4/X3 production durability retain their separate blockers. |
 | External adapters (`adapters`) | `contract-only-no-real-adapters` | `excluded-contract-only`; axis excluded; shipped P0/P1 still block | `REL-INTEGRATION-PROMOTION` | Catalogued integrations are contract-only or test doubles; no external service, SDK, authentication mode, or failure model is production-supported. |
 <!-- END GENERATED READINESS AXES -->
 

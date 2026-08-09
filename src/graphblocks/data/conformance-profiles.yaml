@@ -29,6 +29,7 @@ spec:
     - local-runtime-api
     tck:
     - application-events
+    - outcome
     - retry
     - runtime
     - sequence

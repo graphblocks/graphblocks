@@ -417,6 +417,53 @@ def test_stable_requirement_implementation_roles_match_the_authority_transition(
         "plus-materialized-admission-and-projection"
     )
     assert application_event_slice["exclusions"] == []
+    outcome = c1_entries["outcome"]
+    assert outcome["tckSuites"] == [
+        "application-events",
+        "compiler",
+        "outcome",
+        "runtime",
+        "tool-result",
+    ]
+    assert outcome["scopeNotes"] == [
+        "The compiler, runtime, application-events, and tool-result suites are "
+        "auxiliary evidence for output typing, local execution, stream admission, "
+        "and tool-result distinctions; they do not complete the excluded "
+        "run-terminal and projection semantics."
+    ]
+    assert outcome["authoritySlices"]["outcomeWireAndReadiness"] == {
+        "status": "normative",
+        "authority": "rust",
+        "scope": "closed-outcome-v1-eight-variant-wire-and-readiness-resolution",
+        "normativeImplementations": [
+            "crates/graphblocks-runtime-core/src/outcome.rs",
+            "crates/graphblocks-runtime-core/src/readiness.rs",
+            "crates/graphblocks-python/src/outcome_tck.rs",
+            "crates/graphblocks-python/src/lib.rs",
+        ],
+        "pythonFacadeAndReference": [
+            "src/graphblocks/_outcome_reference.py",
+            "src/graphblocks/outcome.py",
+        ],
+        "installedEvidence": [
+            "packages/graphblocks-runtime/src/graphblocks_runtime/__init__.py",
+            "packages/graphblocks-testing/src/graphblocks_testing/runners.py",
+            "packages/graphblocks-testing/src/graphblocks_testing/cli.py",
+            "tools/verify_wheelhouse.py",
+            "tests/test_testing_package.py",
+            "tests/test_wheelhouse_schema_verification.py",
+            "tests/test_release_supply_chain.py",
+        ],
+        "exclusions": [
+            "Exact comparison begins after the shared canonical JSON envelope "
+            "admission; over-depth, over-limit integer, recursive, non-scalar "
+            "Unicode, and non-JSON requests fail closed before evaluation.",
+            "Python-only metadata and looser facade compatibility outside the "
+            "closed outcome.v1 wire contract remain reference-only.",
+            "Six distinct run terminals, exactly-one terminal enforcement, and "
+            "output-projection-before-terminal-success remain target-normative work.",
+        ],
+    }
     for requirement in target_requirements:
         entry = c1_entries[requirement]
         roles = entry["implementations"]

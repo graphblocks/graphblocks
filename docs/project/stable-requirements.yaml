@@ -288,7 +288,32 @@ profiles:
             - src/graphblocks/tools.py
           targetNormative:
             - crates/graphblocks-runtime-core/src/outcome.rs
+            - crates/graphblocks-runtime-core/src/readiness.rs
         authoritySlices:
+          outcomeWireAndReadiness:
+            status: normative
+            authority: rust
+            scope: closed-outcome-v1-eight-variant-wire-and-readiness-resolution
+            normativeImplementations:
+              - crates/graphblocks-runtime-core/src/outcome.rs
+              - crates/graphblocks-runtime-core/src/readiness.rs
+              - crates/graphblocks-python/src/outcome_tck.rs
+              - crates/graphblocks-python/src/lib.rs
+            pythonFacadeAndReference:
+              - src/graphblocks/_outcome_reference.py
+              - src/graphblocks/outcome.py
+            installedEvidence:
+              - packages/graphblocks-runtime/src/graphblocks_runtime/__init__.py
+              - packages/graphblocks-testing/src/graphblocks_testing/runners.py
+              - packages/graphblocks-testing/src/graphblocks_testing/cli.py
+              - tools/verify_wheelhouse.py
+              - tests/test_testing_package.py
+              - tests/test_wheelhouse_schema_verification.py
+              - tests/test_release_supply_chain.py
+            exclusions:
+              - Exact comparison begins after the shared canonical JSON envelope admission; over-depth, over-limit integer, recursive, non-scalar Unicode, and non-JSON requests fail closed before evaluation.
+              - Python-only metadata and looser facade compatibility outside the closed outcome.v1 wire contract remain reference-only.
+              - Six distinct run terminals, exactly-one terminal enforcement, and output-projection-before-terminal-success remain target-normative work.
           applicationEventStreamAdmission:
             status: normative
             authority: rust
@@ -306,13 +331,19 @@ profiles:
               - tests/test_testing_package.py
               - tests/test_release_supply_chain.py
             exclusions: []
+        scopeNotes:
+          - The compiler, runtime, application-events, and tool-result suites are auxiliary evidence for output typing, local execution, stream admission, and tool-result distinctions; they do not complete the excluded run-terminal and projection semantics.
         schemas: []
-        tckSuites: [application-events, tool-result]
+        tckSuites: [application-events, compiler, outcome, runtime, tool-result]
         evidence:
           - tests/test_outcome_readiness.py
+          - tests/test_outcome_tck_reference.py
           - tests/test_application_event.py
           - tests/test_tool_facade.py
           - tck/application-events/cases.json
+          - tck/compiler/cases.json
+          - tck/outcome/cases.json
+          - tck/runtime/cases.json
           - tck/tool-result/cases.json
       - id: cancellation
         clauses:

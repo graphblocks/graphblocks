@@ -37,7 +37,7 @@ The transition is phase-scoped:
 | Python graph builders, typed authoring, YAML composition, and ergonomic schema APIs | Python | Supported authoring surface; materializes portable resources for the normative compiler |
 | Reference compiler and local reference interpreter | Python | Explicit oracle through `graphblocks.compiler.compile_graph_reference` and reference-runtime/TCK imports; never an implicit production fallback |
 | Standalone canonical/schema-identity and resource validation/migration utility authority | Rust | Implemented through fail-closed public canonical, `SchemaId.parse`, resource validation, and migration facades; supported installed-wheel evidence binds public, reference, and direct-native results over the complete shared resource corpora to the exact runtime artifact |
-| Stable C1 local runtime | Rust | Runtime capability handshake, the frozen native API, every bundled stable C1 suite, and the typed-port requirement slice have installed exact native/reference evidence; three direct C1 requirements, restart-independent local correctness, and panic-free public boundaries still block the core authority gate |
+| Stable C1 local runtime | Rust | Runtime capability handshake, the frozen native API, every bundled stable C1 suite, the typed-port requirement, and the outcome.v1 wire/readiness slice have installed exact native/reference evidence; outcome terminal/projection semantics plus cancellation and local flow, restart-independent local correctness, and panic-free public boundaries still block the core authority gate |
 | C4 production and X3 durable-stream runtime | Profile-specific Rust target | Preview only; live authority, multi-process recovery, fencing, outbox/effect, and adapter evidence are governed by `REL-EXTENSION-RUNTIME-AUTHORITY` and do not block the first C0/C1 release |
 | AI application, governance, durable stream, voice, deployment, observability, and integrations | Profile-specific | No authority or stability is implied until the named extension profile passes its own gates |
 
@@ -108,7 +108,11 @@ Rust implementation crates remain internal APIs unless separately promoted.
    binding capability, fails closed without it, and compares the complete
    stable result/lifecycle contract with the Python oracle. The typed-port
    requirement is now Rust-authoritative through its exact installed suite;
-   generic typed-value transport and remote-boundary policy remain preview.
+   generic typed-value transport and remote-boundary policy remain preview. The
+   outcome.v1 wire/readiness slice is also Rust-authoritative through its exact
+   installed suite. This does not promote Python-only metadata or looser facade
+   compatibility, nor the six run-terminal, exactly-one terminal, and output
+   projection ordering semantics that still block the full outcome requirement.
    The remaining C1 requirements and panic-free public boundaries are
    enumerated by `REL-NORMATIVE-AUTHORITY` and
    `REL-RUNTIME-CORRECTNESS`. Wider production durability belongs to the
@@ -141,6 +145,12 @@ preview independently of the first C0/C1 release decision.
   canonical compilation, typed-boundary rejection, and runtime port-preservation
   cases in Rust, exact-compare their closed contracts with the Python oracle,
   and bind the reports to that same native wheel.
+- Installed outcome tests exact-compare all eight closed outcome.v1 variants,
+  readiness resolution, and invalid/duplicate identity handling through Rust
+  and the Python oracle after the shared canonical JSON envelope admission,
+  then bind the report to that same native wheel. Invalid envelopes fail closed
+  before evaluation. The authority claim explicitly excludes the remaining
+  run-terminal and output projection semantics.
 - Installed-wheel tests execute public canonical, SchemaId, resource
   validation, and resource migration facades beside the explicit Python
   references and direct native functions. They bind the complete shared

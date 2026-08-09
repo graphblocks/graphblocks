@@ -390,6 +390,9 @@ def test_rust_packages_declare_publishable_path_versions_and_bundle_local_fixtur
         ),
         "crates/graphblocks-python/src/fixtures/compiler-cases.json": "tck/compiler/cases.json",
         "crates/graphblocks-python/src/fixtures/runtime-cases.json": "tck/runtime/cases.json",
+        "crates/graphblocks-python/src/fixtures/outcome-cases.json": (
+            "tck/outcome/cases.json"
+        ),
         "crates/graphblocks-python/src/fixtures/typed-ports-cases.json": (
             "tck/typed-ports/cases.json"
         ),
@@ -2229,6 +2232,10 @@ def test_stable_release_matrix_is_complete_and_machine_readable() -> None:
         "installed-application-event-constructor-payload-and-operation-trace-differential"
         in authority["completedPhases"]
     )
+    assert "installed-outcome-exact-differential-and-artifact-identity" in authority[
+        "completedPhases"
+    ]
+    assert "exact-shared-outcome-differential" in authority["completedPhases"]
     assert "supported-installed-native-compiler-tck-and-artifact-evidence" not in (
         authority["remainingPhases"]
     )
@@ -2371,6 +2378,13 @@ def test_stable_release_matrix_is_complete_and_machine_readable() -> None:
         "completedEvidence"
     ]
     assert (
+        "installed-outcome-exact-differential-and-artifact-identity"
+        in authority_gate["completedEvidence"]
+    )
+    assert "exact-shared-outcome-differential" in authority_gate[
+        "completedEvidence"
+    ]
+    assert (
         "stable-c1-typed-ports-outcome-cancellation-and-local-flow-authority"
         not in authority_gate["completedEvidence"]
     )
@@ -2436,6 +2450,8 @@ def test_stable_release_matrix_is_complete_and_machine_readable() -> None:
         if suite
         not in {
             "application-events",
+            "compiler",
+            "outcome",
             "retry",
             "runtime",
             "sequence",
@@ -2460,6 +2476,13 @@ def test_stable_release_matrix_is_complete_and_machine_readable() -> None:
         in runtime_gate["completedEvidence"]
     )
     assert "exact-shared-typed-ports-differential" in runtime_gate[
+        "completedEvidence"
+    ]
+    assert (
+        "installed-outcome-exact-differential-and-artifact-identity"
+        in runtime_gate["completedEvidence"]
+    )
+    assert "exact-shared-outcome-differential" in runtime_gate[
         "completedEvidence"
     ]
     assert "all-stable-c1-requirements-normative" not in runtime_gate[

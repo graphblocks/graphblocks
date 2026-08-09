@@ -4,7 +4,7 @@ use graphblocks_runtime_core::outcome::{
     BlockError, CancelCode, CancelReason, ErrorCategory, Outcome, SkipReason,
 };
 use graphblocks_runtime_core::readiness::{
-    InputDependency, PortRef, Readiness, ReadinessTracker, ResolvedInput,
+    InputDependency, PortRef, Readiness, ReadinessTracker, ReadinessValidationError, ResolvedInput,
 };
 use serde_json::Value;
 
@@ -120,4 +120,88 @@ fn readiness_reports_all_missing_dependencies_in_input_order() {
             missing: vec![first, second]
         },
     );
+}
+
+#[test]
+fn checked_readiness_rejects_invalid_identity_and_duplicate_inputs() {
+    assert!(matches!(
+        PortRef::try_new(" source", "value"),
+        Err(ReadinessValidationError::InvalidText { field, .. })
+            if field == "port ref node"
+    ));
+    assert!(matches!(
+        InputDependency::try_value(" ", PortRef::new("source", "value")),
+        Err(ReadinessValidationError::InvalidText { field, .. })
+            if field == "input dependency input"
+    ));
+
+    let tracker = ReadinessTracker::new();
+    let source = PortRef::new("source", "value");
+    assert_eq!(
+        tracker.try_readiness([
+            InputDependency::value("value", source.clone()),
+            InputDependency::outcome("value", source),
+        ]),
+        Err(ReadinessValidationError::DuplicateDependencyInput {
+            input: "value".to_owned(),
+        })
+    );
+}
+
+#[test]
+fn checked_signal_publication_is_closed_and_duplicate_safe() {
+    let source = PortRef::new("source", "value");
+    let mut tracker = ReadinessTracker::new();
+
+    assert_eq!(
+        tracker.try_publish(source.clone(), Outcome::Value(Value::Null)),
+        Ok(())
+    );
+    assert_eq!(
+        tracker.try_publish(source.clone(), Outcome::Absent),
+        Err(ReadinessValidationError::DuplicateSignal { port: source })
+    );
+
+    let mut invalid_outcome_tracker = ReadinessTracker::new();
+    let invalid_source = PortRef::new("policy", "decision");
+    assert!(matches!(
+        invalid_outcome_tracker.try_publish(
+            invalid_source.clone(),
+            Outcome::Denied(graphblocks_runtime_core::outcome::PolicyDecisionRef::new(" ")),
+        ),
+        Err(ReadinessValidationError::InvalidOutcome { port, .. })
+            if port == invalid_source
+    ));
+}
+
+#[test]
+fn checked_readiness_preserves_nested_source_path_semantics() -> Result<(), ReadinessValidationError>
+{
+    let source = PortRef::new("source", "value");
+    let mut tracker = ReadinessTracker::new();
+    tracker.try_publish(
+        source.clone(),
+        Outcome::Value(serde_json::json!({"items": [{"name": "first"}]})),
+    )?;
+    let dependency = InputDependency::try_value("name", source.clone())
+        .and_then(|dependency| dependency.try_with_source_path(["items", "0", "name"]))?;
+
+    assert_eq!(
+        tracker.try_readiness([dependency]),
+        Ok(Readiness::Ready(BTreeMap::from([(
+            "name".to_owned(),
+            ResolvedInput::Value(serde_json::json!("first")),
+        )])))
+    );
+
+    let missing_dependency = InputDependency::try_value("name", source)
+        .and_then(|dependency| dependency.try_with_source_path(["items", "1", "name"]))?;
+    assert!(matches!(
+        tracker.try_readiness([missing_dependency]),
+        Ok(Readiness::Blocked {
+            outcome: Outcome::Failed(error),
+            ..
+        }) if error.code == "runtime.missing_source_path"
+    ));
+    Ok(())
 }

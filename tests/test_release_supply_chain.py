@@ -338,6 +338,14 @@ def _release_evidence(
                     "native_contract": {"ok": True},
                     "reference_contract": {"ok": True},
                 }
+        elif suite == "outcome":
+            for result in results:
+                result["observed"] = {
+                    "runtime": "native",
+                    "native_reference_match": True,
+                    "native_contract": {"ok": True},
+                    "reference_contract": {"ok": True},
+                }
         elif suite == "runtime":
             for result in results:
                 result["observed"] = {
@@ -504,6 +512,9 @@ def _write_platform_input(
     tck["reports"]["typed-ports"]["evidence"][
         "implementation_artifact"
     ] = dict(native_compiler_artifact)
+    tck["reports"]["outcome"]["evidence"]["implementation_artifact"] = dict(
+        native_compiler_artifact
+    )
     tck["reports"]["runtime"]["evidence"]["implementation_artifact"] = dict(
         native_compiler_artifact
     )

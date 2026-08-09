@@ -1059,6 +1059,7 @@ def _tck_expectations(
     native_exact_suites = {
         "application-events",
         "compiler",
+        "outcome",
         "retry",
         "runtime",
         "sequence",
@@ -1211,6 +1212,7 @@ def _tck_expectations(
         exact_executor_ids = {
             "application-events": "rust-application-events-exact-differential",
             "compiler": "rust-compiler-exact-differential",
+            "outcome": "rust-outcome-exact-differential",
             "retry": "rust-retry-exact-differential",
             "runtime": "rust-runtime-exact-differential",
             "sequence": "rust-sequence-exact-differential",
@@ -1487,6 +1489,20 @@ def _require_release_evidence(
                             "installed typed-ports TCK evidence is not exact "
                             "native/reference execution"
                         )
+            if suite == "outcome":
+                for result in results:
+                    observed = result.get("observed")
+                    if (
+                        not isinstance(observed, Mapping)
+                        or observed.get("runtime") != "native"
+                        or observed.get("native_reference_match") is not True
+                        or observed.get("native_contract")
+                        != observed.get("reference_contract")
+                    ):
+                        raise RuntimeError(
+                            "installed outcome TCK evidence is not exact "
+                            "native/reference execution"
+                        )
             if isinstance(raw_expected_suites, Mapping):
                 expectation = raw_expected_suites.get(suite)
                 if not isinstance(expectation, Mapping):
@@ -1689,6 +1705,7 @@ def _require_release_evidence(
             for suite in (
                 "application-events",
                 "compiler",
+                "outcome",
                 "retry",
                 "runtime",
                 "sequence",

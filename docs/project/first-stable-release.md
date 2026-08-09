@@ -293,9 +293,16 @@ exact-compares their closed result contracts through
 nominal identity, requiredness, and nested-root validation; the installed
 `typed-ports` report adds exact typed Graph construction, canonical compilation,
 typed-boundary rejection, and local-runtime port preservation through
-`rust-typed-ports-exact-differential`. All stable C1 suites now have exact
-native/reference coverage; outcome, cancellation, and local flow remain direct
-requirement-authority work.
+`rust-typed-ports-exact-differential`. The installed `outcome` report
+exact-compares all eight closed outcome.v1 variants, readiness resolution, and
+invalid/duplicate identity handling through
+`rust-outcome-exact-differential`, bound to the same runtime wheel. All stable
+C1 suites now have exact native/reference coverage. The comparison begins only
+after the shared canonical JSON envelope admission; invalid envelopes fail
+closed before either evaluator. Outcome remains a direct
+requirement-authority blocker for six distinct run terminals, exactly-one
+terminal enforcement, and output-projection ordering; cancellation and local
+flow remain direct requirement-authority work as well.
 
 ## Release gates
 

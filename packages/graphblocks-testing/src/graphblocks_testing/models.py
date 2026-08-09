@@ -30,6 +30,7 @@ _STABLE_TCK_SUITE_DIAGNOSTIC_CODES = {
     "tool-lifecycle": "GB3008",
     "tool-result": "GB3009",
     "typed-ports": "GB3010",
+    "outcome": "GB3011",
 }
 
 
@@ -71,6 +72,7 @@ TckCaseKind = Literal[
     "durable",
     "migration",
     "orchestration",
+    "outcome",
     "rag",
     "retry",
     "tool-lifecycle",
@@ -98,6 +100,7 @@ ReleaseCandidateGateStatus = Literal["passed", "failed"]
 _BUNDLED_TCK_SUITES = (
     "application-events",
     "compiler",
+    "outcome",
     "retry",
     "runtime",
     "schema",
@@ -336,6 +339,7 @@ _TCK_CASE_EVIDENCE_FIELDS = frozenset(
         "durable_fixture",
         "migration_fixture",
         "orchestration_fixture",
+        "outcome_fixture",
         "rag_fixture",
         "retry_fixture",
         "tool_lifecycle_fixture",
@@ -400,6 +404,7 @@ class TckCase:
     durable_fixture: dict[str, object] = field(default_factory=dict)
     migration_fixture: dict[str, object] = field(default_factory=dict)
     orchestration_fixture: dict[str, object] = field(default_factory=dict)
+    outcome_fixture: dict[str, object] = field(default_factory=dict)
     rag_fixture: dict[str, object] = field(default_factory=dict)
     retry_fixture: dict[str, object] = field(default_factory=dict)
     tool_lifecycle_fixture: dict[str, object] = field(default_factory=dict)
@@ -442,6 +447,7 @@ class TckCase:
             "durable",
             "migration",
             "orchestration",
+            "outcome",
             "rag",
             "retry",
             "tool-lifecycle",
@@ -552,6 +558,7 @@ class TckCase:
             "durable_fixture",
             "migration_fixture",
             "orchestration_fixture",
+            "outcome_fixture",
             "rag_fixture",
             "retry_fixture",
             "tool_lifecycle_fixture",
@@ -607,6 +614,8 @@ class TckCase:
             raise ValueError("migration TCK case requires fixture")
         if self.kind == "orchestration" and not self.orchestration_fixture:
             raise ValueError("orchestration TCK case requires fixture")
+        if self.kind == "outcome" and not self.outcome_fixture:
+            raise ValueError("outcome TCK case requires fixture")
         if self.kind == "rag" and not self.rag_fixture:
             raise ValueError("rag TCK case requires fixture")
         if self.kind == "retry" and not self.retry_fixture:
@@ -859,6 +868,10 @@ class TckCase:
     @classmethod
     def orchestration(cls, *, case_id: str, fixture: dict[str, object]) -> TckCase:
         return cls(case_id=case_id, kind="orchestration", orchestration_fixture=fixture)
+
+    @classmethod
+    def outcome(cls, *, case_id: str, fixture: dict[str, object]) -> TckCase:
+        return cls(case_id=case_id, kind="outcome", outcome_fixture=fixture)
 
     @classmethod
     def rag(cls, *, case_id: str, fixture: dict[str, object]) -> TckCase:

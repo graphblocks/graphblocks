@@ -53,6 +53,7 @@ from .runners import (
     _ApplicationEventStreamDifferentialTckRunner,
     _NormativeCompilerTckRunner,
     _NormativeRuntimeTckRunner,
+    _OutcomeDifferentialTckRunner,
     _RetryDifferentialTckRunner,
     _SequenceDifferentialTckRunner,
     _ToolExecutionDifferentialTckRunner,
@@ -454,6 +455,7 @@ def main(argv: list[str] | None = None) -> int:
             "migration",
             "runtime",
             "orchestration",
+            "outcome",
             "schema",
             "policy",
             "rag",
@@ -719,6 +721,19 @@ def main(argv: list[str] | None = None) -> int:
                         _native_compiler_version,
                     )(),
                 )
+            elif manifest.suite_id == "outcome" and compiler_artifact is not None:
+                runner = _OutcomeDifferentialTckRunner(
+                    _tck_registry(manifest.suite_id),
+                    profile=args.profile,
+                    evidence_dir=evidence_dir,
+                    suite=manifest.suite_id,
+                    fixture_digest=manifest.fixture_digest,
+                    implementation="graphblocks-runtime",
+                    implementation_version=facade_dependency(
+                        "_native_compiler_version",
+                        _native_compiler_version,
+                    )(),
+                )
             elif manifest.suite_id == "retry" and compiler_artifact is not None:
                 runner = _RetryDifferentialTckRunner(
                     _tck_registry(manifest.suite_id),
@@ -822,6 +837,7 @@ def main(argv: list[str] | None = None) -> int:
                 in {
                     "application-events",
                     "compiler",
+                    "outcome",
                     "retry",
                     "runtime",
                     "sequence",

@@ -762,6 +762,62 @@ def load_typed_ports_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
     return tuple(cases)
 
 
+def load_outcome_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
+    raw_cases = _load_tck_cases_json(path, "outcome")
+    if not isinstance(raw_cases, list):
+        raise ValueError("outcome TCK root must be a list")
+    cases: list[TckCase] = []
+    required_fields_by_scenario = {
+        "normalize_outcome": {"name", "scenario", "outcome", "expected"},
+        "evaluate_readiness": {
+            "name",
+            "scenario",
+            "signals",
+            "dependencies",
+            "expected",
+        },
+    }
+    for index, raw_case in enumerate(raw_cases):
+        if not isinstance(raw_case, Mapping):
+            raise ValueError(f"outcome TCK case {index} must be a mapping")
+        case_id = raw_case.get("name")
+        if not isinstance(case_id, str) or not case_id.strip():
+            raise ValueError(f"outcome TCK case {index} requires name")
+        if "request" in raw_case:
+            if set(raw_case) != {"name", "request", "expected"}:
+                raise ValueError(
+                    f"outcome TCK case {case_id} wrapper must contain exactly "
+                    "expected, name, request"
+                )
+            expected = raw_case.get("expected")
+            if not isinstance(expected, Mapping):
+                raise ValueError(
+                    f"outcome TCK case {case_id} requires expected result"
+                )
+            cases.append(TckCase.outcome(case_id=case_id, fixture=dict(raw_case)))
+            continue
+        scenario = raw_case.get("scenario")
+        if not isinstance(scenario, str):
+            raise ValueError(
+                f"outcome TCK case {case_id} has unsupported scenario {scenario!r}"
+            )
+        required_fields = required_fields_by_scenario.get(scenario)
+        if required_fields is None:
+            raise ValueError(
+                f"outcome TCK case {case_id} has unsupported scenario {scenario!r}"
+            )
+        if set(raw_case) != required_fields:
+            raise ValueError(
+                f"outcome TCK case {case_id} must contain exactly "
+                + ", ".join(sorted(required_fields))
+            )
+        expected = raw_case.get("expected")
+        if not isinstance(expected, Mapping):
+            raise ValueError(f"outcome TCK case {case_id} requires expected result")
+        cases.append(TckCase.outcome(case_id=case_id, fixture=dict(raw_case)))
+    return tuple(cases)
+
+
 def load_usage_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
     raw_cases = _load_tck_cases_json(path, "usage")
     if not isinstance(raw_cases, list):
@@ -1235,6 +1291,8 @@ def load_tck_cases_for_suite(suite: str, path: str | Path) -> tuple[TckCase, ...
         return load_exhaustion_tck_cases(path)
     if suite == "orchestration":
         return load_orchestration_tck_cases(path)
+    if suite == "outcome":
+        return load_outcome_tck_cases(path)
     if suite == "policy":
         return load_policy_tck_cases(path)
     if suite == "rag":

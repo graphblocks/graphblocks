@@ -1,0 +1,1502 @@
+[
+  {
+    "name": "normalize_value_outcome",
+    "scenario": "normalize_outcome",
+    "outcome": {
+      "status": "value",
+      "value": {
+        "answer": "ok",
+        "count": 1
+      }
+    },
+    "expected": {
+      "contractVersion": "graphblocks.outcome.tck.v1",
+      "ok": true,
+      "scenario": "normalize_outcome",
+      "outcome": {
+        "status": "value",
+        "value": {
+          "answer": "ok",
+          "count": 1
+        }
+      }
+    }
+  },
+  {
+    "name": "normalize_absent_outcome",
+    "scenario": "normalize_outcome",
+    "outcome": {
+      "status": "absent"
+    },
+    "expected": {
+      "contractVersion": "graphblocks.outcome.tck.v1",
+      "ok": true,
+      "scenario": "normalize_outcome",
+      "outcome": {
+        "status": "absent"
+      }
+    }
+  },
+  {
+    "name": "normalize_skipped_outcome",
+    "scenario": "normalize_outcome",
+    "outcome": {
+      "status": "skipped",
+      "reason": {
+        "code": "condition_false",
+        "message": "branch condition was false"
+      }
+    },
+    "expected": {
+      "contractVersion": "graphblocks.outcome.tck.v1",
+      "ok": true,
+      "scenario": "normalize_outcome",
+      "outcome": {
+        "status": "skipped",
+        "reason": {
+          "code": "condition_false",
+          "message": "branch condition was false"
+        }
+      }
+    }
+  },
+  {
+    "name": "normalize_denied_outcome",
+    "scenario": "normalize_outcome",
+    "outcome": {
+      "status": "denied",
+      "decisionId": "decision-1"
+    },
+    "expected": {
+      "contractVersion": "graphblocks.outcome.tck.v1",
+      "ok": true,
+      "scenario": "normalize_outcome",
+      "outcome": {
+        "status": "denied",
+        "decisionId": "decision-1"
+      }
+    }
+  },
+  {
+    "name": "normalize_budget_exhausted_outcome",
+    "scenario": "normalize_outcome",
+    "outcome": {
+      "status": "budget_exhausted",
+      "code": "budget.limit",
+      "message": "token budget exhausted"
+    },
+    "expected": {
+      "contractVersion": "graphblocks.outcome.tck.v1",
+      "ok": true,
+      "scenario": "normalize_outcome",
+      "outcome": {
+        "status": "budget_exhausted",
+        "code": "budget.limit",
+        "message": "token budget exhausted"
+      }
+    }
+  },
+  {
+    "name": "normalize_paused_outcome",
+    "scenario": "normalize_outcome",
+    "outcome": {
+      "status": "paused",
+      "code": "approval.required",
+      "message": null
+    },
+    "expected": {
+      "contractVersion": "graphblocks.outcome.tck.v1",
+      "ok": true,
+      "scenario": "normalize_outcome",
+      "outcome": {
+        "status": "paused",
+        "code": "approval.required",
+        "message": null
+      }
+    }
+  },
+  {
+    "name": "normalize_failed_outcome",
+    "scenario": "normalize_outcome",
+    "outcome": {
+      "status": "failed",
+      "error": {
+        "code": "provider.timeout",
+        "category": "timeout",
+        "message": "provider timed out",
+        "retryable": true,
+        "details": {
+          "attempt": 2
+        },
+        "causeChain": [
+          "provider.request"
+        ]
+      }
+    },
+    "expected": {
+      "contractVersion": "graphblocks.outcome.tck.v1",
+      "ok": true,
+      "scenario": "normalize_outcome",
+      "outcome": {
+        "status": "failed",
+        "error": {
+          "code": "provider.timeout",
+          "category": "timeout",
+          "message": "provider timed out",
+          "retryable": true,
+          "details": {
+            "attempt": 2
+          },
+          "causeChain": [
+            "provider.request"
+          ]
+        }
+      }
+    }
+  },
+  {
+    "name": "normalize_cancelled_outcome",
+    "scenario": "normalize_outcome",
+    "outcome": {
+      "status": "cancelled",
+      "reason": {
+        "code": "user_cancel",
+        "message": "cancelled by user",
+        "requestedBy": "principal-1",
+        "policyDecisionRef": null
+      }
+    },
+    "expected": {
+      "contractVersion": "graphblocks.outcome.tck.v1",
+      "ok": true,
+      "scenario": "normalize_outcome",
+      "outcome": {
+        "status": "cancelled",
+        "reason": {
+          "code": "user_cancel",
+          "message": "cancelled by user",
+          "requestedBy": "principal-1",
+          "policyDecisionRef": null
+        }
+      }
+    }
+  },
+  {
+    "name": "unknown_outcome_status_is_rejected",
+    "scenario": "normalize_outcome",
+    "outcome": {
+      "status": "unknown"
+    },
+    "expected": {
+      "contractVersion": "graphblocks.outcome.tck.v1",
+      "ok": false,
+      "scenario": "normalize_outcome",
+      "errorCategory": "invalid_outcome"
+    }
+  },
+  {
+    "name": "missing_failed_error_is_rejected",
+    "scenario": "normalize_outcome",
+    "outcome": {
+      "status": "failed"
+    },
+    "expected": {
+      "contractVersion": "graphblocks.outcome.tck.v1",
+      "ok": false,
+      "scenario": "normalize_outcome",
+      "errorCategory": "missing_field"
+    }
+  },
+  {
+    "name": "forbidden_absent_value_is_rejected",
+    "scenario": "normalize_outcome",
+    "outcome": {
+      "status": "absent",
+      "value": null
+    },
+    "expected": {
+      "contractVersion": "graphblocks.outcome.tck.v1",
+      "ok": false,
+      "scenario": "normalize_outcome",
+      "errorCategory": "forbidden_field"
+    }
+  },
+  {
+    "name": "unknown_outcome_field_is_rejected",
+    "scenario": "normalize_outcome",
+    "outcome": {
+      "status": "value",
+      "value": "ok",
+      "metadata": {}
+    },
+    "expected": {
+      "contractVersion": "graphblocks.outcome.tck.v1",
+      "ok": false,
+      "scenario": "normalize_outcome",
+      "errorCategory": "unknown_field"
+    }
+  },
+  {
+    "name": "blank_outcome_code_is_rejected",
+    "scenario": "normalize_outcome",
+    "outcome": {
+      "status": "skipped",
+      "reason": {
+        "code": " ",
+        "message": null
+      }
+    },
+    "expected": {
+      "contractVersion": "graphblocks.outcome.tck.v1",
+      "ok": false,
+      "scenario": "normalize_outcome",
+      "errorCategory": "invalid_identifier"
+    }
+  },
+  {
+    "name": "blank_human_message_is_rejected",
+    "scenario": "normalize_outcome",
+    "outcome": {
+      "status": "skipped",
+      "reason": {
+        "code": "condition_false",
+        "message": " "
+      }
+    },
+    "expected": {
+      "contractVersion": "graphblocks.outcome.tck.v1",
+      "ok": false,
+      "scenario": "normalize_outcome",
+      "errorCategory": "invalid_outcome"
+    }
+  },
+  {
+    "name": "control_character_in_cause_chain_is_rejected",
+    "scenario": "normalize_outcome",
+    "outcome": {
+      "status": "failed",
+      "error": {
+        "code": "provider.timeout",
+        "category": "timeout",
+        "message": "provider timed out",
+        "retryable": true,
+        "details": {},
+        "causeChain": [
+          "upstream\nfailure"
+        ]
+      }
+    },
+    "expected": {
+      "contractVersion": "graphblocks.outcome.tck.v1",
+      "ok": false,
+      "scenario": "normalize_outcome",
+      "errorCategory": "invalid_outcome"
+    }
+  },
+  {
+    "name": "noncanonical_denied_alias_is_rejected",
+    "scenario": "normalize_outcome",
+    "outcome": {
+      "status": "denied",
+      "decision_id": "decision-1"
+    },
+    "expected": {
+      "contractVersion": "graphblocks.outcome.tck.v1",
+      "ok": false,
+      "scenario": "normalize_outcome",
+      "errorCategory": "noncanonical_alias"
+    }
+  },
+  {
+    "name": "empty_dependencies_are_ready",
+    "scenario": "evaluate_readiness",
+    "signals": [],
+    "dependencies": [],
+    "expected": {
+      "contractVersion": "graphblocks.outcome.tck.v1",
+      "ok": true,
+      "scenario": "evaluate_readiness",
+      "readiness": {
+        "status": "ready",
+        "inputs": {}
+      }
+    }
+  },
+  {
+    "name": "missing_dependencies_preserve_input_order",
+    "scenario": "evaluate_readiness",
+    "signals": [],
+    "dependencies": [
+      {
+        "input": "first",
+        "source": {
+          "node": "a",
+          "port": "value"
+        },
+        "mode": "value"
+      },
+      {
+        "input": "second",
+        "source": {
+          "node": "b",
+          "port": "value"
+        },
+        "mode": "value"
+      }
+    ],
+    "expected": {
+      "contractVersion": "graphblocks.outcome.tck.v1",
+      "ok": true,
+      "scenario": "evaluate_readiness",
+      "readiness": {
+        "status": "waiting",
+        "missing": [
+          {
+            "node": "a",
+            "port": "value"
+          },
+          {
+            "node": "b",
+            "port": "value"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "name": "null_value_is_ready",
+    "scenario": "evaluate_readiness",
+    "signals": [
+      {
+        "portRef": {
+          "node": "source",
+          "port": "value"
+        },
+        "outcome": {
+          "status": "value",
+          "value": null
+        }
+      }
+    ],
+    "dependencies": [
+      {
+        "input": "message",
+        "source": {
+          "node": "source",
+          "port": "value"
+        },
+        "mode": "value"
+      }
+    ],
+    "expected": {
+      "contractVersion": "graphblocks.outcome.tck.v1",
+      "ok": true,
+      "scenario": "evaluate_readiness",
+      "readiness": {
+        "status": "ready",
+        "inputs": {
+          "message": {
+            "mode": "value",
+            "value": null
+          }
+        }
+      }
+    }
+  },
+  {
+    "name": "absent_value_dependency_is_blocked",
+    "scenario": "evaluate_readiness",
+    "signals": [
+      {
+        "portRef": {
+          "node": "branch",
+          "port": "maybe"
+        },
+        "outcome": {
+          "status": "absent"
+        }
+      }
+    ],
+    "dependencies": [
+      {
+        "input": "value",
+        "source": {
+          "node": "branch",
+          "port": "maybe"
+        },
+        "mode": "value"
+      }
+    ],
+    "expected": {
+      "contractVersion": "graphblocks.outcome.tck.v1",
+      "ok": true,
+      "scenario": "evaluate_readiness",
+      "readiness": {
+        "status": "blocked",
+        "input": "value",
+        "source": {
+          "node": "branch",
+          "port": "maybe"
+        },
+        "outcome": {
+          "status": "absent"
+        }
+      }
+    }
+  },
+  {
+    "name": "outcome_mode_preserves_terminal_outcome",
+    "scenario": "evaluate_readiness",
+    "signals": [
+      {
+        "portRef": {
+          "node": "worker",
+          "port": "result"
+        },
+        "outcome": {
+          "status": "cancelled",
+          "reason": {
+            "code": "timeout",
+            "message": "deadline elapsed",
+            "requestedBy": null,
+            "policyDecisionRef": null
+          }
+        }
+      }
+    ],
+    "dependencies": [
+      {
+        "input": "workerOutcome",
+        "source": {
+          "node": "worker",
+          "port": "result"
+        },
+        "mode": "outcome"
+      }
+    ],
+    "expected": {
+      "contractVersion": "graphblocks.outcome.tck.v1",
+      "ok": true,
+      "scenario": "evaluate_readiness",
+      "readiness": {
+        "status": "ready",
+        "inputs": {
+          "workerOutcome": {
+            "mode": "outcome",
+            "outcome": {
+              "status": "cancelled",
+              "reason": {
+                "code": "timeout",
+                "message": "deadline elapsed",
+                "requestedBy": null,
+                "policyDecisionRef": null
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  {
+    "name": "duplicate_dependency_input_is_rejected",
+    "scenario": "evaluate_readiness",
+    "signals": [],
+    "dependencies": [
+      {
+        "input": "value",
+        "source": {
+          "node": "first",
+          "port": "value"
+        },
+        "mode": "value"
+      },
+      {
+        "input": "value",
+        "source": {
+          "node": "second",
+          "port": "value"
+        },
+        "mode": "outcome"
+      }
+    ],
+    "expected": {
+      "contractVersion": "graphblocks.outcome.tck.v1",
+      "ok": false,
+      "scenario": "evaluate_readiness",
+      "errorCategory": "duplicate_dependency"
+    }
+  },
+  {
+    "name": "duplicate_signal_port_is_rejected",
+    "scenario": "evaluate_readiness",
+    "signals": [
+      {
+        "portRef": {
+          "node": "source",
+          "port": "value"
+        },
+        "outcome": {
+          "status": "value",
+          "value": "first"
+        }
+      },
+      {
+        "portRef": {
+          "node": "source",
+          "port": "value"
+        },
+        "outcome": {
+          "status": "value",
+          "value": "second"
+        }
+      }
+    ],
+    "dependencies": [],
+    "expected": {
+      "contractVersion": "graphblocks.outcome.tck.v1",
+      "ok": false,
+      "scenario": "evaluate_readiness",
+      "errorCategory": "duplicate_signal"
+    }
+  },
+  {
+    "name": "blank_signal_identifier_is_rejected",
+    "scenario": "evaluate_readiness",
+    "signals": [
+      {
+        "portRef": {
+          "node": " ",
+          "port": "value"
+        },
+        "outcome": {
+          "status": "value",
+          "value": "ignored"
+        }
+      }
+    ],
+    "dependencies": [],
+    "expected": {
+      "contractVersion": "graphblocks.outcome.tck.v1",
+      "ok": false,
+      "scenario": "evaluate_readiness",
+      "errorCategory": "invalid_identifier"
+    }
+  },
+  {
+    "name": "missing_value_field_is_rejected",
+    "request": {
+      "name": "missing-value-field",
+      "scenario": "normalize_outcome",
+      "outcome": {
+        "status": "value"
+      }
+    },
+    "expected": {
+      "contractVersion": "graphblocks.outcome.tck.v1",
+      "ok": false,
+      "scenario": "normalize_outcome",
+      "errorCategory": "missing_field"
+    }
+  },
+  {
+    "name": "outcome_kind_alias_is_rejected",
+    "request": {
+      "name": "outcome-kind-alias",
+      "scenario": "normalize_outcome",
+      "outcome": {
+        "kind": "absent"
+      }
+    },
+    "expected": {
+      "contractVersion": "graphblocks.outcome.tck.v1",
+      "ok": false,
+      "scenario": "normalize_outcome",
+      "errorCategory": "noncanonical_alias"
+    }
+  },
+  {
+    "name": "value_payload_alias_is_rejected",
+    "request": {
+      "name": "value-payload-alias",
+      "scenario": "normalize_outcome",
+      "outcome": {
+        "status": "value",
+        "payload": "not-canonical"
+      }
+    },
+    "expected": {
+      "contractVersion": "graphblocks.outcome.tck.v1",
+      "ok": false,
+      "scenario": "normalize_outcome",
+      "errorCategory": "noncanonical_alias"
+    }
+  },
+  {
+    "name": "absent_payload_alias_is_forbidden",
+    "request": {
+      "name": "absent-payload-forbidden",
+      "scenario": "normalize_outcome",
+      "outcome": {
+        "status": "absent",
+        "payload": null
+      }
+    },
+    "expected": {
+      "contractVersion": "graphblocks.outcome.tck.v1",
+      "ok": false,
+      "scenario": "normalize_outcome",
+      "errorCategory": "forbidden_field"
+    }
+  },
+  {
+    "name": "failed_cause_chain_alias_is_rejected",
+    "request": {
+      "name": "failed-cause-chain-alias",
+      "scenario": "normalize_outcome",
+      "outcome": {
+        "status": "failed",
+        "error": {
+          "code": "provider.timeout",
+          "category": "timeout",
+          "message": "provider timed out",
+          "retryable": true,
+          "details": {},
+          "cause_chain": []
+        }
+      }
+    },
+    "expected": {
+      "contractVersion": "graphblocks.outcome.tck.v1",
+      "ok": false,
+      "scenario": "normalize_outcome",
+      "errorCategory": "noncanonical_alias"
+    }
+  },
+  {
+    "name": "cancelled_requested_by_alias_is_rejected",
+    "request": {
+      "name": "cancelled-requested-by-alias",
+      "scenario": "normalize_outcome",
+      "outcome": {
+        "status": "cancelled",
+        "reason": {
+          "code": "user_cancel",
+          "message": "cancelled by user",
+          "requested_by": "principal-1",
+          "policyDecisionRef": null
+        }
+      }
+    },
+    "expected": {
+      "contractVersion": "graphblocks.outcome.tck.v1",
+      "ok": false,
+      "scenario": "normalize_outcome",
+      "errorCategory": "noncanonical_alias"
+    }
+  },
+  {
+    "name": "wrong_level_requested_by_is_unknown",
+    "request": {
+      "name": "wrong-level-requested-by",
+      "scenario": "normalize_outcome",
+      "outcome": {
+        "status": "cancelled",
+        "reason": {
+          "code": "user_cancel",
+          "message": null,
+          "requestedBy": null,
+          "policyDecisionRef": null
+        },
+        "requested_by": "principal-1"
+      }
+    },
+    "expected": {
+      "contractVersion": "graphblocks.outcome.tck.v1",
+      "ok": false,
+      "scenario": "normalize_outcome",
+      "errorCategory": "unknown_field"
+    }
+  },
+  {
+    "name": "signal_port_ref_alias_is_rejected",
+    "request": {
+      "name": "signal-port-ref-alias",
+      "scenario": "evaluate_readiness",
+      "signals": [
+        {
+          "port_ref": {
+            "node": "source",
+            "port": "value"
+          },
+          "outcome": {
+            "status": "absent"
+          }
+        }
+      ],
+      "dependencies": []
+    },
+    "expected": {
+      "contractVersion": "graphblocks.outcome.tck.v1",
+      "ok": false,
+      "scenario": "evaluate_readiness",
+      "errorCategory": "noncanonical_alias"
+    }
+  },
+  {
+    "name": "signal_wrong_level_node_is_unknown",
+    "request": {
+      "name": "signal-wrong-level-node",
+      "scenario": "evaluate_readiness",
+      "signals": [
+        {
+          "portRef": {
+            "node": "source",
+            "port": "value"
+          },
+          "outcome": {
+            "status": "absent"
+          },
+          "node": "source"
+        }
+      ],
+      "dependencies": []
+    },
+    "expected": {
+      "contractVersion": "graphblocks.outcome.tck.v1",
+      "ok": false,
+      "scenario": "evaluate_readiness",
+      "errorCategory": "unknown_field"
+    }
+  },
+  {
+    "name": "dependency_source_path_is_unknown",
+    "request": {
+      "name": "dependency-source-path",
+      "scenario": "evaluate_readiness",
+      "signals": [],
+      "dependencies": [
+        {
+          "input": "value",
+          "source": {
+            "node": "source",
+            "port": "value"
+          },
+          "mode": "value",
+          "source_path": "$.value"
+        }
+      ]
+    },
+    "expected": {
+      "contractVersion": "graphblocks.outcome.tck.v1",
+      "ok": false,
+      "scenario": "evaluate_readiness",
+      "errorCategory": "unknown_field"
+    }
+  },
+  {
+    "name": "missing_scenario_is_rejected",
+    "request": {
+      "name": "missing-scenario",
+      "outcome": {
+        "status": "absent"
+      }
+    },
+    "expected": {
+      "contractVersion": "graphblocks.outcome.tck.v1",
+      "ok": false,
+      "scenario": "",
+      "errorCategory": "missing_field"
+    }
+  },
+  {
+    "name": "non_string_scenario_is_rejected",
+    "request": {
+      "name": "non-string-scenario",
+      "scenario": 1,
+      "outcome": {
+        "status": "absent"
+      }
+    },
+    "expected": {
+      "contractVersion": "graphblocks.outcome.tck.v1",
+      "ok": false,
+      "scenario": "",
+      "errorCategory": "invalid_outcome"
+    }
+  },
+  {
+    "name": "unsupported_scenario_is_rejected",
+    "request": {
+      "name": "unsupported-scenario",
+      "scenario": "future_outcome",
+      "outcome": {
+        "status": "absent"
+      }
+    },
+    "expected": {
+      "contractVersion": "graphblocks.outcome.tck.v1",
+      "ok": false,
+      "scenario": "future_outcome",
+      "errorCategory": "unsupported_scenario"
+    }
+  },
+  {
+    "name": "non_array_signals_are_rejected",
+    "request": {
+      "name": "non-array-signals",
+      "scenario": "evaluate_readiness",
+      "signals": {},
+      "dependencies": []
+    },
+    "expected": {
+      "contractVersion": "graphblocks.outcome.tck.v1",
+      "ok": false,
+      "scenario": "evaluate_readiness",
+      "errorCategory": "invalid_readiness"
+    }
+  },
+  {
+    "name": "non_array_dependencies_are_rejected",
+    "request": {
+      "name": "non-array-dependencies",
+      "scenario": "evaluate_readiness",
+      "signals": [],
+      "dependencies": {}
+    },
+    "expected": {
+      "contractVersion": "graphblocks.outcome.tck.v1",
+      "ok": false,
+      "scenario": "evaluate_readiness",
+      "errorCategory": "invalid_readiness"
+    }
+  },
+  {
+    "name": "invalid_dependency_mode_is_rejected",
+    "request": {
+      "name": "invalid-dependency-mode",
+      "scenario": "evaluate_readiness",
+      "signals": [],
+      "dependencies": [
+        {
+          "input": "value",
+          "source": {
+            "node": "source",
+            "port": "value"
+          },
+          "mode": "optional"
+        }
+      ]
+    },
+    "expected": {
+      "contractVersion": "graphblocks.outcome.tck.v1",
+      "ok": false,
+      "scenario": "evaluate_readiness",
+      "errorCategory": "invalid_readiness"
+    }
+  },
+  {
+    "name": "non_string_request_name_is_rejected",
+    "request": {
+      "name": 1,
+      "scenario": "normalize_outcome",
+      "outcome": {
+        "status": "absent"
+      }
+    },
+    "expected": {
+      "contractVersion": "graphblocks.outcome.tck.v1",
+      "ok": false,
+      "scenario": "normalize_outcome",
+      "errorCategory": "invalid_identifier"
+    }
+  },
+  {
+    "name": "unknown_field_precedes_non_string_name",
+    "request": {
+      "name": 1,
+      "scenario": "normalize_outcome",
+      "outcome": {
+        "status": "absent"
+      },
+      "unexpected": true
+    },
+    "expected": {
+      "contractVersion": "graphblocks.outcome.tck.v1",
+      "ok": false,
+      "scenario": "normalize_outcome",
+      "errorCategory": "unknown_field"
+    }
+  },
+  {
+    "name": "forbidden_decision_precedes_missing_skipped_reason",
+    "request": {
+      "name": "skipped-forbidden-before-missing",
+      "scenario": "normalize_outcome",
+      "outcome": {
+        "status": "skipped",
+        "decisionId": "decision-1"
+      }
+    },
+    "expected": {
+      "contractVersion": "graphblocks.outcome.tck.v1",
+      "ok": false,
+      "scenario": "normalize_outcome",
+      "errorCategory": "forbidden_field"
+    }
+  },
+  {
+    "name": "nested_reason_missing_field_is_rejected",
+    "request": {
+      "name": "reason-missing-field",
+      "scenario": "normalize_outcome",
+      "outcome": {
+        "status": "skipped",
+        "reason": {
+          "message": null
+        }
+      }
+    },
+    "expected": {
+      "contractVersion": "graphblocks.outcome.tck.v1",
+      "ok": false,
+      "scenario": "normalize_outcome",
+      "errorCategory": "missing_field"
+    }
+  },
+  {
+    "name": "nested_reason_unknown_field_is_rejected",
+    "request": {
+      "name": "reason-unknown-field",
+      "scenario": "normalize_outcome",
+      "outcome": {
+        "status": "skipped",
+        "reason": {
+          "code": "condition_false",
+          "message": null,
+          "details": {}
+        }
+      }
+    },
+    "expected": {
+      "contractVersion": "graphblocks.outcome.tck.v1",
+      "ok": false,
+      "scenario": "normalize_outcome",
+      "errorCategory": "unknown_field"
+    }
+  },
+  {
+    "name": "nested_reason_wrong_type_is_rejected",
+    "request": {
+      "name": "reason-wrong-type",
+      "scenario": "normalize_outcome",
+      "outcome": {
+        "status": "skipped",
+        "reason": []
+      }
+    },
+    "expected": {
+      "contractVersion": "graphblocks.outcome.tck.v1",
+      "ok": false,
+      "scenario": "normalize_outcome",
+      "errorCategory": "invalid_outcome"
+    }
+  },
+  {
+    "name": "nested_error_missing_field_is_rejected",
+    "request": {
+      "name": "error-missing-field",
+      "scenario": "normalize_outcome",
+      "outcome": {
+        "status": "failed",
+        "error": {
+          "code": "provider.timeout",
+          "category": "timeout",
+          "message": "provider timed out",
+          "retryable": true,
+          "details": {}
+        }
+      }
+    },
+    "expected": {
+      "contractVersion": "graphblocks.outcome.tck.v1",
+      "ok": false,
+      "scenario": "normalize_outcome",
+      "errorCategory": "missing_field"
+    }
+  },
+  {
+    "name": "nested_error_unknown_field_is_rejected",
+    "request": {
+      "name": "error-unknown-field",
+      "scenario": "normalize_outcome",
+      "outcome": {
+        "status": "failed",
+        "error": {
+          "code": "provider.timeout",
+          "category": "timeout",
+          "message": "provider timed out",
+          "retryable": true,
+          "details": {},
+          "causeChain": [],
+          "provider": "example"
+        }
+      }
+    },
+    "expected": {
+      "contractVersion": "graphblocks.outcome.tck.v1",
+      "ok": false,
+      "scenario": "normalize_outcome",
+      "errorCategory": "unknown_field"
+    }
+  },
+  {
+    "name": "nested_error_wrong_type_is_rejected",
+    "request": {
+      "name": "error-wrong-type",
+      "scenario": "normalize_outcome",
+      "outcome": {
+        "status": "failed",
+        "error": []
+      }
+    },
+    "expected": {
+      "contractVersion": "graphblocks.outcome.tck.v1",
+      "ok": false,
+      "scenario": "normalize_outcome",
+      "errorCategory": "invalid_outcome"
+    }
+  },
+  {
+    "name": "non_object_signal_is_invalid_readiness",
+    "request": {
+      "name": "non-object-signal",
+      "scenario": "evaluate_readiness",
+      "signals": [1],
+      "dependencies": []
+    },
+    "expected": {
+      "contractVersion": "graphblocks.outcome.tck.v1",
+      "ok": false,
+      "scenario": "evaluate_readiness",
+      "errorCategory": "invalid_readiness"
+    }
+  },
+  {
+    "name": "non_object_dependency_is_invalid_readiness",
+    "request": {
+      "name": "non-object-dependency",
+      "scenario": "evaluate_readiness",
+      "signals": [],
+      "dependencies": [1]
+    },
+    "expected": {
+      "contractVersion": "graphblocks.outcome.tck.v1",
+      "ok": false,
+      "scenario": "evaluate_readiness",
+      "errorCategory": "invalid_readiness"
+    }
+  },
+  {
+    "name": "non_object_signal_port_is_invalid_readiness",
+    "request": {
+      "name": "non-object-signal-port",
+      "scenario": "evaluate_readiness",
+      "signals": [
+        {
+          "portRef": [],
+          "outcome": {"status": "absent"}
+        }
+      ],
+      "dependencies": []
+    },
+    "expected": {
+      "contractVersion": "graphblocks.outcome.tck.v1",
+      "ok": false,
+      "scenario": "evaluate_readiness",
+      "errorCategory": "invalid_readiness"
+    }
+  },
+  {
+    "name": "non_string_signal_port_identifier_is_rejected",
+    "request": {
+      "name": "non-string-signal-port",
+      "scenario": "evaluate_readiness",
+      "signals": [
+        {
+          "portRef": {"node": 1, "port": "result"},
+          "outcome": {"status": "absent"}
+        }
+      ],
+      "dependencies": []
+    },
+    "expected": {
+      "contractVersion": "graphblocks.outcome.tck.v1",
+      "ok": false,
+      "scenario": "evaluate_readiness",
+      "errorCategory": "invalid_identifier"
+    }
+  },
+  {
+    "name": "non_string_dependency_input_is_rejected",
+    "request": {
+      "name": "non-string-dependency-input",
+      "scenario": "evaluate_readiness",
+      "signals": [],
+      "dependencies": [
+        {
+          "input": 1,
+          "source": {"node": "source", "port": "result"},
+          "mode": "value"
+        }
+      ]
+    },
+    "expected": {
+      "contractVersion": "graphblocks.outcome.tck.v1",
+      "ok": false,
+      "scenario": "evaluate_readiness",
+      "errorCategory": "invalid_identifier"
+    }
+  },
+  {
+    "name": "non_string_dependency_mode_is_invalid_readiness",
+    "request": {
+      "name": "non-string-dependency-mode",
+      "scenario": "evaluate_readiness",
+      "signals": [],
+      "dependencies": [
+        {
+          "input": "payload",
+          "source": {"node": "source", "port": "result"},
+          "mode": 1
+        }
+      ]
+    },
+    "expected": {
+      "contractVersion": "graphblocks.outcome.tck.v1",
+      "ok": false,
+      "scenario": "evaluate_readiness",
+      "errorCategory": "invalid_readiness"
+    }
+  },
+  {
+    "name": "duplicate_signal_precedes_malformed_outcome",
+    "request": {
+      "name": "duplicate-signal-precedence",
+      "scenario": "evaluate_readiness",
+      "signals": [
+        {
+          "portRef": {"node": "source", "port": "result"},
+          "outcome": {"status": "absent"}
+        },
+        {
+          "portRef": {"node": "source", "port": "result"},
+          "outcome": []
+        }
+      ],
+      "dependencies": []
+    },
+    "expected": {
+      "contractVersion": "graphblocks.outcome.tck.v1",
+      "ok": false,
+      "scenario": "evaluate_readiness",
+      "errorCategory": "duplicate_signal"
+    }
+  },
+  {
+    "name": "duplicate_dependency_precedes_malformed_source_and_mode",
+    "request": {
+      "name": "duplicate-dependency-precedence",
+      "scenario": "evaluate_readiness",
+      "signals": [],
+      "dependencies": [
+        {
+          "input": "payload",
+          "source": {"node": "source", "port": "result"},
+          "mode": "value"
+        },
+        {
+          "input": "payload",
+          "source": [],
+          "mode": 1
+        }
+      ]
+    },
+    "expected": {
+      "contractVersion": "graphblocks.outcome.tck.v1",
+      "ok": false,
+      "scenario": "evaluate_readiness",
+      "errorCategory": "duplicate_dependency"
+    }
+  },
+  {
+    "name": "invalid_status_precedes_kind_alias",
+    "request": {
+      "name": "invalid-status-before-kind",
+      "scenario": "normalize_outcome",
+      "outcome": {"status": 1, "kind": "absent"}
+    },
+    "expected": {
+      "contractVersion": "graphblocks.outcome.tck.v1",
+      "ok": false,
+      "scenario": "normalize_outcome",
+      "errorCategory": "invalid_outcome"
+    }
+  },
+  {
+    "name": "non_string_skipped_code_is_invalid_identifier",
+    "request": {
+      "name": "non-string-skipped-code",
+      "scenario": "normalize_outcome",
+      "outcome": {
+        "status": "skipped",
+        "reason": {"code": 1, "message": null}
+      }
+    },
+    "expected": {
+      "contractVersion": "graphblocks.outcome.tck.v1",
+      "ok": false,
+      "scenario": "normalize_outcome",
+      "errorCategory": "invalid_identifier"
+    }
+  },
+  {
+    "name": "non_string_decision_id_is_invalid_identifier",
+    "request": {
+      "name": "non-string-decision-id",
+      "scenario": "normalize_outcome",
+      "outcome": {"status": "denied", "decisionId": 1}
+    },
+    "expected": {
+      "contractVersion": "graphblocks.outcome.tck.v1",
+      "ok": false,
+      "scenario": "normalize_outcome",
+      "errorCategory": "invalid_identifier"
+    }
+  },
+  {
+    "name": "non_string_budget_code_is_invalid_identifier",
+    "request": {
+      "name": "non-string-budget-code",
+      "scenario": "normalize_outcome",
+      "outcome": {"status": "budget_exhausted", "code": 1, "message": null}
+    },
+    "expected": {
+      "contractVersion": "graphblocks.outcome.tck.v1",
+      "ok": false,
+      "scenario": "normalize_outcome",
+      "errorCategory": "invalid_identifier"
+    }
+  },
+  {
+    "name": "non_string_pause_code_is_invalid_identifier",
+    "request": {
+      "name": "non-string-pause-code",
+      "scenario": "normalize_outcome",
+      "outcome": {"status": "paused", "code": 1, "message": null}
+    },
+    "expected": {
+      "contractVersion": "graphblocks.outcome.tck.v1",
+      "ok": false,
+      "scenario": "normalize_outcome",
+      "errorCategory": "invalid_identifier"
+    }
+  },
+  {
+    "name": "non_string_error_code_is_invalid_identifier",
+    "request": {
+      "name": "non-string-error-code",
+      "scenario": "normalize_outcome",
+      "outcome": {
+        "status": "failed",
+        "error": {
+          "code": 1,
+          "category": "timeout",
+          "message": "provider timed out",
+          "retryable": true,
+          "details": {},
+          "causeChain": []
+        }
+      }
+    },
+    "expected": {
+      "contractVersion": "graphblocks.outcome.tck.v1",
+      "ok": false,
+      "scenario": "normalize_outcome",
+      "errorCategory": "invalid_identifier"
+    }
+  },
+  {
+    "name": "non_string_cancel_code_is_invalid_identifier",
+    "request": {
+      "name": "non-string-cancel-code",
+      "scenario": "normalize_outcome",
+      "outcome": {
+        "status": "cancelled",
+        "reason": {
+          "code": 1,
+          "message": null,
+          "requestedBy": null,
+          "policyDecisionRef": null
+        }
+      }
+    },
+    "expected": {
+      "contractVersion": "graphblocks.outcome.tck.v1",
+      "ok": false,
+      "scenario": "normalize_outcome",
+      "errorCategory": "invalid_identifier"
+    }
+  },
+  {
+    "name": "non_string_requested_by_is_invalid_identifier",
+    "request": {
+      "name": "non-string-requested-by",
+      "scenario": "normalize_outcome",
+      "outcome": {
+        "status": "cancelled",
+        "reason": {
+          "code": "user_cancel",
+          "message": null,
+          "requestedBy": 1,
+          "policyDecisionRef": null
+        }
+      }
+    },
+    "expected": {
+      "contractVersion": "graphblocks.outcome.tck.v1",
+      "ok": false,
+      "scenario": "normalize_outcome",
+      "errorCategory": "invalid_identifier"
+    }
+  },
+  {
+    "name": "non_string_policy_decision_ref_is_invalid_identifier",
+    "request": {
+      "name": "non-string-policy-decision-ref",
+      "scenario": "normalize_outcome",
+      "outcome": {
+        "status": "cancelled",
+        "reason": {
+          "code": "user_cancel",
+          "message": null,
+          "requestedBy": null,
+          "policyDecisionRef": 1
+        }
+      }
+    },
+    "expected": {
+      "contractVersion": "graphblocks.outcome.tck.v1",
+      "ok": false,
+      "scenario": "normalize_outcome",
+      "errorCategory": "invalid_identifier"
+    }
+  },
+  {
+    "name": "invalid_skipped_code_precedes_malformed_message",
+    "request": {
+      "name": "skipped-code-precedence",
+      "scenario": "normalize_outcome",
+      "outcome": {
+        "status": "skipped",
+        "reason": {"code": " value ", "message": 1}
+      }
+    },
+    "expected": {
+      "contractVersion": "graphblocks.outcome.tck.v1",
+      "ok": false,
+      "scenario": "normalize_outcome",
+      "errorCategory": "invalid_identifier"
+    }
+  },
+  {
+    "name": "invalid_budget_code_precedes_malformed_message",
+    "request": {
+      "name": "budget-code-precedence",
+      "scenario": "normalize_outcome",
+      "outcome": {"status": "budget_exhausted", "code": "", "message": 1}
+    },
+    "expected": {
+      "contractVersion": "graphblocks.outcome.tck.v1",
+      "ok": false,
+      "scenario": "normalize_outcome",
+      "errorCategory": "invalid_identifier"
+    }
+  },
+  {
+    "name": "invalid_pause_code_precedes_malformed_message",
+    "request": {
+      "name": "pause-code-precedence",
+      "scenario": "normalize_outcome",
+      "outcome": {"status": "paused", "code": " value ", "message": 1}
+    },
+    "expected": {
+      "contractVersion": "graphblocks.outcome.tck.v1",
+      "ok": false,
+      "scenario": "normalize_outcome",
+      "errorCategory": "invalid_identifier"
+    }
+  },
+  {
+    "name": "invalid_error_code_precedes_all_later_fields",
+    "request": {
+      "name": "error-code-precedence",
+      "scenario": "normalize_outcome",
+      "outcome": {
+        "status": "failed",
+        "error": {
+          "code": "",
+          "category": 1,
+          "message": 1,
+          "retryable": "yes",
+          "details": [],
+          "causeChain": 1
+        }
+      }
+    },
+    "expected": {
+      "contractVersion": "graphblocks.outcome.tck.v1",
+      "ok": false,
+      "scenario": "normalize_outcome",
+      "errorCategory": "invalid_identifier"
+    }
+  },
+  {
+    "name": "invalid_cancel_code_precedes_later_reason_fields",
+    "request": {
+      "name": "cancel-code-precedence",
+      "scenario": "normalize_outcome",
+      "outcome": {
+        "status": "cancelled",
+        "reason": {
+          "code": " value ",
+          "message": 1,
+          "requestedBy": 1,
+          "policyDecisionRef": 1
+        }
+      }
+    },
+    "expected": {
+      "contractVersion": "graphblocks.outcome.tck.v1",
+      "ok": false,
+      "scenario": "normalize_outcome",
+      "errorCategory": "invalid_identifier"
+    }
+  },
+  {
+    "name": "invalid_dependency_input_precedes_source_and_mode",
+    "request": {
+      "name": "dependency-input-precedence",
+      "scenario": "evaluate_readiness",
+      "signals": [],
+      "dependencies": [
+        {"input": " value ", "source": [], "mode": 1}
+      ]
+    },
+    "expected": {
+      "contractVersion": "graphblocks.outcome.tck.v1",
+      "ok": false,
+      "scenario": "evaluate_readiness",
+      "errorCategory": "invalid_identifier"
+    }
+  }
+]
