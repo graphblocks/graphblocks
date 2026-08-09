@@ -541,7 +541,7 @@ available. Supported installed-wheel evidence compares public, reference, and
 direct-native results over the complete shared resource corpora and binds the
 corpus to the exact runtime artifact. The audit inventory's `GB-ARCH-001` and
 `GB-ARCH-002` implementation findings have executable closure evidence; the
-separate release transition remains blocked on four stable C1 requirements,
+separate release transition remains blocked on three stable C1 requirements,
 restart-independent local correctness, and panic-free Rust public boundaries.
 The native binding exposes a separate
 versioned,
@@ -567,8 +567,8 @@ validation/migration utility slices. The complete schema and C1 runtime suite
 claims are phase-scoped: the bundled stable runtime suite now executes the Rust
 stdlib path with exact native/reference result and lifecycle comparison. The
 `application-events`, `retry`, `sequence`, `tool-execution`, `tool-lifecycle`,
-and `tool-result` suites also use installed Rust executors. All stable C1
-suites now have exact native/reference coverage.
+`tool-result`, and `typed-ports` suites also use installed Rust executors. All
+stable C1 suites now have exact native/reference coverage.
 This preserves
 the boundary for other schema-facing behavior and the remaining stable C1
 transition blockers.
@@ -607,6 +607,13 @@ The installed `tool-result` report executes all six shared preparation and
 stream-state fixtures in Rust and exact-compares the closed result contract
 with the Python oracle. Its evidence is assigned to
 `rust-tool-result-exact-differential` and the same exact runtime wheel.
+The installed compiler report covers nominal identity, requiredness, and
+nested-root validation. The installed `typed-ports` report adds exact Rust/Python
+contracts for typed Graph construction, canonical compilation, rejection at
+typed authoring boundaries, and local-runtime port preservation through
+`rust-typed-ports-exact-differential`. Together these promote only the typed
+Graph/compiler/local-runtime slice; generic typed-value transport and
+remote-boundary policy remain preview.
 The stable installed runtime API is now an explicit three-symbol allowlist with
 an exact signature snapshot. Its core execution result is projected to a
 closed checkpoint-free envelope, while persistence and other C4/X3 options use

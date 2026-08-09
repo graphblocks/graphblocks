@@ -29,6 +29,7 @@ _STABLE_TCK_SUITE_DIAGNOSTIC_CODES = {
     "tool-execution": "GB3007",
     "tool-lifecycle": "GB3008",
     "tool-result": "GB3009",
+    "typed-ports": "GB3010",
 }
 
 
@@ -75,6 +76,7 @@ TckCaseKind = Literal[
     "tool-lifecycle",
     "tool-execution",
     "tool-result",
+    "typed-ports",
     "usage",
     "voice",
 ]
@@ -103,6 +105,7 @@ _BUNDLED_TCK_SUITES = (
     "tool-execution",
     "tool-lifecycle",
     "tool-result",
+    "typed-ports",
 )
 _STABLE_RELEASE_PROFILES = ("GB-C0-SCHEMA", "GB-C1-LOCAL-RUNTIME")
 
@@ -338,6 +341,7 @@ _TCK_CASE_EVIDENCE_FIELDS = frozenset(
         "tool_lifecycle_fixture",
         "tool_execution_fixture",
         "tool_result_fixture",
+        "typed_ports_fixture",
         "usage_fixture",
         "voice_fixture",
         "approval_review_fixture",
@@ -401,6 +405,7 @@ class TckCase:
     tool_lifecycle_fixture: dict[str, object] = field(default_factory=dict)
     tool_execution_fixture: dict[str, object] = field(default_factory=dict)
     tool_result_fixture: dict[str, object] = field(default_factory=dict)
+    typed_ports_fixture: dict[str, object] = field(default_factory=dict)
     usage_fixture: dict[str, object] = field(default_factory=dict)
     voice_fixture: dict[str, object] = field(default_factory=dict)
     approval_review_fixture: dict[str, object] = field(default_factory=dict)
@@ -442,6 +447,7 @@ class TckCase:
             "tool-lifecycle",
             "tool-execution",
             "tool-result",
+            "typed-ports",
             "usage",
             "voice",
         }:
@@ -551,6 +557,7 @@ class TckCase:
             "tool_lifecycle_fixture",
             "tool_execution_fixture",
             "tool_result_fixture",
+            "typed_ports_fixture",
             "usage_fixture",
             "voice_fixture",
             "approval_review_fixture",
@@ -610,6 +617,8 @@ class TckCase:
             raise ValueError("tool-execution TCK case requires fixture")
         if self.kind == "tool-result" and not self.tool_result_fixture:
             raise ValueError("tool-result TCK case requires fixture")
+        if self.kind == "typed-ports" and not self.typed_ports_fixture:
+            raise ValueError("typed-ports TCK case requires fixture")
         if self.kind == "usage" and not self.usage_fixture:
             raise ValueError("usage TCK case requires fixture")
         if self.kind == "voice" and not self.voice_fixture:
@@ -874,6 +883,10 @@ class TckCase:
     @classmethod
     def tool_result(cls, *, case_id: str, fixture: dict[str, object]) -> TckCase:
         return cls(case_id=case_id, kind="tool-result", tool_result_fixture=fixture)
+
+    @classmethod
+    def typed_ports(cls, *, case_id: str, fixture: dict[str, object]) -> TckCase:
+        return cls(case_id=case_id, kind="typed-ports", typed_ports_fixture=fixture)
 
     @classmethod
     def usage(cls, *, case_id: str, fixture: dict[str, object]) -> TckCase:

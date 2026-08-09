@@ -96,6 +96,7 @@ from .fixture_loading import (
     load_tool_execution_tck_cases,
     load_tool_lifecycle_tck_cases,
     load_tool_result_tck_cases,
+    load_typed_ports_tck_cases,
     load_usage_tck_cases,
     load_voice_tck_cases,
 )
@@ -225,6 +226,7 @@ __all__ = [
     "load_tool_execution_tck_cases",
     "load_tool_lifecycle_tck_cases",
     "load_tool_result_tck_cases",
+    "load_typed_ports_tck_cases",
     "load_usage_tck_cases",
     "load_voice_tck_cases",
     "main",

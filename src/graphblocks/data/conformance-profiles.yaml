@@ -35,6 +35,7 @@ spec:
     - tool-execution
     - tool-lifecycle
     - tool-result
+    - typed-ports
   - id: GB-C2-AI-APPLICATION
     status: normative-profile
     extends:

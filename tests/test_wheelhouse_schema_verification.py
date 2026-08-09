@@ -604,6 +604,35 @@ def test_release_evidence_binds_native_reports_to_exact_runtime_wheel() -> None:
                             }
                         ],
                     },
+                    "typed-ports": {
+                        "ok": True,
+                        "evidence": {
+                            "fixture_digest": "sha256:" + "4" * 64,
+                            "implementation": "graphblocks-runtime",
+                            "implementation_version": "0.1.0",
+                            "implementation_artifact": observed_artifact,
+                            "suite": "typed-ports",
+                            "execution_claim": {
+                                "executor_id": "rust-typed-ports-exact-differential",
+                                "implementation": "graphblocks-runtime",
+                                "language": "rust",
+                                "comparison": "exact-native-reference",
+                                "reference_implementation": "graphblocks-python",
+                            },
+                        },
+                        "results": [
+                            {
+                                "case_id": "typed-ports/native",
+                                "status": "passed",
+                                "observed": {
+                                    "runtime": "native",
+                                    "native_reference_match": True,
+                                    "native_contract": {"ok": True},
+                                    "reference_contract": {"ok": True},
+                                },
+                            }
+                        ],
+                    },
                     "runtime": {
                         "ok": True,
                         "evidence": {
@@ -634,6 +663,19 @@ def test_release_evidence_binds_native_reports_to_exact_runtime_wheel() -> None:
         kind="TCK",
         expected_compiler_artifact=artifact,
     ) == valid
+
+    mismatched = payload(dict(artifact))
+    mismatched["reports"]["typed-ports"]["results"][0]["observed"][
+        "native_contract"
+    ] = {"ok": False}
+    mismatched.pop("contentDigest")
+    mismatched = _with_content_digest(module, mismatched)
+    with pytest.raises(RuntimeError, match="typed-ports TCK evidence is not exact"):
+        module._require_release_evidence(
+            mismatched,
+            kind="TCK",
+            expected_compiler_artifact=artifact,
+        )
 
     substituted = dict(artifact)
     substituted["sha256"] = "c" * 64
@@ -1176,6 +1218,21 @@ def test_default_tck_output_matches_source_derived_release_expectations(
         assert isinstance(reference_contract, dict)
         return json.loads(json.dumps(reference_contract))
 
+    def reference_typed_ports_tck_case_bridge(
+        raw_case: dict[str, object],
+    ) -> dict[str, object]:
+        case = graphblocks_testing.TckCase.typed_ports(
+            case_id=str(raw_case["name"]),
+            fixture=dict(raw_case),
+        )
+        result = graphblocks_testing.TckRunner(
+            graphblocks_testing.stdlib_registry()
+        ).run_cases((case,)).results[0]
+        assert result.status == "passed"
+        reference_contract = result.observed["reference_contract"]
+        assert isinstance(reference_contract, dict)
+        return json.loads(json.dumps(reference_contract))
+
     monkeypatch.setattr(
         graphblocks_runtime,
         "run_stdlib_graph",
@@ -1218,6 +1275,12 @@ def test_default_tck_output_matches_source_derived_release_expectations(
         graphblocks_runtime,
         "_evaluate_tool_result_tck_case",
         reference_tool_result_tck_case_bridge,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        graphblocks_runtime,
+        "_evaluate_typed_ports_tck_case",
+        reference_typed_ports_tck_case_bridge,
         raising=False,
     )
 
@@ -1442,6 +1505,7 @@ def test_stable_tck_expectations_bind_bundled_c0_c1_profiles_and_contract_digest
         "tool-execution",
         "tool-lifecycle",
         "tool-result",
+        "typed-ports",
     }
     assert str(expectations["schema_manifest_digest"]).startswith("sha256:")
     assert str(expectations["profile_catalog_digest"]).startswith("sha256:")
@@ -1585,6 +1649,25 @@ def test_stable_tck_expectations_bind_bundled_c0_c1_profiles_and_contract_digest
     assert expectations["suites"]["tool-result"][
         "reference_implementation_version"
     ] == "1.0.0rc1"
+    assert expectations["suites"]["typed-ports"]["implementation"] == (
+        "graphblocks-runtime"
+    )
+    assert expectations["suites"]["typed-ports"][
+        "implementation_version"
+    ] == "0.1.0"
+    assert expectations["suites"]["typed-ports"][
+        "implementation_artifact_distribution"
+    ] == "graphblocks-runtime"
+    assert expectations["suites"]["typed-ports"]["execution_claim"] == {
+        "executor_id": "rust-typed-ports-exact-differential",
+        "implementation": "graphblocks-runtime",
+        "language": "rust",
+        "comparison": "exact-native-reference",
+        "reference_implementation": "graphblocks-python",
+    }
+    assert expectations["suites"]["typed-ports"][
+        "reference_implementation_version"
+    ] == "1.0.0rc1"
     assert expectations["suites"]["runtime"]["implementation"] == (
         "graphblocks-runtime"
     )
@@ -1617,6 +1700,7 @@ def test_stable_tck_expectations_bind_bundled_c0_c1_profiles_and_contract_digest
             "tool-execution",
             "tool-lifecycle",
             "tool-result",
+            "typed-ports",
         }
     } == {"graphblocks-python"}
 

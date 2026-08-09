@@ -226,21 +226,57 @@ profiles:
           - GB-GCR-SCHEDULING-001
           - GB-GCR-LANGUAGE-BOUNDARY-001
         implementations:
+          normative:
+            - crates/graphblocks-compiler/src/compiler.rs
+            - crates/graphblocks-runtime-core/src/typed_graph.rs
+            - crates/graphblocks-python/src/lib.rs
+            - crates/graphblocks-python/src/typed_ports_tck.rs
+            - packages/graphblocks-runtime/src/graphblocks_runtime/__init__.py
+            - packages/graphblocks-testing/src/graphblocks_testing/cli.py
+            - packages/graphblocks-testing/src/graphblocks_testing/runners.py
           pythonFacadeAndReference:
             - src/graphblocks/compiler.py
             - src/graphblocks/plugins.py
             - src/graphblocks/runtime.py
             - src/graphblocks/typed.py
-          targetNormative:
-            - crates/graphblocks-runtime-core/src/typed_graph.rs
-            - crates/graphblocks-runtime-core/src/typed_value.rs
+        authoritySlices:
+          typedPortCompilationAndLocalRuntime:
+            status: normative
+            authority: rust
+            scope: nominal-port-identity-requiredness-nested-root-validation-and-local-runtime-port-preservation
+            normativeImplementations:
+              - crates/graphblocks-compiler/src/compiler.rs
+              - crates/graphblocks-runtime-core/src/typed_graph.rs
+              - crates/graphblocks-python/src/lib.rs
+              - crates/graphblocks-python/src/typed_ports_tck.rs
+            pythonFacadeAndReference:
+              - src/graphblocks/compiler.py
+              - src/graphblocks/plugins.py
+              - src/graphblocks/runtime.py
+              - src/graphblocks/typed.py
+            installedEvidence:
+              - packages/graphblocks-runtime/src/graphblocks_runtime/__init__.py
+              - packages/graphblocks-testing/src/graphblocks_testing/runners.py
+              - packages/graphblocks-testing/src/graphblocks_testing/cli.py
+              - tools/verify_wheelhouse.py
+              - tests/test_testing_package.py
+              - tests/test_wheelhouse_schema_verification.py
+              - tests/test_release_supply_chain.py
+            exclusions:
+              - Generic typed-value transport and remote-boundary policy remain preview and are not promoted by this slice.
+        scopeNotes:
+          - The normative slice combines the installed compiler corpus for nominal identity, requiredness, and nested-root validation with the typed-ports corpus for portable typed Graph authoring and exact local-runtime port preservation. crates/graphblocks-runtime-core/src/typed_value.rs remains a preview implementation detail outside this authority claim.
         schemas: []
-        tckSuites: [runtime]
+        tckSuites: [compiler, runtime, typed-ports]
         evidence:
           - tests/test_compiler_validation.py
           - tests/test_descriptor_validation.py
           - tests/test_typed_graph_typing.py
           - tests/test_runtime.py
+          - tests/test_testing_package.py
+          - tests/test_wheelhouse_schema_verification.py
+          - tests/test_release_supply_chain.py
+          - tck/typed-ports/cases.json
       - id: outcome
         clauses:
           - GB-GCR-SCHEDULING-001

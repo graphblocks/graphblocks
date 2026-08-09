@@ -9,7 +9,7 @@ release compatibility promise.
 | Graph compiler and canonical Plan identity | `compile_graph` is a fail-closed native facade; `compile_graph_reference` is the explicit oracle executed beside every installed compiler-TCK case | Normative compiler, exposed through the exact `graphblocks-runtime` wheel and accepted only when its complete Plan contract matches the Python oracle |
 | Cross-file YAML composition authoring | Implemented; materializes an expanded Graph | Does not resolve authoring sources; consumes expanded Graph YAML |
 | Typed code graph authoring | Implemented and mypy-tested for the stdlib RAG vertical slice; catalog-backed and materializes a portable Graph | Implemented and trybuild-tested for the stdlib RAG vertical slice; catalog-backed and materializes a portable Graph |
-| Local runtime, cancellation, tools, budget core | Implemented reference interpreter and exact oracle for every bundled stable C1 suite | Active authority for every bundled stable C1 exact-differential suite; typed ports, outcomes, cancellation, and local flow still block complete C1 authority |
+| Local runtime, cancellation, tools, budget core | Implemented reference interpreter and exact oracle for every bundled stable C1 suite | Active authority for every bundled stable C1 exact-differential suite and the typed-port requirement slice; outcomes, cancellation, and local flow still block complete C1 authority |
 | Documents, RAG, conversation reference APIs | Implemented | Selected core models/TCK behavior |
 | Accepted runs and callback resume | Reference server; process-local checkpoint continuation | Preview single-process/single-worker SQLite continuation plus core async/callback records and TCK behavior; consumes trusted pre-admission assertions and does not query policy/budget/schema/lease authorities or verify lease freshness |
 | Registered-secret signed webhook dispatch | Implemented in `graphblocks.callbacks` | Implemented in runtime-core with HMAC signing, replay verification, and egress-bound delivery hooks |
@@ -38,7 +38,7 @@ migration corpora across public/reference/direct-native paths to the exact
 runtime wheel. The complete C0 schema suite remains `reference-only`. C1
 evidence is phase-scoped: the bundled runtime suite is
 `exact-native-reference`. The `application-events`, `retry`, `sequence`,
-`tool-execution`, `tool-lifecycle`, and `tool-result` suites are also
+`tool-execution`, `tool-lifecycle`, `tool-result`, and `typed-ports` suites are also
 `exact-native-reference`. No stable C1 suite remains `reference-only`.
 With a selected native wheel, the `application-events` report executes a
 materialized-event stream admission differential:
@@ -72,6 +72,13 @@ The installed `tool-result` report executes all six shared preparation and
 stream-state fixtures in Rust and exact-compares their closed result contract
 with Python. Its evidence is assigned to
 `rust-tool-result-exact-differential` and bound to that exact wheel.
+The installed compiler report covers nominal identity, requiredness, and
+nested-root validation. The installed `typed-ports` report exact-compares typed
+Graph construction, canonical compilation, typed-boundary rejection, and
+local-runtime port preservation with Python. Its evidence is assigned to
+`rust-typed-ports-exact-differential` and bound to that exact wheel. Generic
+typed-value transport and remote-boundary policy remain preview and are not
+included in this requirement slice.
 This preserves the boundary around other schema-facing and stable C1 runtime
 behavior. C4 production and X3 durable-stream durability are preview promotion
 work under `REL-EXTENSION-RUNTIME-AUTHORITY`; their live-authority,

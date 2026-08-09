@@ -274,6 +274,24 @@ def _fake_native_tool_result_tck_case(
     return json.loads(json.dumps(reference_contract))
 
 
+def _fake_native_typed_ports_tck_case(
+    raw_case: dict[str, object],
+) -> dict[str, object]:
+    import graphblocks_testing
+
+    case = graphblocks_testing.TckCase.typed_ports(
+        case_id=str(raw_case["name"]),
+        fixture=dict(raw_case),
+    )
+    result = graphblocks_testing.TckRunner(
+        graphblocks_testing.stdlib_registry()
+    ).run_cases((case,)).results[0]
+    assert result.status == "passed"
+    reference_contract = result.observed["reference_contract"]
+    assert isinstance(reference_contract, dict)
+    return json.loads(json.dumps(reference_contract))
+
+
 def test_tck_report_requires_nonempty_identified_native_evidence(monkeypatch) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")
@@ -9121,6 +9139,106 @@ def test_tool_result_tck_rejects_native_drift(monkeypatch) -> None:
     }
 
 
+def test_testing_package_loads_shared_typed_ports_tck_cases(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+
+    cases = graphblocks_testing.load_typed_ports_tck_cases(
+        ROOT / "tck" / "typed-ports" / "cases.json"
+    )
+    report = graphblocks_testing.TckRunner(
+        graphblocks_testing.stdlib_registry()
+    ).run_cases(cases)
+
+    assert [case.kind for case in cases] == ["typed-ports"] * 5
+    assert report.ok
+    assert {case.case_id for case in cases} == {
+        "typed_stdlib_model_generate_compiles_portable_plan",
+        "typed_stdlib_model_generate_executes_with_typed_boundary",
+        "cross_builder_input_port_is_rejected",
+        "noncanonical_interface_schema_is_rejected",
+        "catalog_output_type_mismatch_is_rejected",
+    }
+    assert all(
+        result.observed["reference_contract"]
+        == next(
+            case.typed_ports_fixture["expected"]
+            for case in cases
+            if case.case_id == result.case_id
+        )
+        for result in report.results
+    )
+    assert "load_typed_ports_tck_cases" in graphblocks_testing.__all__
+
+
+def test_typed_ports_tck_is_exact_native_reference(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+    runners = importlib.import_module("graphblocks_testing.runners")
+    monkeypatch.setitem(
+        sys.modules,
+        "graphblocks_runtime",
+        SimpleNamespace(
+            _evaluate_typed_ports_tck_case=_fake_native_typed_ports_tck_case
+        ),
+    )
+    cases = graphblocks_testing.load_typed_ports_tck_cases(
+        ROOT / "tck" / "typed-ports" / "cases.json"
+    )
+
+    report = runners._TypedPortsDifferentialTckRunner(
+        graphblocks_testing.stdlib_registry(),
+        suite="typed-ports",
+        implementation="graphblocks-runtime",
+        implementation_version="0.1.0",
+    ).run_cases(cases)
+
+    assert report.ok
+    assert len(report.results) == 5
+    assert all(
+        result.observed["runtime"] == "native"
+        and result.observed["native_reference_match"] is True
+        and result.observed["native_contract"] == result.observed["reference_contract"]
+        for result in report.results
+    )
+
+
+def test_typed_ports_tck_rejects_native_drift(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+    runners = importlib.import_module("graphblocks_testing.runners")
+
+    def drifted_typed_ports_case(
+        raw_case: dict[str, object],
+    ) -> dict[str, object]:
+        contract = _fake_native_typed_ports_tck_case(raw_case)
+        contract["ok"] = False
+        return contract
+
+    monkeypatch.setitem(
+        sys.modules,
+        "graphblocks_runtime",
+        SimpleNamespace(_evaluate_typed_ports_tck_case=drifted_typed_ports_case),
+    )
+    case = graphblocks_testing.load_typed_ports_tck_cases(
+        ROOT / "tck" / "typed-ports" / "cases.json"
+    )[0]
+
+    report = runners._TypedPortsDifferentialTckRunner(
+        graphblocks_testing.stdlib_registry(),
+        suite="typed-ports",
+        implementation="graphblocks-runtime",
+        implementation_version="0.1.0",
+    ).run_cases((case,))
+
+    assert not report.ok
+    assert report.results[0].diagnostics[-1] == {
+        "code": "GB3010",
+        "message": "native typed-ports differs from the Python reference oracle",
+        "path": "$.observed.reference_contract",
+    }
+
+
 def test_testing_package_loads_shared_usage_tck_cases(monkeypatch) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")
@@ -9198,6 +9316,7 @@ def test_testing_package_discovers_all_shared_tck_suite_manifests(monkeypatch) -
         "tool-execution",
         "tool-lifecycle",
         "tool-result",
+        "typed-ports",
         "usage",
         "voice",
     )
@@ -9680,6 +9799,13 @@ def test_testing_package_discovers_all_shared_tck_suite_manifests(monkeypatch) -
         "stream_state_requires_started_before_incremental_output",
         "stream_state_rejects_denied_result_with_committed_effect",
     )
+    assert by_suite["typed-ports"].case_ids == (
+        "typed_stdlib_model_generate_compiles_portable_plan",
+        "typed_stdlib_model_generate_executes_with_typed_boundary",
+        "cross_builder_input_port_is_rejected",
+        "noncanonical_interface_schema_is_rejected",
+        "catalog_output_type_mismatch_is_rejected",
+    )
     assert by_suite["retry"].case_ids == (
         "effect_retry_preserves_idempotency_key",
         "effect_retry_exhaustion_preserves_idempotency_key",
@@ -9789,7 +9915,7 @@ def test_testing_package_cli_lists_tck_suite_manifests(monkeypatch, capsys) -> N
     assert graphblocks_testing.main(["list", str(ROOT / "tck"), "--json"]) == 0
 
     payload = json.loads(capsys.readouterr().out)
-    assert payload["suiteCount"] == 23
+    assert payload["suiteCount"] == 24
     assert payload["suites"][0]["suite_id"] == "application-events"
     assert payload["suites"][0]["case_count"] == 10
     assert payload["contentDigest"].startswith("sha256:")
@@ -9813,6 +9939,7 @@ def test_testing_package_bundled_c0_c1_helpers_and_cli_need_no_external_path(
         "tool-execution",
         "tool-lifecycle",
         "tool-result",
+        "typed-ports",
     )
     manifests = graphblocks_testing.load_bundled_tck_suite_manifests()
 
@@ -9951,6 +10078,7 @@ def test_graphblocks_testing_wheel_and_sdist_ship_runnable_c0_c1_fixtures(
         "tool-execution/cases.json",
         "tool-lifecycle/cases.json",
         "tool-result/cases.json",
+        "typed-ports/cases.json",
     }
     bundled_source = project / "src" / "graphblocks_testing" / "fixtures" / "tck"
     for relative_path in expected_fixture_paths - {"runtime/cases.json"}:
@@ -10040,6 +10168,7 @@ def test_graphblocks_testing_wheel_and_sdist_ship_runnable_c0_c1_fixtures(
             "tool-execution",
             "tool-lifecycle",
             "tool-result",
+            "typed-ports",
         ],
     }
 
@@ -10135,6 +10264,7 @@ def test_testing_package_cli_checks_tck_suite_coverage(monkeypatch, capsys) -> N
         "tool-execution",
         "tool-lifecycle",
         "tool-result",
+        "typed-ports",
         "usage",
     ]
     assert payload["missing_suites"] == []
@@ -10646,6 +10776,26 @@ def test_testing_package_cli_runs_tool_result_tck_suite(monkeypatch, capsys) -> 
     assert payload["contentDigest"].startswith("sha256:")
 
 
+def test_testing_package_cli_runs_typed_ports_tck_suite(monkeypatch, capsys) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+
+    exit_code = graphblocks_testing.main(
+        [
+            "run",
+            "typed-ports",
+            str(ROOT / "tck" / "typed-ports" / "cases.json"),
+            "--json",
+        ]
+    )
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert {result["kind"] for result in payload["results"]} == {"typed-ports"}
+    assert payload["contentDigest"].startswith("sha256:")
+
+
 def test_testing_package_cli_runs_usage_tck_suite(monkeypatch, capsys) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")
@@ -10707,6 +10857,7 @@ def test_testing_package_cli_runs_all_supported_tck_suites(monkeypatch, capsys) 
         "tool-execution",
         "tool-lifecycle",
         "tool-result",
+        "typed-ports",
         "usage",
         "voice",
     )
@@ -10741,6 +10892,7 @@ def test_testing_package_cli_emits_observed_release_tck_identity(
     native_tool_execution_calls: list[str] = []
     native_tool_lifecycle_calls: list[str] = []
     native_tool_result_calls: list[str] = []
+    native_typed_ports_calls: list[str] = []
     native_runtime_calls: list[str] = []
     reference_compile = graphblocks_testing.compile_graph
 
@@ -10808,6 +10960,12 @@ def test_testing_package_cli_emits_observed_release_tck_identity(
         native_tool_result_calls.append(str(raw_case["name"]))
         return _fake_native_tool_result_tck_case(raw_case)
 
+    def evaluate_typed_ports_tck_case(
+        raw_case: dict[str, object],
+    ) -> dict[str, object]:
+        native_typed_ports_calls.append(str(raw_case["name"]))
+        return _fake_native_typed_ports_tck_case(raw_case)
+
     monkeypatch.setattr(
         graphblocks_testing,
         "_native_compiler_wheel_artifact",
@@ -10839,6 +10997,7 @@ def test_testing_package_cli_emits_observed_release_tck_identity(
                 evaluate_tool_lifecycle_tck_case
             ),
             _evaluate_tool_result_tck_case=evaluate_tool_result_tck_case,
+            _evaluate_typed_ports_tck_case=evaluate_typed_ports_tck_case,
             evaluate_application_event_stream=evaluate_application_event_stream,
             run_stdlib_graph=run_stdlib_graph,
         ),
@@ -11010,6 +11169,26 @@ def test_testing_package_cli_emits_observed_release_tck_identity(
     ] == "1.0.0rc1"
     assert native_tool_result_calls == [
         result["case_id"] for result in tool_result_report["results"]
+    ]
+    typed_ports_report = payload["reports"]["typed-ports"]
+    assert typed_ports_report["evidence"]["implementation"] == ("graphblocks-runtime")
+    assert typed_ports_report["evidence"]["implementation_version"] == ("0.1.0")
+    assert typed_ports_report["evidence"]["implementation_artifact"] == (
+        compiler_artifact
+    )
+    assert (
+        typed_ports_report["evidence"]["authority_claim"]["comparison"]
+        == "exact-native-reference"
+    )
+    assert (
+        typed_ports_report["evidence"]["execution_claim"]["executor_id"]
+        == "rust-typed-ports-exact-differential"
+    )
+    assert (
+        typed_ports_report["evidence"]["reference_implementation_version"] == "1.0.0rc1"
+    )
+    assert native_typed_ports_calls == [
+        result["case_id"] for result in typed_ports_report["results"]
     ]
     compiler_report = payload["reports"]["compiler"]
     assert compiler_report["evidence"]["implementation"] == "graphblocks-runtime"

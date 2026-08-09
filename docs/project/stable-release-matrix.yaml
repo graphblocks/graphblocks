@@ -62,7 +62,7 @@ readinessAxes:
       targetReleaseClaim: core-c1-local-runtime-authority
       blocksTargetRelease: true
       shippedP0P1RemainBlocking: true
-      claimBoundary: The four remaining C1 requirements and restart-independent local correctness block 1.0; the installed native runtime API plus all stable C1 exact-differential suites are frozen, while C4/X3 production durability is governed by a separate nonblocking preview-promotion gate.
+      claimBoundary: The three remaining C1 requirements and restart-independent local correctness block 1.0; the installed native runtime API plus the typed-ports requirement and all stable C1 exact-differential suites are frozen, while C4/X3 production durability is governed by a separate nonblocking preview-promotion gate.
     - id: adapters
       label: External adapters
       readiness: contract-only-no-real-adapters
@@ -153,12 +153,14 @@ authorityTransition:
     - exact-shared-tool-lifecycle-differential
     - installed-tool-result-exact-differential-and-artifact-identity
     - exact-shared-tool-result-differential
+    - installed-typed-ports-exact-differential-and-artifact-identity
+    - exact-shared-typed-ports-differential
   remainingPhases:
     - stable-c1-requirement-authority
     - fallible-panic-free-rust-public-boundaries
   coreRuntimeAuthority:
     profile: GB-C1-LOCAL-RUNTIME
-    remainingRequirements: [typed-ports, outcome, cancellation, local-flow]
+    remainingRequirements: [outcome, cancellation, local-flow]
     remainingExactSuites: []
     runtimeCorrectnessGate: REL-RUNTIME-CORRECTNESS
     blocksTargetRelease: true
@@ -231,6 +233,12 @@ authorityTransition:
         comparison: exact-native-reference
         referenceImplementation: graphblocks-python
         allowedSuites: [tool-result]
+      rust-typed-ports-exact-differential:
+        implementation: graphblocks-runtime
+        language: rust
+        comparison: exact-native-reference
+        referenceImplementation: graphblocks-python
+        allowedSuites: [typed-ports]
     suiteClaims:
       application-events:
         executor: rust-application-events-exact-differential
@@ -266,6 +274,10 @@ authorityTransition:
         authorityRole: activeLocalRuntime
       tool-result:
         executor: rust-tool-result-exact-differential
+        profile: GB-C1-LOCAL-RUNTIME
+        authorityRole: activeLocalRuntime
+      typed-ports:
+        executor: rust-typed-ports-exact-differential
         profile: GB-C1-LOCAL-RUNTIME
         authorityRole: activeLocalRuntime
 tierDefinitions:
@@ -958,7 +970,7 @@ releaseGates:
     readiness: blocked
     scope: core-c1-local-runtime
     blocksTargetRelease: true
-    requirementSelectors: [typed-ports, outcome, cancellation, local-flow]
+    requirementSelectors: [outcome, cancellation, local-flow]
     exactSuiteSelectors: []
     requiredEvidence:
       - deterministic-local-scheduler-and-journal-native-authority
@@ -978,6 +990,8 @@ releaseGates:
       - exact-shared-tool-lifecycle-differential
       - installed-tool-result-exact-differential-and-artifact-identity
       - exact-shared-tool-result-differential
+      - installed-typed-ports-exact-differential-and-artifact-identity
+      - exact-shared-typed-ports-differential
       - all-stable-c1-requirements-normative
       - all-stable-c1-suites-exact-native-reference
       - stable-native-local-runtime-api-snapshot
@@ -1001,6 +1015,8 @@ releaseGates:
       - exact-shared-tool-lifecycle-differential
       - installed-tool-result-exact-differential-and-artifact-identity
       - exact-shared-tool-result-differential
+      - installed-typed-ports-exact-differential-and-artifact-identity
+      - exact-shared-typed-ports-differential
       - all-stable-c1-suites-exact-native-reference
       - stable-native-local-runtime-api-snapshot
     blockers:
@@ -1603,6 +1619,8 @@ releaseGates:
       - exact-shared-tool-lifecycle-differential
       - installed-tool-result-exact-differential-and-artifact-identity
       - exact-shared-tool-result-differential
+      - installed-typed-ports-exact-differential-and-artifact-identity
+      - exact-shared-typed-ports-differential
       - exact-shared-c1-application-events-retry-sequence-tool-execution-tool-lifecycle-and-result-differential
       - stable-native-local-runtime-api-snapshot-and-installed-identity
       - fallible-panic-free-rust-public-boundaries
@@ -1634,6 +1652,8 @@ releaseGates:
       - exact-shared-tool-lifecycle-differential
       - installed-tool-result-exact-differential-and-artifact-identity
       - exact-shared-tool-result-differential
+      - installed-typed-ports-exact-differential-and-artifact-identity
+      - exact-shared-typed-ports-differential
       - exact-shared-c1-application-events-retry-sequence-tool-execution-tool-lifecycle-and-result-differential
       - stable-native-local-runtime-api-snapshot-and-installed-identity
     blockers:

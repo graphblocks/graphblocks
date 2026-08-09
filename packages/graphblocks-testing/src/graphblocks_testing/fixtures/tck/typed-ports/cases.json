@@ -1,0 +1,153 @@
+[
+  {
+    "name": "typed_stdlib_model_generate_compiles_portable_plan",
+    "scenario": "compile_stdlib_model_generate",
+    "expected": {
+      "contractVersion": "graphblocks.typed-ports.tck.v1",
+      "ok": true,
+      "scenario": "compile_stdlib_model_generate",
+      "graph": {
+        "apiVersion": "graphblocks.ai/v1",
+        "kind": "Graph",
+        "metadata": {
+          "annotations": {
+            "graphblocks.ai/migratedFrom": "graphblocks.ai/v1alpha3"
+          },
+          "name": "typed-model-generate"
+        },
+        "spec": {
+          "interface": {
+            "inputs": {
+              "prompt": "graphblocks.ai/Prompt@1"
+            },
+            "outputs": {
+              "response": "graphblocks.ai/ModelResponse@1"
+            }
+          },
+          "nodes": {
+            "generate": {
+              "block": "model.generate@1",
+              "config": {
+                "response": "typed response"
+              }
+            }
+          },
+          "edges": [
+            {
+              "from": "$input.prompt",
+              "to": "generate.prompt"
+            },
+            {
+              "from": "generate.response",
+              "to": "$output.response"
+            }
+          ]
+        }
+      },
+      "plan": {
+        "ok": true,
+        "graphHash": "sha256:648acd75b3c6844da5c02ef9a369ac5b179dba8f55ec53ade8f60cfc7d760e53",
+        "diagnostics": [],
+        "graph": {
+          "apiVersion": "graphblocks.ai/v1",
+          "kind": "Graph",
+          "metadata": {
+            "annotations": {
+              "graphblocks.ai/migratedFrom": "graphblocks.ai/v1alpha3"
+            },
+            "name": "typed-model-generate"
+          },
+          "spec": {
+            "interface": {
+              "inputs": {
+                "prompt": "graphblocks.ai/Prompt@1"
+              },
+              "outputs": {
+                "response": "graphblocks.ai/ModelResponse@1"
+              }
+            },
+            "nodes": {
+              "generate": {
+                "block": "model.generate@1",
+                "config": {
+                  "response": "typed response"
+                }
+              }
+            },
+            "edges": [
+              {
+                "from": "$input.prompt",
+                "to": "generate.prompt"
+              },
+              {
+                "from": "generate.response",
+                "to": "$output.response"
+              }
+            ]
+          }
+        }
+      }
+    }
+  },
+  {
+    "name": "typed_stdlib_model_generate_executes_with_typed_boundary",
+    "scenario": "run_stdlib_model_generate",
+    "expected": {
+      "contractVersion": "graphblocks.typed-ports.tck.v1",
+      "ok": true,
+      "scenario": "run_stdlib_model_generate",
+      "runId": "typed-ports-run-1",
+      "graphHash": "sha256:648acd75b3c6844da5c02ef9a369ac5b179dba8f55ec53ade8f60cfc7d760e53",
+      "inputTypes": {
+        "prompt": "graphblocks.ai/Prompt@1"
+      },
+      "inputs": {
+        "prompt": "ignored by scripted response"
+      },
+      "outputTypes": {
+        "response": "graphblocks.ai/ModelResponse@1"
+      },
+      "outputs": {
+        "response": "typed response"
+      },
+      "status": "succeeded",
+      "journalKinds": [
+        "run_started",
+        "node_started",
+        "node_succeeded",
+        "run_succeeded"
+      ],
+      "terminalKind": "run_succeeded"
+    }
+  },
+  {
+    "name": "cross_builder_input_port_is_rejected",
+    "scenario": "reject_cross_builder_port",
+    "expected": {
+      "contractVersion": "graphblocks.typed-ports.tck.v1",
+      "ok": false,
+      "scenario": "reject_cross_builder_port",
+      "errorCategory": "cross_builder_port"
+    }
+  },
+  {
+    "name": "noncanonical_interface_schema_is_rejected",
+    "scenario": "reject_noncanonical_schema",
+    "expected": {
+      "contractVersion": "graphblocks.typed-ports.tck.v1",
+      "ok": false,
+      "scenario": "reject_noncanonical_schema",
+      "errorCategory": "invalid_schema"
+    }
+  },
+  {
+    "name": "catalog_output_type_mismatch_is_rejected",
+    "scenario": "reject_catalog_type_mismatch",
+    "expected": {
+      "contractVersion": "graphblocks.typed-ports.tck.v1",
+      "ok": false,
+      "scenario": "reject_catalog_type_mismatch",
+      "errorCategory": "block_port_type_mismatch"
+    }
+  }
+]

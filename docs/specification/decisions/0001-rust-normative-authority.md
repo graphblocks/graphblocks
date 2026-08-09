@@ -37,7 +37,7 @@ The transition is phase-scoped:
 | Python graph builders, typed authoring, YAML composition, and ergonomic schema APIs | Python | Supported authoring surface; materializes portable resources for the normative compiler |
 | Reference compiler and local reference interpreter | Python | Explicit oracle through `graphblocks.compiler.compile_graph_reference` and reference-runtime/TCK imports; never an implicit production fallback |
 | Standalone canonical/schema-identity and resource validation/migration utility authority | Rust | Implemented through fail-closed public canonical, `SchemaId.parse`, resource validation, and migration facades; supported installed-wheel evidence binds public, reference, and direct-native results over the complete shared resource corpora to the exact runtime artifact |
-| Stable C1 local runtime | Rust | Runtime capability handshake, the frozen native API, and every bundled stable C1 suite have installed exact native/reference evidence; four direct C1 requirements, restart-independent local correctness, and panic-free public boundaries still block the core authority gate |
+| Stable C1 local runtime | Rust | Runtime capability handshake, the frozen native API, every bundled stable C1 suite, and the typed-port requirement slice have installed exact native/reference evidence; three direct C1 requirements, restart-independent local correctness, and panic-free public boundaries still block the core authority gate |
 | C4 production and X3 durable-stream runtime | Profile-specific Rust target | Preview only; live authority, multi-process recovery, fencing, outbox/effect, and adapter evidence are governed by `REL-EXTENSION-RUNTIME-AUTHORITY` and do not block the first C0/C1 release |
 | AI application, governance, durable stream, voice, deployment, observability, and integrations | Profile-specific | No authority or stability is implied until the named extension profile passes its own gates |
 
@@ -106,9 +106,11 @@ Rust implementation crates remain internal APIs unless separately promoted.
    interpreter. The installed stable C1 local scheduler/journal slice now runs
    through the Rust stdlib runtime, requires the versioned `runtime.local.v1`
    binding capability, fails closed without it, and compares the complete
-   stable result/lifecycle contract with the Python oracle. The remaining C1
-   requirements, suites, native API contract, and panic-free public boundaries
-   are enumerated by `REL-NORMATIVE-AUTHORITY` and
+   stable result/lifecycle contract with the Python oracle. The typed-port
+   requirement is now Rust-authoritative through its exact installed suite;
+   generic typed-value transport and remote-boundary policy remain preview.
+   The remaining C1 requirements and panic-free public boundaries are
+   enumerated by `REL-NORMATIVE-AUTHORITY` and
    `REL-RUNTIME-CORRECTNESS`. Wider production durability belongs to the
    separate nonblocking extension-promotion gate.
 5. Extract the reusable control-plane library so language bindings do not
@@ -134,6 +136,11 @@ preview independently of the first C0/C1 release decision.
   on every bundled C1 runtime case, reject implicit fallback, compare the
   stable result and normalized lifecycle contract with the Python oracle, and
   bind both compiler and runtime reports to the same exact native wheel.
+- Installed compiler tests cover nominal identity, requiredness, and nested-root
+  validation. Installed typed-port tests add typed Graph construction,
+  canonical compilation, typed-boundary rejection, and runtime port-preservation
+  cases in Rust, exact-compare their closed contracts with the Python oracle,
+  and bind the reports to that same native wheel.
 - Installed-wheel tests execute public canonical, SchemaId, resource
   validation, and resource migration facades beside the explicit Python
   references and direct native functions. They bind the complete shared

@@ -390,6 +390,9 @@ def test_rust_packages_declare_publishable_path_versions_and_bundle_local_fixtur
         ),
         "crates/graphblocks-python/src/fixtures/compiler-cases.json": "tck/compiler/cases.json",
         "crates/graphblocks-python/src/fixtures/runtime-cases.json": "tck/runtime/cases.json",
+        "crates/graphblocks-python/src/fixtures/typed-ports-cases.json": (
+            "tck/typed-ports/cases.json"
+        ),
         "crates/graphblocks-runtime-core/tests/fixtures/builtin-plugin.yaml": (
             "src/graphblocks/data/builtin-plugin.yaml"
         ),
@@ -2184,7 +2187,6 @@ def test_stable_release_matrix_is_complete_and_machine_readable() -> None:
     assert authority["coreRuntimeAuthority"] == {
         "profile": "GB-C1-LOCAL-RUNTIME",
         "remainingRequirements": [
-            "typed-ports",
             "outcome",
             "cancellation",
             "local-flow",
@@ -2362,6 +2364,17 @@ def test_stable_release_matrix_is_complete_and_machine_readable() -> None:
         authority_gate["completedEvidence"]
     )
     assert (
+        "installed-typed-ports-exact-differential-and-artifact-identity"
+        in authority_gate["completedEvidence"]
+    )
+    assert "exact-shared-typed-ports-differential" in authority_gate[
+        "completedEvidence"
+    ]
+    assert (
+        "stable-c1-typed-ports-outcome-cancellation-and-local-flow-authority"
+        not in authority_gate["completedEvidence"]
+    )
+    assert (
         "installed-application-event-stream-admission-differential-and-artifact-identity"
         in authority_gate["completedEvidence"]
     )
@@ -2429,6 +2442,7 @@ def test_stable_release_matrix_is_complete_and_machine_readable() -> None:
             "tool-execution",
             "tool-lifecycle",
             "tool-result",
+            "typed-ports",
         }
     }
     assert set(runtime_gate["completedEvidence"]) <= set(
@@ -2439,6 +2453,16 @@ def test_stable_release_matrix_is_complete_and_machine_readable() -> None:
         "restart-independent-local-runtime-correctness-incomplete",
     ]
     assert "stable-native-local-runtime-api-snapshot" in runtime_gate[
+        "completedEvidence"
+    ]
+    assert (
+        "installed-typed-ports-exact-differential-and-artifact-identity"
+        in runtime_gate["completedEvidence"]
+    )
+    assert "exact-shared-typed-ports-differential" in runtime_gate[
+        "completedEvidence"
+    ]
+    assert "all-stable-c1-requirements-normative" not in runtime_gate[
         "completedEvidence"
     ]
     assert (

@@ -18,8 +18,15 @@ from .canonical import (
     canonical_dumps_reference as canonical_dumps,
     canonical_hash_reference as canonical_hash,
     canonical_loads_reference as canonical_loads,
-    normalize_graph,
 )
+
+
+def normalize_graph(document: dict[str, object]) -> dict[str, object]:
+    """Normalize through the explicit Python migration reference oracle."""
+
+    from .migration import migrate_document_reference
+
+    return _normalize_graph_unchecked(migrate_document_reference(document))
 
 __all__ = [
     "MAX_CANONICAL_INTEGER_DIGITS",

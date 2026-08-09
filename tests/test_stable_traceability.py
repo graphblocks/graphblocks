@@ -158,7 +158,12 @@ def test_stable_requirement_traceability_matches_the_profile_catalog() -> None:
         assert len(requirement_ids) == len(set(requirement_ids))
         assert all(REQUIREMENT_ID.fullmatch(requirement_id) for requirement_id in requirement_ids)
         covered_tck = {suite for entry in entries for suite in entry["tckSuites"]}
-        assert covered_tck == set(catalog_profile["tck"])
+        inherited_tck = {
+            suite
+            for parent_id in catalog_profile.get("extends", [])
+            for suite in catalog_profiles[parent_id]["tck"]
+        }
+        assert covered_tck - inherited_tck == set(catalog_profile["tck"])
         for suite in covered_tck:
             assert (ROOT / "tck" / suite).is_dir(), f"missing TCK suite {suite}"
 
@@ -337,9 +342,9 @@ def test_stable_requirement_implementation_roles_match_the_authority_transition(
         "deterministic-local-scheduler",
         "journal",
         "local-runtime-api",
+        "typed-ports",
     }
     target_requirements = {
-        "typed-ports",
         "outcome",
         "cancellation",
         "local-flow",
@@ -355,6 +360,54 @@ def test_stable_requirement_implementation_roles_match_the_authority_transition(
     assert "compatibility/stable-runtime-api.json" in c1_entries[
         "local-runtime-api"
     ]["evidence"]
+    typed_ports = c1_entries["typed-ports"]
+    assert "crates/graphblocks-runtime-core/src/typed_value.rs" not in typed_ports[
+        "implementations"
+    ]["normative"]
+    assert typed_ports["scopeNotes"] == [
+        "The normative slice combines the installed compiler corpus for nominal "
+        "identity, requiredness, and nested-root validation with the typed-ports "
+        "corpus for portable typed Graph authoring and exact local-runtime port "
+        "preservation. "
+        "crates/graphblocks-runtime-core/src/typed_value.rs remains a preview "
+        "implementation detail outside this authority claim."
+    ]
+    assert typed_ports["tckSuites"] == ["compiler", "runtime", "typed-ports"]
+    assert typed_ports["authoritySlices"][
+        "typedPortCompilationAndLocalRuntime"
+    ] == {
+        "status": "normative",
+        "authority": "rust",
+        "scope": (
+            "nominal-port-identity-requiredness-nested-root-validation-and-"
+            "local-runtime-port-preservation"
+        ),
+        "normativeImplementations": [
+            "crates/graphblocks-compiler/src/compiler.rs",
+            "crates/graphblocks-runtime-core/src/typed_graph.rs",
+            "crates/graphblocks-python/src/lib.rs",
+            "crates/graphblocks-python/src/typed_ports_tck.rs",
+        ],
+        "pythonFacadeAndReference": [
+            "src/graphblocks/compiler.py",
+            "src/graphblocks/plugins.py",
+            "src/graphblocks/runtime.py",
+            "src/graphblocks/typed.py",
+        ],
+        "installedEvidence": [
+            "packages/graphblocks-runtime/src/graphblocks_runtime/__init__.py",
+            "packages/graphblocks-testing/src/graphblocks_testing/runners.py",
+            "packages/graphblocks-testing/src/graphblocks_testing/cli.py",
+            "tools/verify_wheelhouse.py",
+            "tests/test_testing_package.py",
+            "tests/test_wheelhouse_schema_verification.py",
+            "tests/test_release_supply_chain.py",
+        ],
+        "exclusions": [
+            "Generic typed-value transport and remote-boundary policy remain "
+            "preview and are not promoted by this slice."
+        ],
+    }
     application_event_slice = c1_entries["outcome"]["authoritySlices"][
         "applicationEventStreamAdmission"
     ]

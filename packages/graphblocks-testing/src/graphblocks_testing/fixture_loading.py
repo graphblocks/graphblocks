@@ -732,6 +732,36 @@ def load_tool_result_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
     return tuple(cases)
 
 
+def load_typed_ports_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
+    raw_cases = _load_tck_cases_json(path, "typed-ports")
+    if not isinstance(raw_cases, list):
+        raise ValueError("typed-ports TCK root must be a list")
+    cases: list[TckCase] = []
+    supported_scenarios = {
+        "compile_stdlib_model_generate",
+        "run_stdlib_model_generate",
+        "reject_cross_builder_port",
+        "reject_noncanonical_schema",
+        "reject_catalog_type_mismatch",
+    }
+    for index, raw_case in enumerate(raw_cases):
+        if not isinstance(raw_case, Mapping):
+            raise ValueError(f"typed-ports TCK case {index} must be a mapping")
+        case_id = _first_mapping_value(raw_case, "name", "case_id", "caseId")
+        if not isinstance(case_id, str) or not case_id.strip():
+            raise ValueError(f"typed-ports TCK case {index} requires name")
+        scenario = raw_case.get("scenario")
+        if scenario not in supported_scenarios:
+            raise ValueError(
+                f"typed-ports TCK case {case_id} has unsupported scenario {scenario!r}"
+            )
+        expected = raw_case.get("expected")
+        if not isinstance(expected, Mapping):
+            raise ValueError(f"typed-ports TCK case {case_id} requires expected result")
+        cases.append(TckCase.typed_ports(case_id=case_id, fixture=dict(raw_case)))
+    return tuple(cases)
+
+
 def load_usage_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
     raw_cases = _load_tck_cases_json(path, "usage")
     if not isinstance(raw_cases, list):
@@ -1236,6 +1266,8 @@ def load_tck_cases_for_suite(suite: str, path: str | Path) -> tuple[TckCase, ...
         return load_tool_execution_tck_cases(path)
     if suite == "tool-result":
         return load_tool_result_tck_cases(path)
+    if suite == "typed-ports":
+        return load_typed_ports_tck_cases(path)
     if suite == "usage":
         return load_usage_tck_cases(path)
     if suite == "voice":

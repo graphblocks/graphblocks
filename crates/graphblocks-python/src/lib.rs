@@ -4,6 +4,7 @@ mod sequence_tck;
 mod tool_execution_tck;
 mod tool_lifecycle_tck;
 mod tool_result_tck;
+mod typed_ports_tck;
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -2376,6 +2377,17 @@ fn evaluate_tool_result_tck_case_json(case_json: &str) -> PyResult<String> {
     serde_json::to_string(&result).map_err(|error| {
         PyRuntimeError::new_err(format!(
             "failed to serialize tool-result TCK result: {error}"
+        ))
+    })
+}
+
+#[pyfunction]
+fn evaluate_typed_ports_tck_case_json(case_json: &str) -> PyResult<String> {
+    let case = parse_json_argument(case_json, "typed-ports TCK case")?;
+    let result = typed_ports_tck::evaluate_case(&case).map_err(PyValueError::new_err)?;
+    serde_json::to_string(&result).map_err(|error| {
+        PyRuntimeError::new_err(format!(
+            "failed to serialize typed-ports TCK result: {error}"
         ))
     })
 }
@@ -9704,6 +9716,10 @@ fn _native(module: &Bound<'_, PyModule>) -> PyResult<()> {
     )?)?;
     module.add_function(wrap_pyfunction!(
         evaluate_tool_result_tck_case_json,
+        module
+    )?)?;
+    module.add_function(wrap_pyfunction!(
+        evaluate_typed_ports_tck_case_json,
         module
     )?)?;
     module.add_function(wrap_pyfunction!(

@@ -121,6 +121,7 @@ codes:
   - {code: GB3007, status: active, tier: stable, owner: testing, profile: GB-C1-LOCAL-RUNTIME, defaultSeverity: error, meaning: A tool-execution conformance case does not satisfy its declared fixture contract.}
   - {code: GB3008, status: active, tier: stable, owner: testing, profile: GB-C1-LOCAL-RUNTIME, defaultSeverity: error, meaning: A tool-lifecycle conformance case does not satisfy its declared fixture contract.}
   - {code: GB3009, status: active, tier: stable, owner: testing, profile: GB-C1-LOCAL-RUNTIME, defaultSeverity: error, meaning: A tool-result conformance case does not satisfy its declared fixture contract.}
+  - {code: GB3010, status: active, tier: stable, owner: testing, profile: GB-C1-LOCAL-RUNTIME, defaultSeverity: error, meaning: A typed-port conformance case does not satisfy its declared fixture contract.}
 
   - {code: GB6001, status: active, tier: preview, owner: async-operations, profile: GB-C4-PRODUCTION, defaultSeverity: error, meaning: A callback wait lacks a timeout or explicit infinite-wait policy.}
   - {code: GB6002, status: active, tier: preview, owner: callbacks, profile: GB-C4-PRODUCTION, defaultSeverity: error, meaning: A webhook callback subscription lacks signing configuration.}

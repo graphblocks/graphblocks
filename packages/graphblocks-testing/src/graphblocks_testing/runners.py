@@ -197,6 +197,7 @@ from graphblocks.tools import (
     admit_tool_call,
     validate_tool_result_for_model,
 )
+from graphblocks.typed import BoundBlock, GraphBuilder, NodeOutput, PortType
 from graphblocks.usage import InMemoryUsageLedger, UsageRecord
 
 from ._facade import facade_dependency
@@ -290,6 +291,7 @@ class TckRunner:
     native_tool_execution_tck_authority = False
     native_tool_lifecycle_tck_authority = False
     native_tool_result_tck_authority = False
+    native_typed_ports_tck_authority = False
     native_runtime_authority = False
 
     registry: RuntimeRegistry
@@ -348,6 +350,8 @@ class TckRunner:
                 results.append(self._run_tool_lifecycle_case(case))
             elif case.kind == "tool-result":
                 results.append(self._run_tool_result_case(case))
+            elif case.kind == "typed-ports":
+                results.append(self._run_typed_ports_case(case))
             elif case.kind == "usage":
                 results.append(self._run_usage_case(case))
             elif case.kind == "voice":
@@ -7672,6 +7676,250 @@ class TckRunner:
             observed=observed,
         )
 
+    def _run_typed_ports_case(self, case: TckCase) -> TckResult:
+        diagnostics: list[dict[str, str]] = []
+        fixture = case.typed_ports_fixture
+        expected = fixture.get("expected", {})
+        if not isinstance(expected, Mapping):
+            expected = {}
+            diagnostics.append(
+                {
+                    "code": "TypedPortsExpectedInvalid",
+                    "message": "typed-ports TCK expected result must be a mapping",
+                    "path": "$.expected",
+                }
+            )
+        scenario = str(fixture.get("scenario", ""))
+        contract_version = "graphblocks.typed-ports.tck.v1"
+
+        class PromptValue:
+            pass
+
+        class ModelResponseValue:
+            pass
+
+        prompt_type = PortType("graphblocks.ai/Prompt@1", PromptValue)
+        response_type = PortType("graphblocks.ai/ModelResponse@1", ModelResponseValue)
+        reference_contract: dict[str, object]
+        try:
+            if scenario in {
+                "compile_stdlib_model_generate",
+                "run_stdlib_model_generate",
+            }:
+                graph_builder = GraphBuilder(
+                    "typed-model-generate",
+                    api_version="graphblocks.ai/v1alpha3",
+                )
+                prompt = graph_builder.input("prompt", prompt_type)
+                published_response = graph_builder.output("response", response_type)
+                generated = graph_builder.add(
+                    "generate",
+                    BoundBlock(
+                        block_id="model.generate@1",
+                        inputs={"prompt": prompt},
+                        expected_inputs={"prompt": prompt_type},
+                        expected_outputs={"response": response_type},
+                        config={"response": "typed response"},
+                        _outputs=lambda node_id, owner: NodeOutput(
+                            node_id, "response", response_type, owner
+                        ),
+                    ),
+                )
+                graph_builder.publish(published_response, generated)
+                graph = graph_builder.build()
+                plan = compile_graph(graph)
+                normalized_graph = deepcopy(plan.normalized)
+                if scenario == "compile_stdlib_model_generate":
+                    reference_contract = {
+                        "contractVersion": contract_version,
+                        "ok": plan.ok,
+                        "scenario": scenario,
+                        "graph": normalized_graph,
+                        "plan": {
+                            "ok": plan.ok,
+                            "graphHash": plan.graph_hash,
+                            "diagnostics": plan.diagnostics.to_list(),
+                            "graph": deepcopy(plan.normalized),
+                        },
+                    }
+                else:
+                    run_inputs = {"prompt": "ignored by scripted response"}
+                    run = LocalRuntime(self.registry).run(
+                        normalized_graph,
+                        run_inputs,
+                        run_id="typed-ports-run-1",
+                    )
+                    spec = normalized_graph.get("spec")
+                    if not isinstance(spec, Mapping):
+                        raise TypeError("typed graph spec must be a mapping")
+                    interface = spec.get("interface")
+                    if not isinstance(interface, Mapping):
+                        raise TypeError("typed graph interface must be a mapping")
+                    input_types = interface.get("inputs")
+                    output_types = interface.get("outputs")
+                    if not isinstance(input_types, Mapping) or not isinstance(
+                        output_types, Mapping
+                    ):
+                        raise TypeError("typed graph interface ports must be mappings")
+                    journal_kinds = [record.kind for record in run.journal.records]
+                    reference_contract = {
+                        "contractVersion": contract_version,
+                        "ok": plan.ok,
+                        "scenario": scenario,
+                        "runId": run.run_id,
+                        "graphHash": plan.graph_hash,
+                        "inputTypes": dict(input_types),
+                        "inputs": run_inputs,
+                        "outputTypes": dict(output_types),
+                        "outputs": dict(run.outputs),
+                        "status": run.status,
+                        "journalKinds": journal_kinds,
+                        "terminalKind": journal_kinds[-1] if journal_kinds else None,
+                    }
+            elif scenario == "reject_cross_builder_port":
+                source = GraphBuilder("typed-port-source")
+                foreign_prompt = source.input("prompt", prompt_type)
+                target = GraphBuilder("typed-port-target")
+                try:
+                    target.add(
+                        "generate",
+                        BoundBlock(
+                            block_id="model.generate@1",
+                            inputs={"prompt": foreign_prompt},
+                            expected_inputs={"prompt": prompt_type},
+                            expected_outputs={"response": response_type},
+                            config={"response": "typed response"},
+                            _outputs=lambda node_id, owner: NodeOutput(
+                                node_id, "response", response_type, owner
+                            ),
+                        ),
+                    )
+                except ValueError:
+                    reference_contract = {
+                        "contractVersion": contract_version,
+                        "ok": False,
+                        "scenario": scenario,
+                        "errorCategory": "cross_builder_port",
+                    }
+                else:
+                    raise AssertionError("cross-builder typed port was accepted")
+            elif scenario == "reject_noncanonical_schema":
+                try:
+                    PortType("graphblocks.ai/Prompt", PromptValue)
+                except ValueError:
+                    reference_contract = {
+                        "contractVersion": contract_version,
+                        "ok": False,
+                        "scenario": scenario,
+                        "errorCategory": "invalid_schema",
+                    }
+                else:
+                    raise AssertionError("noncanonical typed schema was accepted")
+            elif scenario == "reject_catalog_type_mismatch":
+                graph_builder = GraphBuilder("typed-port-type-mismatch")
+                prompt = graph_builder.input("prompt", prompt_type)
+                mismatched_response_type = PortType(
+                    "graphblocks.ai/Prompt@1", ModelResponseValue
+                )
+                try:
+                    graph_builder.add(
+                        "generate",
+                        BoundBlock(
+                            block_id="model.generate@1",
+                            inputs={"prompt": prompt},
+                            expected_inputs={"prompt": prompt_type},
+                            expected_outputs={"response": mismatched_response_type},
+                            config={"response": "typed response"},
+                            _outputs=lambda node_id, owner: NodeOutput(
+                                node_id,
+                                "response",
+                                mismatched_response_type,
+                                owner,
+                            ),
+                        ),
+                    )
+                except TypeError:
+                    reference_contract = {
+                        "contractVersion": contract_version,
+                        "ok": False,
+                        "scenario": scenario,
+                        "errorCategory": "block_port_type_mismatch",
+                    }
+                else:
+                    raise AssertionError("catalog output type mismatch was accepted")
+            else:
+                raise ValueError(f"unsupported typed-ports scenario {scenario!r}")
+        except Exception as error:
+            diagnostics.append(
+                {
+                    "code": "TypedPortsExecutionError",
+                    "message": str(error),
+                    "path": "$",
+                }
+            )
+            reference_contract = {
+                "contractVersion": contract_version,
+                "ok": False,
+                "scenario": scenario,
+                "errorCategory": "execution_error",
+            }
+
+        observed: dict[str, object] = {"reference_contract": reference_contract}
+        if reference_contract != dict(expected):
+            diagnostics.append(
+                {
+                    "code": "TypedPortsExpectedMismatch",
+                    "message": "typed-ports reference contract did not match expected result",
+                    "path": "$.expected",
+                }
+            )
+        if self.native_typed_ports_tck_authority:
+            try:
+                from graphblocks_runtime import _evaluate_typed_ports_tck_case
+
+                native_contract = _evaluate_typed_ports_tck_case(dict(fixture))
+                if set(native_contract) != set(reference_contract):
+                    raise ValueError(
+                        "native typed-ports TCK result must use the closed contract"
+                    )
+                native_reference_match = native_contract == reference_contract
+                observed.update(
+                    {
+                        "runtime": "native",
+                        "native_contract": native_contract,
+                        "native_reference_match": native_reference_match,
+                    }
+                )
+                if not native_reference_match:
+                    diagnostics.append(
+                        {
+                            "code": "NativeTypedPortsMismatch",
+                            "message": (
+                                "native typed-ports differs from the Python "
+                                "reference oracle"
+                            ),
+                            "path": "$.observed.reference_contract",
+                        }
+                    )
+            except Exception as error:
+                diagnostics.append(
+                    {
+                        "code": "NativeTypedPortsError",
+                        "message": str(error),
+                        "path": "$",
+                    }
+                )
+                observed.update(
+                    {"runtime": "native", "native_reference_match": False}
+                )
+        return TckResult(
+            case_id=case.case_id,
+            kind=case.kind,
+            status="passed" if not diagnostics else "failed",
+            diagnostics=tuple(diagnostics),
+            observed=observed,
+        )
+
     def _run_tool_execution_case(self, case: TckCase) -> TckResult:
         diagnostics: list[dict[str, str]] = []
         fixture = case.tool_execution_fixture
@@ -9845,6 +10093,15 @@ class _ToolResultDifferentialTckRunner(TckRunner):
     authority_comparison = "exact-native-reference"
     authority_reference_implementation = "graphblocks-python"
     native_tool_result_tck_authority = True
+
+
+class _TypedPortsDifferentialTckRunner(TckRunner):
+    __slots__ = ()
+    authority_executor_id = "rust-typed-ports-exact-differential"
+    authority_language = "rust"
+    authority_comparison = "exact-native-reference"
+    authority_reference_implementation = "graphblocks-python"
+    native_typed_ports_tck_authority = True
 
 
 class _NormativeCompilerTckRunner(TckRunner):

@@ -241,8 +241,8 @@ compares public facades, explicit Python oracles, and direct native functions
 over the fixed utility corpus and complete shared resource corpora, then binds
 those results to the exact runtime wheel record. This does not relabel other
 behavior in the broader reference-only schema TCK.
-`REL-NORMATIVE-AUTHORITY` therefore still blocks 1.0 only on the remaining C1
-requirement authority and panic-free public Rust boundaries. The stable native
+`REL-NORMATIVE-AUTHORITY` therefore still blocks 1.0 only on the three remaining
+C1 requirements and panic-free public Rust boundaries. The stable native
 runtime API, all stable C1 exact-differential suites, and their installed
 artifact identities are now closed. Installed compiler TCK reports execute
 the normative facade and bind the
@@ -289,8 +289,13 @@ fixtures in Rust and exact-compares their closed result flags through
 `rust-tool-lifecycle-exact-differential`. The installed `tool-result` report
 executes all six shared preparation and stream-state fixtures in Rust and
 exact-compares their closed result contracts through
-`rust-tool-result-exact-differential`. All stable C1 suites now have exact
-native/reference coverage.
+`rust-tool-result-exact-differential`. The installed compiler report covers
+nominal identity, requiredness, and nested-root validation; the installed
+`typed-ports` report adds exact typed Graph construction, canonical compilation,
+typed-boundary rejection, and local-runtime port preservation through
+`rust-typed-ports-exact-differential`. All stable C1 suites now have exact
+native/reference coverage; outcome, cancellation, and local flow remain direct
+requirement-authority work.
 
 ## Release gates
 
