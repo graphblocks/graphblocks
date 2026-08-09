@@ -4,8 +4,7 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
 use graphblocks_schema::{
     MAX_CANONICAL_JSON_DEPTH, ResourceSchemaViolation, SchemaId, parse_duration_milliseconds,
-    parse_duration_seconds, resource_depth_violation, resource_schema_errors,
-    validate_canonical_json_depth,
+    resource_depth_violation, resource_schema_errors, validate_canonical_json_depth,
 };
 use jsonschema::error::{TypeKind, ValidationErrorKind};
 use serde_json::{Map, Value};
@@ -2278,7 +2277,7 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
             };
             let flow = node.get("flow").and_then(Value::as_object);
             if let Some(timeout) = flow.and_then(|flow| flow.get("timeout")) {
-                let valid_timeout = parse_duration_seconds(timeout).is_some();
+                let valid_timeout = parse_duration_milliseconds(timeout).is_some();
                 if !valid_timeout {
                     diagnostics.push(Diagnostic::error(
                         "GB1019",

@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, VecDeque};
+use std::time::Instant;
 
 use serde_json::{Value, json};
 
@@ -431,7 +432,10 @@ impl InProcessTestRuntime {
                 )?;
 
                 let started_at_ms = self.virtual_now_ms;
+                let execution_started_at = Instant::now();
                 let execution_result = executor.execute(started.clone());
+                let measured_duration_ms =
+                    u64::try_from(execution_started_at.elapsed().as_millis()).unwrap_or(u64::MAX);
                 if let Some(token) = cancellation_token
                     && let Some(reason) = token.reason()
                 {
@@ -457,7 +461,7 @@ impl InProcessTestRuntime {
                     .and_then(|durations| durations.get(attempt.saturating_sub(1) as usize))
                     .copied()
                     .or_else(|| self.node_durations_ms.get(&node_id).copied())
-                    .unwrap_or(0);
+                    .unwrap_or(measured_duration_ms);
                 self.virtual_now_ms = self.virtual_now_ms.saturating_add(duration_ms);
 
                 if let Some(policy) = self.timeout_policies.get(&node_id)

@@ -31,12 +31,15 @@ use crate::canonical::canonical_json;
 use crate::journal::{JournalMetadata, JournalRecord, SqliteExecutionJournal};
 use crate::outcome::{BlockError, ErrorCategory, Outcome, SkipReason};
 use crate::readiness::{InputDependency, PortRef, ResolvedInput};
+use crate::retry::{EffectKind, RetryPolicy};
 use crate::run_store::{RunDeploymentProvenance, RunStatus, RunStoreError, SqliteRunStore};
 use crate::scheduler::{ScheduledCondition, ScheduledNode, StartedNode};
 use crate::stdlib_blocks::stdlib_block_catalog;
 use crate::test_runtime::{
-    InProcessTestRuntime, NodeExecutionPreflight, NodeExecutor, TestRunResult, TestRunStatus,
+    InProcessTestRuntime, NodeExecutionPreflight, NodeExecutor, NodeRetryBoundary, TestRunResult,
+    TestRunStatus,
 };
+use crate::timeout::TimeoutPolicy;
 use crate::tool::{
     BlockToolImplementation, GraphToolImplementation, McpToolImplementation,
     OpenApiToolImplementation, RemoteToolImplementation, ResolvedTool, ToolApproval, ToolBinding,
@@ -890,7 +893,12 @@ fn run_stdlib_graph_values(
             "runtime callbackReceipt requires checkpointStorePath",
         ));
     }
-    let mut runtime = runtime_with_inputs(bridge_plan.scheduled_nodes, inputs, run_id)?;
+    let mut runtime = runtime_with_inputs(
+        bridge_plan.scheduled_nodes,
+        &bridge_plan.nodes,
+        inputs,
+        run_id,
+    )?;
     let mut executor = StdlibExecutor {
         nodes: bridge_plan.nodes,
         descriptors_by_node: bridge_plan.descriptors_by_node,
@@ -1143,7 +1151,7 @@ fn start_native_callback_run(
         output_ports_by_node,
     } = request.bridge_plan;
     let node_names = nodes.keys().cloned().collect::<Vec<_>>();
-    let mut runtime = runtime_with_inputs(scheduled_nodes, request.inputs, request.run_id)?;
+    let mut runtime = runtime_with_inputs(scheduled_nodes, &nodes, request.inputs, request.run_id)?;
     let mut executor = StdlibExecutor {
         nodes,
         descriptors_by_node,
@@ -1384,7 +1392,7 @@ fn resume_native_callback_run(
         output_projections_by_node,
         output_ports_by_node,
     } = request.bridge_plan;
-    let mut runtime = runtime_with_inputs(scheduled_nodes, request.inputs, request.run_id)?;
+    let mut runtime = runtime_with_inputs(scheduled_nodes, &nodes, request.inputs, request.run_id)?;
     let mut executor = StdlibExecutor {
         nodes,
         descriptors_by_node,
@@ -3487,12 +3495,109 @@ fn build_runtime_bridge_plan(
 
 fn runtime_with_inputs(
     scheduled_nodes: Vec<ScheduledNode>,
+    nodes: &BTreeMap<String, Value>,
     inputs: &Value,
     run_id: &str,
 ) -> Result<InProcessTestRuntime, StdlibRuntimeError> {
     let mut runtime = InProcessTestRuntime::new(run_id, scheduled_nodes).map_err(|error| {
         StdlibRuntimeError::invalid(format!("failed to create test runtime: {error:?}"))
     })?;
+    for (node_id, node) in nodes {
+        let Some(flow) = node.get("flow").and_then(Value::as_object) else {
+            continue;
+        };
+        if let Some(timeout) = flow.get("timeout") {
+            let timeout_ms = parse_duration_milliseconds(timeout).ok_or_else(|| {
+                StdlibRuntimeError::invalid(format!(
+                    "node {node_id:?} flow.timeout must be a positive finite duration"
+                ))
+            })?;
+            let timeout_policy = TimeoutPolicy::new(timeout_ms).map_err(|error| {
+                StdlibRuntimeError::invalid(format!(
+                    "node {node_id:?} flow.timeout is invalid: {error:?}"
+                ))
+            })?;
+            runtime = runtime.with_timeout_policy(node_id, timeout_policy);
+        }
+        let Some(retry) = flow.get("retry") else {
+            continue;
+        };
+        let (max_attempts, idempotency_key) = match retry {
+            Value::Number(_) => (
+                retry.as_u64().ok_or_else(|| {
+                    StdlibRuntimeError::invalid(format!(
+                        "node {node_id:?} flow.retry must be a positive integer or object"
+                    ))
+                })?,
+                None,
+            ),
+            Value::Object(retry) => {
+                let max_attempts = retry
+                    .get("maxAttempts")
+                    .or_else(|| retry.get("max_attempts"))
+                    .and_then(Value::as_u64)
+                    .ok_or_else(|| {
+                        StdlibRuntimeError::invalid(format!(
+                            "node {node_id:?} flow.retry.maxAttempts must be a positive integer"
+                        ))
+                    })?;
+                let idempotency_key = match retry
+                    .get("idempotencyKey")
+                    .or_else(|| retry.get("idempotency_key"))
+                {
+                    None => None,
+                    Some(Value::String(key)) if !key.is_empty() && key == key.trim() => {
+                        Some(key.clone())
+                    }
+                    Some(_) => {
+                        return Err(StdlibRuntimeError::invalid(format!(
+                            "node {node_id:?} flow.retry.idempotencyKey must be a non-empty trimmed string"
+                        )));
+                    }
+                };
+                (max_attempts, idempotency_key)
+            }
+            _ => {
+                return Err(StdlibRuntimeError::invalid(format!(
+                    "node {node_id:?} flow.retry must be a positive integer or object"
+                )));
+            }
+        };
+        let retry_policy = RetryPolicy::try_new(max_attempts)
+            .map_err(|error| {
+                StdlibRuntimeError::invalid(format!(
+                    "node {node_id:?} flow.retry is invalid: {error}"
+                ))
+            })?
+            .retry_on([
+                ErrorCategory::RateLimit,
+                ErrorCategory::Timeout,
+                ErrorCategory::Transient,
+            ]);
+        let mut boundary = NodeRetryBoundary::new(retry_policy);
+        if let Some(idempotency_key) = idempotency_key {
+            boundary = boundary.with_idempotency_key(idempotency_key);
+        }
+        let effect_kind = |effect: &str| match effect {
+            "external_write" => Some(EffectKind::ExternalWrite),
+            "filesystem_write" => Some(EffectKind::FilesystemWrite),
+            "destructive" => Some(EffectKind::Destructive),
+            "process" => Some(EffectKind::Process),
+            _ => None,
+        };
+        let effect = match node.get("effects") {
+            Some(Value::String(effect)) => effect_kind(effect),
+            Some(Value::Array(effects)) => effects
+                .iter()
+                .filter_map(Value::as_str)
+                .find_map(effect_kind),
+            _ => None,
+        };
+        if let Some(effect) = effect {
+            boundary = boundary.with_effect(effect);
+        }
+        runtime = runtime.with_retry_boundary(node_id, boundary);
+    }
     if let Some(input_object) = inputs.as_object() {
         for (input_name, value) in input_object {
             runtime = runtime.with_initial_value(PortRef::new("$input", input_name), value.clone());
@@ -7978,22 +8083,94 @@ fn external_effect_json(effect: &ExternalEffectRecord) -> Value {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
     use std::path::PathBuf;
 
     use crate::application_event::{ApplicationProtocolEventKind, SqliteApplicationProtocolLog};
     use crate::journal::SqliteExecutionJournal;
+    use crate::outcome::{BlockError, ErrorCategory, Outcome};
+    use crate::readiness::PortRef;
     use crate::run_store::{RunStatus, SqliteRunStore};
+    use crate::scheduler::{ScheduledNode, StartedNode};
     use crate::stdlib_blocks::{
         ModelGenerate, ModelGenerateConfig, ModelGenerateInputs, ModelResponseValue, PromptValue,
     };
+    use crate::test_runtime::{InProcessTestRuntime, NodeExecutor, TestRunStatus};
     use crate::typed_graph::GraphBuilder;
     use serde_json::{Value, json};
 
     use super::{
         ExecutionPhase, StdlibRunOptions, StdlibRunStatus, execute_document_ranking,
         optional_alias_duration_ms, run_stdlib_graph_with_options,
-        run_stdlib_graph_with_options_json, stdlib_block_catalog, validate_stdlib_output_contract,
+        run_stdlib_graph_with_options_json, runtime_with_inputs, stdlib_block_catalog,
+        validate_stdlib_output_contract,
     };
+
+    struct ScriptedFlowExecutor {
+        attempts: u32,
+        failures_remaining: u32,
+        failure_category: ErrorCategory,
+        failure_retryable: bool,
+    }
+
+    impl ScriptedFlowExecutor {
+        fn new(failures_remaining: u32) -> Self {
+            Self {
+                attempts: 0,
+                failures_remaining,
+                failure_category: ErrorCategory::Transient,
+                failure_retryable: true,
+            }
+        }
+
+        fn with_failure(mut self, category: ErrorCategory, retryable: bool) -> Self {
+            self.failure_category = category;
+            self.failure_retryable = retryable;
+            self
+        }
+    }
+
+    impl NodeExecutor for ScriptedFlowExecutor {
+        fn execute(
+            &mut self,
+            node: StartedNode,
+        ) -> Result<Vec<(PortRef, Outcome<Value>)>, BlockError> {
+            self.attempts += 1;
+            if self.failures_remaining > 0 {
+                self.failures_remaining -= 1;
+                return Err(BlockError::new(
+                    "test.transient",
+                    self.failure_category.clone(),
+                    "scripted test failure",
+                    self.failure_retryable,
+                ));
+            }
+            Ok(vec![(
+                PortRef::new(node.node_id, "value"),
+                Outcome::Value(json!(self.attempts)),
+            )])
+        }
+    }
+
+    fn runtime_for_flow(flow: Value) -> InProcessTestRuntime {
+        let nodes = BTreeMap::from([("worker".to_owned(), json!({"flow": flow}))]);
+        runtime_with_inputs(
+            vec![ScheduledNode::new("worker", [])],
+            &nodes,
+            &json!({}),
+            "run-flow-boundary",
+        )
+        .expect("graph flow boundary should configure the runtime")
+    }
+
+    fn journal_kinds(result: &crate::test_runtime::TestRunResult) -> Vec<&str> {
+        result
+            .journal
+            .records()
+            .iter()
+            .map(|record| record.kind.as_str())
+            .collect()
+    }
 
     #[test]
     fn native_duration_parser_rounds_up_and_enforces_u64_milliseconds() {
@@ -8027,6 +8204,178 @@ mod tests {
                 "duration must be positive and fit in milliseconds",
             )
             .is_err()
+        );
+    }
+
+    #[test]
+    fn graph_flow_retry_retries_transient_failures_and_stops_at_the_attempt_bound() {
+        let mut runtime = runtime_for_flow(json!({"retry": {"maxAttempts": 2}}));
+        let mut succeeds_on_retry = ScriptedFlowExecutor::new(1);
+
+        let result = runtime
+            .run(&mut succeeds_on_retry)
+            .expect("transient retry should run");
+
+        assert_eq!(result.status, TestRunStatus::Succeeded);
+        assert_eq!(succeeds_on_retry.attempts, 2);
+        assert_eq!(
+            journal_kinds(&result),
+            [
+                "run_started",
+                "node_started",
+                "node_retry",
+                "node_started",
+                "node_completed",
+                "run_succeeded",
+            ]
+        );
+
+        let mut exhausted_runtime = runtime_for_flow(json!({"retry": 2}));
+        let mut always_transient = ScriptedFlowExecutor::new(2);
+        let exhausted = exhausted_runtime
+            .run(&mut always_transient)
+            .expect("retry exhaustion should produce a terminal result");
+
+        assert_eq!(exhausted.status, TestRunStatus::Failed);
+        assert_eq!(always_transient.attempts, 2);
+        assert_eq!(
+            journal_kinds(&exhausted),
+            [
+                "run_started",
+                "node_started",
+                "node_retry",
+                "node_started",
+                "node_failed",
+                "run_failed",
+            ]
+        );
+
+        let mut provider_runtime = runtime_for_flow(json!({"retry": 3}));
+        let mut provider_failure =
+            ScriptedFlowExecutor::new(3).with_failure(ErrorCategory::Provider, true);
+        let provider_result = provider_runtime
+            .run(&mut provider_failure)
+            .expect("provider failure should produce a terminal result");
+
+        assert_eq!(provider_result.status, TestRunStatus::Failed);
+        assert_eq!(provider_failure.attempts, 1);
+        assert_eq!(
+            journal_kinds(&provider_result),
+            ["run_started", "node_started", "node_failed", "run_failed"]
+        );
+    }
+
+    #[test]
+    fn graph_flow_timeout_discards_late_attempts_and_obeys_the_retry_bound() {
+        let mut runtime = runtime_for_flow(json!({
+            "timeout": "5ms",
+            "retry": {"maxAttempts": 2}
+        }))
+        .with_node_attempt_durations_ms("worker", [5, 4]);
+        let mut executor = ScriptedFlowExecutor::new(0);
+
+        let result = runtime
+            .run(&mut executor)
+            .expect("timeout retry should run");
+
+        assert_eq!(result.status, TestRunStatus::Succeeded);
+        assert_eq!(executor.attempts, 2);
+        assert_eq!(
+            journal_kinds(&result),
+            [
+                "run_started",
+                "node_started",
+                "node_retry",
+                "node_started",
+                "node_completed",
+                "run_succeeded",
+            ]
+        );
+        assert_eq!(
+            result
+                .journal
+                .records()
+                .iter()
+                .filter(|record| record.kind == "node_completed")
+                .count(),
+            1
+        );
+
+        let mut exhausted_runtime = runtime_for_flow(json!({
+            "timeout": "5ms",
+            "retry": {"maxAttempts": 2}
+        }))
+        .with_node_attempt_durations_ms("worker", [5, 5]);
+        let mut exhausted_executor = ScriptedFlowExecutor::new(0);
+        let exhausted = exhausted_runtime
+            .run(&mut exhausted_executor)
+            .expect("timeout exhaustion should produce a terminal result");
+
+        assert_eq!(exhausted.status, TestRunStatus::Failed);
+        assert_eq!(exhausted_executor.attempts, 2);
+        assert_eq!(
+            journal_kinds(&exhausted),
+            [
+                "run_started",
+                "node_started",
+                "node_retry",
+                "node_started",
+                "node_failed",
+                "run_failed",
+            ]
+        );
+        assert_eq!(
+            exhausted
+                .journal
+                .records()
+                .iter()
+                .filter(|record| record.kind == "node_completed")
+                .count(),
+            0
+        );
+    }
+
+    #[test]
+    fn graph_flow_effect_retry_requires_and_preserves_the_idempotency_key() {
+        let nodes = BTreeMap::from([(
+            "worker".to_owned(),
+            json!({
+                "effects": ["external_write"],
+                "flow": {
+                    "retry": {
+                        "maxAttempts": 2,
+                        "idempotencyKey": "request-1"
+                    }
+                }
+            }),
+        )]);
+        let mut runtime = runtime_with_inputs(
+            vec![ScheduledNode::new("worker", [])],
+            &nodes,
+            &json!({}),
+            "run-effect-retry",
+        )
+        .expect("effect retry boundary should configure the runtime");
+        let mut executor = ScriptedFlowExecutor::new(1);
+
+        let result = runtime
+            .run(&mut executor)
+            .expect("idempotent effect retry should run");
+
+        assert_eq!(result.status, TestRunStatus::Succeeded);
+        assert_eq!(executor.attempts, 2);
+        let retry_record = result
+            .journal
+            .records()
+            .iter()
+            .find(|record| record.kind == "node_retry")
+            .expect("retry record should be journaled");
+        assert_eq!(
+            retry_record
+                .payload
+                .as_ref()
+                .and_then(|payload| payload.get("idempotencyKey")),
+            Some(&json!("request-1"))
         );
     }
 

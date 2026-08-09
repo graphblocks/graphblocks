@@ -3436,6 +3436,8 @@ fn compile_graph_rejects_invalid_node_timeout() {
         json!(0),
         json!(-1),
         json!(true),
+        json!("18446744073709551616ms"),
+        json!("1e100s"),
     ] {
         let graph = json!({
             "apiVersion": GRAPH_API_VERSION,
@@ -3473,6 +3475,8 @@ fn compile_graph_accepts_positive_finite_node_timeout() {
         json!("0.5s"),
         json!("1.5e0d"),
         json!("2"),
+        json!("1e-1000ms"),
+        json!("18446744073709551615ms"),
     ] {
         let graph = json!({
             "apiVersion": GRAPH_API_VERSION,

@@ -218,6 +218,8 @@ def test_runtime_exposes_expired_timeout_through_attempt_cancellation_token(
         "inf",
         "1_000ms",
         "١s",
+        "18446744073709551616ms",
+        "1e100s",
         pytest.param(10**1000, id="overflowing-integer"),
     ),
 )

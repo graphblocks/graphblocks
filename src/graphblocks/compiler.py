@@ -17,7 +17,7 @@ from ._canonical_reference import (
     canonical_loads,
 )
 from .diagnostics import Diagnostic, DiagnosticSet, Severity
-from .duration import parse_duration_milliseconds, parse_duration_seconds
+from .duration import parse_duration_milliseconds
 from .migration import (
     GRAPH_API_VERSION,
     LEGACY_GRAPH_API_VERSIONS,
@@ -1420,7 +1420,7 @@ def _validate_graph_contracts(context: _ValidationContext) -> _ValidationContext
         if (
             isinstance(flow, dict)
             and "timeout" in flow
-            and parse_duration_seconds(flow["timeout"]) is None
+            and parse_duration_milliseconds(flow["timeout"]) is None
         ):
             diagnostics.append(
                 Diagnostic(
