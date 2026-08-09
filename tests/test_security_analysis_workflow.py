@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import date
 import importlib.util
+import json
 from pathlib import Path
 import re
 import sys
@@ -115,21 +116,111 @@ exceptions:
     assert commands[1][-2:] == ["--ignore", "RUSTSEC-2099-0001"]
 
 
+def test_dependency_audits_verify_and_record_the_pinned_rustsec_database(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tool = _load_tool()
+    manifest = tmp_path / "exceptions.yaml"
+    manifest.write_text("version: 1\nexceptions: []\n", encoding="utf-8")
+    database = tmp_path / "rustsec-advisory-db"
+    database.mkdir()
+    revision = "309ad29d8fe448bf986019e05d47b9e0e29a2218"
+    commands: list[list[str]] = []
+
+    class Completed:
+        def __init__(self, *, stdout: str = "") -> None:
+            self.returncode = 0
+            self.stdout = stdout
+
+    def fake_run(command: list[str], **_kwargs: object) -> Completed:
+        commands.append(command)
+        if command[:3] == ["git", "-C", str(database)]:
+            return Completed(stdout=f"{revision}\n")
+        return Completed()
+
+    monkeypatch.setattr(tool.subprocess, "run", fake_run)
+    output_dir = tmp_path / "evidence"
+
+    assert (
+        tool.run_dependency_audits(
+            exceptions_path=manifest,
+            output_dir=output_dir,
+            rustsec_db_path=database,
+            rustsec_db_revision=revision,
+        )
+        == 0
+    )
+    assert commands[0] == ["git", "-C", str(database), "rev-parse", "HEAD"]
+    assert commands[2] == [
+        "cargo",
+        "audit",
+        "--json",
+        "--db",
+        str(database),
+        "--no-fetch",
+    ]
+    assert json.loads(
+        (output_dir / "rustsec-advisory-db.json").read_text(encoding="utf-8")
+    ) == {
+        "repository": "https://github.com/RustSec/advisory-db",
+        "revision": revision,
+    }
+
+
+def test_dependency_audits_reject_a_mismatched_rustsec_database(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tool = _load_tool()
+    database = tmp_path / "rustsec-advisory-db"
+    database.mkdir()
+
+    class Completed:
+        returncode = 0
+        stdout = "0000000000000000000000000000000000000000\n"
+
+    monkeypatch.setattr(tool.subprocess, "run", lambda *_args, **_kwargs: Completed())
+
+    with pytest.raises(tool.DependencyAuditError, match="does not match"):
+        tool._verify_rustsec_database(
+            database,
+            "309ad29d8fe448bf986019e05d47b9e0e29a2218",
+        )
+
+
 def test_ci_requires_dependency_audit_and_codeql() -> None:
     workflow = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())
     jobs = workflow["jobs"]
 
     dependency_audit = jobs["dependency-audit"]
     assert dependency_audit["permissions"] == {"contents": "read"}
-    assert dependency_audit["env"] == {"RUSTUP_TOOLCHAIN": "1.94.0"}
+    rustsec_revision = "309ad29d8fe448bf986019e05d47b9e0e29a2218"
+    assert dependency_audit["env"] == {
+        "RUSTSEC_ADVISORY_DB_REVISION": rustsec_revision,
+        "RUSTUP_TOOLCHAIN": "1.94.0",
+    }
     dependency_steps = {step["name"]: step for step in dependency_audit["steps"]}
+    rustsec_checkout = dependency_steps["Check out pinned RustSec advisory database"]
+    assert rustsec_checkout["uses"] == (
+        "actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10"
+    )
+    assert rustsec_checkout["with"] == {
+        "repository": "RustSec/advisory-db",
+        "ref": "${{ env.RUSTSEC_ADVISORY_DB_REVISION }}",
+        "path": ".ci/rustsec-advisory-db",
+        "persist-credentials": False,
+    }
     assert dependency_steps["Install pinned vulnerability scanners"]["run"] == (
         "python -m pip install pip-audit==2.10.1 PyYAML==6.0.3\n"
         "cargo install cargo-audit --version 0.22.2 --locked\n"
     )
     audit_run = dependency_steps["Audit Python and Rust dependency graphs"]["run"]
     assert audit_run == (
-        "python tools/run_dependency_audits.py --output-dir dist/ci/dependency-audit"
+        "python tools/run_dependency_audits.py "
+        "--output-dir dist/ci/dependency-audit "
+        "--rustsec-db .ci/rustsec-advisory-db "
+        '--rustsec-db-revision "$RUSTSEC_ADVISORY_DB_REVISION"'
     )
     retained = dependency_steps["Retain dependency-audit evidence"]
     assert retained["if"] == "always()"

@@ -8,6 +8,7 @@ from collections.abc import Sequence
 from datetime import date
 import json
 from pathlib import Path
+import re
 import subprocess
 import sys
 from urllib.parse import urlparse
@@ -17,6 +18,7 @@ import yaml  # type: ignore[import-untyped]
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_EXCEPTIONS_PATH = ROOT / "security/vulnerability-exceptions.yaml"
+RUSTSEC_ADVISORY_DB_URL = "https://github.com/RustSec/advisory-db"
 ALLOWED_ECOSYSTEMS = frozenset({"python", "rust"})
 EXCEPTION_FIELDS = frozenset(
     {
@@ -109,15 +111,56 @@ def load_exceptions(
     return tuple(exceptions)
 
 
+def _verify_rustsec_database(
+    path: Path | None,
+    expected_revision: str | None,
+) -> Path | None:
+    if path is None and expected_revision is None:
+        return None
+    if path is None or expected_revision is None:
+        raise DependencyAuditError(
+            "rustsec database path and revision must be provided together"
+        )
+    if re.fullmatch(r"[0-9a-f]{40}", expected_revision) is None:
+        raise DependencyAuditError(
+            "rustsec database revision must be a lowercase 40-character SHA"
+        )
+    try:
+        revision_result = subprocess.run(
+            ["git", "-C", str(path), "rev-parse", "HEAD"],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    except OSError as error:
+        raise DependencyAuditError(
+            "rustsec database revision could not be verified"
+        ) from error
+    if (
+        revision_result.returncode != 0
+        or revision_result.stdout.strip() != expected_revision
+    ):
+        raise DependencyAuditError(
+            "rustsec database checkout does not match the expected revision"
+        )
+    return path
+
+
 def run_dependency_audits(
     *,
     exceptions_path: Path,
     output_dir: Path,
+    rustsec_db_path: Path | None = None,
+    rustsec_db_revision: str | None = None,
     today: date | None = None,
 ) -> int:
     """Run both audit tools and retain their machine-readable evidence."""
 
     exceptions = load_exceptions(exceptions_path, today=today)
+    verified_rustsec_db = _verify_rustsec_database(
+        rustsec_db_path,
+        rustsec_db_revision,
+    )
     output_dir.mkdir(parents=True, exist_ok=True)
     (output_dir / "vulnerability-exceptions.json").write_text(
         json.dumps(
@@ -129,6 +172,20 @@ def run_dependency_audits(
         + "\n",
         encoding="utf-8",
     )
+    if verified_rustsec_db is not None:
+        (output_dir / "rustsec-advisory-db.json").write_text(
+            json.dumps(
+                {
+                    "repository": RUSTSEC_ADVISORY_DB_URL,
+                    "revision": rustsec_db_revision,
+                },
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
 
     python_command = [
         sys.executable,
@@ -144,6 +201,8 @@ def run_dependency_audits(
         str(output_dir / "pip-audit.json"),
     ]
     rust_command = ["cargo", "audit", "--json"]
+    if verified_rustsec_db is not None:
+        rust_command.extend(("--db", str(verified_rustsec_db), "--no-fetch"))
     for exception in exceptions:
         if exception["ecosystem"] == "python":
             python_command.extend(("--ignore-vuln", exception["advisoryId"]))
@@ -188,6 +247,15 @@ def _parse_args(argv: Sequence[str]) -> argparse.Namespace:
         required=True,
         help="directory for machine-readable audit evidence",
     )
+    parser.add_argument(
+        "--rustsec-db",
+        type=Path,
+        help="path to an explicitly checked-out RustSec advisory database",
+    )
+    parser.add_argument(
+        "--rustsec-db-revision",
+        help="expected lowercase 40-character RustSec database revision",
+    )
     return parser.parse_args(argv)
 
 
@@ -197,6 +265,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return run_dependency_audits(
             exceptions_path=args.exceptions,
             output_dir=args.output_dir,
+            rustsec_db_path=args.rustsec_db,
+            rustsec_db_revision=args.rustsec_db_revision,
         )
     except DependencyAuditError as error:
         print(f"dependency audit configuration failed: {error}", file=sys.stderr)

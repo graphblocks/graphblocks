@@ -446,12 +446,20 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
+      RUSTSEC_ADVISORY_DB_REVISION: "309ad29d8fe448bf986019e05d47b9e0e29a2218"
       RUSTUP_TOOLCHAIN: "1.94.0"
     permissions:
       contents: read
     steps:
       - name: Check out repository
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - name: Check out pinned RustSec advisory database
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          repository: RustSec/advisory-db
+          ref: ${{ env.RUSTSEC_ADVISORY_DB_REVISION }}
+          path: .ci/rustsec-advisory-db
+          persist-credentials: false
       - name: Set up Python
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
@@ -467,7 +475,11 @@ jobs:
           python -m pip install pip-audit==2.10.1 PyYAML==6.0.3
           cargo install cargo-audit --version 0.22.2 --locked
       - name: Audit Python and Rust dependency graphs
-        run: python tools/run_dependency_audits.py --output-dir dist/ci/dependency-audit
+        run: >-
+          python tools/run_dependency_audits.py
+          --output-dir dist/ci/dependency-audit
+          --rustsec-db .ci/rustsec-advisory-db
+          --rustsec-db-revision "$RUSTSEC_ADVISORY_DB_REVISION"
       - name: Retain dependency-audit evidence
         if: always()
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
