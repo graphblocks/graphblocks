@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use graphblocks_runtime_core::cancellation::{
     CancellationGuarantee, CancellationScope, CancellationToken,
 };
@@ -5,12 +7,9 @@ use graphblocks_runtime_core::outcome::{
     BlockError, CancelCode, CancelReason, ErrorCategory, Outcome,
 };
 use graphblocks_runtime_core::readiness::PortRef;
-use graphblocks_runtime_core::retry::{EffectKind, RetryPolicy};
 use graphblocks_runtime_core::scheduler::{ScheduledNode, StartedNode};
-use graphblocks_runtime_core::test_runtime::{
-    InProcessTestRuntime, NodeExecutor, NodeRetryBoundary, TestRunStatus,
-};
-use graphblocks_runtime_core::timeout::TimeoutPolicy;
+use graphblocks_runtime_core::stdlib_runtime::runtime_with_graph_flow_for_conformance;
+use graphblocks_runtime_core::test_runtime::{NodeExecutor, TestRunStatus};
 use graphblocks_schema::parse_duration_milliseconds;
 use serde_json::{Value, json};
 
@@ -178,22 +177,13 @@ pub(crate) fn evaluate_case(case: &Value) -> Result<Value, String> {
         .and_then(Value::as_array)
         .map(Vec::as_slice)
         .unwrap_or(&[]);
-    let effect = effects
-        .iter()
-        .map(|value| {
-            value
-                .as_str()
-                .ok_or_else(|| format!("retry TCK case {case_name} effects must contain strings"))
-        })
-        .collect::<Result<Vec<_>, _>>()?
-        .into_iter()
-        .find_map(|value| match value {
-            "external_write" => Some(EffectKind::ExternalWrite),
-            "filesystem_write" => Some(EffectKind::FilesystemWrite),
-            "destructive" => Some(EffectKind::Destructive),
-            "process" => Some(EffectKind::Process),
-            _ => None,
-        });
+    for effect in effects {
+        if !effect.is_string() {
+            return Err(format!(
+                "retry TCK case {case_name} effects must contain strings"
+            ));
+        }
+    }
     let output_value = case_object
         .get("outputValue")
         .cloned()
@@ -337,32 +327,28 @@ pub(crate) fn evaluate_case(case: &Value) -> Result<Value, String> {
         }
     }
 
-    let policy = RetryPolicy::try_new(max_attempts)
-        .map_err(|error| format!("retry TCK case {case_name}: {error}"))?
-        .retry_on([
-            ErrorCategory::Transient,
-            ErrorCategory::Timeout,
-            ErrorCategory::RateLimit,
-        ]);
-    let mut boundary = NodeRetryBoundary::new(policy);
-    if let Some(effect) = effect {
-        boundary = boundary.with_effect(effect);
-    }
+    let mut retry = serde_json::Map::from_iter([("maxAttempts".to_owned(), json!(max_attempts))]);
     if let Some(idempotency_key) = idempotency_key {
-        boundary = boundary.with_idempotency_key(idempotency_key);
+        retry.insert("idempotencyKey".to_owned(), json!(idempotency_key));
     }
-
-    let mut runtime = InProcessTestRuntime::new(
-        format!("retry-tck-{case_name}"),
-        [ScheduledNode::new(node_id, [])],
+    let mut flow = serde_json::Map::from_iter([("retry".to_owned(), Value::Object(retry))]);
+    if let Some(timeout) = case_object.get("timeout") {
+        flow.insert("timeout".to_owned(), timeout.clone());
+    }
+    let nodes = BTreeMap::from([(
+        node_id.to_owned(),
+        json!({
+            "effects": effects,
+            "flow": flow,
+        }),
+    )]);
+    let mut runtime = runtime_with_graph_flow_for_conformance(
+        vec![ScheduledNode::new(node_id, [])],
+        &nodes,
+        &json!({}),
+        &format!("retry-tck-{case_name}"),
     )
-    .map_err(|error| format!("retry TCK case {case_name}: {error:?}"))?
-    .with_retry_boundary(node_id, boundary);
-    if let Some(timeout_ms) = timeout_ms {
-        let timeout = TimeoutPolicy::new(timeout_ms)
-            .map_err(|error| format!("retry TCK case {case_name}: {error:?}"))?;
-        runtime = runtime.with_timeout_policy(node_id, timeout);
-    }
+    .map_err(|error| format!("retry TCK case {case_name}: {error:?}"))?;
     if !attempt_durations_ms.is_empty() {
         runtime = runtime.with_node_attempt_durations_ms(node_id, attempt_durations_ms);
     }

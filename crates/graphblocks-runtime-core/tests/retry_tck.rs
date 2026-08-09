@@ -1,5 +1,7 @@
 #![allow(clippy::panic)]
 
+use std::collections::BTreeMap;
+
 use graphblocks_runtime_core::cancellation::{
     CancellationGuarantee, CancellationScope, CancellationToken,
 };
@@ -7,13 +9,9 @@ use graphblocks_runtime_core::outcome::{
     BlockError, CancelCode, CancelReason, ErrorCategory, Outcome,
 };
 use graphblocks_runtime_core::readiness::PortRef;
-use graphblocks_runtime_core::retry::{EffectKind, RetryPolicy};
 use graphblocks_runtime_core::scheduler::{ScheduledNode, StartedNode};
-use graphblocks_runtime_core::test_runtime::{
-    InProcessTestRuntime, NodeExecutor, NodeRetryBoundary, TestRunStatus,
-};
-use graphblocks_runtime_core::timeout::TimeoutPolicy;
-use graphblocks_schema::parse_duration_milliseconds;
+use graphblocks_runtime_core::stdlib_runtime::runtime_with_graph_flow_for_conformance;
+use graphblocks_runtime_core::test_runtime::{NodeExecutor, TestRunStatus};
 use serde_json::{Value, json};
 
 struct FixtureExecutor {
@@ -73,7 +71,7 @@ fn rust_retry_matches_shared_tck_cases() {
         let max_attempts = case
             .get("maxAttempts")
             .and_then(Value::as_u64)
-            .expect("retry TCK case should have maxAttempts") as u32;
+            .expect("retry TCK case should have maxAttempts");
         let failures_before_success =
             case.get("failuresBeforeSuccess")
                 .and_then(Value::as_u64)
@@ -100,9 +98,6 @@ fn rust_retry_matches_shared_tck_cases() {
             .get("outputValue")
             .cloned()
             .unwrap_or_else(|| json!("committed"));
-        let timeout_ms = case.get("timeout").map(|value| {
-            parse_duration_milliseconds(value).expect("timeout should be a valid duration")
-        });
         let attempt_durations_ms = case
             .get("attemptDurationsMs")
             .and_then(Value::as_array)
@@ -123,40 +118,29 @@ fn rust_retry_matches_shared_tck_cases() {
             .cloned()
             .unwrap_or_default();
 
-        let policy = RetryPolicy::new(max_attempts).retry_on([
-            ErrorCategory::Transient,
-            ErrorCategory::Timeout,
-            ErrorCategory::RateLimit,
-        ]);
-        let mut boundary = NodeRetryBoundary::new(policy);
-        if let Some(effect) =
-            effects
-                .iter()
-                .filter_map(Value::as_str)
-                .find_map(|effect| match effect {
-                    "external_write" => Some(EffectKind::ExternalWrite),
-                    "filesystem_write" => Some(EffectKind::FilesystemWrite),
-                    "destructive" => Some(EffectKind::Destructive),
-                    "process" => Some(EffectKind::Process),
-                    _ => None,
-                })
-        {
-            boundary = boundary.with_effect(effect);
-        }
+        let mut retry =
+            serde_json::Map::from_iter([("maxAttempts".to_owned(), json!(max_attempts))]);
         if let Some(idempotency_key) = idempotency_key {
-            boundary = boundary.with_idempotency_key(idempotency_key);
+            retry.insert("idempotencyKey".to_owned(), json!(idempotency_key));
         }
-
-        let mut runtime =
-            InProcessTestRuntime::new("run-000001", [ScheduledNode::new(node_id, [])])
-                .expect("runtime should be created")
-                .with_retry_boundary(node_id, boundary);
-        if let Some(timeout_ms) = timeout_ms {
-            runtime = runtime.with_timeout_policy(
-                node_id,
-                TimeoutPolicy::new(timeout_ms).expect("timeout should be positive"),
-            );
+        let mut flow = serde_json::Map::from_iter([("retry".to_owned(), Value::Object(retry))]);
+        if let Some(timeout) = case.get("timeout") {
+            flow.insert("timeout".to_owned(), timeout.clone());
         }
+        let nodes = BTreeMap::from([(
+            node_id.to_owned(),
+            json!({
+                "effects": effects,
+                "flow": flow,
+            }),
+        )]);
+        let mut runtime = runtime_with_graph_flow_for_conformance(
+            vec![ScheduledNode::new(node_id, [])],
+            &nodes,
+            &json!({}),
+            "run-000001",
+        )
+        .expect("Graph flow should configure the runtime");
         if !attempt_durations_ms.is_empty() {
             runtime = runtime.with_node_attempt_durations_ms(node_id, attempt_durations_ms);
         }

@@ -3606,6 +3606,23 @@ fn runtime_with_inputs(
     Ok(runtime)
 }
 
+/// Configure the local runtime through the same normalized Graph `flow`
+/// boundary used by the stdlib executor.
+///
+/// This is intentionally hidden from the supported API surface. The Python
+/// binding uses it only to keep installed conformance execution on the
+/// production flow decoder instead of reconstructing retry and timeout
+/// policies in a second implementation.
+#[doc(hidden)]
+pub fn runtime_with_graph_flow_for_conformance(
+    scheduled_nodes: Vec<ScheduledNode>,
+    nodes: &BTreeMap<String, Value>,
+    inputs: &Value,
+    run_id: &str,
+) -> Result<InProcessTestRuntime, StdlibRuntimeError> {
+    runtime_with_inputs(scheduled_nodes, nodes, inputs, run_id)
+}
+
 fn optional_options_string<'a>(
     options: &'a serde_json::Map<String, Value>,
     primary: &str,
