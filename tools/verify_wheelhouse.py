@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import argparse
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
+from contextlib import contextmanager
 from decimal import Decimal
 import hashlib
 import io
@@ -2324,6 +2325,18 @@ def native_runtime_wheel_member_artifact(
     }
 
 
+@contextmanager
+def _private_build_directory(path: Path) -> Iterator[Path]:
+    """Create one collision-resistant, deterministic build-source directory."""
+    if path.exists() or path.is_symlink():
+        raise RuntimeError(f"private build directory already exists: {path}")
+    path.mkdir(mode=0o700)
+    try:
+        yield path
+    finally:
+        shutil.rmtree(path)
+
+
 def _safe_extract_sdist(sdist: Path, destination: Path) -> Path:
     """Extract one PEP 625 ``.tar.gz`` sdist without trusting archive paths/types."""
     try:
@@ -2762,11 +2775,10 @@ def main(argv: list[str] | None = None) -> int:
         raise RuntimeError(f"first-party wheel matrix is invalid: {matrix.diagnostics!r}")
     manifests = tuple(ROOT / target.manifest for target in matrix.targets)
     expected_distributions: dict[str, str] = {}
-    with TemporaryDirectory(prefix="graphblocks-sdist-build-") as build_root_name, TemporaryDirectory(
-        prefix="graphblocks-sdist-extract-"
-    ) as extraction_root_name:
+    with TemporaryDirectory(prefix="graphblocks-sdist-build-") as build_root_name, _private_build_directory(
+        wheelhouse.parent / ".graphblocks-sdist-extract"
+    ) as extraction_root:
         build_root = Path(build_root_name)
-        extraction_root = Path(extraction_root_name)
         for index, manifest in enumerate(manifests):
             project = tomllib.loads(manifest.read_text(encoding="utf-8"))["project"]
             distribution = canonicalize_name(str(project["name"]))

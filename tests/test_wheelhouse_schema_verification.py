@@ -470,6 +470,29 @@ def test_native_runtime_wheel_member_artifact_hashes_exact_extension_bytes() -> 
     }
 
 
+def test_private_build_directory_fails_closed_on_collision_and_cleans_up(
+    tmp_path: Path,
+) -> None:
+    module = _load_wheelhouse_module()
+    build_root = tmp_path / ".graphblocks-sdist-extract"
+    build_root.mkdir()
+    marker = build_root / "keep"
+    marker.write_text("existing", encoding="utf-8")
+
+    with pytest.raises(RuntimeError, match="already exists"):
+        with module._private_build_directory(build_root):
+            pytest.fail("an existing private build directory must not be reused")
+    assert marker.read_text(encoding="utf-8") == "existing"
+
+    marker.unlink()
+    build_root.rmdir()
+    with pytest.raises(ValueError, match="build failed"):
+        with module._private_build_directory(build_root) as created_root:
+            assert created_root == build_root
+            raise ValueError("build failed")
+    assert not build_root.exists()
+
+
 def test_installed_native_authority_probe_exercises_public_and_reference_paths() -> None:
     module = _load_wheelhouse_module()
     source = module.installed_native_authority_probe_source()
@@ -2641,7 +2664,11 @@ def test_wheelhouse_gate_uses_pep503_distribution_identity(monkeypatch, tmp_path
         f"graphblocks_testing-{testing_version}.tar.gz",
     }
     assert len(wheel_source_roots) == 3
-    assert all("graphblocks-sdist-extract-" in str(path) for path in wheel_source_roots)
+    deterministic_source_root = wheelhouse.parent / ".graphblocks-sdist-extract"
+    assert {path.parents[1] for path in wheel_source_roots} == {
+        deterministic_source_root
+    }
+    assert not deterministic_source_root.exists()
     assert {path.name for path in dependency_wheelhouse.glob("*.whl")} == {
         "jsonschema-4.25.1-py3-none-any.whl"
     }
