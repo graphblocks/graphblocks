@@ -672,6 +672,7 @@ def main(argv: list[str] | None = None) -> int:
         reports: dict[str, dict[str, object]] = {}
         observed_execution_claims: dict[str, dict[str, str]] = {}
         ok = True
+        runner: TckRunner
         for manifest in manifests:
             evidence_dir = (
                 args.evidence_dir / manifest.suite_id

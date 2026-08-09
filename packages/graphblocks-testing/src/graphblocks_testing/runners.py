@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from copy import deepcopy
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
@@ -12,6 +12,7 @@ import hashlib
 import json
 from pathlib import Path
 import time
+from typing import cast
 
 
 from graphblocks.application_event import (
@@ -934,7 +935,9 @@ class TckRunner:
                     )
                 elif disposition == "replace":
                     replacement_parts = []
-                    for raw_part in operation.get("replacementParts", []):
+                    for raw_part in cast(
+                        Iterable[object], operation.get("replacementParts", [])
+                    ):
                         if isinstance(raw_part, Mapping):
                             replacement_parts.append(
                                 ContentPart(
@@ -3061,6 +3064,7 @@ class TckRunner:
         diagnostics: list[dict[str, str]] = []
         fixture = case.budget_race_fixture
         ledger = InMemoryBudgetLedger()
+        observed: dict[str, object]
 
         allocated = []
         raw_allocated = fixture.get("allocated", [])
@@ -3096,7 +3100,7 @@ class TckRunner:
                                 unit=str(amount.get("unit", "")),
                             )
                         )
-            for owner in fixture.get("owners", []) or []:
+            for owner in cast(Iterable[object], fixture.get("owners", []) or []):
                 try:
                     ledger.reserve(
                         budget_id,
@@ -3131,7 +3135,9 @@ class TckRunner:
             ]
             expected_reserved = []
             try:
-                for amount in fixture.get("expectedReserved", []):
+                for amount in cast(
+                    Iterable[object], fixture.get("expectedReserved", [])
+                ):
                     if isinstance(amount, Mapping):
                         usage_amount = UsageAmount(
                             kind=str(amount.get("kind", "")),
@@ -3223,7 +3229,7 @@ class TckRunner:
                         "path": "$.expectedAvailable",
                     }
                 )
-            observed: dict[str, object] = {
+            observed = {
                 "allowed": sum(1 for outcome in outcomes if outcome["allowed"]),
                 "denied": sum(1 for outcome in outcomes if not outcome["allowed"]),
                 "denied_errors": [
@@ -3739,7 +3745,7 @@ class TckRunner:
                             "path": "$.messages",
                         }
                     )
-                messages: list[Message] = []
+                messages = []
                 for raw_message in raw_messages:
                     parent_message_id = raw_message.get(
                         "parentMessageId", raw_message.get("parent_message_id")
@@ -4058,7 +4064,7 @@ class TckRunner:
                             "path": "$.messages",
                         }
                     )
-                messages: list[Message] = []
+                messages = []
                 for raw_message in raw_messages:
                     parent_message_id = raw_message.get(
                         "parentMessageId", raw_message.get("parent_message_id")
@@ -4177,7 +4183,7 @@ class TckRunner:
                             "path": "$.messages",
                         }
                     )
-                messages: list[Message] = []
+                messages = []
                 for raw_message in raw_messages:
                     parent_message_id = raw_message.get(
                         "parentMessageId", raw_message.get("parent_message_id")
@@ -7522,7 +7528,7 @@ class TckRunner:
                             code = type(error).__name__
                         errors.append({"operation": operation_index, "code": code})
 
-                observed = {
+                observed: dict[str, object] = {
                     "accepted": accepted,
                     "errors": errors,
                     "finalStatuses": {
@@ -7613,7 +7619,6 @@ class TckRunner:
                 observed=observed,
             )
 
-        observed: dict[str, object]
         try:
             raw_tool = fixture.get("tool", {})
             if not isinstance(raw_tool, Mapping):
@@ -8749,15 +8754,15 @@ class TckRunner:
                         raise TypeError(
                             "native tool-execution operation must be a mapping"
                         )
-                    op = operation.get("op")
+                    native_op = operation.get("op")
                     expected_keys = {
                         "ready": {"index", "op", "ready"},
                         "policy_stop": {"index", "op", "affected"},
-                    }.get(str(op), {"index", "op", "error"})
+                    }.get(str(native_op), {"index", "op", "error"})
                     if (
                         set(operation) != expected_keys
                         or operation.get("index") != operation_index
-                        or type(op) is not str
+                        or type(native_op) is not str
                     ):
                         raise TypeError(
                             "native tool-execution operation contains invalid field values"
@@ -10067,11 +10072,13 @@ class TckRunner:
         reference_contract = dict(observed)
         observed["reference_contract"] = reference_contract
         if self.native_sequence_tck_authority:
-            expected: dict[str, str] = {}
+            native_expected: dict[str, str] = {}
             if case.expected_sequence_state is not None:
-                expected["state"] = case.expected_sequence_state
+                native_expected["state"] = case.expected_sequence_state
             if case.expected_sequence_creation_error is not None:
-                expected["creation_error"] = case.expected_sequence_creation_error
+                native_expected["creation_error"] = (
+                    case.expected_sequence_creation_error
+                )
             try:
                 from graphblocks_runtime import _evaluate_sequence_tck_case
 
@@ -10082,7 +10089,7 @@ class TckRunner:
                         "operations": [
                             dict(operation) for operation in case.sequence_operations
                         ],
-                        "expected": expected,
+                        "expected": native_expected,
                     }
                 )
                 if set(native_contract) != set(reference_contract):
@@ -10159,11 +10166,6 @@ class TckRunner:
                     journal_store_path = str(
                         self.evidence_dir / f"{run_id}-journal.sqlite3"
                     )
-                native_options: dict[str, object] = {"run_id": run_id}
-                if run_store_path is not None:
-                    native_options["run_store_path"] = run_store_path
-                if journal_store_path is not None:
-                    native_options["journal_store_path"] = journal_store_path
                 if run_store_path is None and journal_store_path is None:
                     from graphblocks_runtime import run_stdlib_graph
 
@@ -10178,7 +10180,9 @@ class TckRunner:
                     native_result = run_stdlib_graph_with_options(
                         case.graph,
                         case.inputs,
-                        **native_options,
+                        run_id=run_id,
+                        run_store_path=run_store_path,
+                        journal_store_path=journal_store_path,
                     )
                 journal = native_result.get("journal", [])
                 journal_records = journal if isinstance(journal, list) else []
