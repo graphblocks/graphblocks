@@ -1033,7 +1033,7 @@ def test_profile_release_tracks_are_closed_owned_and_independent() -> None:
         "activeCompiler": "rust",
         "activeLocalRuntime": "rust",
         "activeReferenceInterpreter": "python",
-        "targetCoreRuntimeAuthority": "rust-transition-blocked",
+        "targetCoreRuntimeAuthority": "rust",
         "inheritedAuthorityFrom": "extends",
     }
     for profile_id in extension_profile_ids:
@@ -1056,7 +1056,7 @@ def test_profile_release_tracks_are_closed_owned_and_independent() -> None:
         ] == "python"
         assert resolved_authority[
             ("GB-C1-LOCAL-RUNTIME", "targetCoreRuntimeAuthority")
-        ] == "rust-transition-blocked"
+        ] == "rust"
         assert resolved_authority[("GB-C0-SCHEMA", "activeCompiler")] == "rust"
     assert profiles["GB-C4-PRODUCTION"]["authority"][
         "targetProductionRuntime"
@@ -2176,24 +2176,20 @@ def test_stable_release_matrix_is_complete_and_machine_readable() -> None:
     assert macos_gate["blockers"] == []
 
     authority = matrix["authorityTransition"]
-    assert authority["readiness"] == "in-progress-blocked"
+    assert authority["readiness"] == "candidate-enforced"
     assert authority["decisionStatus"] == "accepted"
-    assert authority["currentCandidateImplementation"] == "phase-scoped-rust-authority"
+    assert authority["currentCandidateImplementation"] == "stable-c0-c1-rust-authority"
     assert authority["targetNormativeAuthority"] == "rust"
     assert authority["publicCompilerAuthority"] == "rust"
     assert authority["pythonRole"] == "authoring-facade-and-explicit-reference-oracle"
     assert authority["implicitReferenceFallback"] is False
-    assert authority["remainingPhases"] == [
-        "stable-c1-requirement-authority",
-    ]
+    assert authority["remainingPhases"] == []
     assert authority["coreRuntimeAuthority"] == {
         "profile": "GB-C1-LOCAL-RUNTIME",
-        "remainingRequirements": [
-            "local-flow",
-        ],
+        "remainingRequirements": [],
         "remainingExactSuites": [],
         "runtimeCorrectnessGate": "REL-RUNTIME-CORRECTNESS",
-        "blocksTargetRelease": True,
+        "blocksTargetRelease": False,
     }
     assert authority["extensionRuntimeAuthority"] == {
         "profiles": ["GB-C4-PRODUCTION", "GB-X3-DURABLE-STREAM"],
@@ -2265,13 +2261,13 @@ def test_stable_release_matrix_is_complete_and_machine_readable() -> None:
         "requiredGates"
     ]
     assert matrix_profiles["GB-C1-LOCAL-RUNTIME"]["implementation"] == (
-        "rust-native-runtime-target+python-reference-oracle"
+        "rust-native-runtime+python-reference-oracle"
     )
     assert matrix_profiles["GB-C1-LOCAL-RUNTIME"]["authority"] == {
         "activeCompiler": "rust",
         "activeLocalRuntime": "rust",
         "activeReferenceInterpreter": "python",
-        "targetCoreRuntimeAuthority": "rust-transition-blocked",
+        "targetCoreRuntimeAuthority": "rust",
         "inheritedAuthorityFrom": "extends",
     }
     assert "REL-NORMATIVE-AUTHORITY" in matrix_profiles["GB-C1-LOCAL-RUNTIME"][
@@ -2308,9 +2304,7 @@ def test_stable_release_matrix_is_complete_and_machine_readable() -> None:
         "pypi:graphblocks-runtime"
     ]
     assert artifacts["pypi:graphblocks-runtime"]["tier"] == "stable"
-    assert artifacts["pypi:graphblocks-runtime"]["readiness"] == (
-        "authority-transition-blocked"
-    )
+    assert artifacts["pypi:graphblocks-runtime"]["readiness"] == "blocked"
 
     authority_gate = next(
         entry
@@ -2327,9 +2321,8 @@ def test_stable_release_matrix_is_complete_and_machine_readable() -> None:
         in authority_gate["completedEvidence"]
     )
     assert "authority-transition-adr-not-accepted" not in authority_gate["blockers"]
-    assert authority_gate["blockers"] == [
-        "stable-c1-requirement-authority-incomplete",
-    ]
+    assert authority_gate["readiness"] == "candidate-enforced"
+    assert authority_gate["blockers"] == []
     assert "installed-native-compiler-tck-and-artifact-identity-incomplete" not in (
         authority_gate["blockers"]
     )
@@ -2386,10 +2379,9 @@ def test_stable_release_matrix_is_complete_and_machine_readable() -> None:
     assert "exact-shared-outcome-differential" in authority_gate[
         "completedEvidence"
     ]
-    assert (
-        "stable-c1-local-flow-authority"
-        not in authority_gate["completedEvidence"]
-    )
+    assert "stable-c1-local-flow-authority" in authority_gate[
+        "completedEvidence"
+    ]
     assert "stable-c1-cancellation-requirement-authority" in authority_gate[
         "completedEvidence"
     ]
@@ -2472,9 +2464,8 @@ def test_stable_release_matrix_is_complete_and_machine_readable() -> None:
     assert set(runtime_gate["completedEvidence"]) <= set(
         runtime_gate["requiredEvidence"]
     )
-    assert runtime_gate["blockers"] == [
-        "stable-c1-requirement-authority-incomplete",
-    ]
+    assert runtime_gate["readiness"] == "candidate-enforced"
+    assert runtime_gate["blockers"] == []
     assert "stable-native-local-runtime-api-snapshot" in runtime_gate[
         "completedEvidence"
     ]
@@ -2498,7 +2489,7 @@ def test_stable_release_matrix_is_complete_and_machine_readable() -> None:
     assert "exact-shared-outcome-differential" in runtime_gate[
         "completedEvidence"
     ]
-    assert "all-stable-c1-requirements-normative" not in runtime_gate[
+    assert "all-stable-c1-requirements-normative" in runtime_gate[
         "completedEvidence"
     ]
     assert (

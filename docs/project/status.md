@@ -12,8 +12,10 @@ the closed outcome.v1 wire, readiness, six run-terminal distinctions and
 payloads, exactly-one terminal enforcement, and output-projection ordering. The
 cooperative cancellation requirement is also Rust-authoritative across
 pre-start, pre-retry, pre-commit, post-terminal, and timeout-precedence
-boundaries. Local flow remains incomplete. Wider production scheduler,
-suspension, and durable authority still block the complete authority gate.
+boundaries. Conditional execution, timeout/retry flow, retry limits, and
+restart-independent local correctness are also Rust-authoritative. Wider
+production scheduler, suspension, and durable authority remain on separate
+preview promotion gates.
 
 The digest-bound 99-finding deep-audit inventory includes 4 P0, 23 P1, 64 P2,
 and 8 P3 findings. The live closure overlay now binds all 99 findings to
@@ -46,7 +48,7 @@ regenerate this page instead of changing the table by hand.
 | Supply chain (`supply-chain`) | `promotion-contract-enforced-external-evidence-absent` | `release-wide-artifact-supply-chain`; blocks target release | `REL-SUPPLY-CHAIN` | Artifact integrity, provenance, signing, and promotion only; this does not imply runtime security, durability, or adapter readiness. |
 | API and portable contract (`api`) | `candidate-contract-review-blocked` | `core-c0-c1-only`; blocks target release | `REL-CORE-PROFILE`, `REL-API-SNAPSHOT`, `REL-WIRE-V1`, `REL-CLOSED-SCHEMA` | C0/C1 compatibility candidate only; preview modules and production-operation behavior remain outside this claim. |
 | Runtime security (`runtime-security`) | `code-closure-enforced-external-evidence-blocked` | `release-wide-shipped-code`; blocks target release | `REL-AUDIT-REMEDIATION`, `REL-OBJECT-AUTHORIZATION-REVIEW`, `REL-ADVERSARIAL-RESOURCE-TESTS` | The reference server is not a production-ready multi-tenant authority boundary; object authorization and adversarial resource evidence remain mandatory. |
-| Durability and recovery (`durability`) | `core-c1-runtime-authority-and-correctness-blocked-production-preview` | `core-c1-local-runtime-authority`; blocks target release | `REL-AUDIT-REMEDIATION`, `REL-NORMATIVE-AUTHORITY`, `REL-RUNTIME-CORRECTNESS` | The remaining local-flow requirement blocks 1.0; the installed native runtime API plus typed-ports, outcome, cooperative-cancellation, and restart-independent store/journal correctness requirements are Rust-authoritative, while C4/X3 production durability retains its separate blocker. |
+| Durability and recovery (`durability`) | `core-c1-runtime-authority-enforced-production-preview` | `core-c1-local-runtime-authority`; blocks target release | `REL-AUDIT-REMEDIATION`, `REL-NORMATIVE-AUTHORITY`, `REL-RUNTIME-CORRECTNESS` | Core C1 local flow, typed ports, outcomes, cooperative cancellation, and restart-independent store/journal correctness are Rust-authoritative; C4/X3 production durability retains its separate nonblocking preview gate, while candidate-wide audit evidence still blocks 1.0. |
 | External adapters (`adapters`) | `contract-only-no-real-adapters` | `excluded-contract-only`; axis excluded; shipped P0/P1 still block | `REL-INTEGRATION-PROMOTION` | Catalogued integrations are contract-only or test doubles; no external service, SDK, authentication mode, or failure model is production-supported. |
 <!-- END GENERATED READINESS AXES -->
 

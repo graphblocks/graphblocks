@@ -341,15 +341,13 @@ def test_stable_requirement_implementation_roles_match_the_authority_transition(
     normative_requirements = {
         "deterministic-local-scheduler",
         "journal",
+        "local-flow",
         "local-runtime-api",
         "outcome",
         "typed-ports",
         "cancellation",
     }
-    target_requirements = {
-        "local-flow",
-    }
-    assert set(c1_entries) == normative_requirements | target_requirements
+    assert set(c1_entries) == normative_requirements
     for requirement in normative_requirements:
         roles = c1_entries[requirement]["implementations"]
         assert set(roles) == {"normative", "pythonFacadeAndReference"}
@@ -360,6 +358,50 @@ def test_stable_requirement_implementation_roles_match_the_authority_transition(
     assert "compatibility/stable-runtime-api.json" in c1_entries[
         "local-runtime-api"
     ]["evidence"]
+    local_flow = c1_entries["local-flow"]
+    assert local_flow["tckSuites"] == [
+        "compiler",
+        "retry",
+        "runtime",
+        "sequence",
+        "tool-execution",
+    ]
+    assert local_flow["authoritySlices"]["conditionalTimeoutRetryFlow"] == {
+        "status": "normative",
+        "authority": "rust",
+        "scope": (
+            "conditional-skip-effect-suppression-timeout-retry-exhaustion-"
+            "and-attempt-bound"
+        ),
+        "normativeImplementations": [
+            "crates/graphblocks-compiler/src/compiler.rs",
+            "crates/graphblocks-runtime-core/src/scheduler.rs",
+            "crates/graphblocks-runtime-core/src/bounded.rs",
+            "crates/graphblocks-runtime-core/src/stdlib_runtime.rs",
+            "crates/graphblocks-runtime-core/src/test_runtime.rs",
+            "crates/graphblocks-python/src/retry_tck.rs",
+            "crates/graphblocks-python/src/lib.rs",
+        ],
+        "pythonFacadeAndReference": [
+            "src/graphblocks/compiler.py",
+            "src/graphblocks/runtime.py",
+            "src/graphblocks/tools.py",
+        ],
+        "installedEvidence": [
+            "packages/graphblocks-runtime/src/graphblocks_runtime/__init__.py",
+            "packages/graphblocks-testing/src/graphblocks_testing/runners.py",
+            "packages/graphblocks-testing/src/graphblocks_testing/cli.py",
+            "tools/verify_wheelhouse.py",
+            "tests/test_testing_package.py",
+            "tests/test_wheelhouse_schema_verification.py",
+            "tests/test_release_supply_chain.py",
+        ],
+        "exclusions": [
+            "Multi-process scheduling, durable suspension, remote workers, and "
+            "effect outboxes remain preview extension behavior outside local C1 "
+            "flow authority."
+        ],
+    }
     typed_ports = c1_entries["typed-ports"]
     assert "crates/graphblocks-runtime-core/src/typed_value.rs" not in typed_ports[
         "implementations"
@@ -481,8 +523,3 @@ def test_stable_requirement_implementation_roles_match_the_authority_transition(
     ]["scope"] == (
         "pre-start-in-flight-pre-commit-post-terminal-and-timeout-precedence"
     )
-    for requirement in target_requirements:
-        entry = c1_entries[requirement]
-        roles = entry["implementations"]
-        assert "normative" not in roles, entry["id"]
-        assert set(roles) == {"pythonFacadeAndReference", "targetNormative"}

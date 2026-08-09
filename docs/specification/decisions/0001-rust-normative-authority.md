@@ -118,11 +118,12 @@ Rust implementation crates remain internal APIs unless separately promoted.
    exact installed retry suite. Pre-start, pre-retry, pre-commit, and
    post-terminal boundaries are covered with normalized commit and terminal
    counts, while direct Python/Rust tests fix cancellation ahead of timeout
-   retry or output commit. This does not expose a stable public native
-   caller-driven cancellation handle or promote restart, lease, and fencing
-   behavior.
-   The remaining local-flow requirement and panic-free public boundaries are
-   enumerated by `REL-NORMATIVE-AUTHORITY` and
+   retry or output commit. This cancellation slice alone does not expose a
+   stable public native caller-driven cancellation handle or promote restart,
+   lease, and fencing behavior.
+   Conditional execution, timeout/retry flow, retry-attempt bounds, panic-free
+   public boundaries, and restart-independent local correctness are now
+   candidate-enforced by `REL-NORMATIVE-AUTHORITY` and
    `REL-RUNTIME-CORRECTNESS`. Wider production durability belongs to the
    separate nonblocking extension-promotion gate.
 5. Extract the reusable control-plane library so language bindings do not
@@ -130,10 +131,11 @@ Rust implementation crates remain internal APIs unless separately promoted.
    `graphblocks-python` and the one-shot `graphblocks-control` CLI both consume
    the `graphblocks-control-plane` library target.
 
-Until step 4 and its stable C1 differential and API evidence are complete,
-`REL-NORMATIVE-AUTHORITY` remains blocked and
-the project must not describe the entire native runtime as stable. C4/X3 remain
-preview independently of the first C0/C1 release decision.
+Step 4's stable C1 differential and API evidence is complete, so
+`REL-NORMATIVE-AUTHORITY` is candidate-enforced for the scoped C0/C1 contract.
+The project must not describe C4/X3 production or durable runtime behavior as
+stable; those profiles remain preview independently of the first C0/C1 release
+decision.
 
 ## Conformance impact
 

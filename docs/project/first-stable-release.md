@@ -241,8 +241,9 @@ compares public facades, explicit Python oracles, and direct native functions
 over the fixed utility corpus and complete shared resource corpora, then binds
 those results to the exact runtime wheel record. This does not relabel other
 behavior in the broader reference-only schema TCK.
-`REL-NORMATIVE-AUTHORITY` therefore still blocks 1.0 only on the remaining
-local-flow requirement. Fallible public Rust boundaries, the stable native
+`REL-NORMATIVE-AUTHORITY` is now candidate-enforced: conditional execution,
+timeout/retry flow, and the retry-attempt boundary complete the local-flow
+requirement. Fallible public Rust boundaries, the stable native
 runtime API, all stable C1 exact-differential suites, and their installed
 artifact identities are now closed. Installed compiler TCK reports execute
 the normative facade and bind the
@@ -259,8 +260,8 @@ This promotes only the named local scheduler/journal slice; production
 suspension, multi-worker crash recovery, lease/fence, and durable effect
 boundaries remain preview promotion work under
 `REL-EXTENSION-RUNTIME-AUTHORITY`, which does not block the first C0/C1 release.
-`REL-RUNTIME-CORRECTNESS` separately continues to block 1.0 on the remaining
-local-flow requirement. Installed fresh-process evidence now binds the selected
+`REL-RUNTIME-CORRECTNESS` is likewise candidate-enforced. Installed fresh-process
+evidence binds the selected
 native wheel member to exact store/journal reopen results and stale-coordinator
 patch/status rejection after an expired lease takeover.
 

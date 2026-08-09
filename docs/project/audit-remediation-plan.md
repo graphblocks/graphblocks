@@ -540,11 +540,12 @@ fail-closed native facades, while explicit Python reference entry points remain
 available. Supported installed-wheel evidence compares public, reference, and
 direct-native results over the complete shared resource corpora and binds the
 corpus to the exact runtime artifact. The audit inventory's `GB-ARCH-001` and
-`GB-ARCH-002` implementation findings have executable closure evidence; the
-separate release transition remains blocked only on the stable C1 local-flow
-requirement. Installed native fresh-process evidence closes restart-independent
-store/journal correctness and stale coordinator rejection, while fallible public
-Rust boundaries remain enforced by the workspace lint and canonical API tests.
+`GB-ARCH-002` implementation findings have executable closure evidence. The
+stable C1 local-flow transition is now candidate-enforced by exact compiler,
+retry, and runtime corpora. Installed native fresh-process evidence closes
+restart-independent store/journal correctness and stale coordinator rejection,
+while fallible public Rust boundaries remain enforced by the workspace lint and
+canonical API tests.
 The native binding exposes a separate
 versioned,
 closed capability handshake; the Python wrapper rejects incompatible protocol,
@@ -633,8 +634,9 @@ requirement. Python-only metadata and looser facade compatibility remain
 reference-only.
 The cooperative cancellation requirement is likewise Rust-authoritative for
 the installed conformance adapter and Python facade/reference token boundary.
-This promotion does not claim a public native caller-driven cancellation handle
-or close restart, lease, fencing, and local-flow correctness.
+This cancellation slice does not claim a public native caller-driven
+cancellation handle. Separate installed local-flow and fresh-process evidence
+now closes core C1 flow, restart, lease-takeover, and fencing correctness.
 The stable installed runtime API is now an explicit three-symbol allowlist with
 an exact signature snapshot. Its core execution result is projected to a
 closed checkpoint-free envelope, while persistence and other C4/X3 options use

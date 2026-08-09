@@ -57,12 +57,12 @@ readinessAxes:
       claimBoundary: The reference server is not a production-ready multi-tenant authority boundary; object authorization and adversarial resource evidence remain mandatory.
     - id: durability
       label: Durability and recovery
-      readiness: core-c1-runtime-authority-and-correctness-blocked-production-preview
+      readiness: core-c1-runtime-authority-enforced-production-preview
       primaryGates: [REL-AUDIT-REMEDIATION, REL-NORMATIVE-AUTHORITY, REL-RUNTIME-CORRECTNESS]
       targetReleaseClaim: core-c1-local-runtime-authority
       blocksTargetRelease: true
       shippedP0P1RemainBlocking: true
-      claimBoundary: The remaining local-flow requirement blocks 1.0; the installed native runtime API plus typed-ports, outcome, cooperative-cancellation, and restart-independent store/journal correctness requirements are Rust-authoritative, while C4/X3 production durability retains its separate blocker.
+      claimBoundary: Core C1 local flow, typed ports, outcomes, cooperative cancellation, and restart-independent store/journal correctness are Rust-authoritative; C4/X3 production durability retains its separate nonblocking preview gate, while candidate-wide audit evidence still blocks 1.0.
     - id: adapters
       label: External adapters
       readiness: contract-only-no-real-adapters
@@ -115,10 +115,10 @@ deepAudit:
     securityFreeze: {maxOpenP0: 0}
     stableRelease: {maxOpenP0: 0, maxOpenP1: 0}
 authorityTransition:
-  readiness: in-progress-blocked
+  readiness: candidate-enforced
   decisionStatus: accepted
   decision: docs/specification/decisions/0001-rust-normative-authority.md
-  currentCandidateImplementation: phase-scoped-rust-authority
+  currentCandidateImplementation: stable-c0-c1-rust-authority
   targetNormativeAuthority: rust
   publicCompilerAuthority: rust
   pythonRole: authoring-facade-and-explicit-reference-oracle
@@ -160,14 +160,13 @@ authorityTransition:
     - stable-c1-outcome-requirement-authority
     - stable-c1-cancellation-requirement-authority
     - fallible-panic-free-rust-public-boundaries
-  remainingPhases:
-    - stable-c1-requirement-authority
+  remainingPhases: []
   coreRuntimeAuthority:
     profile: GB-C1-LOCAL-RUNTIME
-    remainingRequirements: [local-flow]
+    remainingRequirements: []
     remainingExactSuites: []
     runtimeCorrectnessGate: REL-RUNTIME-CORRECTNESS
-    blocksTargetRelease: true
+    blocksTargetRelease: false
   extensionRuntimeAuthority:
     profiles: [GB-C4-PRODUCTION, GB-X3-DURABLE-STREAM]
     promotionGate: REL-EXTENSION-RUNTIME-AUTHORITY
@@ -369,7 +368,7 @@ artifacts:
     kind: distribution
     path: packages/graphblocks-runtime/pyproject.toml
     tier: stable
-    readiness: authority-transition-blocked
+    readiness: blocked
     stableProfiles: [GB-C0-SCHEMA, GB-C1-LOCAL-RUNTIME]
     previewSurfaces: [GB-C2-AI-APPLICATION, GB-C3-GOVERNED-RUNTIME, GB-C4-PRODUCTION, GB-X1-ORCHESTRATION, GB-X2-VOICE, GB-X3-DURABLE-STREAM]
   - id: crate:graphblocks-schema
@@ -513,10 +512,10 @@ profiles:
     claimOwnerArtifact: pypi:graphblocks-runtime
     implementationArtifacts: [pypi:graphblocks, pypi:graphblocks-runtime, crate:graphblocks-flow, crate:graphblocks-runtime-core, crate:graphblocks-protocol, crate:graphblocks-python]
     evidenceArtifacts: [pypi:graphblocks-testing]
-    implementation: rust-native-runtime-target+python-reference-oracle
+    implementation: rust-native-runtime+python-reference-oracle
     tier: stable
     readiness: blocked
-    authority: {activeCompiler: rust, activeLocalRuntime: rust, activeReferenceInterpreter: python, targetCoreRuntimeAuthority: rust-transition-blocked, inheritedAuthorityFrom: extends}
+    authority: {activeCompiler: rust, activeLocalRuntime: rust, activeReferenceInterpreter: python, targetCoreRuntimeAuthority: rust, inheritedAuthorityFrom: extends}
     promotionGate: REL-CORE-PROFILE
     extends: [GB-C0-SCHEMA]
     requiredGates: [REL-CORE-PROFILE, REL-WIRE-V1, REL-CLOSED-SCHEMA, REL-CLOSED-WORLD, REL-DIAGNOSTICS, REL-TRACEABILITY, REL-INSTALLED-TCK, REL-NORMATIVE-AUTHORITY, REL-API-SNAPSHOT, REL-RUNTIME-CORRECTNESS]
@@ -981,10 +980,10 @@ releaseGates:
       - .github/workflows/docs.yml
   - id: REL-RUNTIME-CORRECTNESS
     description: The stable C1 local runtime has normative implementations, exact differential coverage, a frozen native API, and restart-independent local correctness evidence.
-    readiness: blocked
+    readiness: candidate-enforced
     scope: core-c1-local-runtime
     blocksTargetRelease: true
-    requirementSelectors: [local-flow]
+    requirementSelectors: []
     exactSuiteSelectors: []
     requiredEvidence:
       - deterministic-local-scheduler-and-journal-native-authority
@@ -1039,8 +1038,8 @@ releaseGates:
       - stable-native-local-runtime-api-snapshot
       - restart-independent-local-runtime-store-and-journal-reopen
       - stale-authoritative-commit-rejection
-    blockers:
-      - stable-c1-requirement-authority-incomplete
+      - all-stable-c1-requirements-normative
+    blockers: []
   - id: REL-EXTENSION-RUNTIME-AUTHORITY
     description: C4 production and X3 durable-stream profiles require live authority, multi-process recovery, fencing, and durable output/effect boundaries before their separate preview promotion.
     readiness: definition-blocked
@@ -1602,12 +1601,12 @@ releaseGates:
     blockers:
       - audited-source-commit-tree-or-archive-digest-unavailable
   - id: REL-NORMATIVE-AUTHORITY
-    description: Rust is the normative C0/C1 compiler and runtime authority while Python stays the authoring facade and deterministic reference oracle; this gate tracks only the remaining stable C1 authority transition, not C4/X3 preview durability.
-    readiness: blocked
+    description: Rust is the normative C0/C1 compiler and runtime authority while Python stays the authoring facade and deterministic reference oracle; C4/X3 preview durability remains on its separate promotion track.
+    readiness: candidate-enforced
     blocksTargetRelease: true
     decisionStatus: accepted
     decision: docs/specification/decisions/0001-rust-normative-authority.md
-    currentCandidateImplementation: phase-scoped-rust-authority
+    currentCandidateImplementation: stable-c0-c1-rust-authority
     targetNormativeAuthority: rust
     requiredEvidence:
       - accepted-authority-transition-adr
@@ -1682,8 +1681,8 @@ releaseGates:
       - exact-shared-c1-application-events-retry-sequence-tool-execution-tool-lifecycle-and-result-differential
       - stable-native-local-runtime-api-snapshot-and-installed-identity
       - fallible-panic-free-rust-public-boundaries
-    blockers:
-      - stable-c1-requirement-authority-incomplete
+      - stable-c1-local-flow-authority
+    blockers: []
   - id: REL-PLATFORM-MATRIX
     description: Install typing and runtime gates pass on every published platform; upgrade is explicitly exempt only for v1.0.0.
     readiness: candidate-enforced-with-first-stable-upgrade-exemption
