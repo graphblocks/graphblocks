@@ -388,10 +388,26 @@ def test_rust_packages_declare_publishable_path_versions_and_bundle_local_fixtur
         "crates/graphblocks-protocol/tests/fixtures/worker-admission.json": (
             "tck/worker/admission.json"
         ),
+        "crates/graphblocks-python/src/fixtures/application-events-cases.json": (
+            "tck/application-events/cases.json"
+        ),
         "crates/graphblocks-python/src/fixtures/compiler-cases.json": "tck/compiler/cases.json",
-        "crates/graphblocks-python/src/fixtures/runtime-cases.json": "tck/runtime/cases.json",
         "crates/graphblocks-python/src/fixtures/outcome-cases.json": (
             "tck/outcome/cases.json"
+        ),
+        "crates/graphblocks-python/src/fixtures/retry-cases.json": "tck/retry/cases.json",
+        "crates/graphblocks-python/src/fixtures/runtime-cases.json": "tck/runtime/cases.json",
+        "crates/graphblocks-python/src/fixtures/sequence-cases.json": (
+            "tck/sequence/cases.json"
+        ),
+        "crates/graphblocks-python/src/fixtures/tool-execution-cases.json": (
+            "tck/tool-execution/cases.json"
+        ),
+        "crates/graphblocks-python/src/fixtures/tool-lifecycle-cases.json": (
+            "tck/tool-lifecycle/cases.json"
+        ),
+        "crates/graphblocks-python/src/fixtures/tool-result-cases.json": (
+            "tck/tool-result/cases.json"
         ),
         "crates/graphblocks-python/src/fixtures/typed-ports-cases.json": (
             "tck/typed-ports/cases.json"

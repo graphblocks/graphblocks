@@ -1,0 +1,359 @@
+[
+  {
+    "name": "incremental_arguments_do_not_finalize_call",
+    "kind": "incremental_arguments",
+    "responseId": "response-1",
+    "toolCallId": "call-1",
+    "toolName": "knowledge.search",
+    "resolvedToolId": "resolved-tool-1",
+    "createdAtUnixMs": 1000,
+    "createdAt": "2026-06-23T00:00:00Z",
+    "fragments": [
+      "{\"query\":",
+      "\"runtime policy\"}"
+    ],
+    "expected": {
+      "statuses": [
+        "proposed",
+        "arguments_streaming",
+        "arguments_streaming",
+        "arguments_complete"
+      ],
+      "finalizedBeforeComplete": false,
+      "finalizedAfterComplete": true,
+      "callStatus": "validated",
+      "arguments": {
+        "query": "runtime policy"
+      }
+    }
+  },
+  {
+    "name": "invalid_arguments_denied_before_policy_admission",
+    "kind": "admission_invalid_arguments",
+    "toolName": "process.run",
+    "schemaId": "schemas/ProcessRun@1",
+    "arguments": {
+      "cmd": "echo hello"
+    },
+    "expected": {
+      "admitted": false,
+      "errorContains": "arguments invalid",
+      "schemaRejectedBeforeApproval": true
+    }
+  },
+  {
+    "name": "missing_schema_denies_tool_admission",
+    "kind": "admission_missing_schema",
+    "toolName": "process.run",
+    "schemaId": "schemas/ProcessRun@1",
+    "arguments": {
+      "cmd": [
+        "echo",
+        "hello"
+      ]
+    },
+    "expected": {
+      "admitted": false,
+      "schemaMissingBeforeApproval": true,
+      "errorContains": "schema"
+    }
+  },
+  {
+    "name": "resolved_tool_mismatch_denies_tool_admission",
+    "kind": "admission_resolved_tool_mismatch",
+    "toolName": "process.run",
+    "schemaId": "schemas/ProcessRun@1",
+    "callResolvedToolId": "resolved-tool-other",
+    "arguments": {
+      "cmd": [
+        "echo",
+        "hello"
+      ]
+    },
+    "expected": {
+      "admitted": false,
+      "resolvedToolMismatchBeforeSchema": true,
+      "errorContains": "resolved tool"
+    }
+  },
+  {
+    "name": "tool_name_mismatch_denies_tool_admission",
+    "kind": "admission_tool_name_mismatch",
+    "toolName": "process.run",
+    "callToolName": "knowledge.search",
+    "schemaId": "schemas/ProcessRun@1",
+    "arguments": {
+      "cmd": [
+        "echo",
+        "hello"
+      ]
+    },
+    "expected": {
+      "admitted": false,
+      "toolNameMismatchBeforeSchema": true,
+      "errorContains": "name"
+    }
+  },
+  {
+    "name": "arguments_digest_mismatch_denies_tool_admission",
+    "kind": "admission_arguments_digest_mismatch",
+    "toolName": "process.run",
+    "schemaId": "schemas/ProcessRun@1",
+    "arguments": {
+      "cmd": [
+        "echo",
+        "hello"
+      ]
+    },
+    "argumentsDigest": "sha256:stale",
+    "expected": {
+      "admitted": false,
+      "argumentsDigestRejectedBeforeSchema": true,
+      "errorContains": "digest"
+    }
+  },
+  {
+    "name": "policy_stopped_response_denies_tool_admission",
+    "kind": "admission_policy_stopped_response",
+    "toolName": "process.run",
+    "schemaId": "schemas/ProcessRun@1",
+    "arguments": {
+      "cmd": [
+        "echo",
+        "hello"
+      ]
+    },
+    "outputPolicyState": {
+      "response_status": "policy_stopped"
+    },
+    "expected": {
+      "admitted": false,
+      "policyStoppedBeforeApproval": true,
+      "errorContains": "policy stopped"
+    }
+  },
+  {
+    "name": "expired_policy_decision_denies_tool_admission",
+    "kind": "admission_expired_policy_decision",
+    "toolName": "process.run",
+    "schemaId": "schemas/ProcessRun@1",
+    "arguments": {
+      "cmd": [
+        "echo",
+        "hello"
+      ]
+    },
+    "policyValidUntil": "1970-01-01T00:00:01Z",
+    "admittedAt": "1970-01-01T00:00:01Z",
+    "admittedAtUnixMs": 1000,
+    "expected": {
+      "admitted": false,
+      "policyExpiredBeforeApproval": true,
+      "errorContains": "expired"
+    }
+  },
+  {
+    "name": "expired_resolved_tool_denies_tool_admission",
+    "kind": "admission_expired_resolved_tool",
+    "toolName": "process.run",
+    "schemaId": "schemas/ProcessRun@1",
+    "arguments": {
+      "cmd": [
+        "echo",
+        "hello"
+      ]
+    },
+    "resolvedToolValidUntil": "1970-01-01T00:00:01Z",
+    "resolvedToolValidUntilUnixMs": 1000,
+    "admittedAt": "1970-01-01T00:00:02Z",
+    "admittedAtUnixMs": 2000,
+    "expected": {
+      "admitted": false,
+      "resolvedToolExpiredBeforeApproval": true,
+      "errorContains": "expired"
+    }
+  },
+  {
+    "name": "policy_input_digest_mismatch_denies_tool_admission",
+    "kind": "admission_policy_input_digest_mismatch",
+    "toolName": "process.run",
+    "schemaId": "schemas/ProcessRun@1",
+    "arguments": {
+      "cmd": [
+        "echo",
+        "hello"
+      ]
+    },
+    "expectedPolicyInputDigest": "sha256:before-tool",
+    "actualPolicyInputDigest": "sha256:stale-before-tool",
+    "expected": {
+      "admitted": false,
+      "policyDigestRejectedBeforeApproval": true,
+      "errorContains": "input digest"
+    }
+  },
+  {
+    "name": "missing_policy_input_digest_denies_tool_admission",
+    "kind": "admission_policy_input_digest_missing",
+    "toolName": "process.run",
+    "schemaId": "schemas/ProcessRun@1",
+    "arguments": {
+      "cmd": [
+        "echo",
+        "hello"
+      ]
+    },
+    "actualPolicyInputDigest": "",
+    "expected": {
+      "admitted": false,
+      "policyDigestMissingBeforeApproval": true,
+      "errorContains": "input digest"
+    }
+  },
+  {
+    "name": "policy_denied_decision_denies_tool_admission",
+    "kind": "admission_policy_denied",
+    "toolName": "process.run",
+    "schemaId": "schemas/ProcessRun@1",
+    "arguments": {
+      "cmd": [
+        "echo",
+        "hello"
+      ]
+    },
+    "decisionId": "decision-deny-tool",
+    "reasonCodes": [
+      "process_not_allowed"
+    ],
+    "expected": {
+      "admitted": false,
+      "policyDeniedBeforeApproval": true,
+      "errorContains": "denied"
+    }
+  },
+  {
+    "name": "policy_deferred_decision_denies_tool_admission",
+    "kind": "admission_policy_deferred",
+    "toolName": "process.run",
+    "schemaId": "schemas/ProcessRun@1",
+    "arguments": {
+      "cmd": [
+        "echo",
+        "hello"
+      ]
+    },
+    "decisionId": "decision-defer-tool",
+    "reasonCodes": [
+      "operator_review_required"
+    ],
+    "expected": {
+      "admitted": false,
+      "policyDeferredBeforeApproval": true,
+      "errorContains": "deferred"
+    }
+  },
+  {
+    "name": "missing_approval_denies_tool_admission",
+    "kind": "admission_missing_approval",
+    "toolName": "process.run",
+    "schemaId": "schemas/ProcessRun@1",
+    "arguments": {
+      "cmd": [
+        "echo",
+        "hello"
+      ]
+    },
+    "idempotencyKey": "idem-1",
+    "expected": {
+      "admitted": false,
+      "approvalRequiredBeforeIdempotency": true,
+      "errorContains": "approval"
+    }
+  },
+  {
+    "name": "expired_approval_denies_tool_admission",
+    "kind": "admission_expired_approval",
+    "toolName": "process.run",
+    "schemaId": "schemas/ProcessRun@1",
+    "arguments": {
+      "cmd": [
+        "echo",
+        "hello"
+      ]
+    },
+    "approvalId": "approval-1",
+    "requestedAtUnixMs": 1000,
+    "decidedAtUnixMs": 1050,
+    "expiresAtUnixMs": 1100,
+    "admittedAtUnixMs": 1200,
+    "idempotencyKey": "idem-1",
+    "expected": {
+      "admitted": false,
+      "expiredApprovalRejectedBeforeIdempotency": true,
+      "errorContains": "not valid"
+    }
+  },
+  {
+    "name": "required_idempotency_key_missing_denies_tool_admission",
+    "kind": "admission_missing_required_idempotency_key",
+    "toolName": "process.run",
+    "schemaId": "schemas/ProcessRun@1",
+    "arguments": {
+      "cmd": [
+        "echo",
+        "hello"
+      ]
+    },
+    "approvalId": "approval-1",
+    "expected": {
+      "admitted": false,
+      "idempotencyRejectedAfterApproval": true,
+      "errorContains": "idempotency"
+    }
+  },
+  {
+    "name": "blank_idempotency_key_denies_tool_admission",
+    "kind": "admission_blank_idempotency_key",
+    "toolName": "process.run",
+    "schemaId": "schemas/ProcessRun@1",
+    "arguments": {
+      "cmd": [
+        "echo",
+        "hello"
+      ]
+    },
+    "approvalId": "approval-1",
+    "idempotencyKey": " ",
+    "expected": {
+      "admitted": false,
+      "blankIdempotencyRejectedAfterApproval": true,
+      "errorContains": "idempotency"
+    }
+  },
+  {
+    "name": "approval_invalid_after_argument_mutation",
+    "kind": "approval_argument_mutation",
+    "toolName": "process.run",
+    "schemaId": "schemas/ProcessRun@1",
+    "initialArguments": {
+      "cmd": [
+        "echo",
+        "hello"
+      ]
+    },
+    "mutatedArguments": {
+      "cmd": [
+        "echo",
+        "changed"
+      ]
+    },
+    "expected": {
+      "initialApprovalValid": true,
+      "mutatedApprovalValid": false,
+      "digestChanged": true,
+      "revisedRevision": 2,
+      "admissionWithStaleApproval": false,
+      "errorContains": "not valid"
+    }
+  }
+]

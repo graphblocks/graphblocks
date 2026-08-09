@@ -13561,10 +13561,9 @@ mod tests {
 
     #[test]
     fn evaluate_application_event_tck_case_json_matches_shared_cases() -> Result<(), String> {
-        let cases = serde_json::from_str::<Value>(include_str!(
-            "../../graphblocks-runtime-core/tests/fixtures/application-events-cases.json"
-        ))
-        .map_err(|error| error.to_string())?;
+        let cases =
+            serde_json::from_str::<Value>(include_str!("fixtures/application-events-cases.json"))
+                .map_err(|error| error.to_string())?;
         let cases = cases
             .as_array()
             .ok_or_else(|| "application-events TCK fixture must be an array".to_owned())?;
@@ -13593,10 +13592,8 @@ mod tests {
 
     #[test]
     fn evaluate_retry_tck_case_json_matches_shared_cases() -> Result<(), String> {
-        let cases = serde_json::from_str::<Value>(include_str!(
-            "../../graphblocks-runtime-core/tests/fixtures/retry-cases.json"
-        ))
-        .map_err(|error| error.to_string())?;
+        let cases = serde_json::from_str::<Value>(include_str!("fixtures/retry-cases.json"))
+            .map_err(|error| error.to_string())?;
         let cases = cases
             .as_array()
             .ok_or_else(|| "retry TCK fixture must be an array".to_owned())?;
@@ -13623,10 +13620,8 @@ mod tests {
 
     #[test]
     fn evaluate_sequence_tck_case_json_matches_shared_cases() -> Result<(), String> {
-        let cases = serde_json::from_str::<Value>(include_str!(
-            "../../graphblocks-runtime-core/tests/fixtures/sequence-cases.json"
-        ))
-        .map_err(|error| error.to_string())?;
+        let cases = serde_json::from_str::<Value>(include_str!("fixtures/sequence-cases.json"))
+            .map_err(|error| error.to_string())?;
         let cases = cases
             .as_array()
             .ok_or_else(|| "sequence TCK fixture must be an array".to_owned())?;
@@ -13660,10 +13655,9 @@ mod tests {
     #[test]
     fn evaluate_tool_execution_tck_case_json_matches_shared_cases() -> Result<(), String> {
         pyo3::Python::initialize();
-        let cases = serde_json::from_str::<Value>(include_str!(
-            "../../graphblocks-runtime-core/tests/fixtures/tool-execution-cases.json"
-        ))
-        .map_err(|error| error.to_string())?;
+        let cases =
+            serde_json::from_str::<Value>(include_str!("fixtures/tool-execution-cases.json"))
+                .map_err(|error| error.to_string())?;
         let cases = cases
             .as_array()
             .ok_or_else(|| "tool-execution TCK fixture must be an array".to_owned())?;
@@ -13697,10 +13691,9 @@ mod tests {
 
     #[test]
     fn evaluate_tool_lifecycle_tck_case_json_matches_shared_cases() -> Result<(), String> {
-        let cases = serde_json::from_str::<Value>(include_str!(
-            "../../graphblocks-runtime-core/tests/fixtures/tool-lifecycle-cases.json"
-        ))
-        .map_err(|error| error.to_string())?;
+        let cases =
+            serde_json::from_str::<Value>(include_str!("fixtures/tool-lifecycle-cases.json"))
+                .map_err(|error| error.to_string())?;
         let cases = cases
             .as_array()
             .ok_or_else(|| "tool-lifecycle TCK fixture must be an array".to_owned())?;
@@ -13789,10 +13782,8 @@ mod tests {
     #[test]
     fn evaluate_tool_result_tck_case_json_matches_shared_cases() -> Result<(), String> {
         pyo3::Python::initialize();
-        let cases = serde_json::from_str::<Value>(include_str!(
-            "../../graphblocks-runtime-core/tests/fixtures/tool-result-cases.json"
-        ))
-        .map_err(|error| error.to_string())?;
+        let cases = serde_json::from_str::<Value>(include_str!("fixtures/tool-result-cases.json"))
+            .map_err(|error| error.to_string())?;
         let cases = cases
             .as_array()
             .ok_or_else(|| "tool-result TCK fixture must be an array".to_owned())?;

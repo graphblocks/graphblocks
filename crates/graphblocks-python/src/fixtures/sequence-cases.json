@@ -1,0 +1,101 @@
+[
+  {
+    "name": "bounded_fifo_capacity",
+    "capacity": 2,
+    "operations": [
+      {
+        "op": "send",
+        "value": "first",
+        "expect": "ok",
+        "len": 1
+      },
+      {
+        "op": "send",
+        "value": "second",
+        "expect": "ok",
+        "len": 2
+      },
+      {
+        "op": "send",
+        "value": "third",
+        "expect": "full",
+        "len": 2
+      },
+      {
+        "op": "recv",
+        "value": "first",
+        "len": 1
+      },
+      {
+        "op": "send",
+        "value": "third",
+        "expect": "ok",
+        "len": 2
+      },
+      {
+        "op": "recv",
+        "value": "second",
+        "len": 1
+      },
+      {
+        "op": "recv",
+        "value": "third",
+        "len": 0
+      },
+      {
+        "op": "recv",
+        "len": 0
+      }
+    ],
+    "expected": {
+      "state": "open"
+    }
+  },
+  {
+    "name": "complete_rejects_late_send",
+    "capacity": 2,
+    "operations": [
+      {
+        "op": "send",
+        "value": "kept",
+        "expect": "ok",
+        "len": 1
+      },
+      {
+        "op": "complete",
+        "expect": "ok",
+        "len": 1
+      },
+      {
+        "op": "complete",
+        "expect": "already_terminal_completed",
+        "len": 1
+      },
+      {
+        "op": "send",
+        "value": "late",
+        "expect": "closed_completed",
+        "len": 1
+      },
+      {
+        "op": "recv",
+        "value": "kept",
+        "len": 0
+      },
+      {
+        "op": "recv",
+        "len": 0
+      }
+    ],
+    "expected": {
+      "state": "completed"
+    }
+  },
+  {
+    "name": "zero_capacity_rejected",
+    "capacity": 0,
+    "expected": {
+      "creation_error": "invalid_capacity"
+    }
+  }
+]

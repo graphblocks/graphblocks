@@ -344,13 +344,6 @@ mod tests {
         pyo3::Python::initialize();
         let local = serde_json::from_str::<Value>(include_str!("fixtures/typed-ports-cases.json"))
             .map_err(|error| error.to_string())?;
-        let packaged = serde_json::from_str::<Value>(include_str!(
-            "../../../packages/graphblocks-testing/src/graphblocks_testing/fixtures/tck/typed-ports/cases.json"
-        ))
-        .map_err(|error| error.to_string())?;
-        if local != packaged {
-            return Err("local and packaged typed-ports fixtures differ".to_owned());
-        }
         let cases = local
             .as_array()
             .ok_or_else(|| "typed-ports TCK fixture must be an array".to_owned())?;

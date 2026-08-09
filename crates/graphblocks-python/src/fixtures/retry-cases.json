@@ -1,0 +1,512 @@
+[
+  {
+    "name": "effect_retry_preserves_idempotency_key",
+    "kind": "node_retry",
+    "block": "test.flaky_write@1",
+    "nodeId": "write",
+    "effects": [
+      "external_write"
+    ],
+    "maxAttempts": 3,
+    "failuresBeforeSuccess": 2,
+    "idempotencyKey": "ticket-create:request-1",
+    "outputValue": "committed",
+    "expected": {
+      "status": "succeeded",
+      "terminalKind": "run_succeeded",
+      "attempts": 3,
+      "retryCount": 2,
+      "nodeCommitCount": 1,
+      "terminalCount": 1,
+      "postTerminalCancellation": "not_requested",
+      "startedIdempotencyKeys": [
+        "ticket-create:request-1",
+        "ticket-create:request-1",
+        "ticket-create:request-1"
+      ],
+      "retryIdempotencyKeys": [
+        "ticket-create:request-1",
+        "ticket-create:request-1"
+      ],
+      "attemptIds": [
+        "attempt-1",
+        "attempt-2",
+        "attempt-3"
+      ],
+      "executionContexts": [
+        {
+          "runId": "run-000001",
+          "nodeId": "write",
+          "attempt": 1,
+          "attemptId": "attempt-1",
+          "idempotencyKey": "ticket-create:request-1",
+          "deadlinePresent": false
+        },
+        {
+          "runId": "run-000001",
+          "nodeId": "write",
+          "attempt": 2,
+          "attemptId": "attempt-2",
+          "idempotencyKey": "ticket-create:request-1",
+          "deadlinePresent": false
+        },
+        {
+          "runId": "run-000001",
+          "nodeId": "write",
+          "attempt": 3,
+          "attemptId": "attempt-3",
+          "idempotencyKey": "ticket-create:request-1",
+          "deadlinePresent": false
+        }
+      ],
+      "commitAttemptIds": [
+        "attempt-3"
+      ],
+      "committedOutputValue": "committed",
+      "journalKinds": [
+        "run_started",
+        "node_started",
+        "node_retry",
+        "node_started",
+        "node_retry",
+        "node_started",
+        "node_succeeded",
+        "run_succeeded"
+      ]
+    }
+  },
+  {
+    "name": "effect_retry_exhaustion_preserves_idempotency_key",
+    "kind": "node_retry",
+    "block": "test.always_failing_write@1",
+    "nodeId": "write",
+    "effects": [
+      "external_write"
+    ],
+    "maxAttempts": 2,
+    "failuresBeforeSuccess": 3,
+    "idempotencyKey": "ticket-create:request-2",
+    "expected": {
+      "status": "failed",
+      "terminalKind": "run_failed",
+      "attempts": 2,
+      "retryCount": 1,
+      "nodeCommitCount": 0,
+      "terminalCount": 1,
+      "postTerminalCancellation": "not_requested",
+      "startedIdempotencyKeys": [
+        "ticket-create:request-2",
+        "ticket-create:request-2"
+      ],
+      "retryIdempotencyKeys": [
+        "ticket-create:request-2"
+      ],
+      "attemptIds": [
+        "attempt-1",
+        "attempt-2"
+      ],
+      "executionContexts": [
+        {
+          "runId": "run-000001",
+          "nodeId": "write",
+          "attempt": 1,
+          "attemptId": "attempt-1",
+          "idempotencyKey": "ticket-create:request-2",
+          "deadlinePresent": false
+        },
+        {
+          "runId": "run-000001",
+          "nodeId": "write",
+          "attempt": 2,
+          "attemptId": "attempt-2",
+          "idempotencyKey": "ticket-create:request-2",
+          "deadlinePresent": false
+        }
+      ],
+      "commitAttemptIds": [],
+      "committedOutputValue": null,
+      "journalKinds": [
+        "run_started",
+        "node_started",
+        "node_retry",
+        "node_started",
+        "node_failed",
+        "run_failed"
+      ]
+    }
+  },
+  {
+    "name": "filesystem_write_retry_preserves_idempotency_key",
+    "kind": "node_retry",
+    "block": "test.flaky_file_write@1",
+    "nodeId": "writeFile",
+    "effects": [
+      "filesystem_write"
+    ],
+    "maxAttempts": 3,
+    "failuresBeforeSuccess": 2,
+    "idempotencyKey": "file-write:request-1",
+    "outputValue": "written",
+    "expected": {
+      "status": "succeeded",
+      "terminalKind": "run_succeeded",
+      "attempts": 3,
+      "retryCount": 2,
+      "nodeCommitCount": 1,
+      "terminalCount": 1,
+      "postTerminalCancellation": "not_requested",
+      "startedIdempotencyKeys": [
+        "file-write:request-1",
+        "file-write:request-1",
+        "file-write:request-1"
+      ],
+      "retryIdempotencyKeys": [
+        "file-write:request-1",
+        "file-write:request-1"
+      ],
+      "attemptIds": [
+        "attempt-1",
+        "attempt-2",
+        "attempt-3"
+      ],
+      "executionContexts": [
+        {
+          "runId": "run-000001",
+          "nodeId": "writeFile",
+          "attempt": 1,
+          "attemptId": "attempt-1",
+          "idempotencyKey": "file-write:request-1",
+          "deadlinePresent": false
+        },
+        {
+          "runId": "run-000001",
+          "nodeId": "writeFile",
+          "attempt": 2,
+          "attemptId": "attempt-2",
+          "idempotencyKey": "file-write:request-1",
+          "deadlinePresent": false
+        },
+        {
+          "runId": "run-000001",
+          "nodeId": "writeFile",
+          "attempt": 3,
+          "attemptId": "attempt-3",
+          "idempotencyKey": "file-write:request-1",
+          "deadlinePresent": false
+        }
+      ],
+      "commitAttemptIds": [
+        "attempt-3"
+      ],
+      "committedOutputValue": "written",
+      "journalKinds": [
+        "run_started",
+        "node_started",
+        "node_retry",
+        "node_started",
+        "node_retry",
+        "node_started",
+        "node_succeeded",
+        "run_succeeded"
+      ]
+    }
+  },
+  {
+    "name": "cancelled_effect_attempt_does_not_retry",
+    "kind": "cancelled_before_retry",
+    "block": "test.cancelled_write@1",
+    "nodeId": "write",
+    "effects": [
+      "external_write"
+    ],
+    "maxAttempts": 3,
+    "failuresBeforeSuccess": 3,
+    "cancelOnAttempt": 1,
+    "cancelReason": "policy_stop",
+    "idempotencyKey": "ticket-create:request-3",
+    "expected": {
+      "status": "cancelled",
+      "terminalKind": "run_cancelled",
+      "attempts": 1,
+      "retryCount": 0,
+      "nodeCommitCount": 0,
+      "terminalCount": 1,
+      "postTerminalCancellation": "not_requested",
+      "startedIdempotencyKeys": [
+        "ticket-create:request-3"
+      ],
+      "retryIdempotencyKeys": [],
+      "attemptIds": [
+        "attempt-1"
+      ],
+      "executionContexts": [
+        {
+          "runId": "run-000001",
+          "nodeId": "write",
+          "attempt": 1,
+          "attemptId": "attempt-1",
+          "idempotencyKey": "ticket-create:request-3",
+          "deadlinePresent": false
+        }
+      ],
+      "commitAttemptIds": [],
+      "committedOutputValue": null,
+      "journalKinds": [
+        "run_started",
+        "node_started",
+        "run_cancelled"
+      ]
+    }
+  },
+  {
+    "name": "cancelled_success_attempt_does_not_commit",
+    "kind": "cancelled_before_commit",
+    "block": "test.cancelled_success@1",
+    "nodeId": "write",
+    "effects": [
+      "external_write"
+    ],
+    "maxAttempts": 3,
+    "failuresBeforeSuccess": 0,
+    "cancelOnAttempt": 1,
+    "cancelReason": "policy_stop",
+    "idempotencyKey": "ticket-create:request-4",
+    "outputValue": "must-not-commit",
+    "expected": {
+      "status": "cancelled",
+      "terminalKind": "run_cancelled",
+      "attempts": 1,
+      "retryCount": 0,
+      "startedIdempotencyKeys": [
+        "ticket-create:request-4"
+      ],
+      "retryIdempotencyKeys": [],
+      "attemptIds": [
+        "attempt-1"
+      ],
+      "executionContexts": [
+        {
+          "runId": "run-000001",
+          "nodeId": "write",
+          "attempt": 1,
+          "attemptId": "attempt-1",
+          "idempotencyKey": "ticket-create:request-4",
+          "deadlinePresent": false
+        }
+      ],
+      "commitAttemptIds": [],
+      "committedOutputValue": null,
+      "journalKinds": [
+        "run_started",
+        "node_started",
+        "run_cancelled"
+      ],
+      "nodeCommitCount": 0,
+      "terminalCount": 1,
+      "postTerminalCancellation": "not_requested"
+    }
+  },
+  {
+    "name": "pre_cancelled_run_starts_no_attempt",
+    "kind": "cancelled_before_start",
+    "block": "test.pre_cancelled@1",
+    "nodeId": "write",
+    "maxAttempts": 1,
+    "failuresBeforeSuccess": 0,
+    "cancelBeforeStart": true,
+    "cancelReason": "user_cancel",
+    "expected": {
+      "status": "cancelled",
+      "terminalKind": "run_cancelled",
+      "attempts": 0,
+      "retryCount": 0,
+      "startedIdempotencyKeys": [],
+      "retryIdempotencyKeys": [],
+      "attemptIds": [],
+      "executionContexts": [],
+      "commitAttemptIds": [],
+      "committedOutputValue": null,
+      "journalKinds": [
+        "run_started",
+        "run_cancelled"
+      ],
+      "nodeCommitCount": 0,
+      "terminalCount": 1,
+      "postTerminalCancellation": "not_requested"
+    }
+  },
+  {
+    "name": "post_terminal_cancellation_does_not_rewrite_success",
+    "kind": "cancelled_after_terminal",
+    "block": "test.completed_before_cancel@1",
+    "nodeId": "write",
+    "maxAttempts": 1,
+    "failuresBeforeSuccess": 0,
+    "cancelAfterTerminal": true,
+    "outputValue": "committed",
+    "expected": {
+      "status": "succeeded",
+      "terminalKind": "run_succeeded",
+      "attempts": 1,
+      "retryCount": 0,
+      "startedIdempotencyKeys": [null],
+      "retryIdempotencyKeys": [],
+      "attemptIds": [
+        "attempt-1"
+      ],
+      "executionContexts": [
+        {
+          "runId": "run-000001",
+          "nodeId": "write",
+          "attempt": 1,
+          "attemptId": "attempt-1",
+          "idempotencyKey": null,
+          "deadlinePresent": false
+        }
+      ],
+      "commitAttemptIds": [
+        "attempt-1"
+      ],
+      "committedOutputValue": "committed",
+      "journalKinds": [
+        "run_started",
+        "node_started",
+        "node_succeeded",
+        "run_succeeded"
+      ],
+      "nodeCommitCount": 1,
+      "terminalCount": 1,
+      "postTerminalCancellation": "unchanged"
+    }
+  },
+  {
+    "contractVersion": "graphblocks.retry-flow.tck.v1",
+    "name": "timeout_retry_discards_late_output",
+    "kind": "timeout_retry",
+    "block": "test.slow_then_fast@1",
+    "nodeId": "worker",
+    "maxAttempts": 2,
+    "failuresBeforeSuccess": 0,
+    "timeout": "100ms",
+    "attemptDurationsMs": [110, 0],
+    "attemptOutputValues": [
+      "stale-first-attempt",
+      "committed-on-second-attempt"
+    ],
+    "idempotencyKey": "slow-write:request-1",
+    "expected": {
+      "status": "succeeded",
+      "terminalKind": "run_succeeded",
+      "attempts": 2,
+      "retryCount": 1,
+      "nodeCommitCount": 1,
+      "terminalCount": 1,
+      "postTerminalCancellation": "not_requested",
+      "startedIdempotencyKeys": [
+        "slow-write:request-1",
+        "slow-write:request-1"
+      ],
+      "retryIdempotencyKeys": [
+        "slow-write:request-1"
+      ],
+      "attemptIds": [
+        "attempt-1",
+        "attempt-2"
+      ],
+      "executionContexts": [
+        {
+          "runId": "run-000001",
+          "nodeId": "worker",
+          "attempt": 1,
+          "attemptId": "attempt-1",
+          "idempotencyKey": "slow-write:request-1",
+          "deadlinePresent": true
+        },
+        {
+          "runId": "run-000001",
+          "nodeId": "worker",
+          "attempt": 2,
+          "attemptId": "attempt-2",
+          "idempotencyKey": "slow-write:request-1",
+          "deadlinePresent": true
+        }
+      ],
+      "commitAttemptIds": [
+        "attempt-2"
+      ],
+      "committedOutputValue": "committed-on-second-attempt",
+      "journalKinds": [
+        "run_started",
+        "node_started",
+        "node_retry",
+        "node_started",
+        "node_succeeded",
+        "run_succeeded"
+      ]
+    }
+  },
+  {
+    "contractVersion": "graphblocks.retry-flow.tck.v1",
+    "name": "timeout_retry_exhaustion_commits_nothing",
+    "kind": "timeout_exhaustion",
+    "block": "test.always_slow@1",
+    "nodeId": "worker",
+    "maxAttempts": 2,
+    "failuresBeforeSuccess": 0,
+    "timeout": "100ms",
+    "attemptDurationsMs": [110, 110],
+    "attemptOutputValues": [
+      "stale-first-attempt",
+      "stale-second-attempt"
+    ],
+    "idempotencyKey": "slow-write:request-2",
+    "expected": {
+      "status": "failed",
+      "terminalKind": "run_failed",
+      "attempts": 2,
+      "retryCount": 1,
+      "nodeCommitCount": 0,
+      "terminalCount": 1,
+      "postTerminalCancellation": "not_requested",
+      "startedIdempotencyKeys": [
+        "slow-write:request-2",
+        "slow-write:request-2"
+      ],
+      "retryIdempotencyKeys": [
+        "slow-write:request-2"
+      ],
+      "attemptIds": [
+        "attempt-1",
+        "attempt-2"
+      ],
+      "executionContexts": [
+        {
+          "runId": "run-000001",
+          "nodeId": "worker",
+          "attempt": 1,
+          "attemptId": "attempt-1",
+          "idempotencyKey": "slow-write:request-2",
+          "deadlinePresent": true
+        },
+        {
+          "runId": "run-000001",
+          "nodeId": "worker",
+          "attempt": 2,
+          "attemptId": "attempt-2",
+          "idempotencyKey": "slow-write:request-2",
+          "deadlinePresent": true
+        }
+      ],
+      "commitAttemptIds": [],
+      "committedOutputValue": null,
+      "journalKinds": [
+        "run_started",
+        "node_started",
+        "node_retry",
+        "node_started",
+        "node_failed",
+        "run_failed"
+      ]
+    }
+  }
+]
