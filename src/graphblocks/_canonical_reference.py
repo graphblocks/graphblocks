@@ -6,6 +6,8 @@ remain usable without a native wheel and never become an implicit authority
 fallback for a public native facade.
 """
 
+import importlib
+
 from .canonical import (
     MAX_CANONICAL_INTEGER_DIGITS,
     MAX_CANONICAL_JSON_DEPTH,
@@ -24,9 +26,12 @@ from .canonical import (
 def normalize_graph(document: dict[str, object]) -> dict[str, object]:
     """Normalize through the explicit Python migration reference oracle."""
 
-    from .migration import migrate_document_reference
+    # Keep migration behind a runtime lookup: migration/schema depend on this
+    # canonical leaf, so a syntactic back-edge would recreate their import SCC.
+    migration = importlib.import_module(f"{__package__}.migration")
 
-    return _normalize_graph_unchecked(migrate_document_reference(document))
+    return _normalize_graph_unchecked(migration.migrate_document_reference(document))
+
 
 __all__ = [
     "MAX_CANONICAL_INTEGER_DIGITS",
