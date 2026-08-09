@@ -81,7 +81,7 @@ def test_api_only_compatibility_check_does_not_execute_cli_contracts(
     assert compatibility_module.main(["--api-only"]) == 0
 
 
-def test_runtime_snapshot_prefers_the_checkout_companion_source(
+def test_runtime_snapshot_falls_back_to_the_checkout_companion_source(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     source_root = ROOT / "packages" / "graphblocks-runtime" / "src"
@@ -91,6 +91,21 @@ def test_runtime_snapshot_prefers_the_checkout_companion_source(
         [entry for entry in sys.path if entry != str(source_root)],
     )
     monkeypatch.delitem(sys.modules, "graphblocks_runtime", raising=False)
+    real_import_module = compatibility_module.importlib.import_module
+
+    def import_with_missing_companion(name: str, package: str | None = None) -> object:
+        if name == "graphblocks_runtime" and str(source_root) not in sys.path:
+            raise ModuleNotFoundError(
+                "No module named 'graphblocks_runtime'",
+                name="graphblocks_runtime",
+            )
+        return real_import_module(name, package)
+
+    monkeypatch.setattr(
+        compatibility_module.importlib,
+        "import_module",
+        import_with_missing_companion,
+    )
 
     build_runtime_snapshot()
 

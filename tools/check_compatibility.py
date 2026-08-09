@@ -14,7 +14,6 @@ from io import StringIO
 import json
 from pathlib import Path
 import sys
-from types import SimpleNamespace
 from typing import Any
 from unittest.mock import patch
 
@@ -393,7 +392,12 @@ def build_python_snapshot() -> dict[str, object]:
 
 
 def build_runtime_snapshot() -> dict[str, object]:
-    _enable_source_import(RUNTIME_SOURCE_ROOT)
+    try:
+        importlib.import_module("graphblocks_runtime")
+    except ModuleNotFoundError as error:
+        if error.name != "graphblocks_runtime":
+            raise
+        _enable_source_import(RUNTIME_SOURCE_ROOT)
     policy = _load_yaml(RUNTIME_SURFACE_PATH)
     if set(policy) != {
         "authority",
@@ -545,16 +549,11 @@ def build_cli_snapshot() -> dict[str, object]:
         stderr = StringIO()
         native_compiler_context = nullcontext()
         if native_compiler == "unavailable":
-            native_compiler_context = patch.dict(
-                sys.modules,
-                {
-                    "graphblocks_runtime": SimpleNamespace(
-                        native_extension_available=lambda: False,
-                        native_extension_status=lambda: {
-                            "error": "compatibility fixture unavailable"
-                        },
-                    )
-                },
+            runtime = importlib.import_module("graphblocks_runtime")
+            native_compiler_context = patch.object(
+                runtime,
+                "compile_graph",
+                None,
             )
         with (
             native_compiler_context,
