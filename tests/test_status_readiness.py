@@ -102,7 +102,7 @@ def test_readiness_axes_are_independent_generated_and_release_blocking(
     ]
     assert by_id["runtime-security"]["blocksTargetRelease"] is True
     assert by_id["durability"]["readiness"] == (
-        "core-c1-runtime-authority-and-correctness-blocked-production-preview"
+        "core-c1-runtime-authority-enforced-production-preview"
     )
     assert by_id["durability"]["primaryGates"] == [
         "REL-AUDIT-REMEDIATION",
