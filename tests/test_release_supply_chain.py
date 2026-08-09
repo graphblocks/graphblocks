@@ -705,13 +705,17 @@ def _write_platform_input(
             for record in records
         ],
         "dependencies": [
-            {"ref": graphblocks_ref, "dependsOn": sorted(dependency_refs)},
+            {
+                "ref": graphblocks_ref,
+                "dependsOn": sorted([*dependency_refs, runtime_ref]),
+            },
             {
                 "ref": testing_ref,
                 "dependsOn": sorted(
                     [
                         graphblocks_ref,
                         "pkg:pypi/packaging@25.0",
+                        runtime_ref,
                     ]
                 ),
             },
@@ -3481,6 +3485,26 @@ def test_first_party_dependency_manifest_identity_failure_is_closed(
 
     with pytest.raises(module.ReleaseBundleError, match="runtime dependencies are invalid"):
         module._first_party_runtime_dependencies()
+
+
+def test_first_party_dependency_policy_includes_installed_runtime_extras() -> None:
+    module = _load_module()
+
+    assert module._first_party_runtime_dependencies() == {
+        "graphblocks": {
+            "graphblocks-runtime",
+            "jsonschema",
+            "packaging",
+            "pyyaml",
+            "referencing",
+        },
+        "graphblocks-runtime": set(),
+        "graphblocks-testing": {
+            "graphblocks",
+            "graphblocks-runtime",
+            "packaging",
+        },
+    }
 
 
 def test_release_bundle_rejects_sbom_missing_installed_distribution(

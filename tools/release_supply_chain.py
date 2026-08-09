@@ -216,10 +216,18 @@ PINNED_RELEASE_TOOLS = {
 }
 FIRST_PARTY_RUNTIME_DEPENDENCIES = {
     "graphblocks": frozenset(
-        {"jsonschema", "packaging", "pyyaml", "referencing"}
+        {
+            "graphblocks-runtime",
+            "jsonschema",
+            "packaging",
+            "pyyaml",
+            "referencing",
+        }
     ),
     "graphblocks-runtime": frozenset(),
-    "graphblocks-testing": frozenset({"graphblocks", "packaging"}),
+    "graphblocks-testing": frozenset(
+        {"graphblocks", "graphblocks-runtime", "packaging"}
+    ),
 }
 
 
@@ -3043,11 +3051,17 @@ def _first_party_runtime_dependencies(
             project = tomllib.loads(manifest.read_text(encoding="utf-8"))["project"]
             name = canonicalize_name(str(project["name"]))
             dependencies = project["dependencies"]
-            if not isinstance(dependencies, list):
+            optional_dependencies = project.get("optional-dependencies", {})
+            if not isinstance(dependencies, list) or not isinstance(
+                optional_dependencies, dict
+            ):
+                raise TypeError
+            runtime_dependencies = optional_dependencies.get("runtime", [])
+            if not isinstance(runtime_dependencies, list):
                 raise TypeError
             observed[name] = {
                 canonicalize_name(Requirement(str(requirement)).name)
-                for requirement in dependencies
+                for requirement in [*dependencies, *runtime_dependencies]
             }
         if set(observed) != {
             "graphblocks",
