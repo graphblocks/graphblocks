@@ -57,6 +57,7 @@ try:
         CYCLONEDX_BOM_VERSION,
         PINNED_BUILD_TOOLS,
         PINNED_RUSTC_VERSION,
+        native_runtime_wheel_member_artifact,
         parse_rustc_identity,
         release_evidence_expectations,
         validate_installed_native_authority_evidence,
@@ -4639,6 +4640,9 @@ def _verify_platform_evidence(
     artifact_by_filename = {
         Path(path).name: record for path, record in artifacts.items()
     }
+    artifact_path_by_filename = {
+        Path(path).name: path for path in artifacts
+    }
     if len(artifact_by_filename) != len(artifacts):
         raise ReleaseBundleError("release manifest contains duplicate artifact filenames")
     covered_artifacts: dict[str, str] = {}
@@ -4775,9 +4779,17 @@ def _verify_platform_evidence(
             observed_records
         )
         try:
+            native_runtime_filename = str(native_runtime_artifact["filename"])
+            native_runtime_extension_artifact = native_runtime_wheel_member_artifact(
+                snapshots[artifact_path_by_filename[native_runtime_filename]].data,
+                distribution_version=str(native_runtime_artifact["version"]),
+            )
             validate_installed_native_authority_evidence(
                 platform_payload.get("nativeCanonicalSchemaAuthority"),
                 expected_runtime_artifact=native_runtime_artifact,
+                expected_runtime_extension_artifact=(
+                    native_runtime_extension_artifact
+                ),
             )
             validate_release_evidence_payloads(
                 tck_payload=tck_payload,

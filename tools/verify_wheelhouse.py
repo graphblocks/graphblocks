@@ -4,6 +4,7 @@ import argparse
 from collections.abc import Mapping, Sequence
 from decimal import Decimal
 import hashlib
+import io
 from importlib.metadata import (
     PackageNotFoundError,
     distributions as installed_distributions,
@@ -22,6 +23,7 @@ import tarfile
 from tempfile import TemporaryDirectory
 import tomllib
 import venv
+import zipfile
 
 from packaging.requirements import InvalidRequirement, Requirement
 from packaging.utils import canonicalize_name, parse_sdist_filename, parse_wheel_filename
@@ -107,6 +109,7 @@ STABLE_RUNTIME_STATUS_FIELDS = (
 STABLE_RUNTIME_SMOKE_RUN_ID = "installed-stable-runtime-api"
 NATIVE_RUNTIME_REOPEN_EVIDENCE_FORMAT_VERSION = 2
 NATIVE_RUNTIME_REOPEN_RUN_ID = "installed-native-runtime-reopen"
+MAX_NATIVE_EXTENSION_SIZE = 256 * 1024 * 1024
 MAX_SDIST_MEMBER_COUNT = 100_000
 MAX_SDIST_UNPACKED_SIZE = 512 * 1024 * 1024
 WINDOWS_RESERVED_PATH_NAMES = {
@@ -870,6 +873,7 @@ def validate_installed_native_runtime_reopen_evidence(
     payload: object,
     *,
     expected_distribution_version: str,
+    expected_native_artifact: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
     if not isinstance(payload, dict) or set(payload) != {
         "fence",
@@ -948,6 +952,13 @@ def validate_installed_native_runtime_reopen_evidence(
     if not (writer["artifact"] == reader["artifact"] == fence["artifact"]):
         raise RuntimeError(
             "installed native runtime reopen processes loaded different native artifacts"
+        )
+    if (
+        expected_native_artifact is not None
+        and writer["artifact"] != dict(expected_native_artifact)
+    ):
+        raise RuntimeError(
+            "installed native runtime artifact does not match the selected wheel member"
         )
     if writer["contract"] != reader["contract"]:
         raise RuntimeError(
@@ -1053,6 +1064,7 @@ def _validate_installed_native_binding(
     payload: object,
     *,
     expected_distribution_version: str,
+    expected_native_artifact: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
     if not isinstance(payload, dict) or set(payload) != {
         "canonicalSmoke",
@@ -1075,6 +1087,7 @@ def _validate_installed_native_binding(
     validate_installed_native_runtime_reopen_evidence(
         payload["runtimePersistence"],
         expected_distribution_version=expected_distribution_version,
+        expected_native_artifact=expected_native_artifact,
     )
     status = payload["status"]
     expected_status_fields = {
@@ -1176,10 +1189,12 @@ def validate_installed_native_authority_evidence(
     payload: object,
     *,
     expected_runtime_artifact: Mapping[str, object],
+    expected_runtime_extension_artifact: Mapping[str, object],
 ) -> dict[str, object]:
     if not isinstance(payload, dict) or set(payload) != {
         "probe",
         "runtimeArtifact",
+        "runtimeExtensionArtifact",
     }:
         raise RuntimeError(
             "installed native authority evidence has an invalid envelope"
@@ -1187,6 +1202,12 @@ def validate_installed_native_authority_evidence(
     if payload["runtimeArtifact"] != dict(expected_runtime_artifact):
         raise RuntimeError(
             "installed native authority evidence names another runtime artifact"
+        )
+    if payload["runtimeExtensionArtifact"] != dict(
+        expected_runtime_extension_artifact
+    ):
+        raise RuntimeError(
+            "installed native authority evidence names another runtime extension"
         )
     runtime_version = expected_runtime_artifact.get("version")
     if not isinstance(runtime_version, str) or not runtime_version:
@@ -1196,6 +1217,7 @@ def validate_installed_native_authority_evidence(
     _validate_installed_native_binding(
         payload["probe"],
         expected_distribution_version=runtime_version,
+        expected_native_artifact=expected_runtime_extension_artifact,
     )
     return dict(payload)
 
@@ -2258,6 +2280,50 @@ def _artifact_record(path: Path) -> dict[str, object]:
     }
 
 
+def native_runtime_wheel_member_artifact(
+    wheel_bytes: bytes,
+    *,
+    distribution_version: str,
+) -> dict[str, object]:
+    if type(wheel_bytes) is not bytes or not wheel_bytes:
+        raise RuntimeError("graphblocks-runtime wheel bytes must be nonempty")
+    if not isinstance(distribution_version, str) or not distribution_version:
+        raise RuntimeError("graphblocks-runtime wheel version must be nonempty")
+    try:
+        with zipfile.ZipFile(io.BytesIO(wheel_bytes)) as archive:
+            members = [
+                member
+                for member in archive.infolist()
+                if not member.is_dir()
+                and len(PurePosixPath(member.filename).parts) == 2
+                and PurePosixPath(member.filename).parts[0]
+                == "graphblocks_runtime"
+                and PurePosixPath(member.filename).name.startswith("_native.")
+                and PurePosixPath(member.filename).suffix in {".pyd", ".so"}
+            ]
+            if len(members) != 1:
+                raise RuntimeError(
+                    "graphblocks-runtime wheel must contain exactly one native extension member"
+                )
+            member = members[0]
+            if not 0 < member.file_size <= MAX_NATIVE_EXTENSION_SIZE:
+                raise RuntimeError(
+                    "graphblocks-runtime native extension member size is invalid"
+                )
+            digest = hashlib.sha256()
+            with archive.open(member) as stream:
+                while chunk := stream.read(1024 * 1024):
+                    digest.update(chunk)
+    except (OSError, zipfile.BadZipFile) as error:
+        raise RuntimeError("graphblocks-runtime wheel is not a valid ZIP archive") from error
+    return {
+        "filename": PurePosixPath(member.filename).name,
+        "sha256": digest.hexdigest(),
+        "size": member.file_size,
+        "distributionVersion": distribution_version,
+    }
+
+
 def _safe_extract_sdist(sdist: Path, destination: Path) -> Path:
     """Extract one PEP 625 ``.tar.gz`` sdist without trusting archive paths/types."""
     try:
@@ -2804,6 +2870,10 @@ def main(argv: list[str] | None = None) -> int:
         )
     native_compiler_wheel = native_compiler_wheels[0]
     native_compiler_artifact = _artifact_record(native_compiler_wheel)
+    native_runtime_extension_artifact = native_runtime_wheel_member_artifact(
+        native_compiler_wheel.read_bytes(),
+        distribution_version=str(native_compiler_artifact["version"]),
+    )
     observed_sdist_versions = {
         distribution: version
         for distribution, version, artifact_type in (
@@ -2925,6 +2995,7 @@ def main(argv: list[str] | None = None) -> int:
             expected_distribution_version=str(
                 native_compiler_artifact["version"]
             ),
+            expected_native_artifact=native_runtime_extension_artifact,
         )
         if _artifact_record(native_compiler_wheel) != native_compiler_artifact:
             raise RuntimeError(
@@ -3089,6 +3160,9 @@ def main(argv: list[str] | None = None) -> int:
                 },
                 "nativeCanonicalSchemaAuthority": {
                     "runtimeArtifact": dict(native_compiler_artifact),
+                    "runtimeExtensionArtifact": dict(
+                        native_runtime_extension_artifact
+                    ),
                     "probe": installed_native_binding_payload,
                 },
             }

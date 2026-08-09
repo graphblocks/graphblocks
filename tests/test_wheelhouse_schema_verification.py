@@ -14,6 +14,7 @@ import subprocess
 import sys
 import tarfile
 from types import ModuleType, SimpleNamespace
+import zipfile
 
 import pytest
 
@@ -89,9 +90,32 @@ def _write_mock_sdist(module: ModuleType, *, source_root: Path, output_root: Pat
     return destination
 
 
-def _native_runtime_persistence_payload() -> dict[str, object]:
+def _write_mock_wheel(
+    module: ModuleType,
+    *,
+    source_root: Path,
+    output_root: Path,
+) -> Path:
+    project = module.tomllib.loads(
+        (source_root / "pyproject.toml").read_text(encoding="utf-8")
+    )["project"]
+    wheel_name = str(project["name"]).replace("-", "_")
+    destination = output_root / f"{wheel_name}-{project['version']}-py3-none-any.whl"
+    with zipfile.ZipFile(destination, "w") as archive:
+        archive.writestr(f"{wheel_name}/__init__.py", b"")
+        if module.canonicalize_name(str(project["name"])) == "graphblocks-runtime":
+            archive.writestr(
+                "graphblocks_runtime/_native.abi3.so",
+                b"mock-native-extension",
+            )
+    return destination
+
+
+def _native_runtime_persistence_payload(
+    native_artifact: Mapping[str, object] | None = None,
+) -> dict[str, object]:
     process = {
-        "artifact": {
+        "artifact": dict(native_artifact) if native_artifact is not None else {
             "distributionVersion": "0.1.0",
             "filename": "_native.abi3.so",
             "sha256": "1" * 64,
@@ -205,6 +229,7 @@ def _native_binding_payload(
         "schema.resource-migration.v1",
         "schema.resource-validation.v1",
     ),
+    native_artifact: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
     return {
         "canonicalSmoke": {
@@ -213,7 +238,7 @@ def _native_binding_payload(
         },
         "distributionVersion": distribution_version,
         "publicFacadeEvidence": installed_native_authority_probe_expectations(),
-        "runtimePersistence": _native_runtime_persistence_payload(),
+        "runtimePersistence": _native_runtime_persistence_payload(native_artifact),
         "schemaIdSmoke": {
             "canonical": "schemas/Message@4294967295",
             "majorVersion": 4_294_967_295,
@@ -389,14 +414,19 @@ def test_installed_native_authority_evidence_binds_runtime_artifact() -> None:
         "version": "0.1.0",
         "artifactType": "wheel",
     }
+    runtime_extension_artifact = deepcopy(
+        _native_runtime_persistence_payload()["writer"]["artifact"]
+    )
     evidence = {
         "runtimeArtifact": dict(runtime_artifact),
+        "runtimeExtensionArtifact": dict(runtime_extension_artifact),
         "probe": _native_binding_payload(),
     }
 
     assert module.validate_installed_native_authority_evidence(
         evidence,
         expected_runtime_artifact=runtime_artifact,
+        expected_runtime_extension_artifact=runtime_extension_artifact,
     ) == evidence
 
     tampered = dict(evidence)
@@ -408,7 +438,36 @@ def test_installed_native_authority_evidence_binds_runtime_artifact() -> None:
         module.validate_installed_native_authority_evidence(
             tampered,
             expected_runtime_artifact=runtime_artifact,
+            expected_runtime_extension_artifact=runtime_extension_artifact,
         )
+
+    tampered_extension = deepcopy(evidence)
+    tampered_extension["runtimeExtensionArtifact"]["sha256"] = "3" * 64
+    with pytest.raises(RuntimeError, match="another runtime extension"):
+        module.validate_installed_native_authority_evidence(
+            tampered_extension,
+            expected_runtime_artifact=runtime_artifact,
+            expected_runtime_extension_artifact=runtime_extension_artifact,
+        )
+
+
+def test_native_runtime_wheel_member_artifact_hashes_exact_extension_bytes() -> None:
+    module = _load_wheelhouse_module()
+    extension = b"exact-native-extension-bytes"
+    wheel = io.BytesIO()
+    with zipfile.ZipFile(wheel, "w") as archive:
+        archive.writestr("graphblocks_runtime/__init__.py", b"")
+        archive.writestr("graphblocks_runtime/_native.abi3.so", extension)
+
+    assert module.native_runtime_wheel_member_artifact(
+        wheel.getvalue(),
+        distribution_version="0.1.0",
+    ) == {
+        "filename": "_native.abi3.so",
+        "sha256": hashlib.sha256(extension).hexdigest(),
+        "size": len(extension),
+        "distributionVersion": "0.1.0",
+    }
 
 
 def test_installed_native_authority_probe_exercises_public_and_reference_paths() -> None:
@@ -499,6 +558,20 @@ def test_installed_native_runtime_reopen_evidence_accepts_exact_readback() -> No
         )
         == payload
     )
+
+
+def test_installed_native_runtime_reopen_evidence_rejects_other_wheel_member() -> None:
+    module = _load_wheelhouse_module()
+    payload = _native_runtime_persistence_payload()
+    selected_member = deepcopy(payload["writer"]["artifact"])
+    selected_member["sha256"] = "f" * 64
+
+    with pytest.raises(RuntimeError, match="does not match the selected wheel member"):
+        module.validate_installed_native_runtime_reopen_evidence(
+            payload,
+            expected_distribution_version="0.1.0",
+            expected_native_artifact=selected_member,
+        )
 
 
 def test_wheelhouse_runs_native_authority_probe_from_a_script_file() -> None:
@@ -2258,7 +2331,10 @@ def test_wheelhouse_gate_rejects_invalid_installed_schema_manifest(
         def create(self, path: str) -> None:
             (Path(path) / "bin").mkdir(parents=True)
 
+    native_wheel: Path | None = None
+
     def fake_run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        nonlocal native_wheel
         if command == ["rustc", "--version"]:
             return subprocess.CompletedProcess(
                 command,
@@ -2275,13 +2351,13 @@ def test_wheelhouse_gate_rejects_invalid_installed_schema_manifest(
                     output_root=output_root,
                 )
             else:
-                project = module.tomllib.loads(
-                    (manifest_root / "pyproject.toml").read_text(encoding="utf-8")
-                )["project"]
-                wheel_name = str(project["name"]).replace("-", "_")
-                (output_root / f"{wheel_name}-0.1.0-py3-none-any.whl").write_bytes(
-                    b"wheel"
+                wheel = _write_mock_wheel(
+                    module,
+                    source_root=manifest_root,
+                    output_root=output_root,
                 )
+                if wheel.name.startswith("graphblocks_runtime-"):
+                    native_wheel = wheel
         if any(
             "native_extension_status" in part
             or part.endswith("native-authority-probe.py")
@@ -2290,7 +2366,16 @@ def test_wheelhouse_gate_rejects_invalid_installed_schema_manifest(
             return subprocess.CompletedProcess(
                 command,
                 0,
-                stdout=json.dumps(_native_binding_payload()),
+                stdout=json.dumps(
+                    _native_binding_payload(
+                        native_artifact=module.native_runtime_wheel_member_artifact(
+                            native_wheel.read_bytes(),
+                            distribution_version="0.1.0",
+                        )
+                        if native_wheel is not None
+                        else None
+                    )
+                ),
             )
         if command[-4:] == ["-m", "graphblocks", "schemas", "manifest"]:
             return subprocess.CompletedProcess(
@@ -2390,6 +2475,7 @@ def test_wheelhouse_gate_uses_pep503_distribution_identity(monkeypatch, tmp_path
     )["project"]["version"]
     wheel_source_roots: list[Path] = []
     native_binding_commands: list[list[str]] = []
+    native_wheel: Path | None = None
 
     class FakeEnvBuilder:
         def __init__(self, *, with_pip: bool) -> None:
@@ -2399,6 +2485,7 @@ def test_wheelhouse_gate_uses_pep503_distribution_identity(monkeypatch, tmp_path
             (Path(path) / "bin").mkdir(parents=True)
 
     def fake_run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        nonlocal native_wheel
         if command == ["rustc", "--version"]:
             return subprocess.CompletedProcess(
                 command,
@@ -2416,13 +2503,13 @@ def test_wheelhouse_gate_uses_pep503_distribution_identity(monkeypatch, tmp_path
                 )
             else:
                 wheel_source_roots.append(manifest_root)
-                project = module.tomllib.loads(
-                    (manifest_root / "pyproject.toml").read_text(encoding="utf-8")
-                )["project"]
-                wheel_name = str(project["name"]).replace("-", "_")
-                (output_root / f"{wheel_name}-{project['version']}-py3-none-any.whl").write_bytes(
-                    b"wheel"
+                wheel = _write_mock_wheel(
+                    module,
+                    source_root=manifest_root,
+                    output_root=output_root,
                 )
+                if wheel.name.startswith("graphblocks_runtime-"):
+                    native_wheel = wheel
         if "download" in command and "--dest" in command:
             dependency_root = Path(command[command.index("--dest") + 1])
             (dependency_root / "jsonschema-4.25.1-py3-none-any.whl").write_bytes(
@@ -2441,6 +2528,12 @@ def test_wheelhouse_gate_uses_pep503_distribution_identity(monkeypatch, tmp_path
                     _native_binding_payload(
                         distribution_version=runtime_version,
                         binding_version=runtime_version,
+                        native_artifact=module.native_runtime_wheel_member_artifact(
+                            native_wheel.read_bytes(),
+                            distribution_version=runtime_version,
+                        )
+                        if native_wheel is not None
+                        else None,
                     )
                 ),
             )
@@ -2457,11 +2550,11 @@ def test_wheelhouse_gate_uses_pep503_distribution_identity(monkeypatch, tmp_path
                 command,
                 0,
                 stdout=json.dumps(
-                        [
-                            {"name": "GraphBlocks", "version": root_version},
-                            {"name": "GraphBlocks_Runtime", "version": runtime_version},
-                            {"name": "GraphBlocks.Testing", "version": testing_version},
-                            {"name": "jsonschema", "version": "4.25.1"},
+                    [
+                        {"name": "GraphBlocks", "version": root_version},
+                        {"name": "GraphBlocks_Runtime", "version": runtime_version},
+                        {"name": "GraphBlocks.Testing", "version": testing_version},
+                        {"name": "jsonschema", "version": "4.25.1"},
                     ]
                 ),
             )

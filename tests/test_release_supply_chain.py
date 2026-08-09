@@ -10,6 +10,7 @@ import subprocess
 import sys
 from types import ModuleType
 import xml.etree.ElementTree as ElementTree
+import zipfile
 
 import pytest
 import yaml
@@ -43,14 +44,17 @@ PROMOTION_INTEGRATED_AT = datetime.fromtimestamp(
 )
 
 
-def _native_authority_probe() -> dict[str, object]:
+def _native_authority_probe(
+    runtime_extension_artifact: dict[str, object] | None = None,
+) -> dict[str, object]:
+    artifact = runtime_extension_artifact or {
+        "distributionVersion": "0.1.0",
+        "filename": "_native.abi3.so",
+        "sha256": "1" * 64,
+        "size": 123,
+    }
     process = {
-        "artifact": {
-            "distributionVersion": "0.1.0",
-            "filename": "_native.abi3.so",
-            "sha256": "1" * 64,
-            "size": 123,
-        },
+        "artifact": dict(artifact),
         "contract": {
             "runId": "installed-native-runtime-reopen",
             "graphHash": "sha256:" + "2" * 64,
@@ -554,7 +558,7 @@ def _write_platform_input(
     )
     records: list[dict[str, object]] = []
     for filename in sorted(filenames):
-        content = (
+        initial_content = (
             f"sdist:{filename}".encode()
             if filename.endswith(".tar.gz")
             else b"graphblocks-universal"
@@ -564,7 +568,30 @@ def _write_platform_input(
             else f"runtime:{os_name}".encode()
         )
         path = (sdist_root if filename.endswith(".tar.gz") else wheelhouse) / filename
-        path.write_bytes(content)
+        if filename == _runtime_wheel(os_name, python_version):
+            extension_name = (
+                "_native.abi3.pyd"
+                if os_name == "windows-latest"
+                else "_native.abi3.so"
+            )
+            with zipfile.ZipFile(path, "w") as archive:
+                init_member = zipfile.ZipInfo(
+                    "graphblocks_runtime/__init__.py",
+                    date_time=(1980, 1, 1, 0, 0, 0),
+                )
+                extension_member = zipfile.ZipInfo(
+                    f"graphblocks_runtime/{extension_name}",
+                    date_time=(1980, 1, 1, 0, 0, 0),
+                )
+                archive.writestr(init_member, b"")
+                archive.writestr(
+                    extension_member,
+                    initial_content,
+                )
+            content = path.read_bytes()
+        else:
+            content = initial_content
+            path.write_bytes(content)
         distribution, version = module._artifact_identity(filename)
         digest = module._sha256_bytes(content)
         records.append(
@@ -585,6 +612,13 @@ def _write_platform_input(
         for record in records
         if record["distribution"] == "graphblocks-runtime"
         and record["artifactType"] == "wheel"
+    )
+    native_compiler_path = wheelhouse / str(native_compiler_artifact["filename"])
+    native_runtime_extension_artifact = (
+        module.native_runtime_wheel_member_artifact(
+            native_compiler_path.read_bytes(),
+            distribution_version=str(native_compiler_artifact["version"]),
+        )
     )
     tck["reports"]["application-events"]["evidence"][
         "implementation_artifact"
@@ -755,7 +789,12 @@ def _write_platform_input(
             },
             "nativeCanonicalSchemaAuthority": {
                 "runtimeArtifact": dict(native_compiler_artifact),
-                "probe": _native_authority_probe(),
+                "runtimeExtensionArtifact": dict(
+                    native_runtime_extension_artifact
+                ),
+                "probe": _native_authority_probe(
+                    native_runtime_extension_artifact
+                ),
             },
         }
     )
@@ -3281,6 +3320,7 @@ def test_release_bundle_rejects_platform_contract_binding_substitution(
     (
         ("probe", "public/native authority facade"),
         ("artifact", "another runtime artifact"),
+        ("extension", "another runtime extension"),
     ),
 )
 def test_release_bundle_rejects_native_authority_evidence_substitution(
@@ -3297,8 +3337,10 @@ def test_release_bundle_rejects_native_authority_evidence_substitution(
         authority["probe"]["publicFacadeEvidence"]["corpusDigest"] = (
             "sha256:" + "f" * 64
         )
-    else:
+    elif target == "artifact":
         authority["runtimeArtifact"]["sha256"] = "f" * 64
+    else:
+        authority["runtimeExtensionArtifact"]["sha256"] = "f" * 64
     platform.pop("contentDigest")
     platform["contentDigest"] = canonical_hash(platform)
     platform_path.write_text(
