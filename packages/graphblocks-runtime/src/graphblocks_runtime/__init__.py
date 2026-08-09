@@ -475,9 +475,11 @@ except Exception as error:
         run_id: str,
     ) -> str:
         require_native_extension()
+        raise RuntimeError("native runtime persistence evidence is unavailable")
 
     def _evaluate_runtime_fence_reopen_json(run_store_path: str) -> str:
         require_native_extension()
+        raise RuntimeError("native runtime fence reopen evidence is unavailable")
 else:
 
     def native_extension_available() -> bool:
