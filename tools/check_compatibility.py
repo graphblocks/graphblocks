@@ -36,6 +36,7 @@ RUNTIME_SURFACE_PATH = COMPATIBILITY_ROOT / "stable-runtime-surface.yaml"
 RUNTIME_SNAPSHOT_PATH = COMPATIBILITY_ROOT / "stable-runtime-api.json"
 TESTING_CLI_CASES_PATH = COMPATIBILITY_ROOT / "stable-testing-cli-cases.yaml"
 TESTING_CLI_SNAPSHOT_PATH = COMPATIBILITY_ROOT / "stable-testing-cli-contracts.json"
+RUNTIME_SOURCE_ROOT = ROOT / "packages" / "graphblocks-runtime" / "src"
 TESTING_SOURCE_ROOT = ROOT / "packages" / "graphblocks-testing" / "src"
 MISSING = dataclasses.MISSING
 STANDARD_ANNOTATION_NAMES = frozenset(
@@ -392,6 +393,7 @@ def build_python_snapshot() -> dict[str, object]:
 
 
 def build_runtime_snapshot() -> dict[str, object]:
+    _enable_source_import(RUNTIME_SOURCE_ROOT)
     policy = _load_yaml(RUNTIME_SURFACE_PATH)
     if set(policy) != {
         "authority",
@@ -485,14 +487,14 @@ def build_runtime_snapshot() -> dict[str, object]:
     return snapshot
 
 
-def _enable_testing_source_import() -> None:
-    source_root = str(TESTING_SOURCE_ROOT)
+def _enable_source_import(root: Path) -> None:
+    source_root = str(root)
     if source_root not in sys.path:
         sys.path.insert(0, source_root)
 
 
 def build_testing_snapshot() -> dict[str, object]:
-    _enable_testing_source_import()
+    _enable_source_import(TESTING_SOURCE_ROOT)
     return _build_python_snapshot(TESTING_SURFACE_PATH, package="graphblocks_testing")
 
 
@@ -595,7 +597,7 @@ def build_cli_snapshot() -> dict[str, object]:
 
 
 def build_testing_cli_snapshot() -> dict[str, object]:
-    _enable_testing_source_import()
+    _enable_source_import(TESTING_SOURCE_ROOT)
     from graphblocks_testing import main
 
     policy = _load_yaml(TESTING_CLI_CASES_PATH)

@@ -81,6 +81,24 @@ def test_api_only_compatibility_check_does_not_execute_cli_contracts(
     assert compatibility_module.main(["--api-only"]) == 0
 
 
+def test_runtime_snapshot_prefers_the_checkout_companion_source(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source_root = ROOT / "packages" / "graphblocks-runtime" / "src"
+    monkeypatch.setattr(
+        sys,
+        "path",
+        [entry for entry in sys.path if entry != str(source_root)],
+    )
+    monkeypatch.delitem(sys.modules, "graphblocks_runtime", raising=False)
+
+    build_runtime_snapshot()
+
+    runtime = sys.modules["graphblocks_runtime"]
+    assert runtime.__file__ is not None
+    assert Path(runtime.__file__).resolve().is_relative_to(source_root.resolve())
+
+
 def test_snapshot_writer_requires_explicit_update_for_drift(
     tmp_path,
     monkeypatch,
