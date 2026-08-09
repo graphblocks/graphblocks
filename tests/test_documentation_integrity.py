@@ -2185,7 +2185,6 @@ def test_stable_release_matrix_is_complete_and_machine_readable() -> None:
     assert authority["implicitReferenceFallback"] is False
     assert authority["remainingPhases"] == [
         "stable-c1-requirement-authority",
-        "fallible-panic-free-rust-public-boundaries",
     ]
     assert authority["coreRuntimeAuthority"] == {
         "profile": "GB-C1-LOCAL-RUNTIME",
@@ -2330,7 +2329,6 @@ def test_stable_release_matrix_is_complete_and_machine_readable() -> None:
     assert "authority-transition-adr-not-accepted" not in authority_gate["blockers"]
     assert authority_gate["blockers"] == [
         "stable-c1-requirement-authority-incomplete",
-        "fallible-panic-free-rust-public-boundaries-incomplete",
     ]
     assert "installed-native-compiler-tck-and-artifact-identity-incomplete" not in (
         authority_gate["blockers"]
@@ -2393,6 +2391,9 @@ def test_stable_release_matrix_is_complete_and_machine_readable() -> None:
         not in authority_gate["completedEvidence"]
     )
     assert "stable-c1-cancellation-requirement-authority" in authority_gate[
+        "completedEvidence"
+    ]
+    assert "fallible-panic-free-rust-public-boundaries" in authority_gate[
         "completedEvidence"
     ]
     assert (
@@ -2473,9 +2474,14 @@ def test_stable_release_matrix_is_complete_and_machine_readable() -> None:
     )
     assert runtime_gate["blockers"] == [
         "stable-c1-requirement-authority-incomplete",
-        "restart-independent-local-runtime-correctness-incomplete",
     ]
     assert "stable-native-local-runtime-api-snapshot" in runtime_gate[
+        "completedEvidence"
+    ]
+    assert "restart-independent-local-runtime-store-and-journal-reopen" in (
+        runtime_gate["completedEvidence"]
+    )
+    assert "stale-authoritative-commit-rejection" in runtime_gate[
         "completedEvidence"
     ]
     assert (

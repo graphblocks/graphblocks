@@ -62,7 +62,7 @@ readinessAxes:
       targetReleaseClaim: core-c1-local-runtime-authority
       blocksTargetRelease: true
       shippedP0P1RemainBlocking: true
-      claimBoundary: The remaining local-flow requirement and restart-independent local correctness block 1.0; the installed native runtime API plus typed-ports, outcome, and cooperative-cancellation requirements are Rust-authoritative, while C4/X3 production durability retains its separate blocker.
+      claimBoundary: The remaining local-flow requirement blocks 1.0; the installed native runtime API plus typed-ports, outcome, cooperative-cancellation, and restart-independent store/journal correctness requirements are Rust-authoritative, while C4/X3 production durability retains its separate blocker.
     - id: adapters
       label: External adapters
       readiness: contract-only-no-real-adapters
@@ -159,9 +159,9 @@ authorityTransition:
     - exact-shared-outcome-differential
     - stable-c1-outcome-requirement-authority
     - stable-c1-cancellation-requirement-authority
+    - fallible-panic-free-rust-public-boundaries
   remainingPhases:
     - stable-c1-requirement-authority
-    - fallible-panic-free-rust-public-boundaries
   coreRuntimeAuthority:
     profile: GB-C1-LOCAL-RUNTIME
     remainingRequirements: [local-flow]
@@ -1037,9 +1037,10 @@ releaseGates:
       - exact-shared-outcome-differential
       - all-stable-c1-suites-exact-native-reference
       - stable-native-local-runtime-api-snapshot
+      - restart-independent-local-runtime-store-and-journal-reopen
+      - stale-authoritative-commit-rejection
     blockers:
       - stable-c1-requirement-authority-incomplete
-      - restart-independent-local-runtime-correctness-incomplete
   - id: REL-EXTENSION-RUNTIME-AUTHORITY
     description: C4 production and X3 durable-stream profiles require live authority, multi-process recovery, fencing, and durable output/effect boundaries before their separate preview promotion.
     readiness: definition-blocked
@@ -1680,9 +1681,9 @@ releaseGates:
       - stable-c1-cancellation-requirement-authority
       - exact-shared-c1-application-events-retry-sequence-tool-execution-tool-lifecycle-and-result-differential
       - stable-native-local-runtime-api-snapshot-and-installed-identity
+      - fallible-panic-free-rust-public-boundaries
     blockers:
       - stable-c1-requirement-authority-incomplete
-      - fallible-panic-free-rust-public-boundaries-incomplete
   - id: REL-PLATFORM-MATRIX
     description: Install typing and runtime gates pass on every published platform; upgrade is explicitly exempt only for v1.0.0.
     readiness: candidate-enforced-with-first-stable-upgrade-exemption

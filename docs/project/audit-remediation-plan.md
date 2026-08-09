@@ -541,8 +541,10 @@ available. Supported installed-wheel evidence compares public, reference, and
 direct-native results over the complete shared resource corpora and binds the
 corpus to the exact runtime artifact. The audit inventory's `GB-ARCH-001` and
 `GB-ARCH-002` implementation findings have executable closure evidence; the
-separate release transition remains blocked on three stable C1 requirements,
-restart-independent local correctness, and panic-free Rust public boundaries.
+separate release transition remains blocked only on the stable C1 local-flow
+requirement. Installed native fresh-process evidence closes restart-independent
+store/journal correctness and stale coordinator rejection, while fallible public
+Rust boundaries remain enforced by the workspace lint and canonical API tests.
 The native binding exposes a separate
 versioned,
 closed capability handshake; the Python wrapper rejects incompatible protocol,
