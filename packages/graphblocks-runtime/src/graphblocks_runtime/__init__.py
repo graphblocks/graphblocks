@@ -1338,6 +1338,16 @@ def _evaluate_application_event_tck_case(
     )
 
 
+def _evaluate_retry_tck_case(case: dict[str, object]) -> dict[str, object]:
+    require_native_extension()
+    from . import _native
+
+    return _json_object_result(
+        _native.evaluate_retry_tck_case_json(_canonical_json(case)),
+        "native retry TCK result",
+    )
+
+
 def evaluate_application_protocol_log(
     state: dict[str, object],
     operations: object,

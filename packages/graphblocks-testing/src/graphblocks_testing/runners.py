@@ -285,6 +285,7 @@ class TckRunner:
     authority_reference_implementation = "graphblocks-python"
     native_application_event_authority = False
     native_application_event_tck_authority = False
+    native_retry_tck_authority = False
     native_runtime_authority = False
 
     registry: RuntimeRegistry
@@ -6465,6 +6466,82 @@ class TckRunner:
                 "compileError": str(error),
             }
 
+        reference_contract = {
+            key: observed[key]
+            for key in (
+                "status",
+                "terminalKind",
+                "attempts",
+                "retryCount",
+                "retryIdempotencyKeys",
+                "contextIdempotencyKeys",
+            )
+        }
+        observed["reference_contract"] = reference_contract
+        if self.native_retry_tck_authority:
+            try:
+                from graphblocks_runtime import _evaluate_retry_tck_case
+
+                native_contract = _evaluate_retry_tck_case(dict(fixture))
+                if set(native_contract) != set(reference_contract):
+                    raise ValueError(
+                        "native retry TCK result must use the closed contract"
+                    )
+                if (
+                    native_contract.get("status")
+                    not in {"succeeded", "failed", "cancelled"}
+                    or type(native_contract.get("terminalKind")) is not str
+                    or type(native_contract.get("attempts")) is not int
+                    or type(native_contract.get("retryCount")) is not int
+                    or not all(
+                        isinstance(native_contract.get(key), list)
+                        and all(
+                            value is None or type(value) is str
+                            for value in native_contract[key]
+                        )
+                        for key in (
+                            "retryIdempotencyKeys",
+                            "contextIdempotencyKeys",
+                        )
+                    )
+                ):
+                    raise TypeError(
+                        "native retry TCK result contains invalid field values"
+                    )
+                native_reference_match = native_contract == reference_contract
+                observed.update(
+                    {
+                        "runtime": "native",
+                        "native_contract": native_contract,
+                        "native_reference_match": native_reference_match,
+                    }
+                )
+                if not native_reference_match:
+                    diagnostics.append(
+                        {
+                            "code": "NativeRetryMismatch",
+                            "message": (
+                                "native retry execution differs from the Python "
+                                "reference oracle"
+                            ),
+                            "path": "$.observed.reference_contract",
+                        }
+                    )
+            except Exception as error:
+                diagnostics.append(
+                    {
+                        "code": "NativeRetryExecutionError",
+                        "message": str(error),
+                        "path": "$",
+                    }
+                )
+                observed.update(
+                    {
+                        "runtime": "native",
+                        "native_reference_match": False,
+                    }
+                )
+
         if kind not in {"node_retry", "cancelled_before_retry"}:
             diagnostics.append(
                 {
@@ -9340,6 +9417,15 @@ class _ApplicationEventStreamDifferentialTckRunner(TckRunner):
     authority_reference_implementation = "graphblocks-python"
     native_application_event_authority = True
     native_application_event_tck_authority = True
+
+
+class _RetryDifferentialTckRunner(TckRunner):
+    __slots__ = ()
+    authority_executor_id = "rust-retry-exact-differential"
+    authority_language = "rust"
+    authority_comparison = "exact-native-reference"
+    authority_reference_implementation = "graphblocks-python"
+    native_retry_tck_authority = True
 
 
 class _NormativeCompilerTckRunner(TckRunner):

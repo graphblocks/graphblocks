@@ -1,4 +1,5 @@
 mod application_event_tck;
+mod retry_tck;
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -2321,6 +2322,15 @@ fn evaluate_application_event_tck_case_json(case_json: &str) -> PyResult<String>
         PyRuntimeError::new_err(format!(
             "failed to serialize application event TCK result: {error}"
         ))
+    })
+}
+
+#[pyfunction]
+fn evaluate_retry_tck_case_json(case_json: &str) -> PyResult<String> {
+    let case = parse_json_argument(case_json, "retry TCK case")?;
+    let result = retry_tck::evaluate_case(&case).map_err(PyValueError::new_err)?;
+    serde_json::to_string(&result).map_err(|error| {
+        PyRuntimeError::new_err(format!("failed to serialize retry TCK result: {error}"))
     })
 }
 
@@ -9631,6 +9641,7 @@ fn _native(module: &Bound<'_, PyModule>) -> PyResult<()> {
         evaluate_application_event_tck_case_json,
         module
     )?)?;
+    module.add_function(wrap_pyfunction!(evaluate_retry_tck_case_json, module)?)?;
     module.add_function(wrap_pyfunction!(
         evaluate_application_protocol_stream_json,
         module
@@ -9684,16 +9695,16 @@ mod tests {
         evaluate_declarative_output_policy_json, evaluate_durable_tool_terminal_store_json,
         evaluate_node_lifecycle_json, evaluate_output_gate_json,
         evaluate_provider_limit_policy_json, evaluate_readiness_json, evaluate_retry_policy_json,
-        evaluate_scheduler_json, evaluate_sequential_tool_queue_json, evaluate_task_group_json,
-        evaluate_timeout_deadline_json, evaluate_tool_admission_json, evaluate_tool_approval_json,
-        evaluate_tool_execution_plan_json, evaluate_tool_resolution_json,
-        evaluate_tool_result_stream_json, evaluate_usage_ledger_json, finalize_tool_call_json,
-        migrate_resource_json, negotiate_application_protocol_capabilities_json,
-        parse_application_protocol_event_kind, parse_json_argument, parse_resolved_tool,
-        parse_schema_id_json, parse_tool_call, prepare_tool_result_for_model_json,
-        record_tool_effect_audit_event_json, record_tool_effect_precondition_json,
-        resource_schema_errors_json, run_stdlib_graph_json, run_stdlib_graph_with_options_json,
-        run_test_graph_json, run_test_graph_with_options_json,
+        evaluate_retry_tck_case_json, evaluate_scheduler_json, evaluate_sequential_tool_queue_json,
+        evaluate_task_group_json, evaluate_timeout_deadline_json, evaluate_tool_admission_json,
+        evaluate_tool_approval_json, evaluate_tool_execution_plan_json,
+        evaluate_tool_resolution_json, evaluate_tool_result_stream_json,
+        evaluate_usage_ledger_json, finalize_tool_call_json, migrate_resource_json,
+        negotiate_application_protocol_capabilities_json, parse_application_protocol_event_kind,
+        parse_json_argument, parse_resolved_tool, parse_schema_id_json, parse_tool_call,
+        prepare_tool_result_for_model_json, record_tool_effect_audit_event_json,
+        record_tool_effect_precondition_json, resource_schema_errors_json, run_stdlib_graph_json,
+        run_stdlib_graph_with_options_json, run_test_graph_json, run_test_graph_with_options_json,
         serialize_application_protocol_log_error, validate_remote_payload_json,
         validate_worker_advertisement_json, validate_worker_protocol_message_json,
     };
@@ -12987,6 +12998,31 @@ mod tests {
                 case.get("expectedAcceptedKinds")
             );
             assert_eq!(output.get("diagnostics"), Some(&expected_diagnostics));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn evaluate_retry_tck_case_json_matches_shared_cases() -> Result<(), String> {
+        let cases = serde_json::from_str::<Value>(include_str!(
+            "../../graphblocks-runtime-core/tests/fixtures/retry-cases.json"
+        ))
+        .map_err(|error| error.to_string())?;
+        let cases = cases
+            .as_array()
+            .ok_or_else(|| "retry TCK fixture must be an array".to_owned())?;
+
+        for case in cases {
+            let output = evaluate_retry_tck_case_json(
+                &serde_json::to_string(case).map_err(|error| error.to_string())?,
+            )
+            .map_err(|error| error.to_string())?;
+            let output =
+                serde_json::from_str::<Value>(&output).map_err(|error| error.to_string())?;
+            assert_eq!(
+                output.as_object(),
+                case.get("expected").and_then(Value::as_object)
+            );
         }
         Ok(())
     }

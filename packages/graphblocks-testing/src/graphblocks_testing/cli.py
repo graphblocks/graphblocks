@@ -53,6 +53,7 @@ from .runners import (
     _ApplicationEventStreamDifferentialTckRunner,
     _NormativeCompilerTckRunner,
     _NormativeRuntimeTckRunner,
+    _RetryDifferentialTckRunner,
 )
 
 
@@ -712,6 +713,19 @@ def main(argv: list[str] | None = None) -> int:
                         _native_compiler_version,
                     )(),
                 )
+            elif manifest.suite_id == "retry" and compiler_artifact is not None:
+                runner = _RetryDifferentialTckRunner(
+                    _tck_registry(manifest.suite_id),
+                    profile=args.profile,
+                    evidence_dir=evidence_dir,
+                    suite=manifest.suite_id,
+                    fixture_digest=manifest.fixture_digest,
+                    implementation="graphblocks-runtime",
+                    implementation_version=facade_dependency(
+                        "_native_compiler_version",
+                        _native_compiler_version,
+                    )(),
+                )
             else:
                 runner = TckRunner(
                     _tck_registry(manifest.suite_id),
@@ -730,7 +744,8 @@ def main(argv: list[str] | None = None) -> int:
             )
             evidence["suite_manifest_digest"] = manifest.content_digest()
             if (
-                manifest.suite_id in {"application-events", "compiler", "runtime"}
+                manifest.suite_id
+                in {"application-events", "compiler", "retry", "runtime"}
                 and compiler_artifact is not None
             ):
                 evidence["implementation_artifact"] = dict(compiler_artifact)

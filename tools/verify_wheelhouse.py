@@ -1056,7 +1056,7 @@ def _tck_expectations(
         raise RuntimeError("checked-in native compiler version is invalid") from error
     suites: dict[str, dict[str, object]] = {}
     contracts: list[dict[str, object]] = []
-    native_exact_suites = {"application-events", "compiler", "runtime"}
+    native_exact_suites = {"application-events", "compiler", "retry", "runtime"}
     for cases_path in sorted(tck_root.glob("*/cases.json"), key=lambda path: path.parent.name):
         suite = cases_path.parent.name
         case_ids = [
@@ -1201,6 +1201,7 @@ def _tck_expectations(
         exact_executor_ids = {
             "application-events": "rust-application-events-exact-differential",
             "compiler": "rust-compiler-exact-differential",
+            "retry": "rust-retry-exact-differential",
             "runtime": "rust-runtime-exact-differential",
         }
         observed_execution_claims = {
@@ -1559,23 +1560,28 @@ def _require_release_evidence(
                                 "exact native/reference normalized construction, operation "
                                 "trace, and admission"
                             )
+                if (
+                    suite == "retry"
+                    and isinstance(execution_claim, Mapping)
+                    and execution_claim.get("comparison")
+                    == "exact-native-reference"
+                ):
+                    for result in results:
+                        observed = result.get("observed")
+                        if (
+                            not isinstance(observed, Mapping)
+                            or observed.get("runtime") != "native"
+                            or observed.get("native_reference_match") is not True
+                            or observed.get("native_contract")
+                            != observed.get("reference_contract")
+                        ):
+                            raise RuntimeError(
+                                "installed retry TCK evidence is not exact "
+                                "native/reference execution"
+                            )
         if expected_compiler_artifact is not None:
             expected_artifact = dict(expected_compiler_artifact)
-            application_event_report = reports.get("application-events")
-            application_event_evidence = (
-                application_event_report.get("evidence")
-                if isinstance(application_event_report, Mapping)
-                else None
-            )
-            if not isinstance(application_event_evidence, Mapping) or (
-                application_event_evidence.get("implementation_artifact")
-                != expected_artifact
-            ):
-                raise RuntimeError(
-                    "installed application-event implementation evidence does not bind the "
-                    "exact graphblocks-runtime wheel"
-                )
-            for suite in ("compiler", "runtime"):
+            for suite in ("application-events", "compiler", "retry", "runtime"):
                 report = reports.get(suite)
                 evidence = (
                     report.get("evidence") if isinstance(report, Mapping) else None

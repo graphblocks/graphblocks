@@ -542,7 +542,7 @@ direct-native results over the complete shared resource corpora and binds the
 corpus to the exact runtime artifact. The audit inventory's `GB-ARCH-001` and
 `GB-ARCH-002` implementation findings have executable closure evidence; the
 separate release transition remains blocked on four stable C1 requirements,
-six exact-differential suites, restart-independent local correctness, and
+four exact-differential suites, restart-independent local correctness, and
 panic-free Rust public boundaries.
 The native binding exposes a separate
 versioned,
@@ -567,8 +567,8 @@ record proves the active canonical/SchemaId and resource
 validation/migration utility slices. The complete schema and C1 runtime suite
 claims are phase-scoped: the bundled stable runtime suite now executes the Rust
 stdlib path with exact native/reference result and lifecycle comparison. The
-`application-events` suite also uses an installed Rust executor; the five
-remaining C1 suites stay `reference-only`. This preserves the boundary for
+`application-events` and `retry` suites also use installed Rust executors; the
+four remaining C1 suites stay `reference-only`. This preserves the boundary for
 other schema-facing behavior and the remaining stable C1 transition blockers.
 When a selected native wheel is supplied, the `application-events` report now
 also replays every Python-materialized event through the installed Rust stream
@@ -583,6 +583,11 @@ and unknown operations with exact code, message, and path comparison. The
 release matrix therefore binds `application-events` to the
 `rust-application-events-exact-differential` executor and exact runtime-wheel
 identity, with Python retained as the reference oracle.
+The installed `retry` report executes all four shared
+retry/idempotency/cancellation fixtures through the Rust local runtime, exact
+compares the closed status, terminal, attempt, retry-key, and context-key
+contract with Python, and binds that proof to the
+`rust-retry-exact-differential` executor and exact runtime wheel.
 The stable installed runtime API is now an explicit three-symbol allowlist with
 an exact signature snapshot. Its core execution result is projected to a
 closed checkpoint-free envelope, while persistence and other C4/X3 options use

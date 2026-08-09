@@ -260,8 +260,8 @@ suspension, multi-worker crash recovery, lease/fence, and durable effect
 boundaries remain preview promotion work under
 `REL-EXTENSION-RUNTIME-AUTHORITY`, which does not block the first C0/C1 release.
 `REL-RUNTIME-CORRECTNESS` separately continues to block 1.0 on the remaining
-C1 requirements, suites, native API snapshot, and restart-independent local
-store/journal evidence.
+C1 requirements and suites plus restart-independent local store/journal
+evidence.
 
 The installed `application-events` report additionally runs each
 Python-materialized attempted event through the selected Rust wheel and exact
@@ -275,8 +275,11 @@ Numeric `*UnixMs` fields are the cross-language time authority. The shared
 adversarial corpus includes boolean numeric coercion and unknown-operation
 cases, with exact code, message, and path comparison. The authority matrix
 assigns this suite to `rust-application-events-exact-differential`, with Python
-retained as the reference oracle. Five other C1 suites remain
-`reference-only` transition work.
+retained as the reference oracle. The installed `retry` report likewise runs
+all four shared retry/idempotency/cancellation fixtures through the Rust local
+runtime and exact-compares its closed result with the Python oracle. Its claim
+is bound to `rust-retry-exact-differential` and the selected runtime wheel.
+Four other C1 suites remain `reference-only` transition work.
 
 ## Release gates
 

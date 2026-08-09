@@ -494,6 +494,28 @@ def test_release_evidence_binds_native_reports_to_exact_runtime_wheel() -> None:
                             {"case_id": "compiler/native", "status": "passed"}
                         ],
                     },
+                    "retry": {
+                        "ok": True,
+                        "evidence": {
+                            "fixture_digest": "sha256:" + "e" * 64,
+                            "implementation": "graphblocks-runtime",
+                            "implementation_version": "0.1.0",
+                            "implementation_artifact": observed_artifact,
+                            "suite": "retry",
+                        },
+                        "results": [
+                            {
+                                "case_id": "retry/native",
+                                "status": "passed",
+                                "observed": {
+                                    "runtime": "native",
+                                    "native_reference_match": True,
+                                    "native_contract": {"attempts": 1},
+                                    "reference_contract": {"attempts": 1},
+                                },
+                            }
+                        ],
+                    },
                     "runtime": {
                         "ok": True,
                         "evidence": {
@@ -984,6 +1006,21 @@ def test_default_tck_output_matches_source_derived_release_expectations(
         assert isinstance(reference_tck_contract, dict)
         return json.loads(json.dumps(reference_tck_contract))
 
+    def reference_retry_tck_case_bridge(
+        raw_case: dict[str, object],
+    ) -> dict[str, object]:
+        case = graphblocks_testing.TckCase.retry(
+            case_id=str(raw_case["name"]),
+            fixture=dict(raw_case),
+        )
+        result = graphblocks_testing.TckRunner(
+            graphblocks_testing.stdlib_registry()
+        ).run_cases((case,)).results[0]
+        assert result.status == "passed"
+        reference_contract = result.observed["reference_contract"]
+        assert isinstance(reference_contract, dict)
+        return json.loads(json.dumps(reference_contract))
+
     monkeypatch.setattr(
         graphblocks_runtime,
         "run_stdlib_graph",
@@ -998,6 +1035,11 @@ def test_default_tck_output_matches_source_derived_release_expectations(
         graphblocks_runtime,
         "_evaluate_application_event_tck_case",
         reference_application_event_tck_case_bridge,
+    )
+    monkeypatch.setattr(
+        graphblocks_runtime,
+        "_evaluate_retry_tck_case",
+        reference_retry_tck_case_bridge,
     )
 
     exit_code = graphblocks_testing.main(
@@ -1269,6 +1311,25 @@ def test_stable_tck_expectations_bind_bundled_c0_c1_profiles_and_contract_digest
     assert expectations["suites"]["application-events"][
         "reference_implementation_version"
     ] == "1.0.0rc1"
+    assert expectations["suites"]["retry"]["implementation"] == (
+        "graphblocks-runtime"
+    )
+    assert expectations["suites"]["retry"]["implementation_version"] == (
+        "0.1.0"
+    )
+    assert expectations["suites"]["retry"][
+        "implementation_artifact_distribution"
+    ] == "graphblocks-runtime"
+    assert expectations["suites"]["retry"]["execution_claim"] == {
+        "executor_id": "rust-retry-exact-differential",
+        "implementation": "graphblocks-runtime",
+        "language": "rust",
+        "comparison": "exact-native-reference",
+        "reference_implementation": "graphblocks-python",
+    }
+    assert expectations["suites"]["retry"][
+        "reference_implementation_version"
+    ] == "1.0.0rc1"
     assert expectations["suites"]["runtime"]["implementation"] == (
         "graphblocks-runtime"
     )
@@ -1291,7 +1352,7 @@ def test_stable_tck_expectations_bind_bundled_c0_c1_profiles_and_contract_digest
     assert {
         expectation["implementation"]
         for suite, expectation in expectations["suites"].items()
-        if suite not in {"application-events", "compiler", "runtime"}
+        if suite not in {"application-events", "compiler", "retry", "runtime"}
     } == {"graphblocks-python"}
 
 

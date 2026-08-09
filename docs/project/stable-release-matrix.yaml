@@ -62,7 +62,7 @@ readinessAxes:
       targetReleaseClaim: core-c1-local-runtime-authority
       blocksTargetRelease: true
       shippedP0P1RemainBlocking: true
-      claimBoundary: The four remaining C1 requirements, five remaining exact-differential suites, and restart-independent local correctness block 1.0; the installed native runtime API and exact application-event suite are frozen, while C4/X3 production durability is governed by a separate nonblocking preview-promotion gate.
+      claimBoundary: The four remaining C1 requirements, four remaining exact-differential suites, and restart-independent local correctness block 1.0; the installed native runtime API plus exact application-event and retry suites are frozen, while C4/X3 production durability is governed by a separate nonblocking preview-promotion gate.
     - id: adapters
       label: External adapters
       readiness: contract-only-no-real-adapters
@@ -143,6 +143,8 @@ authorityTransition:
     - installed-application-event-constructor-payload-and-operation-trace-differential
     - installed-application-event-adversarial-structured-diagnostic-differential
     - exact-shared-application-events-differential
+    - installed-retry-exact-differential-and-artifact-identity
+    - exact-shared-retry-differential
   remainingPhases:
     - stable-c1-requirement-authority
     - stable-c1-suite-exact-differential
@@ -150,7 +152,7 @@ authorityTransition:
   coreRuntimeAuthority:
     profile: GB-C1-LOCAL-RUNTIME
     remainingRequirements: [typed-ports, outcome, cancellation, local-flow]
-    remainingExactSuites: [retry, sequence, tool-execution, tool-lifecycle, tool-result]
+    remainingExactSuites: [sequence, tool-execution, tool-lifecycle, tool-result]
     runtimeCorrectnessGate: REL-RUNTIME-CORRECTNESS
     blocksTargetRelease: true
   extensionRuntimeAuthority:
@@ -173,7 +175,6 @@ authorityTransition:
         comparison: reference-only
         referenceImplementation: graphblocks-python
         allowedSuites:
-          - retry
           - schema
           - sequence
           - tool-execution
@@ -191,6 +192,12 @@ authorityTransition:
         comparison: exact-native-reference
         referenceImplementation: graphblocks-python
         allowedSuites: [compiler]
+      rust-retry-exact-differential:
+        implementation: graphblocks-runtime
+        language: rust
+        comparison: exact-native-reference
+        referenceImplementation: graphblocks-python
+        allowedSuites: [retry]
       rust-runtime-exact-differential:
         implementation: graphblocks-runtime
         language: rust
@@ -207,9 +214,9 @@ authorityTransition:
         profile: GB-C0-SCHEMA
         authorityRole: activeCompiler
       retry:
-        executor: python-reference
+        executor: rust-retry-exact-differential
         profile: GB-C1-LOCAL-RUNTIME
-        authorityRole: activeReferenceInterpreter
+        authorityRole: activeLocalRuntime
       runtime:
         executor: rust-runtime-exact-differential
         profile: GB-C1-LOCAL-RUNTIME
@@ -925,7 +932,7 @@ releaseGates:
     scope: core-c1-local-runtime
     blocksTargetRelease: true
     requirementSelectors: [typed-ports, outcome, cancellation, local-flow]
-    exactSuiteSelectors: [retry, sequence, tool-execution, tool-lifecycle, tool-result]
+    exactSuiteSelectors: [sequence, tool-execution, tool-lifecycle, tool-result]
     requiredEvidence:
       - deterministic-local-scheduler-and-journal-native-authority
       - installed-native-local-runtime-artifact-identity
@@ -934,6 +941,8 @@ releaseGates:
       - installed-application-event-constructor-payload-and-operation-trace-differential
       - installed-application-event-adversarial-structured-diagnostic-differential-and-artifact-identity
       - exact-shared-application-events-differential
+      - installed-retry-exact-differential-and-artifact-identity
+      - exact-shared-retry-differential
       - all-stable-c1-requirements-normative
       - all-stable-c1-suites-exact-native-reference
       - stable-native-local-runtime-api-snapshot
@@ -947,6 +956,8 @@ releaseGates:
       - installed-application-event-constructor-payload-and-operation-trace-differential
       - installed-application-event-adversarial-structured-diagnostic-differential-and-artifact-identity
       - exact-shared-application-events-differential
+      - installed-retry-exact-differential-and-artifact-identity
+      - exact-shared-retry-differential
       - stable-native-local-runtime-api-snapshot
     blockers:
       - stable-c1-requirement-authority-incomplete
@@ -1539,6 +1550,8 @@ releaseGates:
       - installed-application-event-constructor-payload-and-operation-trace-differential
       - installed-application-event-adversarial-structured-diagnostic-differential-and-artifact-identity
       - exact-shared-application-events-differential
+      - installed-retry-exact-differential-and-artifact-identity
+      - exact-shared-retry-differential
       - exact-shared-c1-application-events-retry-sequence-tool-execution-tool-lifecycle-and-result-differential
       - stable-native-local-runtime-api-snapshot-and-installed-identity
       - fallible-panic-free-rust-public-boundaries
@@ -1560,6 +1573,8 @@ releaseGates:
       - installed-application-event-constructor-payload-and-operation-trace-differential
       - installed-application-event-adversarial-structured-diagnostic-differential-and-artifact-identity
       - exact-shared-application-events-differential
+      - installed-retry-exact-differential-and-artifact-identity
+      - exact-shared-retry-differential
       - stable-native-local-runtime-api-snapshot-and-installed-identity
     blockers:
       - stable-c1-requirement-authority-incomplete
