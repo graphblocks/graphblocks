@@ -2190,7 +2190,6 @@ def test_stable_release_matrix_is_complete_and_machine_readable() -> None:
     assert authority["coreRuntimeAuthority"] == {
         "profile": "GB-C1-LOCAL-RUNTIME",
         "remainingRequirements": [
-            "cancellation",
             "local-flow",
         ],
         "remainingExactSuites": [],
@@ -2236,6 +2235,9 @@ def test_stable_release_matrix_is_complete_and_machine_readable() -> None:
     ]
     assert "exact-shared-outcome-differential" in authority["completedPhases"]
     assert "stable-c1-outcome-requirement-authority" in authority[
+        "completedPhases"
+    ]
+    assert "stable-c1-cancellation-requirement-authority" in authority[
         "completedPhases"
     ]
     assert "supported-installed-native-compiler-tck-and-artifact-evidence" not in (
@@ -2387,9 +2389,12 @@ def test_stable_release_matrix_is_complete_and_machine_readable() -> None:
         "completedEvidence"
     ]
     assert (
-        "stable-c1-typed-ports-outcome-cancellation-and-local-flow-authority"
+        "stable-c1-local-flow-authority"
         not in authority_gate["completedEvidence"]
     )
+    assert "stable-c1-cancellation-requirement-authority" in authority_gate[
+        "completedEvidence"
+    ]
     assert (
         "installed-application-event-stream-admission-differential-and-artifact-identity"
         in authority_gate["completedEvidence"]

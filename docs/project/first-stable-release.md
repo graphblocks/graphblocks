@@ -260,7 +260,7 @@ suspension, multi-worker crash recovery, lease/fence, and durable effect
 boundaries remain preview promotion work under
 `REL-EXTENSION-RUNTIME-AUTHORITY`, which does not block the first C0/C1 release.
 `REL-RUNTIME-CORRECTNESS` separately continues to block 1.0 on the remaining
-C1 requirements plus restart-independent local store/journal evidence.
+local-flow requirement plus restart-independent local store/journal evidence.
 
 The installed `application-events` report additionally runs each
 Python-materialized attempted event through the selected Rust wheel and exact
@@ -275,9 +275,12 @@ adversarial corpus includes boolean numeric coercion and unknown-operation
 cases, with exact code, message, and path comparison. The authority matrix
 assigns this suite to `rust-application-events-exact-differential`, with Python
 retained as the reference oracle. The installed `retry` report likewise runs
-all four shared retry/idempotency/cancellation fixtures through the Rust local
-runtime and exact-compares its closed result with the Python oracle. Its claim
-is bound to `rust-retry-exact-differential` and the selected runtime wheel.
+all seven shared retry/idempotency/cancellation fixtures through the Rust local
+runtime and exact-compares status, terminal kind, attempts, retry identities,
+node commits, terminal count, and post-terminal immutability with the Python
+oracle. The cancellation cases cover pre-start, failed-attempt pre-retry,
+successful-attempt pre-commit, and post-terminal boundaries. Its claim is bound
+to `rust-retry-exact-differential` and the selected runtime wheel.
 The installed `sequence` report now exact-compares bounded FIFO operation
 results, buffer lengths, terminal state, and invalid-capacity creation through
 `rust-sequence-exact-differential`. The installed `tool-execution` report runs
@@ -303,9 +306,10 @@ failure emits one `run_failed` terminal with no partial outputs. This evidence
 runs through `rust-outcome-exact-differential`, bound to the same runtime wheel.
 All stable C1 suites now have exact native/reference coverage. The comparison
 begins only after the shared canonical JSON envelope admission; invalid
-envelopes fail closed before either evaluator. The outcome requirement is now
-Rust-authoritative; cancellation and local flow remain direct
-requirement-authority work.
+envelopes fail closed before either evaluator. The outcome and cooperative
+cancellation requirements are now Rust-authoritative; local flow remains the
+only direct C1 requirement-authority work. Restart, lease, and fencing
+correctness remains outside the cancellation promotion.
 
 ## Release gates
 

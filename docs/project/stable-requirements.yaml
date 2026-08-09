@@ -356,17 +356,47 @@ profiles:
         clauses:
           - GB-GCR-TIMEOUT-RETRY-001
         implementations:
-          pythonFacadeAndReference:
-            - src/graphblocks/runtime.py
-            - src/graphblocks/tools.py
-          targetNormative:
+          normative:
             - crates/graphblocks-runtime-core/src/cancellation.rs
             - crates/graphblocks-runtime-core/src/timeout.rs
+            - crates/graphblocks-runtime-core/src/test_runtime.rs
+            - crates/graphblocks-python/src/retry_tck.rs
+            - crates/graphblocks-python/src/lib.rs
+          pythonFacadeAndReference:
+            - src/graphblocks/runtime.py
+        authoritySlices:
+          cooperativeCancellationLifecycle:
+            status: normative
+            authority: rust
+            scope: pre-start-in-flight-pre-commit-post-terminal-and-timeout-precedence
+            normativeImplementations:
+              - crates/graphblocks-runtime-core/src/cancellation.rs
+              - crates/graphblocks-runtime-core/src/timeout.rs
+              - crates/graphblocks-runtime-core/src/test_runtime.rs
+              - crates/graphblocks-python/src/retry_tck.rs
+              - crates/graphblocks-python/src/lib.rs
+            pythonFacadeAndReference:
+              - src/graphblocks/runtime.py
+            installedEvidence:
+              - packages/graphblocks-runtime/src/graphblocks_runtime/__init__.py
+              - packages/graphblocks-testing/src/graphblocks_testing/runners.py
+              - packages/graphblocks-testing/src/graphblocks_testing/cli.py
+              - tools/verify_wheelhouse.py
+              - tests/test_testing_package.py
+              - tests/test_wheelhouse_schema_verification.py
+              - tests/test_release_supply_chain.py
+            exclusions:
+              - The frozen public native API does not yet expose a caller-driven cancellation handle; this authority slice covers the installed conformance adapter and the Python facade/reference token boundary.
+        scopeNotes:
+          - The retry suite exact-compares retry/idempotency plus cancellation before start, before retry, before result commit, and after terminal through the installed Rust wheel. It normalizes node commit and terminal counts across language-specific journal names. Python and Rust unit evidence additionally fixes cancellation ahead of timeout retry or output commit. Tool-lifecycle remains auxiliary profile coverage. Restart, lease, and fencing correctness remains in local-flow.
         schemas: []
-        tckSuites: [tool-lifecycle]
+        tckSuites: [outcome, retry, tool-lifecycle]
         evidence:
           - tests/test_cancellation_runtime.py
           - tests/test_timeout_runtime.py
+          - tests/test_testing_package.py
+          - tck/outcome/cases.json
+          - tck/retry/cases.json
           - tck/tool-lifecycle/cases.json
       - id: journal
         clauses:

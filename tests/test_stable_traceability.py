@@ -344,9 +344,9 @@ def test_stable_requirement_implementation_roles_match_the_authority_transition(
         "local-runtime-api",
         "outcome",
         "typed-ports",
+        "cancellation",
     }
     target_requirements = {
-        "cancellation",
         "local-flow",
     }
     assert set(c1_entries) == normative_requirements | target_requirements
@@ -470,6 +470,17 @@ def test_stable_requirement_implementation_roles_match_the_authority_transition(
             "closed outcome.v1 wire contract remain reference-only.",
         ],
     }
+    cancellation = c1_entries["cancellation"]
+    assert cancellation["tckSuites"] == ["outcome", "retry", "tool-lifecycle"]
+    assert set(cancellation["implementations"]) == {
+        "normative",
+        "pythonFacadeAndReference",
+    }
+    assert cancellation["authoritySlices"][
+        "cooperativeCancellationLifecycle"
+    ]["scope"] == (
+        "pre-start-in-flight-pre-commit-post-terminal-and-timeout-precedence"
+    )
     for requirement in target_requirements:
         entry = c1_entries[requirement]
         roles = entry["implementations"]

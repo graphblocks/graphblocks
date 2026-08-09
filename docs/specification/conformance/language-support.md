@@ -9,7 +9,7 @@ release compatibility promise.
 | Graph compiler and canonical Plan identity | `compile_graph` is a fail-closed native facade; `compile_graph_reference` is the explicit oracle executed beside every installed compiler-TCK case | Normative compiler, exposed through the exact `graphblocks-runtime` wheel and accepted only when its complete Plan contract matches the Python oracle |
 | Cross-file YAML composition authoring | Implemented; materializes an expanded Graph | Does not resolve authoring sources; consumes expanded Graph YAML |
 | Typed code graph authoring | Implemented and mypy-tested for the stdlib RAG vertical slice; catalog-backed and materializes a portable Graph | Implemented and trybuild-tested for the stdlib RAG vertical slice; catalog-backed and materializes a portable Graph |
-| Local runtime, cancellation, tools, budget core | Implemented reference interpreter and exact oracle for every bundled stable C1 suite | Active authority for every bundled stable C1 exact-differential suite plus the complete typed-port and outcome requirements; cancellation and local flow still block complete C1 authority |
+| Local runtime, cancellation, tools, budget core | Implemented reference interpreter and exact oracle for every bundled stable C1 suite | Active authority for every bundled stable C1 exact-differential suite plus the complete typed-port, outcome, and cooperative-cancellation requirements; local flow still blocks complete C1 authority |
 | Documents, RAG, conversation reference APIs | Implemented | Selected core models/TCK behavior |
 | Accepted runs and callback resume | Reference server; process-local checkpoint continuation | Preview single-process/single-worker SQLite continuation plus core async/callback records and TCK behavior; consumes trusted pre-admission assertions and does not query policy/budget/schema/lease authorities or verify lease freshness |
 | Registered-secret signed webhook dispatch | Implemented in `graphblocks.callbacks` | Implemented in runtime-core with HMAC signing, replay verification, and egress-bound delivery hooks |
@@ -52,9 +52,12 @@ includes boolean numeric coercion and unknown-operation cases with exact code,
 message, and path comparison. The release matrix binds the report to the
 `rust-application-events-exact-differential` executor and exact runtime wheel,
 with Python retained as the reference oracle.
-The installed `retry` report executes all four shared fixtures through the Rust
+The installed `retry` report executes all seven shared fixtures through the Rust
 local runtime and exact-compares the closed status, terminal, attempt,
-retry-key, and context-key contract with Python. Its evidence is assigned to
+retry-key, context-key, node-commit count, terminal count, and post-terminal
+immutability contract with Python. Its cancellation cases cover pre-start,
+failed-attempt pre-retry, successful-attempt pre-commit, and post-terminal
+boundaries. Its evidence is assigned to
 `rust-retry-exact-differential` and bound to the same exact runtime wheel.
 The installed `sequence` report exact-compares bounded FIFO operation results,
 buffer lengths, terminal state, and invalid-capacity creation through
@@ -89,8 +92,11 @@ cases proving output commit before success and no partial output on projection
 failure. This promotes the complete outcome requirement over requests admitted
 by the shared canonical JSON envelope boundary. Python-only metadata and looser
 facade compatibility remain reference-only.
-This preserves the boundary around other schema-facing and stable C1 runtime
-behavior. C4 production and X3 durable-stream durability are preview promotion
+The cooperative cancellation requirement is normative for this installed
+conformance adapter and the Python facade/reference token boundary. It does not
+claim a public native caller-driven cancellation handle or restart, lease, and
+fencing correctness. This preserves the boundary around other schema-facing
+and stable C1 runtime behavior. C4 production and X3 durable-stream durability are preview promotion
 work under `REL-EXTENSION-RUNTIME-AUTHORITY`; their live-authority,
 multi-process, fencing, and outbox requirements do not block the first C0/C1
 release.

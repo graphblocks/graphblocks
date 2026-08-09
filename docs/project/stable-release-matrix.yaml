@@ -62,7 +62,7 @@ readinessAxes:
       targetReleaseClaim: core-c1-local-runtime-authority
       blocksTargetRelease: true
       shippedP0P1RemainBlocking: true
-      claimBoundary: The two remaining C1 requirements and restart-independent local correctness block 1.0; the installed native runtime API, typed-ports requirement, complete outcome requirement, and all stable C1 exact-differential suites are frozen, while cancellation, local flow, and C4/X3 production durability retain their separate blockers.
+      claimBoundary: The remaining local-flow requirement and restart-independent local correctness block 1.0; the installed native runtime API plus typed-ports, outcome, and cooperative-cancellation requirements are Rust-authoritative, while C4/X3 production durability retains its separate blocker.
     - id: adapters
       label: External adapters
       readiness: contract-only-no-real-adapters
@@ -158,12 +158,13 @@ authorityTransition:
     - installed-outcome-exact-differential-and-artifact-identity
     - exact-shared-outcome-differential
     - stable-c1-outcome-requirement-authority
+    - stable-c1-cancellation-requirement-authority
   remainingPhases:
     - stable-c1-requirement-authority
     - fallible-panic-free-rust-public-boundaries
   coreRuntimeAuthority:
     profile: GB-C1-LOCAL-RUNTIME
-    remainingRequirements: [cancellation, local-flow]
+    remainingRequirements: [local-flow]
     remainingExactSuites: []
     runtimeCorrectnessGate: REL-RUNTIME-CORRECTNESS
     blocksTargetRelease: true
@@ -983,7 +984,7 @@ releaseGates:
     readiness: blocked
     scope: core-c1-local-runtime
     blocksTargetRelease: true
-    requirementSelectors: [cancellation, local-flow]
+    requirementSelectors: [local-flow]
     exactSuiteSelectors: []
     requiredEvidence:
       - deterministic-local-scheduler-and-journal-native-authority
@@ -1620,7 +1621,8 @@ releaseGates:
       - native-resource-schema-validation-and-migration-routing-and-installed-differential
       - supported-installed-native-local-runtime-differential-and-artifact-identity
       - native-local-runtime-capability-handshake
-      - stable-c1-typed-ports-outcome-cancellation-and-local-flow-authority
+      - stable-c1-cancellation-requirement-authority
+      - stable-c1-local-flow-authority
       - installed-application-event-stream-admission-differential-and-artifact-identity
       - installed-application-event-raw-fixture-differential-and-artifact-identity
       - installed-application-event-constructor-payload-and-operation-trace-differential
@@ -1675,6 +1677,7 @@ releaseGates:
       - exact-shared-typed-ports-differential
       - installed-outcome-exact-differential-and-artifact-identity
       - exact-shared-outcome-differential
+      - stable-c1-cancellation-requirement-authority
       - exact-shared-c1-application-events-retry-sequence-tool-execution-tool-lifecycle-and-result-differential
       - stable-native-local-runtime-api-snapshot-and-installed-identity
     blockers:

@@ -37,7 +37,7 @@ The transition is phase-scoped:
 | Python graph builders, typed authoring, YAML composition, and ergonomic schema APIs | Python | Supported authoring surface; materializes portable resources for the normative compiler |
 | Reference compiler and local reference interpreter | Python | Explicit oracle through `graphblocks.compiler.compile_graph_reference` and reference-runtime/TCK imports; never an implicit production fallback |
 | Standalone canonical/schema-identity and resource validation/migration utility authority | Rust | Implemented through fail-closed public canonical, `SchemaId.parse`, resource validation, and migration facades; supported installed-wheel evidence binds public, reference, and direct-native results over the complete shared resource corpora to the exact runtime artifact |
-| Stable C1 local runtime | Rust | Runtime capability handshake, the frozen native API, every bundled stable C1 suite, and the complete typed-port and outcome requirements have installed exact native/reference evidence; cancellation and local flow, restart-independent local correctness, and panic-free public boundaries still block the core authority gate |
+| Stable C1 local runtime | Rust | Runtime capability handshake, the frozen native API, every bundled stable C1 suite, and the complete typed-port, outcome, and cooperative-cancellation requirements have installed exact native/reference evidence; local flow, restart-independent local correctness, and panic-free public boundaries still block the core authority gate |
 | C4 production and X3 durable-stream runtime | Profile-specific Rust target | Preview only; live authority, multi-process recovery, fencing, outbox/effect, and adapter evidence are governed by `REL-EXTENSION-RUNTIME-AUTHORITY` and do not block the first C0/C1 release |
 | AI application, governance, durable stream, voice, deployment, observability, and integrations | Profile-specific | No authority or stability is implied until the named extension profile passes its own gates |
 
@@ -114,7 +114,14 @@ Rust implementation crates remain internal APIs unless separately promoted.
    and payloads, exactly-one terminal enforcement, and output projection
    ordering are covered. This does not promote Python-only metadata or looser
    facade compatibility.
-   The remaining C1 requirements and panic-free public boundaries are
+   The cooperative cancellation requirement is Rust-authoritative through the
+   exact installed retry suite. Pre-start, pre-retry, pre-commit, and
+   post-terminal boundaries are covered with normalized commit and terminal
+   counts, while direct Python/Rust tests fix cancellation ahead of timeout
+   retry or output commit. This does not expose a stable public native
+   caller-driven cancellation handle or promote restart, lease, and fencing
+   behavior.
+   The remaining local-flow requirement and panic-free public boundaries are
    enumerated by `REL-NORMATIVE-AUTHORITY` and
    `REL-RUNTIME-CORRECTNESS`. Wider production durability belongs to the
    separate nonblocking extension-promotion gate.

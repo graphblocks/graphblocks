@@ -585,11 +585,15 @@ and unknown operations with exact code, message, and path comparison. The
 release matrix therefore binds `application-events` to the
 `rust-application-events-exact-differential` executor and exact runtime-wheel
 identity, with Python retained as the reference oracle.
-The installed `retry` report executes all four shared
+The installed `retry` report executes all seven shared
 retry/idempotency/cancellation fixtures through the Rust local runtime, exact
-compares the closed status, terminal, attempt, retry-key, and context-key
-contract with Python, and binds that proof to the
+compares the closed status, terminal, attempt, retry-key, context-key,
+node-commit count, terminal count, and post-terminal immutability contract with
+Python, and binds that proof to the
 `rust-retry-exact-differential` executor and exact runtime wheel.
+The cancellation cases cover pre-start, failed-attempt pre-retry,
+successful-attempt pre-commit, and post-terminal boundaries. Python and Rust
+unit evidence also fixes cancellation ahead of timeout retry or output commit.
 The installed `sequence` report exact-compares every bounded FIFO send,
 receive, and completion result together with buffer lengths, terminal state,
 and invalid-capacity creation, and binds the proof to
@@ -625,6 +629,10 @@ after the shared canonical JSON envelope admission, which fails invalid
 envelopes closed before evaluation. This promotes the complete outcome
 requirement. Python-only metadata and looser facade compatibility remain
 reference-only.
+The cooperative cancellation requirement is likewise Rust-authoritative for
+the installed conformance adapter and Python facade/reference token boundary.
+This promotion does not claim a public native caller-driven cancellation handle
+or close restart, lease, fencing, and local-flow correctness.
 The stable installed runtime API is now an explicit three-symbol allowlist with
 an exact signature snapshot. Its core execution result is projected to a
 closed checkpoint-free envelope, while persistence and other C4/X3 options use
