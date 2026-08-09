@@ -289,9 +289,7 @@ class ConformanceAuthorityMatrix:
                 if candidate.language == "python"
                 and candidate.comparison == "reference-only"
             ]
-            if (
-                len(reference_executors) != 1
-            ):
+            if len(reference_executors) != 1:
                 raise ValueError(
                     f"authority executor {executor.executor_id!r} must name a "
                     "Python reference-only implementation"
