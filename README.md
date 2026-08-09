@@ -10,7 +10,7 @@ application protocols, policy and budget boundaries, package metadata, and
 conformance profiles without requiring a particular model provider, database,
 parser, server framework, or deployment platform.
 
-The project is preparing its first 1.0 release candidate. Compatibility is
+The project is preparing its first stable 1.0 release. Compatibility is
 claimed by conformance profile and executable evidence, not by package or
 directory presence. Rust is the normative Graph compiler, while higher
 profiles and native runtime surfaces remain blocked or preview as listed in the

@@ -2,9 +2,9 @@
 
 Notable project changes are documented here. GraphBlocks follows semantic
 versioning for the explicitly listed stable surfaces; the current series is
-preparing the first 1.0 release candidate.
+preparing the first stable 1.0 release.
 
-## 1.0.0rc1 - Unreleased
+## 1.0.0rc3 - Unreleased
 
 ### Added
 
