@@ -8167,7 +8167,7 @@ mod tests {
                 self.failures_remaining -= 1;
                 return Err(BlockError::new(
                     "test.transient",
-                    self.failure_category.clone(),
+                    self.failure_category,
                     "scripted test failure",
                     self.failure_retryable,
                 ));

@@ -1012,18 +1012,20 @@ fn in_process_test_runtime_records_same_idempotency_key_across_effect_retries() 
     );
 }
 
+type RecordedExecutionContext = (
+    String,
+    String,
+    u32,
+    String,
+    Option<String>,
+    bool,
+    CancellationScope,
+);
+
 #[derive(Default)]
 struct ContextRecordingExecutor {
     attempts: usize,
-    contexts: Vec<(
-        String,
-        String,
-        u32,
-        String,
-        Option<String>,
-        bool,
-        CancellationScope,
-    )>,
+    contexts: Vec<RecordedExecutionContext>,
     attempt_tokens: Vec<NodeExecutionCancellationToken>,
 }
 
