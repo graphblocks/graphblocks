@@ -418,6 +418,7 @@ dependencies = [
  "graphblocks-runtime-durable",
  "graphblocks-schema",
  "pyo3",
+ "rusqlite",
  "serde_json",
 ]
 

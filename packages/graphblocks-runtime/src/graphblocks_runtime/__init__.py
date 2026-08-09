@@ -153,6 +153,7 @@ _NATIVE_BINDING_CAPABILITIES: tuple[str, ...] = ()
 try:
     from ._native import (
         __version__,
+        _inspect_runtime_evidence_json,
         admit_exhaustion_work_json,
         admit_worker_message_json,
         binding_contract_json as _binding_contract_json,
@@ -464,6 +465,13 @@ except Exception as error:
         graph_json: str,
         inputs_json: str,
         options_json: str,
+    ) -> str:
+        require_native_extension()
+
+    def _inspect_runtime_evidence_json(
+        run_store_path: str,
+        journal_store_path: str,
+        run_id: str,
     ) -> str:
         require_native_extension()
 else:
@@ -1033,6 +1041,22 @@ def run_stdlib_graph_with_options(
             "native stdlib runtime result",
         )
     return run_stdlib_graph(graph, inputs)
+
+
+def _inspect_runtime_evidence(
+    *,
+    run_store_path: str,
+    journal_store_path: str,
+    run_id: str,
+) -> dict[str, object]:
+    return _json_object_result(
+        _inspect_runtime_evidence_json(
+            run_store_path,
+            journal_store_path,
+            run_id,
+        ),
+        "native runtime persistence evidence",
+    )
 
 
 def run_test_graph(

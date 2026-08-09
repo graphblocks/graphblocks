@@ -44,6 +44,30 @@ PROMOTION_INTEGRATED_AT = datetime.fromtimestamp(
 
 
 def _native_authority_probe() -> dict[str, object]:
+    process = {
+        "artifact": {
+            "distributionVersion": "0.1.0",
+            "filename": "_native.abi3.so",
+            "sha256": "1" * 64,
+            "size": 123,
+        },
+        "contract": {
+            "runId": "installed-native-runtime-reopen",
+            "graphHash": "sha256:" + "2" * 64,
+            "inputs": {"message": {"text": "ok"}},
+            "status": "completed",
+            "stateRevision": 0,
+            "terminalKind": "run_succeeded",
+            "journalKinds": [
+                "run_started",
+                "node_started",
+                "node_completed",
+                "run_succeeded",
+            ],
+            "journalSequences": [1, 2, 3, 4],
+        },
+        "referencePackageImported": False,
+    }
     return {
         "canonicalSmoke": {
             "hash": "sha256:43258cff783fe7036d8a43033f830adfc60ec037382473548ac742b888292777",
@@ -51,6 +75,11 @@ def _native_authority_probe() -> dict[str, object]:
         },
         "distributionVersion": "0.1.0",
         "publicFacadeEvidence": installed_native_authority_probe_expectations(),
+        "runtimePersistence": {
+            "formatVersion": 1,
+            "writer": json.loads(json.dumps(process)),
+            "reader": json.loads(json.dumps(process)),
+        },
         "schemaIdSmoke": {
             "canonical": "schemas/Message@4294967295",
             "majorVersion": 4_294_967_295,

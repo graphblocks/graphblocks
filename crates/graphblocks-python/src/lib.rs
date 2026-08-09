@@ -6894,6 +6894,89 @@ fn persist_test_runtime_evidence(
     Ok(())
 }
 
+#[pyfunction(name = "_inspect_runtime_evidence_json")]
+fn inspect_runtime_evidence_json(
+    run_store_path: &str,
+    journal_store_path: &str,
+    run_id: &str,
+) -> PyResult<String> {
+    if run_id.trim().is_empty() {
+        return Err(PyValueError::new_err(
+            "native runtime evidence run_id must not be empty",
+        ));
+    }
+    let store = SqliteRunStore::open(run_store_path).map_err(|error| {
+        PyRuntimeError::new_err(format!(
+            "failed to reopen SQLite run store evidence: {error:?}"
+        ))
+    })?;
+    let run = store.get_run(run_id).map_err(|error| {
+        PyRuntimeError::new_err(format!(
+            "failed to load native runtime evidence run {run_id:?}: {error:?}"
+        ))
+    })?;
+    let expected_terminal_kind = match run.status {
+        RunStatus::Completed => "run_succeeded",
+        RunStatus::Failed => "run_failed",
+        RunStatus::Cancelled => "run_cancelled",
+        status => {
+            return Err(PyRuntimeError::new_err(format!(
+                "native runtime evidence run {run_id:?} has non-terminal local status {:?}",
+                status.as_str(),
+            )));
+        }
+    };
+    let journal = SqliteExecutionJournal::open(journal_store_path, run_id).map_err(|error| {
+        PyRuntimeError::new_err(format!(
+            "failed to reopen SQLite execution journal evidence: {error:?}"
+        ))
+    })?;
+    let records = journal.records().map_err(|error| {
+        PyRuntimeError::new_err(format!(
+            "failed to validate native runtime evidence journal: {error:?}"
+        ))
+    })?;
+    let Some(last_record) = records.last() else {
+        return Err(PyRuntimeError::new_err(
+            "native runtime evidence journal must not be empty",
+        ));
+    };
+    let terminal_count = records.iter().filter(|record| record.terminal).count();
+    if terminal_count != 1 || !last_record.terminal {
+        return Err(PyRuntimeError::new_err(format!(
+            "native runtime evidence journal requires one final terminal record, found {terminal_count}"
+        )));
+    }
+    if last_record.kind != expected_terminal_kind {
+        return Err(PyRuntimeError::new_err(format!(
+            "native runtime evidence status {:?} conflicts with terminal kind {:?}",
+            run.status.as_str(),
+            last_record.kind,
+        )));
+    }
+    serde_json::to_string(&json!({
+        "runId": run.run_id,
+        "graphHash": run.graph_hash,
+        "inputs": run.inputs,
+        "status": run.status.as_str(),
+        "stateRevision": run.state_revision,
+        "terminalKind": last_record.kind,
+        "journalKinds": records
+            .iter()
+            .map(|record| record.kind.as_str())
+            .collect::<Vec<_>>(),
+        "journalSequences": records
+            .iter()
+            .map(|record| record.run_sequence)
+            .collect::<Vec<_>>(),
+    }))
+    .map_err(|error| {
+        PyRuntimeError::new_err(format!(
+            "failed to serialize native runtime evidence: {error}"
+        ))
+    })
+}
+
 fn project_runtime_output_value(
     output_values: &mut Value,
     source_value: &Value,
@@ -9743,6 +9826,7 @@ fn _native(module: &Bound<'_, PyModule>) -> PyResult<()> {
         run_stdlib_graph_with_options_json,
         module
     )?)?;
+    module.add_function(wrap_pyfunction!(inspect_runtime_evidence_json, module)?)?;
     module.add_function(wrap_pyfunction!(decide_agent_step_json, module)?)?;
     module.add_function(wrap_pyfunction!(admit_exhaustion_work_json, module)?)?;
     module.add_function(wrap_pyfunction!(
@@ -9831,12 +9915,13 @@ mod tests {
         evaluate_tool_execution_plan_json, evaluate_tool_execution_tck_case_json,
         evaluate_tool_lifecycle_tck_case_json, evaluate_tool_resolution_json,
         evaluate_tool_result_stream_json, evaluate_tool_result_tck_case_json,
-        evaluate_usage_ledger_json, finalize_tool_call_json, migrate_resource_json,
-        negotiate_application_protocol_capabilities_json, parse_application_protocol_event_kind,
-        parse_json_argument, parse_resolved_tool, parse_schema_id_json, parse_tool_call,
-        prepare_tool_result_for_model_json, record_tool_effect_audit_event_json,
-        record_tool_effect_precondition_json, resource_schema_errors_json, run_stdlib_graph_json,
-        run_stdlib_graph_with_options_json, run_test_graph_json, run_test_graph_with_options_json,
+        evaluate_usage_ledger_json, finalize_tool_call_json, inspect_runtime_evidence_json,
+        migrate_resource_json, negotiate_application_protocol_capabilities_json,
+        parse_application_protocol_event_kind, parse_json_argument, parse_resolved_tool,
+        parse_schema_id_json, parse_tool_call, prepare_tool_result_for_model_json,
+        record_tool_effect_audit_event_json, record_tool_effect_precondition_json,
+        resource_schema_errors_json, run_stdlib_graph_json, run_stdlib_graph_with_options_json,
+        run_test_graph_json, run_test_graph_with_options_json,
         serialize_application_protocol_log_error, validate_remote_payload_json,
         validate_worker_advertisement_json, validate_worker_protocol_message_json,
     };
@@ -16357,6 +16442,176 @@ mod tests {
             Some("Native ok")
         );
 
+        Ok(())
+    }
+
+    #[test]
+    fn inspect_runtime_evidence_json_reopens_and_validates_sqlite_state() -> Result<(), String> {
+        pyo3::Python::initialize();
+        let run_store_path = unique_sqlite_path("stdlib-reopen-run-store");
+        let journal_store_path = unique_sqlite_path("stdlib-reopen-journal-store");
+        let run_id = "run-native-stdlib-reopen-1";
+        let graph = json!({
+            "apiVersion": "graphblocks.ai/v1alpha3",
+            "kind": "Graph",
+            "metadata": {"name": "native-stdlib-reopen"},
+            "spec": {
+                "interface": {
+                    "inputs": {"message": "graphblocks.ai/Message@1"},
+                    "outputs": {"prompt": "graphblocks.ai/Prompt@1"}
+                },
+                "nodes": {
+                    "render": {
+                        "block": "prompt.render@1",
+                        "config": {"template": "Native {message.text}"},
+                        "inputs": {"message": "$input.message"},
+                        "outputs": {"prompt": "$output.prompt"}
+                    }
+                }
+            }
+        });
+        let inputs = json!({"message": {"text": "ok"}});
+        let options = json!({
+            "runId": run_id,
+            "runStorePath": run_store_path.to_string_lossy(),
+            "journalStorePath": journal_store_path.to_string_lossy(),
+        });
+        let result_json = run_stdlib_graph_with_options_json(
+            &serde_json::to_string(&graph).map_err(|error| error.to_string())?,
+            &serde_json::to_string(&inputs).map_err(|error| error.to_string())?,
+            &serde_json::to_string(&options).map_err(|error| error.to_string())?,
+        )
+        .map_err(|error| error.to_string())?;
+        let result =
+            serde_json::from_str::<Value>(&result_json).map_err(|error| error.to_string())?;
+
+        let evidence_json = inspect_runtime_evidence_json(
+            run_store_path
+                .to_str()
+                .ok_or_else(|| "run store path must be UTF-8".to_owned())?,
+            journal_store_path
+                .to_str()
+                .ok_or_else(|| "journal store path must be UTF-8".to_owned())?,
+            run_id,
+        )
+        .map_err(|error| error.to_string())?;
+        let evidence =
+            serde_json::from_str::<Value>(&evidence_json).map_err(|error| error.to_string())?;
+        assert_eq!(
+            evidence,
+            json!({
+                "runId": run_id,
+                "graphHash": result["graphHash"],
+                "inputs": inputs,
+                "status": "completed",
+                "stateRevision": 0,
+                "terminalKind": "run_succeeded",
+                "journalKinds": [
+                    "run_started",
+                    "node_started",
+                    "node_completed",
+                    "run_succeeded"
+                ],
+                "journalSequences": [1, 2, 3, 4],
+            })
+        );
+
+        let wrong_run_error = match inspect_runtime_evidence_json(
+            run_store_path
+                .to_str()
+                .ok_or_else(|| "run store path must be UTF-8".to_owned())?,
+            journal_store_path
+                .to_str()
+                .ok_or_else(|| "journal store path must be UTF-8".to_owned())?,
+            "never-existed",
+        ) {
+            Ok(value) => {
+                return Err(format!(
+                    "unknown run evidence unexpectedly succeeded: {value}"
+                ));
+            }
+            Err(error) => error,
+        };
+        assert!(
+            wrong_run_error
+                .to_string()
+                .contains("failed to load native runtime evidence run")
+        );
+
+        let swapped_store_error = match inspect_runtime_evidence_json(
+            journal_store_path
+                .to_str()
+                .ok_or_else(|| "journal store path must be UTF-8".to_owned())?,
+            run_store_path
+                .to_str()
+                .ok_or_else(|| "run store path must be UTF-8".to_owned())?,
+            run_id,
+        ) {
+            Ok(value) => {
+                return Err(format!(
+                    "swapped runtime stores unexpectedly succeeded: {value}"
+                ));
+            }
+            Err(error) => error,
+        };
+        assert!(
+            swapped_store_error
+                .to_string()
+                .contains("failed to load native runtime evidence run")
+        );
+
+        for (label, statement, expected_error) in [
+            (
+                "sequence",
+                "UPDATE journal_records SET run_sequence = 9 WHERE run_sequence = 4",
+                "stored journal sequence gap",
+            ),
+            (
+                "terminal",
+                "UPDATE journal_records SET terminal = 2 WHERE run_sequence = 4",
+                "terminal flag must be 0 or 1",
+            ),
+            (
+                "payload",
+                "UPDATE journal_records SET payload_json = '{' WHERE run_sequence = 2",
+                "EOF while parsing an object",
+            ),
+        ] {
+            let corrupt_path = unique_sqlite_path(&format!("stdlib-reopen-{label}"));
+            std::fs::copy(&journal_store_path, &corrupt_path)
+                .map_err(|error| format!("journal fixture copies: {error}"))?;
+            let connection = rusqlite::Connection::open(&corrupt_path)
+                .map_err(|error| format!("corrupt journal opens: {error}"))?;
+            connection
+                .execute(statement, [])
+                .map_err(|error| format!("corrupt journal updates: {error}"))?;
+            drop(connection);
+
+            let error = match inspect_runtime_evidence_json(
+                run_store_path
+                    .to_str()
+                    .ok_or_else(|| "run store path must be UTF-8".to_owned())?,
+                corrupt_path
+                    .to_str()
+                    .ok_or_else(|| "corrupt journal path must be UTF-8".to_owned())?,
+                run_id,
+            ) {
+                Ok(value) => {
+                    return Err(format!(
+                        "corrupt runtime evidence unexpectedly succeeded: {value}"
+                    ));
+                }
+                Err(error) => error,
+            };
+            assert!(
+                error.to_string().contains(expected_error),
+                "{label}: {error}"
+            );
+            let _ = std::fs::remove_file(corrupt_path);
+        }
+
+        let _ = std::fs::remove_file(run_store_path);
+        let _ = std::fs::remove_file(journal_store_path);
         Ok(())
     }
 

@@ -105,6 +105,8 @@ STABLE_RUNTIME_STATUS_FIELDS = (
     "module",
 )
 STABLE_RUNTIME_SMOKE_RUN_ID = "installed-stable-runtime-api"
+NATIVE_RUNTIME_REOPEN_EVIDENCE_FORMAT_VERSION = 1
+NATIVE_RUNTIME_REOPEN_RUN_ID = "installed-native-runtime-reopen"
 MAX_SDIST_MEMBER_COUNT = 100_000
 MAX_SDIST_UNPACKED_SIZE = 512 * 1024 * 1024
 WINDOWS_RESERVED_PATH_NAMES = {
@@ -632,6 +634,63 @@ def stable_runtime_smoke_expectation() -> dict[str, object]:
     }
 
 
+def installed_native_runtime_reopen_writer_source() -> str:
+    runtime_smoke_case = _stable_runtime_smoke_case()
+    graph_json = json.dumps(
+        runtime_smoke_case["document"],
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    inputs_json = json.dumps(
+        runtime_smoke_case["inputs"],
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    return "\n".join(
+        (
+            "from hashlib import sha256",
+            "from importlib.metadata import version",
+            "import json",
+            "from pathlib import Path",
+            "import sys",
+            "import graphblocks_runtime",
+            "import graphblocks_runtime._native as native_extension",
+            f"graph = json.loads({graph_json!r})",
+            f"inputs = json.loads({inputs_json!r})",
+            f"run_id = {NATIVE_RUNTIME_REOPEN_RUN_ID!r}",
+            "result = graphblocks_runtime.run_stdlib_graph_with_options(graph, inputs, run_id=run_id, run_store_path=sys.argv[1], journal_store_path=sys.argv[2])",
+            "journal = result['journal']",
+            "status = {'succeeded': 'completed', 'failed': 'failed', 'cancelled': 'cancelled'}[result['status']]",
+            "contract = {'runId': result['runId'], 'graphHash': result['graphHash'], 'inputs': inputs, 'status': status, 'stateRevision': 0, 'terminalKind': next(record['kind'] for record in reversed(journal) if record['terminal'] is True), 'journalKinds': [record['kind'] for record in journal], 'journalSequences': [record['runSequence'] for record in journal]}",
+            "extension_path = Path(native_extension.__file__).resolve()",
+            "artifact = {'filename': extension_path.name, 'sha256': sha256(extension_path.read_bytes()).hexdigest(), 'size': extension_path.stat().st_size, 'distributionVersion': version('graphblocks-runtime')}",
+            "payload = {'artifact': artifact, 'contract': contract, 'referencePackageImported': 'graphblocks' in sys.modules}",
+            "print(json.dumps(payload, sort_keys=True))",
+        )
+    )
+
+
+def installed_native_runtime_reopen_reader_source() -> str:
+    return "\n".join(
+        (
+            "from hashlib import sha256",
+            "from importlib.metadata import version",
+            "import json",
+            "from pathlib import Path",
+            "import sys",
+            "import graphblocks_runtime",
+            "import graphblocks_runtime._native as native_extension",
+            "contract = graphblocks_runtime._inspect_runtime_evidence(run_store_path=sys.argv[1], journal_store_path=sys.argv[2], run_id=sys.argv[3])",
+            "extension_path = Path(native_extension.__file__).resolve()",
+            "artifact = {'filename': extension_path.name, 'sha256': sha256(extension_path.read_bytes()).hexdigest(), 'size': extension_path.stat().st_size, 'distributionVersion': version('graphblocks-runtime')}",
+            "payload = {'artifact': artifact, 'contract': contract, 'referencePackageImported': 'graphblocks' in sys.modules}",
+            "print(json.dumps(payload, sort_keys=True))",
+        )
+    )
+
+
 def installed_native_authority_probe_source() -> str:
     resource_validation_cases = _load_native_authority_cases(
         NATIVE_RESOURCE_VALIDATION_CASES_PATH,
@@ -672,12 +731,18 @@ def installed_native_authority_probe_source() -> str:
         separators=(",", ":"),
         sort_keys=True,
     )
+    runtime_reopen_writer_source = installed_native_runtime_reopen_writer_source()
+    runtime_reopen_reader_source = installed_native_runtime_reopen_reader_source()
     return "\n".join(
         (
             "from copy import deepcopy",
             "import inspect",
             "import json",
             "from importlib.metadata import version",
+            "from pathlib import Path",
+            "import subprocess",
+            "import sys",
+            "from tempfile import TemporaryDirectory",
             "import graphblocks_runtime",
             (
                 "from graphblocks.canonical import canonical_dumps, "
@@ -752,10 +817,135 @@ def installed_native_authority_probe_source() -> str:
             f"stable_runtime_result = graphblocks_runtime.run_stdlib_graph(stable_runtime_graph, stable_runtime_inputs, run_id={STABLE_RUNTIME_SMOKE_RUN_ID!r})",
             "stable_runtime_terminal_kind = next((record.get('kind') for record in reversed(stable_runtime_result['journal']) if record.get('terminal') is True), None)",
             "stable_runtime_smoke = {'runId': stable_runtime_result['runId'], 'status': stable_runtime_result['status'], 'outputs': stable_runtime_result['outputs'], 'terminalKind': stable_runtime_terminal_kind}",
-            "payload = {'canonicalSmoke': {'hash': graphblocks_runtime.canonical_hash_json('{\"b\":2,\"a\":1}'), 'json': graphblocks_runtime.canonicalize_json('{\"b\":2,\"a\":1}')}, 'distributionVersion': version('graphblocks-runtime'), 'publicFacadeEvidence': public_facade_evidence, 'schemaIdSmoke': graphblocks_runtime.parse_schema_id('schemas/Message@4294967295'), 'stableRuntimeApi': stable_runtime_api, 'stableRuntimeSmoke': stable_runtime_smoke, 'status': native_status}",
+            f"runtime_reopen_writer_source = {runtime_reopen_writer_source!r}",
+            f"runtime_reopen_reader_source = {runtime_reopen_reader_source!r}",
+            "with TemporaryDirectory(prefix='graphblocks-native-reopen-') as runtime_reopen_root_text:",
+            "    runtime_reopen_root = Path(runtime_reopen_root_text)",
+            "    writer_script = runtime_reopen_root / 'writer.py'",
+            "    reader_script = runtime_reopen_root / 'reader.py'",
+            "    writer_script.write_text(runtime_reopen_writer_source + '\\n', encoding='utf-8', newline='\\n')",
+            "    reader_script.write_text(runtime_reopen_reader_source + '\\n', encoding='utf-8', newline='\\n')",
+            "    run_store_path = runtime_reopen_root / 'runs.sqlite3'",
+            "    journal_store_path = runtime_reopen_root / 'journal.sqlite3'",
+            "    writer_process = subprocess.run([sys.executable, str(writer_script), str(run_store_path), str(journal_store_path)], check=True, cwd=runtime_reopen_root, capture_output=True, text=True)",
+            (
+                "    reader_process = subprocess.run([sys.executable, "
+                "str(reader_script), str(run_store_path), str(journal_store_path), "
+                f"{NATIVE_RUNTIME_REOPEN_RUN_ID!r}], check=True, "
+                "cwd=runtime_reopen_root, capture_output=True, text=True)"
+            ),
+            f"    runtime_persistence = {{'formatVersion': {NATIVE_RUNTIME_REOPEN_EVIDENCE_FORMAT_VERSION}, 'writer': json.loads(writer_process.stdout), 'reader': json.loads(reader_process.stdout)}}",
+            "payload = {'canonicalSmoke': {'hash': graphblocks_runtime.canonical_hash_json('{\"b\":2,\"a\":1}'), 'json': graphblocks_runtime.canonicalize_json('{\"b\":2,\"a\":1}')}, 'distributionVersion': version('graphblocks-runtime'), 'publicFacadeEvidence': public_facade_evidence, 'runtimePersistence': runtime_persistence, 'schemaIdSmoke': graphblocks_runtime.parse_schema_id('schemas/Message@4294967295'), 'stableRuntimeApi': stable_runtime_api, 'stableRuntimeSmoke': stable_runtime_smoke, 'status': native_status}",
             "print(json.dumps(payload, sort_keys=True))",
         )
     )
+
+
+def validate_installed_native_runtime_reopen_evidence(
+    payload: object,
+    *,
+    expected_distribution_version: str,
+) -> dict[str, object]:
+    if not isinstance(payload, dict) or set(payload) != {
+        "formatVersion",
+        "reader",
+        "writer",
+    }:
+        raise RuntimeError("installed native runtime reopen evidence is not closed")
+    if payload["formatVersion"] != NATIVE_RUNTIME_REOPEN_EVIDENCE_FORMAT_VERSION:
+        raise RuntimeError(
+            "installed native runtime reopen evidence version is unsupported"
+        )
+    for role in ("writer", "reader"):
+        process = payload[role]
+        if not isinstance(process, dict) or set(process) != {
+            "artifact",
+            "contract",
+            "referencePackageImported",
+        }:
+            raise RuntimeError(
+                f"installed native runtime reopen {role} evidence is not closed"
+            )
+        if process["referencePackageImported"] is not False:
+            raise RuntimeError(
+                f"installed native runtime reopen {role} imported the reference package"
+            )
+        artifact = process["artifact"]
+        if not isinstance(artifact, dict) or set(artifact) != {
+            "distributionVersion",
+            "filename",
+            "sha256",
+            "size",
+        }:
+            raise RuntimeError(
+                f"installed native runtime reopen {role} artifact identity is not closed"
+            )
+        filename = artifact["filename"]
+        digest = artifact["sha256"]
+        size = artifact["size"]
+        if (
+            type(filename) is not str
+            or not filename
+            or Path(filename).name != filename
+            or type(digest) is not str
+            or len(digest) != 64
+            or any(character not in "0123456789abcdef" for character in digest)
+            or type(size) is not int
+            or size <= 0
+            or artifact["distributionVersion"] != expected_distribution_version
+        ):
+            raise RuntimeError(
+                f"installed native runtime reopen {role} artifact identity is invalid"
+            )
+        contract = process["contract"]
+        if not isinstance(contract, dict) or set(contract) != {
+            "graphHash",
+            "inputs",
+            "journalKinds",
+            "journalSequences",
+            "runId",
+            "stateRevision",
+            "status",
+            "terminalKind",
+        }:
+            raise RuntimeError(
+                f"installed native runtime reopen {role} contract is not closed"
+            )
+    writer = payload["writer"]
+    reader = payload["reader"]
+    if writer["artifact"] != reader["artifact"]:
+        raise RuntimeError(
+            "installed native runtime reopen processes loaded different native artifacts"
+        )
+    if writer["contract"] != reader["contract"]:
+        raise RuntimeError(
+            "installed native runtime reopen reader differs from the writer contract"
+        )
+    contract = writer["contract"]
+    graph_hash = contract["graphHash"]
+    expected_terminal_kind = stable_runtime_smoke_expectation()["terminalKind"]
+    expected_journal_kinds = [
+        "run_started",
+        "node_started",
+        "node_completed",
+        expected_terminal_kind,
+    ]
+    if (
+        contract["runId"] != NATIVE_RUNTIME_REOPEN_RUN_ID
+        or contract["inputs"] != _stable_runtime_smoke_case()["inputs"]
+        or contract["status"] != "completed"
+        or contract["stateRevision"] != 0
+        or contract["terminalKind"] != expected_terminal_kind
+        or contract["journalKinds"] != expected_journal_kinds
+        or contract["journalSequences"]
+        != list(range(1, len(expected_journal_kinds) + 1))
+        or type(graph_hash) is not str
+        or not graph_hash.startswith("sha256:")
+        or len(graph_hash) != 71
+        or any(character not in "0123456789abcdef" for character in graph_hash[7:])
+    ):
+        raise RuntimeError("installed native runtime reopen contract is invalid")
+    return payload
 
 
 def _validate_installed_native_binding(
@@ -767,6 +957,7 @@ def _validate_installed_native_binding(
         "canonicalSmoke",
         "distributionVersion",
         "publicFacadeEvidence",
+        "runtimePersistence",
         "schemaIdSmoke",
         "stableRuntimeApi",
         "stableRuntimeSmoke",
@@ -780,6 +971,10 @@ def _validate_installed_native_binding(
             "installed native binding distribution version does not match "
             "the built graphblocks-runtime wheel"
         )
+    validate_installed_native_runtime_reopen_evidence(
+        payload["runtimePersistence"],
+        expected_distribution_version=expected_distribution_version,
+    )
     status = payload["status"]
     expected_status_fields = {
         "available",
