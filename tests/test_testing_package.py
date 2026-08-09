@@ -10259,6 +10259,8 @@ def test_testing_package_discovers_all_shared_tck_suite_manifests(monkeypatch) -
         "local_terminal_budget_exhaustion_exhausts",
         "local_terminal_absent_fails_closed",
         "local_terminal_skipped_fails_closed",
+        "output_projection_commits_before_success",
+        "output_projection_failure_terminalizes_without_partial_outputs",
     )
     assert by_suite["retry"].case_ids == (
         "effect_retry_preserves_idempotency_key",
@@ -10268,6 +10270,8 @@ def test_testing_package_discovers_all_shared_tck_suite_manifests(monkeypatch) -
         "cancelled_success_attempt_does_not_commit",
         "pre_cancelled_run_starts_no_attempt",
         "post_terminal_cancellation_does_not_rewrite_success",
+        "timeout_retry_discards_late_output",
+        "timeout_retry_exhaustion_commits_nothing",
     )
     assert by_suite["rag"].case_ids == (
         "grounded_answer_accepts_current_context_source",
@@ -10374,7 +10378,7 @@ def test_testing_package_cli_lists_tck_suite_manifests(monkeypatch, capsys) -> N
     payload = json.loads(capsys.readouterr().out)
     assert payload["suiteCount"] == 25
     assert payload["suites"][0]["suite_id"] == "application-events"
-    assert payload["suites"][0]["case_count"] == 10
+    assert payload["suites"][0]["case_count"] == 11
     assert payload["contentDigest"].startswith("sha256:")
     assert "main" in graphblocks_testing.__all__
 
