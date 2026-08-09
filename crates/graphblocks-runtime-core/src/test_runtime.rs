@@ -1,11 +1,11 @@
 use std::collections::{BTreeMap, VecDeque};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
 
 use crate::cancellation::CancellationToken;
 use crate::journal::{ExecutionJournal, JournalError, JournalMetadata};
-use crate::outcome::{BlockError, Outcome, SkipReason};
+use crate::outcome::{BlockError, CancelCode, CancelReason, ErrorCategory, Outcome, SkipReason};
 use crate::readiness::PortRef;
 use crate::retry::{EffectKind, RetryDecision, RetryPolicy, RetryPolicyError, RetryRequest};
 use crate::run_store::{InMemoryRunStore, RunStatus, RunStoreError};
@@ -20,6 +20,14 @@ pub trait NodeExecutor {
     }
 
     fn execute(&mut self, node: StartedNode) -> Result<Vec<(PortRef, Outcome<Value>)>, BlockError>;
+
+    fn execute_with_context(
+        &mut self,
+        node: StartedNode,
+        _context: &NodeExecutionContext,
+    ) -> Result<Vec<(PortRef, Outcome<Value>)>, BlockError> {
+        self.execute(node)
+    }
 }
 
 pub trait OutcomeNodeExecutor {
@@ -28,6 +36,182 @@ pub trait OutcomeNodeExecutor {
     }
 
     fn execute(&mut self, node: StartedNode) -> Outcome<Vec<(PortRef, Outcome<Value>)>>;
+
+    fn execute_with_context(
+        &mut self,
+        node: StartedNode,
+        _context: &NodeExecutionContext,
+    ) -> Outcome<Vec<(PortRef, Outcome<Value>)>> {
+        self.execute(node)
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct NodeExecutionCancellationToken {
+    token: CancellationToken,
+    deadline_started_at: Option<Instant>,
+    deadline_duration: Option<Duration>,
+    deadline_reason: Option<CancelReason>,
+}
+
+impl NodeExecutionCancellationToken {
+    fn new(
+        parent: Option<&CancellationToken>,
+        node_id: &str,
+        timeout_policy: Option<TimeoutPolicy>,
+    ) -> Self {
+        let token = parent.map_or_else(
+            || {
+                CancellationToken::new(
+                    crate::cancellation::CancellationScope::Node,
+                    crate::cancellation::CancellationGuarantee::Cooperative,
+                )
+            },
+            |parent| {
+                parent.child(
+                    crate::cancellation::CancellationScope::Node,
+                    crate::cancellation::CancellationGuarantee::Cooperative,
+                )
+            },
+        );
+        let deadline_duration = timeout_policy
+            .map(TimeoutPolicy::duration_ms)
+            .map(Duration::from_millis);
+        let deadline_reason = timeout_policy.map(|_| {
+            let mut reason = CancelReason::new(CancelCode::Timeout);
+            reason.message = Some(format!("node {node_id} exceeded timeout deadline"));
+            reason
+        });
+        Self {
+            token,
+            deadline_started_at: deadline_duration.map(|_| Instant::now()),
+            deadline_duration,
+            deadline_reason,
+        }
+    }
+
+    pub fn scope(&self) -> crate::cancellation::CancellationScope {
+        self.token.scope()
+    }
+
+    pub fn guarantee(&self) -> crate::cancellation::CancellationGuarantee {
+        self.token.guarantee()
+    }
+
+    pub fn reason(&self) -> Option<CancelReason> {
+        if let Some(reason) = self.token.reason() {
+            return Some(reason);
+        }
+        if let (Some(started_at), Some(duration), Some(reason)) = (
+            self.deadline_started_at,
+            self.deadline_duration,
+            self.deadline_reason.as_ref(),
+        ) && started_at.elapsed() >= duration
+        {
+            self.token.cancel(reason.clone());
+        }
+        self.token.reason()
+    }
+
+    pub fn is_cancelled(&self) -> bool {
+        self.reason().is_some()
+    }
+
+    fn cancel(&self, reason: CancelReason) -> bool {
+        self.token.cancel(reason)
+    }
+
+    pub fn check_active(&self) -> Result<(), BlockError> {
+        let Some(reason) = self.reason() else {
+            return Ok(());
+        };
+        let (code, category, retryable) = if reason.code == CancelCode::Timeout {
+            ("runtime.timeout", ErrorCategory::Timeout, true)
+        } else {
+            ("runtime.cancelled", ErrorCategory::Cancelled, false)
+        };
+        Err(BlockError::new(
+            code,
+            category,
+            reason
+                .message
+                .unwrap_or_else(|| format!("node execution cancelled: {:?}", reason.code)),
+            retryable,
+        ))
+    }
+}
+
+#[derive(Debug)]
+pub struct NodeExecutionContext {
+    run_id: String,
+    node_id: String,
+    attempt: u32,
+    attempt_id: String,
+    idempotency_key: Option<String>,
+    deadline: Option<Deadline>,
+    cancellation_token: NodeExecutionCancellationToken,
+}
+
+impl NodeExecutionContext {
+    fn new(
+        run_id: String,
+        node_id: String,
+        attempt: u32,
+        attempt_id: String,
+        idempotency_key: Option<String>,
+        deadline: Option<Deadline>,
+        cancellation_token: NodeExecutionCancellationToken,
+    ) -> Self {
+        Self {
+            run_id,
+            node_id,
+            attempt,
+            attempt_id,
+            idempotency_key,
+            deadline,
+            cancellation_token,
+        }
+    }
+
+    pub(crate) fn unbounded() -> Self {
+        Self::new(
+            "run".to_owned(),
+            "node".to_owned(),
+            1,
+            "attempt-1".to_owned(),
+            None,
+            None,
+            NodeExecutionCancellationToken::new(None, "node", None),
+        )
+    }
+
+    pub fn run_id(&self) -> &str {
+        &self.run_id
+    }
+
+    pub fn node_id(&self) -> &str {
+        &self.node_id
+    }
+
+    pub fn attempt(&self) -> u32 {
+        self.attempt
+    }
+
+    pub fn attempt_id(&self) -> &str {
+        &self.attempt_id
+    }
+
+    pub fn idempotency_key(&self) -> Option<&str> {
+        self.idempotency_key.as_deref()
+    }
+
+    pub fn deadline(&self) -> Option<&Deadline> {
+        self.deadline.as_ref()
+    }
+
+    pub fn cancellation_token(&self) -> &NodeExecutionCancellationToken {
+        &self.cancellation_token
+    }
 }
 
 pub struct LegacyNodeExecutorAdapter<'a, E: ?Sized> {
@@ -50,6 +234,17 @@ where
 
     fn execute(&mut self, node: StartedNode) -> Outcome<Vec<(PortRef, Outcome<Value>)>> {
         match self.executor.execute(node) {
+            Ok(outputs) => Outcome::Value(outputs),
+            Err(error) => Outcome::Failed(error),
+        }
+    }
+
+    fn execute_with_context(
+        &mut self,
+        node: StartedNode,
+        context: &NodeExecutionContext,
+    ) -> Outcome<Vec<(PortRef, Outcome<Value>)>> {
+        match self.executor.execute_with_context(node, context) {
             Ok(outputs) => Outcome::Value(outputs),
             Err(error) => Outcome::Failed(error),
         }
@@ -310,6 +505,18 @@ impl InProcessTestRuntime {
         self.run_with_cancellation_state(None, executor)
     }
 
+    pub fn run_with_outcomes_and_cancellation<E>(
+        &mut self,
+        cancellation_token: &CancellationToken,
+        executor: &mut E,
+    ) -> Result<OutcomeRunResult, TestRuntimeError>
+    where
+        E: OutcomeNodeExecutor,
+    {
+        self.validate_retry_boundaries()?;
+        self.run_with_cancellation_state(Some(cancellation_token), executor)
+    }
+
     fn validate_retry_boundaries(&self) -> Result<(), RetryPolicyError> {
         for boundary in self.retry_boundaries.values() {
             boundary.policy.validate()?;
@@ -414,9 +621,10 @@ impl InProcessTestRuntime {
             }
             let mut attempt = 1_u32;
             loop {
+                let attempt_id = format!("attempt-{attempt}");
                 let metadata = JournalMetadata::new()
                     .with_node_id(node_id.clone())
-                    .with_attempt_id(format!("attempt-{attempt}"));
+                    .with_attempt_id(attempt_id.clone());
                 let started_payload = self.retry_boundaries.get(&node_id).and_then(|boundary| {
                     boundary.idempotency_key.as_ref().map(|idempotency_key| {
                         json!({
@@ -433,11 +641,50 @@ impl InProcessTestRuntime {
 
                 let started_at_ms = self.virtual_now_ms;
                 let execution_started_at = Instant::now();
-                let execution_result = executor.execute(started.clone());
+                let timeout_policy = self.timeout_policies.get(&node_id).copied();
+                let deadline = timeout_policy
+                    .and_then(|policy| Deadline::new(node_id.clone(), started_at_ms, policy).ok());
+                let execution_context = NodeExecutionContext::new(
+                    self.journal.run_id().to_owned(),
+                    node_id.clone(),
+                    attempt,
+                    attempt_id,
+                    self.retry_boundaries
+                        .get(&node_id)
+                        .and_then(|boundary| boundary.idempotency_key.clone()),
+                    deadline.clone(),
+                    NodeExecutionCancellationToken::new(
+                        cancellation_token,
+                        &node_id,
+                        timeout_policy,
+                    ),
+                );
+                let execution_result =
+                    executor.execute_with_context(started.clone(), &execution_context);
                 let measured_duration_ms =
                     u64::try_from(execution_started_at.elapsed().as_millis()).unwrap_or(u64::MAX);
                 if let Some(token) = cancellation_token
                     && let Some(reason) = token.reason()
+                {
+                    self.journal.append_terminal_with_metadata(
+                        "run_cancelled",
+                        metadata,
+                        Some(json!({
+                            "code": format!("{:?}", reason.code),
+                            "message": reason.message,
+                            "requestedBy": reason.requested_by,
+                            "policyDecisionRef": reason.policy_decision_ref,
+                        })),
+                    )?;
+                    return Ok(OutcomeRunResult {
+                        run_id: self.journal.run_id().to_owned(),
+                        status: OutcomeRunStatus::Cancelled,
+                        journal: self.journal.clone(),
+                    });
+                }
+                let attempt_cancellation_reason = execution_context.cancellation_token().reason();
+                if let Some(reason) = attempt_cancellation_reason.as_ref()
+                    && reason.code != CancelCode::Timeout
                 {
                     self.journal.append_terminal_with_metadata(
                         "run_cancelled",
@@ -464,11 +711,19 @@ impl InProcessTestRuntime {
                     .unwrap_or(measured_duration_ms);
                 self.virtual_now_ms = self.virtual_now_ms.saturating_add(duration_ms);
 
-                if let Some(policy) = self.timeout_policies.get(&node_id)
-                    && let Ok(deadline) = Deadline::new(node_id.clone(), started_at_ms, *policy)
-                {
-                    let decision = deadline.check(self.virtual_now_ms);
-                    if self.virtual_now_ms >= deadline.deadline_ms() {
+                if let Some(deadline) = deadline {
+                    let wall_clock_timed_out = attempt_cancellation_reason
+                        .as_ref()
+                        .is_some_and(|reason| reason.code == CancelCode::Timeout);
+                    if wall_clock_timed_out || self.virtual_now_ms >= deadline.deadline_ms() {
+                        execution_context
+                            .cancellation_token()
+                            .cancel(CancelReason::new(CancelCode::Timeout));
+                        let decision = if wall_clock_timed_out {
+                            deadline.check(deadline.deadline_ms())
+                        } else {
+                            deadline.check(self.virtual_now_ms)
+                        };
                         let mut error = decision.block_error();
                         error.retryable = true;
                         if let Some(boundary) = self.retry_boundaries.get(&node_id) {
@@ -556,6 +811,14 @@ impl InProcessTestRuntime {
                         });
                     }
                 }
+
+                let completion_reason = match &execution_result {
+                    Outcome::Cancelled(reason) => reason.clone(),
+                    _ => CancelReason::new(CancelCode::Superseded),
+                };
+                execution_context
+                    .cancellation_token()
+                    .cancel(completion_reason);
 
                 match execution_result {
                     Outcome::Value(outputs) => {

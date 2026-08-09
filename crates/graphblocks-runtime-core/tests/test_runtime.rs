@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use graphblocks_runtime_core::cancellation::{
     CancellationGuarantee, CancellationScope, CancellationToken,
 };
@@ -10,8 +12,8 @@ use graphblocks_runtime_core::retry::{EffectKind, RetryPolicy, RetryPolicyError}
 use graphblocks_runtime_core::run_store::{InMemoryRunStore, RunStatus, RunStoreError};
 use graphblocks_runtime_core::scheduler::{ScheduledNode, StartedNode};
 use graphblocks_runtime_core::test_runtime::{
-    InProcessTestRuntime, NodeExecutor, NodeRetryBoundary, OutcomeNodeExecutor, OutcomeRunStatus,
-    TestRunStatus, TestRuntimeError,
+    InProcessTestRuntime, NodeExecutionCancellationToken, NodeExecutionContext, NodeExecutor,
+    NodeRetryBoundary, OutcomeNodeExecutor, OutcomeRunStatus, TestRunStatus, TestRuntimeError,
 };
 use graphblocks_runtime_core::timeout::TimeoutPolicy;
 use serde_json::{Value, json};
@@ -139,6 +141,92 @@ fn outcome_executor_maps_every_run_level_outcome_to_one_terminal_record() {
             Some(expected_terminal),
         );
     }
+}
+
+#[derive(Default)]
+struct ContextOutcomeExecutor {
+    observed_attempt: Option<(String, String, u32, String, CancellationScope)>,
+}
+
+impl OutcomeNodeExecutor for ContextOutcomeExecutor {
+    fn execute(&mut self, _node: StartedNode) -> Outcome<Vec<(PortRef, Outcome<Value>)>> {
+        Outcome::Failed(BlockError::new(
+            "runtime.missing_execution_context",
+            ErrorCategory::Internal,
+            "context-aware executor was invoked without an execution context",
+            false,
+        ))
+    }
+
+    fn execute_with_context(
+        &mut self,
+        _node: StartedNode,
+        context: &NodeExecutionContext,
+    ) -> Outcome<Vec<(PortRef, Outcome<Value>)>> {
+        self.observed_attempt = Some((
+            context.run_id().to_owned(),
+            context.node_id().to_owned(),
+            context.attempt(),
+            context.attempt_id().to_owned(),
+            context.cancellation_token().scope(),
+        ));
+        Outcome::Value(vec![(
+            PortRef::new("node", "value"),
+            Outcome::Value(json!("done")),
+        )])
+    }
+}
+
+#[test]
+fn outcome_executor_receives_node_execution_context() {
+    let mut runtime = InProcessTestRuntime::new("run-000001", [ScheduledNode::new("node", [])])
+        .expect("runtime should be created");
+    let mut executor = ContextOutcomeExecutor::default();
+
+    let result = runtime
+        .run_with_outcomes(&mut executor)
+        .expect("runtime should run");
+
+    assert_eq!(result.status, OutcomeRunStatus::Succeeded);
+    assert_eq!(
+        executor.observed_attempt,
+        Some((
+            "run-000001".to_owned(),
+            "node".to_owned(),
+            1,
+            "attempt-1".to_owned(),
+            CancellationScope::Node,
+        ))
+    );
+}
+
+#[derive(Default)]
+struct NeverCalledOutcomeExecutor {
+    calls: usize,
+}
+
+impl OutcomeNodeExecutor for NeverCalledOutcomeExecutor {
+    fn execute(&mut self, _node: StartedNode) -> Outcome<Vec<(PortRef, Outcome<Value>)>> {
+        self.calls += 1;
+        Outcome::Value(Vec::new())
+    }
+}
+
+#[test]
+fn outcome_executor_accepts_host_cancellation_before_admission() {
+    let token = CancellationToken::new(CancellationScope::Run, CancellationGuarantee::Cooperative);
+    token.cancel(CancelReason::new(CancelCode::Shutdown));
+    let mut runtime = InProcessTestRuntime::new("run-000001", [ScheduledNode::new("node", [])])
+        .expect("runtime should be created");
+    let mut executor = NeverCalledOutcomeExecutor::default();
+
+    let result = runtime
+        .run_with_outcomes_and_cancellation(&token, &mut executor)
+        .expect("runtime should run");
+
+    assert_eq!(result.status, OutcomeRunStatus::Cancelled);
+    assert_eq!(executor.calls, 0);
+    assert_eq!(result.journal.terminal_kind(), Some("run_cancelled"));
 }
 
 #[test]
@@ -857,6 +945,189 @@ fn in_process_test_runtime_records_same_idempotency_key_across_effect_retries() 
             })
             .collect::<Vec<_>>(),
         vec![Some("tool-call-1"), Some("tool-call-1")]
+    );
+}
+
+#[derive(Default)]
+struct ContextRecordingExecutor {
+    attempts: usize,
+    contexts: Vec<(
+        String,
+        String,
+        u32,
+        String,
+        Option<String>,
+        bool,
+        CancellationScope,
+    )>,
+    attempt_tokens: Vec<NodeExecutionCancellationToken>,
+}
+
+impl NodeExecutor for ContextRecordingExecutor {
+    fn execute(
+        &mut self,
+        _node: StartedNode,
+    ) -> Result<Vec<(PortRef, Outcome<Value>)>, BlockError> {
+        Err(BlockError::new(
+            "runtime.missing_execution_context",
+            ErrorCategory::Internal,
+            "context-aware executor was invoked without an execution context",
+            false,
+        ))
+    }
+
+    fn execute_with_context(
+        &mut self,
+        _node: StartedNode,
+        context: &NodeExecutionContext,
+    ) -> Result<Vec<(PortRef, Outcome<Value>)>, BlockError> {
+        self.attempts += 1;
+        self.contexts.push((
+            context.run_id().to_owned(),
+            context.node_id().to_owned(),
+            context.attempt(),
+            context.attempt_id().to_owned(),
+            context.idempotency_key().map(str::to_owned),
+            context.deadline().is_some(),
+            context.cancellation_token().scope(),
+        ));
+        self.attempt_tokens
+            .push(context.cancellation_token().clone());
+        if self.attempts == 1 {
+            return Err(BlockError::new(
+                "tool.transient",
+                ErrorCategory::Transient,
+                "temporary tool failure",
+                true,
+            ));
+        }
+        Ok(vec![(
+            PortRef::new("tool", "result"),
+            Outcome::Value(json!("committed")),
+        )])
+    }
+}
+
+#[test]
+fn in_process_test_runtime_passes_attempt_authority_to_every_retry() {
+    let policy = RetryPolicy::new(2).retry_on([ErrorCategory::Transient]);
+    let mut runtime = InProcessTestRuntime::new("run-000001", [ScheduledNode::new("tool", [])])
+        .expect("runtime should be created")
+        .with_retry_boundary(
+            "tool",
+            NodeRetryBoundary::new(policy)
+                .with_effect(EffectKind::ExternalWrite)
+                .with_idempotency_key("tool-call-1"),
+        )
+        .with_timeout_policy("tool", TimeoutPolicy::new(1_000).expect("valid timeout"));
+    let mut executor = ContextRecordingExecutor::default();
+
+    let result = runtime.run(&mut executor).expect("runtime should run");
+
+    assert_eq!(result.status, TestRunStatus::Succeeded);
+    assert_eq!(
+        executor.contexts,
+        vec![
+            (
+                "run-000001".to_owned(),
+                "tool".to_owned(),
+                1,
+                "attempt-1".to_owned(),
+                Some("tool-call-1".to_owned()),
+                true,
+                CancellationScope::Node,
+            ),
+            (
+                "run-000001".to_owned(),
+                "tool".to_owned(),
+                2,
+                "attempt-2".to_owned(),
+                Some("tool-call-1".to_owned()),
+                true,
+                CancellationScope::Node,
+            ),
+        ]
+    );
+    assert_eq!(
+        executor
+            .attempt_tokens
+            .iter()
+            .map(|token| token.reason().map(|reason| reason.code))
+            .collect::<Vec<_>>(),
+        vec![Some(CancelCode::Superseded), Some(CancelCode::Superseded),],
+    );
+}
+
+#[derive(Default)]
+struct DeadlineAwareEffectExecutor {
+    committed: bool,
+    cancellation_reason: Option<CancelReason>,
+}
+
+impl NodeExecutor for DeadlineAwareEffectExecutor {
+    fn execute(
+        &mut self,
+        _node: StartedNode,
+    ) -> Result<Vec<(PortRef, Outcome<Value>)>, BlockError> {
+        Err(BlockError::new(
+            "runtime.missing_execution_context",
+            ErrorCategory::Internal,
+            "deadline-aware executor was invoked without an execution context",
+            false,
+        ))
+    }
+
+    fn execute_with_context(
+        &mut self,
+        _node: StartedNode,
+        context: &NodeExecutionContext,
+    ) -> Result<Vec<(PortRef, Outcome<Value>)>, BlockError> {
+        std::thread::sleep(Duration::from_millis(20));
+        let active = context.cancellation_token().check_active();
+        self.cancellation_reason = context.cancellation_token().reason();
+        active?;
+        self.committed = true;
+        Ok(vec![(
+            PortRef::new("tool", "result"),
+            Outcome::Value(json!("must-not-commit")),
+        )])
+    }
+}
+
+#[test]
+fn in_process_test_runtime_exposes_deadline_before_effect_commit() {
+    let mut runtime = InProcessTestRuntime::new("run-000001", [ScheduledNode::new("tool", [])])
+        .expect("runtime should be created")
+        .with_timeout_policy("tool", TimeoutPolicy::new(5).expect("valid timeout"));
+    let mut executor = DeadlineAwareEffectExecutor::default();
+
+    let result = runtime.run(&mut executor).expect("runtime should run");
+
+    assert_eq!(result.status, TestRunStatus::Failed);
+    assert!(!executor.committed);
+    assert_eq!(
+        executor
+            .cancellation_reason
+            .as_ref()
+            .map(|reason| reason.code),
+        Some(CancelCode::Timeout)
+    );
+    assert_eq!(
+        result
+            .journal
+            .records()
+            .iter()
+            .map(|record| record.kind.as_str())
+            .collect::<Vec<_>>(),
+        vec!["run_started", "node_started", "node_failed", "run_failed"],
+    );
+    assert_eq!(
+        result.journal.records()[2]
+            .payload
+            .as_ref()
+            .and_then(|payload| payload.get("code"))
+            .and_then(Value::as_str),
+        Some("runtime.timeout"),
     );
 }
 

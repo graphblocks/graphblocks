@@ -36,8 +36,8 @@ use crate::run_store::{RunDeploymentProvenance, RunStatus, RunStoreError, Sqlite
 use crate::scheduler::{ScheduledCondition, ScheduledNode, StartedNode};
 use crate::stdlib_blocks::stdlib_block_catalog;
 use crate::test_runtime::{
-    InProcessTestRuntime, NodeExecutionPreflight, NodeExecutor, NodeRetryBoundary, TestRunResult,
-    TestRunStatus,
+    InProcessTestRuntime, NodeExecutionContext, NodeExecutionPreflight, NodeExecutor,
+    NodeRetryBoundary, TestRunResult, TestRunStatus,
 };
 use crate::timeout::TimeoutPolicy;
 use crate::tool::{
@@ -406,6 +406,14 @@ impl NodeExecutor for StdlibExecutor {
     }
 
     fn execute(&mut self, node: StartedNode) -> Result<Vec<(PortRef, Outcome<Value>)>, BlockError> {
+        self.execute_with_context(node, &NodeExecutionContext::unbounded())
+    }
+
+    fn execute_with_context(
+        &mut self,
+        node: StartedNode,
+        context: &NodeExecutionContext,
+    ) -> Result<Vec<(PortRef, Outcome<Value>)>, BlockError> {
         let mut resolved_inputs = node.inputs;
         let Some(node_spec) = self.nodes.get(&node.node_id).and_then(Value::as_object) else {
             return Err(BlockError::new(
@@ -528,6 +536,7 @@ impl NodeExecutor for StdlibExecutor {
             .get("config")
             .cloned()
             .unwrap_or_else(|| json!({}));
+        context.cancellation_token().check_active()?;
         let (outputs, phase) = if let Some(outputs) = self.replay_node_outputs.get(&node.node_id) {
             (outputs.clone(), ExecutionPhase::Initial)
         } else if let Some(resume) = self
@@ -572,6 +581,7 @@ impl NodeExecutor for StdlibExecutor {
             )
         })?;
         validate_stdlib_output_contract(block_id, descriptor, outputs_object, &config, phase)?;
+        context.cancellation_token().check_active()?;
         if block_id == "async.await_callback@1"
             && self.resume_wait.is_none()
             && outputs
