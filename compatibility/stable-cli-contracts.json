@@ -249,6 +249,7 @@
           {
             "kind": "node_succeeded",
             "payload": {
+              "attempt": 1,
               "node": "render",
               "outputs": [
                 "prompt"
