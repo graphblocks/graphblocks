@@ -10153,6 +10153,9 @@ class TckRunner:
                     "status": result.status,
                     "outputs": _runtime_mutable_json_like(result.outputs),
                     "terminal_kind": result.journal.terminal_kind,
+                    "normalized_journal_kinds": [
+                        record.kind for record in result.journal.records
+                    ],
                     "runtime": "local",
                     "runtime_facade": "LocalRuntime",
                     "result_facade": "LocalRunResult",
@@ -10203,6 +10206,16 @@ class TckRunner:
                     "code": "TerminalKindMismatch",
                     "message": "runtime terminal kind did not match expected terminal kind",
                     "path": "$.expected_terminal_kind",
+                }
+            )
+        if case.expected_journal_kinds and observed.get(
+            "normalized_journal_kinds"
+        ) != list(case.expected_journal_kinds):
+            diagnostics.append(
+                {
+                    "code": "JournalKindsMismatch",
+                    "message": "runtime journal kinds did not match expected kinds",
+                    "path": "$.expected_journal_kinds",
                 }
             )
         return TckResult(

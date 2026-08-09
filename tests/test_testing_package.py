@@ -1310,17 +1310,28 @@ def test_testing_package_loads_shared_runtime_tck_cases_with_terminal_expectatio
     cases = graphblocks_testing.load_runtime_tck_cases(ROOT / "tck" / "runtime" / "cases.json")
     report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry()).run_cases(cases)
 
-    assert len(cases) >= 7
+    assert len(cases) >= 10
     assert all(case.kind == "runtime" for case in cases)
     assert {case.case_id for case in cases} >= {
         "control_map_renders_each_item",
         "control_select_treats_null_as_present",
+        "conditional_input_guard_false_skips_node",
+        "conditional_input_guard_non_boolean_fails_closed",
+        "conditional_input_guard_true_executes_node",
         "tools_resolve_feeds_scripted_agent",
         "tools_resolve_rejects_blank_scope_tool_name",
         "tools_resolve_rejects_non_string_definition_tag",
     }
     assert any(case.expected_terminal_kind == "run_failed" for case in cases)
     assert sum(1 for case in cases if case.native_node_outputs) == 4
+    cases_by_id = {case.case_id: case for case in cases}
+    assert cases_by_id[
+        "conditional_input_guard_false_skips_node"
+    ].expected_journal_kinds == (
+        "run_started",
+        "node_succeeded",
+        "run_succeeded",
+    )
     assert report.ok
     assert {result.observed["terminal_kind"] for result in report.results} == {
         "run_failed",
@@ -10276,6 +10287,9 @@ def test_testing_package_bundled_c0_c1_helpers_and_cli_need_no_external_path(
     )
     assert tuple(case.case_id for case in bundled_runtime_cases) == (
         "prompt_render_output",
+        "conditional_input_guard_true_executes_node",
+        "conditional_input_guard_false_skips_node",
+        "conditional_input_guard_non_boolean_fails_closed",
         "control_map_renders_each_item",
         "control_select_treats_null_as_present",
     )
@@ -10421,6 +10435,9 @@ def test_graphblocks_testing_wheel_and_sdist_ship_runnable_c0_c1_fixtures(
         source_runtime_by_name[case_id]
         for case_id in (
             "prompt_render_output",
+            "conditional_input_guard_true_executes_node",
+            "conditional_input_guard_false_skips_node",
+            "conditional_input_guard_non_boolean_fails_closed",
             "control_map_renders_each_item",
             "control_select_treats_null_as_present",
         )
@@ -10718,10 +10735,10 @@ def test_testing_package_cli_runs_runtime_tck_native_profile_without_fallback(mo
     assert payload["profile"] == "native"
     assert {result["kind"] for result in payload["results"]} == {"runtime"}
     observed = {result["case_id"]: result["observed"] for result in payload["results"]}
-    assert len(observed) == 7
+    assert len(observed) == 10
     assert all(result["runtime"] == "native" for result in observed.values())
     assert all(result["native_reference_match"] is True for result in observed.values())
-    assert payload["native_evidence"]["native_case_count"] == 7
+    assert payload["native_evidence"]["native_case_count"] == 10
     assert payload["native_evidence"]["fallback_case_count"] == 0
     assert payload["contentDigest"].startswith("sha256:")
 
@@ -10782,6 +10799,12 @@ def test_testing_package_cli_native_runtime_tck_writes_evidence_paths(tmp_path, 
         "fallback_case_count": 0,
         "fallback_reasons": {},
         "journal_store_paths": [
+            str(evidence_dir / "tck-conditional-input-guard-false-skips-node-journal.sqlite3"),
+            str(
+                evidence_dir
+                / "tck-conditional-input-guard-non-boolean-fails-closed-journal.sqlite3"
+            ),
+            str(evidence_dir / "tck-conditional-input-guard-true-executes-node-journal.sqlite3"),
             str(evidence_dir / "tck-control-map-renders-each-item-journal.sqlite3"),
             str(evidence_dir / "tck-control-select-treats-null-as-present-journal.sqlite3"),
             str(evidence_dir / "tck-policy-stopped-turn-rejects-commit-journal.sqlite3"),
@@ -10790,8 +10813,14 @@ def test_testing_package_cli_native_runtime_tck_writes_evidence_paths(tmp_path, 
             str(evidence_dir / "tck-tools-resolve-rejects-blank-scope-tool-name-journal.sqlite3"),
             str(evidence_dir / "tck-tools-resolve-rejects-non-string-definition-tag-journal.sqlite3"),
         ],
-        "native_case_count": 7,
+        "native_case_count": 10,
         "run_store_paths": [
+            str(evidence_dir / "tck-conditional-input-guard-false-skips-node-runs.sqlite3"),
+            str(
+                evidence_dir
+                / "tck-conditional-input-guard-non-boolean-fails-closed-runs.sqlite3"
+            ),
+            str(evidence_dir / "tck-conditional-input-guard-true-executes-node-runs.sqlite3"),
             str(evidence_dir / "tck-control-map-renders-each-item-runs.sqlite3"),
             str(evidence_dir / "tck-control-select-treats-null-as-present-runs.sqlite3"),
             str(evidence_dir / "tck-policy-stopped-turn-rejects-commit-runs.sqlite3"),

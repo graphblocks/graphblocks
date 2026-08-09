@@ -1284,6 +1284,30 @@ fn rust_stdlib_runtime_matches_shared_runtime_tck_cases() -> Result<(), String> 
             expected.get("outputs"),
             "runtime TCK case {case_name} outputs mismatch",
         );
+        if let Some(expected_journal_kinds) =
+            expected.get("journal_kinds").and_then(Value::as_array)
+        {
+            let actual_journal_kinds = result
+                .get("journal")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(|record| record.get("kind").and_then(Value::as_str))
+                .map(|kind| {
+                    if kind == "node_completed" {
+                        "node_succeeded"
+                    } else {
+                        kind
+                    }
+                })
+                .map(Value::from)
+                .collect::<Vec<_>>();
+            assert_eq!(
+                actual_journal_kinds.as_slice(),
+                expected_journal_kinds.as_slice(),
+                "runtime TCK case {case_name} journal kinds mismatch",
+            );
+        }
     }
 
     Ok(())

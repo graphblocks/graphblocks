@@ -34,7 +34,9 @@ use crate::readiness::{InputDependency, PortRef, ResolvedInput};
 use crate::run_store::{RunDeploymentProvenance, RunStatus, RunStoreError, SqliteRunStore};
 use crate::scheduler::{ScheduledCondition, ScheduledNode, StartedNode};
 use crate::stdlib_blocks::stdlib_block_catalog;
-use crate::test_runtime::{InProcessTestRuntime, NodeExecutor, TestRunResult, TestRunStatus};
+use crate::test_runtime::{
+    InProcessTestRuntime, NodeExecutionPreflight, NodeExecutor, TestRunResult, TestRunStatus,
+};
 use crate::tool::{
     BlockToolImplementation, GraphToolImplementation, McpToolImplementation,
     OpenApiToolImplementation, RemoteToolImplementation, ResolvedTool, ToolApproval, ToolBinding,
@@ -353,6 +355,53 @@ struct RuntimeEvidencePersistence<'a> {
 }
 
 impl NodeExecutor for StdlibExecutor {
+    fn preflight(&mut self, node: &StartedNode) -> Option<NodeExecutionPreflight> {
+        let Some(ResolvedInput::Value(mut guard)) = node.inputs.get(INTERNAL_WHEN_INPUT).cloned()
+        else {
+            return None;
+        };
+        let when = self
+            .nodes
+            .get(&node.node_id)
+            .and_then(|node| node.get("when"))
+            .and_then(Value::as_str)?;
+        let guard_path = when.split_once('.').map(|(_, path)| path)?;
+        for part in guard_path.split('.').skip(1) {
+            let Some(value) = guard.get(part).cloned() else {
+                return Some(NodeExecutionPreflight::Failed(BlockError::new(
+                    format!("{}.invalid_when", node.node_id),
+                    ErrorCategory::Configuration,
+                    format!("node.when guard {when:?} is missing path segment {part:?}"),
+                    false,
+                )));
+            };
+            guard = value;
+        }
+        match guard {
+            Value::Bool(true) => return None,
+            Value::Bool(false) => {}
+            _ => {
+                return Some(NodeExecutionPreflight::Failed(BlockError::new(
+                    format!("{}.invalid_when", node.node_id),
+                    ErrorCategory::Configuration,
+                    format!("node.when guard {when:?} must resolve to a boolean"),
+                    false,
+                )));
+            }
+        }
+        let reason = SkipReason::new("condition_false");
+        self.executed_node_outputs
+            .insert(node.node_id.clone(), checkpoint_skipped_value(&reason));
+        Some(NodeExecutionPreflight::Skipped {
+            reason: reason.clone(),
+            outputs: skipped_node_outputs(
+                &node.node_id,
+                self.output_ports_by_node.get(&node.node_id),
+                reason,
+            ),
+        })
+    }
+
     fn execute(&mut self, node: StartedNode) -> Result<Vec<(PortRef, Outcome<Value>)>, BlockError> {
         let mut resolved_inputs = node.inputs;
         let Some(node_spec) = self.nodes.get(&node.node_id).and_then(Value::as_object) else {

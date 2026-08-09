@@ -150,6 +150,21 @@ def load_runtime_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
             raise ValueError(
                 f"runtime TCK case {case_id} expected terminal_kind must be a string"
             )
+        expected_journal_kinds = _first_mapping_value(
+            expected,
+            "journal_kinds",
+            "journalKinds",
+            "expected_journal_kinds",
+            "expectedJournalKinds",
+            default=[],
+        )
+        if not isinstance(expected_journal_kinds, list) or any(
+            not isinstance(kind, str) or not kind.strip()
+            for kind in expected_journal_kinds
+        ):
+            raise ValueError(
+                f"runtime TCK case {case_id} expected journal_kinds must be a list of strings"
+            )
         cases.append(
             TckCase.runtime(
                 case_id=case_id,
@@ -159,6 +174,7 @@ def load_runtime_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
                 expected_outputs=expected_outputs,
                 expected_status=expected_status,
                 expected_terminal_kind=expected_terminal_kind,
+                expected_journal_kinds=tuple(expected_journal_kinds),
             )
         )
     return tuple(cases)

@@ -51,6 +51,159 @@
     }
   },
   {
+    "name": "conditional_input_guard_true_executes_node",
+    "document": {
+      "apiVersion": "graphblocks.ai/v1",
+      "kind": "Graph",
+      "metadata": {
+        "name": "runtime-conditional-input-true"
+      },
+      "spec": {
+        "interface": {
+          "inputs": {
+            "enabled": "graphblocks.ai/Boolean@1",
+            "message": "graphblocks.ai/Message@1"
+          },
+          "outputs": {
+            "prompt": "graphblocks.ai/Prompt@1"
+          }
+        },
+        "nodes": {
+          "render": {
+            "block": "prompt.render@1",
+            "when": "$input.enabled",
+            "config": {
+              "template": "Conditional {message.text}"
+            },
+            "inputs": {
+              "message": "$input.message"
+            },
+            "outputs": {
+              "prompt": "$output.prompt"
+            }
+          }
+        }
+      }
+    },
+    "inputs": {
+      "enabled": true,
+      "message": {
+        "text": "ok"
+      }
+    },
+    "expected": {
+      "status": "succeeded",
+      "terminal_kind": "run_succeeded",
+      "journal_kinds": [
+        "run_started",
+        "node_started",
+        "node_succeeded",
+        "run_succeeded"
+      ],
+      "outputs": {
+        "prompt": "Conditional ok"
+      }
+    }
+  },
+  {
+    "name": "conditional_input_guard_false_skips_node",
+    "document": {
+      "apiVersion": "graphblocks.ai/v1",
+      "kind": "Graph",
+      "metadata": {
+        "name": "runtime-conditional-input-false"
+      },
+      "spec": {
+        "interface": {
+          "inputs": {
+            "enabled": "graphblocks.ai/Boolean@1",
+            "message": "graphblocks.ai/Message@1"
+          },
+          "outputs": {
+            "prompt": "graphblocks.ai/Prompt@1"
+          }
+        },
+        "nodes": {
+          "render": {
+            "block": "prompt.render@1",
+            "when": "$input.enabled",
+            "config": {
+              "template": "Conditional {message.text}"
+            },
+            "inputs": {
+              "message": "$input.message"
+            },
+            "outputs": {
+              "prompt": "$output.prompt"
+            }
+          }
+        }
+      }
+    },
+    "inputs": {
+      "enabled": false
+    },
+    "expected": {
+      "status": "succeeded",
+      "terminal_kind": "run_succeeded",
+      "journal_kinds": [
+        "run_started",
+        "node_succeeded",
+        "run_succeeded"
+      ],
+      "outputs": {}
+    }
+  },
+  {
+    "name": "conditional_input_guard_non_boolean_fails_closed",
+    "document": {
+      "apiVersion": "graphblocks.ai/v1",
+      "kind": "Graph",
+      "metadata": {
+        "name": "runtime-conditional-input-non-boolean"
+      },
+      "spec": {
+        "interface": {
+          "inputs": {
+            "enabled": "graphblocks.ai/Any@1",
+            "message": "graphblocks.ai/Message@1"
+          },
+          "outputs": {
+            "prompt": "graphblocks.ai/Prompt@1"
+          }
+        },
+        "nodes": {
+          "render": {
+            "block": "prompt.render@1",
+            "when": "$input.enabled",
+            "config": {
+              "template": "Must not render {message.text}"
+            },
+            "inputs": {
+              "message": "$input.message"
+            },
+            "outputs": {
+              "prompt": "$output.prompt"
+            }
+          }
+        }
+      }
+    },
+    "inputs": {
+      "enabled": "true"
+    },
+    "expected": {
+      "status": "failed",
+      "terminal_kind": "run_failed",
+      "journal_kinds": [
+        "run_started",
+        "node_failed",
+        "run_failed"
+      ],
+      "outputs": {}
+    }
+  },
+  {
     "name": "control_map_renders_each_item",
     "document": {
       "apiVersion": "graphblocks.ai/v1alpha3",

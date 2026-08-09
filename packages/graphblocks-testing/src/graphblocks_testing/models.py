@@ -367,6 +367,7 @@ class TckCase:
     expected_ok: bool = True
     expected_status: str = "succeeded"
     expected_terminal_kind: str | None = None
+    expected_journal_kinds: tuple[str, ...] = field(default_factory=tuple)
     block_catalog: tuple[dict[str, object], ...] = field(default_factory=tuple)
     allow_unknown_blocks: bool = False
     schema_id: str | None = None
@@ -470,6 +471,9 @@ class TckCase:
         )
         object.__setattr__(
             self, "expected_warning_codes", tuple(self.expected_warning_codes)
+        )
+        object.__setattr__(
+            self, "expected_journal_kinds", tuple(self.expected_journal_kinds)
         )
         object.__setattr__(
             self,
@@ -723,6 +727,7 @@ class TckCase:
         expected_outputs: dict[str, object] | None = None,
         expected_status: str = "succeeded",
         expected_terminal_kind: str | None = None,
+        expected_journal_kinds: tuple[str, ...] = (),
     ) -> TckCase:
         return cls(
             case_id=case_id,
@@ -735,6 +740,7 @@ class TckCase:
             expected_outputs=expected_outputs,
             expected_status=expected_status,
             expected_terminal_kind=expected_terminal_kind,
+            expected_journal_kinds=expected_journal_kinds,
         )
 
     @classmethod

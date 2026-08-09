@@ -4,7 +4,7 @@ use serde_json::{Value, json};
 
 use crate::cancellation::CancellationToken;
 use crate::journal::{ExecutionJournal, JournalError, JournalMetadata};
-use crate::outcome::{BlockError, Outcome};
+use crate::outcome::{BlockError, Outcome, SkipReason};
 use crate::readiness::PortRef;
 use crate::retry::{EffectKind, RetryDecision, RetryPolicy, RetryPolicyError, RetryRequest};
 use crate::run_store::{InMemoryRunStore, RunStatus, RunStoreError};
@@ -14,10 +14,18 @@ use crate::scheduler::{
 use crate::timeout::{Deadline, TimeoutPolicy};
 
 pub trait NodeExecutor {
+    fn preflight(&mut self, _node: &StartedNode) -> Option<NodeExecutionPreflight> {
+        None
+    }
+
     fn execute(&mut self, node: StartedNode) -> Result<Vec<(PortRef, Outcome<Value>)>, BlockError>;
 }
 
 pub trait OutcomeNodeExecutor {
+    fn preflight(&mut self, _node: &StartedNode) -> Option<NodeExecutionPreflight> {
+        None
+    }
+
     fn execute(&mut self, node: StartedNode) -> Outcome<Vec<(PortRef, Outcome<Value>)>>;
 }
 
@@ -35,12 +43,25 @@ impl<E> OutcomeNodeExecutor for LegacyNodeExecutorAdapter<'_, E>
 where
     E: NodeExecutor + ?Sized,
 {
+    fn preflight(&mut self, node: &StartedNode) -> Option<NodeExecutionPreflight> {
+        self.executor.preflight(node)
+    }
+
     fn execute(&mut self, node: StartedNode) -> Outcome<Vec<(PortRef, Outcome<Value>)>> {
         match self.executor.execute(node) {
             Ok(outputs) => Outcome::Value(outputs),
             Err(error) => Outcome::Failed(error),
         }
     }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum NodeExecutionPreflight {
+    Skipped {
+        reason: SkipReason,
+        outputs: Vec<(PortRef, Outcome<Value>)>,
+    },
+    Failed(BlockError),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -347,6 +368,49 @@ impl InProcessTestRuntime {
                 });
             }
             let started = self.scheduler.start_node(&node_id)?;
+            if let Some(preflight) = executor.preflight(&started) {
+                match preflight {
+                    NodeExecutionPreflight::Skipped { reason, outputs } => {
+                        let newly_ready = self.scheduler.complete_node(&node_id, outputs)?;
+                        self.journal.append_with_metadata(
+                            "node_completed",
+                            JournalMetadata::new().with_node_id(node_id.clone()),
+                            Some(json!({
+                                "skipped": true,
+                                "reason": reason.code,
+                                "message": reason.message,
+                            })),
+                        )?;
+                        for node_id in newly_ready {
+                            ready.push_back(node_id);
+                        }
+                    }
+                    NodeExecutionPreflight::Failed(error) => {
+                        let metadata = JournalMetadata::new().with_node_id(node_id.clone());
+                        let payload = json!({
+                            "code": error.code,
+                            "category": format!("{:?}", error.category),
+                            "message": error.message,
+                        });
+                        self.journal.append_with_metadata(
+                            "node_failed",
+                            metadata.clone(),
+                            Some(payload.clone()),
+                        )?;
+                        self.journal.append_terminal_with_metadata(
+                            "run_failed",
+                            metadata,
+                            Some(payload),
+                        )?;
+                        return Ok(OutcomeRunResult {
+                            run_id: self.journal.run_id().to_owned(),
+                            status: OutcomeRunStatus::Failed,
+                            journal: self.journal.clone(),
+                        });
+                    }
+                }
+                continue;
+            }
             let mut attempt = 1_u32;
             loop {
                 let metadata = JournalMetadata::new()
