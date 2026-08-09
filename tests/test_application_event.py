@@ -234,6 +234,9 @@ def test_standard_application_event_names_match_tool_and_output_policy_contract(
         "RunSucceeded",
         "RunFailed",
         "RunCancelled",
+        "RunRejected",
+        "RunPaused",
+        "RunExhausted",
         "ToolCallProposed",
         "ToolCallArgumentsDelta",
         "ToolCallArgumentsCompleted",
@@ -288,6 +291,55 @@ def test_standard_application_event_names_match_tool_and_output_policy_contract(
     assert "ToolCallCompleted" in TOOL_APPLICATION_EVENT_KINDS
     assert "ToolResultDelta" in TOOL_APPLICATION_EVENT_KINDS
     assert "OutputCutoff" not in TOOL_APPLICATION_EVENT_KINDS
+
+
+@pytest.mark.parametrize(
+    ("status", "terminal_kind", "event_kind"),
+    (
+        ("succeeded", "run_succeeded", "RunSucceeded"),
+        ("failed", "run_failed", "RunFailed"),
+        ("cancelled", "run_cancelled", "RunCancelled"),
+        ("rejected", "run_rejected", "RunRejected"),
+        ("paused", "run_paused", "RunPaused"),
+        ("exhausted", "run_exhausted", "RunExhausted"),
+    ),
+)
+def test_local_run_terminal_maps_six_statuses_without_output_leakage(
+    status: str,
+    terminal_kind: str,
+    event_kind: ApplicationEventKind,
+) -> None:
+    event = ApplicationEvent.local_run_terminal(
+        _metadata(),
+        status=status,
+        terminal_kind=terminal_kind,
+        outputs={"answer": "done", "secret": "local-only"},
+        terminal_payload={"code": "terminal.reason"},
+    )
+
+    assert event.kind == event_kind
+    assert event.payload["status"] == status
+    assert event.payload["terminal_kind"] == terminal_kind
+    assert event.payload["terminal_payload"] == {"code": "terminal.reason"}
+    assert event.payload["outputs"] == (
+        {"answer": "done", "secret": "local-only"}
+        if status == "succeeded"
+        else {}
+    )
+
+
+def test_local_run_terminal_rejects_mismatched_status_and_journal_kind() -> None:
+    with pytest.raises(
+        ApplicationEventError,
+        match="local run terminal status and journal kind must match",
+    ):
+        ApplicationEvent.local_run_terminal(
+            _metadata(),
+            status="paused",
+            terminal_kind="run_exhausted",
+            outputs={},
+            terminal_payload={},
+        )
 
 
 def test_application_event_accepts_async_run_lifecycle_events() -> None:
@@ -2599,6 +2651,16 @@ def test_application_event_stream_state_matches_shared_tck_cases() -> None:
                     "RunSucceeded",
                     metadata,
                     payload={"status": "succeeded", "outputs": operation.get("outputs", {})},
+                )
+                accepted = state.accept(event)
+                assert (accepted is not None) is operation.get("expectAccepted", True), case_name
+            elif operation["op"] == "local_run_terminal":
+                event = ApplicationEvent.local_run_terminal(
+                    metadata,
+                    status=operation["status"],
+                    terminal_kind=operation["terminalKind"],
+                    outputs=operation.get("outputs", {}),
+                    terminal_payload=operation.get("terminalPayload", {}),
                 )
                 accepted = state.accept(event)
                 assert (accepted is not None) is operation.get("expectAccepted", True), case_name

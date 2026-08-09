@@ -94,6 +94,30 @@ pub enum OutcomeRunStatus {
     Exhausted,
 }
 
+impl OutcomeRunStatus {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Succeeded => "succeeded",
+            Self::Failed => "failed",
+            Self::Cancelled => "cancelled",
+            Self::Rejected => "rejected",
+            Self::Paused => "paused",
+            Self::Exhausted => "exhausted",
+        }
+    }
+
+    pub const fn terminal_kind(self) -> &'static str {
+        match self {
+            Self::Succeeded => "run_succeeded",
+            Self::Failed => "run_failed",
+            Self::Cancelled => "run_cancelled",
+            Self::Rejected => "run_rejected",
+            Self::Paused => "run_paused",
+            Self::Exhausted => "run_exhausted",
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct OutcomeRunResult {
     pub run_id: String,

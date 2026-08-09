@@ -11,6 +11,7 @@ use crate::output_policy::{
 };
 use crate::policy::PolicyDecision;
 use crate::run_store::RunStatusSnapshot;
+use crate::test_runtime::OutcomeRunStatus;
 use crate::tool_approval::ToolApprovalRequest;
 use crate::tool_call::{
     ToolCall, ToolCallDraft, ToolCallDraftStatus, ToolCallError, ToolCallStatus,
@@ -28,6 +29,9 @@ pub enum ApplicationEventKind {
     RunSucceeded,
     RunFailed,
     RunCancelled,
+    RunRejected,
+    RunPaused,
+    RunExhausted,
     ToolCallProposed,
     ToolCallArgumentsDelta,
     ToolCallArgumentsCompleted,
@@ -87,6 +91,9 @@ impl ApplicationEventKind {
             Self::RunSucceeded => "RunSucceeded",
             Self::RunFailed => "RunFailed",
             Self::RunCancelled => "RunCancelled",
+            Self::RunRejected => "RunRejected",
+            Self::RunPaused => "RunPaused",
+            Self::RunExhausted => "RunExhausted",
             Self::ToolCallProposed => "ToolCallProposed",
             Self::ToolCallArgumentsDelta => "ToolCallArgumentsDelta",
             Self::ToolCallArgumentsCompleted => "ToolCallArgumentsCompleted",
@@ -175,6 +182,9 @@ impl ApplicationEventKind {
             Self::RunSucceeded
                 | Self::RunFailed
                 | Self::RunCancelled
+                | Self::RunRejected
+                | Self::RunPaused
+                | Self::RunExhausted
                 | Self::RunCompleted
                 | Self::RunExpired
                 | Self::RunPolicyStopped
@@ -281,20 +291,90 @@ pub struct ApplicationEvent {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ApplicationEventError {
-    ToolEventRequiresToolCallId { kind: ApplicationEventKind },
-    NotToolEvent { kind: ApplicationEventKind },
-    EmptyMetadataField { field: &'static str },
-    EmptyPayloadField { field: &'static str },
-    InvalidPayload { field: &'static str },
-    InvalidPayloadKey { field: String },
+    ToolEventRequiresToolCallId {
+        kind: ApplicationEventKind,
+    },
+    NotToolEvent {
+        kind: ApplicationEventKind,
+    },
+    EmptyMetadataField {
+        field: &'static str,
+    },
+    EmptyPayloadField {
+        field: &'static str,
+    },
+    InvalidPayload {
+        field: &'static str,
+    },
+    InvalidPayloadKey {
+        field: String,
+    },
+    LocalRunTerminalMismatch {
+        status: String,
+        terminal_kind: String,
+    },
     EmptyToolCallId,
-    InvalidToolCall { source: ToolCallError },
-    InvalidToolResultEvent { source: ToolResultEventError },
-    InvalidOutputCutoff { source: OutputCutoffError },
-    InvalidOutputPolicyDecision { source: OutputPolicyDecisionError },
+    InvalidToolCall {
+        source: ToolCallError,
+    },
+    InvalidToolResultEvent {
+        source: ToolResultEventError,
+    },
+    InvalidOutputCutoff {
+        source: OutputCutoffError,
+    },
+    InvalidOutputPolicyDecision {
+        source: OutputPolicyDecisionError,
+    },
 }
 
 impl ApplicationEvent {
+    pub fn local_run_terminal(
+        metadata: ApplicationEventMetadata,
+        status: OutcomeRunStatus,
+        terminal_kind: &str,
+        outputs: Value,
+        terminal_payload: Value,
+    ) -> Result<Self, ApplicationEventError> {
+        if terminal_kind != status.terminal_kind() {
+            return Err(ApplicationEventError::LocalRunTerminalMismatch {
+                status: status.as_str().to_owned(),
+                terminal_kind: terminal_kind.to_owned(),
+            });
+        }
+        if !outputs.is_object() {
+            return Err(ApplicationEventError::InvalidPayload { field: "outputs" });
+        }
+        if !terminal_payload.is_object() {
+            return Err(ApplicationEventError::InvalidPayload {
+                field: "terminal_payload",
+            });
+        }
+        let kind = match status {
+            OutcomeRunStatus::Succeeded => ApplicationEventKind::RunSucceeded,
+            OutcomeRunStatus::Failed => ApplicationEventKind::RunFailed,
+            OutcomeRunStatus::Cancelled => ApplicationEventKind::RunCancelled,
+            OutcomeRunStatus::Rejected => ApplicationEventKind::RunRejected,
+            OutcomeRunStatus::Paused => ApplicationEventKind::RunPaused,
+            OutcomeRunStatus::Exhausted => ApplicationEventKind::RunExhausted,
+        };
+        let committed_outputs = if status == OutcomeRunStatus::Succeeded {
+            outputs
+        } else {
+            json!({})
+        };
+        Self::new(
+            kind,
+            metadata,
+            json!({
+                "status": status.as_str(),
+                "terminal_kind": terminal_kind,
+                "outputs": committed_outputs,
+                "terminal_payload": terminal_payload,
+            }),
+        )
+    }
+
     pub fn tool_call_draft(
         metadata: ApplicationEventMetadata,
         draft: &ToolCallDraft,
@@ -871,10 +951,10 @@ impl ApplicationEventStreamState {
         {
             return None;
         }
-        if event.kind.is_run_terminal()
-            && self
-                .terminal_event_kind_by_run_id
-                .contains_key(&event.metadata.run_id)
+        if self
+            .terminal_event_kind_by_run_id
+            .contains_key(&event.metadata.run_id)
+            && event.kind != ApplicationEventKind::LateExternalCallbackReceived
         {
             return None;
         }

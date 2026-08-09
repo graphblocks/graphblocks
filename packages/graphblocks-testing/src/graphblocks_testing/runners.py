@@ -1069,6 +1069,37 @@ class TckRunner:
                             "path": f"$.operations[{sequence - 1}].expectAccepted",
                         }
                     )
+            elif operation.get("op") == "local_run_terminal":
+                status = operation.get("status")
+                terminal_kind = operation.get("terminalKind")
+                outputs = operation.get("outputs", {})
+                terminal_payload = operation.get("terminalPayload", {})
+                if not isinstance(status, str):
+                    raise TypeError("local run terminal status must be a string")
+                if not isinstance(terminal_kind, str):
+                    raise TypeError("local run terminal kind must be a string")
+                if not isinstance(outputs, Mapping):
+                    raise TypeError("local run terminal outputs must be a mapping")
+                if not isinstance(terminal_payload, Mapping):
+                    raise TypeError("local run terminal payload must be a mapping")
+                event = ApplicationEvent.local_run_terminal(
+                    metadata,
+                    status=status,
+                    terminal_kind=terminal_kind,
+                    outputs=outputs,
+                    terminal_payload=terminal_payload,
+                )
+                accepted = accept_event(event)
+                if (accepted is not None) is not bool(
+                    operation.get("expectAccepted", True)
+                ):
+                    diagnostics.append(
+                        {
+                            "code": "ApplicationEventAcceptanceMismatch",
+                            "message": "application event acceptance did not match expected result",
+                            "path": f"$.operations[{sequence - 1}].expectAccepted",
+                        }
+                    )
             elif operation.get("op") == "tool_call_state":
                 arguments = operation.get("arguments", {})
                 draft = ToolCallDraft.proposed(

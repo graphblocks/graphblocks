@@ -14,6 +14,7 @@ use graphblocks_runtime_core::output_policy::{
 };
 use graphblocks_runtime_core::policy::{PolicyDecision, PolicyEffect};
 use graphblocks_runtime_core::run_store::{RunStatus, RunStatusSnapshot};
+use graphblocks_runtime_core::test_runtime::OutcomeRunStatus;
 use graphblocks_runtime_core::tool::{
     BlockToolImplementation, ToolBinding, ToolCatalog, ToolDefinition, ToolImplementation,
     ToolResolutionScope,
@@ -102,6 +103,9 @@ fn standard_event_names_match_the_tool_and_output_policy_contract() {
         ApplicationEventKind::RunSucceeded.as_str(),
         ApplicationEventKind::RunFailed.as_str(),
         ApplicationEventKind::RunCancelled.as_str(),
+        ApplicationEventKind::RunRejected.as_str(),
+        ApplicationEventKind::RunPaused.as_str(),
+        ApplicationEventKind::RunExhausted.as_str(),
         ApplicationEventKind::ToolCallProposed.as_str(),
         ApplicationEventKind::ToolCallArgumentsDelta.as_str(),
         ApplicationEventKind::ToolCallArgumentsCompleted.as_str(),
@@ -143,6 +147,9 @@ fn standard_event_names_match_the_tool_and_output_policy_contract() {
             "RunSucceeded",
             "RunFailed",
             "RunCancelled",
+            "RunRejected",
+            "RunPaused",
+            "RunExhausted",
             "ToolCallProposed",
             "ToolCallArgumentsDelta",
             "ToolCallArgumentsCompleted",
@@ -1093,6 +1100,28 @@ fn application_event_stream_state_accepts_exactly_one_terminal_outcome_per_run()
         json!({"reason": "operator"}),
     )
     .expect("other run terminal event is valid");
+    let late_progress = ApplicationEvent::new(
+        ApplicationEventKind::AsyncOperationPolling,
+        ApplicationEventMetadata {
+            event_id: "event-run-1-late-progress".to_owned(),
+            sequence: 3,
+            cursor: Some("run-1:3".to_owned()),
+            ..metadata()
+        },
+        json!({"status": "polling"}),
+    )
+    .expect("late progress event envelope is valid");
+    let late_callback = ApplicationEvent::new(
+        ApplicationEventKind::LateExternalCallbackReceived,
+        ApplicationEventMetadata {
+            event_id: "event-run-1-late-callback".to_owned(),
+            sequence: 4,
+            cursor: Some("run-1:4".to_owned()),
+            ..metadata()
+        },
+        json!({"status": "late"}),
+    )
+    .expect("late callback event envelope is valid");
 
     assert_eq!(
         state.accept(first_terminal.clone()),
@@ -1104,7 +1133,86 @@ fn application_event_stream_state_accepts_exactly_one_terminal_outcome_per_run()
         state.accept(other_run_terminal.clone()),
         Some(other_run_terminal)
     );
-    assert_eq!(state.accepted_events().len(), 2);
+    assert_eq!(state.accept(late_progress), None);
+    assert_eq!(state.accept(late_callback.clone()), Some(late_callback));
+    assert_eq!(state.accepted_events().len(), 3);
+}
+
+#[test]
+fn local_run_terminal_maps_six_statuses_without_output_leakage() {
+    let cases = [
+        (
+            OutcomeRunStatus::Succeeded,
+            "run_succeeded",
+            ApplicationEventKind::RunSucceeded,
+        ),
+        (
+            OutcomeRunStatus::Failed,
+            "run_failed",
+            ApplicationEventKind::RunFailed,
+        ),
+        (
+            OutcomeRunStatus::Cancelled,
+            "run_cancelled",
+            ApplicationEventKind::RunCancelled,
+        ),
+        (
+            OutcomeRunStatus::Rejected,
+            "run_rejected",
+            ApplicationEventKind::RunRejected,
+        ),
+        (
+            OutcomeRunStatus::Paused,
+            "run_paused",
+            ApplicationEventKind::RunPaused,
+        ),
+        (
+            OutcomeRunStatus::Exhausted,
+            "run_exhausted",
+            ApplicationEventKind::RunExhausted,
+        ),
+    ];
+
+    for (status, terminal_kind, event_kind) in cases {
+        let event = ApplicationEvent::local_run_terminal(
+            metadata(),
+            status,
+            terminal_kind,
+            json!({"answer": "done", "secret": "local-only"}),
+            json!({"code": "terminal.reason"}),
+        )
+        .expect("local run terminal mapping is valid");
+
+        assert_eq!(event.kind, event_kind);
+        assert_eq!(event.payload["status"], json!(status.as_str()));
+        assert_eq!(event.payload["terminal_kind"], json!(terminal_kind));
+        assert_eq!(
+            event.payload["terminal_payload"],
+            json!({"code": "terminal.reason"})
+        );
+        assert_eq!(
+            event.payload["outputs"],
+            if status == OutcomeRunStatus::Succeeded {
+                json!({"answer": "done", "secret": "local-only"})
+            } else {
+                json!({})
+            }
+        );
+    }
+
+    assert_eq!(
+        ApplicationEvent::local_run_terminal(
+            metadata(),
+            OutcomeRunStatus::Paused,
+            "run_exhausted",
+            json!({}),
+            json!({}),
+        ),
+        Err(ApplicationEventError::LocalRunTerminalMismatch {
+            status: "paused".to_owned(),
+            terminal_kind: "run_exhausted".to_owned(),
+        })
+    );
 }
 
 #[test]

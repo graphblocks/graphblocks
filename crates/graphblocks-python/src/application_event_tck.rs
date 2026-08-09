@@ -7,6 +7,7 @@ use graphblocks_runtime_core::output_policy::{
     DraftDisposition, DurableResult, GenerationChunk, OutputCutoff, OutputPolicyDecision,
     PendingToolCallsDisposition, ProviderCancellation, TerminalReason,
 };
+use graphblocks_runtime_core::test_runtime::OutcomeRunStatus;
 use graphblocks_runtime_core::tool_call::{ToolCallDraft, ToolCallStatus};
 use graphblocks_runtime_core::tool_result::{
     ArtifactRef, ContentPart, ToolEffectOutcome, ToolResult, ToolResultEvent,
@@ -164,6 +165,37 @@ pub(crate) fn evaluate_case(case: &Value) -> Result<Value, String> {
                         "status": "succeeded",
                         "outputs": operation.get("outputs").cloned().unwrap_or_else(|| json!({})),
                     }),
+                )
+                .map_err(|error| format!("{case_name}: {error:?}"))?;
+                let accepted = accept_event(&mut state, event, index, 0, &mut operation_results)?;
+                record_acceptance_mismatch(operation, index, accepted.is_some(), &mut diagnostics);
+            }
+            "local_run_terminal" => {
+                let status = match required_str(operation, "status")? {
+                    "succeeded" => OutcomeRunStatus::Succeeded,
+                    "failed" => OutcomeRunStatus::Failed,
+                    "cancelled" => OutcomeRunStatus::Cancelled,
+                    "rejected" => OutcomeRunStatus::Rejected,
+                    "paused" => OutcomeRunStatus::Paused,
+                    "exhausted" => OutcomeRunStatus::Exhausted,
+                    other => {
+                        return Err(format!(
+                            "application-events TCK case {case_name} has unknown local run terminal status {other}"
+                        ));
+                    }
+                };
+                let event = ApplicationEvent::local_run_terminal(
+                    metadata,
+                    status,
+                    required_str(operation, "terminalKind")?,
+                    operation
+                        .get("outputs")
+                        .cloned()
+                        .unwrap_or_else(|| json!({})),
+                    operation
+                        .get("terminalPayload")
+                        .cloned()
+                        .unwrap_or_else(|| json!({})),
                 )
                 .map_err(|error| format!("{case_name}: {error:?}"))?;
                 let accepted = accept_event(&mut state, event, index, 0, &mut operation_results)?;

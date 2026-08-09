@@ -48,6 +48,9 @@ ApplicationEventKind = Literal[
     "RunSucceeded",
     "RunFailed",
     "RunCancelled",
+    "RunRejected",
+    "RunPaused",
+    "RunExhausted",
     "ToolCallProposed",
     "ToolCallArgumentsDelta",
     "ToolCallArgumentsCompleted",
@@ -106,6 +109,9 @@ STANDARD_APPLICATION_EVENT_KINDS: tuple[ApplicationEventKind, ...] = (
     "RunSucceeded",
     "RunFailed",
     "RunCancelled",
+    "RunRejected",
+    "RunPaused",
+    "RunExhausted",
     "ToolCallProposed",
     "ToolCallArgumentsDelta",
     "ToolCallArgumentsCompleted",
@@ -381,6 +387,9 @@ TERMINAL_APPLICATION_EVENT_KINDS = frozenset(
         "RunSucceeded",
         "RunFailed",
         "RunCancelled",
+        "RunRejected",
+        "RunPaused",
+        "RunExhausted",
         "RunPolicyStopped",
         "RunExpired",
     }
@@ -1196,6 +1205,50 @@ class ApplicationEvent:
             self,
             "payload",
             _freeze_payload(ApplicationEventError, "application event payload", self.payload),
+        )
+
+    @classmethod
+    def local_run_terminal(
+        cls,
+        metadata: ApplicationEventMetadata,
+        *,
+        status: str,
+        terminal_kind: str,
+        outputs: Mapping[str, object],
+        terminal_payload: Mapping[str, object],
+    ) -> ApplicationEvent:
+        mapping: dict[str, tuple[ApplicationEventKind, str]] = {
+            "succeeded": ("RunSucceeded", "run_succeeded"),
+            "failed": ("RunFailed", "run_failed"),
+            "cancelled": ("RunCancelled", "run_cancelled"),
+            "rejected": ("RunRejected", "run_rejected"),
+            "paused": ("RunPaused", "run_paused"),
+            "exhausted": ("RunExhausted", "run_exhausted"),
+        }
+        if not isinstance(status, str) or status not in mapping:
+            raise ApplicationEventError("local run terminal status is invalid")
+        if not isinstance(terminal_kind, str):
+            raise ApplicationEventError("local run terminal kind must be a string")
+        event_kind, expected_terminal_kind = mapping[status]
+        if terminal_kind != expected_terminal_kind:
+            raise ApplicationEventError(
+                "local run terminal status and journal kind must match"
+            )
+        if not isinstance(outputs, Mapping):
+            raise ApplicationEventError("local run terminal outputs must be a mapping")
+        if not isinstance(terminal_payload, Mapping):
+            raise ApplicationEventError(
+                "local run terminal payload must be a mapping"
+            )
+        return cls.new(
+            event_kind,
+            metadata,
+            payload={
+                "status": status,
+                "terminal_kind": terminal_kind,
+                "outputs": dict(outputs) if status == "succeeded" else {},
+                "terminal_payload": dict(terminal_payload),
+            },
         )
 
     @classmethod

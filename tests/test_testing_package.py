@@ -1881,7 +1881,7 @@ def test_testing_package_loads_shared_application_event_tck_cases(monkeypatch) -
     )
     report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry()).run_cases(cases)
 
-    assert [case.kind for case in cases] == ["application-events"] * 10
+    assert [case.kind for case in cases] == ["application-events"] * 11
     assert report.ok
     assert {tuple(result.observed["accepted_kinds"]) for result in report.results} == {
         (
@@ -1922,6 +1922,14 @@ def test_testing_package_loads_shared_application_event_tck_cases(monkeypatch) -
             "ToolResultDenied",
         ),
         ("RunSucceeded", "RunSucceeded"),
+        (
+            "RunSucceeded",
+            "RunFailed",
+            "RunCancelled",
+            "RunRejected",
+            "RunPaused",
+            "RunExhausted",
+        ),
         (),
     }
     assert [
@@ -2072,6 +2080,26 @@ def test_application_event_stream_admission_is_exact_native_reference(
         emission["admission"]
         for emission in cutoff_tck_observed["operation_results"][0]["emissions"]
     ] == ["accepted", "accepted"]
+    terminal_tck_observed = next(
+        result.observed["native_tck_contract"]["observed"]
+        for result in report.results
+        if result.case_id == "local_run_terminal_statuses_map_without_loss"
+    )
+    terminal_events = terminal_tck_observed["accepted_events"]
+    assert [event["payload"]["status"] for event in terminal_events] == [
+        "succeeded",
+        "failed",
+        "cancelled",
+        "rejected",
+        "paused",
+        "exhausted",
+    ]
+    assert terminal_events[0]["payload"]["outputs"] == {"answer": "done"}
+    assert all(event["payload"]["outputs"] == {} for event in terminal_events[1:])
+    assert all(
+        operation["emissions"][0]["admission"] == "dropped"
+        for operation in terminal_tck_observed["operation_results"][6:]
+    )
 
 
 def test_application_event_raw_tck_execution_rejects_native_drift(monkeypatch) -> None:
@@ -9541,6 +9569,7 @@ def test_testing_package_discovers_all_shared_tck_suite_manifests(monkeypatch) -
         "terminal_tool_result_events_preserve_partial_status",
         "failed_and_denied_tool_result_events_are_terminal",
         "stream_rejects_conflicting_duplicate_ids_and_nonmonotonic_sequences",
+        "local_run_terminal_statuses_map_without_loss",
         "boolean_generation_sequence_has_structured_diagnostic",
         "unknown_operation_has_structured_diagnostic",
     )

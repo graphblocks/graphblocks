@@ -617,6 +617,32 @@
     ]
   },
   {
+    "name": "local_run_terminal_statuses_map_without_loss",
+    "operations": [
+      {"op": "local_run_terminal", "runId": "run-succeeded", "eventSequence": 1, "status": "succeeded", "terminalKind": "run_succeeded", "outputs": {"answer": "done"}, "terminalPayload": {"outputsCommitted": true}},
+      {"op": "local_run_terminal", "runId": "run-failed", "eventSequence": 1, "status": "failed", "terminalKind": "run_failed", "outputs": {"secret": "must-not-leak"}, "terminalPayload": {"code": "node.failed"}},
+      {"op": "local_run_terminal", "runId": "run-cancelled", "eventSequence": 1, "status": "cancelled", "terminalKind": "run_cancelled", "outputs": {"secret": "must-not-leak"}, "terminalPayload": {"code": "user_cancel"}},
+      {"op": "local_run_terminal", "runId": "run-rejected", "eventSequence": 1, "status": "rejected", "terminalKind": "run_rejected", "outputs": {"secret": "must-not-leak"}, "terminalPayload": {"decisionId": "decision-1"}},
+      {"op": "local_run_terminal", "runId": "run-paused", "eventSequence": 1, "status": "paused", "terminalKind": "run_paused", "outputs": {"secret": "must-not-leak"}, "terminalPayload": {"code": "approval_required"}},
+      {"op": "local_run_terminal", "runId": "run-exhausted", "eventSequence": 1, "status": "exhausted", "terminalKind": "run_exhausted", "outputs": {"secret": "must-not-leak"}, "terminalPayload": {"code": "budget.limit"}},
+      {"op": "local_run_terminal", "runId": "run-succeeded", "eventSequence": 2, "status": "failed", "terminalKind": "run_failed", "outputs": {}, "terminalPayload": {}, "expectAccepted": false},
+      {"op": "local_run_terminal", "runId": "run-failed", "eventSequence": 2, "status": "failed", "terminalKind": "run_failed", "outputs": {}, "terminalPayload": {}, "expectAccepted": false},
+      {"op": "local_run_terminal", "runId": "run-cancelled", "eventSequence": 2, "status": "failed", "terminalKind": "run_failed", "outputs": {}, "terminalPayload": {}, "expectAccepted": false},
+      {"op": "local_run_terminal", "runId": "run-rejected", "eventSequence": 2, "status": "failed", "terminalKind": "run_failed", "outputs": {}, "terminalPayload": {}, "expectAccepted": false},
+      {"op": "local_run_terminal", "runId": "run-paused", "eventSequence": 2, "status": "failed", "terminalKind": "run_failed", "outputs": {}, "terminalPayload": {}, "expectAccepted": false},
+      {"op": "local_run_terminal", "runId": "run-exhausted", "eventSequence": 2, "status": "failed", "terminalKind": "run_failed", "outputs": {}, "terminalPayload": {}, "expectAccepted": false},
+      {"op": "tool_call_state", "runId": "run-succeeded", "eventSequence": 3, "toolCallId": "late-call", "toolName": "late.tool", "resolvedToolId": "late-tool", "status": "validated", "arguments": {}, "createdAtUnixMs": 1700000, "expectAccepted": false}
+    ],
+    "expectedAcceptedKinds": [
+      "RunSucceeded",
+      "RunFailed",
+      "RunCancelled",
+      "RunRejected",
+      "RunPaused",
+      "RunExhausted"
+    ]
+  },
+  {
     "name": "boolean_generation_sequence_has_structured_diagnostic",
     "operations": [
       {

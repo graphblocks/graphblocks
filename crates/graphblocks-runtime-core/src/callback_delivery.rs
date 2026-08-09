@@ -220,6 +220,9 @@ impl EventFilter {
         let is_terminal_event = matches!(
             event.kind,
             ApplicationEventKind::RunSucceeded
+                | ApplicationEventKind::RunRejected
+                | ApplicationEventKind::RunPaused
+                | ApplicationEventKind::RunExhausted
                 | ApplicationEventKind::RunCompleted
                 | ApplicationEventKind::RunFailed
                 | ApplicationEventKind::RunCancelled
