@@ -914,6 +914,60 @@
     }
   },
   {
+    "name": "retry_attempt_limit_100",
+    "document": {
+      "apiVersion": "graphblocks.ai/v1alpha3",
+      "kind": "Graph",
+      "metadata": {
+        "name": "retry-attempt-limit-100"
+      },
+      "spec": {
+        "nodes": {
+          "work": {
+            "block": "test.work@1",
+            "flow": {
+              "retry": {
+                "maxAttempts": 100
+              }
+            }
+          }
+        }
+      }
+    },
+    "expected": {
+      "graph_hash": "sha256:fbb1cd21ea96f12d98b14ecd541b9363e7d787910c279db437ee73887f4c75ad",
+      "error_codes": []
+    }
+  },
+  {
+    "name": "retry_attempt_limit_101",
+    "document": {
+      "apiVersion": "graphblocks.ai/v1alpha3",
+      "kind": "Graph",
+      "metadata": {
+        "name": "retry-attempt-limit-101"
+      },
+      "spec": {
+        "nodes": {
+          "work": {
+            "block": "test.work@1",
+            "flow": {
+              "retry": {
+                "maxAttempts": 101
+              }
+            }
+          }
+        }
+      }
+    },
+    "expected": {
+      "graph_hash": "sha256:81b34be82e5c7163b652efb3f3707172e88479988591c19a14a8b8e25951d1e7",
+      "error_codes": [
+        "GB1008"
+      ]
+    }
+  },
+  {
     "name": "ambiguous_connection_binding",
     "document": {
       "apiVersion": "graphblocks.ai/v1alpha3",

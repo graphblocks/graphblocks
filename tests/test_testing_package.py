@@ -869,11 +869,21 @@ def test_testing_package_loads_shared_compiler_tck_cases_with_diagnostic_expecta
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")
 
-    cases = graphblocks_testing.load_compiler_tck_cases(ROOT / "tck" / "compiler" / "cases.json")
+    cases = graphblocks_testing.load_compiler_tck_cases(
+        ROOT / "tck" / "compiler" / "cases.json"
+    )
     report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry()).run_cases(cases)
+    cases_by_id = {case.case_id: case for case in cases}
+    results_by_id = {result.case_id: result for result in report.results}
 
     assert len(cases) >= 20
     assert report.ok
+    assert cases_by_id["retry_attempt_limit_100"].expected_error_codes == ()
+    assert cases_by_id["retry_attempt_limit_101"].expected_error_codes == ("GB1008",)
+    assert results_by_id["retry_attempt_limit_100"].observed["error_codes"] == []
+    assert results_by_id["retry_attempt_limit_101"].observed["error_codes"] == [
+        "GB1008"
+    ]
     assert all("error_codes" in result.observed for result in report.results)
     assert {
         result.observed["compiler_mode"] for result in report.results
