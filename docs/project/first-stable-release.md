@@ -279,7 +279,10 @@ retained as the reference oracle. The installed `retry` report likewise runs
 all four shared retry/idempotency/cancellation fixtures through the Rust local
 runtime and exact-compares its closed result with the Python oracle. Its claim
 is bound to `rust-retry-exact-differential` and the selected runtime wheel.
-Four other C1 suites remain `reference-only` transition work.
+The installed `sequence` report now exact-compares bounded FIFO operation
+results, buffer lengths, terminal state, and invalid-capacity creation through
+`rust-sequence-exact-differential`. Three other C1 suites remain
+`reference-only` transition work.
 
 ## Release gates
 

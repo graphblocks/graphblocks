@@ -516,6 +516,28 @@ def test_release_evidence_binds_native_reports_to_exact_runtime_wheel() -> None:
                             }
                         ],
                     },
+                    "sequence": {
+                        "ok": True,
+                        "evidence": {
+                            "fixture_digest": "sha256:" + "f" * 64,
+                            "implementation": "graphblocks-runtime",
+                            "implementation_version": "0.1.0",
+                            "implementation_artifact": observed_artifact,
+                            "suite": "sequence",
+                        },
+                        "results": [
+                            {
+                                "case_id": "sequence/native",
+                                "status": "passed",
+                                "observed": {
+                                    "runtime": "native",
+                                    "native_reference_match": True,
+                                    "native_contract": {"state": "open"},
+                                    "reference_contract": {"state": "open"},
+                                },
+                            }
+                        ],
+                    },
                     "runtime": {
                         "ok": True,
                         "evidence": {
@@ -1021,6 +1043,28 @@ def test_default_tck_output_matches_source_derived_release_expectations(
         assert isinstance(reference_contract, dict)
         return json.loads(json.dumps(reference_contract))
 
+    def reference_sequence_tck_case_bridge(
+        raw_case: dict[str, object],
+    ) -> dict[str, object]:
+        raw_operations = raw_case.get("operations", [])
+        raw_expected = raw_case["expected"]
+        assert isinstance(raw_operations, list)
+        assert isinstance(raw_expected, dict)
+        case = graphblocks_testing.TckCase.sequence(
+            case_id=str(raw_case["name"]),
+            capacity=int(raw_case["capacity"]),
+            operations=tuple(dict(operation) for operation in raw_operations),
+            expected_state=raw_expected.get("state"),
+            expected_creation_error=raw_expected.get("creation_error"),
+        )
+        result = graphblocks_testing.TckRunner(
+            graphblocks_testing.stdlib_registry()
+        ).run_cases((case,)).results[0]
+        assert result.status == "passed"
+        reference_contract = result.observed["reference_contract"]
+        assert isinstance(reference_contract, dict)
+        return json.loads(json.dumps(reference_contract))
+
     monkeypatch.setattr(
         graphblocks_runtime,
         "run_stdlib_graph",
@@ -1040,6 +1084,12 @@ def test_default_tck_output_matches_source_derived_release_expectations(
         graphblocks_runtime,
         "_evaluate_retry_tck_case",
         reference_retry_tck_case_bridge,
+    )
+    monkeypatch.setattr(
+        graphblocks_runtime,
+        "_evaluate_sequence_tck_case",
+        reference_sequence_tck_case_bridge,
+        raising=False,
     )
 
     exit_code = graphblocks_testing.main(
@@ -1330,6 +1380,25 @@ def test_stable_tck_expectations_bind_bundled_c0_c1_profiles_and_contract_digest
     assert expectations["suites"]["retry"][
         "reference_implementation_version"
     ] == "1.0.0rc1"
+    assert expectations["suites"]["sequence"]["implementation"] == (
+        "graphblocks-runtime"
+    )
+    assert expectations["suites"]["sequence"]["implementation_version"] == (
+        "0.1.0"
+    )
+    assert expectations["suites"]["sequence"][
+        "implementation_artifact_distribution"
+    ] == "graphblocks-runtime"
+    assert expectations["suites"]["sequence"]["execution_claim"] == {
+        "executor_id": "rust-sequence-exact-differential",
+        "implementation": "graphblocks-runtime",
+        "language": "rust",
+        "comparison": "exact-native-reference",
+        "reference_implementation": "graphblocks-python",
+    }
+    assert expectations["suites"]["sequence"][
+        "reference_implementation_version"
+    ] == "1.0.0rc1"
     assert expectations["suites"]["runtime"]["implementation"] == (
         "graphblocks-runtime"
     )
@@ -1352,7 +1421,8 @@ def test_stable_tck_expectations_bind_bundled_c0_c1_profiles_and_contract_digest
     assert {
         expectation["implementation"]
         for suite, expectation in expectations["suites"].items()
-        if suite not in {"application-events", "compiler", "retry", "runtime"}
+        if suite
+        not in {"application-events", "compiler", "retry", "runtime", "sequence"}
     } == {"graphblocks-python"}
 
 

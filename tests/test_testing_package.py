@@ -195,6 +195,31 @@ def _fake_native_retry_tck_case(
     return json.loads(json.dumps(reference_contract))
 
 
+def _fake_native_sequence_tck_case(
+    raw_case: dict[str, object],
+) -> dict[str, object]:
+    import graphblocks_testing
+
+    raw_operations = raw_case.get("operations", [])
+    raw_expected = raw_case["expected"]
+    assert isinstance(raw_operations, list)
+    assert isinstance(raw_expected, dict)
+    case = graphblocks_testing.TckCase.sequence(
+        case_id=str(raw_case["name"]),
+        capacity=int(raw_case["capacity"]),
+        operations=tuple(dict(operation) for operation in raw_operations),
+        expected_state=raw_expected.get("state"),
+        expected_creation_error=raw_expected.get("creation_error"),
+    )
+    result = graphblocks_testing.TckRunner(
+        graphblocks_testing.stdlib_registry()
+    ).run_cases((case,)).results[0]
+    assert result.status == "passed"
+    reference_contract = result.observed["reference_contract"]
+    assert isinstance(reference_contract, dict)
+    return json.loads(json.dumps(reference_contract))
+
+
 def test_tck_report_requires_nonempty_identified_native_evidence(monkeypatch) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")
@@ -2454,6 +2479,78 @@ def test_testing_package_loads_shared_sequence_tck_cases(monkeypatch) -> None:
     }
     assert any(result.observed.get("creation_error") == "invalid_capacity" for result in report.results)
     assert "load_sequence_tck_cases" in graphblocks_testing.__all__
+
+
+def test_sequence_tck_is_exact_native_reference(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+    runners = importlib.import_module("graphblocks_testing.runners")
+    monkeypatch.setitem(
+        sys.modules,
+        "graphblocks_runtime",
+        SimpleNamespace(_evaluate_sequence_tck_case=_fake_native_sequence_tck_case),
+    )
+    cases = graphblocks_testing.load_sequence_tck_cases(
+        ROOT / "tck" / "sequence" / "cases.json"
+    )
+
+    report = runners._SequenceDifferentialTckRunner(
+        graphblocks_testing.stdlib_registry(),
+        suite="sequence",
+        implementation="graphblocks-runtime",
+        implementation_version="0.1.0",
+    ).run_cases(cases)
+
+    assert report.ok
+    assert all(
+        result.observed["runtime"] == "native"
+        and result.observed["native_reference_match"] is True
+        and result.observed["native_contract"]
+        == result.observed["reference_contract"]
+        for result in report.results
+    )
+    fifo = report.results[0].observed["native_contract"]
+    assert fifo["operationResults"][3] == {
+        "op": "recv",
+        "value": "first",
+        "len": 1,
+    }
+
+
+def test_sequence_tck_rejects_native_drift(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+    runners = importlib.import_module("graphblocks_testing.runners")
+
+    def drifted_sequence_case(raw_case: dict[str, object]) -> dict[str, object]:
+        contract = _fake_native_sequence_tck_case(raw_case)
+        contract["len"] = 1
+        return contract
+
+    monkeypatch.setitem(
+        sys.modules,
+        "graphblocks_runtime",
+        SimpleNamespace(_evaluate_sequence_tck_case=drifted_sequence_case),
+    )
+    case = graphblocks_testing.load_sequence_tck_cases(
+        ROOT / "tck" / "sequence" / "cases.json"
+    )[0]
+
+    report = runners._SequenceDifferentialTckRunner(
+        graphblocks_testing.stdlib_registry(),
+        suite="sequence",
+        implementation="graphblocks-runtime",
+        implementation_version="0.1.0",
+    ).run_cases((case,))
+
+    assert not report.ok
+    assert report.results[0].diagnostics[-1] == {
+        "code": "GB3006",
+        "message": (
+            "native sequence execution differs from the Python reference oracle"
+        ),
+        "path": "$.observed.reference_contract",
+    }
 
 
 def test_testing_package_loads_shared_exhaustion_tck_cases(monkeypatch) -> None:
@@ -10367,6 +10464,7 @@ def test_testing_package_cli_emits_observed_release_tck_identity(
     native_calls: list[str] = []
     native_application_event_calls: list[int] = []
     native_retry_calls: list[str] = []
+    native_sequence_calls: list[str] = []
     native_runtime_calls: list[str] = []
     reference_compile = graphblocks_testing.compile_graph
 
@@ -10410,6 +10508,12 @@ def test_testing_package_cli_emits_observed_release_tck_identity(
         native_retry_calls.append(str(raw_case["name"]))
         return _fake_native_retry_tck_case(raw_case)
 
+    def evaluate_sequence_tck_case(
+        raw_case: dict[str, object],
+    ) -> dict[str, object]:
+        native_sequence_calls.append(str(raw_case["name"]))
+        return _fake_native_sequence_tck_case(raw_case)
+
     monkeypatch.setattr(
         graphblocks_testing,
         "_native_compiler_wheel_artifact",
@@ -10433,6 +10537,7 @@ def test_testing_package_cli_emits_observed_release_tck_identity(
                 _fake_native_application_event_tck_case
             ),
             _evaluate_retry_tck_case=evaluate_retry_tck_case,
+            _evaluate_sequence_tck_case=evaluate_sequence_tck_case,
             evaluate_application_event_stream=evaluate_application_event_stream,
             run_stdlib_graph=run_stdlib_graph,
         ),
@@ -10520,6 +10625,24 @@ def test_testing_package_cli_emits_observed_release_tck_identity(
     )
     assert native_retry_calls == [
         result["case_id"] for result in retry_report["results"]
+    ]
+    sequence_report = payload["reports"]["sequence"]
+    assert sequence_report["evidence"]["implementation"] == "graphblocks-runtime"
+    assert sequence_report["evidence"]["implementation_version"] == "0.1.0"
+    assert sequence_report["evidence"]["implementation_artifact"] == (
+        compiler_artifact
+    )
+    assert sequence_report["evidence"]["authority_claim"]["comparison"] == (
+        "exact-native-reference"
+    )
+    assert sequence_report["evidence"]["execution_claim"]["executor_id"] == (
+        "rust-sequence-exact-differential"
+    )
+    assert sequence_report["evidence"]["reference_implementation_version"] == (
+        "1.0.0rc1"
+    )
+    assert native_sequence_calls == [
+        result["case_id"] for result in sequence_report["results"]
     ]
     compiler_report = payload["reports"]["compiler"]
     assert compiler_report["evidence"]["implementation"] == "graphblocks-runtime"

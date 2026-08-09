@@ -1056,7 +1056,13 @@ def _tck_expectations(
         raise RuntimeError("checked-in native compiler version is invalid") from error
     suites: dict[str, dict[str, object]] = {}
     contracts: list[dict[str, object]] = []
-    native_exact_suites = {"application-events", "compiler", "retry", "runtime"}
+    native_exact_suites = {
+        "application-events",
+        "compiler",
+        "retry",
+        "runtime",
+        "sequence",
+    }
     for cases_path in sorted(tck_root.glob("*/cases.json"), key=lambda path: path.parent.name):
         suite = cases_path.parent.name
         case_ids = [
@@ -1203,6 +1209,7 @@ def _tck_expectations(
             "compiler": "rust-compiler-exact-differential",
             "retry": "rust-retry-exact-differential",
             "runtime": "rust-runtime-exact-differential",
+            "sequence": "rust-sequence-exact-differential",
         }
         observed_execution_claims = {
             suite: {
@@ -1579,9 +1586,34 @@ def _require_release_evidence(
                                 "installed retry TCK evidence is not exact "
                                 "native/reference execution"
                             )
+                if (
+                    suite == "sequence"
+                    and isinstance(execution_claim, Mapping)
+                    and execution_claim.get("comparison")
+                    == "exact-native-reference"
+                ):
+                    for result in results:
+                        observed = result.get("observed")
+                        if (
+                            not isinstance(observed, Mapping)
+                            or observed.get("runtime") != "native"
+                            or observed.get("native_reference_match") is not True
+                            or observed.get("native_contract")
+                            != observed.get("reference_contract")
+                        ):
+                            raise RuntimeError(
+                                "installed sequence TCK evidence is not exact "
+                                "native/reference execution"
+                            )
         if expected_compiler_artifact is not None:
             expected_artifact = dict(expected_compiler_artifact)
-            for suite in ("application-events", "compiler", "retry", "runtime"):
+            for suite in (
+                "application-events",
+                "compiler",
+                "retry",
+                "runtime",
+                "sequence",
+            ):
                 report = reports.get(suite)
                 evidence = (
                     report.get("evidence") if isinstance(report, Mapping) else None

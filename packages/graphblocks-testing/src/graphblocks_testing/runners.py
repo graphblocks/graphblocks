@@ -286,6 +286,7 @@ class TckRunner:
     native_application_event_authority = False
     native_application_event_tck_authority = False
     native_retry_tck_authority = False
+    native_sequence_tck_authority = False
     native_runtime_authority = False
 
     registry: RuntimeRegistry
@@ -9116,110 +9117,192 @@ class TckRunner:
                         "path": "$.expected.creation_error",
                     }
                 )
-            return TckResult(
-                case_id=case.case_id,
-                kind=case.kind,
-                status="passed" if not diagnostics else "failed",
-                diagnostics=tuple(diagnostics),
-                observed=observed,
-            )
-        if case.expected_sequence_creation_error is not None:
-            diagnostics.append(
-                {
-                    "code": "SequenceCreationUnexpectedSuccess",
-                    "message": "sequence TCK case expected a creation error but sequence was created",
-                    "path": "$.expected.creation_error",
-                }
-            )
-
-        state = "open"
-        buffer: list[str] = []
-        for operation_index, operation in enumerate(case.sequence_operations):
-            op = operation.get("op")
-            if op == "send":
-                if "value" not in operation:
-                    diagnostics.append(
-                        {
-                            "code": "SequenceOperationInvalid",
-                            "message": "sequence send operation requires value",
-                            "path": f"$.operations[{operation_index}].value",
-                        }
-                    )
-                    actual = "invalid_operation"
-                elif state != "open":
-                    actual = f"closed_{state}"
-                elif len(buffer) >= capacity:
-                    actual = "full"
-                else:
-                    buffer.append(str(operation["value"]))
-                    actual = "ok"
-                expected = operation.get("expect")
-                if expected is not None and actual != expected:
-                    diagnostics.append(
-                        {
-                            "code": "SequenceSendResultMismatch",
-                            "message": "sequence send result did not match expected result",
-                            "path": f"$.operations[{operation_index}].expect",
-                        }
-                    )
-            elif op == "recv":
-                actual_value = buffer.pop(0) if buffer else None
-                expected_value = operation.get("value")
-                if actual_value != expected_value:
-                    diagnostics.append(
-                        {
-                            "code": "SequenceReceiveValueMismatch",
-                            "message": "sequence receive value did not match expected value",
-                            "path": f"$.operations[{operation_index}].value",
-                        }
-                    )
-            elif op == "complete":
-                if state == "open":
-                    state = "completed"
-                    actual = "ok"
-                else:
-                    actual = f"already_terminal_{state}"
-                expected = operation.get("expect")
-                if expected is not None and actual != expected:
-                    diagnostics.append(
-                        {
-                            "code": "SequenceCompleteResultMismatch",
-                            "message": "sequence complete result did not match expected result",
-                            "path": f"$.operations[{operation_index}].expect",
-                        }
-                    )
-            else:
+        else:
+            if case.expected_sequence_creation_error is not None:
                 diagnostics.append(
                     {
-                        "code": "SequenceOperationUnknown",
-                        "message": f"sequence TCK operation {op!r} is not supported",
-                        "path": f"$.operations[{operation_index}].op",
-                    }
-                )
-                continue
-            expected_len = operation.get("len")
-            if expected_len is not None and len(buffer) != expected_len:
-                diagnostics.append(
-                    {
-                        "code": "SequenceLengthMismatch",
-                        "message": "sequence buffer length did not match expected length",
-                        "path": f"$.operations[{operation_index}].len",
+                        "code": "SequenceCreationUnexpectedSuccess",
+                        "message": "sequence TCK case expected a creation error but sequence was created",
+                        "path": "$.expected.creation_error",
                     }
                 )
 
-        observed["state"] = state
-        observed["len"] = len(buffer)
-        if (
-            case.expected_sequence_state is not None
-            and state != case.expected_sequence_state
-        ):
-            diagnostics.append(
+            state = "open"
+            buffer: list[str] = []
+            operation_results: list[dict[str, object]] = []
+            for operation_index, operation in enumerate(case.sequence_operations):
+                op = operation.get("op")
+                if op == "send":
+                    if "value" not in operation:
+                        diagnostics.append(
+                            {
+                                "code": "SequenceOperationInvalid",
+                                "message": "sequence send operation requires value",
+                                "path": f"$.operations[{operation_index}].value",
+                            }
+                        )
+                        actual = "invalid_operation"
+                    elif state != "open":
+                        actual = f"closed_{state}"
+                    elif len(buffer) >= capacity:
+                        actual = "full"
+                    else:
+                        buffer.append(str(operation["value"]))
+                        actual = "ok"
+                    operation_results.append(
+                        {"op": "send", "result": actual, "len": len(buffer)}
+                    )
+                    expected = operation.get("expect")
+                    if expected is not None and actual != expected:
+                        diagnostics.append(
+                            {
+                                "code": "SequenceSendResultMismatch",
+                                "message": "sequence send result did not match expected result",
+                                "path": f"$.operations[{operation_index}].expect",
+                            }
+                        )
+                elif op == "recv":
+                    actual_value = buffer.pop(0) if buffer else None
+                    operation_results.append(
+                        {"op": "recv", "value": actual_value, "len": len(buffer)}
+                    )
+                    expected_value = operation.get("value")
+                    if actual_value != expected_value:
+                        diagnostics.append(
+                            {
+                                "code": "SequenceReceiveValueMismatch",
+                                "message": "sequence receive value did not match expected value",
+                                "path": f"$.operations[{operation_index}].value",
+                            }
+                        )
+                elif op == "complete":
+                    if state == "open":
+                        state = "completed"
+                        actual = "ok"
+                    else:
+                        actual = f"already_terminal_{state}"
+                    operation_results.append(
+                        {"op": "complete", "result": actual, "len": len(buffer)}
+                    )
+                    expected = operation.get("expect")
+                    if expected is not None and actual != expected:
+                        diagnostics.append(
+                            {
+                                "code": "SequenceCompleteResultMismatch",
+                                "message": "sequence complete result did not match expected result",
+                                "path": f"$.operations[{operation_index}].expect",
+                            }
+                        )
+                else:
+                    diagnostics.append(
+                        {
+                            "code": "SequenceOperationUnknown",
+                            "message": f"sequence TCK operation {op!r} is not supported",
+                            "path": f"$.operations[{operation_index}].op",
+                        }
+                    )
+                    continue
+                expected_len = operation.get("len")
+                if expected_len is not None and len(buffer) != expected_len:
+                    diagnostics.append(
+                        {
+                            "code": "SequenceLengthMismatch",
+                            "message": "sequence buffer length did not match expected length",
+                            "path": f"$.operations[{operation_index}].len",
+                        }
+                    )
+
+            observed.update(
                 {
-                    "code": "SequenceStateMismatch",
-                    "message": "sequence final state did not match expected state",
-                    "path": "$.expected.state",
+                    "state": state,
+                    "len": len(buffer),
+                    "operationResults": operation_results,
                 }
             )
+            if (
+                case.expected_sequence_state is not None
+                and state != case.expected_sequence_state
+            ):
+                diagnostics.append(
+                    {
+                        "code": "SequenceStateMismatch",
+                        "message": "sequence final state did not match expected state",
+                        "path": "$.expected.state",
+                    }
+                )
+
+        reference_contract = dict(observed)
+        observed["reference_contract"] = reference_contract
+        if self.native_sequence_tck_authority:
+            expected: dict[str, str] = {}
+            if case.expected_sequence_state is not None:
+                expected["state"] = case.expected_sequence_state
+            if case.expected_sequence_creation_error is not None:
+                expected["creation_error"] = case.expected_sequence_creation_error
+            try:
+                from graphblocks_runtime import _evaluate_sequence_tck_case
+
+                native_contract = _evaluate_sequence_tck_case(
+                    {
+                        "name": case.case_id,
+                        "capacity": capacity,
+                        "operations": [
+                            dict(operation) for operation in case.sequence_operations
+                        ],
+                        "expected": expected,
+                    }
+                )
+                if set(native_contract) != set(reference_contract):
+                    raise ValueError(
+                        "native sequence TCK result must use the closed contract"
+                    )
+                if "creation_error" in reference_contract:
+                    if type(native_contract.get("creation_error")) is not str:
+                        raise TypeError(
+                            "native sequence TCK creation error must be a string"
+                        )
+                elif (
+                    type(native_contract.get("state")) is not str
+                    or type(native_contract.get("len")) is not int
+                    or not isinstance(native_contract.get("operationResults"), list)
+                    or not all(
+                        isinstance(result, Mapping)
+                        for result in native_contract["operationResults"]
+                    )
+                ):
+                    raise TypeError(
+                        "native sequence TCK result contains invalid field values"
+                    )
+                native_reference_match = native_contract == reference_contract
+                observed.update(
+                    {
+                        "runtime": "native",
+                        "native_contract": native_contract,
+                        "native_reference_match": native_reference_match,
+                    }
+                )
+                if not native_reference_match:
+                    diagnostics.append(
+                        {
+                            "code": "NativeSequenceMismatch",
+                            "message": (
+                                "native sequence execution differs from the Python "
+                                "reference oracle"
+                            ),
+                            "path": "$.observed.reference_contract",
+                        }
+                    )
+            except Exception as error:
+                diagnostics.append(
+                    {
+                        "code": "NativeSequenceExecutionError",
+                        "message": str(error),
+                        "path": "$",
+                    }
+                )
+                observed.update(
+                    {"runtime": "native", "native_reference_match": False}
+                )
         return TckResult(
             case_id=case.case_id,
             kind=case.kind,
@@ -9426,6 +9509,15 @@ class _RetryDifferentialTckRunner(TckRunner):
     authority_comparison = "exact-native-reference"
     authority_reference_implementation = "graphblocks-python"
     native_retry_tck_authority = True
+
+
+class _SequenceDifferentialTckRunner(TckRunner):
+    __slots__ = ()
+    authority_executor_id = "rust-sequence-exact-differential"
+    authority_language = "rust"
+    authority_comparison = "exact-native-reference"
+    authority_reference_implementation = "graphblocks-python"
+    native_sequence_tck_authority = True
 
 
 class _NormativeCompilerTckRunner(TckRunner):
