@@ -152,6 +152,7 @@ def test_stable_tck_suites_emit_registered_numeric_diagnostics() -> None:
     assert set(codes) == {
         "application-events",
         "compiler",
+        "outcome",
         "retry",
         "runtime",
         "schema",
@@ -159,6 +160,7 @@ def test_stable_tck_suites_emit_registered_numeric_diagnostics() -> None:
         "tool-execution",
         "tool-lifecycle",
         "tool-result",
+        "typed-ports",
     }
     assert all(pattern.fullmatch(code) for code in codes.values())
     assert set(codes.values()) <= set(registered)

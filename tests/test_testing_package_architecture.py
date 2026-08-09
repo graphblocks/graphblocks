@@ -86,6 +86,7 @@ EXPECTED_PUBLIC_EXPORTS = (
     "load_exhaustion_tck_cases",
     "load_migration_tck_cases",
     "load_orchestration_tck_cases",
+    "load_outcome_tck_cases",
     "load_policy_tck_cases",
     "load_rag_tck_cases",
     "load_retry_tck_cases",
@@ -99,6 +100,7 @@ EXPECTED_PUBLIC_EXPORTS = (
     "load_tool_execution_tck_cases",
     "load_tool_lifecycle_tck_cases",
     "load_tool_result_tck_cases",
+    "load_typed_ports_tck_cases",
     "load_usage_tck_cases",
     "load_voice_tck_cases",
     "main",
@@ -113,7 +115,7 @@ def test_testing_package_root_is_a_bounded_export_only_facade() -> None:
     source = (PACKAGE_ROOT / "__init__.py").read_text(encoding="utf-8")
     module = ast.parse(source)
 
-    assert len(source.splitlines()) <= 250
+    assert len(source.splitlines()) <= 260
     assert not [
         node
         for node in module.body

@@ -1230,6 +1230,7 @@ def test_conformance_profile_set_resolves_inherited_tck_and_acceptance_requireme
         "compiler",
         "conversation",
         "documents",
+        "outcome",
         "rag",
         "retry",
         "runtime",
@@ -1238,6 +1239,7 @@ def test_conformance_profile_set_resolves_inherited_tck_and_acceptance_requireme
         "tool-execution",
         "tool-lifecycle",
         "tool-result",
+        "typed-ports",
     )
     assert claim.acceptance_applications == (
         "direct-file-analysis",
@@ -1356,6 +1358,7 @@ def test_conformance_profile_tck_suites_have_shared_fixture_manifests(monkeypatc
         "budget-race",
         "compiler",
         "exhaustion",
+        "outcome",
         "policy",
         "retry",
         "runtime",
@@ -1364,6 +1367,7 @@ def test_conformance_profile_tck_suites_have_shared_fixture_manifests(monkeypatc
         "tool-execution",
         "tool-lifecycle",
         "tool-result",
+        "typed-ports",
         "usage",
     )
     assert coverage.available_suites == (
@@ -1379,6 +1383,7 @@ def test_conformance_profile_tck_suites_have_shared_fixture_manifests(monkeypatc
             "exhaustion",
             "migration",
             "orchestration",
+        "outcome",
         "policy",
         "rag",
         "retry",
@@ -1388,6 +1393,7 @@ def test_conformance_profile_tck_suites_have_shared_fixture_manifests(monkeypatc
         "tool-execution",
         "tool-lifecycle",
         "tool-result",
+        "typed-ports",
         "usage",
         "voice",
     )
@@ -1539,6 +1545,7 @@ def test_conformance_profile_claim_validates_tck_and_acceptance_evidence(monkeyp
             "compiler",
             "conversation",
             "documents",
+            "outcome",
             "rag",
             "retry",
             "runtime",
@@ -1547,6 +1554,7 @@ def test_conformance_profile_claim_validates_tck_and_acceptance_evidence(monkeyp
             "tool-execution",
             "tool-lifecycle",
             "tool-result",
+            "typed-ports",
         )
     }
 
@@ -1891,6 +1899,13 @@ def test_conformance_profile_claim_reports_missing_inherited_tck(monkeypatch) ->
         {
             "code": "ConformanceTckMissing",
             "profile_id": "GB-C2-AI-APPLICATION",
+            "suite": "outcome",
+            "path": "$.profiles.GB-C2-AI-APPLICATION.tck.outcome",
+            "message": "claimed conformance profile requires a passing TCK suite with no report",
+        },
+        {
+            "code": "ConformanceTckMissing",
+            "profile_id": "GB-C2-AI-APPLICATION",
             "suite": "rag",
             "path": "$.profiles.GB-C2-AI-APPLICATION.tck.rag",
             "message": "claimed conformance profile requires a passing TCK suite with no report",
@@ -1942,6 +1957,13 @@ def test_conformance_profile_claim_reports_missing_inherited_tck(monkeypatch) ->
             "profile_id": "GB-C2-AI-APPLICATION",
             "suite": "tool-result",
             "path": "$.profiles.GB-C2-AI-APPLICATION.tck.tool-result",
+            "message": "claimed conformance profile requires a passing TCK suite with no report",
+        },
+        {
+            "code": "ConformanceTckMissing",
+            "profile_id": "GB-C2-AI-APPLICATION",
+            "suite": "typed-ports",
+            "path": "$.profiles.GB-C2-AI-APPLICATION.tck.typed-ports",
             "message": "claimed conformance profile requires a passing TCK suite with no report",
         },
         {
