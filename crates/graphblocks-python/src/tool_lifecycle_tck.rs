@@ -83,7 +83,7 @@ fn evaluate_incremental(
     let call = draft
         .into_tool_call(resolved_tool_id, created_at_unix_ms)
         .map_err(|error| format!("tool-lifecycle TCK case {case_name}: {error:?}"))?;
-    Ok(json!({
+    json!({
         "statuses": statuses,
         "finalizedBeforeComplete": finalized_before_complete,
         "finalizedAfterComplete": true,
@@ -92,7 +92,7 @@ fn evaluate_incremental(
     })
     .as_object()
     .cloned()
-    .ok_or_else(|| format!("tool-lifecycle TCK case {case_name} result must be an object"))?)
+    .ok_or_else(|| format!("tool-lifecycle TCK case {case_name} result must be an object"))
 }
 
 fn evaluate_admission(
@@ -203,7 +203,7 @@ fn evaluate_admission(
         admitted_at_unix_ms: optional_u64(case, "admittedAtUnixMs").unwrap_or(1_200),
     });
 
-    Ok(json!({
+    json!({
         "admitted": result.is_ok(),
         "schemaRejectedBeforeApproval": matches!(
             &result,
@@ -273,7 +273,7 @@ fn evaluate_admission(
     })
     .as_object()
     .cloned()
-    .ok_or_else(|| format!("tool-lifecycle TCK case {case_name} result must be an object"))?)
+    .ok_or_else(|| format!("tool-lifecycle TCK case {case_name} result must be an object"))
 }
 
 fn evaluate_approval_mutation(
@@ -315,7 +315,7 @@ fn evaluate_approval_mutation(
         idempotency_key: Some("idem-1".to_owned()),
         admitted_at_unix_ms: 1_200,
     });
-    Ok(json!({
+    json!({
         "initialApprovalValid": initial_valid,
         "mutatedApprovalValid": revised_valid,
         "digestChanged": revised.arguments_digest != call.arguments_digest,
@@ -324,7 +324,7 @@ fn evaluate_approval_mutation(
     })
     .as_object()
     .cloned()
-    .ok_or_else(|| format!("tool-lifecycle TCK case {case_name} result must be an object"))?)
+    .ok_or_else(|| format!("tool-lifecycle TCK case {case_name} result must be an object"))
 }
 
 fn resolved_process_tool(
