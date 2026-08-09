@@ -140,15 +140,14 @@ fn known_resources_cannot_bypass_stable_target_validation() -> Result<(), Box<dy
         assert_eq!(migration_error.code, expected_code);
         assert_ne!(migration_error.path, "$");
         let serialized = serde_json::to_value(migration_error)?;
-        assert_eq!(
-            serialized
-                .as_object()
-                .ok_or("serialized migration error must be an object")?
-                .keys()
-                .map(String::as_str)
-                .collect::<Vec<_>>(),
-            ["code", "message", "path"]
-        );
+        let mut serialized_fields = serialized
+            .as_object()
+            .ok_or("serialized migration error must be an object")?
+            .keys()
+            .map(String::as_str)
+            .collect::<Vec<_>>();
+        serialized_fields.sort_unstable();
+        assert_eq!(serialized_fields, ["code", "message", "path"]);
     }
     Ok(())
 }
