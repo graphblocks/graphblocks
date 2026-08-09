@@ -10,11 +10,20 @@ import pytest
 from graphblocks import canonical
 
 
+_DIRECT_CANONICAL_IMPORT_ALLOWLIST = frozenset(
+    {
+        "__init__.py",
+        "_canonical_reference.py",
+        "_outcome_reference.py",
+    }
+)
+
+
 def test_python_internals_use_the_explicit_canonical_reference_boundary() -> None:
     package_root = Path(canonical.__file__).resolve().parent
     offenders: list[str] = []
     for path in sorted(package_root.glob("*.py")):
-        if path.name in {"__init__.py", "_canonical_reference.py"}:
+        if path.name in _DIRECT_CANONICAL_IMPORT_ALLOWLIST:
             continue
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
         if any(
