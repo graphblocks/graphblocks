@@ -288,6 +288,7 @@ class TckRunner:
     native_retry_tck_authority = False
     native_sequence_tck_authority = False
     native_tool_execution_tck_authority = False
+    native_tool_lifecycle_tck_authority = False
     native_runtime_authority = False
 
     registry: RuntimeRegistry
@@ -7031,6 +7032,51 @@ class TckRunner:
                     "path": "$.observed.error",
                 }
             )
+        reference_contract = {
+            str(key): observed.get(str(key))
+            for key in expected
+            if str(key) != "errorContains"
+        }
+        observed["reference_contract"] = reference_contract
+        if self.native_tool_lifecycle_tck_authority:
+            try:
+                from graphblocks_runtime import _evaluate_tool_lifecycle_tck_case
+
+                native_contract = _evaluate_tool_lifecycle_tck_case(dict(fixture))
+                if set(native_contract) != set(reference_contract):
+                    raise ValueError(
+                        "native tool-lifecycle TCK result must use the closed contract"
+                    )
+                native_reference_match = native_contract == reference_contract
+                observed.update(
+                    {
+                        "runtime": "native",
+                        "native_contract": native_contract,
+                        "native_reference_match": native_reference_match,
+                    }
+                )
+                if not native_reference_match:
+                    diagnostics.append(
+                        {
+                            "code": "NativeToolLifecycleMismatch",
+                            "message": (
+                                "native tool-lifecycle differs from the Python "
+                                "reference oracle"
+                            ),
+                            "path": "$.observed.reference_contract",
+                        }
+                    )
+            except Exception as error:
+                diagnostics.append(
+                    {
+                        "code": "NativeToolLifecycleError",
+                        "message": str(error),
+                        "path": "$",
+                    }
+                )
+                observed.update(
+                    {"runtime": "native", "native_reference_match": False}
+                )
         return TckResult(
             case_id=case.case_id,
             kind=case.kind,
@@ -9680,6 +9726,15 @@ class _ToolExecutionDifferentialTckRunner(TckRunner):
     authority_comparison = "exact-native-reference"
     authority_reference_implementation = "graphblocks-python"
     native_tool_execution_tck_authority = True
+
+
+class _ToolLifecycleDifferentialTckRunner(TckRunner):
+    __slots__ = ()
+    authority_executor_id = "rust-tool-lifecycle-exact-differential"
+    authority_language = "rust"
+    authority_comparison = "exact-native-reference"
+    authority_reference_implementation = "graphblocks-python"
+    native_tool_lifecycle_tck_authority = True
 
 
 class _NormativeCompilerTckRunner(TckRunner):

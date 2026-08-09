@@ -111,6 +111,15 @@ def test_authority_matrix_binds_stable_profile_suite_language_claims() -> None:
         "comparison": "exact-native-reference",
         "reference_implementation": "graphblocks-python",
     }
+    assert suite_claims["tool-lifecycle"] == {
+        "executor_id": "rust-tool-lifecycle-exact-differential",
+        "implementation": "graphblocks-runtime",
+        "language": "rust",
+        "profile_id": "GB-C1-LOCAL-RUNTIME",
+        "authority_role": "activeLocalRuntime",
+        "comparison": "exact-native-reference",
+        "reference_implementation": "graphblocks-python",
+    }
     assert {
         claim["language"]
         for suite, claim in suite_claims.items()
@@ -122,6 +131,7 @@ def test_authority_matrix_binds_stable_profile_suite_language_claims() -> None:
             "runtime",
             "sequence",
             "tool-execution",
+            "tool-lifecycle",
         }
     } == {"python"}
 

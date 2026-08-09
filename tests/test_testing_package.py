@@ -238,6 +238,24 @@ def _fake_native_tool_execution_tck_case(
     return json.loads(json.dumps(reference_contract))
 
 
+def _fake_native_tool_lifecycle_tck_case(
+    raw_case: dict[str, object],
+) -> dict[str, object]:
+    import graphblocks_testing
+
+    case = graphblocks_testing.TckCase.tool_lifecycle(
+        case_id=str(raw_case["name"]),
+        fixture=dict(raw_case),
+    )
+    result = graphblocks_testing.TckRunner(
+        graphblocks_testing.stdlib_registry()
+    ).run_cases((case,)).results[0]
+    assert result.status == "passed"
+    reference_contract = result.observed["reference_contract"]
+    assert isinstance(reference_contract, dict)
+    return json.loads(json.dumps(reference_contract))
+
+
 def test_tck_report_requires_nonempty_identified_native_evidence(monkeypatch) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")
@@ -8777,6 +8795,80 @@ def test_testing_package_loads_shared_tool_lifecycle_tck_cases(monkeypatch) -> N
     assert "load_tool_lifecycle_tck_cases" in graphblocks_testing.__all__
 
 
+def test_tool_lifecycle_tck_is_exact_native_reference(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+    runners = importlib.import_module("graphblocks_testing.runners")
+    monkeypatch.setitem(
+        sys.modules,
+        "graphblocks_runtime",
+        SimpleNamespace(
+            _evaluate_tool_lifecycle_tck_case=(
+                _fake_native_tool_lifecycle_tck_case
+            )
+        ),
+    )
+    cases = graphblocks_testing.load_tool_lifecycle_tck_cases(
+        ROOT / "tck" / "tool-lifecycle" / "cases.json"
+    )
+
+    report = runners._ToolLifecycleDifferentialTckRunner(
+        graphblocks_testing.stdlib_registry(),
+        suite="tool-lifecycle",
+        implementation="graphblocks-runtime",
+        implementation_version="0.1.0",
+    ).run_cases(cases)
+
+    assert report.ok
+    assert all(
+        result.observed["runtime"] == "native"
+        and result.observed["native_reference_match"] is True
+        and result.observed["native_contract"]
+        == result.observed["reference_contract"]
+        for result in report.results
+    )
+
+
+def test_tool_lifecycle_tck_rejects_native_drift(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+    runners = importlib.import_module("graphblocks_testing.runners")
+
+    def drifted_tool_lifecycle_case(
+        raw_case: dict[str, object],
+    ) -> dict[str, object]:
+        contract = _fake_native_tool_lifecycle_tck_case(raw_case)
+        contract["finalizedAfterComplete"] = False
+        return contract
+
+    monkeypatch.setitem(
+        sys.modules,
+        "graphblocks_runtime",
+        SimpleNamespace(
+            _evaluate_tool_lifecycle_tck_case=drifted_tool_lifecycle_case
+        ),
+    )
+    case = graphblocks_testing.load_tool_lifecycle_tck_cases(
+        ROOT / "tck" / "tool-lifecycle" / "cases.json"
+    )[0]
+
+    report = runners._ToolLifecycleDifferentialTckRunner(
+        graphblocks_testing.stdlib_registry(),
+        suite="tool-lifecycle",
+        implementation="graphblocks-runtime",
+        implementation_version="0.1.0",
+    ).run_cases((case,))
+
+    assert not report.ok
+    assert report.results[0].diagnostics[-1] == {
+        "code": "GB3008",
+        "message": (
+            "native tool-lifecycle differs from the Python reference oracle"
+        ),
+        "path": "$.observed.reference_contract",
+    }
+
+
 def test_testing_package_loads_shared_tool_execution_tck_cases(monkeypatch) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")
@@ -10560,6 +10652,7 @@ def test_testing_package_cli_emits_observed_release_tck_identity(
     native_retry_calls: list[str] = []
     native_sequence_calls: list[str] = []
     native_tool_execution_calls: list[str] = []
+    native_tool_lifecycle_calls: list[str] = []
     native_runtime_calls: list[str] = []
     reference_compile = graphblocks_testing.compile_graph
 
@@ -10615,6 +10708,12 @@ def test_testing_package_cli_emits_observed_release_tck_identity(
         native_tool_execution_calls.append(str(raw_case["name"]))
         return _fake_native_tool_execution_tck_case(raw_case)
 
+    def evaluate_tool_lifecycle_tck_case(
+        raw_case: dict[str, object],
+    ) -> dict[str, object]:
+        native_tool_lifecycle_calls.append(str(raw_case["name"]))
+        return _fake_native_tool_lifecycle_tck_case(raw_case)
+
     monkeypatch.setattr(
         graphblocks_testing,
         "_native_compiler_wheel_artifact",
@@ -10641,6 +10740,9 @@ def test_testing_package_cli_emits_observed_release_tck_identity(
             _evaluate_sequence_tck_case=evaluate_sequence_tck_case,
             _evaluate_tool_execution_tck_case=(
                 evaluate_tool_execution_tck_case
+            ),
+            _evaluate_tool_lifecycle_tck_case=(
+                evaluate_tool_lifecycle_tck_case
             ),
             evaluate_application_event_stream=evaluate_application_event_stream,
             run_stdlib_graph=run_stdlib_graph,
@@ -10769,6 +10871,28 @@ def test_testing_package_cli_emits_observed_release_tck_identity(
     ] == "1.0.0rc1"
     assert native_tool_execution_calls == [
         result["case_id"] for result in tool_execution_report["results"]
+    ]
+    tool_lifecycle_report = payload["reports"]["tool-lifecycle"]
+    assert tool_lifecycle_report["evidence"]["implementation"] == (
+        "graphblocks-runtime"
+    )
+    assert tool_lifecycle_report["evidence"]["implementation_version"] == (
+        "0.1.0"
+    )
+    assert tool_lifecycle_report["evidence"]["implementation_artifact"] == (
+        compiler_artifact
+    )
+    assert tool_lifecycle_report["evidence"]["authority_claim"][
+        "comparison"
+    ] == "exact-native-reference"
+    assert tool_lifecycle_report["evidence"]["execution_claim"][
+        "executor_id"
+    ] == "rust-tool-lifecycle-exact-differential"
+    assert tool_lifecycle_report["evidence"][
+        "reference_implementation_version"
+    ] == "1.0.0rc1"
+    assert native_tool_lifecycle_calls == [
+        result["case_id"] for result in tool_lifecycle_report["results"]
     ]
     compiler_report = payload["reports"]["compiler"]
     assert compiler_report["evidence"]["implementation"] == "graphblocks-runtime"

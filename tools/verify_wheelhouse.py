@@ -1063,6 +1063,7 @@ def _tck_expectations(
         "runtime",
         "sequence",
         "tool-execution",
+        "tool-lifecycle",
     }
     for cases_path in sorted(tck_root.glob("*/cases.json"), key=lambda path: path.parent.name):
         suite = cases_path.parent.name
@@ -1212,6 +1213,7 @@ def _tck_expectations(
             "runtime": "rust-runtime-exact-differential",
             "sequence": "rust-sequence-exact-differential",
             "tool-execution": "rust-tool-execution-exact-differential",
+            "tool-lifecycle": "rust-tool-lifecycle-exact-differential",
         }
         observed_execution_claims = {
             suite: {
@@ -1626,6 +1628,25 @@ def _require_release_evidence(
                                 "installed tool-execution TCK evidence is not exact "
                                 "native/reference execution"
                             )
+                if (
+                    suite == "tool-lifecycle"
+                    and isinstance(execution_claim, Mapping)
+                    and execution_claim.get("comparison")
+                    == "exact-native-reference"
+                ):
+                    for result in results:
+                        observed = result.get("observed")
+                        if (
+                            not isinstance(observed, Mapping)
+                            or observed.get("runtime") != "native"
+                            or observed.get("native_reference_match") is not True
+                            or observed.get("native_contract")
+                            != observed.get("reference_contract")
+                        ):
+                            raise RuntimeError(
+                                "installed tool-lifecycle TCK evidence is not exact "
+                                "native/reference execution"
+                            )
         if expected_compiler_artifact is not None:
             expected_artifact = dict(expected_compiler_artifact)
             for suite in (
@@ -1635,6 +1656,7 @@ def _require_release_evidence(
                 "runtime",
                 "sequence",
                 "tool-execution",
+                "tool-lifecycle",
             ):
                 report = reports.get(suite)
                 evidence = (

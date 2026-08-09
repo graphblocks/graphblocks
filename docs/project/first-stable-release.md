@@ -284,7 +284,10 @@ results, buffer lengths, terminal state, and invalid-capacity creation through
 `rust-sequence-exact-differential`. The installed `tool-execution` report runs
 all 19 shared execution-plan fixtures through Rust and exact-compares creation
 errors, per-operation results, and final call states through
-`rust-tool-execution-exact-differential`. Two other C1 suites remain
+`rust-tool-execution-exact-differential`. The installed `tool-lifecycle` report
+executes all 18 shared argument, admission-order, approval, and idempotency
+fixtures in Rust and exact-compares their closed result flags through
+`rust-tool-lifecycle-exact-differential`. One other C1 suite remains
 `reference-only` transition work.
 
 ## Release gates

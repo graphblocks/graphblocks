@@ -567,8 +567,9 @@ record proves the active canonical/SchemaId and resource
 validation/migration utility slices. The complete schema and C1 runtime suite
 claims are phase-scoped: the bundled stable runtime suite now executes the Rust
 stdlib path with exact native/reference result and lifecycle comparison. The
-`application-events`, `retry`, `sequence`, and `tool-execution` suites also use
-installed Rust executors; the two remaining C1 suites stay `reference-only`.
+`application-events`, `retry`, `sequence`, `tool-execution`, and
+`tool-lifecycle` suites also use installed Rust executors; the one remaining C1
+suite stays `reference-only`.
 This preserves
 the boundary for other schema-facing behavior and the remaining stable C1
 transition blockers.
@@ -599,6 +600,10 @@ the Rust execution-plan implementation and exact-compares creation errors,
 per-operation ready/transition/policy-stop results, and final call states with
 the Python oracle. Its evidence is assigned to
 `rust-tool-execution-exact-differential` and the same exact runtime wheel.
+The installed `tool-lifecycle` report executes all 18 shared argument,
+admission-order, approval, and idempotency fixtures in Rust and exact-compares
+the closed result flags with the Python oracle. Its evidence is assigned to
+`rust-tool-lifecycle-exact-differential` and the same exact runtime wheel.
 The stable installed runtime API is now an explicit three-symbol allowlist with
 an exact signature snapshot. Its core execution result is projected to a
 closed checkpoint-free envelope, while persistence and other C4/X3 options use

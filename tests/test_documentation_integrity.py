@@ -2191,7 +2191,6 @@ def test_stable_release_matrix_is_complete_and_machine_readable() -> None:
             "local-flow",
         ],
         "remainingExactSuites": [
-            "tool-lifecycle",
             "tool-result",
         ],
         "runtimeCorrectnessGate": "REL-RUNTIME-CORRECTNESS",
@@ -2432,6 +2431,7 @@ def test_stable_release_matrix_is_complete_and_machine_readable() -> None:
             "runtime",
             "sequence",
             "tool-execution",
+            "tool-lifecycle",
         }
     }
     assert set(runtime_gate["completedEvidence"]) <= set(
