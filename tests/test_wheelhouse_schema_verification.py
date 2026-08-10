@@ -1037,7 +1037,7 @@ def test_release_tck_expectations_validate_observed_suite_identity(
                 ),
                 "fixture_digest": expected_digest,
                 "implementation": "graphblocks-python",
-                "implementation_version": "1.0.0rc4",
+                "implementation_version": "1.0.0rc5",
                 "suite_manifest_digest": expected_digest,
                 "execution_claim": {
                     "executor_id": "python-reference",
@@ -1070,7 +1070,7 @@ def test_release_tck_expectations_validate_observed_suite_identity(
                             ],
                             "fixture_digest": fixture_digest,
                             "implementation": "graphblocks-python",
-                            "implementation_version": "1.0.0rc4",
+                            "implementation_version": "1.0.0rc5",
                             "execution_claim": expected["suites"]["schema"][
                                 "execution_claim"
                             ],
@@ -1856,7 +1856,7 @@ def test_stable_tck_expectations_bind_bundled_c0_c1_profiles_and_contract_digest
     }
     assert expectations["suites"]["compiler"][
         "reference_implementation_version"
-    ] == "1.0.0rc4"
+    ] == "1.0.0rc5"
     assert expectations["suites"]["application-events"]["implementation"] == (
         "graphblocks-runtime"
     )
@@ -1872,7 +1872,7 @@ def test_stable_tck_expectations_bind_bundled_c0_c1_profiles_and_contract_digest
     }
     assert expectations["suites"]["application-events"][
         "reference_implementation_version"
-    ] == "1.0.0rc4"
+    ] == "1.0.0rc5"
     assert expectations["suites"]["outcome"]["implementation"] == (
         "graphblocks-runtime"
     )
@@ -1891,7 +1891,7 @@ def test_stable_tck_expectations_bind_bundled_c0_c1_profiles_and_contract_digest
     }
     assert expectations["suites"]["outcome"][
         "reference_implementation_version"
-    ] == "1.0.0rc4"
+    ] == "1.0.0rc5"
     assert expectations["suites"]["retry"]["implementation"] == (
         "graphblocks-runtime"
     )
@@ -1910,7 +1910,7 @@ def test_stable_tck_expectations_bind_bundled_c0_c1_profiles_and_contract_digest
     }
     assert expectations["suites"]["retry"][
         "reference_implementation_version"
-    ] == "1.0.0rc4"
+    ] == "1.0.0rc5"
     assert expectations["suites"]["sequence"]["implementation"] == (
         "graphblocks-runtime"
     )
@@ -1929,7 +1929,7 @@ def test_stable_tck_expectations_bind_bundled_c0_c1_profiles_and_contract_digest
     }
     assert expectations["suites"]["sequence"][
         "reference_implementation_version"
-    ] == "1.0.0rc4"
+    ] == "1.0.0rc5"
     assert expectations["suites"]["tool-execution"]["implementation"] == (
         "graphblocks-runtime"
     )
@@ -1948,7 +1948,7 @@ def test_stable_tck_expectations_bind_bundled_c0_c1_profiles_and_contract_digest
     }
     assert expectations["suites"]["tool-execution"][
         "reference_implementation_version"
-    ] == "1.0.0rc4"
+    ] == "1.0.0rc5"
     assert expectations["suites"]["tool-lifecycle"]["implementation"] == (
         "graphblocks-runtime"
     )
@@ -1967,7 +1967,7 @@ def test_stable_tck_expectations_bind_bundled_c0_c1_profiles_and_contract_digest
     }
     assert expectations["suites"]["tool-lifecycle"][
         "reference_implementation_version"
-    ] == "1.0.0rc4"
+    ] == "1.0.0rc5"
     assert expectations["suites"]["tool-result"]["implementation"] == (
         "graphblocks-runtime"
     )
@@ -1986,7 +1986,7 @@ def test_stable_tck_expectations_bind_bundled_c0_c1_profiles_and_contract_digest
     }
     assert expectations["suites"]["tool-result"][
         "reference_implementation_version"
-    ] == "1.0.0rc4"
+    ] == "1.0.0rc5"
     assert expectations["suites"]["typed-ports"]["implementation"] == (
         "graphblocks-runtime"
     )
@@ -2005,7 +2005,7 @@ def test_stable_tck_expectations_bind_bundled_c0_c1_profiles_and_contract_digest
     }
     assert expectations["suites"]["typed-ports"][
         "reference_implementation_version"
-    ] == "1.0.0rc4"
+    ] == "1.0.0rc5"
     assert expectations["suites"]["runtime"]["implementation"] == (
         "graphblocks-runtime"
     )
@@ -2024,7 +2024,7 @@ def test_stable_tck_expectations_bind_bundled_c0_c1_profiles_and_contract_digest
     }
     assert expectations["suites"]["runtime"][
         "reference_implementation_version"
-    ] == "1.0.0rc4"
+    ] == "1.0.0rc5"
     assert {
         expectation["implementation"]
         for suite, expectation in expectations["suites"].items()
