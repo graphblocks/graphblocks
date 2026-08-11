@@ -31,8 +31,8 @@ from tools.verify_wheelhouse import (
 COMMIT = "1" * 40
 TREE = "2" * 40
 CANDIDATE_COMMIT = "3" * 40
-RELEASE_REF = "refs/tags/v1.0.0-rc.9"
-RELEASE_VERSION = "1.0.0rc9"
+RELEASE_REF = "refs/tags/v1.0.0-rc.10"
+RELEASE_VERSION = "1.0.0rc10"
 BUILDER_ID = "https://github.com/graphblocks/graphblocks/.github/workflows/ci.yml"
 INVOCATION_ID = "https://github.com/graphblocks/graphblocks/actions/runs/1"
 RUSTC_OUTPUT = "rustc 1.94.0 (012345678 2026-01-01)"
@@ -1229,19 +1229,19 @@ def test_promotion_source_diff_allows_only_release_metadata(
     (repository / "docs" / "project").mkdir(parents=True)
     (repository / "compatibility").mkdir()
     (repository / "pyproject.toml").write_text(
-        '[project]\nversion = "1.0.0rc9"\n'
+        '[project]\nversion = "1.0.0rc10"\n'
         'classifiers = ["Development Status :: 4 - Beta"]\n',
         encoding="utf-8",
     )
     (repository / "src" / "graphblocks" / "_version.py").write_text(
-        '__version__ = "1.0.0rc9"\n', encoding="utf-8"
+        '__version__ = "1.0.0rc10"\n', encoding="utf-8"
     )
     (repository / "docs" / "project" / "status.md").write_text(
         "Candidate\n", encoding="utf-8"
     )
     cli_report = {
         "ok": True,
-        "implementation_version": "1.0.0rc9",
+        "implementation_version": "1.0.0rc10",
     }
     cli_report["contentDigest"] = canonical_hash(cli_report)
     (repository / "compatibility" / "stable-testing-cli-contracts.json").write_text(
@@ -1271,7 +1271,7 @@ def test_promotion_source_diff_allows_only_release_metadata(
         text=True,
     ).stdout.strip()
     subprocess.run(
-        ["git", "tag", "v1.0.0-rc.9", candidate_commit],
+        ["git", "tag", "v1.0.0-rc.10", candidate_commit],
         cwd=repository,
         check=True,
     )
@@ -1297,7 +1297,7 @@ def test_promotion_source_diff_allows_only_release_metadata(
     (repository / "compatibility" / "stable-testing-cli-contracts.json").write_bytes(
         module._promoted_testing_cli_snapshot(
             candidate_snapshot,
-            candidate_version="1.0.0rc9",
+            candidate_version="1.0.0rc10",
             final_version="1.0.0",
         )
     )
@@ -1415,7 +1415,7 @@ def test_promotion_source_diff_rejects_release_authority_drift(
         text=True,
     ).stdout.strip()
     subprocess.run(
-        ["git", "tag", "v1.0.0-rc.9", candidate_commit],
+        ["git", "tag", "v1.0.0-rc.10", candidate_commit],
         cwd=repository,
         check=True,
     )
@@ -1469,7 +1469,7 @@ def test_promotion_source_diff_requires_candidate_ref_to_resolve_exact_commit(
         check=True,
     )
     (repository / "pyproject.toml").write_text(
-        '[project]\nversion = "1.0.0rc9"\n', encoding="utf-8"
+        '[project]\nversion = "1.0.0rc10"\n', encoding="utf-8"
     )
     subprocess.run(["git", "add", "."], cwd=repository, check=True)
     subprocess.run(["git", "commit", "-qm", "candidate"], cwd=repository, check=True)
@@ -2023,11 +2023,11 @@ def test_final_release_resolves_hashes_and_verifies_every_promotion_report(
     assert any(name == "audit-closure.json" for name, _identity in verified)
     ci_identity = (
         "https://github.com/graphblocks/graphblocks/.github/workflows/"
-        "ci.yml@refs/tags/v1.0.0-rc.9"
+        "ci.yml@refs/tags/v1.0.0-rc.10"
     )
     promotion_identity = (
         "https://github.com/graphblocks/graphblocks/.github/workflows/"
-        "promotion-reports.yml@refs/tags/v1.0.0-rc.9"
+        "promotion-reports.yml@refs/tags/v1.0.0-rc.10"
     )
     assert [identity for _name, identity in verified].count(ci_identity) == 6
     assert [identity for _name, identity in verified].count(promotion_identity) == 18
@@ -2074,7 +2074,7 @@ def test_promotion_report_signature_rejects_a_self_declared_signer(tmp_path: Pat
             certificate_oidc_issuer=module.SIGSTORE_ISSUER,
             expected_certificate_identity=(
                 "https://github.com/graphblocks/graphblocks/.github/workflows/"
-                "promotion-reports.yml@refs/tags/v1.0.0-rc.9"
+                "promotion-reports.yml@refs/tags/v1.0.0-rc.10"
             ),
             cosign="cosign",
         )
@@ -2110,7 +2110,7 @@ def test_promotion_signature_returns_one_unambiguous_rekor_time(
     )
     identity = (
         "https://github.com/graphblocks/graphblocks/.github/workflows/"
-        "promotion-reports.yml@refs/tags/v1.0.0-rc.9"
+        "promotion-reports.yml@refs/tags/v1.0.0-rc.10"
     )
 
     observed = module._verify_promotion_report_signature(
@@ -2189,7 +2189,7 @@ def test_promotion_signature_rejects_invalid_rekor_times_after_cosign_verificati
         signature_path.write_bytes(module._canonical_json_bytes(bundle))
     identity = (
         "https://github.com/graphblocks/graphblocks/.github/workflows/"
-        "promotion-reports.yml@refs/tags/v1.0.0-rc.9"
+        "promotion-reports.yml@refs/tags/v1.0.0-rc.10"
     )
 
     with pytest.raises(module.ReleaseBundleError, match=error):
@@ -3865,7 +3865,7 @@ def test_release_bundle_signature_is_in_closure_and_pinned_to_release_workflow_r
     monkeypatch.setattr(module.subprocess, "run", fake_run)
     identity = (
         "https://github.com/graphblocks/graphblocks/.github/workflows/ci.yml@"
-        "refs/tags/v1.0.0-rc.9"
+        "refs/tags/v1.0.0-rc.10"
     )
     module.verify_release_bundle(
         bundle_dir=bundle,
@@ -3939,7 +3939,7 @@ def test_release_bundle_wraps_cosign_signature_verification_failure(
     monkeypatch.setattr(module.subprocess, "run", failing_run)
     identity = (
         "https://github.com/graphblocks/graphblocks/.github/workflows/ci.yml@"
-        "refs/tags/v1.0.0-rc.9"
+        "refs/tags/v1.0.0-rc.10"
     )
 
     with pytest.raises(
