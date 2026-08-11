@@ -2953,6 +2953,25 @@ def main(argv: list[str] | None = None) -> int:
     build_environment["SOURCE_DATE_EPOCH"] = "315532800"
     build_environment["PYTHONHASHSEED"] = "0"
     build_environment["RUSTC"] = args.rustc
+    if platform_module.system() == "Windows":
+        inherited_rust_flag_variables = tuple(
+            name
+            for name in (
+                "CARGO_ENCODED_RUSTFLAGS",
+                "CARGO_BUILD_RUSTFLAGS",
+                "RUSTFLAGS",
+            )
+            if build_environment.get(name)
+        )
+        if inherited_rust_flag_variables:
+            raise RuntimeError(
+                "Windows release builds reject inherited Rust compiler flags: "
+                + ", ".join(inherited_rust_flag_variables)
+            )
+        build_environment["CARGO_INCREMENTAL"] = "0"
+        build_environment["CARGO_ENCODED_RUSTFLAGS"] = (
+            "-C\x1flink-arg=/Brepro"
+        )
     catalog = load_package_catalog()
     matrix = build_wheel_matrix(ROOT, catalog=catalog)
     if not matrix.ok:

@@ -2838,3 +2838,66 @@ def test_wheelhouse_gate_derives_build_targets_from_package_catalog(
     with pytest.raises(ExpectedStop):
         module.main(["--wheelhouse", str(tmp_path / "wheelhouse")])
     assert matrix_calls == [(root, catalog)]
+
+
+def test_windows_wheelhouse_build_enforces_reproducible_msvc_linking(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    module = _load_wheelhouse_module()
+    root = tmp_path / "repo"
+    manifest = root / "pyproject.toml"
+    root.mkdir()
+    manifest.write_text(
+        '[project]\nname = "graphblocks"\nversion = "1.0.0"\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(module, "ROOT", root)
+    monkeypatch.setattr(module.platform_module, "system", lambda: "Windows")
+    monkeypatch.setattr(
+        module,
+        "observe_rustc_identity",
+        lambda _rustc: {"version": "rustc 1.94.0", "verbose": "mock"},
+    )
+    monkeypatch.setattr(module, "_pinned_build_tool_identities", lambda: {})
+    monkeypatch.setattr(module, "_resolved_build_environment", lambda **_kwargs: {})
+    monkeypatch.setattr(module, "load_package_catalog", lambda: {})
+    monkeypatch.setattr(
+        module,
+        "build_wheel_matrix",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            ok=True,
+            targets=(SimpleNamespace(manifest="pyproject.toml"),),
+            diagnostics=(),
+        ),
+    )
+
+    observed_environments: list[dict[str, str]] = []
+
+    class ExpectedStop(Exception):
+        pass
+
+    def stop_after_first_build(
+        command: list[str], **kwargs: object
+    ) -> subprocess.CompletedProcess[str] | None:
+        assert "build" in command
+        environment = kwargs["env"]
+        assert isinstance(environment, dict)
+        observed_environments.append(environment)
+        raise ExpectedStop
+
+    monkeypatch.setattr(module.subprocess, "run", stop_after_first_build)
+    monkeypatch.setenv("RUSTFLAGS", "-C opt-level=1")
+    with pytest.raises(RuntimeError, match="inherited Rust compiler flags"):
+        module.main(["--wheelhouse", str(tmp_path / "conflicting-wheelhouse")])
+
+    monkeypatch.delenv("RUSTFLAGS")
+    monkeypatch.setenv("CARGO_INCREMENTAL", "1")
+    with pytest.raises(ExpectedStop):
+        module.main(["--wheelhouse", str(tmp_path / "wheelhouse")])
+
+    assert len(observed_environments) == 1
+    assert observed_environments[0]["CARGO_INCREMENTAL"] == "0"
+    assert observed_environments[0]["CARGO_ENCODED_RUSTFLAGS"] == (
+        "-C\x1flink-arg=/Brepro"
+    )
