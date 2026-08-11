@@ -113,6 +113,9 @@ NATIVE_RUNTIME_REOPEN_RUN_ID = "installed-native-runtime-reopen"
 MAX_NATIVE_EXTENSION_SIZE = 256 * 1024 * 1024
 MAX_SDIST_MEMBER_COUNT = 100_000
 MAX_SDIST_UNPACKED_SIZE = 512 * 1024 * 1024
+ZIP_CENTRAL_DIRECTORY_HEADER_SIZE = 46
+ZIP_END_OF_CENTRAL_DIRECTORY_SIZE = 22
+ZIP_HOST_SYSTEM_UNIX = 3
 WINDOWS_RESERVED_PATH_NAMES = {
     "con",
     "prn",
@@ -2337,6 +2340,187 @@ def _private_build_directory(path: Path) -> Iterator[Path]:
         shutil.rmtree(path)
 
 
+def normalize_platform_independent_wheel_host_system(path: Path) -> bool:
+    """Canonicalize the ZIP creator OS without rewriting wheel member streams."""
+    try:
+        _distribution, _version, _build, tags = parse_wheel_filename(path.name)
+    except ValueError as error:
+        raise RuntimeError(f"invalid wheel filename: {path.name}") from error
+    if not tags or any(tag.abi != "none" or tag.platform != "any" for tag in tags):
+        return False
+
+    try:
+        if path.is_symlink() or not path.is_file():
+            raise RuntimeError("platform-independent wheel must be a regular file")
+        archive_size = path.stat().st_size
+        if not 0 < archive_size <= MAX_SDIST_UNPACKED_SIZE:
+            raise RuntimeError("platform-independent wheel has an invalid archive size")
+        wheel_bytes = bytearray(path.read_bytes())
+        with zipfile.ZipFile(io.BytesIO(wheel_bytes)) as archive:
+            members = archive.infolist()
+            if not members or len(members) > MAX_SDIST_MEMBER_COUNT:
+                raise RuntimeError("platform-independent wheel has an invalid member count")
+            if sum(member.file_size for member in members) > MAX_SDIST_UNPACKED_SIZE:
+                raise RuntimeError("platform-independent wheel exceeds the unpacked size cap")
+            if archive.comment:
+                raise RuntimeError("platform-independent wheel must not have a ZIP comment")
+            if len({member.filename for member in members}) != len(members):
+                raise RuntimeError("platform-independent wheel has duplicate members")
+            if archive.testzip() is not None:
+                raise RuntimeError("platform-independent wheel has a corrupt member")
+            original_metadata = tuple(
+                (
+                    member.filename,
+                    member.date_time,
+                    member.compress_type,
+                    member.comment,
+                    member.extra,
+                    member.internal_attr,
+                    member.external_attr,
+                    member.create_version,
+                    member.extract_version,
+                    member.reserved,
+                    member.flag_bits,
+                    member.volume,
+                    member.CRC,
+                    member.compress_size,
+                    member.file_size,
+                    member.header_offset,
+                )
+                for member in members
+            )
+    except (OSError, zipfile.BadZipFile) as error:
+        raise RuntimeError(
+            f"platform-independent wheel is not a valid ZIP archive: {path.name}"
+        ) from error
+
+    if len(wheel_bytes) < ZIP_END_OF_CENTRAL_DIRECTORY_SIZE:
+        raise RuntimeError("platform-independent wheel has a truncated ZIP directory")
+    eocd_offset = len(wheel_bytes) - ZIP_END_OF_CENTRAL_DIRECTORY_SIZE
+    if wheel_bytes[eocd_offset : eocd_offset + 4] != b"PK\x05\x06":
+        raise RuntimeError("platform-independent wheel has a non-canonical ZIP ending")
+    disk_number = int.from_bytes(wheel_bytes[eocd_offset + 4 : eocd_offset + 6], "little")
+    central_directory_disk = int.from_bytes(
+        wheel_bytes[eocd_offset + 6 : eocd_offset + 8], "little"
+    )
+    disk_member_count = int.from_bytes(
+        wheel_bytes[eocd_offset + 8 : eocd_offset + 10], "little"
+    )
+    total_member_count = int.from_bytes(
+        wheel_bytes[eocd_offset + 10 : eocd_offset + 12], "little"
+    )
+    central_directory_size = int.from_bytes(
+        wheel_bytes[eocd_offset + 12 : eocd_offset + 16], "little"
+    )
+    central_directory_offset = int.from_bytes(
+        wheel_bytes[eocd_offset + 16 : eocd_offset + 20], "little"
+    )
+    comment_size = int.from_bytes(
+        wheel_bytes[eocd_offset + 20 : eocd_offset + 22], "little"
+    )
+    if (
+        disk_number != 0
+        or central_directory_disk != 0
+        or disk_member_count != len(members)
+        or total_member_count != len(members)
+        or comment_size != 0
+        or central_directory_offset + central_directory_size != eocd_offset
+    ):
+        raise RuntimeError(
+            "platform-independent wheel has an unsupported ZIP directory layout"
+        )
+
+    cursor = central_directory_offset
+    changed = False
+    for member in members:
+        fixed_end = cursor + ZIP_CENTRAL_DIRECTORY_HEADER_SIZE
+        if (
+            fixed_end > eocd_offset
+            or wheel_bytes[cursor : cursor + 4] != b"PK\x01\x02"
+        ):
+            raise RuntimeError(
+                "platform-independent wheel has an invalid central directory member"
+            )
+        filename_size = int.from_bytes(wheel_bytes[cursor + 28 : cursor + 30], "little")
+        extra_size = int.from_bytes(wheel_bytes[cursor + 30 : cursor + 32], "little")
+        member_comment_size = int.from_bytes(
+            wheel_bytes[cursor + 32 : cursor + 34], "little"
+        )
+        next_cursor = fixed_end + filename_size + extra_size + member_comment_size
+        if filename_size == 0 or next_cursor > eocd_offset:
+            raise RuntimeError(
+                "platform-independent wheel has an invalid central directory size"
+            )
+        host_system = wheel_bytes[cursor + 5]
+        if host_system not in {0, ZIP_HOST_SYSTEM_UNIX}:
+            raise RuntimeError(
+                "platform-independent wheel uses an unsupported ZIP creator system"
+            )
+        if host_system != member.create_system:
+            raise RuntimeError(
+                "platform-independent wheel ZIP creator metadata is inconsistent"
+            )
+        if host_system != ZIP_HOST_SYSTEM_UNIX:
+            wheel_bytes[cursor + 5] = ZIP_HOST_SYSTEM_UNIX
+            changed = True
+        cursor = next_cursor
+    if cursor != eocd_offset:
+        raise RuntimeError(
+            "platform-independent wheel has trailing central directory records"
+        )
+    if not changed:
+        return False
+
+    try:
+        with zipfile.ZipFile(io.BytesIO(wheel_bytes)) as archive:
+            normalized_members = archive.infolist()
+            if archive.testzip() is not None:
+                raise RuntimeError("normalized platform-independent wheel is corrupt")
+            normalized_metadata = tuple(
+                (
+                    member.filename,
+                    member.date_time,
+                    member.compress_type,
+                    member.comment,
+                    member.extra,
+                    member.internal_attr,
+                    member.external_attr,
+                    member.create_version,
+                    member.extract_version,
+                    member.reserved,
+                    member.flag_bits,
+                    member.volume,
+                    member.CRC,
+                    member.compress_size,
+                    member.file_size,
+                    member.header_offset,
+                )
+                for member in normalized_members
+            )
+            if normalized_metadata != original_metadata or any(
+                member.create_system != ZIP_HOST_SYSTEM_UNIX
+                for member in normalized_members
+            ):
+                raise RuntimeError(
+                    "platform-independent wheel normalization changed member metadata"
+                )
+    except zipfile.BadZipFile as error:
+        raise RuntimeError("normalized platform-independent wheel is invalid") from error
+
+    temporary_path = path.with_name(f".{path.name}.host-system")
+    if temporary_path.exists() or temporary_path.is_symlink():
+        raise RuntimeError(
+            f"wheel normalization temporary path already exists: {temporary_path}"
+        )
+    try:
+        with temporary_path.open("xb") as output:
+            output.write(wheel_bytes)
+        os.replace(temporary_path, path)
+    finally:
+        temporary_path.unlink(missing_ok=True)
+    return True
+
+
 def _safe_extract_sdist(sdist: Path, destination: Path) -> Path:
     """Extract one PEP 625 ``.tar.gz`` sdist without trusting archive paths/types."""
     try:
@@ -2846,6 +3030,8 @@ def main(argv: list[str] | None = None) -> int:
             )
 
     built_wheels = tuple(sorted(wheelhouse.glob("*.whl")))
+    for built_wheel in built_wheels:
+        normalize_platform_independent_wheel_host_system(built_wheel)
     built_sdists = tuple(sorted(sdist_dir.glob("*.tar.gz")))
     if len(built_wheels) != len(manifests):
         raise RuntimeError(

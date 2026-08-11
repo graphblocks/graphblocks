@@ -101,14 +101,43 @@ def _write_mock_wheel(
     )["project"]
     wheel_name = str(project["name"]).replace("-", "_")
     destination = output_root / f"{wheel_name}-{project['version']}-py3-none-any.whl"
+    members = [(f"{wheel_name}/__init__.py", b"")]
+    if module.canonicalize_name(str(project["name"])) == "graphblocks-runtime":
+        members.append(
+            ("graphblocks_runtime/_native.abi3.so", b"mock-native-extension")
+        )
     with zipfile.ZipFile(destination, "w") as archive:
-        archive.writestr(f"{wheel_name}/__init__.py", b"")
-        if module.canonicalize_name(str(project["name"])) == "graphblocks-runtime":
-            archive.writestr(
-                "graphblocks_runtime/_native.abi3.so",
-                b"mock-native-extension",
-            )
+        for name, content in members:
+            info = zipfile.ZipInfo(name, date_time=(1980, 1, 1, 0, 0, 0))
+            info.create_system = 0
+            info.external_attr = 0o100644 << 16
+            archive.writestr(info, content)
     return destination
+
+
+def _write_host_system_wheel(
+    destination: Path,
+    *,
+    create_system: int,
+) -> dict[str, bytes]:
+    members = {
+        "graphblocks/__init__.py": b'__version__ = "1.0.0rc5"\n',
+        "graphblocks-1.0.0rc5.dist-info/METADATA": (
+            b"Metadata-Version: 2.4\nName: graphblocks\nVersion: 1.0.0rc5\n"
+        ),
+        "graphblocks-1.0.0rc5.dist-info/WHEEL": (
+            b"Wheel-Version: 1.0\nTag: py3-none-any\n"
+        ),
+        "graphblocks-1.0.0rc5.dist-info/RECORD": b"",
+    }
+    with zipfile.ZipFile(destination, "w") as archive:
+        for name, content in members.items():
+            info = zipfile.ZipInfo(name, date_time=(1980, 1, 1, 0, 0, 0))
+            info.compress_type = zipfile.ZIP_DEFLATED
+            info.create_system = create_system
+            info.external_attr = 0o100644 << 16
+            archive.writestr(info, content)
+    return members
 
 
 def _native_runtime_persistence_payload(
@@ -491,6 +520,52 @@ def test_private_build_directory_fails_closed_on_collision_and_cleans_up(
             assert created_root == build_root
             raise ValueError("build failed")
     assert not build_root.exists()
+
+
+def test_platform_independent_wheel_host_system_normalization_is_cross_platform(
+    tmp_path: Path,
+) -> None:
+    module = _load_wheelhouse_module()
+    unix_wheel = tmp_path / "unix" / "graphblocks-1.0.0rc5-py3-none-any.whl"
+    windows_wheel = tmp_path / "windows" / "graphblocks-1.0.0rc5-py3-none-any.whl"
+    unix_wheel.parent.mkdir()
+    windows_wheel.parent.mkdir()
+    members = _write_host_system_wheel(unix_wheel, create_system=3)
+    assert members == _write_host_system_wheel(windows_wheel, create_system=0)
+    assert unix_wheel.read_bytes() != windows_wheel.read_bytes()
+
+    assert module.normalize_platform_independent_wheel_host_system(unix_wheel) is False
+    assert module.normalize_platform_independent_wheel_host_system(windows_wheel) is True
+
+    assert unix_wheel.read_bytes() == windows_wheel.read_bytes()
+    with zipfile.ZipFile(windows_wheel) as archive:
+        assert archive.testzip() is None
+        assert {info.create_system for info in archive.infolist()} == {3}
+        assert {info.filename: archive.read(info) for info in archive.infolist()} == members
+
+
+def test_platform_specific_wheel_host_system_is_not_rewritten(tmp_path: Path) -> None:
+    module = _load_wheelhouse_module()
+    wheel = tmp_path / "graphblocks-1.0.0rc5-cp311-abi3-win_amd64.whl"
+    _write_host_system_wheel(wheel, create_system=0)
+    original = wheel.read_bytes()
+
+    assert module.normalize_platform_independent_wheel_host_system(wheel) is False
+    assert wheel.read_bytes() == original
+
+
+def test_platform_independent_wheel_host_system_normalization_fails_closed(
+    tmp_path: Path,
+) -> None:
+    module = _load_wheelhouse_module()
+    wheel = tmp_path / "graphblocks-1.0.0rc5-py3-none-any.whl"
+    _write_host_system_wheel(wheel, create_system=0)
+    malformed = bytearray(wheel.read_bytes())
+    malformed[-18:-16] = (1).to_bytes(2, "little")
+    wheel.write_bytes(malformed)
+
+    with pytest.raises(RuntimeError, match="unsupported ZIP directory layout"):
+        module.normalize_platform_independent_wheel_host_system(wheel)
 
 
 def test_installed_native_authority_probe_exercises_public_and_reference_paths() -> None:
@@ -2658,6 +2733,9 @@ def test_wheelhouse_gate_uses_pep503_distribution_identity(monkeypatch, tmp_path
         f"graphblocks_runtime-{runtime_version}-py3-none-any.whl",
         f"graphblocks_testing-{testing_version}-py3-none-any.whl",
     }
+    for wheel in wheelhouse.glob("*.whl"):
+        with zipfile.ZipFile(wheel) as archive:
+            assert {member.create_system for member in archive.infolist()} == {3}
     assert {path.name for path in sdist_root.glob("*.tar.gz")} == {
         f"graphblocks-{root_version}.tar.gz",
         f"graphblocks_runtime-{runtime_version}.tar.gz",
