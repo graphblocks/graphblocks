@@ -3836,17 +3836,38 @@ def _aggregate_sbom(
                 continue
             if _component_properties(component).get("graphblocks:release-artifact") == "true":
                 continue
-            encoded = _canonical_json_bytes(component)
-            reference = component.get("bom-ref")
+            aggregate_component = component
+            external_references = component.get("externalReferences")
+            if isinstance(external_references, list):
+                retained_references = [
+                    external_reference
+                    for external_reference in external_references
+                    if not (
+                        isinstance(external_reference, dict)
+                        and external_reference.get("type") == "distribution"
+                        and external_reference.get("comment")
+                        == "PackageSource: Archive"
+                    )
+                ]
+                if len(retained_references) != len(external_references):
+                    aggregate_component = dict(component)
+                    if retained_references:
+                        aggregate_component["externalReferences"] = (
+                            retained_references
+                        )
+                    else:
+                        aggregate_component.pop("externalReferences", None)
+            encoded = _canonical_json_bytes(aggregate_component)
+            reference = aggregate_component.get("bom-ref")
             if isinstance(reference, str) and reference:
                 previous = referenced_components.get(reference)
                 if previous is not None and previous[0] != encoded:
                     raise ReleaseBundleError(
                         "platform SBOMs disagree on a referenced dependency component"
                     )
-                referenced_components[reference] = (encoded, component)
+                referenced_components[reference] = (encoded, aggregate_component)
             else:
-                dependency_components[encoded] = component
+                dependency_components[encoded] = aggregate_component
         for reference, dependencies in _sbom_dependency_graph(
             platform.sbom_payload
         ).items():

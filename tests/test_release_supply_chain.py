@@ -829,6 +829,46 @@ def _inputs(
     return inputs
 
 
+def _add_platform_archive_references(platform_inputs: Path) -> None:
+    for platform_root in platform_inputs.iterdir():
+        sbom_path = platform_root / "platform-evidence" / "sbom.cdx.json"
+        payload = json.loads(sbom_path.read_text(encoding="utf-8"))
+        for component in payload["components"]:
+            if component.get("name") not in {
+                "graphblocks-runtime",
+                "graphblocks-testing",
+            }:
+                continue
+            component["externalReferences"] = [
+                {
+                    "comment": "PackageSource: Archive",
+                    "hashes": [
+                        {
+                            "alg": "SHA-256",
+                            "content": (
+                                "a" * 64
+                                if "windows-latest" in platform_root.name
+                                else "b" * 64
+                            ),
+                        }
+                    ],
+                    "type": "distribution",
+                    "url": (
+                        f"file:///{platform_root.name}/{component['name']}.whl"
+                    ),
+                },
+                {
+                    "comment": "from packaging metadata Project-URL: Documentation",
+                    "type": "documentation",
+                    "url": "https://graphblocks.example/docs",
+                },
+            ]
+        sbom_path.write_text(
+            json.dumps(payload, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+
+
 def _audit_closure_report(module: ModuleType) -> dict[str, object]:
     return {
         "candidateRef": RELEASE_REF,
@@ -2924,6 +2964,83 @@ def test_release_bundle_output_is_deterministic(tmp_path: Path) -> None:
         for path in second.rglob("*")
         if path.is_file()
     }
+
+
+def test_aggregate_sbom_drops_platform_archive_references(
+    tmp_path: Path,
+) -> None:
+    module = _load_module()
+    inputs = _inputs(module, tmp_path)
+    _add_platform_archive_references(inputs)
+    bundle = tmp_path / "bundle"
+
+    module.assemble_release_bundle(
+        platform_inputs_dir=inputs,
+        output_dir=bundle,
+        git_commit=COMMIT,
+        release_ref=RELEASE_REF,
+        builder_id=BUILDER_ID,
+        invocation_id=INVOCATION_ID,
+    )
+
+    aggregate = json.loads((bundle / "SBOM.cdx.json").read_text(encoding="utf-8"))
+    logical_components = {
+        component["name"]: component
+        for component in aggregate["components"]
+        if component.get("name")
+        in {"graphblocks-runtime", "graphblocks-testing"}
+    }
+    assert set(logical_components) == {
+        "graphblocks-runtime",
+        "graphblocks-testing",
+    }
+    assert all(
+        component["externalReferences"]
+        == [
+            {
+                "comment": "from packaging metadata Project-URL: Documentation",
+                "type": "documentation",
+                "url": "https://graphblocks.example/docs",
+            }
+        ]
+        for component in logical_components.values()
+    )
+
+
+def test_aggregate_sbom_still_rejects_non_archive_component_drift(
+    tmp_path: Path,
+) -> None:
+    module = _load_module()
+    inputs = _inputs(module, tmp_path)
+    _add_platform_archive_references(inputs)
+    platform_root = next(iter(inputs.iterdir()))
+    sbom_path = platform_root / "platform-evidence" / "sbom.cdx.json"
+    payload = json.loads(sbom_path.read_text(encoding="utf-8"))
+    runtime_component = next(
+        component
+        for component in payload["components"]
+        if component.get("name") == "graphblocks-runtime"
+    )
+    runtime_component["externalReferences"][1]["url"] = (
+        "https://graphblocks.example/drifted-docs"
+    )
+    sbom_path.write_text(
+        json.dumps(payload, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(
+        module.ReleaseBundleError,
+        match="platform SBOMs disagree on a referenced dependency component",
+    ):
+        module.assemble_release_bundle(
+            platform_inputs_dir=inputs,
+            output_dir=tmp_path / "bundle",
+            git_commit=COMMIT,
+            release_ref=RELEASE_REF,
+            builder_id=BUILDER_ID,
+            invocation_id=INVOCATION_ID,
+        )
 
 
 def test_direct_assembly_resolves_release_ref_to_requested_commit(
