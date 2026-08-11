@@ -4689,6 +4689,8 @@ def test_candidate_promotion_report_workflow_freezes_before_isolated_signing() -
     assert "github.repository == 'graphblocks/graphblocks'" in validation["if"]
     assert "startsWith(github.ref, 'refs/tags/v1.0.0-rc.')" in validation["if"]
     validation_steps = {step["name"]: step for step in validation["steps"]}
+    checkout = validation_steps["Check out the candidate source"]
+    assert checkout["with"] == {"fetch-depth": 0}
     freeze_command = validation_steps["Validate and freeze the public report"]["run"]
     assert "freeze-promotion-report" in freeze_command
     assert "--candidate-ref \"$GITHUB_REF\"" in freeze_command
