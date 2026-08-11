@@ -79,6 +79,7 @@ except ModuleNotFoundError:  # Direct `python tools/release_supply_chain.py` exe
         CYCLONEDX_BOM_VERSION,
         PINNED_BUILD_TOOLS,
         PINNED_RUSTC_VERSION,
+        native_runtime_wheel_member_artifact,
         parse_rustc_identity,
         release_evidence_expectations,
         validate_installed_native_authority_evidence,

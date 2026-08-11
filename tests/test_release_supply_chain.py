@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import builtins
 from datetime import datetime, timezone
 from decimal import Decimal
 import importlib.util
@@ -202,6 +203,30 @@ def _load_module() -> ModuleType:
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+def test_direct_script_fallback_imports_native_runtime_wheel_helper(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tools_path = Path(__file__).parents[1] / "tools"
+    monkeypatch.syspath_prepend(str(tools_path))
+    real_import = builtins.__import__
+
+    def direct_script_import(
+        name: str,
+        globals: dict[str, object] | None = None,
+        locals: dict[str, object] | None = None,
+        fromlist: tuple[str, ...] = (),
+        level: int = 0,
+    ) -> object:
+        if name in {"tools.stable_security_gates", "tools.verify_wheelhouse"}:
+            raise ModuleNotFoundError(f"No module named '{name}'", name=name)
+        return real_import(name, globals, locals, fromlist, level)
+
+    monkeypatch.setattr(builtins, "__import__", direct_script_import)
+    module = _load_module()
+
+    assert callable(module.native_runtime_wheel_member_artifact)
 
 
 def _with_content_digest(payload: dict[str, object]) -> dict[str, object]:
