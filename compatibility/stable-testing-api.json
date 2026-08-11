@@ -432,7 +432,7 @@
             "compare": true,
             "default": {
               "kind": "value",
-              "value": "1.0.0rc5"
+              "value": "1.0.0rc6"
             },
             "hash": null,
             "init": true,
@@ -461,7 +461,7 @@
       "kind": "class",
       "path": "graphblocks_testing.TckRunner",
       "profile": "GB-C1-LOCAL-RUNTIME",
-      "signature": "(registry: 'RuntimeRegistry', profile: 'str' = 'local', evidence_dir: 'Path | None' = None, suite: 'str | None' = None, fixture_digest: 'str | None' = None, implementation: 'str' = 'graphblocks-python', implementation_version: 'str' = '1.0.0rc5') -> None",
+      "signature": "(registry: 'RuntimeRegistry', profile: 'str' = 'local', evidence_dir: 'Path | None' = None, suite: 'str | None' = None, fixture_digest: 'str | None' = None, implementation: 'str' = 'graphblocks-python', implementation_version: 'str' = '1.0.0rc6') -> None",
       "typeReferences": []
     },
     {
