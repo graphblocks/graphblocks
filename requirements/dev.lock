@@ -13,7 +13,7 @@ diff-cover==10.4.1
     # via graphblocks (pyproject.toml)
 github-slugger==0.0.3
     # via graphblocks (pyproject.toml)
-hypothesis==6.165.2
+hypothesis==6.165.3
     # via graphblocks (pyproject.toml)
 iniconfig==2.3.0
     # via pytest
