@@ -2184,7 +2184,8 @@ def test_stable_release_matrix_is_complete_and_machine_readable() -> None:
         },
     }
     assert audit_gate["blockers"] == [
-        "audited-source-commit-tree-or-archive-digest-unavailable",
+        "original-audited-source-package-unavailable",
+        "independent-audit-provenance-authority-unavailable",
     ]
     assert audit_gate["exitCriteria"]["maxOpenBySeverity"] == {"P0": 0, "P1": 0}
     assert audit_gate["companionGates"] == [
