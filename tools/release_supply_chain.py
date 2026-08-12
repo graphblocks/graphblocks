@@ -4397,6 +4397,7 @@ def assemble_release_bundle(
     builder_id: str,
     invocation_id: str,
     promotion_evidence: Path | None = None,
+    audited_source_package: Path | None = None,
     cosign: str | Sequence[str] = "cosign",
 ) -> dict[str, object]:
     if GIT_COMMIT.fullmatch(git_commit) is None:
@@ -4464,10 +4465,11 @@ def assemble_release_bundle(
             release_version=release_version,
             verify_source_diff=True,
             cosign=cosign,
+            audited_source_package=audited_source_package,
         )
-    elif promotion_evidence is not None:
+    elif promotion_evidence is not None or audited_source_package is not None:
         raise ReleaseBundleError(
-            "release candidates must not supply stable promotion evidence"
+            "release candidates must not supply stable promotion or audit-source evidence"
         )
     expectations_payload = _release_expectations_snapshot(
         git_commit=git_commit,
@@ -4719,7 +4721,11 @@ def assemble_release_bundle(
         ),
     }
     _write_json(output_dir / "release-manifest.json", manifest)
-    _verify_release_bundle(bundle_dir=output_dir, require_stable_signature=False)
+    _verify_release_bundle(
+        bundle_dir=output_dir,
+        require_stable_signature=False,
+        audited_source_package=audited_source_package,
+    )
     return manifest
 
 
@@ -5191,6 +5197,7 @@ def _verify_release_bundle(
     certificate_oidc_issuer: str = SIGSTORE_ISSUER,
     cosign: str | Sequence[str] = "cosign",
     require_stable_signature: bool,
+    audited_source_package: Path | None = None,
 ) -> dict[str, object]:
     manifest_path = bundle_dir / "release-manifest.json"
     manifest_snapshot = _snapshot_regular_file(manifest_path, owner="release manifest")
@@ -5432,6 +5439,7 @@ def _verify_release_bundle(
                 release_version=release_version,
                 verify_source_diff=True,
                 cosign=cosign,
+                audited_source_package=audited_source_package,
             )
         )
         if promotion_payload != _validated_promotion_payload or raw_promotion_binding.get(
@@ -5533,6 +5541,7 @@ def verify_release_bundle(
     certificate_identity: str | None = None,
     certificate_oidc_issuer: str = SIGSTORE_ISSUER,
     cosign: str | Sequence[str] = "cosign",
+    audited_source_package: Path | None = None,
 ) -> dict[str, object]:
     return _verify_release_bundle(
         bundle_dir=bundle_dir,
@@ -5541,6 +5550,7 @@ def verify_release_bundle(
         certificate_oidc_issuer=certificate_oidc_issuer,
         cosign=cosign,
         require_stable_signature=True,
+        audited_source_package=audited_source_package,
     )
 
 
@@ -5592,6 +5602,7 @@ def main(argv: list[str] | None = None) -> int:
     assemble.add_argument("--builder-id", required=True)
     assemble.add_argument("--invocation-id", required=True)
     assemble.add_argument("--promotion-evidence", type=Path)
+    assemble.add_argument("--audited-source-package", type=Path)
     assemble.add_argument("--cosign", default="cosign")
     freeze_matrix_report = subparsers.add_parser("freeze-candidate-matrix-report")
     freeze_matrix_report.add_argument("--output-dir", type=Path, required=True)
@@ -5634,6 +5645,7 @@ def main(argv: list[str] | None = None) -> int:
     verify.add_argument("--signature-bundle", type=Path)
     verify.add_argument("--certificate-identity")
     verify.add_argument("--certificate-oidc-issuer", default=SIGSTORE_ISSUER)
+    verify.add_argument("--audited-source-package", type=Path)
     verify.add_argument("--cosign", default="cosign")
     args = parser.parse_args(argv)
 
@@ -5648,6 +5660,11 @@ def main(argv: list[str] | None = None) -> int:
             promotion_evidence=(
                 args.promotion_evidence.resolve()
                 if args.promotion_evidence is not None
+                else None
+            ),
+            audited_source_package=(
+                args.audited_source_package.resolve()
+                if args.audited_source_package is not None
                 else None
             ),
             cosign=args.cosign,
@@ -5706,6 +5723,11 @@ def main(argv: list[str] | None = None) -> int:
             certificate_identity=args.certificate_identity,
             certificate_oidc_issuer=args.certificate_oidc_issuer,
             cosign=args.cosign,
+            audited_source_package=(
+                args.audited_source_package.resolve()
+                if args.audited_source_package is not None
+                else None
+            ),
         )
         print(f"verified release bundle in {args.bundle_dir}")
     return 0

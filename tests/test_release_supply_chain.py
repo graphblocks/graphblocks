@@ -1582,6 +1582,14 @@ def test_final_release_binds_promotion_evidence_and_requires_signature(
     module = _load_module()
     inputs = _inputs(module, tmp_path, stable_version="1.0.0")
     promotion = _write_promotion_evidence(module, tmp_path / "promotion.json")
+    audited_source_package = tmp_path / "audited-source-package"
+    audited_source_package.mkdir()
+    observed_source_packages: list[Path | None] = []
+    module._require_stable_audited_source_identity = (
+        lambda _audit_closure, *, package_root=None, **_arguments: (
+            observed_source_packages.append(package_root)
+        )
+    )
     bundle = tmp_path / "bundle"
     manifest = module.assemble_release_bundle(
         platform_inputs_dir=inputs,
@@ -1591,8 +1599,13 @@ def test_final_release_binds_promotion_evidence_and_requires_signature(
         builder_id=BUILDER_ID,
         invocation_id=INVOCATION_ID,
         promotion_evidence=promotion,
+        audited_source_package=audited_source_package,
     )
 
+    assert observed_source_packages == [
+        audited_source_package,
+        audited_source_package,
+    ]
     assert manifest["readiness"] == "promotion-authorized-signature-required"
     assert manifest["signaturePolicy"]["status"] == "signature-required"
     assert manifest["externalGates"] == ["keyless-signing-identity"]
@@ -1612,7 +1625,10 @@ def test_final_release_binds_promotion_evidence_and_requires_signature(
         "promotionEvidence"
     ] == promotion_binding
     with pytest.raises(module.ReleaseBundleError, match="requires its Sigstore signature"):
-        module.verify_release_bundle(bundle_dir=bundle)
+        module.verify_release_bundle(
+            bundle_dir=bundle,
+            audited_source_package=audited_source_package,
+        )
     signature = bundle / module.SIGNATURE_BUNDLE_NAME
     signature.write_text("{}", encoding="utf-8")
     signature_verifications: list[dict[str, object]] = []
@@ -1627,6 +1643,7 @@ def test_final_release_binds_promotion_evidence_and_requires_signature(
         bundle_dir=bundle,
         signature_bundle=signature,
         certificate_identity=certificate_identity,
+        audited_source_package=audited_source_package,
     )["readiness"] == "promotion-authorized-signature-required"
     assert len(signature_verifications) == 1
     self_declared = dict(manifest)
@@ -1636,6 +1653,26 @@ def test_final_release_binds_promotion_evidence_and_requires_signature(
     )
     with pytest.raises(module.ReleaseBundleError, match="unsupported format or readiness"):
         module.verify_release_bundle(bundle_dir=bundle)
+
+
+def test_release_candidate_rejects_external_audited_source_package(
+    tmp_path: Path,
+) -> None:
+    module = _load_module()
+    inputs = _inputs(module, tmp_path)
+    package = tmp_path / "audited-source-package"
+    package.mkdir()
+
+    with pytest.raises(module.ReleaseBundleError, match="must not supply"):
+        module.assemble_release_bundle(
+            platform_inputs_dir=inputs,
+            output_dir=tmp_path / "bundle",
+            git_commit=COMMIT,
+            release_ref=RELEASE_REF,
+            builder_id=BUILDER_ID,
+            invocation_id=INVOCATION_ID,
+            audited_source_package=package,
+        )
 
 
 def test_final_promotion_rejects_authentic_unavailable_audited_source(
@@ -4490,7 +4527,8 @@ def test_ci_enforces_pinned_platform_aggregation_and_isolated_release_signing() 
     assert "--platform-inputs-dir dist/platform-inputs" in assemble
     assert '--release-ref "$GITHUB_REF"' in assemble
     assert '[[ "$GITHUB_REF" == "refs/tags/v1.0.0" ]]' in assemble
-    assert 'promotion_args=(--promotion-evidence "$PROMOTION_EVIDENCE_PATH")' in assemble
+    assert '--promotion-evidence "$PROMOTION_EVIDENCE_PATH"' in assemble
+    assert '--audited-source-package "$AUDITED_SOURCE_PACKAGE_PATH"' in assemble
     assert '"${promotion_args[@]}"' in assemble
     assert "--cosign cosign" in assemble
     assert "sha256sum dist/release-bundle/release-manifest.json" in assemble
@@ -4498,6 +4536,9 @@ def test_ci_enforces_pinned_platform_aggregation_and_isolated_release_signing() 
     assert aggregate_steps["Assemble and verify the offline release bundle"]["env"][
         "PROMOTION_EVIDENCE_PATH"
     ] == "docs/project/releases/v1.0.0-promotion-evidence.json"
+    assert aggregate_steps["Assemble and verify the offline release bundle"]["env"][
+        "AUDITED_SOURCE_PACKAGE_PATH"
+    ] == "dist/external-audited-source-package"
     assert not (
         root / "docs" / "project" / "releases" / "v1.0.0-promotion-evidence.json"
     ).exists()

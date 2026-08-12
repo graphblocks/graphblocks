@@ -699,10 +699,14 @@ jobs:
           BUILDER_ID: https://github.com/graphblocks/graphblocks/.github/workflows/ci.yml
           INVOCATION_ID: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}/attempts/${{ github.run_attempt }}
           PROMOTION_EVIDENCE_PATH: docs/project/releases/v1.0.0-promotion-evidence.json
+          AUDITED_SOURCE_PACKAGE_PATH: dist/external-audited-source-package
         run: |
           promotion_args=()
           if [[ "$GITHUB_REF" == "refs/tags/v1.0.0" ]]; then
-            promotion_args=(--promotion-evidence "$PROMOTION_EVIDENCE_PATH")
+            promotion_args=(
+              --promotion-evidence "$PROMOTION_EVIDENCE_PATH"
+              --audited-source-package "$AUDITED_SOURCE_PACKAGE_PATH"
+            )
           fi
           python tools/release_supply_chain.py assemble \
             --platform-inputs-dir dist/platform-inputs \
