@@ -22,7 +22,13 @@ and 8 P3 findings. The live closure overlay now binds all 99 findings to
 ancestor fix commits and executable regression paths, and the repository
 checker reports zero open findings in every severity. Candidate-bound
 independent review, reconstructed reproduction execution evidence,
-audited-source identity, platform evidence, and soak still block 1.0. The
+an externally supplied audited-source package signed by a configured
+independent auditor or evidence custodian, platform evidence, and soak still
+block 1.0. The repository now has fail-closed Git/archive identity, safe ZIP,
+file-level byte matching, provenance signature, proof-closure, and final
+promotion admission validators; the checked-in trust policy remains explicitly
+`unavailable` because no external authority identity or original audit input
+has been supplied. The
 preview server therefore must not yet be represented as a production-ready
 multi-tenant authority boundary. See the
 [deep audit remediation plan](audit-remediation-plan.md).

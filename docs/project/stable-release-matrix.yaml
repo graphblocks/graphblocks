@@ -1305,6 +1305,12 @@ releaseGates:
       - fail-closed-notice-only-reserved-rust-and-npm-artifacts
       - independent-supply-chain-api-security-durability-and-adapter-readiness-axes
       - always-run-bounded-local-links-anchors-and-generated-facts-gate
+      - strict-v2-git-or-archive-audited-source-claim
+      - real-git-object-or-raw-archive-identity-verification
+      - bounded-no-extraction-zip-and-file-level-evidence-byte-matching
+      - independent-cosign-provenance-authority-and-cross-proof-closure
+      - candidate-bound-closed-provenance-trust-policy
+      - final-assembly-and-verification-audited-source-package-admission
     evidence:
       - docs/project/audit-issues.json
       - docs/project/audit-issue-status.yaml
@@ -1313,6 +1319,23 @@ releaseGates:
       - .github/workflows/ci.yml
       - tools/release_supply_chain.py
       - tests/test_release_supply_chain.py
+      - docs/project/audit-provenance-trust.yaml
+      - tools/audited_source_claim.py
+      - tools/audited_source_verification.py
+      - tools/audited_source_archive.py
+      - tools/audited_source_evidence.py
+      - tools/audited_source_archive_evidence.py
+      - tools/audited_source_provenance.py
+      - tools/audited_source_eligibility.py
+      - tools/audited_source_package.py
+      - tests/test_audited_source_claim.py
+      - tests/test_audited_source_verification.py
+      - tests/test_audited_source_archive.py
+      - tests/test_audited_source_evidence.py
+      - tests/test_audited_source_archive_evidence.py
+      - tests/test_audited_source_provenance.py
+      - tests/test_audited_source_eligibility.py
+      - tests/test_audited_source_package.py
       - .github/workflows/promotion-reports.yml
       - reproductions/audit-reproduction-manifest.yaml
       - tools/check_audit_reproductions.py
@@ -1623,6 +1646,7 @@ releaseGates:
       requiredEvidence:
         - digest-bound-99-finding-workstream-coverage
         - audited-source-identity-and-file-level-evidence-manifest
+        - independently-signed-audited-source-provenance-and-candidate-bound-trust
         - reconstructed-nine-finding-reproduction-suite
         - two-principal-two-tenant-authorization-matrix
         - independent-object-authorization-review
@@ -1649,7 +1673,8 @@ releaseGates:
         - independent-api-and-security-reviews
         - promotion-evidence-bound-audit-inventory
     blockers:
-      - audited-source-commit-tree-or-archive-digest-unavailable
+      - original-audited-source-package-unavailable
+      - independent-audit-provenance-authority-unavailable
   - id: REL-NORMATIVE-AUTHORITY
     description: Rust is the normative C0/C1 compiler and runtime authority while Python stays the authoring facade and deterministic reference oracle; C4/X3 preview durability remains on its separate promotion track.
     readiness: candidate-enforced

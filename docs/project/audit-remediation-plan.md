@@ -43,6 +43,18 @@ unknown and must not be inferred from the audit date. Obtaining one of those
 source identities and creating a file-level evidence manifest with commands,
 tool versions, environment, and digests is a release-evidence blocker.
 
+The repository implements the complete fail-closed verification path for that
+future evidence: strict v2 source claims, real Git object verification or raw
+archive hashing, bounded no-extraction ZIP inspection, exact captured-file byte
+matching, reconstructed-file classification, canonical provenance attestation,
+pinned Cosign authority verification, proof-closure composition, and final
+release admission. The candidate-bound
+[`audit-provenance-trust.yaml`](audit-provenance-trust.yaml) remains
+`unavailable`. It must be replaced by a real independent auditor or evidence
+custodian identity at the same new candidate that carries the identified
+source claim. A project release-workflow signature is not accepted as a
+historical audit authority by default.
+
 A finding moves to resolved only when:
 
 1. its fix is merged;
@@ -57,7 +69,8 @@ The current generated count is 99 resolved findings: all 4 P0, 23 P1, 64 P2,
 and 8 P3 findings are bound to ancestor fix commits and executable evidence.
 There are zero open findings in every severity. The remaining deep-audit release
 blockers are candidate-bound independent review and the unavailable audited
-source identity described above, not issue-level remediation work.
+source package and independent trust identity described above, not issue-level
+remediation work.
 GB-QA-001 is resolved by expanding strict mypy coverage from 2 to 18
 production modules and enforcing non-regression budgets for both strict module
 count and the 145 remaining type-ignore comments.
