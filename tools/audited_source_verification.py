@@ -41,6 +41,13 @@ class VerifiedArchiveSourceIdentity:
     size: int
 
 
+@dataclass(frozen=True, slots=True)
+class ArchiveBytesSnapshot:
+    data: bytes
+    sha256: str
+    size: int
+
+
 def _git_object_type(
     repository: Path,
     object_id: str,
@@ -110,13 +117,12 @@ def verify_git_source_identity(
     )
 
 
-def verify_archive_source_identity(
-    claim: IdentifiedArchiveAuditedSource,
-    *,
+def snapshot_archive_bytes(
     archive: Path,
+    *,
     max_bytes: int = DEFAULT_MAX_ARCHIVE_BYTES,
-) -> VerifiedArchiveSourceIdentity:
-    """Hash an exact bounded regular archive without following links."""
+) -> ArchiveBytesSnapshot:
+    """Read immutable bounded archive bytes without following filesystem links."""
 
     if type(max_bytes) is not int or max_bytes < 1:
         raise ValueError("archive byte budget must be a positive integer")
@@ -147,6 +153,7 @@ def verify_archive_source_identity(
             "audited-source archive could not be opened safely",
         ) from error
     digest = hashlib.sha256()
+    chunks: list[bytes] = []
     size = 0
     try:
         descriptor_status = os.fstat(descriptor)
@@ -171,6 +178,7 @@ def verify_archive_source_identity(
                     "audited-source archive exceeds its byte budget",
                 )
             digest.update(chunk)
+            chunks.append(chunk)
         final_status = os.fstat(descriptor)
         if (
             final_status.st_dev,
@@ -194,6 +202,23 @@ def verify_archive_source_identity(
     finally:
         os.close(descriptor)
     observed_digest = digest.hexdigest()
+    return ArchiveBytesSnapshot(
+        data=b"".join(chunks),
+        sha256=observed_digest,
+        size=size,
+    )
+
+
+def verify_archive_source_identity(
+    claim: IdentifiedArchiveAuditedSource,
+    *,
+    archive: Path,
+    max_bytes: int = DEFAULT_MAX_ARCHIVE_BYTES,
+) -> VerifiedArchiveSourceIdentity:
+    """Hash an exact bounded regular archive without following links."""
+
+    snapshot = snapshot_archive_bytes(archive, max_bytes=max_bytes)
+    observed_digest = snapshot.sha256
     if claim.archive_digest != "sha256:" + observed_digest:
         raise AuditedSourceVerificationError(
             "AUDIT_SOURCE_ARCHIVE_DIGEST",
@@ -202,5 +227,5 @@ def verify_archive_source_identity(
     return VerifiedArchiveSourceIdentity(
         claim=claim,
         sha256=observed_digest,
-        size=size,
+        size=snapshot.size,
     )
