@@ -11,6 +11,7 @@ from pathlib import Path, PurePosixPath
 import re
 import stat
 import subprocess
+import sys
 from tempfile import TemporaryDirectory
 import tomllib
 from typing import NamedTuple, TYPE_CHECKING
@@ -18,6 +19,12 @@ from typing import NamedTuple, TYPE_CHECKING
 from packaging.requirements import InvalidRequirement, Requirement
 from packaging.utils import canonicalize_name, parse_sdist_filename, parse_wheel_filename
 import yaml  # type: ignore[import-untyped]
+
+
+if __package__ in {None, ""}:
+    repository_root = str(Path(__file__).resolve().parents[1])
+    if repository_root not in sys.path:
+        sys.path.insert(0, repository_root)
 
 from graphblocks.canonical import (
     canonical_dumps_reference as canonical_dumps,

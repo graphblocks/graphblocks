@@ -230,6 +230,21 @@ def test_direct_script_fallback_imports_native_runtime_wheel_helper(
     assert callable(module.native_runtime_wheel_member_artifact)
 
 
+def test_release_supply_chain_direct_script_help_loads_audit_modules() -> None:
+    root = Path(__file__).parents[1]
+
+    completed = subprocess.run(
+        [sys.executable, "tools/release_supply_chain.py", "--help"],
+        cwd=root,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert "--help" in completed.stdout
+
+
 def _with_content_digest(payload: dict[str, object]) -> dict[str, object]:
     payload = dict(payload)
     payload["contentDigest"] = canonical_hash(payload)
