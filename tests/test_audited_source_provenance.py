@@ -10,6 +10,7 @@ from typing import cast
 import pytest
 
 from tools.audited_source_claim import IdentifiedGitAuditedSource, ProvenanceBinding
+from tools.audited_source_evidence import AuditArtifactBinding
 from tools.audited_source_provenance import (
     AuditedSourceProvenanceError,
     ProvenanceTrustPolicy,
@@ -113,6 +114,12 @@ def test_authorized_provenance_binds_source_files_and_audit_artifacts(
 
     assert verified.attestation_sha256 == hashlib.sha256(attestation_bytes).hexdigest()
     assert verified.authority_identity == AUDITOR_IDENTITY
+    assert verified.file_evidence_manifest_digest == "sha256:" + "3" * 64
+    assert verified.audit_artifacts == AuditArtifactBinding(
+        report_digest=AUDIT_ARTIFACTS["reportDigest"],
+        inventory_digest=AUDIT_ARTIFACTS["inventoryDigest"],
+        evidence_bundle_digest=AUDIT_ARTIFACTS["evidenceBundleDigest"],
+    )
     arguments = json.loads(argument_log.read_text(encoding="utf-8"))
     assert arguments[0] == "verify-blob"
     assert Path(arguments[1]).name == "attestation.json"

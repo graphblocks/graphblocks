@@ -68,6 +68,7 @@ class VerifiedGitFileEvidence:
     manifest_sha256: str
     captured_files: int
     reconstructed_files: int
+    audit_artifacts: AuditArtifactBinding
 
 
 def canonical_file_evidence_manifest_bytes(value: Mapping[str, object]) -> bytes:
@@ -514,4 +515,5 @@ def verify_git_file_evidence(
         manifest_sha256=manifest_sha256,
         captured_files=len(manifest.captured_files),
         reconstructed_files=len(manifest.reconstructed_files),
+        audit_artifacts=manifest.audit_artifacts,
     )

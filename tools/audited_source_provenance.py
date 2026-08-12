@@ -18,6 +18,7 @@ from tools.audited_source_claim import (
     IdentifiedArchiveAuditedSource,
     IdentifiedGitAuditedSource,
 )
+from tools.audited_source_evidence import AuditArtifactBinding
 
 
 DEFAULT_MAX_ATTESTATION_BYTES = 256 * 1024
@@ -77,6 +78,8 @@ class VerifiedAuditedSourceProvenance:
     attestation_sha256: str
     authority_identity: str
     issued_at: datetime
+    audit_artifacts: AuditArtifactBinding
+    file_evidence_manifest_digest: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -497,4 +500,10 @@ def verify_audited_source_provenance(
         attestation_sha256=attestation_snapshot.sha256,
         authority_identity=decoded.authority_identity,
         issued_at=decoded.issued_at,
+        audit_artifacts=AuditArtifactBinding(
+            report_digest=decoded.audit_artifacts["reportDigest"],
+            inventory_digest=decoded.audit_artifacts["inventoryDigest"],
+            evidence_bundle_digest=decoded.audit_artifacts["evidenceBundleDigest"],
+        ),
+        file_evidence_manifest_digest=decoded.file_evidence_manifest_digest,
     )

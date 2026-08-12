@@ -18,6 +18,7 @@ from tools.audited_source_archive_evidence import (
 )
 from tools.audited_source_claim import IdentifiedArchiveAuditedSource, ProvenanceBinding
 from tools.audited_source_evidence import canonical_file_evidence_manifest_bytes
+from tools.audited_source_evidence import AuditArtifactBinding
 from tools.audited_source_verification import verify_archive_source_identity
 
 
@@ -100,6 +101,11 @@ def test_archive_file_evidence_matches_safe_source_member_and_captured_bytes(
     assert verified.manifest_sha256 == hashlib.sha256(manifest_bytes).hexdigest()
     assert verified.captured_files == 1
     assert verified.reconstructed_files == 1
+    assert verified.audit_artifacts == AuditArtifactBinding(
+        report_digest=AUDIT_ARTIFACTS["reportDigest"],
+        inventory_digest=AUDIT_ARTIFACTS["inventoryDigest"],
+        evidence_bundle_digest=AUDIT_ARTIFACTS["evidenceBundleDigest"],
+    )
 
 
 @pytest.mark.parametrize(

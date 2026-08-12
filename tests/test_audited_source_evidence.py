@@ -10,6 +10,7 @@ import pytest
 
 from tools.audited_source_claim import IdentifiedGitAuditedSource, ProvenanceBinding
 from tools.audited_source_evidence import (
+    AuditArtifactBinding,
     AuditedSourceEvidenceError,
     canonical_file_evidence_manifest_bytes,
     decode_git_file_evidence_manifest,
@@ -121,6 +122,11 @@ def test_git_file_evidence_matches_source_blob_and_captured_bytes(
     assert result.manifest_sha256 == hashlib.sha256(manifest_bytes).hexdigest()
     assert result.captured_files == 1
     assert result.reconstructed_files == 1
+    assert result.audit_artifacts == AuditArtifactBinding(
+        report_digest=AUDIT_ARTIFACTS["reportDigest"],
+        inventory_digest=AUDIT_ARTIFACTS["inventoryDigest"],
+        evidence_bundle_digest=AUDIT_ARTIFACTS["evidenceBundleDigest"],
+    )
 
 
 @pytest.mark.parametrize(

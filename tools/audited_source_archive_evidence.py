@@ -12,7 +12,10 @@ import stat
 from typing import Mapping
 
 from tools.audited_source_archive import VerifiedZipArchive
-from tools.audited_source_evidence import canonical_file_evidence_manifest_bytes
+from tools.audited_source_evidence import (
+    AuditArtifactBinding,
+    canonical_file_evidence_manifest_bytes,
+)
 from tools.audited_source_verification import VerifiedArchiveSourceIdentity
 
 
@@ -50,7 +53,7 @@ class ArchiveReconstructedFileEvidence:
 
 @dataclass(frozen=True, slots=True)
 class ArchiveFileEvidenceManifest:
-    audit_artifacts: dict[str, str]
+    audit_artifacts: AuditArtifactBinding
     archive_digest: str
     captured_files: tuple[ArchiveCapturedFileEvidence, ...]
     reconstructed_files: tuple[ArchiveReconstructedFileEvidence, ...]
@@ -62,6 +65,7 @@ class VerifiedArchiveFileEvidence:
     manifest_sha256: str
     captured_files: int
     reconstructed_files: int
+    audit_artifacts: AuditArtifactBinding
 
 
 def _path(value: object, *, owner: str) -> str:
@@ -262,7 +266,11 @@ def decode_archive_file_evidence_manifest(
             )
         )
     return ArchiveFileEvidenceManifest(
-        audit_artifacts=dict(artifacts),
+        audit_artifacts=AuditArtifactBinding(
+            report_digest=artifacts["reportDigest"],
+            inventory_digest=artifacts["inventoryDigest"],
+            evidence_bundle_digest=artifacts["evidenceBundleDigest"],
+        ),
         archive_digest=archive_digest,
         captured_files=tuple(captured_records),
         reconstructed_files=tuple(reconstructed_records),
@@ -410,7 +418,11 @@ def verify_archive_file_evidence(
             "AUDIT_SOURCE_ARCHIVE_FILE_IDENTITY",
             "archive file-evidence manifest does not bind the verified source",
         )
-    if manifest.audit_artifacts != dict(expected_audit_artifacts):
+    if {
+        "reportDigest": manifest.audit_artifacts.report_digest,
+        "inventoryDigest": manifest.audit_artifacts.inventory_digest,
+        "evidenceBundleDigest": manifest.audit_artifacts.evidence_bundle_digest,
+    } != dict(expected_audit_artifacts):
         raise AuditedSourceArchiveEvidenceError(
             "AUDIT_SOURCE_ARCHIVE_ARTIFACT_BINDING",
             "archive file-evidence manifest does not bind the audit artifacts",
@@ -463,4 +475,5 @@ def verify_archive_file_evidence(
         manifest_sha256=manifest_sha256,
         captured_files=len(manifest.captured_files),
         reconstructed_files=len(manifest.reconstructed_files),
+        audit_artifacts=manifest.audit_artifacts,
     )
