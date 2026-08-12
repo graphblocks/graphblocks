@@ -75,21 +75,37 @@ if TYPE_CHECKING:
         EligibleAuditedSource,
         verify_audited_source_package,
     )
-    from tools.audited_source_provenance import ProvenanceTrustPolicy
+    from tools.audited_source_provenance import (
+        AuditedSourceProvenanceError,
+        UnavailableProvenanceTrustPolicy,
+        decode_provenance_trust_policy,
+        decode_provenance_trust_policy_claim,
+        provenance_trust_policy_claim,
+    )
 else:
     try:
         from tools.audited_source_package import (
             EligibleAuditedSource,
             verify_audited_source_package,
         )
-        from tools.audited_source_provenance import ProvenanceTrustPolicy
+        from tools.audited_source_provenance import (
+            AuditedSourceProvenanceError,
+            UnavailableProvenanceTrustPolicy,
+            decode_provenance_trust_policy,
+            decode_provenance_trust_policy_claim,
+            provenance_trust_policy_claim,
+        )
     except ModuleNotFoundError:  # Direct script execution.
         from audited_source_package import (  # type: ignore[no-redef]
             EligibleAuditedSource,
             verify_audited_source_package,
         )
         from audited_source_provenance import (  # type: ignore[no-redef]
-            ProvenanceTrustPolicy,
+            AuditedSourceProvenanceError,
+            UnavailableProvenanceTrustPolicy,
+            decode_provenance_trust_policy,
+            decode_provenance_trust_policy_claim,
+            provenance_trust_policy_claim,
         )
 
 try:
@@ -172,6 +188,7 @@ AUDIT_REMEDIATION_MAP_PATH = "docs/project/audit-remediation-map.yaml"
 AUDIT_CHECKER_PATH = "tools/check_audit_inventory.py"
 AUDIT_REPRODUCTION_MANIFEST_PATH = "reproductions/audit-reproduction-manifest.yaml"
 AUDIT_REPRODUCTION_CHECKER_PATH = "tools/check_audit_reproductions.py"
+AUDIT_PROVENANCE_TRUST_PATH = "docs/project/audit-provenance-trust.yaml"
 AUDIT_CLOSURE_SOURCE_PATHS = (
     AUDIT_INVENTORY_PATH,
     AUDIT_STATUS_PATH,
@@ -179,6 +196,7 @@ AUDIT_CLOSURE_SOURCE_PATHS = (
     AUDIT_CHECKER_PATH,
     AUDIT_REPRODUCTION_MANIFEST_PATH,
     AUDIT_REPRODUCTION_CHECKER_PATH,
+    AUDIT_PROVENANCE_TRUST_PATH,
 )
 FINAL_ADMISSION_GATE_PREDICATES = (
     {
@@ -1205,7 +1223,6 @@ def _require_stable_audited_source_identity(
     audit_closure: Mapping[str, object],
     *,
     package_root: Path | None = None,
-    trust_policy: ProvenanceTrustPolicy | None = None,
     cosign: str | Sequence[str] = "cosign",
 ) -> EligibleAuditedSource:
     reproductions = audit_closure.get("reproductions")
@@ -1260,10 +1277,25 @@ def _require_stable_audited_source_identity(
         raise ReleaseBundleError(
             "REL_AUDIT_SOURCE_ARTIFACT_BINDING: audited source artifact binding is invalid"
         )
-    if package_root is None or trust_policy is None:
+    try:
+        trust_policy = decode_provenance_trust_policy_claim(
+            reproductions.get("provenanceTrustPolicy")
+            if isinstance(reproductions, Mapping)
+            else None
+        )
+    except AuditedSourceProvenanceError as error:
+        raise ReleaseBundleError(
+            "REL_AUDIT_SOURCE_TRUST_INVALID: audited source trust policy is invalid"
+        ) from error
+    if isinstance(trust_policy, UnavailableProvenanceTrustPolicy):
+        raise ReleaseBundleError(
+            "REL_AUDIT_SOURCE_TRUST_UNAVAILABLE: independent audit authority "
+            "identity has not been supplied"
+        )
+    if package_root is None:
         raise ReleaseBundleError(
             "REL_AUDIT_SOURCE_EVIDENCE_UNAVAILABLE: identified audited source requires "
-            "an external verified evidence package and pinned trust policy"
+            "an external verified evidence package"
         )
     try:
         return verify_audited_source_package(
@@ -1299,6 +1331,14 @@ def _audit_closure_claim_from_blobs(
         raise ReleaseBundleError(
             "stable promotion audit contracts could not be loaded"
         ) from error
+    try:
+        provenance_trust = decode_provenance_trust_policy(
+            source_blobs[AUDIT_PROVENANCE_TRUST_PATH]
+        )
+    except AuditedSourceProvenanceError as error:
+        raise ReleaseBundleError(
+            "stable promotion audit provenance trust policy is invalid"
+        ) from error
     if (
         not isinstance(status, Mapping)
         or not isinstance(remediation_map, Mapping)
@@ -1321,7 +1361,7 @@ def _audit_closure_claim_from_blobs(
             f"stable promotion audit closure is invalid: {error}"
         ) from error
     claim = _audit_closure_claim_from_result(source_blobs, result)
-    claim["reproductions"] = _audit_reproduction_claim_from_blobs(
+    reproductions = _audit_reproduction_claim_from_blobs(
         manifest_bytes=source_blobs[AUDIT_REPRODUCTION_MANIFEST_PATH],
         checker_bytes=source_blobs[AUDIT_REPRODUCTION_CHECKER_PATH],
         remediation_map=remediation_map,
@@ -1329,6 +1369,10 @@ def _audit_closure_claim_from_blobs(
         read_file=read_file,
         regular_file_exists=regular_file_exists,
     )
+    reproductions["provenanceTrustPolicy"] = provenance_trust_policy_claim(
+        provenance_trust
+    )
+    claim["reproductions"] = reproductions
     return claim
 
 
@@ -2242,7 +2286,6 @@ def _validate_promotion_evidence(
     cosign: str | Sequence[str] = "cosign",
     integration_matrix: Mapping[str, object] | None = None,
     audited_source_package: Path | None = None,
-    audited_source_trust_policy: ProvenanceTrustPolicy | None = None,
 ) -> tuple[dict[str, object], str, tuple[FileSnapshot, ...]]:
     owner = "stable promotion evidence"
     payload = _json_from_snapshot(snapshot, owner=owner)
@@ -2392,7 +2435,6 @@ def _validate_promotion_evidence(
     _require_stable_audited_source_identity(
         candidate_audit_closure,
         package_root=audited_source_package,
-        trust_policy=audited_source_trust_policy,
         cosign=cosign,
     )
 

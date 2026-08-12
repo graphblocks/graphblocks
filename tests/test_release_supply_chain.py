@@ -21,6 +21,7 @@ from graphblocks.canonical import (
     canonical_hash_reference as canonical_hash,
 )
 from tools import stable_security_gates
+from tools.audited_source_provenance import ProvenanceTrustPolicy
 from tools.verify_wheelhouse import (
     installed_native_authority_probe_expectations,
     stable_runtime_api_snapshot,
@@ -2503,9 +2504,18 @@ def test_release_claim_preserves_identified_source_but_final_gate_requires_packa
         "evidenceBundleDigest": "sha256:"
         + "75cf142766d1e8cbf8c89c1157727d8a4ca0e945b15e9157c8977f1c6a02fe06",
     }
+    assert claim["reproductions"]["provenanceTrustPolicy"] == {
+        "formatVersion": 1,
+        "status": "unavailable",
+        "repository": "graphblocks/graphblocks",
+        "limitation": (
+            "Independent auditor or evidence-custodian signing identity has not "
+            "been supplied"
+        ),
+    }
     with pytest.raises(
         module.ReleaseBundleError,
-        match="REL_AUDIT_SOURCE_EVIDENCE_UNAVAILABLE",
+        match="REL_AUDIT_SOURCE_TRUST_UNAVAILABLE",
     ):
         module._require_stable_audited_source_identity(claim)
 
@@ -2537,14 +2547,17 @@ def test_final_gate_delegates_identified_source_to_closed_package_verifier(
         "reproductions": {
             "auditedSourceIdentity": source_claim,
             "auditArtifacts": artifacts,
+            "provenanceTrustPolicy": {
+                "formatVersion": 1,
+                "status": "configured",
+                "repository": "graphblocks/graphblocks",
+                "authorityType": "auditor",
+                "certificateIdentity": "auditor@example.test",
+                "certificateOidcIssuer": "https://issuer.example.test",
+                "allowProjectReleaseWorkflow": False,
+            },
         }
     }
-    policy = module.ProvenanceTrustPolicy(
-        repository="graphblocks/graphblocks",
-        authority_type="auditor",
-        certificate_identity="auditor@example.test",
-        certificate_oidc_issuer="https://issuer.example.test",
-    )
     observed: list[dict[str, object]] = []
     eligible = object()
 
@@ -2558,7 +2571,6 @@ def test_final_gate_delegates_identified_source_to_closed_package_verifier(
         module._require_stable_audited_source_identity(
             audit_closure,
             package_root=tmp_path,
-            trust_policy=policy,
             cosign=["cosign-pinned"],
         )
         is eligible
@@ -2566,7 +2578,12 @@ def test_final_gate_delegates_identified_source_to_closed_package_verifier(
     assert observed[0]["claim"].archive_digest == "sha256:" + "1" * 64
     assert observed[0]["package_root"] == tmp_path
     assert observed[0]["expected_audit_artifacts"] == artifacts
-    assert observed[0]["trust_policy"] == policy
+    assert observed[0]["trust_policy"] == ProvenanceTrustPolicy(
+        repository="graphblocks/graphblocks",
+        authority_type="auditor",
+        certificate_identity="auditor@example.test",
+        certificate_oidc_issuer="https://issuer.example.test",
+    )
     assert observed[0]["git_repository"] == module.ROOT
     assert observed[0]["cosign"] == ["cosign-pinned"]
 

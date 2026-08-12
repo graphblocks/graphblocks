@@ -134,16 +134,12 @@ def _is_canonical_text(value: object, *, max_length: int = 1_024) -> bool:
     )
 
 
-def decode_provenance_trust_policy(data: bytes) -> ProvenanceTrustPolicyConfig:
-    """Decode a strict closed trust policy from candidate-bound YAML bytes."""
+def decode_provenance_trust_policy_claim(
+    value: object,
+) -> ProvenanceTrustPolicyConfig:
+    """Decode the closed report representation of a provenance trust policy."""
 
-    try:
-        raw = load_strict_yaml_document(data)
-    except AuditedSourceClaimError as error:
-        raise AuditedSourceProvenanceError(
-            "AUDIT_SOURCE_PROVENANCE_TRUST_POLICY",
-            "provenance trust policy is not strict bounded YAML",
-        ) from error
+    raw = value
     if type(raw) is not dict:
         raise AuditedSourceProvenanceError(
             "AUDIT_SOURCE_PROVENANCE_TRUST_POLICY",
@@ -209,6 +205,19 @@ def decode_provenance_trust_policy(data: bytes) -> ProvenanceTrustPolicyConfig:
             "AUDIT_SOURCE_PROVENANCE_TRUST_POLICY",
             "provenance trust policy values are invalid",
         ) from error
+
+
+def decode_provenance_trust_policy(data: bytes) -> ProvenanceTrustPolicyConfig:
+    """Decode a strict closed trust policy from candidate-bound YAML bytes."""
+
+    try:
+        raw = load_strict_yaml_document(data)
+    except AuditedSourceClaimError as error:
+        raise AuditedSourceProvenanceError(
+            "AUDIT_SOURCE_PROVENANCE_TRUST_POLICY",
+            "provenance trust policy is not strict bounded YAML",
+        ) from error
+    return decode_provenance_trust_policy_claim(raw)
 
 
 def provenance_trust_policy_claim(

@@ -17,6 +17,7 @@ from tools.audited_source_provenance import (
     UnavailableProvenanceTrustPolicy,
     canonical_provenance_attestation_bytes,
     decode_provenance_trust_policy,
+    decode_provenance_trust_policy_claim,
     provenance_trust_policy_claim,
     verify_audited_source_provenance,
 )
@@ -305,6 +306,10 @@ def test_provenance_trust_policy_decoder_returns_closed_configured_policy() -> N
         certificate_oidc_issuer=OIDC_ISSUER,
     )
     assert provenance_trust_policy_claim(decoded)["status"] == "configured"
+    assert (
+        decode_provenance_trust_policy_claim(provenance_trust_policy_claim(decoded))
+        == decoded
+    )
 
 
 @pytest.mark.parametrize(
