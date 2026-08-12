@@ -65,19 +65,37 @@ def test_audit_reproduction_manifest_rejects_captured_file_substitution(
         check_audit_reproductions.check_audit_reproductions(manifest_path=manifest)
 
 
-def test_audit_reproduction_manifest_does_not_invent_source_identity(
+def test_audit_reproduction_manifest_rejects_unverified_source_identity(
     tmp_path: Path,
 ) -> None:
     manifest = _mutated_manifest(
         tmp_path,
-        lambda payload: payload["auditedSource"].update(
-            {"status": "identified", "gitRevision": "1" * 40}
+        lambda payload: payload.update(
+            {
+                "formatVersion": 2,
+                "auditedSource": {
+                    "schemaVersion": 2,
+                    "state": "identified",
+                    "description": "Invented audit input",
+                    "identity": {
+                        "kind": "git",
+                        "objectFormat": "sha1",
+                        "gitRevision": "1" * 40,
+                        "gitTree": "2" * 40,
+                    },
+                    "fileEvidenceManifestDigest": "sha256:" + "3" * 64,
+                    "provenanceBinding": {
+                        "kind": "signed-attestation",
+                        "digest": "sha256:" + "4" * 64,
+                    },
+                },
+            }
         ),
     )
 
     with pytest.raises(
         check_audit_reproductions.AuditReproductionError,
-        match="must stay explicit",
+        match="AUDIT_SOURCE_UNVERIFIED",
     ):
         check_audit_reproductions.check_audit_reproductions(manifest_path=manifest)
 

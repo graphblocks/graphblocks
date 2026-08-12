@@ -2377,6 +2377,81 @@ def test_candidate_workflow_derives_and_freezes_audit_closure(
         )
 
 
+def test_release_claim_preserves_v2_unavailable_audited_source() -> None:
+    module = _load_module()
+    root = Path(__file__).parents[1]
+    source_blobs = {
+        path: (root / path).read_bytes() for path in module.AUDIT_CLOSURE_SOURCE_PATHS
+    }
+    manifest = yaml.safe_load(
+        source_blobs[module.AUDIT_REPRODUCTION_MANIFEST_PATH]
+    )
+    manifest["formatVersion"] = 2
+    manifest["auditedSource"] = {
+        "schemaVersion": 2,
+        "state": "unavailable",
+        "description": "Original audit input",
+        "limitation": "Original source identity remains unavailable",
+    }
+    source_blobs[module.AUDIT_REPRODUCTION_MANIFEST_PATH] = yaml.safe_dump(
+        manifest,
+        sort_keys=False,
+    ).encode("utf-8")
+
+    claim = module._audit_closure_claim_from_blobs(
+        source_blobs,
+        is_ancestor=lambda _commit: True,
+        regression_exists=lambda _path: True,
+        read_file=lambda path: (root / path).read_bytes(),
+        regular_file_exists=lambda path: (root / path).is_file(),
+    )
+
+    assert claim["reproductions"]["auditedSourceIdentity"] == manifest[
+        "auditedSource"
+    ]
+
+
+def test_release_claim_rejects_structured_but_unverified_audited_source() -> None:
+    module = _load_module()
+    root = Path(__file__).parents[1]
+    source_blobs = {
+        path: (root / path).read_bytes() for path in module.AUDIT_CLOSURE_SOURCE_PATHS
+    }
+    manifest = yaml.safe_load(
+        source_blobs[module.AUDIT_REPRODUCTION_MANIFEST_PATH]
+    )
+    manifest["formatVersion"] = 2
+    manifest["auditedSource"] = {
+        "schemaVersion": 2,
+        "state": "identified",
+        "description": "Unverified audit input",
+        "identity": {
+            "kind": "git",
+            "objectFormat": "sha1",
+            "gitRevision": "1" * 40,
+            "gitTree": "2" * 40,
+        },
+        "fileEvidenceManifestDigest": "sha256:" + "3" * 64,
+        "provenanceBinding": {
+            "kind": "signed-attestation",
+            "digest": "sha256:" + "4" * 64,
+        },
+    }
+    source_blobs[module.AUDIT_REPRODUCTION_MANIFEST_PATH] = yaml.safe_dump(
+        manifest,
+        sort_keys=False,
+    ).encode("utf-8")
+
+    with pytest.raises(module.ReleaseBundleError, match="REL_AUDIT_SOURCE_UNVERIFIED"):
+        module._audit_closure_claim_from_blobs(
+            source_blobs,
+            is_ancestor=lambda _commit: True,
+            regression_exists=lambda _path: True,
+            read_file=lambda path: (root / path).read_bytes(),
+            regular_file_exists=lambda path: (root / path).is_file(),
+        )
+
+
 def test_candidate_ci_freezes_one_canonical_matrix_run_attestation(
     tmp_path: Path,
 ) -> None:

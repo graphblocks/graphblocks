@@ -41,6 +41,35 @@ else:
             validate_audit_inventory,
         )
 
+if TYPE_CHECKING:
+    from tools.audited_source_claim import (
+        AuditedSourceClaimError,
+        IdentifiedArchiveAuditedSource,
+        IdentifiedGitAuditedSource,
+        audited_source_report_claim,
+        decode_audited_source,
+        load_strict_yaml_document,
+    )
+else:
+    try:
+        from tools.audited_source_claim import (
+            AuditedSourceClaimError,
+            IdentifiedArchiveAuditedSource,
+            IdentifiedGitAuditedSource,
+            audited_source_report_claim,
+            decode_audited_source,
+            load_strict_yaml_document,
+        )
+    except ModuleNotFoundError:  # Direct script execution.
+        from audited_source_claim import (
+            AuditedSourceClaimError,
+            IdentifiedArchiveAuditedSource,
+            IdentifiedGitAuditedSource,
+            audited_source_report_claim,
+            decode_audited_source,
+            load_strict_yaml_document,
+        )
+
 try:
     from tools.stable_security_gates import (
         JUNIT_MAX_BYTES as SECURITY_GATE_JUNIT_MAX_BYTES,
@@ -746,8 +775,8 @@ def _audit_reproduction_claim_from_blobs(
     regular_file_exists: Callable[[str], bool],
 ) -> dict[str, object]:
     try:
-        manifest = yaml.safe_load(manifest_bytes)
-    except (UnicodeError, yaml.YAMLError) as error:
+        manifest = load_strict_yaml_document(manifest_bytes)
+    except AuditedSourceClaimError as error:
         raise ReleaseBundleError(
             "stable promotion audit reproduction manifest could not be loaded"
         ) from error
@@ -765,7 +794,8 @@ def _audit_reproduction_claim_from_blobs(
         },
         owner="stable promotion audit reproduction manifest",
     )
-    if manifest.get("formatVersion") != 1 or manifest.get("auditDate") != "2026-07-27":
+    manifest_format_version = manifest.get("formatVersion")
+    if manifest_format_version not in {1, 2} or manifest.get("auditDate") != "2026-07-27":
         raise ReleaseBundleError(
             "stable promotion audit reproduction manifest version/date is invalid"
         )
@@ -782,19 +812,24 @@ def _audit_reproduction_claim_from_blobs(
         raise ReleaseBundleError(
             "stable promotion audit reproduction authority drifted"
         )
-    audited_source = _require_exact_keys(
-        manifest.get("auditedSource"),
-        {"status", "description", "gitRevision", "archiveDigest", "limitation"},
-        owner="stable promotion audit reproduction source",
-    )
-    if (
-        audited_source.get("status") != "unavailable"
-        or audited_source.get("gitRevision") is not None
-        or audited_source.get("archiveDigest") is not None
+    try:
+        audited_source = decode_audited_source(
+            manifest.get("auditedSource"),
+            manifest_format_version=manifest_format_version,
+        )
+    except AuditedSourceClaimError as error:
+        raise ReleaseBundleError(
+            f"stable promotion audited-source claim is invalid: {error}"
+        ) from error
+    if isinstance(
+        audited_source,
+        (IdentifiedGitAuditedSource, IdentifiedArchiveAuditedSource),
     ):
         raise ReleaseBundleError(
-            "stable promotion audit reproduction source identity is not truthful"
+            "REL_AUDIT_SOURCE_UNVERIFIED: identified audited source lacks "
+            "method-specific provenance verification"
         )
+    audited_source_claim = audited_source_report_claim(audited_source)
     execution = _require_exact_keys(
         manifest.get("execution"),
         {"supportedPython", "runner", "timeoutSeconds"},
@@ -1029,7 +1064,7 @@ def _audit_reproduction_claim_from_blobs(
             {"path": path, "sha256": "sha256:" + digest}
             for path, digest in sorted(selector_sources.items())
         ],
-        "auditedSourceIdentity": "unavailable",
+        "auditedSourceIdentity": audited_source_claim,
     }
 
 
@@ -1065,9 +1100,15 @@ def _require_stable_audited_source_identity(
     audit_closure: Mapping[str, object],
 ) -> None:
     reproductions = audit_closure.get("reproductions")
-    if (
-        isinstance(reproductions, Mapping)
-        and reproductions.get("auditedSourceIdentity") == "unavailable"
+    source_claim = (
+        reproductions.get("auditedSourceIdentity")
+        if isinstance(reproductions, Mapping)
+        else None
+    )
+    if source_claim == "unavailable" or (
+        isinstance(source_claim, Mapping)
+        and source_claim.get("schemaVersion") == 2
+        and source_claim.get("state") == "unavailable"
     ):
         raise ReleaseBundleError(
             "REL_AUDIT_SOURCE_UNAVAILABLE: audited source identity is unavailable; "

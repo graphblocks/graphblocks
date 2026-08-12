@@ -9,9 +9,36 @@ from pathlib import Path
 import re
 import subprocess
 import sys
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
-import yaml  # type: ignore[import-untyped]
+if TYPE_CHECKING:
+    from tools.audited_source_claim import (
+        AuditedSourceClaimError,
+        IdentifiedArchiveAuditedSource,
+        IdentifiedGitAuditedSource,
+        audited_source_report_claim,
+        decode_audited_source,
+        load_strict_yaml_document,
+    )
+else:
+    try:
+        from tools.audited_source_claim import (
+            AuditedSourceClaimError,
+            IdentifiedArchiveAuditedSource,
+            IdentifiedGitAuditedSource,
+            audited_source_report_claim,
+            decode_audited_source,
+            load_strict_yaml_document,
+        )
+    except ModuleNotFoundError:  # Direct script execution.
+        from audited_source_claim import (
+            AuditedSourceClaimError,
+            IdentifiedArchiveAuditedSource,
+            IdentifiedGitAuditedSource,
+            audited_source_report_claim,
+            decode_audited_source,
+            load_strict_yaml_document,
+        )
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -67,8 +94,9 @@ def _path(value: object, owner: str) -> tuple[str, Path]:
 
 def _yaml(path: Path, owner: str) -> object:
     try:
-        return yaml.safe_load(path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeError, yaml.YAMLError) as error:
+        data = path.read_bytes()
+        return load_strict_yaml_document(data)
+    except (OSError, AuditedSourceClaimError) as error:
         raise AuditReproductionError(f"{owner} cannot be loaded") from error
 
 
@@ -108,7 +136,8 @@ def check_audit_reproductions(
         },
         "audit reproduction manifest",
     )
-    if manifest["formatVersion"] != 1 or manifest["auditDate"] != "2026-07-27":
+    manifest_format_version = manifest["formatVersion"]
+    if manifest_format_version not in {1, 2} or manifest["auditDate"] != "2026-07-27":
         raise AuditReproductionError("audit reproduction manifest version/date is invalid")
 
     remediation_map = _yaml(MAP_PATH, "audit remediation map")
@@ -129,19 +158,22 @@ def check_audit_reproductions(
     if artifact_binding != remediation_map.get("artifactDigests"):
         raise AuditReproductionError("audit reproduction artifact binding drifted")
 
-    audited_source = _mapping(
-        manifest["auditedSource"],
-        {"status", "description", "gitRevision", "archiveDigest", "limitation"},
-        "audit reproduction source identity",
-    )
-    if (
-        audited_source["status"] != "unavailable"
-        or audited_source["gitRevision"] is not None
-        or audited_source["archiveDigest"] is not None
+    try:
+        audited_source = decode_audited_source(
+            manifest["auditedSource"],
+            manifest_format_version=manifest_format_version,
+        )
+    except AuditedSourceClaimError as error:
+        raise AuditReproductionError(str(error)) from error
+    if isinstance(
+        audited_source,
+        (IdentifiedGitAuditedSource, IdentifiedArchiveAuditedSource),
     ):
-        raise AuditReproductionError("unknown audited source identity must stay explicit")
-    _text(audited_source["description"], "audit source description")
-    _text(audited_source["limitation"], "audit source limitation")
+        raise AuditReproductionError(
+            "AUDIT_SOURCE_UNVERIFIED: identified audited source lacks "
+            "method-specific provenance verification"
+        )
+    audited_source_claim = audited_source_report_claim(audited_source)
 
     execution = _mapping(
         manifest["execution"],
@@ -335,7 +367,7 @@ def check_audit_reproductions(
         "reconstructedHarnesses": len(reconstructed_paths),
         "currentSelectors": len(selectors),
         "executed": execute,
-        "auditedSourceIdentity": "unavailable",
+        "auditedSourceIdentity": audited_source_claim,
     }
 
 
@@ -357,7 +389,7 @@ def main(argv: list[str] | None = None) -> int:
         f"{result['findings']} findings, {result['capturedFiles']} captured files, "
         f"{result['reconstructedHarnesses']} reconstructed harnesses, "
         f"{result['currentSelectors']} current selectors, executed={result['executed']}, "
-        "audited-source=unavailable"
+        f"audited-source={result['auditedSourceIdentity']}"
     )
     return 0
 
