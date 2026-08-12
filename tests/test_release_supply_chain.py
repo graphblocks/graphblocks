@@ -4257,6 +4257,9 @@ def test_ci_enforces_pinned_platform_aggregation_and_isolated_release_signing() 
     )
     assert aggregate["permissions"] == {"contents": "read"}
     assert "id-token" not in json.dumps(aggregate)
+    assert aggregate["outputs"] == {
+        "manifest_sha256": "${{ steps.release_bundle.outputs.manifest_sha256 }}"
+    }
     aggregate_steps = {step["name"]: step for step in aggregate["steps"]}
     assert aggregate_steps["Check out repository"]["with"] == {"fetch-depth": 0}
     download = aggregate_steps["Download exact supported-platform release inputs"]
@@ -4270,13 +4273,17 @@ def test_ci_enforces_pinned_platform_aggregation_and_isolated_release_signing() 
         "name": "graphblocks-stable-security-gates-${{ github.run_attempt }}",
         "path": "dist/stable-security-gates",
     }
-    assemble = aggregate_steps["Assemble and verify the offline release bundle"]["run"]
+    assemble_step = aggregate_steps["Assemble and verify the offline release bundle"]
+    assert assemble_step["id"] == "release_bundle"
+    assemble = assemble_step["run"]
     assert "--platform-inputs-dir dist/platform-inputs" in assemble
     assert '--release-ref "$GITHUB_REF"' in assemble
     assert '[[ "$GITHUB_REF" == "refs/tags/v1.0.0" ]]' in assemble
     assert 'promotion_args=(--promotion-evidence "$PROMOTION_EVIDENCE_PATH")' in assemble
     assert '"${promotion_args[@]}"' in assemble
     assert "--cosign cosign" in assemble
+    assert "sha256sum dist/release-bundle/release-manifest.json" in assemble
+    assert 'echo "manifest_sha256=$manifest_sha256" >> "$GITHUB_OUTPUT"' in assemble
     assert aggregate_steps["Assemble and verify the offline release bundle"]["env"][
         "PROMOTION_EVIDENCE_PATH"
     ] == "docs/project/releases/v1.0.0-promotion-evidence.json"
@@ -4384,7 +4391,8 @@ def test_ci_enforces_pinned_platform_aggregation_and_isolated_release_signing() 
 
     signing = jobs["release-signing"]
     assert signing["needs"] == ["release-ref-gate", "release-evidence"]
-    assert signing["if"] == "needs.release-ref-gate.outputs.release_ref == github.ref"
+    assert "needs.release-evidence.result == 'success'" in signing["if"]
+    assert "needs.release-ref-gate.outputs.release_ref == github.ref" in signing["if"]
     assert signing["permissions"] == {"id-token": "write"}
     signing_steps = {step["name"]: step for step in signing["steps"]}
     signing_actions = [step["uses"] for step in signing["steps"] if "uses" in step]
@@ -4407,14 +4415,18 @@ def test_ci_enforces_pinned_platform_aggregation_and_isolated_release_signing() 
     assert signing_command["env"] == {
         "CERTIFICATE_IDENTITY": "https://github.com/graphblocks/graphblocks/.github/workflows/ci.yml@${{ needs.release-ref-gate.outputs.release_ref }}",
         "CERTIFICATE_OIDC_ISSUER": "https://token.actions.githubusercontent.com",
+        "EXPECTED_MANIFEST_SHA256": "${{ needs.release-evidence.outputs.manifest_sha256 }}",
     }
     command = signing_command["run"]
+    assert "sha256sum dist/release-bundle/release-manifest.json" in command
+    assert '"$observed_manifest_sha256" != "$EXPECTED_MANIFEST_SHA256"' in command
+    assert command.index("sha256sum") < command.index("cosign sign-blob")
     assert command.count("cosign ") == 2
     assert "cosign sign-blob" in command
     assert "cosign verify-blob" in command
     assert "--certificate-identity \"$CERTIFICATE_IDENTITY\"" in command
     assert "--certificate-oidc-issuer \"$CERTIFICATE_OIDC_ISSUER\"" in command
-    assert command.count("dist/release-bundle/release-manifest.json") == 2
+    assert command.count("dist/release-bundle/release-manifest.json") == 3
     assert command.count("dist/release-bundle/release-manifest.sigstore.json") == 2
     all_signing_commands = "\n".join(
         step["run"] for step in signing["steps"] if "run" in step

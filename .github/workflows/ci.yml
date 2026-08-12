@@ -660,6 +660,8 @@ jobs:
     timeout-minutes: 30
     permissions:
       contents: read
+    outputs:
+      manifest_sha256: ${{ steps.release_bundle.outputs.manifest_sha256 }}
     steps:
       - name: Check out repository
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
@@ -692,6 +694,7 @@ jobs:
           name: graphblocks-stable-security-gates-${{ github.run_attempt }}
           path: dist/stable-security-gates
       - name: Assemble and verify the offline release bundle
+        id: release_bundle
         env:
           BUILDER_ID: https://github.com/graphblocks/graphblocks/.github/workflows/ci.yml
           INVOCATION_ID: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}/attempts/${{ github.run_attempt }}
@@ -710,6 +713,12 @@ jobs:
             --builder-id "$BUILDER_ID" \
             --invocation-id "$INVOCATION_ID" \
             --cosign cosign
+          manifest_sha256="$(sha256sum dist/release-bundle/release-manifest.json | cut -d ' ' -f 1)"
+          if [[ ! "$manifest_sha256" =~ ^[0-9a-f]{64}$ ]]; then
+            echo "::error::assembled release manifest has an invalid SHA-256 digest"
+            exit 1
+          fi
+          echo "manifest_sha256=$manifest_sha256" >> "$GITHUB_OUTPUT"
       - name: Freeze the successful candidate matrix attestation
         if: startsWith(github.ref, 'refs/tags/v1.0.0-rc.')
         env:
@@ -788,7 +797,9 @@ jobs:
     needs:
       - release-ref-gate
       - release-evidence
-    if: needs.release-ref-gate.outputs.release_ref == github.ref
+    if: >-
+      needs.release-evidence.result == 'success' &&
+      needs.release-ref-gate.outputs.release_ref == github.ref
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -807,7 +818,13 @@ jobs:
         env:
           CERTIFICATE_IDENTITY: https://github.com/graphblocks/graphblocks/.github/workflows/ci.yml@${{ needs.release-ref-gate.outputs.release_ref }}
           CERTIFICATE_OIDC_ISSUER: https://token.actions.githubusercontent.com
+          EXPECTED_MANIFEST_SHA256: ${{ needs.release-evidence.outputs.manifest_sha256 }}
         run: |
+          observed_manifest_sha256="$(sha256sum dist/release-bundle/release-manifest.json | cut -d ' ' -f 1)"
+          if [[ "$observed_manifest_sha256" != "$EXPECTED_MANIFEST_SHA256" ]]; then
+            echo "::error::downloaded release manifest does not match the validated assembly digest"
+            exit 1
+          fi
           cosign sign-blob --yes \
             --bundle dist/release-bundle/release-manifest.sigstore.json \
             dist/release-bundle/release-manifest.json
