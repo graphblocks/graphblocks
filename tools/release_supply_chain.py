@@ -70,6 +70,28 @@ else:
             load_strict_yaml_document,
         )
 
+if TYPE_CHECKING:
+    from tools.audited_source_package import (
+        EligibleAuditedSource,
+        verify_audited_source_package,
+    )
+    from tools.audited_source_provenance import ProvenanceTrustPolicy
+else:
+    try:
+        from tools.audited_source_package import (
+            EligibleAuditedSource,
+            verify_audited_source_package,
+        )
+        from tools.audited_source_provenance import ProvenanceTrustPolicy
+    except ModuleNotFoundError:  # Direct script execution.
+        from audited_source_package import (  # type: ignore[no-redef]
+            EligibleAuditedSource,
+            verify_audited_source_package,
+        )
+        from audited_source_provenance import (  # type: ignore[no-redef]
+            ProvenanceTrustPolicy,
+        )
+
 try:
     from tools.stable_security_gates import (
         JUNIT_MAX_BYTES as SECURITY_GATE_JUNIT_MAX_BYTES,
@@ -889,15 +911,29 @@ def _audit_reproduction_claim_from_blobs(
         raise ReleaseBundleError(
             f"stable promotion audited-source claim is invalid: {error}"
         ) from error
-    if isinstance(
-        audited_source,
-        (IdentifiedGitAuditedSource, IdentifiedArchiveAuditedSource),
-    ):
-        raise ReleaseBundleError(
-            "REL_AUDIT_SOURCE_UNVERIFIED: identified audited source lacks "
-            "method-specific provenance verification"
-        )
     audited_source_claim = audited_source_report_claim(audited_source)
+    artifact_digests = _require_exact_keys(
+        remediation_map.get("artifactDigests"),
+        {"reportSha256", "inventorySha256", "evidenceBundleSha256"},
+        owner="stable promotion audit artifact digests",
+    )
+    audit_artifacts = {
+        "reportDigest": "sha256:"
+        + _require_sha256(
+            artifact_digests.get("reportSha256"),
+            owner="stable promotion audit report digest",
+        ),
+        "inventoryDigest": "sha256:"
+        + _require_sha256(
+            artifact_digests.get("inventorySha256"),
+            owner="stable promotion audit inventory digest",
+        ),
+        "evidenceBundleDigest": "sha256:"
+        + _require_sha256(
+            artifact_digests.get("evidenceBundleSha256"),
+            owner="stable promotion audit evidence-bundle digest",
+        ),
+    }
     execution = _require_exact_keys(
         manifest.get("execution"),
         {"supportedPython", "runner", "timeoutSeconds"},
@@ -1133,6 +1169,7 @@ def _audit_reproduction_claim_from_blobs(
             for path, digest in sorted(selector_sources.items())
         ],
         "auditedSourceIdentity": audited_source_claim,
+        "auditArtifacts": audit_artifacts,
     }
 
 
@@ -1166,7 +1203,11 @@ def _audit_closure_claim_from_result(
 
 def _require_stable_audited_source_identity(
     audit_closure: Mapping[str, object],
-) -> None:
+    *,
+    package_root: Path | None = None,
+    trust_policy: ProvenanceTrustPolicy | None = None,
+    cosign: str | Sequence[str] = "cosign",
+) -> EligibleAuditedSource:
     reproductions = audit_closure.get("reproductions")
     source_claim = (
         reproductions.get("auditedSourceIdentity")
@@ -1182,10 +1223,63 @@ def _require_stable_audited_source_identity(
             "REL_AUDIT_SOURCE_UNAVAILABLE: audited source identity is unavailable; "
             "stable promotion is blocked"
         )
-    raise ReleaseBundleError(
-        "REL_AUDIT_SOURCE_SCHEMA_UNSUPPORTED: current audited source claim cannot "
-        "establish stable-release eligibility"
+    if not isinstance(source_claim, Mapping):
+        raise ReleaseBundleError(
+            "REL_AUDIT_SOURCE_SCHEMA_UNSUPPORTED: current audited source claim cannot "
+            "establish stable-release eligibility"
+        )
+    try:
+        decoded = decode_audited_source(source_claim, manifest_format_version=2)
+    except AuditedSourceClaimError as error:
+        raise ReleaseBundleError(
+            "REL_AUDIT_SOURCE_SCHEMA_UNSUPPORTED: audited source claim is invalid"
+        ) from error
+    if not isinstance(
+        decoded,
+        (IdentifiedGitAuditedSource, IdentifiedArchiveAuditedSource),
+    ):
+        raise ReleaseBundleError(
+            "REL_AUDIT_SOURCE_UNAVAILABLE: audited source identity is unavailable; "
+            "stable promotion is blocked"
+        )
+    audit_artifacts = (
+        reproductions.get("auditArtifacts")
+        if isinstance(reproductions, Mapping)
+        else None
     )
+    if (
+        not isinstance(audit_artifacts, Mapping)
+        or set(audit_artifacts)
+        != {"reportDigest", "inventoryDigest", "evidenceBundleDigest"}
+        or any(
+            not isinstance(value, str)
+            or re.fullmatch(r"sha256:[0-9a-f]{64}", value) is None
+            for value in audit_artifacts.values()
+        )
+    ):
+        raise ReleaseBundleError(
+            "REL_AUDIT_SOURCE_ARTIFACT_BINDING: audited source artifact binding is invalid"
+        )
+    if package_root is None or trust_policy is None:
+        raise ReleaseBundleError(
+            "REL_AUDIT_SOURCE_EVIDENCE_UNAVAILABLE: identified audited source requires "
+            "an external verified evidence package and pinned trust policy"
+        )
+    try:
+        return verify_audited_source_package(
+            decoded,
+            package_root=package_root,
+            expected_audit_artifacts={
+                key: str(value) for key, value in audit_artifacts.items()
+            },
+            trust_policy=trust_policy,
+            git_repository=ROOT,
+            cosign=cosign,
+        )
+    except ValueError as error:
+        raise ReleaseBundleError(
+            "REL_AUDIT_SOURCE_VERIFICATION_FAILED: audited source package did not verify"
+        ) from error
 
 
 def _audit_closure_claim_from_blobs(
@@ -2147,6 +2241,8 @@ def _validate_promotion_evidence(
     verify_source_diff: bool,
     cosign: str | Sequence[str] = "cosign",
     integration_matrix: Mapping[str, object] | None = None,
+    audited_source_package: Path | None = None,
+    audited_source_trust_policy: ProvenanceTrustPolicy | None = None,
 ) -> tuple[dict[str, object], str, tuple[FileSnapshot, ...]]:
     owner = "stable promotion evidence"
     payload = _json_from_snapshot(snapshot, owner=owner)
@@ -2293,7 +2389,12 @@ def _validate_promotion_evidence(
             "zero-open P0/P1 closure"
         )
     used_report_digests.add(audit_report_digest)
-    _require_stable_audited_source_identity(candidate_audit_closure)
+    _require_stable_audited_source_identity(
+        candidate_audit_closure,
+        package_root=audited_source_package,
+        trust_policy=audited_source_trust_policy,
+        cosign=cosign,
+    )
 
     if integration_matrix is None:
         integration_matrix_path = "docs/project/stable-release-matrix.yaml"

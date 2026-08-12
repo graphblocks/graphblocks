@@ -321,7 +321,9 @@ def _trust_test_source(
     )
     # The checked-in RC10 claim is intentionally unavailable. Tests for unrelated
     # final-promotion gates use this narrow bypass until a verified v2 fixture exists.
-    module._require_stable_audited_source_identity = lambda _audit_closure: None
+    module._require_stable_audited_source_identity = (
+        lambda _audit_closure, **_arguments: None
+    )
     module._promotion_source_diff = lambda **_arguments: {
         "digest": PROMOTION_SOURCE_DIFF["digest"],
         "changes": [dict(change) for change in PROMOTION_SOURCE_DIFF["changes"]],
@@ -2449,7 +2451,9 @@ def test_release_claim_preserves_v2_unavailable_audited_source() -> None:
     ]
 
 
-def test_release_claim_rejects_structured_but_unverified_audited_source() -> None:
+def test_release_claim_preserves_identified_source_but_final_gate_requires_package(
+    tmp_path: Path,
+) -> None:
     module = _load_module()
     root = Path(__file__).parents[1]
     source_blobs = {
@@ -2480,14 +2484,91 @@ def test_release_claim_rejects_structured_but_unverified_audited_source() -> Non
         sort_keys=False,
     ).encode("utf-8")
 
-    with pytest.raises(module.ReleaseBundleError, match="REL_AUDIT_SOURCE_UNVERIFIED"):
-        module._audit_closure_claim_from_blobs(
-            source_blobs,
-            is_ancestor=lambda _commit: True,
-            regression_exists=lambda _path: True,
-            read_file=lambda path: (root / path).read_bytes(),
-            regular_file_exists=lambda path: (root / path).is_file(),
+    claim = module._audit_closure_claim_from_blobs(
+        source_blobs,
+        is_ancestor=lambda _commit: True,
+        regression_exists=lambda _path: True,
+        read_file=lambda path: (root / path).read_bytes(),
+        regular_file_exists=lambda path: (root / path).is_file(),
+    )
+
+    assert claim["reproductions"]["auditedSourceIdentity"] == manifest[
+        "auditedSource"
+    ]
+    assert claim["reproductions"]["auditArtifacts"] == {
+        "reportDigest": "sha256:"
+        + "5ad9b3dcb77b387e1a5d6b41bdb65b9c609c18526d0f1ec712dcb102bfba9f2c",
+        "inventoryDigest": "sha256:"
+        + "9f98ebde8dc981b0eaee8ed795e04306ac67f707223cfe844e2365561db7eb44",
+        "evidenceBundleDigest": "sha256:"
+        + "75cf142766d1e8cbf8c89c1157727d8a4ca0e945b15e9157c8977f1c6a02fe06",
+    }
+    with pytest.raises(
+        module.ReleaseBundleError,
+        match="REL_AUDIT_SOURCE_EVIDENCE_UNAVAILABLE",
+    ):
+        module._require_stable_audited_source_identity(claim)
+
+
+def test_final_gate_delegates_identified_source_to_closed_package_verifier(
+    tmp_path: Path,
+) -> None:
+    module = _load_module()
+    source_claim = {
+        "schemaVersion": 2,
+        "state": "identified",
+        "description": "Externally attested audit input",
+        "identity": {
+            "kind": "archive",
+            "archiveDigest": "sha256:" + "1" * 64,
+        },
+        "fileEvidenceManifestDigest": "sha256:" + "2" * 64,
+        "provenanceBinding": {
+            "kind": "recovered-audit-input",
+            "digest": "sha256:" + "3" * 64,
+        },
+    }
+    artifacts = {
+        "reportDigest": "sha256:" + "a" * 64,
+        "inventoryDigest": "sha256:" + "b" * 64,
+        "evidenceBundleDigest": "sha256:" + "c" * 64,
+    }
+    audit_closure = {
+        "reproductions": {
+            "auditedSourceIdentity": source_claim,
+            "auditArtifacts": artifacts,
+        }
+    }
+    policy = module.ProvenanceTrustPolicy(
+        repository="graphblocks/graphblocks",
+        authority_type="auditor",
+        certificate_identity="auditor@example.test",
+        certificate_oidc_issuer="https://issuer.example.test",
+    )
+    observed: list[dict[str, object]] = []
+    eligible = object()
+
+    def verify(_claim: object, **arguments: object) -> object:
+        observed.append({"claim": _claim, **arguments})
+        return eligible
+
+    module.verify_audited_source_package = verify
+
+    assert (
+        module._require_stable_audited_source_identity(
+            audit_closure,
+            package_root=tmp_path,
+            trust_policy=policy,
+            cosign=["cosign-pinned"],
         )
+        is eligible
+    )
+    assert observed[0]["claim"].archive_digest == "sha256:" + "1" * 64
+    assert observed[0]["package_root"] == tmp_path
+    assert observed[0]["expected_audit_artifacts"] == artifacts
+    assert observed[0]["trust_policy"] == policy
+    assert observed[0]["git_repository"] == module.ROOT
+    assert observed[0]["cosign"] == ["cosign-pinned"]
 
 
 def test_candidate_ci_freezes_one_canonical_matrix_run_attestation(
