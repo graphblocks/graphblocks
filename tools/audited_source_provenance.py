@@ -15,8 +15,10 @@ import tempfile
 from typing import Mapping, Sequence, TypeAlias
 
 from tools.audited_source_claim import (
+    AuditedSourceClaimError,
     IdentifiedArchiveAuditedSource,
     IdentifiedGitAuditedSource,
+    load_strict_yaml_document,
 )
 from tools.audited_source_evidence import AuditArtifactBinding
 
@@ -65,6 +67,29 @@ class ProvenanceTrustPolicy:
             raise ValueError("provenance trust policy is invalid")
 
 
+@dataclass(frozen=True, slots=True)
+class UnavailableProvenanceTrustPolicy:
+    """Explicit marker used until an independent audit authority is pinned."""
+
+    repository: str
+    limitation: str
+    format_version: int = 1
+    status: str = "unavailable"
+
+    def __post_init__(self) -> None:
+        if (
+            type(self.repository) is not str
+            or REPOSITORY.fullmatch(self.repository) is None
+            or not _is_canonical_text(self.limitation)
+        ):
+            raise ValueError("unavailable provenance trust policy is invalid")
+
+
+ProvenanceTrustPolicyConfig: TypeAlias = (
+    ProvenanceTrustPolicy | UnavailableProvenanceTrustPolicy
+)
+
+
 AuditedSourceIdentityClaim: TypeAlias = (
     IdentifiedGitAuditedSource | IdentifiedArchiveAuditedSource
 )
@@ -107,6 +132,106 @@ def _is_canonical_text(value: object, *, max_length: int = 1_024) -> bool:
         and len(value) <= max_length
         and all(ord(character) >= 32 for character in value)
     )
+
+
+def decode_provenance_trust_policy(data: bytes) -> ProvenanceTrustPolicyConfig:
+    """Decode a strict closed trust policy from candidate-bound YAML bytes."""
+
+    try:
+        raw = load_strict_yaml_document(data)
+    except AuditedSourceClaimError as error:
+        raise AuditedSourceProvenanceError(
+            "AUDIT_SOURCE_PROVENANCE_TRUST_POLICY",
+            "provenance trust policy is not strict bounded YAML",
+        ) from error
+    if type(raw) is not dict:
+        raise AuditedSourceProvenanceError(
+            "AUDIT_SOURCE_PROVENANCE_TRUST_POLICY",
+            "provenance trust policy must be a mapping",
+        )
+    status = raw.get("status")
+    expected_fields = (
+        {"formatVersion", "status", "repository", "limitation"}
+        if status == "unavailable"
+        else {
+            "formatVersion",
+            "status",
+            "repository",
+            "authorityType",
+            "certificateIdentity",
+            "certificateOidcIssuer",
+            "allowProjectReleaseWorkflow",
+        }
+    )
+    if (
+        set(raw) != expected_fields
+        or type(raw.get("formatVersion")) is not int
+        or raw.get("formatVersion") != 1
+    ):
+        raise AuditedSourceProvenanceError(
+            "AUDIT_SOURCE_PROVENANCE_TRUST_POLICY",
+            "provenance trust policy has an unsupported shape or version",
+        )
+    try:
+        if status == "unavailable":
+            repository = raw.get("repository")
+            limitation = raw.get("limitation")
+            if type(repository) is not str or type(limitation) is not str:
+                raise ValueError
+            return UnavailableProvenanceTrustPolicy(
+                repository=repository,
+                limitation=limitation,
+            )
+        if status != "configured":
+            raise ValueError
+        repository = raw.get("repository")
+        authority_type = raw.get("authorityType")
+        identity = raw.get("certificateIdentity")
+        issuer = raw.get("certificateOidcIssuer")
+        allow_project = raw.get("allowProjectReleaseWorkflow")
+        if (
+            type(repository) is not str
+            or type(authority_type) is not str
+            or type(identity) is not str
+            or type(issuer) is not str
+            or type(allow_project) is not bool
+        ):
+            raise ValueError
+        return ProvenanceTrustPolicy(
+            repository=repository,
+            authority_type=authority_type,
+            certificate_identity=identity,
+            certificate_oidc_issuer=issuer,
+            allow_project_release_workflow=allow_project,
+        )
+    except ValueError as error:
+        raise AuditedSourceProvenanceError(
+            "AUDIT_SOURCE_PROVENANCE_TRUST_POLICY",
+            "provenance trust policy values are invalid",
+        ) from error
+
+
+def provenance_trust_policy_claim(
+    policy: ProvenanceTrustPolicyConfig,
+) -> dict[str, object]:
+    """Return the exact signed-report representation of a trust policy."""
+
+    if isinstance(policy, UnavailableProvenanceTrustPolicy):
+        return {
+            "formatVersion": policy.format_version,
+            "status": policy.status,
+            "repository": policy.repository,
+            "limitation": policy.limitation,
+        }
+    return {
+        "formatVersion": 1,
+        "status": "configured",
+        "repository": policy.repository,
+        "authorityType": policy.authority_type,
+        "certificateIdentity": policy.certificate_identity,
+        "certificateOidcIssuer": policy.certificate_oidc_issuer,
+        "allowProjectReleaseWorkflow": policy.allow_project_release_workflow,
+    }
 
 
 def canonical_provenance_attestation_bytes(value: Mapping[str, object]) -> bytes:

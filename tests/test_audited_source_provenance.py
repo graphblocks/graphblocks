@@ -14,7 +14,10 @@ from tools.audited_source_evidence import AuditArtifactBinding
 from tools.audited_source_provenance import (
     AuditedSourceProvenanceError,
     ProvenanceTrustPolicy,
+    UnavailableProvenanceTrustPolicy,
     canonical_provenance_attestation_bytes,
+    decode_provenance_trust_policy,
+    provenance_trust_policy_claim,
     verify_audited_source_provenance,
 )
 
@@ -259,3 +262,61 @@ def test_provenance_verification_failure_is_closed_and_sanitized(
 
     assert "secret output" not in str(raised.value)
     assert os.fspath(attestation) not in str(raised.value)
+
+
+def test_provenance_trust_policy_decoder_preserves_explicit_unavailability() -> None:
+    decoded = decode_provenance_trust_policy(
+        b"formatVersion: 1\n"
+        b"status: unavailable\n"
+        b"repository: graphblocks/graphblocks\n"
+        b"limitation: Independent audit authority identity has not been supplied\n"
+    )
+
+    assert decoded == UnavailableProvenanceTrustPolicy(
+        repository="graphblocks/graphblocks",
+        limitation="Independent audit authority identity has not been supplied",
+    )
+    assert provenance_trust_policy_claim(decoded) == {
+        "formatVersion": 1,
+        "status": "unavailable",
+        "repository": "graphblocks/graphblocks",
+        "limitation": "Independent audit authority identity has not been supplied",
+    }
+
+
+def test_provenance_trust_policy_decoder_returns_closed_configured_policy() -> None:
+    decoded = decode_provenance_trust_policy(
+        b"formatVersion: 1\n"
+        b"status: configured\n"
+        b"repository: graphblocks/graphblocks\n"
+        b"authorityType: auditor\n"
+        b"certificateIdentity: https://github.com/example/audit/.github/workflows/attest.yml@refs/tags/audit-1\n"
+        b"certificateOidcIssuer: https://token.actions.githubusercontent.com\n"
+        b"allowProjectReleaseWorkflow: false\n"
+    )
+
+    assert decoded == ProvenanceTrustPolicy(
+        repository="graphblocks/graphblocks",
+        authority_type="auditor",
+        certificate_identity=(
+            "https://github.com/example/audit/"
+            ".github/workflows/attest.yml@refs/tags/audit-1"
+        ),
+        certificate_oidc_issuer=OIDC_ISSUER,
+    )
+    assert provenance_trust_policy_claim(decoded)["status"] == "configured"
+
+
+@pytest.mark.parametrize(
+    "data",
+    (
+        b"formatVersion: 1\nstatus: configured\nrepository: graphblocks/graphblocks\n",
+        b"formatVersion: 1\nformatVersion: 1\nstatus: unavailable\nrepository: graphblocks/graphblocks\nlimitation: missing\n",
+        b"formatVersion: 1\nstatus: unavailable\nrepository: graphblocks/graphblocks\nlimitation: missing\nunknown: true\n",
+    ),
+)
+def test_provenance_trust_policy_decoder_rejects_partial_duplicate_or_open_yaml(
+    data: bytes,
+) -> None:
+    with pytest.raises(AuditedSourceProvenanceError, match="TRUST_POLICY"):
+        decode_provenance_trust_policy(data)
