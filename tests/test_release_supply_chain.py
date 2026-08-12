@@ -1665,6 +1665,41 @@ def test_final_promotion_rejects_authentic_unavailable_audited_source(
         )
 
 
+def test_final_promotion_rejects_unregistered_required_release_gate(
+    tmp_path: Path,
+) -> None:
+    module = _load_module()
+    _trust_test_source(module)
+    promotion = _write_promotion_evidence(module, tmp_path / "promotion.json")
+    integration_matrix = yaml.safe_load(
+        (Path(__file__).parents[1] / "docs/project/stable-release-matrix.yaml").read_text(
+            encoding="utf-8"
+        )
+    )
+    integration_matrix["globalRequiredGates"].append("REL-UNREGISTERED")
+    integration_matrix["releaseGates"].append(
+        {
+            "id": "REL-UNREGISTERED",
+            "description": "Unregistered release blocker",
+            "blocksTargetRelease": True,
+        }
+    )
+
+    with pytest.raises(module.ReleaseBundleError, match="unregistered release gate"):
+        module._validate_promotion_evidence(
+            module._snapshot_regular_file(
+                promotion,
+                owner="unregistered-gate promotion",
+            ),
+            git_commit=COMMIT,
+            git_tree=TREE,
+            release_ref="refs/tags/v1.0.0",
+            release_version="1.0.0",
+            verify_source_diff=True,
+            integration_matrix=integration_matrix,
+        )
+
+
 def test_final_promotion_consumes_signed_concrete_real_service_runs(
     tmp_path: Path,
 ) -> None:
@@ -1723,29 +1758,32 @@ def test_final_promotion_consumes_signed_concrete_real_service_runs(
         promotion_path,
         owner="test promotion evidence",
     )
-    integration_matrix = {
-        "integrations": [
-            {
-                "id": integration_id,
-                "implementationMaturity": "real-adapter",
-                "supportedAuthentication": ["api-key"],
-                "supportedServiceOrSdkVersions": ["1.2.3"],
-                "retryAndFailureModel": "bounded-exponential-retry",
-                "realServiceEvidence": [
-                    {
-                        "test": "tests/integration/test_qdrant_real_service.py",
-                        "workflow": workflow,
-                        "workflowJob": "qdrant",
-                        "testStep": "exercise-qdrant-real-service",
-                        "artifactName": (
-                            f"{integration_id}-${{{{ github.sha }}}}-"
-                            "${{ github.run_id }}-${{ github.run_attempt }}"
-                        ),
-                    }
-                ],
-            }
-        ]
-    }
+    integration_matrix = yaml.safe_load(
+        (Path(__file__).parents[1] / "docs/project/stable-release-matrix.yaml").read_text(
+            encoding="utf-8"
+        )
+    )
+    integration_matrix["integrations"] = [
+        {
+            "id": integration_id,
+            "implementationMaturity": "real-adapter",
+            "supportedAuthentication": ["api-key"],
+            "supportedServiceOrSdkVersions": ["1.2.3"],
+            "retryAndFailureModel": "bounded-exponential-retry",
+            "realServiceEvidence": [
+                {
+                    "test": "tests/integration/test_qdrant_real_service.py",
+                    "workflow": workflow,
+                    "workflowJob": "qdrant",
+                    "testStep": "exercise-qdrant-real-service",
+                    "artifactName": (
+                        f"{integration_id}-${{{{ github.sha }}}}-"
+                        "${{ github.run_id }}-${{ github.run_attempt }}"
+                    ),
+                }
+            ],
+        }
+    ]
     signature_calls: list[dict[str, object]] = []
     module._verify_promotion_report_signature = (
         lambda **arguments: signature_calls.append(arguments)

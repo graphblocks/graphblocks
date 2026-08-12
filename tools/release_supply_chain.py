@@ -158,6 +158,74 @@ AUDIT_CLOSURE_SOURCE_PATHS = (
     AUDIT_REPRODUCTION_MANIFEST_PATH,
     AUDIT_REPRODUCTION_CHECKER_PATH,
 )
+FINAL_ADMISSION_GATE_PREDICATES = (
+    {
+        "gateId": "REL-AUDIT-REMEDIATION",
+        "enforcement": "promotion-validator",
+        "predicate": "audit-closure-and-verified-source",
+        "regression": "tests/test_release_supply_chain.py::test_final_promotion_rejects_authentic_unavailable_audited_source",
+    },
+    {
+        "gateId": "REL-OBJECT-AUTHORIZATION-REVIEW",
+        "enforcement": "promotion-validator",
+        "predicate": "independent-object-authorization-review",
+        "regression": "tests/test_release_supply_chain.py::test_final_release_rejects_promotion_evidence_substitution",
+    },
+    {
+        "gateId": "REL-ADVERSARIAL-RESOURCE-TESTS",
+        "enforcement": "promotion-validator",
+        "predicate": "candidate-security-matrix",
+        "regression": "tests/test_release_supply_chain.py::test_final_promotion_rejects_security_gate_substitution",
+    },
+    {
+        "gateId": "REL-NORMATIVE-AUTHORITY",
+        "enforcement": "bundle-validator",
+        "predicate": "installed-native-authority-evidence",
+        "regression": "tests/test_release_supply_chain.py::test_release_bundle_rejects_native_authority_evidence_substitution",
+    },
+    {
+        "gateId": "REL-RUNTIME-CORRECTNESS",
+        "enforcement": "bundle-validator",
+        "predicate": "installed-local-runtime-correctness-evidence",
+        "regression": "tests/test_release_supply_chain.py::test_release_bundle_rejects_platform_contract_binding_substitution",
+    },
+    {
+        "gateId": "REL-CORE-PROFILE",
+        "enforcement": "bundle-validator",
+        "predicate": "frozen-core-contract-expectations",
+        "regression": "tests/test_release_supply_chain.py::test_release_bundle_rejects_tck_contract_digest_substitution",
+    },
+    {
+        "gateId": "REL-PLATFORM-MATRIX",
+        "enforcement": "bundle-validator",
+        "predicate": "supported-platform-evidence",
+        "regression": "tests/test_release_supply_chain.py::test_release_bundle_rejects_missing_platform_and_dependency_contamination",
+    },
+    {
+        "gateId": "REL-MACOS-NATIVE-SMOKE",
+        "enforcement": "required-ci-gate",
+        "predicate": "macos-native-wheel-smoke",
+        "regression": "tests/test_macos_native_smoke.py::test_macos_native_wheel_smoke_is_required_for_both_python_versions",
+    },
+    {
+        "gateId": "REL-DOCS-INTEGRITY",
+        "enforcement": "required-ci-gate",
+        "predicate": "closed-documentation-integrity",
+        "regression": "tests/test_docs_checker.py::test_documentation_integrity_is_a_named_release_gate",
+    },
+    {
+        "gateId": "REL-SUPPLY-CHAIN",
+        "enforcement": "bundle-validator",
+        "predicate": "immutable-bundle-and-signature-policy",
+        "regression": "tests/test_release_supply_chain.py::test_release_bundle_signature_is_in_closure_and_pinned_to_release_workflow_ref",
+    },
+    {
+        "gateId": "REL-RC-SOAK",
+        "enforcement": "promotion-validator",
+        "predicate": "candidate-soak-period-and-applications",
+        "regression": "tests/test_release_supply_chain.py::test_final_release_rejects_future_and_out_of_period_soak_evidence",
+    },
+)
 PROMOTION_IMMUTABLE_AUTHORITY_PATHS = {
     "docs/project/stable-release-matrix.yaml",
     SECURITY_GATE_MANIFEST_PATH,
@@ -2253,6 +2321,9 @@ def _validate_promotion_evidence(
             loaded_matrices.append(loaded_matrix)
         candidate_integration_matrix, final_integration_matrix = loaded_matrices
         integration_claim_fields = (
+            "globalRequiredGates",
+            "finalAdmissionPolicy",
+            "releaseGates",
             "integrationPromotionPolicy",
             "integrations",
         )
@@ -2269,6 +2340,62 @@ def _validate_promotion_evidence(
     if not isinstance(integration_matrix, Mapping):
         raise ReleaseBundleError(
             "stable promotion integration matrix has an invalid shape"
+        )
+    final_admission_policy = _require_exact_keys(
+        integration_matrix.get("finalAdmissionPolicy"),
+        {"formatVersion", "validator", "requiredGatePredicates"},
+        owner="stable promotion final-admission policy",
+    )
+    expected_predicates = [dict(record) for record in FINAL_ADMISSION_GATE_PREDICATES]
+    if final_admission_policy != {
+        "formatVersion": 1,
+        "validator": "tools/release_supply_chain.py::_validate_promotion_evidence",
+        "requiredGatePredicates": expected_predicates,
+    }:
+        raise ReleaseBundleError(
+            "stable promotion final-admission predicate registry drifted"
+        )
+    global_required_gates = integration_matrix.get("globalRequiredGates")
+    expected_gate_ids = [record["gateId"] for record in expected_predicates]
+    if (
+        not isinstance(global_required_gates, list)
+        or global_required_gates != expected_gate_ids
+        or len(global_required_gates) != len(set(global_required_gates))
+    ):
+        raise ReleaseBundleError(
+            "stable promotion matrix contains an unregistered release gate"
+        )
+    raw_release_gates = integration_matrix.get("releaseGates")
+    if not isinstance(raw_release_gates, list):
+        raise ReleaseBundleError(
+            "stable promotion matrix release gate inventory is invalid"
+        )
+    release_gates: dict[str, Mapping[str, object]] = {}
+    for raw_gate in raw_release_gates:
+        if not isinstance(raw_gate, Mapping):
+            raise ReleaseBundleError(
+                "stable promotion matrix release gate inventory is invalid"
+            )
+        gate_id = raw_gate.get("id")
+        if not isinstance(gate_id, str) or not gate_id or gate_id in release_gates:
+            raise ReleaseBundleError(
+                "stable promotion matrix release gate inventory is invalid"
+            )
+        release_gates[gate_id] = raw_gate
+    blocking_gate_ids = {
+        gate_id
+        for gate_id, gate in release_gates.items()
+        if gate.get("blocksTargetRelease") is True
+    }
+    if (
+        any(
+            release_gates.get(gate_id, {}).get("blocksTargetRelease") is not True
+            for gate_id in expected_gate_ids
+        )
+        or not blocking_gate_ids.issubset(set(expected_gate_ids))
+    ):
+        raise ReleaseBundleError(
+            "stable promotion matrix contains an unregistered release gate"
         )
     raw_integration_entries = integration_matrix.get("integrations")
     if not isinstance(raw_integration_entries, list):

@@ -14,6 +14,34 @@ import yaml
 ROOT = Path(__file__).parents[1]
 
 
+def test_every_required_release_gate_has_an_executable_final_predicate() -> None:
+    matrix = yaml.safe_load(
+        (ROOT / "docs/project/stable-release-matrix.yaml").read_text(encoding="utf-8")
+    )
+    policy = matrix["finalAdmissionPolicy"]
+    predicates = policy["requiredGatePredicates"]
+    predicate_ids = [record["gateId"] for record in predicates]
+    release_gates = {record["id"]: record for record in matrix["releaseGates"]}
+
+    assert policy["formatVersion"] == 1
+    assert policy["validator"] == (
+        "tools/release_supply_chain.py::_validate_promotion_evidence"
+    )
+    assert predicate_ids == matrix["globalRequiredGates"]
+    assert len(predicate_ids) == len(set(predicate_ids))
+    assert all(
+        release_gates[gate_id]["blocksTargetRelease"] is True
+        for gate_id in predicate_ids
+    )
+    for record in predicates:
+        assert set(record) == {"gateId", "enforcement", "predicate", "regression"}
+        test_path, separator, test_name = record["regression"].partition("::")
+        assert separator == "::"
+        assert test_path.startswith("tests/")
+        source = (ROOT / test_path).read_text(encoding="utf-8")
+        assert re.search(rf"^def {re.escape(test_name)}\(", source, re.MULTILINE)
+
+
 def test_project_and_artifact_maturity_claims_are_consistent() -> None:
     matrix = yaml.safe_load(
         (ROOT / "docs" / "project" / "stable-release-matrix.yaml").read_text(
