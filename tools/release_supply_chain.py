@@ -1061,6 +1061,24 @@ def _audit_closure_claim_from_result(
     }
 
 
+def _require_stable_audited_source_identity(
+    audit_closure: Mapping[str, object],
+) -> None:
+    reproductions = audit_closure.get("reproductions")
+    if (
+        isinstance(reproductions, Mapping)
+        and reproductions.get("auditedSourceIdentity") == "unavailable"
+    ):
+        raise ReleaseBundleError(
+            "REL_AUDIT_SOURCE_UNAVAILABLE: audited source identity is unavailable; "
+            "stable promotion is blocked"
+        )
+    raise ReleaseBundleError(
+        "REL_AUDIT_SOURCE_SCHEMA_UNSUPPORTED: current audited source claim cannot "
+        "establish stable-release eligibility"
+    )
+
+
 def _audit_closure_claim_from_blobs(
     source_blobs: Mapping[str, bytes],
     *,
@@ -2166,6 +2184,7 @@ def _validate_promotion_evidence(
             "zero-open P0/P1 closure"
         )
     used_report_digests.add(audit_report_digest)
+    _require_stable_audited_source_identity(candidate_audit_closure)
 
     if integration_matrix is None:
         integration_matrix_path = "docs/project/stable-release-matrix.yaml"

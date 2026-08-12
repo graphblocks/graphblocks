@@ -319,6 +319,9 @@ def _trust_test_source(
     module._verify_promotion_report_signature = (
         lambda **_arguments: PROMOTION_INTEGRATED_AT
     )
+    # The checked-in RC10 claim is intentionally unavailable. Tests for unrelated
+    # final-promotion gates use this narrow bypass until a verified v2 fixture exists.
+    module._require_stable_audited_source_identity = lambda _audit_closure: None
     module._promotion_source_diff = lambda **_arguments: {
         "digest": PROMOTION_SOURCE_DIFF["digest"],
         "changes": [dict(change) for change in PROMOTION_SOURCE_DIFF["changes"]],
@@ -1630,6 +1633,36 @@ def test_final_release_binds_promotion_evidence_and_requires_signature(
     )
     with pytest.raises(module.ReleaseBundleError, match="unsupported format or readiness"):
         module.verify_release_bundle(bundle_dir=bundle)
+
+
+def test_final_promotion_rejects_authentic_unavailable_audited_source(
+    tmp_path: Path,
+) -> None:
+    module = _load_module()
+    require_stable_audited_source_identity = (
+        module._require_stable_audited_source_identity
+    )
+    _trust_test_source(module)
+    module._require_stable_audited_source_identity = (
+        require_stable_audited_source_identity
+    )
+    promotion = _write_promotion_evidence(module, tmp_path / "promotion.json")
+
+    with pytest.raises(
+        module.ReleaseBundleError,
+        match="REL_AUDIT_SOURCE_UNAVAILABLE",
+    ):
+        module._validate_promotion_evidence(
+            module._snapshot_regular_file(
+                promotion,
+                owner="unavailable audited-source promotion",
+            ),
+            git_commit=COMMIT,
+            git_tree=TREE,
+            release_ref="refs/tags/v1.0.0",
+            release_version="1.0.0",
+            verify_source_diff=True,
+        )
 
 
 def test_final_promotion_consumes_signed_concrete_real_service_runs(
