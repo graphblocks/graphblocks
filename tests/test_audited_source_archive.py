@@ -73,7 +73,14 @@ def test_verified_zip_rejects_escaping_or_ambiguous_paths(
     tmp_path: Path,
     name: str,
 ) -> None:
-    path, source = _verified_archive(tmp_path, _zip_bytes([(name, b"bad")]))
+    archive_name = name.replace("\\", "/")
+    archive_bytes = _zip_bytes([(archive_name, b"bad")])
+    if archive_name != name:
+        archive_bytes = archive_bytes.replace(
+            archive_name.encode("utf-8"),
+            name.encode("utf-8"),
+        )
+    path, source = _verified_archive(tmp_path, archive_bytes)
 
     with pytest.raises(AuditedSourceArchiveError, match="ARCHIVE_PATH"):
         read_verified_zip_members(source, archive=path)
