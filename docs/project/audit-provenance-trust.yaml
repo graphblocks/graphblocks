@@ -1,4 +1,4 @@
 formatVersion: 1
 status: unavailable
 repository: graphblocks/graphblocks
-limitation: Independent auditor or evidence-custodian signing identity has not been supplied
+limitation: Optional independent source-package verification is not configured; stable promotion uses the project-managed digest-bound audit closure

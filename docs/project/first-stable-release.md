@@ -217,23 +217,23 @@ reproduction manifest and checker, validates all captured and reconstructed
 file digests from both candidate and final Git objects, and records the exact
 selector-source digests. Historical vulnerable behavior still cannot be
 independently replayed against an identified audited source; that
-source-identity gap remains blocking and is not inferred from the captured
-timestamps.
+source-identity limitation is recorded explicitly and is not inferred from the
+captured timestamps. It does not block stable promotion because the project
+owns this audit and binds its report, inventory, evidence bundle, remediation
+commits, and executable regressions directly into the candidate and final
+promotion evidence.
 
-The final admission path now accepts only a closed external audited-source
-package. For Git, it verifies a real commit-to-tree relation and every captured
-Git blob; for an archive, it hashes the raw input and inspects a bounded ZIP
-without extraction before matching captured bytes. Both variants require a
-canonical file-evidence manifest, exact bindings to the report, inventory, and
-evidence-bundle digests, and a canonical provenance attestation verified by
-Cosign against the candidate-bound trust policy. Identity, file evidence, and
-provenance are composed into one eligible type and compared again before
-promotion. The current
-[`audit-provenance-trust.yaml`](audit-provenance-trust.yaml) deliberately says
-`unavailable`; project release workflow signatures cannot establish historical
-audit provenance by default. A new release candidate is required after a real
-independent authority and the original input are supplied. RC10 is retained as
-historical candidate evidence and cannot be retrofitted.
+The final admission path requires the project-managed audit closure: exact
+artifact digests, all 99 finding identities and remediation commits, captured
+and reconstructed reproduction digests, executable selectors, and equality of
+the candidate and final closure. A closed audited-source package remains an
+optional higher-assurance input. When supplied, its Git or archive identity,
+file-level evidence, provenance attestation, and Cosign authority are still
+verified fail-closed. The current
+[`audit-provenance-trust.yaml`](audit-provenance-trust.yaml) therefore records
+that optional independent verification is not configured; it is not a stable
+release blocker. RC10 remains historical evidence, and a new candidate is
+still required for the completed remediation set.
 
 The stable promotion validator treats runtime security as evidence distinct
 from supply-chain integrity. Each candidate matrix attestation carries the

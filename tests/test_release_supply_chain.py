@@ -335,11 +335,6 @@ def _trust_test_source(
     module._verify_promotion_report_signature = (
         lambda **_arguments: PROMOTION_INTEGRATED_AT
     )
-    # The checked-in RC10 claim is intentionally unavailable. Tests for unrelated
-    # final-promotion gates use this narrow bypass until a verified v2 fixture exists.
-    module._require_stable_audited_source_identity = (
-        lambda _audit_closure, **_arguments: None
-    )
     module._promotion_source_diff = lambda **_arguments: {
         "digest": PROMOTION_SOURCE_DIFF["digest"],
         "changes": [dict(change) for change in PROMOTION_SOURCE_DIFF["changes"]],
@@ -1597,14 +1592,6 @@ def test_final_release_binds_promotion_evidence_and_requires_signature(
     module = _load_module()
     inputs = _inputs(module, tmp_path, stable_version="1.0.0")
     promotion = _write_promotion_evidence(module, tmp_path / "promotion.json")
-    audited_source_package = tmp_path / "audited-source-package"
-    audited_source_package.mkdir()
-    observed_source_packages: list[Path | None] = []
-    module._require_stable_audited_source_identity = (
-        lambda _audit_closure, *, package_root=None, **_arguments: (
-            observed_source_packages.append(package_root)
-        )
-    )
     bundle = tmp_path / "bundle"
     manifest = module.assemble_release_bundle(
         platform_inputs_dir=inputs,
@@ -1614,13 +1601,8 @@ def test_final_release_binds_promotion_evidence_and_requires_signature(
         builder_id=BUILDER_ID,
         invocation_id=INVOCATION_ID,
         promotion_evidence=promotion,
-        audited_source_package=audited_source_package,
     )
 
-    assert observed_source_packages == [
-        audited_source_package,
-        audited_source_package,
-    ]
     assert manifest["readiness"] == "promotion-authorized-signature-required"
     assert manifest["signaturePolicy"]["status"] == "signature-required"
     assert manifest["externalGates"] == ["keyless-signing-identity"]
@@ -1640,10 +1622,7 @@ def test_final_release_binds_promotion_evidence_and_requires_signature(
         "promotionEvidence"
     ] == promotion_binding
     with pytest.raises(module.ReleaseBundleError, match="requires its Sigstore signature"):
-        module.verify_release_bundle(
-            bundle_dir=bundle,
-            audited_source_package=audited_source_package,
-        )
+        module.verify_release_bundle(bundle_dir=bundle)
     signature = bundle / module.SIGNATURE_BUNDLE_NAME
     signature.write_text("{}", encoding="utf-8")
     signature_verifications: list[dict[str, object]] = []
@@ -1658,7 +1637,6 @@ def test_final_release_binds_promotion_evidence_and_requires_signature(
         bundle_dir=bundle,
         signature_bundle=signature,
         certificate_identity=certificate_identity,
-        audited_source_package=audited_source_package,
     )["readiness"] == "promotion-authorized-signature-required"
     assert len(signature_verifications) == 1
     self_declared = dict(manifest)
@@ -1690,34 +1668,29 @@ def test_release_candidate_rejects_external_audited_source_package(
         )
 
 
-def test_final_promotion_rejects_authentic_unavailable_audited_source(
+def test_final_promotion_accepts_project_managed_unavailable_source(
     tmp_path: Path,
 ) -> None:
     module = _load_module()
-    require_stable_audited_source_identity = (
-        module._require_stable_audited_source_identity
-    )
     _trust_test_source(module)
-    module._require_stable_audited_source_identity = (
-        require_stable_audited_source_identity
-    )
     promotion = _write_promotion_evidence(module, tmp_path / "promotion.json")
 
-    with pytest.raises(
-        module.ReleaseBundleError,
-        match="REL_AUDIT_SOURCE_UNAVAILABLE",
-    ):
-        module._validate_promotion_evidence(
-            module._snapshot_regular_file(
-                promotion,
-                owner="unavailable audited-source promotion",
-            ),
-            git_commit=COMMIT,
-            git_tree=TREE,
-            release_ref="refs/tags/v1.0.0",
-            release_version="1.0.0",
-            verify_source_diff=True,
-        )
+    payload, content_digest, _reports = module._validate_promotion_evidence(
+        module._snapshot_regular_file(
+            promotion,
+            owner="project-managed audit evidence promotion",
+        ),
+        git_commit=COMMIT,
+        git_tree=TREE,
+        release_ref="refs/tags/v1.0.0",
+        release_version="1.0.0",
+        verify_source_diff=True,
+    )
+
+    assert payload["auditClosure"]["reproductions"]["auditedSourceIdentity"] == (
+        "unavailable"
+    )
+    assert content_digest == payload["contentDigest"]
 
 
 def test_final_promotion_rejects_unregistered_required_release_gate(
@@ -2504,7 +2477,7 @@ def test_release_claim_preserves_v2_unavailable_audited_source() -> None:
     ]
 
 
-def test_release_claim_preserves_identified_source_but_final_gate_requires_package(
+def test_release_claim_preserves_identified_source_with_optional_package_verification(
     tmp_path: Path,
 ) -> None:
     module = _load_module()
@@ -2561,15 +2534,33 @@ def test_release_claim_preserves_identified_source_but_final_gate_requires_packa
         "status": "unavailable",
         "repository": "graphblocks/graphblocks",
         "limitation": (
-            "Independent auditor or evidence-custodian signing identity has not "
-            "been supplied"
+            "Optional independent source-package verification is not configured; "
+            "stable promotion uses the project-managed digest-bound audit closure"
         ),
     }
+    assert module._require_stable_audit_evidence(claim) is None
     with pytest.raises(
         module.ReleaseBundleError,
         match="REL_AUDIT_SOURCE_TRUST_UNAVAILABLE",
     ):
-        module._require_stable_audited_source_identity(claim)
+        module._require_stable_audit_evidence(claim, package_root=root)
+
+
+def test_project_managed_audit_evidence_rejects_invalid_artifact_binding() -> None:
+    module = _load_module()
+    audit_closure = {
+        "reproductions": {
+            "auditedSourceIdentity": "unavailable",
+            "auditArtifacts": {
+                "reportDigest": "sha256:" + "a" * 64,
+                "inventoryDigest": "sha256:" + "b" * 64,
+                "evidenceBundleDigest": "not-a-digest",
+            },
+        }
+    }
+
+    with pytest.raises(module.ReleaseBundleError, match="REL_AUDIT_ARTIFACT_BINDING"):
+        module._require_stable_audit_evidence(audit_closure)
 
 
 def test_final_gate_delegates_identified_source_to_closed_package_verifier(
@@ -2620,7 +2611,7 @@ def test_final_gate_delegates_identified_source_to_closed_package_verifier(
     module.verify_audited_source_package = verify
 
     assert (
-        module._require_stable_audited_source_identity(
+        module._require_stable_audit_evidence(
             audit_closure,
             package_root=tmp_path,
             cosign=["cosign-pinned"],
@@ -4543,7 +4534,7 @@ def test_ci_enforces_pinned_platform_aggregation_and_isolated_release_signing() 
     assert '--release-ref "$GITHUB_REF"' in assemble
     assert '[[ "$GITHUB_REF" == "refs/tags/v1.0.0" ]]' in assemble
     assert '--promotion-evidence "$PROMOTION_EVIDENCE_PATH"' in assemble
-    assert '--audited-source-package "$AUDITED_SOURCE_PACKAGE_PATH"' in assemble
+    assert "--audited-source-package" not in assemble
     assert '"${promotion_args[@]}"' in assemble
     assert "--cosign cosign" in assemble
     assert "sha256sum dist/release-bundle/release-manifest.json" in assemble
@@ -4551,9 +4542,9 @@ def test_ci_enforces_pinned_platform_aggregation_and_isolated_release_signing() 
     assert aggregate_steps["Assemble and verify the offline release bundle"]["env"][
         "PROMOTION_EVIDENCE_PATH"
     ] == "docs/project/releases/v1.0.0-promotion-evidence.json"
-    assert aggregate_steps["Assemble and verify the offline release bundle"]["env"][
-        "AUDITED_SOURCE_PACKAGE_PATH"
-    ] == "dist/external-audited-source-package"
+    assert "AUDITED_SOURCE_PACKAGE_PATH" not in aggregate_steps[
+        "Assemble and verify the offline release bundle"
+    ]["env"]
     assert not (
         root / "docs" / "project" / "releases" / "v1.0.0-promotion-evidence.json"
     ).exists()

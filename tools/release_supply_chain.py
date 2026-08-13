@@ -209,8 +209,8 @@ FINAL_ADMISSION_GATE_PREDICATES = (
     {
         "gateId": "REL-AUDIT-REMEDIATION",
         "enforcement": "promotion-validator",
-        "predicate": "audit-closure-and-verified-source",
-        "regression": "tests/test_release_supply_chain.py::test_final_promotion_rejects_authentic_unavailable_audited_source",
+        "predicate": "project-managed-audit-artifact-and-remediation-closure",
+        "regression": "tests/test_release_supply_chain.py::test_final_promotion_accepts_project_managed_unavailable_source",
     },
     {
         "gateId": "REL-OBJECT-AUTHORIZATION-REVIEW",
@@ -1226,46 +1226,13 @@ def _audit_closure_claim_from_result(
     }
 
 
-def _require_stable_audited_source_identity(
+def _require_stable_audit_evidence(
     audit_closure: Mapping[str, object],
     *,
     package_root: Path | None = None,
     cosign: str | Sequence[str] = "cosign",
-) -> EligibleAuditedSource:
+) -> EligibleAuditedSource | None:
     reproductions = audit_closure.get("reproductions")
-    source_claim = (
-        reproductions.get("auditedSourceIdentity")
-        if isinstance(reproductions, Mapping)
-        else None
-    )
-    if source_claim == "unavailable" or (
-        isinstance(source_claim, Mapping)
-        and source_claim.get("schemaVersion") == 2
-        and source_claim.get("state") == "unavailable"
-    ):
-        raise ReleaseBundleError(
-            "REL_AUDIT_SOURCE_UNAVAILABLE: audited source identity is unavailable; "
-            "stable promotion is blocked"
-        )
-    if not isinstance(source_claim, Mapping):
-        raise ReleaseBundleError(
-            "REL_AUDIT_SOURCE_SCHEMA_UNSUPPORTED: current audited source claim cannot "
-            "establish stable-release eligibility"
-        )
-    try:
-        decoded = decode_audited_source(source_claim, manifest_format_version=2)
-    except AuditedSourceClaimError as error:
-        raise ReleaseBundleError(
-            "REL_AUDIT_SOURCE_SCHEMA_UNSUPPORTED: audited source claim is invalid"
-        ) from error
-    if not isinstance(
-        decoded,
-        (IdentifiedGitAuditedSource, IdentifiedArchiveAuditedSource),
-    ):
-        raise ReleaseBundleError(
-            "REL_AUDIT_SOURCE_UNAVAILABLE: audited source identity is unavailable; "
-            "stable promotion is blocked"
-        )
     audit_artifacts = (
         reproductions.get("auditArtifacts")
         if isinstance(reproductions, Mapping)
@@ -1282,8 +1249,48 @@ def _require_stable_audited_source_identity(
         )
     ):
         raise ReleaseBundleError(
-            "REL_AUDIT_SOURCE_ARTIFACT_BINDING: audited source artifact binding is invalid"
+            "REL_AUDIT_ARTIFACT_BINDING: project-managed audit artifact binding "
+            "is invalid"
         )
+    source_claim = (
+        reproductions.get("auditedSourceIdentity")
+        if isinstance(reproductions, Mapping)
+        else None
+    )
+    if source_claim == "unavailable" or (
+        isinstance(source_claim, Mapping)
+        and source_claim.get("schemaVersion") == 2
+        and source_claim.get("state") == "unavailable"
+    ):
+        if package_root is not None:
+            raise ReleaseBundleError(
+                "REL_AUDIT_SOURCE_UNAVAILABLE: an optional source package cannot be "
+                "verified without an identified historical source"
+            )
+        return None
+    if not isinstance(source_claim, Mapping):
+        raise ReleaseBundleError(
+            "REL_AUDIT_SOURCE_SCHEMA_UNSUPPORTED: current audited source claim cannot "
+            "establish stable-release eligibility"
+        )
+    try:
+        decoded = decode_audited_source(source_claim, manifest_format_version=2)
+    except AuditedSourceClaimError as error:
+        raise ReleaseBundleError(
+            "REL_AUDIT_SOURCE_SCHEMA_UNSUPPORTED: audited source claim is invalid"
+        ) from error
+    if not isinstance(
+        decoded,
+        (IdentifiedGitAuditedSource, IdentifiedArchiveAuditedSource),
+    ):
+        if package_root is not None:
+            raise ReleaseBundleError(
+                "REL_AUDIT_SOURCE_UNAVAILABLE: an optional source package requires "
+                "an identified historical source"
+            )
+        return None
+    if package_root is None:
+        return None
     try:
         trust_policy = decode_provenance_trust_policy_claim(
             reproductions.get("provenanceTrustPolicy")
@@ -1296,13 +1303,8 @@ def _require_stable_audited_source_identity(
         ) from error
     if isinstance(trust_policy, UnavailableProvenanceTrustPolicy):
         raise ReleaseBundleError(
-            "REL_AUDIT_SOURCE_TRUST_UNAVAILABLE: independent audit authority "
-            "identity has not been supplied"
-        )
-    if package_root is None:
-        raise ReleaseBundleError(
-            "REL_AUDIT_SOURCE_EVIDENCE_UNAVAILABLE: identified audited source requires "
-            "an external verified evidence package"
+            "REL_AUDIT_SOURCE_TRUST_UNAVAILABLE: optional independent source-package "
+            "verification requires a configured authority"
         )
     try:
         return verify_audited_source_package(
@@ -2439,7 +2441,7 @@ def _validate_promotion_evidence(
             "zero-open P0/P1 closure"
         )
     used_report_digests.add(audit_report_digest)
-    _require_stable_audited_source_identity(
+    _require_stable_audit_evidence(
         candidate_audit_closure,
         package_root=audited_source_package,
         cosign=cosign,

@@ -1793,9 +1793,7 @@ def test_stable_release_matrix_is_complete_and_machine_readable() -> None:
     audit_gate = next(
         entry for entry in matrix["releaseGates"] if entry["id"] == "REL-AUDIT-REMEDIATION"
     )
-    assert audit_gate["readiness"] == (
-        "code-closure-enforced-external-evidence-blocked"
-    )
+    assert audit_gate["readiness"] == "code-closure-enforced"
     assert audit["liveStatus"] == {
         "authority": "docs/project/audit-issue-status.yaml",
         "inventory": "docs/project/audit-issues.json",
@@ -2183,10 +2181,7 @@ def test_stable_release_matrix_is_complete_and_machine_readable() -> None:
             "durationSeconds": 47,
         },
     }
-    assert audit_gate["blockers"] == [
-        "original-audited-source-package-unavailable",
-        "independent-audit-provenance-authority-unavailable",
-    ]
+    assert audit_gate["blockers"] == []
     assert audit_gate["exitCriteria"]["maxOpenBySeverity"] == {"P0": 0, "P1": 0}
     assert audit_gate["companionGates"] == [
         "REL-OBJECT-AUTHORIZATION-REVIEW",

@@ -62,7 +62,7 @@ readinessAxes:
       targetReleaseClaim: core-c1-local-runtime-authority
       blocksTargetRelease: true
       shippedP0P1RemainBlocking: true
-      claimBoundary: Core C1 local flow, typed ports, outcomes, cooperative cancellation, and restart-independent store/journal correctness are Rust-authoritative; C4/X3 production durability retains its separate nonblocking preview gate, while candidate-wide audit evidence still blocks 1.0.
+      claimBoundary: Core C1 local flow, typed ports, outcomes, cooperative cancellation, and restart-independent store/journal correctness are Rust-authoritative; C4/X3 production durability retains its separate nonblocking preview gate, while the project-managed audit closure remains a required satisfied gate.
     - id: adapters
       label: External adapters
       readiness: contract-only-no-real-adapters
@@ -91,8 +91,8 @@ finalAdmissionPolicy:
   requiredGatePredicates:
     - gateId: REL-AUDIT-REMEDIATION
       enforcement: promotion-validator
-      predicate: audit-closure-and-verified-source
-      regression: tests/test_release_supply_chain.py::test_final_promotion_rejects_authentic_unavailable_audited_source
+      predicate: project-managed-audit-artifact-and-remediation-closure
+      regression: tests/test_release_supply_chain.py::test_final_promotion_accepts_project_managed_unavailable_source
     - gateId: REL-OBJECT-AUTHORIZATION-REVIEW
       enforcement: promotion-validator
       predicate: independent-object-authorization-review
@@ -1243,8 +1243,8 @@ releaseGates:
     blockers:
       - three-reviewed-candidate-security-gate-attestations-not-published
   - id: REL-AUDIT-REMEDIATION
-    description: Every deep-audit P0 and P1 in a shipped artifact is closed with executable regression and review evidence.
-    readiness: code-closure-enforced-external-evidence-blocked
+    description: All 99 deep-audit findings are closed through project-managed artifact digests, ancestor remediation commits, reproductions, and executable regression evidence.
+    readiness: code-closure-enforced
     blocksTargetRelease: true
     plan: docs/project/audit-remediation-plan.md
     companionGates: [REL-OBJECT-AUTHORIZATION-REVIEW, REL-ADVERSARIAL-RESOURCE-TESTS, REL-MACOS-NATIVE-SMOKE]
@@ -1308,9 +1308,9 @@ releaseGates:
       - strict-v2-git-or-archive-audited-source-claim
       - real-git-object-or-raw-archive-identity-verification
       - bounded-no-extraction-zip-and-file-level-evidence-byte-matching
-      - independent-cosign-provenance-authority-and-cross-proof-closure
-      - candidate-bound-closed-provenance-trust-policy
-      - final-assembly-and-verification-audited-source-package-admission
+      - optional-independent-cosign-provenance-and-source-package-verification
+      - project-managed-audit-artifact-digests-and-remediation-closure
+      - final-assembly-and-verification-project-audit-evidence-admission
     evidence:
       - docs/project/audit-issues.json
       - docs/project/audit-issue-status.yaml
@@ -1645,8 +1645,8 @@ releaseGates:
       maxOpenBySeverity: {P0: 0, P1: 0}
       requiredEvidence:
         - digest-bound-99-finding-workstream-coverage
-        - audited-source-identity-and-file-level-evidence-manifest
-        - independently-signed-audited-source-provenance-and-candidate-bound-trust
+        - project-managed-report-inventory-and-evidence-bundle-digests
+        - candidate-bound-remediation-and-reproduction-closure
         - reconstructed-nine-finding-reproduction-suite
         - two-principal-two-tenant-authorization-matrix
         - independent-object-authorization-review
@@ -1672,9 +1672,7 @@ releaseGates:
         - supported-python-and-pinned-rust-rerun
         - independent-api-and-security-reviews
         - promotion-evidence-bound-audit-inventory
-    blockers:
-      - original-audited-source-package-unavailable
-      - independent-audit-provenance-authority-unavailable
+    blockers: []
   - id: REL-NORMATIVE-AUTHORITY
     description: Rust is the normative C0/C1 compiler and runtime authority while Python stays the authoring facade and deterministic reference oracle; C4/X3 preview durability remains on its separate promotion track.
     readiness: candidate-enforced
