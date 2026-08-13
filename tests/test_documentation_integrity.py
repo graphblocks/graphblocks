@@ -69,6 +69,8 @@ def test_project_and_artifact_maturity_claims_are_consistent() -> None:
     )
     assert policy["profileTierAuthority"] == "profiles"
     assert "GraphBlocks is pre-1.0 release-candidate software." in status
+    assert "project-managed release gate" in status
+    assert "externally supplied audited-source package" not in status
     assert "GraphBlocks is pre-1.0 release-candidate software." in security
     assert "GraphBlocks is alpha software." not in security
     assert policy["securitySupport"] == {
