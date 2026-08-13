@@ -39,7 +39,7 @@
       "profile": "GB-C1-LOCAL-RUNTIME",
       "stderr": "",
       "stdoutJson": {
-        "contentDigest": "sha256:f9143a6d959571901c40e442b3e636030a9c53feedb510bb425b692f9a5d010f",
+        "contentDigest": "sha256:7fca8e5c145b7222cba8ba51227b5f56cd60baa5f93860e217daeb2e8221c912",
         "ok": true,
         "profile": "local",
         "reports": {
@@ -48,7 +48,7 @@
               "case_ids_digest": "sha256:c6f9bcd7bbcd72680f88d6b6238416e47034d947941b8145f3cd5a2b3d99b096",
               "fixture_digest": "sha256:b628bd17f8b11d767f19b6c9d8453e4e5dc4d4899c11dd5bc84bc8dd1e59de79",
               "implementation": "graphblocks-python",
-              "implementation_version": "1.0.0rc10",
+              "implementation_version": "1.0.0rc11",
               "suite": "schema",
               "suite_manifest_digest": "sha256:a20e3fff9e7dbdfecf08cb6e483a7649a095ef9edee3ebfe87f3b3afe02d080f"
             },
