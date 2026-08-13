@@ -232,8 +232,11 @@ file-level evidence, provenance attestation, and Cosign authority are still
 verified fail-closed. The current
 [`audit-provenance-trust.yaml`](audit-provenance-trust.yaml) therefore records
 that optional independent verification is not configured; it is not a stable
-release blocker. RC10 remains historical evidence, and a new candidate is
-still required for the completed remediation set.
+release blocker. RC10 remains historical evidence. RC11 now binds the completed
+remediation set and its retained signed evidence is indexed in the
+[`v1.0.0-rc.11` operator ledger](releases/v1.0.0-rc.11.md). Stable promotion
+still requires the independent reviews, completed soak, protected final ref,
+and authorized real staging rehearsal recorded there.
 
 The stable promotion validator treats runtime security as evidence distinct
 from supply-chain integrity. Each candidate matrix attestation carries the
