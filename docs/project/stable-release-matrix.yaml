@@ -135,7 +135,7 @@ finalAdmissionPolicy:
       regression: tests/test_release_supply_chain.py::test_final_release_rejects_future_and_out_of_period_soak_evidence
 deepAudit:
   auditDate: '2026-07-27'
-  readiness: code-closure-enforced-external-evidence-blocked
+  readiness: code-closure-enforced
   plan: docs/project/audit-remediation-plan.md
   coverageMap: docs/project/audit-remediation-map.yaml
   releaseBlockingSeverities: [P0, P1]

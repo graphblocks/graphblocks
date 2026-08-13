@@ -1750,6 +1750,7 @@ def test_stable_release_matrix_is_complete_and_machine_readable() -> None:
     assert all((ROOT / path).is_file() for path in operator_gate["currentEvidence"])
 
     audit = matrix["deepAudit"]
+    assert audit["readiness"] == "code-closure-enforced"
     assert audit["releaseBlockingSeverities"] == ["P0", "P1"]
     assert audit["defectScope"] == "all-code-shipped-in-release-artifacts"
     assert audit["baseline"]["total"] == sum(audit["baseline"]["bySeverity"].values()) == 99
