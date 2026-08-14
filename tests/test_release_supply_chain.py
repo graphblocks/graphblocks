@@ -976,67 +976,26 @@ def _promotion_payload_and_files(
             ],
             "securityGates": _security_gate_result(module)[0],
         }
-        for index in range(1, 4)
+        for index in range(1, 2)
     ]
     for index, run in enumerate(matrix_runs, start=1):
         reports[f"matrix-run-{index}"] = dict(run)
     for index, report in enumerate(integration_reports, start=1):
         reports[f"integration-run-{index}"] = dict(report)
-    applications = [
-        {
-            "applicationId": "application-one",
-            "nontrivial": True,
-            "startedAt": "2026-06-01T00:00:00Z",
-            "endedAt": "2026-06-15T00:00:00Z",
-        },
-        {
-            "applicationId": "application-two",
-            "nontrivial": True,
-            "startedAt": "2026-06-01T00:00:00Z",
-            "endedAt": "2026-06-15T00:00:00Z",
-        },
-    ]
-    for application in applications:
-        reports[str(application["applicationId"])] = dict(application)
     reviewed_matrix_run_digests = [
         "sha256:" + module._sha256_bytes(module._canonical_json_bytes(run))
         for run in matrix_runs
     ]
-    for review_name, reviewer in (
-        ("api", "reviewer-api@example.test"),
-        ("security", "reviewer-security@example.test"),
-    ):
-        report: dict[str, object] = {
-            "reviewerIdentity": reviewer,
-            "approved": True,
-            "candidateRef": RELEASE_REF,
-            "candidateCommit": CANDIDATE_COMMIT,
-        }
-        if review_name == "security":
-            report.update(
-                {
-                    "objectAuthorizationScope": list(
-                        module.OBJECT_AUTHORIZATION_REVIEW_SCOPE
-                    ),
-                    "reviewedMatrixRunDigests": reviewed_matrix_run_digests,
-                }
-            )
-        reports[f"{review_name}-review"] = report
-    reports["protected-final-ref"] = {
-        "releaseRef": "refs/tags/v1.0.0",
-        "protected": True,
+    reports["owner-signoff"] = {
+        "formatVersion": 1,
+        "policy": "personal-project-owner-signoff-v1",
+        "ownerIdentity": module.PROMOTION_OWNER_IDENTITY,
+        "approved": True,
+        "targetReleaseRef": "refs/tags/v1.0.0",
+        "candidateRef": RELEASE_REF,
+        "candidateCommit": CANDIDATE_COMMIT,
+        "reviewedMatrixRunDigests": reviewed_matrix_run_digests,
     }
-    rehearsal_report = {
-        "environment": "staging",
-        "authorized": True,
-        "realExternalActions": True,
-        "authorizedBy": "release-operator@example.test",
-        "operations": [
-            {"operation": operation, "status": "success"}
-            for operation in ("publish", "rollback", "yank", "restore")
-        ],
-    }
-    reports["staged-rehearsal"] = rehearsal_report
     reports["stable-scope"] = {
         "unresolvedCritical": 0,
         "unresolvedHigh": 0,
@@ -1086,7 +1045,7 @@ def _promotion_payload_and_files(
         )
 
     payload: dict[str, object] = {
-        "formatVersion": 1,
+        "formatVersion": 2,
         "release": {
             "releaseRef": "refs/tags/v1.0.0",
             "releaseVersion": "1.0.0",
@@ -1124,52 +1083,16 @@ def _promotion_payload_and_files(
             }
             for index, report in enumerate(integration_reports, start=1)
         ],
-        "soak": {
-            "startedAt": "2026-06-01T00:00:00Z",
-            "endedAt": "2026-06-15T00:00:00Z",
-            "applications": [
-                {
-                    "applicationId": application["applicationId"],
-                    "nontrivial": True,
-                    "reportDigest": report_digests[str(application["applicationId"])],
-                }
-                for application in applications
-            ],
-        },
-        "reviews": {
-            "api": {
-                "reviewerIdentity": "reviewer-api@example.test",
-                "approved": True,
-                "reportDigest": report_digests["api-review"],
-            },
-            "security": {
-                "reviewerIdentity": "reviewer-security@example.test",
-                "approved": True,
-                "reportDigest": report_digests["security-review"],
-                "objectAuthorizationScope": list(
-                    module.OBJECT_AUTHORIZATION_REVIEW_SCOPE
-                ),
-                "reviewedMatrixRunDigests": reviewed_matrix_run_digests,
-            },
+        "ownerSignoff": {
+            "ownerIdentity": module.PROMOTION_OWNER_IDENTITY,
+            "approved": True,
+            "reportDigest": report_digests["owner-signoff"],
         },
         "stableScope": {
             "unresolvedCritical": 0,
             "unresolvedHigh": 0,
             "unexplainedFlakes": 0,
             "reportDigest": report_digests["stable-scope"],
-        },
-        "protectedFinalRef": {
-            "releaseRef": "refs/tags/v1.0.0",
-            "protected": True,
-            "reportDigest": report_digests["protected-final-ref"],
-        },
-        "stagedRehearsal": {
-            "environment": "staging",
-            "authorized": True,
-            "realExternalActions": True,
-            "authorizedBy": "release-operator@example.test",
-            "reportDigest": report_digests["staged-rehearsal"],
-            "operations": rehearsal_report["operations"],
         },
         "reportArtifacts": report_artifacts,
     }
@@ -1961,13 +1884,13 @@ def test_final_promotion_consumes_signed_concrete_real_service_runs(
         ("final-source", "exact final ref and version"),
         ("source-diff", "does not match the candidate and final commits"),
         ("candidate-manifest", "does not resolve to a signed report"),
-        ("short-soak", "at least 14 days"),
-        ("reviewer", "independent object-authorization"),
+        ("owner-identity", "configured project owner"),
+        ("owner-approval", "configured project owner"),
+        ("owner-report", "owner signoff does not bind"),
         ("noncanonical-digest", "lowercase SHA-256 digest"),
         ("defect", "zero unresolved"),
         ("audit-closure", "audit report"),
         ("upgrade", "first-stable upgrade exemption"),
-        ("rehearsal", "authorized real staged"),
     ),
 )
 def test_final_release_rejects_promotion_evidence_substitution(
@@ -1984,22 +1907,22 @@ def test_final_release_rejects_promotion_evidence_substitution(
         payload["candidate"]["sourceDiff"]["digest"] = "sha256:" + "9" * 64
     elif substitution == "candidate-manifest":
         payload["candidate"]["manifestDigest"] = "sha256:" + "9" * 64
-    elif substitution == "short-soak":
-        payload["soak"]["endedAt"] = "2026-06-14T23:59:59Z"
-    elif substitution == "reviewer":
-        payload["reviews"]["security"]["reviewerIdentity"] = payload["reviews"][
-            "api"
-        ]["reviewerIdentity"]
+    elif substitution == "owner-identity":
+        payload["ownerSignoff"]["ownerIdentity"] = "another-owner"
+    elif substitution == "owner-approval":
+        payload["ownerSignoff"]["approved"] = False
+    elif substitution == "owner-report":
+        payload["ownerSignoff"]["reportDigest"] = payload["stableScope"][
+            "reportDigest"
+        ]
     elif substitution == "noncanonical-digest":
-        payload["reviews"]["security"]["reportDigest"] = "sha256:" + "A" * 64
+        payload["ownerSignoff"]["reportDigest"] = "sha256:" + "A" * 64
     elif substitution == "defect":
         payload["stableScope"]["unresolvedHigh"] = 1
     elif substitution == "audit-closure":
         payload["auditClosure"]["openBySeverity"]["P1"] = 1
     elif substitution == "upgrade":
         payload["upgradeGate"]["status"] = "passed"
-    else:
-        payload["stagedRehearsal"]["realExternalActions"] = False
     payload.pop("contentDigest")
     payload["contentDigest"] = canonical_hash(payload)
     evidence = tmp_path / f"promotion-{substitution}.json"
@@ -2117,8 +2040,8 @@ def test_final_release_resolves_hashes_and_verifies_every_promotion_report(
         promotion_evidence=promotion,
     )
 
-    assert len(verified) == 24
-    assert len({name for name, _identity in verified}) == 12
+    assert len(verified) == 10
+    assert len({name for name, _identity in verified}) == 5
     assert any(name == "audit-closure.json" for name, _identity in verified)
     ci_identity = (
         "https://github.com/graphblocks/graphblocks/.github/workflows/"
@@ -2128,8 +2051,8 @@ def test_final_release_resolves_hashes_and_verifies_every_promotion_report(
         "https://github.com/graphblocks/graphblocks/.github/workflows/"
         "promotion-reports.yml@refs/tags/v1.0.0-rc.11"
     )
-    assert [identity for _name, identity in verified].count(ci_identity) == 6
-    assert [identity for _name, identity in verified].count(promotion_identity) == 18
+    assert [identity for _name, identity in verified].count(ci_identity) == 2
+    assert [identity for _name, identity in verified].count(promotion_identity) == 8
 
     missing_promotion = _write_promotion_evidence(
         module, tmp_path / "missing" / "promotion.json"
@@ -2321,40 +2244,16 @@ def test_promotion_signature_rejects_invalid_rekor_times_after_cosign_verificati
             },
         ),
         (
-            "soak-application",
+            "owner-signoff",
             {
-                "applicationId": "application-one",
-                "nontrivial": True,
-                "startedAt": "2026-06-01T00:00:00Z",
-                "endedAt": "2026-06-15T00:00:00Z",
-            },
-        ),
-        (
-            "api-review",
-            {
-                "reviewerIdentity": "reviewer-api@example.test",
+                "formatVersion": 1,
+                "policy": "personal-project-owner-signoff-v1",
+                "ownerIdentity": "seo-rii",
                 "approved": True,
+                "targetReleaseRef": "refs/tags/v1.0.0",
                 "candidateRef": RELEASE_REF,
                 "candidateCommit": CANDIDATE_COMMIT,
-            },
-        ),
-        (
-            "security-review",
-            {
-                "reviewerIdentity": "reviewer-security@example.test",
-                "approved": True,
-                "candidateRef": RELEASE_REF,
-                "candidateCommit": CANDIDATE_COMMIT,
-                "objectAuthorizationScope": [
-                    "run-create-list-status-delete-attach-detach-events-and-streams",
-                    "run-cancel-pause-resume-and-expire",
-                    "subscription-create-revoke-and-event-acknowledgement",
-                    "callback-submit-register-and-revoke",
-                    "delivery-redrive-and-dead-letter",
-                ],
-                "reviewedMatrixRunDigests": [
-                    "sha256:" + str(index) * 64 for index in range(1, 4)
-                ],
+                "reviewedMatrixRunDigests": ["sha256:" + "1" * 64],
             },
         ),
         (
@@ -2363,23 +2262,6 @@ def test_promotion_signature_rejects_invalid_rekor_times_after_cosign_verificati
                 "unresolvedCritical": 0,
                 "unresolvedHigh": 0,
                 "unexplainedFlakes": 0,
-            },
-        ),
-        (
-            "protected-final-ref",
-            {"releaseRef": "refs/tags/v1.0.0", "protected": True},
-        ),
-        (
-            "staged-rehearsal",
-            {
-                "environment": "staging",
-                "authorized": True,
-                "realExternalActions": True,
-                "authorizedBy": "release-operator@example.test",
-                "operations": [
-                    {"operation": operation, "status": "success"}
-                    for operation in ("publish", "rollback", "yank", "restore")
-                ],
             },
         ),
     ),
@@ -2400,12 +2282,40 @@ def test_candidate_workflow_can_validate_and_freeze_each_promotion_report_type(
         report_type=report_type,
         candidate_ref=RELEASE_REF,
         candidate_commit=CANDIDATE_COMMIT,
-        workflow_actor=payload.get("reviewerIdentity"),
+        workflow_actor=payload.get("ownerIdentity"),
     )
 
     assert frozen.path == output_dir / "report.json"
     assert frozen.data == module._canonical_json_bytes(payload)
     assert frozen.sha256 == module._sha256_bytes(frozen.data)
+
+
+@pytest.mark.parametrize(
+    "report_type",
+    (
+        "soak-application",
+        "api-review",
+        "security-review",
+        "protected-final-ref",
+        "staged-rehearsal",
+    ),
+)
+def test_candidate_workflow_rejects_retired_external_report_types(
+    tmp_path: Path,
+    report_type: str,
+) -> None:
+    module = _load_module()
+    input_path = tmp_path / f"{report_type}.json"
+    input_path.write_text("{}", encoding="utf-8")
+
+    with pytest.raises(module.ReleaseBundleError, match="not supported"):
+        module.freeze_promotion_report(
+            input_path=input_path,
+            output_dir=tmp_path / "frozen",
+            report_type=report_type,
+            candidate_ref=RELEASE_REF,
+            candidate_commit=CANDIDATE_COMMIT,
+        )
 
 
 def test_candidate_workflow_derives_and_freezes_audit_closure(
@@ -2726,43 +2636,37 @@ def test_candidate_ci_rejects_substituted_security_gate_evidence(
         )
 
 
-def test_security_review_freeze_requires_actor_scope_and_matrix_evidence(
+def test_owner_signoff_freeze_requires_project_owner_and_matrix_evidence(
     tmp_path: Path,
 ) -> None:
     module = _load_module()
     payload = {
-        "reviewerIdentity": "reviewer-security",
+        "formatVersion": 1,
+        "policy": "personal-project-owner-signoff-v1",
+        "ownerIdentity": module.PROMOTION_OWNER_IDENTITY,
         "approved": True,
+        "targetReleaseRef": "refs/tags/v1.0.0",
         "candidateRef": RELEASE_REF,
         "candidateCommit": CANDIDATE_COMMIT,
-        "objectAuthorizationScope": list(module.OBJECT_AUTHORIZATION_REVIEW_SCOPE),
-        "reviewedMatrixRunDigests": [
-            "sha256:" + str(index) * 64 for index in range(1, 4)
-        ],
+        "reviewedMatrixRunDigests": ["sha256:" + "1" * 64],
     }
-    generic_payload = {
-        key: value
-        for key, value in payload.items()
-        if key not in {"objectAuthorizationScope", "reviewedMatrixRunDigests"}
-    }
+    missing_matrix = dict(payload)
+    missing_matrix.pop("reviewedMatrixRunDigests")
 
     for name, mutation, actor, error in (
         (
-            "generic",
-            generic_payload,
-            "reviewer-security",
+            "missing-matrix",
+            missing_matrix,
+            module.PROMOTION_OWNER_IDENTITY,
             "invalid or incomplete shape",
         ),
         ("no-actor", payload, None, "workflow actor"),
-        ("wrong-actor", payload, "another-reviewer", "does not approve"),
+        ("wrong-actor", payload, "another-owner", "does not approve"),
         (
-            "partial-scope",
-            {
-                **payload,
-                "objectAuthorizationScope": payload["objectAuthorizationScope"][:-1],
-            },
-            "reviewer-security",
-            "object-authorization",
+            "wrong-owner",
+            {**payload, "ownerIdentity": "another-owner"},
+            "another-owner",
+            "does not approve",
         ),
         (
             "duplicate-report",
@@ -2771,10 +2675,10 @@ def test_security_review_freeze_requires_actor_scope_and_matrix_evidence(
                 "reviewedMatrixRunDigests": [
                     payload["reviewedMatrixRunDigests"][0],
                 ]
-                * 3,
+                * 2,
             },
-            "reviewer-security",
-            "adversarial-resource evidence",
+            module.PROMOTION_OWNER_IDENTITY,
+            "does not approve",
         ),
     ):
         input_path = tmp_path / f"{name}.json"
@@ -2783,7 +2687,7 @@ def test_security_review_freeze_requires_actor_scope_and_matrix_evidence(
             module.freeze_promotion_report(
                 input_path=input_path,
                 output_dir=tmp_path / f"{name}-output",
-                report_type="security-review",
+                report_type="owner-signoff",
                 candidate_ref=RELEASE_REF,
                 candidate_commit=CANDIDATE_COMMIT,
                 workflow_actor=actor,
@@ -2792,7 +2696,7 @@ def test_security_review_freeze_requires_actor_scope_and_matrix_evidence(
 
 @pytest.mark.parametrize(
     "substitution",
-    ("resource-status", "resource-category", "source-digest", "review-digest"),
+    ("resource-status", "resource-category", "source-digest"),
 )
 def test_final_promotion_rejects_security_gate_substitution(
     tmp_path: Path,
@@ -2810,10 +2714,6 @@ def test_final_promotion_rejects_security_gate_substitution(
         first_run["securityGates"]["objectAuthorization"]["routeManifest"][
             "sha256"
         ] = "sha256:" + "9" * 64
-    else:
-        payload["reviews"]["security"]["reviewedMatrixRunDigests"][0] = (
-            "sha256:" + "9" * 64
-        )
     payload.pop("contentDigest")
     payload["contentDigest"] = canonical_hash(payload)
     evidence = _write_promotion_payload(
@@ -2824,7 +2724,7 @@ def test_final_promotion_rejects_security_gate_substitution(
 
     with pytest.raises(
         module.ReleaseBundleError,
-        match="security gates|security review",
+        match="security gates",
     ):
         module._validate_promotion_evidence(
             module._snapshot_regular_file(evidence, owner="mutated security evidence"),
@@ -2983,14 +2883,18 @@ def test_candidate_workflow_rejects_a_report_for_another_candidate(
     tmp_path: Path,
 ) -> None:
     module = _load_module()
-    input_path = tmp_path / "review.json"
+    input_path = tmp_path / "owner-signoff.json"
     input_path.write_text(
         json.dumps(
             {
-                "reviewerIdentity": "reviewer-api@example.test",
+                "formatVersion": 1,
+                "policy": "personal-project-owner-signoff-v1",
+                "ownerIdentity": module.PROMOTION_OWNER_IDENTITY,
                 "approved": True,
+                "targetReleaseRef": "refs/tags/v1.0.0",
                 "candidateRef": RELEASE_REF,
                 "candidateCommit": COMMIT,
+                "reviewedMatrixRunDigests": ["sha256:" + "1" * 64],
             }
         ),
         encoding="utf-8",
@@ -3000,85 +2904,10 @@ def test_candidate_workflow_rejects_a_report_for_another_candidate(
         module.freeze_promotion_report(
             input_path=input_path,
             output_dir=tmp_path / "frozen",
-            report_type="api-review",
+            report_type="owner-signoff",
             candidate_ref=RELEASE_REF,
             candidate_commit=CANDIDATE_COMMIT,
-            workflow_actor="reviewer-api@example.test",
-        )
-
-
-def test_final_release_rejects_future_and_out_of_period_soak_evidence(
-    tmp_path: Path,
-) -> None:
-    module = _load_module()
-    _trust_test_source(module, stable_version="1.0.0")
-    future = _promotion_payload(module)
-    future["soak"]["endedAt"] = "2099-06-15T00:00:00Z"
-    future.pop("contentDigest")
-    future["contentDigest"] = canonical_hash(future)
-    future_path = _write_promotion_payload(
-        module, tmp_path / "future" / "promotion.json", future
-    )
-    with pytest.raises(module.ReleaseBundleError, match="must not end in the future"):
-        module._validate_promotion_evidence(
-            module._snapshot_regular_file(future_path, owner="future promotion"),
-            git_commit=COMMIT,
-            git_tree=TREE,
-            release_ref="refs/tags/v1.0.0",
-            release_version="1.0.0",
-            verify_source_diff=True,
-        )
-
-    outside, report_files = _promotion_payload_and_files(module)
-    report_path = "promotion-reports/application-one.json"
-    report = json.loads(report_files[report_path])
-    report["startedAt"] = "2026-05-31T23:59:59Z"
-    report_bytes = module._canonical_json_bytes(report)
-    report_sha256 = module._sha256_bytes(report_bytes)
-    record = next(
-        item for item in outside["reportArtifacts"] if item["path"] == report_path
-    )
-    old_digest = "sha256:" + record["sha256"]
-    record["sha256"] = report_sha256
-    application = next(
-        item
-        for item in outside["soak"]["applications"]
-        if item["reportDigest"] == old_digest
-    )
-    application["reportDigest"] = "sha256:" + report_sha256
-    outside.pop("contentDigest")
-    outside["contentDigest"] = canonical_hash(outside)
-    outside_path = _write_promotion_payload(
-        module, tmp_path / "outside" / "promotion.json", outside
-    )
-    (outside_path.parent / report_path).write_bytes(report_bytes)
-    with pytest.raises(module.ReleaseBundleError, match="does not cover the soak period"):
-        module._validate_promotion_evidence(
-            module._snapshot_regular_file(outside_path, owner="outside promotion"),
-            git_commit=COMMIT,
-            git_tree=TREE,
-            release_ref="refs/tags/v1.0.0",
-            release_version="1.0.0",
-            verify_source_diff=True,
-        )
-
-
-def test_soak_report_signature_cannot_predate_its_claimed_end(tmp_path: Path) -> None:
-    module = _load_module()
-    _trust_test_source(module, stable_version="1.0.0")
-    module._verify_promotion_report_signature = lambda **_arguments: datetime(
-        2026, 6, 14, 23, 59, 59, tzinfo=timezone.utc
-    )
-    promotion = _write_promotion_evidence(module, tmp_path / "promotion.json")
-
-    with pytest.raises(module.ReleaseBundleError, match="signed before its claimed end"):
-        module._validate_promotion_evidence(
-            module._snapshot_regular_file(promotion, owner="self-dated promotion"),
-            git_commit=COMMIT,
-            git_tree=TREE,
-            release_ref="refs/tags/v1.0.0",
-            release_version="1.0.0",
-            verify_source_diff=True,
+            workflow_actor=module.PROMOTION_OWNER_IDENTITY,
         )
 
 
@@ -3173,13 +3002,9 @@ def test_release_bundle_binds_exact_platform_artifacts_evidence_tools_and_rehear
     assert manifest["externalGates"] == [
         "keyless-signing-identity",
         "release-index-credentials",
-        "release-candidate-soak",
-        "independent-api-review",
-        "independent-security-review",
-        "candidate-object-authorization-review",
+        "project-owner-signoff",
+        "candidate-object-authorization-attestations",
         "candidate-adversarial-resource-attestations",
-        "protected-final-ref",
-        "authorized-real-staged-rehearsal",
     ]
     assert manifest["toolIdentities"] == dict(sorted(module.PINNED_RELEASE_TOOLS.items()))
     assert manifest["observedToolIdentities"] == {"cosign": COSIGN_IDENTITY}
@@ -4973,8 +4798,8 @@ def test_candidate_promotion_report_workflow_freezes_before_isolated_signing() -
     assert "matrix-run" not in inputs["report_type"]["options"]
     assert inputs["report_json"] == {
         "description": (
-            "Public JSON report; review identity must equal the dispatcher and security "
-            "review must bind candidate matrix digests"
+            "Public JSON report; owner signoff must be dispatched by the configured "
+            "project owner and bind candidate matrix digests"
         ),
         "required": True,
         "type": "string",

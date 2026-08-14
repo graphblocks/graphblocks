@@ -235,8 +235,10 @@ that optional independent verification is not configured; it is not a stable
 release blocker. RC10 remains historical evidence. RC11 now binds the completed
 remediation set and its retained signed evidence is indexed in the
 [`v1.0.0-rc.11` operator ledger](releases/v1.0.0-rc.11.md). Stable promotion
-still requires the independent reviews, completed soak, protected final ref,
-and authorized real staging rehearsal recorded there.
+under the simplified personal-project policy requires a fresh candidate,
+one complete signed matrix attestation, zero-blocker status, and the configured
+project owner's signed approval. RC11 predates that policy and remains
+historical evidence rather than a promotable candidate.
 
 The stable promotion validator treats runtime security as evidence distinct
 from supply-chain integrity. Each candidate matrix attestation carries the
@@ -246,11 +248,12 @@ leg executes that manifest's exact pytest node selectors for authorization,
 request, response, schema/regex, YAML-parser, and canonical-number behavior.
 The resulting canonical report binds the candidate commit, source digests,
 all-pass counts, and raw JUnit digest; candidate attestation freezing parses
-and revalidates both retained files before recording `passed`. The independent
-security review must be dispatched by the declared reviewer, approve that
-exact scope, and bind all three signed candidate matrix report digests. A
-generic `approved: true` report or a green unrelated test suite cannot satisfy
-either runtime-security gate.
+and revalidates both retained files before recording `passed`. At least one
+complete matrix report must be signed by the candidate CI identity. The final
+owner signoff must be dispatched by the configured project owner and bind all
+included signed candidate matrix report digests. A generic `approved: true`
+report or a green unrelated test suite cannot satisfy either runtime-security
+gate.
 
 The profile tables now record the phase-scoped authority accepted by ADR-0001.
 Standalone canonical serialization/hash, SchemaId routing, resource
@@ -362,17 +365,16 @@ from the exact release artifacts:
    provenance and live issue inventory are digest-bound; all nine reproduced
    findings have executable regression harnesses; the inventory has zero open
    P0/P1; there are no unresolved critical/high stable-scope defects or
-   unexplained flakes; an independent object-authorization review approves the
-   exact candidate route manifest, selector manifest, source digests, and
-   all-pass JUnit result; adversarial request, response, schema, YAML-parser,
-   and canonical resource-budget tests pass with the same candidate-bound
-   evidence; and three consecutive release-candidate matrix runs are clean on
-   supported Python and pinned Rust.
+   unexplained flakes; the project owner approves the exact candidate after
+   its route manifest, selector manifest, source digests, and all-pass JUnit
+   result are validated automatically; adversarial request, response, schema,
+   YAML-parser, and canonical resource-budget tests pass with the same
+   candidate-bound evidence; and at least one release-candidate matrix run is
+   clean on supported Python and pinned Rust.
 8. Artifacts carry checksums, an SBOM, provenance, and signatures; publishing,
    rollback, and yank procedures have been rehearsed.
-9. The unchanged release candidate completes a two-to-four-week soak in at
-   least two non-trivial applications and passes independent API/security
-   review.
+9. The configured project owner signs approval of the exact candidate and all
+   included matrix attestation digests.
 10. The required `macos-15` arm64 native-wheel smoke matrix passes on Python
    3.11 and 3.12. It builds and installs the exact base and native wheels in an
    isolated environment, executes the native compiler binding, validates the
@@ -464,7 +466,7 @@ any open P0/P1 finding. The closed contract binds all of the following:
   accepted substitute for an upgrade-from-previous-stable result;
 - the exact Git name/status diff from that candidate to the final commit,
   including a lowercase SHA-256 digest and a sorted closed change list;
-- at least three distinct, successful, complete attestations covering the
+- at least one successful, complete attestation covering the
   exact supported operating-system/Python matrix and the same candidate;
 - one successful signed run for every `real-adapter` evidence recipe, binding
   the candidate commit, concrete Actions run attempt, test and workflow,
@@ -472,19 +474,14 @@ any open P0/P1 finding. The closed contract binds all of the following:
   and uploaded report, with the runs collectively covering every declared
   authentication/version pair; this list is empty while no real adapter is
   claimed;
-- a completed, non-future soak of at least 14 days in at least two distinct
-  applications explicitly attested as non-trivial, each of whose signed report
-  intervals covers the declared soak period;
-- approved API and security reports from distinct reviewer identities;
 - a digest-bound audit inventory proving zero open P0/P1 findings across all
   code shipped in the 1.0 release artifacts, zero unresolved critical/high
   stable-scope defects, and zero unexplained flakes;
-- an attestation that the exact final ref is protected; and
-- an authorized real staging rehearsal in which publish, rollback, yank, and
-  restore each succeeded.
+- a signed approval from the configured project owner that binds the exact
+  candidate and every included matrix attestation digest.
 
-Every candidate, matrix run, integration run, application, review, audit
-inventory, stable-scope defect audit, ref-protection, and rehearsal report must
+Every candidate, matrix run, integration run, audit inventory, stable-scope
+defect audit, and owner-signoff report must
 be referenced by a canonical lowercase SHA-256 digest and an adjacent Sigstore
 bundle. The record must give the exact safe relative paths, file hashes,
 signature hashes, certificate identities, and issuer. Before 1.0 promotion,
@@ -498,9 +495,8 @@ report must instead be signed by the exact integration workflow named by its
 catalogued recipe at that candidate tag. Identities selected only by the
 evidence are never accepted as signature authorities. Each matrix and
 integration report binds the canonical GitHub Actions run/attempt URL that
-produced it. The signed API/security payloads bind the distinct reviewer
-principals reported by their trusted workflow, and the signed rehearsal payload
-binds its authorizer. The assembler validates the complete record
+produced it. The signed owner payload binds the configured project owner and
+the included matrix digests. The assembler validates the complete record
 against the clean, full-history final checkout. Only
 release documentation other than `stable-release-matrix.yaml` and
 `stable-security-gates.yaml`, the two Python package manifests, the public
@@ -509,9 +505,9 @@ may differ from the candidate. Both release-authority YAML files are immutable
 between RC and final. Non-documentation files must be exact
 `1.0.0rc.N`-to-`1.0.0` replacements, apart from the optional packaging
 classifier promotion to Production/Stable; implementation, schema, TCK, and
-normative-specification changes require a new RC and soak.
+normative-specification changes require a new RC and owner signoff.
 This whole-matrix immutability also prevents the final release from adding or
-widening an adapter, readiness, review, or test-gate claim after signed runs
+widening an adapter, readiness, approval, or test-gate claim after signed runs
 were collected.
 
 The promotion record binds the exact final ref and version without embedding
@@ -610,9 +606,8 @@ has only `id-token: write`; it does not check out source, install packages, or
 run project code. It downloads that exact frozen artifact, signs and directly
 verifies the fixed paths with Cosign 3.0.6, and retains the report and adjacent
 Sigstore bundle for assembly. The workflow must be present before the candidate
-tag is cut so that the candidate manifest, reviews, real application soak,
-defect audit, protected-ref observation, and staged rehearsal can be signed
-after they actually occur without moving or rebuilding the candidate tag.
+tag is cut so that the candidate manifest, defect audit, and owner signoff can
+be signed without moving or rebuilding the candidate tag.
 
 Branch pushes and pull requests exercise the validator tests and
 four-combination installed-artifact matrix without receiving an OIDC signing
@@ -623,11 +618,10 @@ therefore remain `candidate` and record the signature as
 CI uses the fixed repository path
 `docs/project/releases/v1.0.0-promotion-evidence.json` only for the final tag.
 No record exists there yet and this document does not fabricate one, so a final
-tag currently fails closed. A release operator must place independently
-verifiable evidence at that path only after the real soak, reviews, protected
-ref observation, clean matrices, defect/flake audit, and authorized staged
-publish/rollback/yank/restore rehearsal have occurred, using the retained
-CI outputs for matrix attestations and the candidate-tag promotion-report
-workflow outputs for the remaining report/signature pairs. The deterministic
-in-bundle dry run remains useful candidate evidence, but it cannot satisfy or
-replace that real staged-rehearsal attestation.
+tag currently fails closed. A release operator must place verifiable evidence
+at that path only after a clean candidate matrix, the defect/flake audit, and
+the configured project owner's approval, using retained CI outputs for the
+matrix attestation and the candidate-tag promotion-report workflow outputs for
+the remaining report/signature pairs. The deterministic in-bundle dry run
+continues to validate the publish/rollback/yank/restore state machine without
+performing registry mutations.

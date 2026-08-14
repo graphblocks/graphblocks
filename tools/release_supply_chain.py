@@ -172,15 +172,12 @@ SIGSTORE_WORKFLOW = ".github/workflows/ci.yml"
 PROMOTION_SIGSTORE_WORKFLOW = ".github/workflows/promotion-reports.yml"
 SIGNATURE_BUNDLE_NAME = "release-manifest.sigstore.json"
 PROMOTION_EVIDENCE_NAME = "promotion-evidence.json"
+PROMOTION_OWNER_IDENTITY = "seo-rii"
 PROMOTION_REPORT_TYPES = (
     "candidate-manifest",
     "audit-closure",
-    "soak-application",
-    "api-review",
-    "security-review",
+    "owner-signoff",
     "stable-scope",
-    "protected-final-ref",
-    "staged-rehearsal",
 )
 PROMOTION_DOCUMENTATION_PATHS = {
     "CHANGELOG.md",
@@ -215,8 +212,8 @@ FINAL_ADMISSION_GATE_PREDICATES = (
     {
         "gateId": "REL-OBJECT-AUTHORIZATION-REVIEW",
         "enforcement": "promotion-validator",
-        "predicate": "independent-object-authorization-review",
-        "regression": "tests/test_release_supply_chain.py::test_final_release_rejects_promotion_evidence_substitution",
+        "predicate": "candidate-bound-project-owner-approval",
+        "regression": "tests/test_release_supply_chain.py::test_owner_signoff_freeze_requires_project_owner_and_matrix_evidence",
     },
     {
         "gateId": "REL-ADVERSARIAL-RESOURCE-TESTS",
@@ -266,12 +263,6 @@ FINAL_ADMISSION_GATE_PREDICATES = (
         "predicate": "immutable-bundle-and-signature-policy",
         "regression": "tests/test_release_supply_chain.py::test_release_bundle_signature_is_in_closure_and_pinned_to_release_workflow_ref",
     },
-    {
-        "gateId": "REL-RC-SOAK",
-        "enforcement": "promotion-validator",
-        "predicate": "candidate-soak-period-and-applications",
-        "regression": "tests/test_release_supply_chain.py::test_final_release_rejects_future_and_out_of_period_soak_evidence",
-    },
 )
 PROMOTION_IMMUTABLE_AUTHORITY_PATHS = {
     "docs/project/stable-release-matrix.yaml",
@@ -309,10 +300,6 @@ MATRIX_PROMOTION_REPORT_KEYS = {
     "supportedMatrix",
     "securityGates",
 }
-OBJECT_AUTHORIZATION_REVIEW_SCOPE = tuple(
-    category["id"]
-    for category in STABLE_SECURITY_GATE_MANIFEST["objectAuthorization"]["categories"]
-)
 ADVERSARIAL_RESOURCE_CATEGORIES = tuple(
     category["id"]
     for category in STABLE_SECURITY_GATE_MANIFEST["adversarialResources"]["categories"]
@@ -659,23 +646,6 @@ def _validate_integration_result(
             f"{owner} must prove connectivity, authentication, version, retry, and failure"
         )
     return dict(result)
-
-
-def _parse_utc_timestamp(value: object, *, owner: str) -> datetime:
-    if not isinstance(value, str) or re.fullmatch(
-        r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z",
-        value,
-    ) is None:
-        raise ReleaseBundleError(f"{owner} must be a canonical UTC timestamp")
-    try:
-        observed = datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ").replace(
-            tzinfo=timezone.utc
-        )
-    except ValueError as error:
-        raise ReleaseBundleError(f"{owner} must be a valid UTC timestamp") from error
-    if observed.strftime("%Y-%m-%dT%H:%M:%SZ") != value:
-        raise ReleaseBundleError(f"{owner} must be a canonical UTC timestamp")
-    return observed
 
 
 def _require_content_digest(payload: Mapping[str, object], *, owner: str) -> str:
@@ -2107,94 +2077,52 @@ def freeze_promotion_report(
                 "audit-closure promotion report does not bind this candidate's "
                 "validated audit state"
             )
-    elif report_type == "soak-application":
-        report = _require_exact_keys(
-            payload,
-            {"applicationId", "nontrivial", "startedAt", "endedAt"},
-            owner=owner,
-        )
-        _require_nonempty_string(
-            report.get("applicationId"), owner="soak application id"
-        )
-        started_at = _parse_utc_timestamp(
-            report.get("startedAt"), owner="soak application start"
-        )
-        ended_at = _parse_utc_timestamp(
-            report.get("endedAt"), owner="soak application end"
-        )
-        if (
-            report.get("nontrivial") is not True
-            or started_at >= ended_at
-            or ended_at > datetime.now(timezone.utc)
-            or (ended_at - started_at).total_seconds() < 14 * 24 * 60 * 60
-        ):
-            raise ReleaseBundleError(
-                "soak application promotion report is not a completed 14-day nontrivial soak"
-            )
-    elif report_type == "api-review":
-        report = _require_exact_keys(
-            payload,
-            {"reviewerIdentity", "approved", "candidateRef", "candidateCommit"},
-            owner=owner,
-        )
-        reviewer = _require_nonempty_string(
-            report.get("reviewerIdentity"), owner=f"{report_type} reviewer identity"
-        )
-        actor = _require_nonempty_string(
-            workflow_actor, owner=f"{report_type} workflow actor"
-        )
-        if (
-            reviewer != actor
-            or report.get("approved") is not True
-            or report.get("candidateRef") != candidate_ref
-            or report.get("candidateCommit") != candidate_commit
-        ):
-            raise ReleaseBundleError(
-                f"{report_type} promotion report does not approve this candidate"
-            )
-    elif report_type == "security-review":
+    elif report_type == "owner-signoff":
         report = _require_exact_keys(
             payload,
             {
-                "reviewerIdentity",
+                "formatVersion",
+                "policy",
+                "ownerIdentity",
                 "approved",
+                "targetReleaseRef",
                 "candidateRef",
                 "candidateCommit",
-                "objectAuthorizationScope",
                 "reviewedMatrixRunDigests",
             },
             owner=owner,
         )
-        reviewer = _require_nonempty_string(
-            report.get("reviewerIdentity"), owner="security-review reviewer identity"
+        declared_owner = _require_nonempty_string(
+            report.get("ownerIdentity"), owner="owner-signoff owner identity"
         )
         actor = _require_nonempty_string(
-            workflow_actor, owner="security-review workflow actor"
+            workflow_actor, owner="owner-signoff workflow actor"
         )
         reviewed_digests = report.get("reviewedMatrixRunDigests")
-        if not isinstance(reviewed_digests, list) or len(reviewed_digests) < 3:
+        if not isinstance(reviewed_digests, list) or not reviewed_digests:
             raise ReleaseBundleError(
-                "security-review must cover at least three candidate matrix reports"
+                "owner-signoff must cover at least one candidate matrix report"
             )
         normalized_digests = [
             _require_prefixed_sha256(
                 digest,
-                owner=f"security-review matrix report digest {index}",
+                owner=f"owner-signoff matrix report digest {index}",
             )
             for index, digest in enumerate(reviewed_digests)
         ]
         if (
-            reviewer != actor
+            report.get("formatVersion") != 1
+            or report.get("policy") != "personal-project-owner-signoff-v1"
+            or declared_owner != PROMOTION_OWNER_IDENTITY
+            or declared_owner != actor
             or report.get("approved") is not True
+            or report.get("targetReleaseRef") != "refs/tags/v1.0.0"
             or report.get("candidateRef") != candidate_ref
             or report.get("candidateCommit") != candidate_commit
-            or report.get("objectAuthorizationScope")
-            != list(OBJECT_AUTHORIZATION_REVIEW_SCOPE)
             or len(normalized_digests) != len(set(normalized_digests))
         ):
             raise ReleaseBundleError(
-                "security-review does not approve the candidate object-authorization "
-                "and adversarial-resource evidence"
+                "owner-signoff does not approve this candidate and its matrix evidence"
             )
     elif report_type == "stable-scope":
         report = _require_exact_keys(
@@ -2211,71 +2139,8 @@ def freeze_promotion_report(
             raise ReleaseBundleError(
                 "stable-scope promotion report contains unresolved release blockers"
             )
-    elif report_type == "protected-final-ref":
-        report = _require_exact_keys(
-            payload,
-            {"releaseRef", "protected"},
-            owner=owner,
-        )
-        if report != {"releaseRef": "refs/tags/v1.0.0", "protected": True}:
-            raise ReleaseBundleError(
-                "protected-ref promotion report does not bind the final release ref"
-            )
     else:
-        report = _require_exact_keys(
-            payload,
-            {
-                "environment",
-                "authorized",
-                "realExternalActions",
-                "authorizedBy",
-                "operations",
-            },
-            owner=owner,
-        )
-        _require_nonempty_string(
-            report.get("authorizedBy"), owner="staged rehearsal authorizer"
-        )
-        operations = report.get("operations")
-        if not isinstance(operations, list) or len(operations) != 4:
-            raise ReleaseBundleError(
-                "staged rehearsal promotion report must contain four operations"
-            )
-        observed_operations: dict[str, str] = {}
-        for index, raw_operation in enumerate(operations):
-            operation = _require_exact_keys(
-                raw_operation,
-                {"operation", "status"},
-                owner=f"staged rehearsal operation {index}",
-            )
-            name = _require_nonempty_string(
-                operation.get("operation"),
-                owner=f"staged rehearsal operation {index} name",
-            )
-            status = _require_nonempty_string(
-                operation.get("status"),
-                owner=f"staged rehearsal operation {index} status",
-            )
-            if name in observed_operations:
-                raise ReleaseBundleError(
-                    "staged rehearsal promotion report contains duplicate operations"
-                )
-            observed_operations[name] = status
-        if (
-            report.get("environment") != "staging"
-            or report.get("authorized") is not True
-            or report.get("realExternalActions") is not True
-            or observed_operations
-            != {
-                "publish": "success",
-                "rollback": "success",
-                "yank": "success",
-                "restore": "success",
-            }
-        ):
-            raise ReleaseBundleError(
-                "staged rehearsal promotion report is not an authorized real rehearsal"
-            )
+        raise ReleaseBundleError("promotion report type is not implemented")
 
     return _write_frozen_promotion_report(
         payload,
@@ -2312,19 +2177,16 @@ def _validate_promotion_evidence(
             "upgradeGate",
             "supportedMatrixRuns",
             "integrationRuns",
-            "soak",
-            "reviews",
+            "ownerSignoff",
             "stableScope",
-            "protectedFinalRef",
-            "stagedRehearsal",
             "reportArtifacts",
             "contentDigest",
         },
         owner=owner,
     )
     content_digest = _require_content_digest(payload, owner=owner)
-    if payload.get("formatVersion") != 1:
-        raise ReleaseBundleError("stable promotion evidence formatVersion must be 1")
+    if payload.get("formatVersion") != 2:
+        raise ReleaseBundleError("stable promotion evidence formatVersion must be 2")
 
     release = _require_exact_keys(
         payload.get("release"),
@@ -2818,9 +2680,9 @@ def _validate_promotion_evidence(
         )
 
     matrix_runs = payload.get("supportedMatrixRuns")
-    if not isinstance(matrix_runs, list) or len(matrix_runs) < 3:
+    if not isinstance(matrix_runs, list) or not matrix_runs:
         raise ReleaseBundleError(
-            "stable promotion requires at least three supported-matrix run attestations"
+            "stable promotion requires at least one supported-matrix run attestation"
         )
     expected_matrix = [
         {"os": os_name, "python": python_version}
@@ -2917,169 +2779,6 @@ def _validate_promotion_evidence(
             )
         used_report_digests.add(attestation_digest)
 
-    soak = _require_exact_keys(
-        payload.get("soak"),
-        {"startedAt", "endedAt", "applications"},
-        owner="stable promotion soak",
-    )
-    started_at = _parse_utc_timestamp(
-        soak.get("startedAt"), owner="stable promotion soak start"
-    )
-    ended_at = _parse_utc_timestamp(
-        soak.get("endedAt"), owner="stable promotion soak end"
-    )
-    if started_at >= ended_at or ended_at > datetime.now(timezone.utc):
-        raise ReleaseBundleError(
-            "stable promotion soak must be complete and must not end in the future"
-        )
-    if (ended_at - started_at).total_seconds() < 14 * 24 * 60 * 60:
-        raise ReleaseBundleError("stable promotion soak must be at least 14 days")
-    applications = soak.get("applications")
-    if not isinstance(applications, list) or len(applications) < 2:
-        raise ReleaseBundleError(
-            "stable promotion soak requires at least two nontrivial applications"
-        )
-    application_ids: set[str] = set()
-    application_digests: set[str] = set()
-    for index, raw_application in enumerate(applications):
-        application = _require_exact_keys(
-            raw_application,
-            {"applicationId", "nontrivial", "reportDigest"},
-            owner=f"stable promotion soak application {index}",
-        )
-        application_id = _require_nonempty_string(
-            application.get("applicationId"),
-            owner=f"stable promotion soak application {index} id",
-        )
-        report_digest = _require_prefixed_sha256(
-            application.get("reportDigest"),
-            owner=f"stable promotion soak application {index} report digest",
-        )
-        if application.get("nontrivial") is not True:
-            raise ReleaseBundleError(
-                "stable promotion soak applications must be attested as nontrivial"
-            )
-        if application_id in application_ids or report_digest in application_digests:
-            raise ReleaseBundleError(
-                "stable promotion soak applications must be distinct"
-            )
-        application_ids.add(application_id)
-        application_digests.add(report_digest)
-        application_artifact = _promotion_report_artifact(
-            reports,
-            report_digest,
-            owner=f"stable promotion soak application {index}",
-        )
-        application_report = _require_exact_keys(
-            application_artifact.payload,
-            {"applicationId", "nontrivial", "startedAt", "endedAt"},
-            owner=f"stable promotion soak application {index} report",
-        )
-        application_started_at = _parse_utc_timestamp(
-            application_report.get("startedAt"),
-            owner=f"stable promotion soak application {index} report start",
-        )
-        application_ended_at = _parse_utc_timestamp(
-            application_report.get("endedAt"),
-            owner=f"stable promotion soak application {index} report end",
-        )
-        if (
-            application_report.get("applicationId") != application_id
-            or application_report.get("nontrivial") is not True
-            or application_started_at != started_at
-            or application_ended_at != ended_at
-        ):
-            raise ReleaseBundleError(
-                "stable promotion soak application report does not cover the soak period"
-            )
-        if application_artifact.signature_integrated_at < application_ended_at:
-            raise ReleaseBundleError(
-                "stable promotion soak application report was signed before its claimed end"
-            )
-        used_report_digests.add(report_digest)
-
-    reviews = _require_exact_keys(
-        payload.get("reviews"),
-        {"api", "security"},
-        owner="stable promotion reviews",
-    )
-    api_review = _require_exact_keys(
-        reviews.get("api"),
-        {"reviewerIdentity", "approved", "reportDigest"},
-        owner="stable promotion API review",
-    )
-    api_reviewer = _require_nonempty_string(
-        api_review.get("reviewerIdentity"),
-        owner="stable promotion API reviewer identity",
-    )
-    api_report_digest = _require_prefixed_sha256(
-        api_review.get("reportDigest"),
-        owner="stable promotion API review report digest",
-    )
-    if api_review.get("approved") is not True or _promotion_report(
-        reports,
-        api_report_digest,
-        owner="stable promotion API review",
-    ) != {
-        "reviewerIdentity": api_reviewer,
-        "approved": True,
-        "candidateRef": candidate_ref,
-        "candidateCommit": candidate_commit,
-    }:
-        raise ReleaseBundleError(
-            "stable promotion API report does not bind the candidate review"
-        )
-    used_report_digests.add(api_report_digest)
-
-    security_review = _require_exact_keys(
-        reviews.get("security"),
-        {
-            "reviewerIdentity",
-            "approved",
-            "reportDigest",
-            "objectAuthorizationScope",
-            "reviewedMatrixRunDigests",
-        },
-        owner="stable promotion security review",
-    )
-    security_reviewer = _require_nonempty_string(
-        security_review.get("reviewerIdentity"),
-        owner="stable promotion security reviewer identity",
-    )
-    security_report_digest = _require_prefixed_sha256(
-        security_review.get("reportDigest"),
-        owner="stable promotion security review report digest",
-    )
-    reviewed_matrix_digests = security_review.get("reviewedMatrixRunDigests")
-    if (
-        security_review.get("approved") is not True
-        or security_reviewer == api_reviewer
-        or security_report_digest == api_report_digest
-        or security_review.get("objectAuthorizationScope")
-        != list(OBJECT_AUTHORIZATION_REVIEW_SCOPE)
-        or reviewed_matrix_digests != matrix_attestation_digests
-    ):
-        raise ReleaseBundleError(
-            "stable promotion security review does not bind the independent "
-            "object-authorization and adversarial-resource gates"
-        )
-    if _promotion_report(
-        reports,
-        security_report_digest,
-        owner="stable promotion security review",
-    ) != {
-        "reviewerIdentity": security_reviewer,
-        "approved": True,
-        "candidateRef": candidate_ref,
-        "candidateCommit": candidate_commit,
-        "objectAuthorizationScope": list(OBJECT_AUTHORIZATION_REVIEW_SCOPE),
-        "reviewedMatrixRunDigests": matrix_attestation_digests,
-    }:
-        raise ReleaseBundleError(
-            "stable promotion security report does not bind the candidate gate evidence"
-        )
-    used_report_digests.add(security_report_digest)
-
     stable_scope = _require_exact_keys(
         payload.get("stableScope"),
         {
@@ -3116,99 +2815,44 @@ def _validate_promotion_evidence(
         )
     used_report_digests.add(stable_scope_report_digest)
 
-    protected_ref = _require_exact_keys(
-        payload.get("protectedFinalRef"),
-        {"releaseRef", "protected", "reportDigest"},
-        owner="stable promotion protected final ref",
+    owner_signoff = _require_exact_keys(
+        payload.get("ownerSignoff"),
+        {"ownerIdentity", "approved", "reportDigest"},
+        owner="stable promotion owner signoff",
     )
-    protected_ref_digest = _require_prefixed_sha256(
-        protected_ref.get("reportDigest"),
-        owner="stable promotion protected final ref report digest",
+    owner_identity = _require_nonempty_string(
+        owner_signoff.get("ownerIdentity"),
+        owner="stable promotion owner identity",
     )
-    if protected_ref.get("releaseRef") != release_ref or protected_ref.get(
-        "protected"
-    ) is not True:
-        raise ReleaseBundleError("stable promotion final ref is not attested as protected")
-    if _promotion_report(
-        reports,
-        protected_ref_digest,
-        owner="stable promotion protected final ref",
-    ) != {"releaseRef": release_ref, "protected": True}:
-        raise ReleaseBundleError(
-            "stable promotion protected final ref report does not bind the final ref"
-        )
-    used_report_digests.add(protected_ref_digest)
-
-    rehearsal = _require_exact_keys(
-        payload.get("stagedRehearsal"),
-        {
-            "environment",
-            "authorized",
-            "realExternalActions",
-            "authorizedBy",
-            "reportDigest",
-            "operations",
-        },
-        owner="stable promotion staged rehearsal",
+    owner_report_digest = _require_prefixed_sha256(
+        owner_signoff.get("reportDigest"),
+        owner="stable promotion owner-signoff report digest",
     )
-    _require_nonempty_string(
-        rehearsal.get("authorizedBy"),
-        owner="stable promotion staged rehearsal authorizer",
-    )
-    rehearsal_report_digest = _require_prefixed_sha256(
-        rehearsal.get("reportDigest"),
-        owner="stable promotion staged rehearsal report digest",
-    )
-    operations = rehearsal.get("operations")
-    if not isinstance(operations, list) or len(operations) != 4:
-        raise ReleaseBundleError(
-            "stable promotion staged rehearsal must cover exactly four recovery operations"
-        )
-    observed_operations: dict[str, str] = {}
-    for index, raw_operation in enumerate(operations):
-        operation = _require_exact_keys(
-            raw_operation,
-            {"operation", "status"},
-            owner=f"stable promotion staged rehearsal operation {index}",
-        )
-        name = _require_nonempty_string(
-            operation.get("operation"),
-            owner=f"stable promotion staged rehearsal operation {index} name",
-        )
-        status = _require_nonempty_string(
-            operation.get("status"),
-            owner=f"stable promotion staged rehearsal operation {index} status",
-        )
-        if name in observed_operations:
-            raise ReleaseBundleError(
-                "stable promotion staged rehearsal contains duplicate operations"
-            )
-        observed_operations[name] = status
     if (
-        rehearsal.get("environment") != "staging"
-        or rehearsal.get("authorized") is not True
-        or rehearsal.get("realExternalActions") is not True
-        or observed_operations
-        != {
-            "publish": "success",
-            "rollback": "success",
-            "yank": "success",
-            "restore": "success",
-        }
+        owner_identity != PROMOTION_OWNER_IDENTITY
+        or owner_signoff.get("approved") is not True
     ):
         raise ReleaseBundleError(
-            "stable promotion requires an authorized real staged "
-            "publish/rollback/yank/restore rehearsal"
+            "stable promotion requires approval from the configured project owner"
         )
     if _promotion_report(
         reports,
-        rehearsal_report_digest,
-        owner="stable promotion staged rehearsal",
-    ) != {key: value for key, value in rehearsal.items() if key != "reportDigest"}:
+        owner_report_digest,
+        owner="stable promotion owner signoff",
+    ) != {
+        "formatVersion": 1,
+        "policy": "personal-project-owner-signoff-v1",
+        "ownerIdentity": PROMOTION_OWNER_IDENTITY,
+        "approved": True,
+        "targetReleaseRef": release_ref,
+        "candidateRef": candidate_ref,
+        "candidateCommit": candidate_commit,
+        "reviewedMatrixRunDigests": matrix_attestation_digests,
+    }:
         raise ReleaseBundleError(
-            "stable promotion staged rehearsal report does not bind the rehearsal"
+            "stable promotion owner signoff does not bind the candidate matrix evidence"
         )
-    used_report_digests.add(rehearsal_report_digest)
+    used_report_digests.add(owner_report_digest)
     if used_report_digests != set(reports):
         raise ReleaseBundleError(
             "stable promotion evidence contains unreferenced signed report artifacts"
@@ -4719,13 +4363,9 @@ def assemble_release_bundle(
             else [
                 "keyless-signing-identity",
                 "release-index-credentials",
-                "release-candidate-soak",
-                "independent-api-review",
-                "independent-security-review",
-                "candidate-object-authorization-review",
+                "project-owner-signoff",
+                "candidate-object-authorization-attestations",
                 "candidate-adversarial-resource-attestations",
-                "protected-final-ref",
-                "authorized-real-staged-rehearsal",
             ]
         ),
     }
@@ -5310,13 +4950,9 @@ def _verify_release_bundle(
         else [
             "keyless-signing-identity",
             "release-index-credentials",
-            "release-candidate-soak",
-            "independent-api-review",
-            "independent-security-review",
-            "candidate-object-authorization-review",
+            "project-owner-signoff",
+            "candidate-object-authorization-attestations",
             "candidate-adversarial-resource-attestations",
-            "protected-final-ref",
-            "authorized-real-staged-rehearsal",
         ]
     )
     if manifest.get("externalGates") != expected_external_gates:

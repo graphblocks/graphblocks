@@ -33,7 +33,7 @@ readinessAxes:
   axes:
     - id: supply-chain
       label: Supply chain
-      readiness: promotion-contract-enforced-external-evidence-absent
+      readiness: promotion-contract-enforced-owner-signoff-pending
       primaryGates: [REL-SUPPLY-CHAIN]
       targetReleaseClaim: release-wide-artifact-supply-chain
       blocksTargetRelease: true
@@ -41,7 +41,7 @@ readinessAxes:
       claimBoundary: Artifact integrity, provenance, signing, and promotion only; this does not imply runtime security, durability, or adapter readiness.
     - id: api
       label: API and portable contract
-      readiness: candidate-contract-review-blocked
+      readiness: candidate-contract-owner-signoff-pending
       primaryGates: [REL-CORE-PROFILE, REL-API-SNAPSHOT, REL-WIRE-V1, REL-CLOSED-SCHEMA]
       targetReleaseClaim: core-c0-c1-only
       blocksTargetRelease: true
@@ -49,7 +49,7 @@ readinessAxes:
       claimBoundary: C0/C1 compatibility candidate only; preview modules and production-operation behavior remain outside this claim.
     - id: runtime-security
       label: Runtime security
-      readiness: code-closure-enforced-external-evidence-blocked
+      readiness: code-closure-enforced-owner-signoff-pending
       primaryGates: [REL-AUDIT-REMEDIATION, REL-OBJECT-AUTHORIZATION-REVIEW, REL-ADVERSARIAL-RESOURCE-TESTS]
       targetReleaseClaim: release-wide-shipped-code
       blocksTargetRelease: true
@@ -84,7 +84,6 @@ globalRequiredGates:
   - REL-MACOS-NATIVE-SMOKE
   - REL-DOCS-INTEGRITY
   - REL-SUPPLY-CHAIN
-  - REL-RC-SOAK
 finalAdmissionPolicy:
   formatVersion: 1
   validator: tools/release_supply_chain.py::_validate_promotion_evidence
@@ -95,8 +94,8 @@ finalAdmissionPolicy:
       regression: tests/test_release_supply_chain.py::test_final_promotion_accepts_project_managed_unavailable_source
     - gateId: REL-OBJECT-AUTHORIZATION-REVIEW
       enforcement: promotion-validator
-      predicate: independent-object-authorization-review
-      regression: tests/test_release_supply_chain.py::test_final_release_rejects_promotion_evidence_substitution
+      predicate: candidate-bound-project-owner-approval
+      regression: tests/test_release_supply_chain.py::test_owner_signoff_freeze_requires_project_owner_and_matrix_evidence
     - gateId: REL-ADVERSARIAL-RESOURCE-TESTS
       enforcement: promotion-validator
       predicate: candidate-security-matrix
@@ -129,10 +128,6 @@ finalAdmissionPolicy:
       enforcement: bundle-validator
       predicate: immutable-bundle-and-signature-policy
       regression: tests/test_release_supply_chain.py::test_release_bundle_signature_is_in_closure_and_pinned_to_release_workflow_ref
-    - gateId: REL-RC-SOAK
-      enforcement: promotion-validator
-      predicate: candidate-soak-period-and-applications
-      regression: tests/test_release_supply_chain.py::test_final_release_rejects_future_and_out_of_period_soak_evidence
 deepAudit:
   auditDate: '2026-07-27'
   readiness: code-closure-enforced
@@ -1185,8 +1180,8 @@ releaseGates:
       - tests/test_release_supply_chain.py
       - .github/workflows/ci.yml
   - id: REL-OBJECT-AUTHORIZATION-REVIEW
-    description: An independent reviewer approves the closed object-authorization scope against the exact candidate route manifest and manifest-selected all-pass test/JUnit evidence, then binds every reviewed CI matrix attestation digest.
-    readiness: evidence-contract-enforced-review-outstanding
+    description: The project owner approves the exact candidate and its signed matrix evidence after the closed object-authorization scope and manifest-selected all-pass test/JUnit evidence pass automatically.
+    readiness: evidence-contract-enforced-owner-signoff-outstanding
     blocksTargetRelease: true
     scope:
       - run-create-list-status-delete-attach-detach-events-and-streams
@@ -1195,11 +1190,9 @@ releaseGates:
       - callback-submit-register-and-revoke
       - delivery-redrive-and-dead-letter
     codeEnforced:
-      - workflow actor must equal the declared reviewer identity
-      - security review scope is closed and exact
+      - workflow actor must equal the configured project owner identity
       - selector manifest, authorization test sources, JUnit result, and route manifest digests bind candidate source
-      - security review binds every signed candidate matrix attestation digest
-      - API and security reviewers and reports are distinct
+      - owner signoff binds every included signed candidate matrix attestation digest
     evidence:
       - docs/project/stable-security-gates.yaml
       - src/graphblocks/server.py
@@ -1210,7 +1203,7 @@ releaseGates:
       - .github/workflows/ci.yml
       - .github/workflows/promotion-reports.yml
     blockers:
-      - candidate-bound-independent-object-authorization-review-not-published
+      - candidate-bound-project-owner-signoff-not-published
   - id: REL-ADVERSARIAL-RESOURCE-TESTS
     description: Every signed candidate matrix report binds a manifest-selected all-pass pytest/JUnit run for the closed adversarial request, response, schema/regex, YAML-parser, and canonical-number categories against exact candidate test-source digests.
     readiness: evidence-contract-enforced-candidate-runs-outstanding
@@ -1226,7 +1219,7 @@ releaseGates:
       - candidate report is emitted only after every required CI job succeeds and revalidates both evidence files
       - category set, selectors, all-pass counts, attempt-scoped artifact identity, JUnit digest, evidence paths, and source digests are closed
       - report is signed by the candidate CI workflow identity
-      - final promotion requires three distinct reports reviewed by security
+      - final promotion requires at least one complete signed candidate matrix report
     evidence:
       - docs/project/stable-security-gates.yaml
       - tools/stable_security_gates.py
@@ -1241,7 +1234,7 @@ releaseGates:
       - tests/test_release_supply_chain.py
       - .github/workflows/ci.yml
     blockers:
-      - three-reviewed-candidate-security-gate-attestations-not-published
+      - candidate-security-gate-attestation-not-published
   - id: REL-AUDIT-REMEDIATION
     description: All 99 deep-audit findings are closed through project-managed artifact digests, ancestor remediation commits, reproductions, and executable regression evidence.
     readiness: code-closure-enforced
@@ -1649,7 +1642,7 @@ releaseGates:
         - candidate-bound-remediation-and-reproduction-closure
         - reconstructed-nine-finding-reproduction-suite
         - two-principal-two-tenant-authorization-matrix
-        - independent-object-authorization-review
+        - project-owner-signoff-over-candidate-security-evidence
         - authentication-401-403-404-reason-header-matrix
         - auth-provider-failure-structured-audit
         - fail-closed-protected-route-configuration
@@ -1670,7 +1663,7 @@ releaseGates:
         - documentation-risk-and-generated-facts-drift-checks
         - targeted-miri-loom-or-equivalent-state-machine-validation
         - supported-python-and-pinned-rust-rerun
-        - independent-api-and-security-reviews
+        - project-owner-release-approval
         - promotion-evidence-bound-audit-inventory
     blockers: []
   - id: REL-NORMATIVE-AUTHORITY
@@ -1833,20 +1826,13 @@ releaseGates:
       - distinct ancestor prior-RC manifest and digest-bound release-metadata-only source diff
       - stable release matrix and stable security-gate manifest are immutable from RC to final
       - signed audit-closure report and immutable candidate-to-final audit inventory status map and checker digests
-      - three distinct complete supported-matrix attestations and fourteen-day two-application soak validation
-      - distinct approved API/security review and zero critical/high defect or unexplained-flake validation
-      - protected-final-ref and authorized real staged publish rollback yank restore validation
+      - at least one complete supported-matrix attestation bound to the exact candidate
+      - project-owner approval and zero critical/high defect or unexplained-flake validation
       - promotion evidence manifest provenance standalone-verification and signed-file-closure binding
       - promotion-authorized final readiness remains signature-required
     blockers:
       - protected-release-ref-signature
-      - three-clean-supported-matrix-attestations
-      - fourteen-day-two-application-soak
-      - independent-api-and-security-reviews
+      - clean-supported-matrix-attestation
+      - project-owner-signoff
       - zero-critical-high-defects-and-unexplained-flakes
-      - protected-final-ref-attestation
-      - authorized-real-staged-publish-rollback-yank-restore-rehearsal
       - promotion-evidence-record-at-fixed-path
-  - id: REL-RC-SOAK
-    description: An unchanged RC completes independent review and a two-to-four-week application soak.
-    blocksTargetRelease: true

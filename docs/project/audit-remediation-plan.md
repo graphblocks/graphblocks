@@ -189,7 +189,7 @@ claim. A regression reads all three package manifests and rejects drift from
 that policy. The clean documentation gate passed in run 31247119804, job
 93077455406.
 This closes the recorded code-and-regression count; it does not replace the
-independent review, candidate attestation, platform, or soak gates.
+candidate attestation, platform, or project-owner-signoff gates.
 
 ## Release posture
 
@@ -734,8 +734,8 @@ readiness cannot alter runtime-security, durability, or adapter claims. Final
 promotion additionally requires CI-signed candidate reports that bind the
 closed authorization and adversarial-resource evidence to a candidate-bound
 selector manifest, exact test-source digests, all-pass counts, and retained
-JUnit digest, plus an actor-bound independent security review covering every
-retained matrix report digest. The durability axis separately records that C1
+JUnit digest, plus an actor-bound project-owner signoff covering every retained
+matrix report digest. The durability axis separately records that C1
 local-runtime authority still blocks 1.0 even though C4/X3 production
 durability remains preview and outside the stable claim. Candidate reruns use
 attempt-scoped artifacts, and the release matrix plus security-gate manifest
@@ -897,13 +897,14 @@ following audit gates pass:
 - a separately defined macOS and native-wheel smoke gate passes; expanding the
   official supported-platform matrix requires an explicit release-tooling and
   evidence decision;
-- independent API and security reviews approve the unchanged release
-  candidate; and
+- the configured project owner signs approval of the unchanged release
+  candidate and its matrix evidence; and
 - the reconstructed audit reproductions and applicable full gates pass on
   Python 3.11/3.12 and pinned Rust 1.94.
 
 The exact release candidate must still satisfy the installed-artifact,
-supply-chain, signed-evidence, protected-ref, and soak requirements in the
+supply-chain, signed-evidence, candidate-matrix, and owner-signoff requirements
+in the
 [first stable release boundary](first-stable-release.md). Audit remediation
 adds to those gates; it does not replace them.
 

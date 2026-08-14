@@ -10,14 +10,10 @@ on:
         options:
           - candidate-manifest
           - audit-closure
-          - soak-application
-          - api-review
-          - security-review
+          - owner-signoff
           - stable-scope
-          - protected-final-ref
-          - staged-rehearsal
       report_json:
-        description: Public JSON report; review identity must equal the dispatcher and security review must bind candidate matrix digests
+        description: Public JSON report; owner signoff must be dispatched by the configured project owner and bind candidate matrix digests
         required: true
         type: string
 

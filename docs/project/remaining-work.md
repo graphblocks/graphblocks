@@ -18,5 +18,5 @@ The 99-finding audit supersedes the earlier feature-led ordering. The closed
 `graphblocks.ai/v1` Graph and PluginManifest resources, alpha migrations, and
 candidate snapshots are implemented; recreating or re-promoting them is not
 remaining work. The release is instead blocked on verified closure of every P0
-and P1 plus the audit, installed-artifact, supply-chain, independent-review, and
-soak gates linked above.
+and P1 plus the audit, installed-artifact, supply-chain, candidate-matrix, and
+project-owner-signoff gates linked above.

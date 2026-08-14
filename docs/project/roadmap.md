@@ -34,9 +34,9 @@ Work proceeds in this order:
    authorization/adversarial/differential/resource/performance/restart/security
    matrices, complete the separately defined macOS and native-wheel smoke gate,
    reconstruct all nine reproduced findings, bind the source/evidence
-   provenance and live inventory, rerun on supported Python and pinned Rust, and
-   pass an independent API and security review on the unchanged release
-   candidate.
+   provenance and live inventory, rerun on supported Python and pinned Rust,
+   and obtain the configured project owner's signed approval of the exact
+   candidate and its complete matrix evidence.
 
 The closed `graphblocks.ai/v1` Graph and PluginManifest resources and their
 alpha migrations are already candidate-enforced; they are no longer future

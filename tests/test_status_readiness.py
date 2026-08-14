@@ -81,7 +81,7 @@ def test_readiness_axes_are_independent_generated_and_release_blocking(
 
     by_id = {axis["id"]: axis for axis in axes}
     assert by_id["supply-chain"]["readiness"] == (
-        "promotion-contract-enforced-external-evidence-absent"
+        "promotion-contract-enforced-owner-signoff-pending"
     )
     assert by_id["supply-chain"]["primaryGates"] == ["REL-SUPPLY-CHAIN"]
     assert by_id["supply-chain"]["targetReleaseClaim"] == (
@@ -93,7 +93,7 @@ def test_readiness_axes_are_independent_generated_and_release_blocking(
         "imply runtime security, durability, or adapter readiness."
     )
     assert by_id["runtime-security"]["readiness"] == (
-        "code-closure-enforced-external-evidence-blocked"
+        "code-closure-enforced-owner-signoff-pending"
     )
     assert by_id["runtime-security"]["primaryGates"] == [
         "REL-AUDIT-REMEDIATION",
@@ -149,14 +149,14 @@ def test_readiness_axes_are_independent_generated_and_release_blocking(
         release_gates["REL-AUDIT-REMEDIATION"]["exitCriteria"]["requiredEvidence"]
     )
     assert {
-        "independent-object-authorization-review",
+        "project-owner-signoff-over-candidate-security-evidence",
         "adversarial-request-response-schema-canonical-resource-testing",
     } <= audit_evidence
     first_stable = (ROOT / "docs" / "project" / "first-stable-release.md").read_text(
         encoding="utf-8"
     )
     first_stable_words = " ".join(first_stable.split())
-    assert "independent object-authorization review" in first_stable
+    assert "project owner approves the exact candidate" in first_stable
     assert (
         "adversarial request, response, schema, YAML-parser, and canonical "
         "resource-budget"
@@ -172,7 +172,7 @@ def test_readiness_axes_are_independent_generated_and_release_blocking(
     assert checked.returncode == 0, checked.stderr
 
     status = STATUS_PATH.read_text(encoding="utf-8").replace(
-        "`code-closure-enforced-external-evidence-blocked`",
+        "`code-closure-enforced-owner-signoff-pending`",
         "`ready`",
         1,
     )
