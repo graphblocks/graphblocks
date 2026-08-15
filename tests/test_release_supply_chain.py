@@ -9,6 +9,7 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+import tomllib
 from types import ModuleType
 import xml.etree.ElementTree as ElementTree
 import zipfile
@@ -4407,9 +4408,13 @@ def test_ci_enforces_pinned_platform_aggregation_and_isolated_release_signing() 
     assert "AUDITED_SOURCE_PACKAGE_PATH" not in aggregate_steps[
         "Assemble and verify the offline release bundle"
     ]["env"]
-    assert not (
+    project_version = tomllib.loads((root / "pyproject.toml").read_text())["project"][
+        "version"
+    ]
+    promotion_evidence = (
         root / "docs" / "project" / "releases" / "v1.0.0-promotion-evidence.json"
-    ).exists()
+    )
+    assert promotion_evidence.exists() is (project_version == "1.0.0")
     freeze_matrix = aggregate_steps[
         "Freeze the successful candidate matrix attestation"
     ]
