@@ -2,17 +2,17 @@
 
 ## Supported versions
 
-GraphBlocks 1.0 is stable software. That release status is not a blanket
-security-readiness claim. Packaging maturity is artifact-specific: the
-`graphblocks` and `graphblocks-testing` distributions use the Production/Stable
+GraphBlocks is pre-1.0 release-candidate software. That project phase is not a
+blanket security-readiness claim. Packaging maturity is artifact-specific: the
+`graphblocks` and `graphblocks-testing` distributions currently use the Beta
 classifier, while `graphblocks-runtime` uses Alpha. Profile compatibility and
 artifact readiness are governed by the
 [stable release matrix](docs/project/stable-release-matrix.yaml), independently
 of those packaging classifiers.
 
-The 1.0 maintenance series is supported. Security fixes are applied to the
-current development branch and supported maintenance releases. Do not use the
-reference runtime as a security boundary without an independent review.
+Security fixes are applied to the current development branch; no released
+maintenance series is supported yet. Do not use the reference runtime as a
+security boundary without an independent review.
 
 ## Reporting a vulnerability
 

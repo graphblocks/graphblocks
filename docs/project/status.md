@@ -1,6 +1,6 @@
 # Implementation Status
 
-GraphBlocks 1.0 is stable software. Python provides the broad
+GraphBlocks is pre-1.0 release-candidate software. Python provides the broad
 authoring and explicit reference surface. Rust is the normative Graph compiler
 and the selected target for production execution authority. The compiler,
 runtime protocol handshake, standalone canonical/schema-identity facades, and
@@ -20,10 +20,9 @@ preview promotion gates.
 The digest-bound 99-finding deep-audit inventory includes 4 P0, 23 P1, 64 P2,
 and 8 P3 findings. The live closure overlay now binds all 99 findings to
 ancestor fix commits and executable regression paths, and the repository
-checker reports zero open findings in every severity. A clean RC13 candidate
-under the simplified policy, its supported-platform evidence, and a
-candidate-bound project-owner signoff satisfy the 1.0 promotion requirements.
-The project-managed release gate
+checker reports zero open findings in every severity. A fresh candidate under
+the simplified policy, its supported-platform evidence, and a candidate-bound
+project-owner signoff still block 1.0. The project-managed release gate
 binds the report, inventory, evidence-bundle digests, remediation commits,
 reproductions, and current selectors to candidate and final Git objects. The
 repository also retains optional fail-closed Git/archive identity, safe ZIP,
@@ -59,17 +58,12 @@ regenerate this page instead of changing the table by hand.
 | External adapters (`adapters`) | `contract-only-no-real-adapters` | `excluded-contract-only`; axis excluded; shipped P0/P1 still block | `REL-INTEGRATION-PROMOTION` | Catalogued integrations are contract-only or test doubles; no external service, SDK, authentication mode, or failure model is production-supported. |
 <!-- END GENERATED READINESS AXES -->
 
-This generated table is the immutable RC13 candidate-time projection. The
-retained final promotion evidence satisfies its release-blocking owner-signoff
-states without rewriting the candidate matrix; preview and excluded axes keep
-the limitations shown above.
-
-The stable 1.0 scope and its satisfied promotion gates are recorded in the
+The intended 1.0 scope and its unmet gates are recorded in the
 [first stable release boundary](first-stable-release.md). The closed
 `graphblocks.ai/v1` core wire, explicit alpha migrations, compatibility
-snapshots, and candidate enforcement are implemented. The retained RC13
-evidence includes one complete signed candidate matrix, the first-stable
-upgrade exemption, zero-blocker status, and signed project-owner approval.
+snapshots, and candidate enforcement are implemented. One complete signed
+candidate matrix, the first-stable upgrade exemption, zero-blocker status, and
+a signed project-owner approval remain before the stable tag.
 
 The Python release surface is consolidated into three distributions:
 `graphblocks` for the Python authoring/reference SDK, built-ins, CLI, and server
