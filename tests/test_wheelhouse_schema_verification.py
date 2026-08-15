@@ -121,14 +121,14 @@ def _write_host_system_wheel(
     create_system: int,
 ) -> dict[str, bytes]:
     members = {
-        "graphblocks/__init__.py": b'__version__ = "1.0.0rc11"\n',
-        "graphblocks-1.0.0rc11.dist-info/METADATA": (
-            b"Metadata-Version: 2.4\nName: graphblocks\nVersion: 1.0.0rc11\n"
+        "graphblocks/__init__.py": b'__version__ = "1.0.0rc12"\n',
+        "graphblocks-1.0.0rc12.dist-info/METADATA": (
+            b"Metadata-Version: 2.4\nName: graphblocks\nVersion: 1.0.0rc12\n"
         ),
-        "graphblocks-1.0.0rc11.dist-info/WHEEL": (
+        "graphblocks-1.0.0rc12.dist-info/WHEEL": (
             b"Wheel-Version: 1.0\nTag: py3-none-any\n"
         ),
-        "graphblocks-1.0.0rc11.dist-info/RECORD": b"",
+        "graphblocks-1.0.0rc12.dist-info/RECORD": b"",
     }
     with zipfile.ZipFile(destination, "w") as archive:
         for name, content in members.items():
@@ -526,8 +526,8 @@ def test_platform_independent_wheel_host_system_normalization_is_cross_platform(
     tmp_path: Path,
 ) -> None:
     module = _load_wheelhouse_module()
-    unix_wheel = tmp_path / "unix" / "graphblocks-1.0.0rc11-py3-none-any.whl"
-    windows_wheel = tmp_path / "windows" / "graphblocks-1.0.0rc11-py3-none-any.whl"
+    unix_wheel = tmp_path / "unix" / "graphblocks-1.0.0rc12-py3-none-any.whl"
+    windows_wheel = tmp_path / "windows" / "graphblocks-1.0.0rc12-py3-none-any.whl"
     unix_wheel.parent.mkdir()
     windows_wheel.parent.mkdir()
     members = _write_host_system_wheel(unix_wheel, create_system=3)
@@ -546,7 +546,7 @@ def test_platform_independent_wheel_host_system_normalization_is_cross_platform(
 
 def test_platform_specific_wheel_host_system_is_not_rewritten(tmp_path: Path) -> None:
     module = _load_wheelhouse_module()
-    wheel = tmp_path / "graphblocks-1.0.0rc11-cp311-abi3-win_amd64.whl"
+    wheel = tmp_path / "graphblocks-1.0.0rc12-cp311-abi3-win_amd64.whl"
     _write_host_system_wheel(wheel, create_system=0)
     original = wheel.read_bytes()
 
@@ -558,7 +558,7 @@ def test_platform_independent_wheel_host_system_normalization_fails_closed(
     tmp_path: Path,
 ) -> None:
     module = _load_wheelhouse_module()
-    wheel = tmp_path / "graphblocks-1.0.0rc11-py3-none-any.whl"
+    wheel = tmp_path / "graphblocks-1.0.0rc12-py3-none-any.whl"
     _write_host_system_wheel(wheel, create_system=0)
     malformed = bytearray(wheel.read_bytes())
     malformed[-18:-16] = (1).to_bytes(2, "little")
@@ -1112,7 +1112,7 @@ def test_release_tck_expectations_validate_observed_suite_identity(
                 ),
                 "fixture_digest": expected_digest,
                 "implementation": "graphblocks-python",
-                "implementation_version": "1.0.0rc11",
+                "implementation_version": "1.0.0rc12",
                 "suite_manifest_digest": expected_digest,
                 "execution_claim": {
                     "executor_id": "python-reference",
@@ -1145,7 +1145,7 @@ def test_release_tck_expectations_validate_observed_suite_identity(
                             ],
                             "fixture_digest": fixture_digest,
                             "implementation": "graphblocks-python",
-                            "implementation_version": "1.0.0rc11",
+                            "implementation_version": "1.0.0rc12",
                             "execution_claim": expected["suites"]["schema"][
                                 "execution_claim"
                             ],
@@ -1931,7 +1931,7 @@ def test_stable_tck_expectations_bind_bundled_c0_c1_profiles_and_contract_digest
     }
     assert expectations["suites"]["compiler"][
         "reference_implementation_version"
-    ] == "1.0.0rc11"
+    ] == "1.0.0rc12"
     assert expectations["suites"]["application-events"]["implementation"] == (
         "graphblocks-runtime"
     )
@@ -1947,7 +1947,7 @@ def test_stable_tck_expectations_bind_bundled_c0_c1_profiles_and_contract_digest
     }
     assert expectations["suites"]["application-events"][
         "reference_implementation_version"
-    ] == "1.0.0rc11"
+    ] == "1.0.0rc12"
     assert expectations["suites"]["outcome"]["implementation"] == (
         "graphblocks-runtime"
     )
@@ -1966,7 +1966,7 @@ def test_stable_tck_expectations_bind_bundled_c0_c1_profiles_and_contract_digest
     }
     assert expectations["suites"]["outcome"][
         "reference_implementation_version"
-    ] == "1.0.0rc11"
+    ] == "1.0.0rc12"
     assert expectations["suites"]["retry"]["implementation"] == (
         "graphblocks-runtime"
     )
@@ -1985,7 +1985,7 @@ def test_stable_tck_expectations_bind_bundled_c0_c1_profiles_and_contract_digest
     }
     assert expectations["suites"]["retry"][
         "reference_implementation_version"
-    ] == "1.0.0rc11"
+    ] == "1.0.0rc12"
     assert expectations["suites"]["sequence"]["implementation"] == (
         "graphblocks-runtime"
     )
@@ -2004,7 +2004,7 @@ def test_stable_tck_expectations_bind_bundled_c0_c1_profiles_and_contract_digest
     }
     assert expectations["suites"]["sequence"][
         "reference_implementation_version"
-    ] == "1.0.0rc11"
+    ] == "1.0.0rc12"
     assert expectations["suites"]["tool-execution"]["implementation"] == (
         "graphblocks-runtime"
     )
@@ -2023,7 +2023,7 @@ def test_stable_tck_expectations_bind_bundled_c0_c1_profiles_and_contract_digest
     }
     assert expectations["suites"]["tool-execution"][
         "reference_implementation_version"
-    ] == "1.0.0rc11"
+    ] == "1.0.0rc12"
     assert expectations["suites"]["tool-lifecycle"]["implementation"] == (
         "graphblocks-runtime"
     )
@@ -2042,7 +2042,7 @@ def test_stable_tck_expectations_bind_bundled_c0_c1_profiles_and_contract_digest
     }
     assert expectations["suites"]["tool-lifecycle"][
         "reference_implementation_version"
-    ] == "1.0.0rc11"
+    ] == "1.0.0rc12"
     assert expectations["suites"]["tool-result"]["implementation"] == (
         "graphblocks-runtime"
     )
@@ -2061,7 +2061,7 @@ def test_stable_tck_expectations_bind_bundled_c0_c1_profiles_and_contract_digest
     }
     assert expectations["suites"]["tool-result"][
         "reference_implementation_version"
-    ] == "1.0.0rc11"
+    ] == "1.0.0rc12"
     assert expectations["suites"]["typed-ports"]["implementation"] == (
         "graphblocks-runtime"
     )
@@ -2080,7 +2080,7 @@ def test_stable_tck_expectations_bind_bundled_c0_c1_profiles_and_contract_digest
     }
     assert expectations["suites"]["typed-ports"][
         "reference_implementation_version"
-    ] == "1.0.0rc11"
+    ] == "1.0.0rc12"
     assert expectations["suites"]["runtime"]["implementation"] == (
         "graphblocks-runtime"
     )
@@ -2099,7 +2099,7 @@ def test_stable_tck_expectations_bind_bundled_c0_c1_profiles_and_contract_digest
     }
     assert expectations["suites"]["runtime"][
         "reference_implementation_version"
-    ] == "1.0.0rc11"
+    ] == "1.0.0rc12"
     assert {
         expectation["implementation"]
         for suite, expectation in expectations["suites"].items()
