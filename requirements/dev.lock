@@ -5,7 +5,7 @@ attrs==26.1.0
     # via
     #   jsonschema
     #   referencing
-chardet==7.5.1
+chardet==7.6.0
     # via diff-cover
 coverage==7.15.4
     # via pytest-cov
@@ -13,7 +13,7 @@ diff-cover==10.4.1
     # via graphblocks (pyproject.toml)
 github-slugger==0.0.3
     # via graphblocks (pyproject.toml)
-hypothesis==6.165.5
+hypothesis==6.165.9
     # via graphblocks (pyproject.toml)
 iniconfig==2.3.0
     # via pytest
