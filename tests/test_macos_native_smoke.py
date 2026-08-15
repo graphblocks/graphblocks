@@ -9,6 +9,8 @@ import sys
 import pytest
 import yaml
 
+from graphblocks._version import __version__ as GRAPHBLOCKS_VERSION
+
 
 ROOT = Path(__file__).parents[1]
 TOOL_PATH = ROOT / "tools/macos_native_smoke.py"
@@ -51,7 +53,7 @@ def _probe(tmp_path: Path) -> dict[str, object]:
             "basePrefix": "/Library/Frameworks/Python.framework/Versions/3.11",
         },
         "distributions": {
-            "graphblocks": "1.0.0rc12",
+            "graphblocks": GRAPHBLOCKS_VERSION,
             "graphblocks-runtime": "0.1.0",
         },
         "modules": {
@@ -146,7 +148,7 @@ def test_macos_probe_is_closed_installed_and_native(tmp_path: Path) -> None:
 
 def test_macos_wheelhouse_requires_exact_arm64_abi3_artifacts(tmp_path: Path) -> None:
     tool = _load_tool()
-    base = tmp_path / "graphblocks-1.0.0rc12-py3-none-any.whl"
+    base = tmp_path / f"graphblocks-{GRAPHBLOCKS_VERSION}-py3-none-any.whl"
     native = tmp_path / "graphblocks_runtime-0.1.0-cp311-abi3-macosx_11_0_arm64.whl"
     base.write_bytes(b"base-wheel")
     native.write_bytes(b"native-wheel")

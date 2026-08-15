@@ -506,6 +506,10 @@ between RC and final. Non-documentation files must be exact
 `1.0.0rc.N`-to-`1.0.0` replacements, apart from the optional packaging
 classifier promotion to Production/Stable; implementation, schema, TCK, and
 normative-specification changes require a new RC and owner signoff.
+The immutable matrix therefore remains the candidate-time authority snapshot:
+its maturity policy, candidate artifact train, and readiness fields describe
+the promoted RC, while the final package metadata, project status, and security
+policy documents may record the completed stable release.
 This whole-matrix immutability also prevents the final release from adding or
 widening an adapter, readiness, approval, or test-gate claim after signed runs
 were collected.

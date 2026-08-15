@@ -18,6 +18,7 @@ import zipfile
 
 import pytest
 
+from graphblocks._version import __version__ as GRAPHBLOCKS_VERSION
 from graphblocks.canonical import (
     canonical_dumps_reference,
     canonical_hash_reference,
@@ -1931,7 +1932,7 @@ def test_stable_tck_expectations_bind_bundled_c0_c1_profiles_and_contract_digest
     }
     assert expectations["suites"]["compiler"][
         "reference_implementation_version"
-    ] == "1.0.0rc12"
+    ] == GRAPHBLOCKS_VERSION
     assert expectations["suites"]["application-events"]["implementation"] == (
         "graphblocks-runtime"
     )
@@ -1947,7 +1948,7 @@ def test_stable_tck_expectations_bind_bundled_c0_c1_profiles_and_contract_digest
     }
     assert expectations["suites"]["application-events"][
         "reference_implementation_version"
-    ] == "1.0.0rc12"
+    ] == GRAPHBLOCKS_VERSION
     assert expectations["suites"]["outcome"]["implementation"] == (
         "graphblocks-runtime"
     )
@@ -1966,7 +1967,7 @@ def test_stable_tck_expectations_bind_bundled_c0_c1_profiles_and_contract_digest
     }
     assert expectations["suites"]["outcome"][
         "reference_implementation_version"
-    ] == "1.0.0rc12"
+    ] == GRAPHBLOCKS_VERSION
     assert expectations["suites"]["retry"]["implementation"] == (
         "graphblocks-runtime"
     )
@@ -1985,7 +1986,7 @@ def test_stable_tck_expectations_bind_bundled_c0_c1_profiles_and_contract_digest
     }
     assert expectations["suites"]["retry"][
         "reference_implementation_version"
-    ] == "1.0.0rc12"
+    ] == GRAPHBLOCKS_VERSION
     assert expectations["suites"]["sequence"]["implementation"] == (
         "graphblocks-runtime"
     )
@@ -2004,7 +2005,7 @@ def test_stable_tck_expectations_bind_bundled_c0_c1_profiles_and_contract_digest
     }
     assert expectations["suites"]["sequence"][
         "reference_implementation_version"
-    ] == "1.0.0rc12"
+    ] == GRAPHBLOCKS_VERSION
     assert expectations["suites"]["tool-execution"]["implementation"] == (
         "graphblocks-runtime"
     )
@@ -2023,7 +2024,7 @@ def test_stable_tck_expectations_bind_bundled_c0_c1_profiles_and_contract_digest
     }
     assert expectations["suites"]["tool-execution"][
         "reference_implementation_version"
-    ] == "1.0.0rc12"
+    ] == GRAPHBLOCKS_VERSION
     assert expectations["suites"]["tool-lifecycle"]["implementation"] == (
         "graphblocks-runtime"
     )
@@ -2042,7 +2043,7 @@ def test_stable_tck_expectations_bind_bundled_c0_c1_profiles_and_contract_digest
     }
     assert expectations["suites"]["tool-lifecycle"][
         "reference_implementation_version"
-    ] == "1.0.0rc12"
+    ] == GRAPHBLOCKS_VERSION
     assert expectations["suites"]["tool-result"]["implementation"] == (
         "graphblocks-runtime"
     )
@@ -2061,7 +2062,7 @@ def test_stable_tck_expectations_bind_bundled_c0_c1_profiles_and_contract_digest
     }
     assert expectations["suites"]["tool-result"][
         "reference_implementation_version"
-    ] == "1.0.0rc12"
+    ] == GRAPHBLOCKS_VERSION
     assert expectations["suites"]["typed-ports"]["implementation"] == (
         "graphblocks-runtime"
     )
@@ -2080,7 +2081,7 @@ def test_stable_tck_expectations_bind_bundled_c0_c1_profiles_and_contract_digest
     }
     assert expectations["suites"]["typed-ports"][
         "reference_implementation_version"
-    ] == "1.0.0rc12"
+    ] == GRAPHBLOCKS_VERSION
     assert expectations["suites"]["runtime"]["implementation"] == (
         "graphblocks-runtime"
     )
@@ -2099,7 +2100,7 @@ def test_stable_tck_expectations_bind_bundled_c0_c1_profiles_and_contract_digest
     }
     assert expectations["suites"]["runtime"][
         "reference_implementation_version"
-    ] == "1.0.0rc12"
+    ] == GRAPHBLOCKS_VERSION
     assert {
         expectation["implementation"]
         for suite, expectation in expectations["suites"].items()

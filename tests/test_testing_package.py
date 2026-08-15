@@ -18,6 +18,8 @@ import zipfile
 import pytest
 import yaml
 
+from graphblocks._version import __version__ as GRAPHBLOCKS_VERSION
+
 
 ROOT = Path(__file__).parents[1]
 TEST_NATIVE_EXTENSION_NAME = (
@@ -851,7 +853,7 @@ def test_testing_package_runs_compiler_tck_case_and_reports_hash(monkeypatch) ->
     assert evidence == {
         "fixture_digest": report.fixture_digest,
         "implementation": "graphblocks-python",
-        "implementation_version": "1.0.0rc12",
+        "implementation_version": GRAPHBLOCKS_VERSION,
         "suite": "compiler",
     }
     assert report.fixture_digest.startswith("sha256:")
@@ -894,7 +896,7 @@ def test_testing_package_loads_shared_compiler_tck_cases_with_diagnostic_expecta
     )
     assert any(result.observed["error_codes"] for result in report.results)
     assert report.implementation == "graphblocks-python"
-    assert report.implementation_version == "1.0.0rc12"
+    assert report.implementation_version == GRAPHBLOCKS_VERSION
     assert "load_compiler_tck_cases" in graphblocks_testing.__all__
 
 
@@ -11624,7 +11626,7 @@ def test_testing_package_cli_emits_observed_release_tck_identity(
     ] == ("rust-application-events-exact-differential")
     assert application_event_report["evidence"][
         "reference_implementation_version"
-    ] == "1.0.0rc12"
+    ] == GRAPHBLOCKS_VERSION
     assert len(native_application_event_calls) == len(
         application_event_report["results"]
     )
@@ -11639,7 +11641,7 @@ def test_testing_package_cli_emits_observed_release_tck_identity(
         "rust-retry-exact-differential"
     )
     assert retry_report["evidence"]["reference_implementation_version"] == (
-        "1.0.0rc12"
+        GRAPHBLOCKS_VERSION
     )
     assert native_retry_calls == [
         result["case_id"] for result in retry_report["results"]
@@ -11657,7 +11659,7 @@ def test_testing_package_cli_emits_observed_release_tck_identity(
         "rust-sequence-exact-differential"
     )
     assert sequence_report["evidence"]["reference_implementation_version"] == (
-        "1.0.0rc12"
+        GRAPHBLOCKS_VERSION
     )
     assert native_sequence_calls == [
         result["case_id"] for result in sequence_report["results"]
@@ -11680,7 +11682,7 @@ def test_testing_package_cli_emits_observed_release_tck_identity(
     ] == "rust-tool-execution-exact-differential"
     assert tool_execution_report["evidence"][
         "reference_implementation_version"
-    ] == "1.0.0rc12"
+    ] == GRAPHBLOCKS_VERSION
     assert native_tool_execution_calls == [
         result["case_id"] for result in tool_execution_report["results"]
     ]
@@ -11702,7 +11704,7 @@ def test_testing_package_cli_emits_observed_release_tck_identity(
     ] == "rust-tool-lifecycle-exact-differential"
     assert tool_lifecycle_report["evidence"][
         "reference_implementation_version"
-    ] == "1.0.0rc12"
+    ] == GRAPHBLOCKS_VERSION
     assert native_tool_lifecycle_calls == [
         result["case_id"] for result in tool_lifecycle_report["results"]
     ]
@@ -11724,7 +11726,7 @@ def test_testing_package_cli_emits_observed_release_tck_identity(
     ] == "rust-tool-result-exact-differential"
     assert tool_result_report["evidence"][
         "reference_implementation_version"
-    ] == "1.0.0rc12"
+    ] == GRAPHBLOCKS_VERSION
     assert native_tool_result_calls == [
         result["case_id"] for result in tool_result_report["results"]
     ]
@@ -11744,7 +11746,7 @@ def test_testing_package_cli_emits_observed_release_tck_identity(
     )
     assert (
         typed_ports_report["evidence"]["reference_implementation_version"]
-        == "1.0.0rc12"
+        == GRAPHBLOCKS_VERSION
     )
     assert native_typed_ports_calls == [
         result["case_id"] for result in typed_ports_report["results"]
@@ -11760,7 +11762,7 @@ def test_testing_package_cli_emits_observed_release_tck_identity(
         "rust-outcome-exact-differential"
     )
     assert outcome_report["evidence"]["reference_implementation_version"] == (
-        "1.0.0rc12"
+        GRAPHBLOCKS_VERSION
     )
     assert len(native_outcome_calls) == len(outcome_report["results"])
     assert all(
@@ -11778,7 +11780,7 @@ def test_testing_package_cli_emits_observed_release_tck_identity(
         "rust-compiler-exact-differential"
     )
     assert compiler_report["evidence"]["reference_implementation_version"] == (
-        "1.0.0rc12"
+        GRAPHBLOCKS_VERSION
     )
     assert len(native_calls) == len(compiler_report["results"])
     runtime_report = payload["reports"]["runtime"]
@@ -11792,7 +11794,7 @@ def test_testing_package_cli_emits_observed_release_tck_identity(
         "rust-runtime-exact-differential"
     )
     assert runtime_report["evidence"]["reference_implementation_version"] == (
-        "1.0.0rc12"
+        GRAPHBLOCKS_VERSION
     )
     assert len(native_runtime_calls) == len(runtime_report["results"])
     assert payload["contentDigest"] == graphblocks_testing.canonical_hash(

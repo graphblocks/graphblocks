@@ -48,6 +48,15 @@ def test_project_and_artifact_maturity_claims_are_consistent() -> None:
             encoding="utf-8"
         )
     )
+    project_metadata = tomllib.loads(
+        (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    )["project"]
+    is_stable_release = project_metadata["version"] == "1.0.0"
+    phase_statement = (
+        "GraphBlocks 1.0 is stable software."
+        if is_stable_release
+        else "GraphBlocks is pre-1.0 release-candidate software."
+    )
     policy = matrix["maturityPolicy"]
     status = " ".join(
         (ROOT / policy["projectPhaseDocument"])
@@ -68,10 +77,10 @@ def test_project_and_artifact_maturity_claims_are_consistent() -> None:
         "or-security-support"
     )
     assert policy["profileTierAuthority"] == "profiles"
-    assert "GraphBlocks is pre-1.0 release-candidate software." in status
+    assert phase_statement in status
     assert "project-managed release gate" in status
     assert "externally supplied audited-source package" not in status
-    assert "GraphBlocks is pre-1.0 release-candidate software." in security
+    assert phase_statement in security
     assert "GraphBlocks is alpha software." not in security
     assert policy["securitySupport"] == {
         "policy": "current-development-branch-only-no-maintenance-series",
@@ -84,7 +93,10 @@ def test_project_and_artifact_maturity_claims_are_consistent() -> None:
         "headSha": "8a896e7fad37f3f460475672d0ca3e42b6f43a0b",
         "conclusion": "success",
     }
-    assert "no released maintenance series is supported yet" in security
+    if is_stable_release:
+        assert "The 1.0 maintenance series is supported." in security
+    else:
+        assert "no released maintenance series is supported yet" in security
     assert "Do not use the reference runtime as a security boundary" in security
 
     for declaration in policy["artifactClassifiers"]:
@@ -95,7 +107,13 @@ def test_project_and_artifact_maturity_claims_are_consistent() -> None:
             for classifier in metadata["project"]["classifiers"]
             if classifier.startswith("Development Status :: ")
         ]
-        assert development_classifiers == [declaration["classifier"]]
+        expected_classifier = declaration["classifier"]
+        if is_stable_release and declaration["artifactId"] in {
+            "pypi:graphblocks",
+            "pypi:graphblocks-testing",
+        }:
+            expected_classifier = "Development Status :: 5 - Production/Stable"
+        assert development_classifiers == [expected_classifier]
         artifact = artifacts[declaration["artifactId"]]
         assert artifact["path"] == metadata_path
         assert artifact["tier"] == "stable"

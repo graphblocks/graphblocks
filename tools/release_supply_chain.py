@@ -184,6 +184,7 @@ PROMOTION_DOCUMENTATION_PATHS = {
     "README.md",
     "README.ko.md",
     "README.zh-CN.md",
+    "SECURITY.md",
 }
 PROMOTION_DOCUMENTATION_PREFIX = "docs/project/"
 AUDIT_INVENTORY_PATH = "docs/project/audit-issues.json"

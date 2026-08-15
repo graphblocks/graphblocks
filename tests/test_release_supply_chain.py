@@ -1178,6 +1178,9 @@ def test_promotion_source_diff_allows_only_release_metadata(
     (repository / "docs" / "project" / "status.md").write_text(
         "Candidate\n", encoding="utf-8"
     )
+    (repository / "SECURITY.md").write_text(
+        "Candidate security support\n", encoding="utf-8"
+    )
     cli_report = {
         "ok": True,
         "implementation_version": "1.0.0rc12",
@@ -1226,6 +1229,9 @@ def test_promotion_source_diff_allows_only_release_metadata(
     (repository / "docs" / "project" / "status.md").write_text(
         "Stable\n", encoding="utf-8"
     )
+    (repository / "SECURITY.md").write_text(
+        "Stable security support\n", encoding="utf-8"
+    )
     (repository / "docs" / "project" / "releases").mkdir()
     (repository / "docs" / "project" / "releases" / "v1.0.0.json").write_text(
         "{}\n", encoding="utf-8"
@@ -1265,6 +1271,7 @@ def test_promotion_source_diff_allows_only_release_metadata(
         candidate_ref=RELEASE_REF,
     )
     assert observed["changes"] == [
+        {"path": "SECURITY.md", "status": "M"},
         {
             "path": "compatibility/stable-testing-cli-contracts.json",
             "status": "M",
@@ -1305,6 +1312,36 @@ def test_promotion_source_diff_allows_only_release_metadata(
             final_tree=changed_tree,
             candidate_ref=RELEASE_REF,
         )
+
+
+@pytest.mark.parametrize(
+    ("test_path", "version_sensitive_marker"),
+    (
+        (
+            "tests/test_testing_package.py",
+            "def test_testing_package_runs_compiler_tck_case_and_reports_hash",
+        ),
+        (
+            "tests/test_wheelhouse_schema_verification.py",
+            "def test_stable_tck_expectations_bind_bundled_c0_c1_profiles",
+        ),
+        (
+            "tests/test_macos_native_smoke.py",
+            "def _probe",
+        ),
+    ),
+)
+def test_final_promotion_version_sensitive_tests_do_not_pin_candidate_version(
+    test_path: str,
+    version_sensitive_marker: str,
+) -> None:
+    source = (Path(__file__).parents[1] / test_path).read_text(encoding="utf-8")
+    version_sensitive_source = source[source.index(version_sensitive_marker) :]
+
+    assert re.search(
+        r'''["']1\.0\.0rc[1-9][0-9]*["']''', version_sensitive_source
+    ) is None
+    assert "GRAPHBLOCKS_VERSION" in source
 
 
 @pytest.mark.parametrize(
