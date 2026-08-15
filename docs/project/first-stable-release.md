@@ -232,13 +232,11 @@ file-level evidence, provenance attestation, and Cosign authority are still
 verified fail-closed. The current
 [`audit-provenance-trust.yaml`](audit-provenance-trust.yaml) therefore records
 that optional independent verification is not configured; it is not a stable
-release blocker. RC10 remains historical evidence. RC11 now binds the completed
-remediation set and its retained signed evidence is indexed in the
-[`v1.0.0-rc.11` operator ledger](releases/v1.0.0-rc.11.md). Stable promotion
-under the simplified personal-project policy requires a fresh candidate,
-one complete signed matrix attestation, zero-blocker status, and the configured
-project owner's signed approval. RC11 predates that policy and remains
-historical evidence rather than a promotable candidate.
+release blocker. RC10 through RC12 remain historical evidence. RC13 binds the
+completed remediation set and its retained signed evidence is indexed in the
+[`v1.0.0-rc.13` operator ledger](releases/v1.0.0-rc.13.md). It has one complete
+signed matrix attestation, zero-blocker status, and the configured project
+owner's signed approval under the simplified personal-project policy.
 
 The stable promotion validator treats runtime security as evidence distinct
 from supply-chain integrity. Each candidate matrix attestation carries the
