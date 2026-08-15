@@ -1,9 +1,8 @@
 # First Stable Release Boundary
 
-This document defines the intended compatibility boundary for the first stable
-GraphBlocks release. It is a release target, not a statement that the current
-source tree is already stable. A row marked **stable** is part of the 1.0
-promise only after every release gate in this document passes. The canonical
+This document defines the compatibility boundary for the stable GraphBlocks
+1.0 release. A row marked **stable** is part of the 1.0 promise because every
+applicable release gate in this document passed. The canonical
 machine-readable form of these classifications is
 [`stable-release-matrix.yaml`](stable-release-matrix.yaml).
 Artifact release trains and interoperability contracts are separately recorded
@@ -31,7 +30,7 @@ promoted independently without weakening the initial core promise.
 Repository presence, a passing unit test, a package-catalog entry, or a
 `0.1.x` version does not promote an item to stable.
 
-The Python core and testing artifacts use the `1.0.0rc13` core candidate train,
+The Python core and testing artifacts use the stable `1.0.0` core train,
 while the native runtime, active Rust workspace crates, and deployment scaffold
 remain on their independent `0.1.0` trains. The Cargo and npm `graphblocks`
 packages at `0.0.2` reserve names only. These version numbers express artifact
@@ -50,7 +49,7 @@ evidence.
 | `graphblocks-testing` | Stable | TCK discovery/execution, C0/C1 fixtures, deterministic report format, and the `graphblocks-tck` command. A TCK report is evidence for the named implementation/profile/digests, not a blanket claim for the whole repository. |
 | `graphblocks-runtime` | Stable | Stable scope is limited to the normative compiler binding and the C1 runtime surface that passes the final authority, protocol, supported-wheel, suspension, and differential gates. Other native entry points remain preview unless named by a promoted profile. |
 
-The deliberately small candidate stable Python surface is enumerated in
+The deliberately small stable Python surface is enumerated in
 [`compatibility/stable-python-surface.yaml`](../../compatibility/stable-python-surface.yaml)
 and enforced against its exact
 [`stable-python-api.json`](../../compatibility/stable-python-api.json) signature
@@ -60,9 +59,8 @@ parsed-JSON cases are likewise enumerated in
 [`stable-cli-cases.yaml`](../../compatibility/stable-cli-cases.yaml) and frozen
 in
 [`stable-cli-contracts.json`](../../compatibility/stable-cli-contracts.json).
-These snapshots are candidate-enforced evidence and have been refreshed against
-the stable `v1` wire resources. They still require independent compatibility
-review before the release gate can be declared passed.
+These snapshots are candidate-enforced evidence, have been refreshed against
+the stable `v1` wire resources, and passed the 1.0 compatibility review.
 
 The installed C1 runtime compatibility boundary is separately enumerated in
 [`stable-runtime-surface.yaml`](../../compatibility/stable-runtime-surface.yaml)
@@ -157,8 +155,8 @@ profile catalog or missing evidence paths.
 
 | Resource/version | 1.0 tier | Read/write policy |
 | --- | --- | --- |
-| `graphblocks.ai/v1` `Graph` | Stable candidate | Canonical output and authoring target for C0/C1. The closed schema contains graph interfaces, executable block nodes, edges, typed configuration/resource bindings, conditions, bounded local flow/effects, tool bindings/execution, and output policy. Composition, background execution, events, callbacks, AI-application state, governance, voice, and other preview fields are excluded. Its canonical form, alpha migrations, negative reader tests, and TCK fixtures are candidate-enforced; compatibility and release review remain. |
-| `graphblocks.ai/v1` `PluginManifest` | Stable candidate | Stable C0 plugin/catalog resource. Its closed schema, alpha migration, stable-reader validation, and TCK evidence are candidate-enforced; compatibility and release review remain. |
+| `graphblocks.ai/v1` `Graph` | Stable | Canonical output and authoring target for C0/C1. The closed schema contains graph interfaces, executable block nodes, edges, typed configuration/resource bindings, conditions, bounded local flow/effects, tool bindings/execution, and output policy. Composition, background execution, events, callbacks, AI-application state, governance, voice, and other preview fields are excluded. Its canonical form, alpha migrations, negative reader tests, TCK fixtures, compatibility review, and release review passed. |
+| `graphblocks.ai/v1` `PluginManifest` | Stable | Stable C0 plugin/catalog resource. Its closed schema, alpha migration, stable-reader validation, TCK evidence, compatibility review, and release review passed. |
 | `graphblocks.ai/v1alpha3` `Graph` | Preview and migration input | C0/C1-compatible documents use the explicit, golden-tested alpha-to-v1 migration. A document containing preview-only fields cannot be represented by v1: public migration fails closed, while preview compilation retains alpha3. Alpha3 is not a stable authoring or output contract. |
 | `graphblocks.ai/v1alpha1` and `v1alpha2` `Graph` | Migration-only | Accepted only through explicit, golden-tested migrations. They are not valid 1.0 output or stable authoring targets. |
 | `graphblocks.ai/v1alpha1` `Application` and `Binding` | Preview | Belong to the C2+ surface and are not part of the initial stable wire promise. |
@@ -618,12 +616,9 @@ therefore remain `candidate` and record the signature as
 `external-gate-pending`.
 
 CI uses the fixed repository path
-`docs/project/releases/v1.0.0-promotion-evidence.json` only for the final tag.
-No record exists there yet and this document does not fabricate one, so a final
-tag currently fails closed. A release operator must place verifiable evidence
-at that path only after a clean candidate matrix, the defect/flake audit, and
-the configured project owner's approval, using retained CI outputs for the
-matrix attestation and the candidate-tag promotion-report workflow outputs for
-the remaining report/signature pairs. The deterministic in-bundle dry run
-continues to validate the publish/rollback/yank/restore state machine without
-performing registry mutations.
+[`v1.0.0-promotion-evidence.json`](releases/v1.0.0-promotion-evidence.json) for
+the final tag. That record binds the clean RC13 candidate matrix, defect and
+flake audit, configured project-owner approval, retained CI outputs, and signed
+candidate-tag promotion reports. The deterministic in-bundle dry run continues
+to validate the publish/rollback/yank/restore state machine without performing
+registry mutations.
