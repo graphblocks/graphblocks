@@ -1551,7 +1551,7 @@ releaseGates:
       packageSemverEqualsContractVersion: false
       unsupportedCombinationBehavior: fail-closed-before-operation
       artifactTrains:
-        pypiCore: 1.0.0rc13
+        pypiCore: 1.0.0rc14
         nativeAndRust: 0.1.0
         reservedNames: 0.0.2
       contractVersions:
