@@ -4643,6 +4643,9 @@ def test_ci_primes_offline_rust_inputs_and_retains_failure_diagnostics() -> None
         "github.event.pull_request.base.sha || github.event.before }}"
     )
     coverage_command = coverage_step["run"]
+    assert '[[ -z "$COVERAGE_COMPARE_REF"' in coverage_command
+    assert '"$COVERAGE_COMPARE_REF" =~ ^0{40}$' in coverage_command
+    assert 'COVERAGE_COMPARE_REF="$(git rev-parse HEAD^)"' in coverage_command
     assert "tests/test_server_lifecycle.py" in coverage_command
     assert "tests/test_canonical_native_facade.py" in coverage_command
     for module, threshold in (

@@ -240,6 +240,9 @@ jobs:
           COVERAGE_COMPARE_REF: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
         run: |
           set -o pipefail
+          if [[ -z "$COVERAGE_COMPARE_REF" || "$COVERAGE_COMPARE_REF" =~ ^0{40}$ ]]; then
+            COVERAGE_COMPARE_REF="$(git rev-parse HEAD^)"
+          fi
           python -m pytest \
             tests/test_server_core.py \
             tests/test_server_error_contract.py \
