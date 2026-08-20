@@ -37,7 +37,9 @@ def test_development_lock_generation_uses_a_checkout_relative_source(
     )
 
     assert command[-1] == "pyproject.toml"
-    assert command[command.index("--constraint") + 1] == "requirements/dev.lock"
+    assert Path(command[command.index("--constraint") + 1]) == Path(
+        "requirements/dev.lock"
+    )
     assert str(check_dev_lock.ROOT) not in command
 
     unconstrained = check_dev_lock.compile_command(
