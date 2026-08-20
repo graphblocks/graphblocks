@@ -41,8 +41,8 @@ class DevLockError(ValueError):
     """Raised when the development lock is missing, stale, or non-portable."""
 
 
-def compile_command(output_path: Path) -> tuple[str, ...]:
-    return (
+def compile_command(output_path: Path, *, constrain_existing: bool) -> tuple[str, ...]:
+    command = [
         sys.executable,
         "-m",
         "piptools",
@@ -55,10 +55,17 @@ def compile_command(output_path: Path) -> tuple[str, ...]:
         "--no-header",
         "--no-emit-index-url",
         "--quiet",
-        "--output-file",
-        str(output_path),
-        SOURCE_PATH.name,
+    ]
+    if constrain_existing:
+        command.extend(("--constraint", str(LOCK_PATH.relative_to(ROOT))))
+    command.extend(
+        (
+            "--output-file",
+            str(output_path),
+            SOURCE_PATH.name,
+        )
     )
+    return tuple(command)
 
 
 def _installed_pip_tools_version() -> str:
@@ -70,7 +77,7 @@ def _installed_pip_tools_version() -> str:
         ) from error
 
 
-def _compile_lock_body() -> str:
+def _compile_lock_body(*, constrain_existing: bool) -> str:
     installed = _installed_pip_tools_version()
     if installed != PIP_TOOLS_VERSION:
         raise DevLockError(
@@ -79,7 +86,10 @@ def _compile_lock_body() -> str:
     with TemporaryDirectory(prefix="graphblocks-dev-lock-") as directory:
         output_path = Path(directory) / "dev.lock"
         completed = subprocess.run(
-            compile_command(output_path),
+            compile_command(
+                output_path,
+                constrain_existing=constrain_existing,
+            ),
             cwd=ROOT,
             check=False,
             capture_output=True,
@@ -94,7 +104,9 @@ def _compile_lock_body() -> str:
         try:
             return output_path.read_text(encoding="utf-8")
         except OSError as error:
-            raise DevLockError("pip-tools did not produce a development lock") from error
+            raise DevLockError(
+                "pip-tools did not produce a development lock"
+            ) from error
 
 
 def _required_project_dependencies() -> frozenset[str]:
@@ -111,7 +123,9 @@ def _required_project_dependencies() -> frozenset[str]:
             canonicalize_name(Requirement(item).name) for item in dependencies
         )
     except InvalidRequirement as error:
-        raise DevLockError("pyproject contains an invalid dependency requirement") from error
+        raise DevLockError(
+            "pyproject contains an invalid dependency requirement"
+        ) from error
 
 
 def validate_lock(lock_text: str) -> frozenset[str]:
@@ -163,16 +177,16 @@ def validate_lock(lock_text: str) -> frozenset[str]:
     return frozenset(locked_names)
 
 
-def rendered_lock() -> str:
-    body = _compile_lock_body().lstrip()
+def rendered_lock(*, constrain_existing: bool) -> str:
+    body = _compile_lock_body(constrain_existing=constrain_existing).lstrip()
     rendered = LOCK_HEADER + body
     validate_lock(rendered)
     return rendered
 
 
 def check_dev_lock(*, write: bool = False) -> int:
-    generated = rendered_lock()
     if write:
+        generated = rendered_lock(constrain_existing=False)
         LOCK_PATH.write_text(generated, encoding="utf-8", newline="\n")
         print(f"updated {LOCK_PATH.relative_to(ROOT)}")
         return 0
@@ -181,13 +195,24 @@ def check_dev_lock(*, write: bool = False) -> int:
     except OSError as error:
         raise DevLockError("development lock cannot be read") from error
     validate_lock(committed)
-    if committed != generated:
+    generated = rendered_lock(constrain_existing=True)
+    committed_pins = tuple(
+        line.strip()
+        for line in committed.splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    )
+    generated_pins = tuple(
+        line.strip()
+        for line in generated.splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    )
+    if committed_pins != generated_pins:
         difference = "".join(
             difflib.unified_diff(
-                committed.splitlines(keepends=True),
-                generated.splitlines(keepends=True),
-                fromfile="requirements/dev.lock",
-                tofile="regenerated development lock",
+                [f"{line}\n" for line in committed_pins],
+                [f"{line}\n" for line in generated_pins],
+                fromfile="requirements/dev.lock pins",
+                tofile="regenerated development lock pins",
             )
         )
         raise DevLockError(
