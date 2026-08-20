@@ -14,13 +14,13 @@ policy:
   releaseTrainMeaning: Package versions identify independently published artifacts; protocol, schema, and checkpoint versions identify interoperability contracts.
 artifacts:
   - id: pypi:graphblocks
-    version: 1.0.0rc14
+    version: 1.0.0rc15
     manifest: pyproject.toml
     catalogDistribution: graphblocks
     releaseTrain: core-1.0-candidate
     role: python-authoring-facade
   - id: pypi:graphblocks-testing
-    version: 1.0.0rc14
+    version: 1.0.0rc15
     manifest: packages/graphblocks-testing/pyproject.toml
     catalogDistribution: graphblocks-testing
     releaseTrain: core-1.0-candidate

@@ -31,7 +31,7 @@ promoted independently without weakening the initial core promise.
 Repository presence, a passing unit test, a package-catalog entry, or a
 `0.1.x` version does not promote an item to stable.
 
-The Python core and testing artifacts use the `1.0.0rc14` core candidate train,
+The Python core and testing artifacts use the `1.0.0rc15` core candidate train,
 while the native runtime, active Rust workspace crates, and deployment scaffold
 remain on their independent `0.1.0` trains. The Cargo and npm `graphblocks`
 packages at `0.0.2` reserve names only. These version numbers express artifact
