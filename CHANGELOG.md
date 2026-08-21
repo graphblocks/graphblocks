@@ -1,13 +1,14 @@
 # Changelog
 
 Notable project changes are documented here. GraphBlocks follows semantic
-versioning for the explicitly listed stable surfaces.
+versioning for the explicitly listed stable surfaces; the current series is
+preparing the first stable 1.0 release.
 
-## 1.0.0 - 2026-08-21
+## 1.0.0rc16 - Unreleased
 
 ### Added
 
-- Stable C0 schema/compiler and C1 local-runtime boundaries, closed
+- Candidate-stable C0 schema/compiler and C1 local-runtime boundaries, closed
   `graphblocks.ai/v1` Graph and PluginManifest schemas, compatibility snapshots,
   numeric diagnostics, bundled stable TCK fixtures, and release evidence gates.
 - Deterministic local YAML composition with typed `GraphFragment` slots,

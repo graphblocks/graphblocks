@@ -12,12 +12,11 @@ This file does not maintain an independent implementation checklist. Use:
 - [implementation status](status.md) plus commit-bound CI evidence for current
   facts.
 
-## Post-1.0 stabilization
+## Current release blocker
 
 The 99-finding audit supersedes the earlier feature-led ordering. The closed
 `graphblocks.ai/v1` Graph and PluginManifest resources, alpha migrations, and
 candidate snapshots are implemented; recreating or re-promoting them is not
-remaining work. The 1.0 promotion closed every P0 and P1 plus the audit,
-installed-artifact, supply-chain, candidate-matrix, and project-owner-signoff
-gates linked above. Remaining work advances the preview profiles without
-widening the stable C0/C1 compatibility claim.
+remaining work. The release is instead blocked on verified closure of every P0
+and P1 plus the audit, installed-artifact, supply-chain, candidate-matrix, and
+project-owner-signoff gates linked above.
