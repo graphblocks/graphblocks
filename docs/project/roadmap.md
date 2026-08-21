@@ -30,18 +30,18 @@ Work proceeds in this order:
    validation/migration authority slices, then complete the remaining
    production execution authority; and correct the Rust control-plane
    dependency direction.
-4. **Stable-candidate closure.** Reach zero open P0/P1 findings, enforce the
+4. **Stable-candidate closure — completed for 1.0.** Reached zero open P0/P1 findings, enforced the
    authorization/adversarial/differential/resource/performance/restart/security
    matrices, complete the separately defined macOS and native-wheel smoke gate,
    reconstruct all nine reproduced findings, bind the source/evidence
    provenance and live inventory, rerun on supported Python and pinned Rust,
-   and obtain the configured project owner's signed approval of the exact
+   and obtained the configured project owner's signed approval of the exact
    candidate and its complete matrix evidence.
 
 The closed `graphblocks.ai/v1` Graph and PluginManifest resources and their
 alpha migrations are already candidate-enforced; they are no longer future
-promotion work. The compatibility promise remains blocked until every
-applicable audit and release gate passes.
+promotion work. All applicable 1.0 audit and release gates passed. Later
+profile promotions retain their own independent gates.
 
 The target architecture keeps schema, compiler, runtime core, protocol, and
 testing portable. AI application, governance, durable execution, voice,

@@ -10,11 +10,11 @@ application protocols, policy and budget boundaries, package metadata, and
 conformance profiles without requiring a particular model provider, database,
 parser, server framework, or deployment platform.
 
-The project is preparing its first stable 1.0 release. Compatibility is
-claimed by conformance profile and executable evidence, not by package or
-directory presence. Rust is the normative Graph compiler, while higher
-profiles and native runtime surfaces remain blocked or preview as listed in the
-release matrix.
+GraphBlocks 1.0 provides a stable C0 schema/compiler and C1 local-runtime core.
+Compatibility is claimed by conformance profile and executable evidence, not
+by package or directory presence. Rust is the normative Graph compiler, while
+higher profiles and wider native runtime surfaces remain preview as listed in
+the release matrix.
 
 ## What is here
 
