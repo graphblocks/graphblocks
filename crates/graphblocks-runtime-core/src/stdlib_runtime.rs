@@ -582,8 +582,16 @@ impl NodeExecutor for StdlibExecutor {
         })?;
         validate_stdlib_output_contract(block_id, descriptor, outputs_object, &config, phase)?;
         context.cancellation_token().check_active()?;
+        // Only the node currently being resumed is exempt from suspending:
+        // a different await node reached after a resume opens a fresh wait
+        // and must checkpoint the run again instead of leaking its wait
+        // state into the outputs of a completed run.
+        let is_resumed_wait_node = self
+            .resume_wait
+            .as_ref()
+            .is_some_and(|resume| resume.node_id == node.node_id);
         if block_id == "async.await_callback@1"
-            && self.resume_wait.is_none()
+            && !is_resumed_wait_node
             && outputs
                 .pointer("/wait/checkpoint")
                 .and_then(Value::as_bool)
@@ -601,7 +609,7 @@ impl NodeExecutor for StdlibExecutor {
                 wait_node: node.node_id.clone(),
                 operation,
             });
-        } else if self.resume_wait.is_none() {
+        } else {
             self.executed_node_outputs
                 .insert(node.node_id.clone(), outputs.clone());
         }
@@ -1402,6 +1410,7 @@ fn resume_native_callback_run(
         output_projections_by_node,
         output_ports_by_node,
     } = request.bridge_plan;
+    let node_names = nodes.keys().cloned().collect::<Vec<_>>();
     let mut runtime = runtime_with_inputs(scheduled_nodes, &nodes, request.inputs, request.run_id)?;
     let mut executor = StdlibExecutor {
         nodes,
@@ -1418,7 +1427,80 @@ fn resume_native_callback_run(
         executed_node_outputs: BTreeMap::new(),
         suspension: None,
     };
-    let resumed = match runtime.run(&mut executor) {
+    let run_outcome = runtime.run(&mut executor);
+    if let Ok(result) = &run_outcome
+        && let Some(suspension) = executor.suspension.take()
+    {
+        // The resumed segment reached another async.await_callback node:
+        // park the run behind a fresh checkpoint instead of completing it
+        // with wait-state values in its outputs.
+        let mut node_outputs = replay_node_outputs.clone();
+        node_outputs.extend(executor.executed_node_outputs.clone());
+        let journal_prefix = resumed_waiting_native_journal_prefix(
+            &stored.result.journal,
+            result,
+            &replay_node_outputs,
+            receipt,
+            &suspension,
+        )?;
+        let checkpoint = build_native_callback_checkpoint(NativeCheckpointBuildRequest {
+            run_id: request.run_id,
+            graph_hash: &graph_hash,
+            inputs: request.inputs,
+            node_names: &node_names,
+            suspension: &suspension,
+            node_outputs: &node_outputs,
+            output_values: &executor.output_values,
+            journal_prefix: &journal_prefix,
+            deployment_provenance: request.deployment_provenance,
+        })?;
+        validate_native_checkpoint_identity(
+            &checkpoint,
+            request.run_id,
+            &graph_hash,
+            request.inputs,
+            request.deployment_provenance,
+        )?;
+        let journal = waiting_native_journal(journal_prefix, &suspension, &checkpoint)?;
+        let waiting = StdlibRunResult {
+            run_id: request.run_id.to_owned(),
+            graph_hash,
+            status: StdlibRunStatus::WaitingCallback,
+            outputs: executor.output_values,
+            journal,
+            checkpoint: Some(checkpoint.clone()),
+            deployment_provenance: request.deployment_provenance.cloned(),
+        };
+        persist_native_callback_run(
+            request.checkpoint_store_path,
+            &checkpoint,
+            &waiting,
+            NativeCallbackPersistence {
+                expected_phase: Some(NativeCallbackCoordinatorPhase::CallbackAccepted),
+                phase: NativeCallbackCoordinatorPhase::WaitingEvidencePending,
+                callback_idempotency_key: None,
+                callback_payload_digest: None,
+                callback_receipt: None,
+            },
+        )?;
+        let stored_waiting = StoredNativeCallbackRun {
+            checkpoint,
+            result: waiting.clone(),
+            phase: NativeCallbackCoordinatorPhase::WaitingEvidencePending,
+            callback_idempotency_key: None,
+            callback_payload_digest: None,
+            callback_receipt: None,
+        };
+        reconcile_native_callback_evidence(evidence_context, &stored_waiting)?;
+        mark_native_callback_phase(
+            request.checkpoint_store_path,
+            request.run_id,
+            NativeCallbackCoordinatorPhase::WaitingEvidencePending,
+            NativeCallbackCoordinatorPhase::WaitingCallback,
+        )?;
+        return Ok(waiting);
+    }
+    let resumed = match run_outcome {
         Ok(result) => {
             let output_values = if result.status == TestRunStatus::Succeeded {
                 executor.output_values
@@ -3094,31 +3176,67 @@ fn resumed_native_journal(
 ) -> Result<Vec<Value>, StdlibRuntimeError> {
     let mut records = waiting_records.to_vec();
     append_native_resume_journal_boundary(&mut records, &result.run_id, receipt)?;
-    for record in test_journal_values(result) {
+    append_resumed_segment_journal_records(
+        &mut records,
+        waiting_records,
+        test_journal_values(result),
+        replay_node_outputs,
+        &result.run_id,
+    );
+    Ok(records)
+}
+
+/// Journal prefix for a run that suspended at a second wait node after a
+/// callback resume: the first segment's waiting journal, the resume
+/// boundary, and this segment's records up to the new wait node.
+fn resumed_waiting_native_journal_prefix(
+    waiting_records: &[Value],
+    result: &TestRunResult,
+    replay_node_outputs: &BTreeMap<String, Value>,
+    receipt: &Value,
+    suspension: &NativeCallbackSuspension,
+) -> Result<Vec<Value>, StdlibRuntimeError> {
+    let mut records = waiting_records.to_vec();
+    append_native_resume_journal_boundary(&mut records, &result.run_id, receipt)?;
+    append_resumed_segment_journal_records(
+        &mut records,
+        waiting_records,
+        native_waiting_journal_prefix(result, suspension),
+        replay_node_outputs,
+        &result.run_id,
+    );
+    Ok(records)
+}
+
+fn append_resumed_segment_journal_records(
+    records: &mut Vec<Value>,
+    waiting_records: &[Value],
+    segment_records: Vec<Value>,
+    replay_node_outputs: &BTreeMap<String, Value>,
+    run_id: &str,
+) {
+    let resumed_wait_node = waiting_records
+        .iter()
+        .rev()
+        .find(|record| {
+            record.get("kind").and_then(Value::as_str) == Some("run_waiting_callback")
+        })
+        .and_then(|record| record.pointer("/payload/waitNode"))
+        .and_then(Value::as_str);
+    for record in segment_records {
         let kind = record.get("kind").and_then(Value::as_str);
         let node_id = record.get("nodeId").and_then(Value::as_str);
         if kind == Some("run_started")
             || node_id.is_some_and(|node_id| replay_node_outputs.contains_key(node_id))
-            || (kind == Some("node_started")
-                && node_id
-                    == waiting_records
-                        .iter()
-                        .rev()
-                        .find(|record| {
-                            record.get("kind").and_then(Value::as_str)
-                                == Some("run_waiting_callback")
-                        })
-                        .and_then(|record| record.pointer("/payload/waitNode"))
-                        .and_then(Value::as_str))
+            || (kind == Some("node_started") && node_id == resumed_wait_node)
         {
             continue;
         }
-        let metadata = record.get("nodeId").and_then(Value::as_str);
         push_native_journal_record(
-            &mut records,
-            &result.run_id,
+            records,
+            run_id,
             kind.unwrap_or("runtime_record"),
-            metadata,
+            node_id,
             record
                 .get("payload")
                 .filter(|value| !value.is_null())
@@ -3126,7 +3244,6 @@ fn resumed_native_journal(
             record.get("terminal") == Some(&Value::Bool(true)),
         );
     }
-    Ok(records)
 }
 
 fn append_native_resume_journal_boundary(

@@ -202,6 +202,137 @@ fn run_graph(path: &Path, graph: &Value, receipt: Option<Value>) -> Result<Value
     serde_json::from_str(&result).map_err(|error| error.to_string())
 }
 
+const SECOND_RESUME_TOKEN_HASH: &str =
+    "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+
+fn two_wait_graph() -> Value {
+    let mut graph = callback_graph();
+    let nodes = graph
+        .pointer_mut("/spec/nodes")
+        .and_then(Value::as_object_mut)
+        .expect("graph nodes are an object");
+    nodes.insert(
+        "zStart".to_owned(),
+        json!({
+            "block": "async.start_operation@1",
+            "inputs": {"subject": "wait.callback"},
+            "config": {
+                "operationId": "operation-native-2",
+                "runId": "run-native-callback-1",
+                "nodeId": "zWait",
+                "attemptId": "attempt-1",
+                "kind": "ci_job",
+                "providerOperationId": "provider-operation-2",
+                "resumeTokenHash": SECOND_RESUME_TOKEN_HASH,
+                "idempotencyKey": "operation-idempotency-2",
+                "expectedSchema": "schemas/CICallback@1",
+                "createdAtUnixMs": 3000,
+                "submittedAtUnixMs": 3050,
+                "timeoutMs": 60000,
+                "resume": {
+                    "requirePolicyReevaluation": true,
+                    "requireBudgetReservation": true,
+                    "requireReleaseCompatibility": true,
+                    "requireOwnershipFence": true
+                },
+                "attemptFencing": true
+            }
+        }),
+    );
+    nodes.insert(
+        "zWait".to_owned(),
+        json!({
+            "block": "async.await_callback@1",
+            "inputs": {"operation": "zStart.operation"},
+            "config": {
+                "checkpoint": true,
+                "onTimeout": "fail",
+                "timeoutMs": 60000,
+                "idempotencyKey": "operation-idempotency-2",
+                "callback": {
+                    "required": true,
+                    "schema": "schemas/CICallback@1"
+                },
+                "resume": {
+                    "requirePolicyReevaluation": true,
+                    "requireBudgetReservation": true,
+                    "requireReleaseCompatibility": true,
+                    "requireOwnershipFence": true
+                },
+                "attemptFencing": true
+            }
+        }),
+    );
+    graph
+}
+
+fn second_wait_receipt(second_waiting: &Value) -> Value {
+    let mut receipt = callback_receipt(second_waiting, true);
+    receipt["operation_id"] = json!("operation-native-2");
+    receipt["node_id"] = json!("zWait");
+    receipt["provider_operation_id"] = json!("provider-operation-2");
+    receipt["operation_idempotency_key"] = json!("operation-idempotency-2");
+    receipt["callback_idempotency_key"] = json!("callback-idempotency-2");
+    receipt["resume_token_hash"] = json!(SECOND_RESUME_TOKEN_HASH);
+    receipt["received_at_unix_ms"] = json!(4000);
+    receipt["resume_admission"]["operation_id"] = json!("operation-native-2");
+    receipt["resume_admission"]["node_id"] = json!("zWait");
+    sign_callback_admission(&mut receipt);
+    receipt
+}
+
+#[test]
+fn native_callback_resume_suspends_again_at_a_second_wait_node() -> Result<(), String> {
+    let path = sqlite_path("second-wait");
+    let graph = two_wait_graph();
+
+    let waiting = run_graph(&path, &graph, None)?;
+    assert_eq!(waiting["status"], "waiting_callback");
+    assert_eq!(waiting["checkpoint"]["wait_node"], "wait");
+    assert_eq!(
+        waiting["checkpoint"]["operation"]["operation_id"],
+        "operation-native-1"
+    );
+
+    let second_waiting = run_graph(&path, &graph, Some(callback_receipt(&waiting, true)))?;
+
+    assert_eq!(second_waiting["status"], "waiting_callback");
+    assert_eq!(second_waiting["checkpoint"]["wait_node"], "zWait");
+    assert_eq!(
+        second_waiting["checkpoint"]["operation"]["operation_id"],
+        "operation-native-2"
+    );
+    assert_eq!(
+        second_waiting["journal"]
+            .as_array()
+            .and_then(|records| records.last())
+            .and_then(|record| record.get("kind")),
+        Some(&json!("run_waiting_callback"))
+    );
+    let journal_len = second_waiting["journal"]
+        .as_array()
+        .expect("journal is an array")
+        .len();
+    assert_eq!(
+        second_waiting["checkpoint"]["journal_binding"]["prefix_position"],
+        json!(journal_len - 1)
+    );
+    assert_eq!(
+        second_waiting["checkpoint"]["journal_binding"]["waiting_position"],
+        json!(journal_len)
+    );
+
+    let completed = run_graph(&path, &graph, Some(second_wait_receipt(&second_waiting)))?;
+
+    assert_eq!(completed["status"], "succeeded");
+    assert_eq!(
+        completed["outputs"]["callback"],
+        json!({"status": "completed", "conclusion": "success"})
+    );
+    let _ = std::fs::remove_file(&path);
+    Ok(())
+}
+
 #[test]
 fn native_callback_run_suspends_and_returns_a_canonical_checkpoint() -> Result<(), String> {
     let path = sqlite_path("suspend");
