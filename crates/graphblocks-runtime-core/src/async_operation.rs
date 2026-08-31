@@ -2595,25 +2595,39 @@ impl AsyncOperationStore {
         cancelled_at_unix_ms: u64,
     ) -> Result<(), AsyncOperationError> {
         let mut inner = lock_async_operation_store(&self.inner);
+        let state = inner
+            .operations
+            .get(operation_id)
+            .map(|operation| operation.state)
+            .ok_or_else(|| AsyncOperationError::OperationNotFound {
+                operation_id: operation_id.to_owned(),
+            })?;
+
+        // A CallbackReceived operation whose latest resume decision was
+        // denied or paused is parked awaiting remediation, not consumed by
+        // a resume; it must stay cancellable or it wedges forever.
+        let awaiting_remediation = state == AsyncOperationState::CallbackReceived
+            && callback_resume_awaits_remediation(inner.events_by_operation.get(operation_id));
+        if !awaiting_remediation
+            && matches!(
+                state,
+                AsyncOperationState::CallbackReceived
+                    | AsyncOperationState::Completed
+                    | AsyncOperationState::Failed
+                    | AsyncOperationState::Cancelled
+                    | AsyncOperationState::Expired
+            )
+        {
+            return Err(AsyncOperationError::OperationTerminal {
+                operation_id: operation_id.to_owned(),
+                state,
+            });
+        }
         let operation = inner.operations.get_mut(operation_id).ok_or_else(|| {
             AsyncOperationError::OperationNotFound {
                 operation_id: operation_id.to_owned(),
             }
         })?;
-
-        if matches!(
-            operation.state,
-            AsyncOperationState::CallbackReceived
-                | AsyncOperationState::Completed
-                | AsyncOperationState::Failed
-                | AsyncOperationState::Cancelled
-                | AsyncOperationState::Expired
-        ) {
-            return Err(AsyncOperationError::OperationTerminal {
-                operation_id: operation_id.to_owned(),
-                state: operation.state,
-            });
-        }
         validate_terminal_transition_timestamp(operation, "cancelled_at", cancelled_at_unix_ms)?;
         if operation
             .expires_at_unix_ms
@@ -2647,25 +2661,39 @@ impl AsyncOperationStore {
         expired_at_unix_ms: u64,
     ) -> Result<(), AsyncOperationError> {
         let mut inner = lock_async_operation_store(&self.inner);
+        let state = inner
+            .operations
+            .get(operation_id)
+            .map(|operation| operation.state)
+            .ok_or_else(|| AsyncOperationError::OperationNotFound {
+                operation_id: operation_id.to_owned(),
+            })?;
+
+        // See cancel_operation: a denied or paused callback resume leaves
+        // the operation parked in CallbackReceived, and expiry must remain
+        // able to reap it.
+        let awaiting_remediation = state == AsyncOperationState::CallbackReceived
+            && callback_resume_awaits_remediation(inner.events_by_operation.get(operation_id));
+        if !awaiting_remediation
+            && matches!(
+                state,
+                AsyncOperationState::CallbackReceived
+                    | AsyncOperationState::Completed
+                    | AsyncOperationState::Failed
+                    | AsyncOperationState::Cancelled
+                    | AsyncOperationState::Expired
+            )
+        {
+            return Err(AsyncOperationError::OperationTerminal {
+                operation_id: operation_id.to_owned(),
+                state,
+            });
+        }
         let operation = inner.operations.get_mut(operation_id).ok_or_else(|| {
             AsyncOperationError::OperationNotFound {
                 operation_id: operation_id.to_owned(),
             }
         })?;
-
-        if matches!(
-            operation.state,
-            AsyncOperationState::CallbackReceived
-                | AsyncOperationState::Completed
-                | AsyncOperationState::Failed
-                | AsyncOperationState::Cancelled
-                | AsyncOperationState::Expired
-        ) {
-            return Err(AsyncOperationError::OperationTerminal {
-                operation_id: operation_id.to_owned(),
-                state: operation.state,
-            });
-        }
         validate_terminal_transition_timestamp(operation, "expired_at", expired_at_unix_ms)?;
 
         let from = operation.state;
@@ -3531,6 +3559,24 @@ fn validate_callback_submission_and_resume_decision(
         }
     }
     Ok(())
+}
+
+/// Reports whether a CallbackReceived operation is parked awaiting operator
+/// remediation: its latest resume decision was denied or paused instead of
+/// authorized, so no resume will ever consume it.
+fn callback_resume_awaits_remediation(events: Option<&Vec<AsyncOperationEvent>>) -> bool {
+    let Some(events) = events else {
+        return false;
+    };
+    for event in events.iter().rev() {
+        match event {
+            AsyncOperationEvent::CallbackResumeAuthorized { .. } => return false,
+            AsyncOperationEvent::CallbackResumePaused { .. }
+            | AsyncOperationEvent::CallbackResumeDenied { .. } => return true,
+            _ => {}
+        }
+    }
+    false
 }
 
 fn validate_terminal_transition_timestamp(

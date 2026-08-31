@@ -2774,6 +2774,93 @@ fn callback_resume_policy_denial_is_journaled_without_resuming() {
 }
 
 #[test]
+fn denied_callback_resume_leaves_operation_cancellable() {
+    let store = AsyncOperationStore::new();
+    store
+        .register(waiting_operation())
+        .expect("operation registers");
+    store
+        .accept_callback_with_resume_decision(
+            valid_submission("cb-policy", "idem-policy"),
+            &callback_schema_registry(),
+            AsyncCallbackResumeDecision::DenyPolicy {
+                decision_id: "decision-deny-resume".to_owned(),
+                reason: "tenant no longer entitled".to_owned(),
+            },
+        )
+        .expect("callback is recorded before policy denial is applied");
+    assert_eq!(
+        store.operation_state("op-1"),
+        Some(AsyncOperationState::CallbackReceived)
+    );
+
+    store
+        .cancel_operation("op-1", 1_500)
+        .expect("denied callback resume must leave the operation cancellable");
+
+    assert_eq!(
+        store.operation_state("op-1"),
+        Some(AsyncOperationState::Cancelled)
+    );
+    let events = store.events_for_operation("op-1");
+    assert!(events.iter().any(|event| matches!(
+        event,
+        AsyncOperationEvent::StateChanged {
+            from: AsyncOperationState::CallbackReceived,
+            to: AsyncOperationState::Cancelled,
+            ..
+        }
+    )));
+}
+
+#[test]
+fn paused_callback_resume_leaves_operation_expirable() {
+    let store = AsyncOperationStore::new();
+    store
+        .register(waiting_operation())
+        .expect("operation registers");
+    store
+        .accept_callback_with_resume_decision(
+            valid_submission("cb-pause", "idem-pause"),
+            &callback_schema_registry(),
+            AsyncCallbackResumeDecision::PauseAuthorizationRequired,
+        )
+        .expect("callback is recorded before authorization pause");
+
+    store
+        .expire_operation("op-1", 2_100)
+        .expect("paused callback resume must leave the operation expirable");
+
+    assert_eq!(
+        store.operation_state("op-1"),
+        Some(AsyncOperationState::Expired)
+    );
+}
+
+#[test]
+fn authorized_callback_resume_keeps_operation_terminal_for_cancel() {
+    let store = AsyncOperationStore::new();
+    store
+        .register(waiting_operation())
+        .expect("operation registers");
+    store
+        .accept_callback_with_resume_decision(
+            valid_submission("cb-auth", "idem-auth"),
+            &callback_schema_registry(),
+            authorized_resume_decision(),
+        )
+        .expect("callback is recorded and resume authorized");
+
+    assert_eq!(
+        store.cancel_operation("op-1", 1_500),
+        Err(AsyncOperationError::OperationTerminal {
+            operation_id: "op-1".to_owned(),
+            state: AsyncOperationState::CallbackReceived,
+        })
+    );
+}
+
+#[test]
 fn callback_resume_release_incompatibility_pauses_operator_resume() {
     let store = AsyncOperationStore::new();
     store

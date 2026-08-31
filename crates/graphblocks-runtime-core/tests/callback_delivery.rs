@@ -977,6 +977,53 @@ fn retry_then_dead_letter_failure_does_not_force_run_terminal_action() {
 }
 
 #[test]
+fn retry_then_dead_letter_dead_letters_client_errors_for_redrive() {
+    let scheduler = CallbackDeliveryScheduler::new(CallbackRetryPolicy::new(3, 100, 1_000));
+    let subscription = subscription(
+        EventFilter::new(),
+        CallbackFailurePolicy::RetryThenDeadLetter,
+    );
+    let event = protocol_event("event-1", ApplicationProtocolEventKind::ReviewRequested, 1);
+    let delivery = scheduler
+        .schedule_event(&subscription, &event)
+        .expect("delivery schedules");
+
+    let dead_lettered =
+        scheduler.record_response(delivery, CallbackDeliveryResponse::ClientError(401), 1_000);
+
+    assert_eq!(dead_lettered.status, CallbackDeliveryStatus::DeadLettered);
+    assert_eq!(dead_lettered.next_retry_at_unix_ms, None);
+    assert_eq!(
+        dead_lettered.last_error.as_deref(),
+        Some("client_error:401")
+    );
+    assert_eq!(
+        scheduler.run_action_for_terminal_failure(&dead_lettered),
+        None
+    );
+    let dead_letter = CallbackDeadLetter::from_delivery(dead_lettered, 2_000)
+        .expect("client-error delivery is redrivable from the dead-letter queue");
+    assert_eq!(dead_letter.last_error.as_deref(), Some("client_error:401"));
+}
+
+#[test]
+fn best_effort_client_error_stays_failed_without_dead_letter() {
+    let scheduler = CallbackDeliveryScheduler::new(CallbackRetryPolicy::new(3, 100, 1_000));
+    let subscription = subscription(EventFilter::new(), CallbackFailurePolicy::BestEffort);
+    let event = protocol_event("event-1", ApplicationProtocolEventKind::ReviewRequested, 1);
+    let delivery = scheduler
+        .schedule_event(&subscription, &event)
+        .expect("delivery schedules");
+
+    let failed =
+        scheduler.record_response(delivery, CallbackDeliveryResponse::ClientError(404), 1_000);
+
+    assert_eq!(failed.status, CallbackDeliveryStatus::Failed);
+    assert_eq!(failed.next_retry_at_unix_ms, None);
+    assert_eq!(failed.last_error.as_deref(), Some("client_error:404"));
+}
+
+#[test]
 fn dead_letter_rejects_zero_dead_lettered_timestamp() {
     let scheduler = CallbackDeliveryScheduler::new(CallbackRetryPolicy::new(1, 100, 1_000));
     let subscription = subscription(

@@ -3588,7 +3588,16 @@ impl CallbackDeliveryScheduler {
                 );
             }
             CallbackDeliveryResponse::ClientError(status) => {
-                delivery.status = CallbackDeliveryStatus::Failed;
+                // A client error is permanent, so it is never retried; under
+                // RetryThenDeadLetter it must still land in the dead-letter
+                // queue (Failed deliveries cannot be redriven), otherwise the
+                // event would be unrecoverable.
+                delivery.status =
+                    if delivery.failure_policy == CallbackFailurePolicy::RetryThenDeadLetter {
+                        CallbackDeliveryStatus::DeadLettered
+                    } else {
+                        CallbackDeliveryStatus::Failed
+                    };
                 delivery.next_retry_at_unix_ms = None;
                 delivery.last_error = Some(format!("client_error:{status}"));
             }
