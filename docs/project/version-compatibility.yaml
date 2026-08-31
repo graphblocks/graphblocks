@@ -67,15 +67,15 @@ contracts:
     version: graphblocks.ai/v1
     authority: schemas/graphblocks.ai/v1/graph.schema.json
     combinations:
-      - {artifact: 'pypi:graphblocks', versions: '>=1.0.0rc1,<2'}
-      - {artifact: 'pypi:graphblocks-testing', versions: '>=1.0.0rc1,<2'}
+      - {artifact: 'pypi:graphblocks', versions: '>=1.0.0,<2'}
+      - {artifact: 'pypi:graphblocks-testing', versions: '>=1.0.0,<2'}
       - {artifact: 'cargo:active-workspace', versions: '>=0.1,<0.2'}
     mismatchEvidence: [tests/test_schema_values.py]
   - id: native-binding-v1
     version: 1
     authority: packages/graphblocks-runtime/src/graphblocks_runtime/__init__.py
     combinations:
-      - {artifact: 'pypi:graphblocks', versions: '>=1.0.0rc1,<2', role: consumer}
+      - {artifact: 'pypi:graphblocks', versions: '>=1.0.0,<2', role: consumer}
       - {artifact: 'pypi:graphblocks-runtime', versions: '>=0.1,<0.2', role: provider}
       - {artifact: 'cargo:active-workspace', versions: '>=0.1,<0.2', role: provider}
     mismatchEvidence: [tests/test_runtime_package.py]
@@ -84,21 +84,21 @@ contracts:
     authority: crates/graphblocks-protocol/src/lib.rs
     mirror: src/graphblocks/worker.py
     combinations:
-      - {artifact: 'pypi:graphblocks', versions: '>=1.0.0rc1,<2'}
+      - {artifact: 'pypi:graphblocks', versions: '>=1.0.0,<2'}
       - {artifact: 'cargo:active-workspace', versions: '>=0.1,<0.2'}
     mismatchEvidence: [tests/test_worker_core.py]
   - id: application-protocol-v1
     version: graphblocks.app.v1
     authority: tck/application-protocol/cases.json
     combinations:
-      - {artifact: 'pypi:graphblocks', versions: '>=1.0.0rc1,<2'}
-      - {artifact: 'pypi:graphblocks-testing', versions: '>=1.0.0rc1,<2'}
+      - {artifact: 'pypi:graphblocks', versions: '>=1.0.0,<2'}
+      - {artifact: 'pypi:graphblocks-testing', versions: '>=1.0.0,<2'}
       - {artifact: 'cargo:active-workspace', versions: '>=0.1,<0.2'}
     mismatchEvidence: [tests/test_server_core.py, crates/graphblocks-runtime-core/tests/application_protocol_tck.rs]
   - id: durable-checkpoint-v1
     version: graphblocks.runtime@v1
     authority: src/graphblocks/durable_server.py
     combinations:
-      - {artifact: 'pypi:graphblocks', versions: '>=1.0.0rc1,<2'}
+      - {artifact: 'pypi:graphblocks', versions: '>=1.0.0,<2'}
       - {artifact: 'cargo:active-workspace', versions: '>=0.1,<0.2'}
     mismatchEvidence: [tests/test_server_storage_contract.py]

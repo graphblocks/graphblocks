@@ -4709,6 +4709,7 @@ def test_ci_primes_offline_rust_inputs_and_retains_failure_diagnostics() -> None
         "dependency-audit",
         "codeql",
         "macos-native-smoke",
+        "docs-integrity",
     ]
     assert required["if"] == "always()"
     assert required["permissions"] == {}
@@ -4722,6 +4723,7 @@ def test_ci_primes_offline_rust_inputs_and_retains_failure_diagnostics() -> None
         "DEPENDENCY_AUDIT_RESULT": "${{ needs.dependency-audit.result }}",
         "CODEQL_RESULT": "${{ needs.codeql.result }}",
         "MACOS_NATIVE_SMOKE_RESULT": "${{ needs.macos-native-smoke.result }}",
+        "DOCS_INTEGRITY_RESULT": "${{ needs.docs-integrity.result }}",
     }
     for variable in (
         "PYTHON_QUALITY_RESULT",
@@ -4732,6 +4734,7 @@ def test_ci_primes_offline_rust_inputs_and_retains_failure_diagnostics() -> None
         "DEPENDENCY_AUDIT_RESULT",
         "CODEQL_RESULT",
         "MACOS_NATIVE_SMOKE_RESULT",
+        "DOCS_INTEGRITY_RESULT",
     ):
         assert variable in required_step["run"]
 

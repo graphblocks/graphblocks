@@ -428,7 +428,7 @@ def test_catalog_declares_three_python_artifacts_and_deployment_scaffold() -> No
             "import": "graphblocks",
             "kind": "pure_python",
             "manifest": "pyproject.toml",
-            "versionConstraint": ">=1.0.0rc1,<2",
+            "versionConstraint": ">=1.0.0,<2",
             "dependsOn": [],
             "stableClaimRequires": ["graphblocks-runtime"],
         },
@@ -445,7 +445,7 @@ def test_catalog_declares_three_python_artifacts_and_deployment_scaffold() -> No
             "import": "graphblocks_testing",
             "kind": "pure_python",
             "manifest": "packages/graphblocks-testing/pyproject.toml",
-            "versionConstraint": ">=1.0.0rc1,<2",
+            "versionConstraint": ">=1.0.0,<2",
             "dependsOn": ["graphblocks"],
         },
         "graphblocks-deployment-chart": {
@@ -614,7 +614,7 @@ def test_package_lock_resolves_default_component_and_artifact_selection() -> Non
     assert entries["graphblocks-core"].artifact == "graphblocks"
     assert entries["graphblocks-core"].import_package == "graphblocks"
     assert all(
-        entry.version_constraint == ">=1.0.0rc1,<2" for entry in lock.entries
+        entry.version_constraint == ">=1.0.0,<2" for entry in lock.entries
     )
     assert not (
         {
@@ -719,7 +719,7 @@ def test_package_lock_payload_and_digest_are_canonical() -> None:
         "kind": "pure_python",
         "layer": "integration",
         "stability": "integration",
-        "versionConstraint": ">=1.0.0rc1,<2",
+        "versionConstraint": ">=1.0.0,<2",
     }
     assert left.lock_payload()["requested"] == [
         "graphblocks-mcp",

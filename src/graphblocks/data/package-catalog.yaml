@@ -43,7 +43,7 @@ artifacts:
   import: graphblocks
   kind: pure_python
   manifest: pyproject.toml
-  versionConstraint: '>=1.0.0rc1,<2'
+  versionConstraint: '>=1.0.0,<2'
   dependsOn: []
   stableClaimRequires:
   - graphblocks-runtime
@@ -57,7 +57,7 @@ artifacts:
   import: graphblocks_testing
   kind: pure_python
   manifest: packages/graphblocks-testing/pyproject.toml
-  versionConstraint: '>=1.0.0rc1,<2'
+  versionConstraint: '>=1.0.0,<2'
   dependsOn:
   - graphblocks
 - distribution: graphblocks-deployment-chart

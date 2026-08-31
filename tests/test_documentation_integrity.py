@@ -71,7 +71,7 @@ def test_project_and_artifact_maturity_claims_are_consistent() -> None:
     artifacts = {entry["id"]: entry for entry in matrix["artifacts"]}
 
     assert policy["formatVersion"] == 1
-    assert policy["projectPhase"] == "pre-1.0-release-candidate"
+    assert policy["projectPhase"] == "stable-1.0"
     assert policy["classifierSemantics"] == (
         "packaging-distribution-maturity-only-not-profile-compatibility-"
         "or-security-support"
@@ -107,13 +107,7 @@ def test_project_and_artifact_maturity_claims_are_consistent() -> None:
             for classifier in metadata["project"]["classifiers"]
             if classifier.startswith("Development Status :: ")
         ]
-        expected_classifier = declaration["classifier"]
-        if is_stable_release and declaration["artifactId"] in {
-            "pypi:graphblocks",
-            "pypi:graphblocks-testing",
-        }:
-            expected_classifier = "Development Status :: 5 - Production/Stable"
-        assert development_classifiers == [expected_classifier]
+        assert development_classifiers == [declaration["classifier"]]
         artifact = artifacts[declaration["artifactId"]]
         assert artifact["path"] == metadata_path
         assert artifact["tier"] == "stable"
@@ -1399,7 +1393,7 @@ def test_stable_release_matrix_is_complete_and_machine_readable() -> None:
     matrix = yaml.safe_load((ROOT / "docs" / "project" / "stable-release-matrix.yaml").read_text())
     assert matrix["matrixVersion"] == 1
     assert matrix["targetRelease"] == "1.0"
-    assert matrix["currentReadiness"] == "blocked"
+    assert matrix["currentReadiness"] == "released"
 
     tiers = {"stable", "preview", "internal", "reserved"}
     assert set(matrix["tierDefinitions"]) == tiers
@@ -2365,7 +2359,7 @@ def test_stable_release_matrix_is_complete_and_machine_readable() -> None:
         "pypi:graphblocks-runtime"
     ]
     assert artifacts["pypi:graphblocks-runtime"]["tier"] == "stable"
-    assert artifacts["pypi:graphblocks-runtime"]["readiness"] == "blocked"
+    assert artifacts["pypi:graphblocks-runtime"]["readiness"] == "released"
 
     authority_gate = next(
         entry

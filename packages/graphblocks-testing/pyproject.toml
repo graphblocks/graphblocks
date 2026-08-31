@@ -21,7 +21,7 @@ classifiers = [
   "Typing :: Typed",
 ]
 dependencies = [
-  "graphblocks>=1.0.0rc1,<2",
+  "graphblocks>=1.0.0,<2",
   "packaging>=24.0",
 ]
 

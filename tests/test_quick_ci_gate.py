@@ -27,6 +27,7 @@ def test_push_and_pull_request_cannot_bypass_full_or_quick_gates_by_path() -> No
         "dependency-audit",
         "codeql",
         "macos-native-smoke",
+        "docs-integrity",
     ]
     assert required["if"] == "always()"
 

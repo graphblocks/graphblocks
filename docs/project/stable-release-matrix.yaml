@@ -1,9 +1,9 @@
 matrixVersion: 1
 targetRelease: '1.0'
-currentReadiness: blocked
+currentReadiness: released
 maturityPolicy:
   formatVersion: 1
-  projectPhase: pre-1.0-release-candidate
+  projectPhase: stable-1.0
   projectPhaseDocument: docs/project/status.md
   classifierSemantics: packaging-distribution-maturity-only-not-profile-compatibility-or-security-support
   profileTierAuthority: profiles
@@ -14,10 +14,10 @@ maturityPolicy:
   artifactClassifiers:
     - artifactId: pypi:graphblocks
       metadata: pyproject.toml
-      classifier: 'Development Status :: 4 - Beta'
+      classifier: 'Development Status :: 5 - Production/Stable'
     - artifactId: pypi:graphblocks-testing
       metadata: packages/graphblocks-testing/pyproject.toml
-      classifier: 'Development Status :: 4 - Beta'
+      classifier: 'Development Status :: 5 - Production/Stable'
     - artifactId: pypi:graphblocks-runtime
       metadata: packages/graphblocks-runtime/pyproject.toml
       classifier: 'Development Status :: 3 - Alpha'
@@ -396,7 +396,7 @@ artifacts:
     kind: distribution
     path: pyproject.toml
     tier: stable
-    readiness: blocked
+    readiness: released
     stableProfiles: [GB-C0-SCHEMA, GB-C1-LOCAL-RUNTIME]
     stableClaimRequires: [pypi:graphblocks-runtime]
     exclusions: [GB-C2-AI-APPLICATION, GB-C3-GOVERNED-RUNTIME, GB-C4-PRODUCTION, GB-X1-ORCHESTRATION, GB-X2-VOICE, GB-X3-DURABLE-STREAM, external-integrations]
@@ -405,14 +405,14 @@ artifacts:
     kind: distribution
     path: packages/graphblocks-testing/pyproject.toml
     tier: stable
-    readiness: blocked
+    readiness: released
     stableProfiles: [GB-C0-SCHEMA, GB-C1-LOCAL-RUNTIME]
   - id: pypi:graphblocks-runtime
     ecosystem: python
     kind: distribution
     path: packages/graphblocks-runtime/pyproject.toml
     tier: stable
-    readiness: blocked
+    readiness: released
     stableProfiles: [GB-C0-SCHEMA, GB-C1-LOCAL-RUNTIME]
     previewSurfaces: [GB-C2-AI-APPLICATION, GB-C3-GOVERNED-RUNTIME, GB-C4-PRODUCTION, GB-X1-ORCHESTRATION, GB-X2-VOICE, GB-X3-DURABLE-STREAM]
   - id: crate:graphblocks-schema
@@ -545,7 +545,7 @@ profiles:
     evidenceArtifacts: [pypi:graphblocks-testing]
     implementation: rust-native-compiler+python-facade
     tier: stable
-    readiness: blocked
+    readiness: released
     authority: {activeCompiler: rust, activeStandaloneCanonicalAndSchemaIdentity: rust, activeResourceSchemaValidationAndMigration: rust, activeAuthoringFacade: python, referenceOracle: python}
     extends: []
     promotionGate: REL-CORE-PROFILE
@@ -558,7 +558,7 @@ profiles:
     evidenceArtifacts: [pypi:graphblocks-testing]
     implementation: rust-native-runtime+python-reference-oracle
     tier: stable
-    readiness: blocked
+    readiness: released
     authority: {activeCompiler: rust, activeLocalRuntime: rust, activeReferenceInterpreter: python, targetCoreRuntimeAuthority: rust, inheritedAuthorityFrom: extends}
     promotionGate: REL-CORE-PROFILE
     extends: [GB-C0-SCHEMA]
