@@ -6057,7 +6057,14 @@ fn parse_application_event(value: &Value, label: &str) -> PyResult<ApplicationEv
         let draft_disposition = match kind {
             ApplicationEventKind::AssistantIncomplete => "mark_incomplete",
             ApplicationEventKind::AssistantRetracted => "retract",
-            _ => unreachable!(),
+            // The enclosing matches! gate keeps this arm unreachable; fail
+            // through the FFI error path rather than aborting the host
+            // process if the gate and this match ever drift apart.
+            _ => {
+                return Err(PyValueError::new_err(format!(
+                    "{label}.kind has no draft disposition default"
+                )));
+            }
         };
         payload_object.insert("draft_disposition".to_owned(), json!(draft_disposition));
     }

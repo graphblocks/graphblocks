@@ -1865,6 +1865,7 @@ impl SqliteRunStore {
         self.connection
             .execute_batch(
                 "
+                PRAGMA busy_timeout = 5000;
                 CREATE TABLE IF NOT EXISTS runs (
                     sequence INTEGER PRIMARY KEY,
                     run_id TEXT NOT NULL UNIQUE,
@@ -2055,7 +2056,10 @@ impl SqliteRunStore {
         deployment_provenance: RunDeploymentProvenance,
         model_visible_tools: Vec<ModelVisibleToolRef>,
     ) -> Result<RunRecord, RunStoreError> {
-        let transaction = self.connection.transaction().map_err(storage_error)?;
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(storage_error)?;
         let next_sequence = transaction
             .query_row(
                 "SELECT COALESCE(MAX(sequence), 0) + 1 FROM runs",
@@ -2371,7 +2375,10 @@ impl SqliteRunStore {
     ) -> Result<RunOwnershipLease, RunStoreError> {
         let run_id = run_id.as_ref();
         self.get_run(run_id)?;
-        let transaction = self.connection.transaction().map_err(storage_error)?;
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(storage_error)?;
         let current = sqlite_load_run_ownership_lease(&transaction, run_id)?;
         let lease = acquire_run_ownership_lease(
             run_id,
@@ -2396,7 +2403,10 @@ impl SqliteRunStore {
     ) -> Result<RunOwnershipLease, RunStoreError> {
         let run_id = run_id.as_ref();
         self.get_run(run_id)?;
-        let transaction = self.connection.transaction().map_err(storage_error)?;
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(storage_error)?;
         let current = sqlite_load_run_ownership_lease(&transaction, run_id)?.ok_or_else(|| {
             RunStoreError::RunOwnershipLeaseMismatch {
                 run_id: run_id.to_owned(),

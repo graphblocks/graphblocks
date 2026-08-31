@@ -562,7 +562,12 @@ fn tool_result_event(
                         .with_effect_outcome(effect_outcome);
                     Ok(ToolResultEvent::incomplete(tool_call_id, sequence, result))
                 }
-                _ => unreachable!(),
+                // The outer arm lists exactly these operations; return a
+                // fixture error instead of aborting the host process if
+                // the two lists ever drift apart.
+                _ => Err(format!(
+                    "{case_name}: unsupported tool result operation {op:?}"
+                )),
             }
         }
         "tool_result_delta" | "tool_result_completed" => {

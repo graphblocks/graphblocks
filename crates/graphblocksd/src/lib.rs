@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::io::{Read, Write};
 use std::net::{IpAddr, Ipv6Addr, SocketAddr, TcpStream};
 use std::sync::Arc;
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, Instant, SystemTime};
 
 use graphblocks_protocol::{
     WORKER_PROTOCOL_VERSION, WorkerAdmissionDecision, WorkerAdmissionPolicy, WorkerAdvertisement,
@@ -433,9 +433,9 @@ impl WebhookHttpClient for StdWebhookHttpClient {
             let connection = ClientConnection::new(self.tls_config.clone(), server_name)
                 .map_err(|error| WebhookHttpClientError::Tls(error.to_string()))?;
             let mut stream = StreamOwned::new(connection, stream);
-            exchange_http(&mut stream, &wire)?
+            exchange_http(&mut stream, &wire, self.timeout)?
         } else {
-            exchange_http(&mut stream, &wire)?
+            exchange_http(&mut stream, &wire, self.timeout)?
         };
         parse_http_response(&response)
     }
@@ -444,6 +444,7 @@ impl WebhookHttpClient for StdWebhookHttpClient {
 fn exchange_http(
     stream: &mut (impl Read + Write),
     wire: &str,
+    timeout: Duration,
 ) -> Result<String, WebhookHttpClientError> {
     const MAX_RESPONSE_HEADER_BYTES: usize = 64 * 1024;
 
@@ -454,9 +455,19 @@ fn exchange_http(
         .flush()
         .map_err(|error| WebhookHttpClientError::Transport(error.to_string()))?;
 
+    // The socket read timeout only bounds each individual read; a peer
+    // dripping one byte per read could otherwise hold this delivery slot
+    // for MAX_RESPONSE_HEADER_BYTES reads. The whole response must arrive
+    // within the same budget after the request is written.
+    let deadline = Instant::now() + timeout;
     let mut response = Vec::new();
     let mut buffer = [0_u8; 1024];
     loop {
+        if Instant::now() >= deadline {
+            return Err(WebhookHttpClientError::Transport(
+                "webhook response deadline exceeded".to_owned(),
+            ));
+        }
         let read = stream
             .read(&mut buffer)
             .map_err(|error| WebhookHttpClientError::Transport(error.to_string()))?;
