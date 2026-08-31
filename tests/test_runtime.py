@@ -346,6 +346,110 @@ def test_runtime_treats_condition_skipped_optional_output_as_absent() -> None:
     assert observed_inputs == [{}]
 
 
+def test_runtime_cascades_skip_to_required_consumer_of_guarded_node() -> None:
+    calls: list[str] = []
+    registry = RuntimeRegistry(block_catalog=BlockCatalog({}), allow_untyped=True)
+    registry.register(
+        "test.condition@1",
+        lambda inputs, config, context: {"enabled": False},
+    )
+
+    def branch(inputs, config, context):
+        calls.append("branch")
+        return {"value": "must-not-run"}
+
+    def consume(inputs, config, context):
+        calls.append("consumer")
+        return {"observed": inputs}
+
+    registry.register("test.branch@1", branch)
+    registry.register("test.consumer@1", consume)
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "cascade-skip-required-consumer"},
+        "spec": {
+            "nodes": {
+                "condition": {"block": "test.condition@1"},
+                "branch": {
+                    "block": "test.branch@1",
+                    "when": "condition.enabled",
+                },
+                "consumer": {"block": "test.consumer@1"},
+            },
+            "edges": [
+                {"from": "branch.value", "to": "consumer.value"},
+                {"from": "consumer.observed", "to": "$output.observed"},
+            ],
+        },
+    }
+
+    result = InProcessRuntime(registry).run(graph, {})
+
+    assert result.status == "succeeded"
+    assert result.outputs == {}
+    assert calls == []
+    consumer_records = [
+        record
+        for record in result.journal.records
+        if record.kind == "node_succeeded"
+        and record.payload["node"] == "consumer"
+    ]
+    assert consumer_records[0].payload["skipped"] is True
+    assert consumer_records[0].payload["reason"] == "condition_false"
+
+
+def test_runtime_cascades_skip_through_a_guard_on_a_skipped_node() -> None:
+    calls: list[str] = []
+    registry = RuntimeRegistry(block_catalog=BlockCatalog({}), allow_untyped=True)
+    registry.register(
+        "test.condition@1",
+        lambda inputs, config, context: {"enabled": False},
+    )
+
+    def branch(inputs, config, context):
+        calls.append("branch")
+        return {"done": True}
+
+    def follower(inputs, config, context):
+        calls.append("follower")
+        return {"value": "must-not-run"}
+
+    registry.register("test.branch@1", branch)
+    registry.register("test.follower@1", follower)
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "cascade-skip-through-guard"},
+        "spec": {
+            "nodes": {
+                "condition": {"block": "test.condition@1"},
+                "branch": {
+                    "block": "test.branch@1",
+                    "when": "condition.enabled",
+                },
+                "follower": {
+                    "block": "test.follower@1",
+                    "when": "branch.done",
+                },
+            }
+        },
+    }
+
+    result = InProcessRuntime(registry).run(graph, {})
+
+    assert result.status == "succeeded"
+    assert calls == []
+    follower_records = [
+        record
+        for record in result.journal.records
+        if record.kind == "node_succeeded"
+        and record.payload["node"] == "follower"
+    ]
+    assert follower_records[0].payload["skipped"] is True
+    assert follower_records[0].payload["reason"] == "condition_false"
+
+
 def test_runtime_treats_omitted_optional_block_output_as_absent() -> None:
     observed_inputs: list[dict[str, object]] = []
     catalog = BlockCatalog(

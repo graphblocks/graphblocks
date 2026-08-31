@@ -1614,6 +1614,10 @@ class InProcessRuntime:
 
         node_inputs: dict[str, dict[str, Any]] = {name: {} for name in nodes}
         node_outputs: dict[str, dict[str, Any]] = {}
+        # Nodes skipped in this execution segment, mapped to their skip
+        # reason so the skip cascades to dependents the way the normative
+        # runtime propagates skipped outcomes.
+        skipped_nodes: dict[str, str] = {}
         output_values: dict[str, Any] = {}
         remaining = set(nodes)
         if checkpoint is None:
@@ -2026,6 +2030,22 @@ class InProcessRuntime:
                 guard = node.get("when")
                 if isinstance(guard, str):
                     guard_owner, _, guard_path = guard.partition(".")
+                    if guard_owner in skipped_nodes:
+                        skip_reason = skipped_nodes[guard_owner]
+                        node_outputs[node_name] = {}
+                        skipped_nodes[node_name] = skip_reason
+                        journal.append(
+                            "node_succeeded",
+                            {
+                                "node": node_name,
+                                "outputs": [],
+                                "skipped": True,
+                                "reason": skip_reason,
+                            },
+                        )
+                        remaining.remove(node_name)
+                        progressed = True
+                        break
                     guard_ready = True
                     if guard_owner == "$input":
                         guard_value: Any = inputs
@@ -2061,6 +2081,7 @@ class InProcessRuntime:
                         return RunResult(run_id, "failed", output_values, journal)
                     if not guard_value:
                         node_outputs[node_name] = {}
+                        skipped_nodes[node_name] = "condition_false"
                         journal.append(
                             "node_succeeded",
                             {
@@ -2081,6 +2102,7 @@ class InProcessRuntime:
                     and edge["to"].split(".", 1)[0] == node_name
                 ]
                 ready = True
+                cascade_skip_reason: str | None = None
                 resolved_inputs: dict[str, Any] = {}
                 for edge in inbound:
                     source = edge["from"]
@@ -2134,6 +2156,15 @@ class InProcessRuntime:
                                     )
                                 if target_optional:
                                     continue
+                                if source_owner in skipped_nodes:
+                                    # A skipped producer cannot satisfy a
+                                    # required input; propagate the skip to
+                                    # this node like the normative runtime
+                                    # instead of starving the schedule into
+                                    # an unresolved-dependencies failure.
+                                    cascade_skip_reason = skipped_nodes[
+                                        source_owner
+                                    ]
                                 ready = False
                                 break
                         if not ready:
@@ -2158,6 +2189,21 @@ class InProcessRuntime:
                         break
                     current[parts[-1]] = value
 
+                if cascade_skip_reason is not None:
+                    node_outputs[node_name] = {}
+                    skipped_nodes[node_name] = cascade_skip_reason
+                    journal.append(
+                        "node_succeeded",
+                        {
+                            "node": node_name,
+                            "outputs": [],
+                            "skipped": True,
+                            "reason": cascade_skip_reason,
+                        },
+                    )
+                    remaining.remove(node_name)
+                    progressed = True
+                    break
                 if not ready:
                     continue
 
