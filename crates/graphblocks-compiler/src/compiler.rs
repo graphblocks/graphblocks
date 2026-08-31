@@ -147,6 +147,53 @@ const TWO_TO_1024: &str = concat!(
     "5768838150682342462881473913110540827237163350510684586298239947245938479716304835356329624224137216",
 );
 
+/// Matches CPython's repr() printability rule: characters in the Unicode
+/// categories Cc, Cf, Co, Zl, Zp, and Zs (except ASCII space) are escaped.
+/// Unassigned code points (Cn) are also unprintable in CPython, but
+/// detecting them needs full per-version Unicode tables; the assigned
+/// categories below cover the characters that occur in real documents
+/// (no-break spaces, zero-width and bidirectional controls, private use).
+fn python_repr_escapes(character: char) -> bool {
+    if character.is_control() {
+        // Cc
+        return true;
+    }
+    matches!(
+        u32::from(character),
+        // Zs space separators other than U+0020, which CPython prints.
+        0x00A0 | 0x1680 | 0x2000..=0x200A | 0x202F | 0x205F | 0x3000
+        // Zl and Zp line and paragraph separators.
+        | 0x2028 | 0x2029
+        // Co private-use characters.
+        | 0xE000..=0xF8FF | 0xF0000..=0xFFFFD | 0x100000..=0x10FFFD
+        // Cf format controls for the Unicode versions CPython 3.11 and
+        // 3.12 ship; ranges that were still unassigned in older Unicode
+        // versions are escaped there as well, so the rendering agrees
+        // either way.
+        | 0x00AD
+        | 0x0600..=0x0605
+        | 0x061C
+        | 0x06DD
+        | 0x070F
+        | 0x0890..=0x0891
+        | 0x08E2
+        | 0x180E
+        | 0x200B..=0x200F
+        | 0x202A..=0x202E
+        | 0x2060..=0x2064
+        | 0x2066..=0x206F
+        | 0xFEFF
+        | 0xFFF9..=0xFFFB
+        | 0x110BD
+        | 0x110CD
+        | 0x13430..=0x1343F
+        | 0x1BCA0..=0x1BCA3
+        | 0x1D173..=0x1D17A
+        | 0xE0001
+        | 0xE0020..=0xE007F
+    )
+}
+
 fn python_string_repr(value: &str) -> String {
     let quote = if value.contains('\'') && !value.contains('"') {
         '"'
@@ -165,7 +212,7 @@ fn python_string_repr(value: &str) -> String {
                 rendered.push('\\');
                 rendered.push(character);
             }
-            character if character.is_control() => {
+            character if python_repr_escapes(character) => {
                 let scalar = u32::from(character);
                 if scalar <= u32::from(u8::MAX) {
                     let _ = write!(rendered, "\\x{scalar:02x}");
@@ -4699,4 +4746,33 @@ fn config_diagnostic_path(node_name: &str, pointer: &str) -> String {
         }
     }
     path
+}
+
+#[cfg(test)]
+mod python_repr_tests {
+    use super::python_string_repr;
+
+    #[test]
+    fn python_string_repr_escapes_cpython_unprintable_characters() {
+        // Expected values generated with CPython repr().
+        assert_eq!(python_string_repr("a\u{00A0}b"), "'a\\xa0b'");
+        assert_eq!(python_string_repr("z\u{200B}q"), "'z\\u200bq'");
+        assert_eq!(python_string_repr("x\u{2028}"), "'x\\u2028'");
+        assert_eq!(python_string_repr("nl\u{2029}"), "'nl\\u2029'");
+        assert_eq!(python_string_repr("sp\u{3000}"), "'sp\\u3000'");
+        assert_eq!(python_string_repr("pua\u{E000}"), "'pua\\ue000'");
+        assert_eq!(python_string_repr("bidi\u{202E}"), "'bidi\\u202e'");
+        assert_eq!(python_string_repr("soft\u{00AD}"), "'soft\\xad'");
+        assert_eq!(python_string_repr("mvs\u{180E}"), "'mvs\\u180e'");
+        assert_eq!(python_string_repr("tag\u{E0041}"), "'tag\\U000e0041'");
+        assert_eq!(python_string_repr("mus\u{1D173}"), "'mus\\U0001d173'");
+    }
+
+    #[test]
+    fn python_string_repr_keeps_printable_characters_verbatim() {
+        assert_eq!(python_string_repr("oké"), "'oké'");
+        assert_eq!(python_string_repr("space ok"), "'space ok'");
+        assert_eq!(python_string_repr("tab\t"), "'tab\\t'");
+        assert_eq!(python_string_repr("quote's"), "\"quote's\"");
+    }
 }
