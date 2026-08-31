@@ -24,6 +24,7 @@ from .admission import (
     AdmissionIdempotencyConflictError,
     AdmissionQueueFullError,
     AdmissionTicket,
+    AdmissionTicketNotFoundError,
     AdmissionTicketQueue,
 )
 from .application_event import (
@@ -4218,13 +4219,30 @@ class GraphBlocksServerApp:
         self.close()
 
     def _has_lifecycle_work_locked(self) -> bool:
-        return bool(
+        if (
             self._active_server_requests
             or self._tracked_accepted_run_futures
             or self._accepted_run_reservations_by_run_id
             or self._advancing_accepted_runs_by_run_id
-            or self._pending_accepted_runs_by_run_id
-        )
+        ):
+            return True
+        for run_id in self._pending_accepted_runs_by_run_id:
+            execution = self._accepted_run_executions_by_run_id.get(run_id)
+            if (
+                execution is None
+                or execution.checkpoint is None
+                or execution.resume_dispatch_pending
+            ):
+                return True
+            if (
+                execution.resume_future is not None
+                and not execution.resume_future.done()
+            ):
+                return True
+        # Every remaining pending run is checkpointed awaiting an external
+        # callback with no worker in flight; such runs are durable and must
+        # not hold drain()/close() open indefinitely.
+        return False
 
     def drain(self, *, timeout: float | None = None) -> bool:
         """Stop new work and wait for accepted requests and runs to finish."""
@@ -5450,11 +5468,14 @@ class GraphBlocksServerApp:
                 resource_kind == "event_subscription"
                 and resource_id is not None
             ):
+                # Snapshot the dict atomically: this scan runs without the
+                # subscription lock, and lazy iteration over a dict another
+                # thread mutates raises RuntimeError.
                 event_subscription = next(
                     (
                         subscription
                         for subscriptions
-                        in self._subscriptions_by_run_id.values()
+                        in list(self._subscriptions_by_run_id.values())
                         for subscription in subscriptions
                         if subscription.subscription_id == resource_id
                     ),
@@ -5474,11 +5495,17 @@ class GraphBlocksServerApp:
                 resource_kind == "callback_delivery"
                 and resource_id is not None
             ):
+                # Snapshot the dict atomically: this scan runs without the
+                # callback-registration lock, and lazy iteration over a dict
+                # another thread mutates raises RuntimeError.
                 delivery_result = next(
                     (
                         result
                         for results
-                        in self._callback_delivery_results_by_subscription_id.values()
+                        in list(
+                            self._callback_delivery_results_by_subscription_id
+                            .values()
+                        )
                         for result in results
                         if result.delivery_id == resource_id
                     ),
@@ -5778,11 +5805,17 @@ class GraphBlocksServerApp:
                         and self.admission_ticket_queue is not None
                         and response_mode in {"accepted", "background"}
                     ):
-                        existing_ticket = self.admission_ticket_queue.get(
-                            existing_ticket_id
-                        )
+                        try:
+                            existing_ticket = self.admission_ticket_queue.get(
+                                existing_ticket_id
+                            )
+                        except AdmissionTicketNotFoundError:
+                            # Pruned terminal ticket: treat the resubmission
+                            # as a conflict with the retained run below.
+                            existing_ticket = None
                         if (
-                            existing_ticket.request_id == request_id
+                            existing_ticket is not None
+                            and existing_ticket.request_id == request_id
                             and existing_ticket.owner_id == admission_owner_id
                             and existing_ticket.tenant_id == run_tenant_id
                         ):
@@ -6422,12 +6455,21 @@ class GraphBlocksServerApp:
                         "initialCursor": f"{run_id}:0",
                     }
                     if admission_ticket is not None:
+                        refreshed_ticket = admission_ticket
+                        if self.admission_ticket_queue is not None:
+                            try:
+                                refreshed_ticket = (
+                                    self.admission_ticket_queue.get(
+                                        admission_ticket.ticket_id
+                                    )
+                                )
+                            except AdmissionTicketNotFoundError:
+                                # The ticket completed and was pruned before
+                                # the response was assembled; fall back to
+                                # the snapshot taken at admission.
+                                refreshed_ticket = admission_ticket
                         accepted_payload["admissionTicket"] = (
-                            self.admission_ticket_queue.get(
-                                admission_ticket.ticket_id
-                            ).contract()
-                            if self.admission_ticket_queue is not None
-                            else admission_ticket.contract()
+                            refreshed_ticket.contract()
                         )
                     return ServerResponse.json(
                         202,
@@ -9587,9 +9629,15 @@ class GraphBlocksServerApp:
                     raise ValueError(
                         f"run {run_id!r} has an admission ticket but no admission queue"
                     )
-                admission_ticket = self.admission_ticket_queue.get(
-                    admission_ticket_id
-                )
+                try:
+                    admission_ticket = self.admission_ticket_queue.get(
+                        admission_ticket_id
+                    )
+                except AdmissionTicketNotFoundError:
+                    raise ValueError(
+                        f"pending accepted run {run_id!r} admission ticket "
+                        "is no longer available"
+                    ) from None
                 if admission_ticket.state == "queued":
                     raise ValueError(
                         f"pending accepted run {run_id!r} is queued for admission"
@@ -10299,9 +10347,16 @@ class GraphBlocksServerApp:
             admission_ticket_id is not None
             and self.admission_ticket_queue is not None
         ):
-            admission_ticket = self.admission_ticket_queue.get(
-                admission_ticket_id
-            )
+            try:
+                admission_ticket = self.admission_ticket_queue.get(
+                    admission_ticket_id
+                )
+            except AdmissionTicketNotFoundError:
+                # The queue prunes terminal tickets after their retention
+                # window; the run's state is still derivable from its events
+                # and control records below.
+                admission_ticket = None
+        if admission_ticket is not None:
             state = admission_ticket.state
             issued_at = datetime.fromtimestamp(
                 admission_ticket.issued_at_ms / 1_000,
@@ -10426,8 +10481,12 @@ class GraphBlocksServerApp:
                     }
                     waiting_on.append(waiting)
         if state not in {"completed", "succeeded", "failed", "cancelled", "expired", "policy_stopped"}:
-            for operation_id in sorted(self._callbacks_by_operation_id):
-                submissions = self._callbacks_by_operation_id[operation_id]
+            # Snapshot the dict atomically: status projection runs from
+            # callers that do not hold the accepted-run lock, so a key
+            # removed mid-iteration would otherwise raise KeyError.
+            callbacks_by_operation_id = dict(self._callbacks_by_operation_id)
+            for operation_id in sorted(callbacks_by_operation_id):
+                submissions = callbacks_by_operation_id[operation_id]
                 if not submissions:
                     continue
                 submission = submissions[-1]
@@ -10911,11 +10970,34 @@ class GraphBlocksServerApp:
                 and self.admission_ticket_queue is not None
                 and run_id not in self._advancing_accepted_runs_by_run_id
             ):
-                _, promoted_on_control = self.admission_ticket_queue.cancel(
-                    ticket_id,
-                    now_ms=self.admission_clock(),
-                    state="expired" if status == "expired" else "cancelled",
-                )
+                # The terminal control record is already committed above, so
+                # admission-queue cleanup must not fail the request: the
+                # ticket may have been pruned, and a running ticket requires
+                # its own fencing token to cancel.
+                try:
+                    control_ticket = self.admission_ticket_queue.get(ticket_id)
+                except AdmissionTicketNotFoundError:
+                    control_ticket = None
+                if control_ticket is not None:
+                    try:
+                        _, promoted_on_control = (
+                            self.admission_ticket_queue.cancel(
+                                ticket_id,
+                                now_ms=self.admission_clock(),
+                                state=(
+                                    "expired"
+                                    if status == "expired"
+                                    else "cancelled"
+                                ),
+                                fencing_token=(
+                                    control_ticket.fencing_token
+                                    if control_ticket.state == "running"
+                                    else None
+                                ),
+                            )
+                        )
+                    except AdmissionError:
+                        promoted_on_control = ()
             self._accepted_run_condition.notify_all()
         if (
             operation == "resume_run"
