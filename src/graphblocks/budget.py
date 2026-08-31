@@ -1459,10 +1459,27 @@ class InMemoryBudgetLedger:
                 )
 
 
+def _canonical_decimal_string(value: Decimal) -> str:
+    """Render equal Decimal values as identical strings.
+
+    Decimal arithmetic preserves exponents, so equal balances reached
+    through different operation histories (1.5 vs 1.50, or 1E+2 vs 100)
+    would otherwise serialize differently and break byte-level ledger
+    comparisons downstream.
+    """
+
+    if value == 0:
+        return "0"
+    normalized = value.normalize()
+    if normalized.as_tuple().exponent > 0:
+        normalized = normalized.quantize(Decimal(1))
+    return str(normalized)
+
+
 def _usage_amount_to_json(amount: UsageAmount) -> dict[str, object]:
     return {
         "kind": amount.kind,
-        "amount": str(amount.amount),
+        "amount": _canonical_decimal_string(amount.amount),
         "unit": amount.unit,
         "dimensions": dict(sorted(amount.dimensions.items())),
     }
@@ -1510,7 +1527,7 @@ def _amount_map_to_json(values: dict[AmountKey, Decimal]) -> list[dict[str, obje
     return [
         {
             "kind": kind,
-            "amount": str(values[(kind, unit, dimensions)]),
+            "amount": _canonical_decimal_string(values[(kind, unit, dimensions)]),
             "unit": unit,
             "dimensions": dict(dimensions),
         }

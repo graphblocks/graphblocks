@@ -1821,12 +1821,14 @@ class DurableAcceptedRunServerApp:
                     "error": str(error),
                 },
             )
-        except AcceptedRunStorageError as error:
+        except AcceptedRunStorageError:
+            # Storage errors wrap driver details (SQLite state, paths);
+            # keep those out of client responses.
             return ServerResponse.json(
                 503,
                 {
                     "ok": False,
-                    "error": str(error),
+                    "error": "durable run storage is unavailable",
                 },
             )
         except (TypeError, ValueError) as error:

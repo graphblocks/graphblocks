@@ -64,6 +64,25 @@ def test_budget_records_are_immutable_and_reject_ambiguous_accounting_keys() -> 
         )
 
 
+def test_budget_ledger_serializes_equal_decimals_identically() -> None:
+    from graphblocks.budget import _canonical_decimal_string, _usage_amount_to_json
+
+    assert _canonical_decimal_string(Decimal("1.50")) == "1.5"
+    assert _canonical_decimal_string(Decimal("1.5")) == "1.5"
+    assert _canonical_decimal_string(Decimal("100")) == "100"
+    assert _canonical_decimal_string(Decimal("1E+2")) == "100"
+    assert _canonical_decimal_string(Decimal("0.00")) == "0"
+    assert _canonical_decimal_string(Decimal("-0")) == "0"
+    assert _canonical_decimal_string(Decimal("-2.50")) == "-2.5"
+
+    accumulated = Decimal("1.0") + Decimal("0.50")
+    assert _usage_amount_to_json(
+        UsageAmount("model_total_tokens", accumulated, "tokens")
+    ) == _usage_amount_to_json(
+        UsageAmount("model_total_tokens", Decimal("1.5"), "tokens")
+    )
+
+
 def test_completion_reserve_rejects_inconsistent_restored_lifecycle() -> None:
     with pytest.raises(ValueError, match="spent completion reserve requires"):
         CompletionReserve(
