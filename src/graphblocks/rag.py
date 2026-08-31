@@ -2289,8 +2289,11 @@ def _acl_allows(resource_id: str, acl: dict[str, object] | None, auth: AuthConte
     if auth is None:
         raise PermissionError(f"authorization context required for {resource_id!r}")
     tenant_id = acl.get("tenant_id")
-    if isinstance(tenant_id, str) and tenant_id != auth.tenant_id:
-        return False
+    if tenant_id is not None:
+        if not isinstance(tenant_id, str):
+            raise ValueError(f"ACL tenant_id for {resource_id!r} must be a string")
+        if tenant_id != auth.tenant_id:
+            return False
 
     has_selector = False
     principals = acl.get("principals")

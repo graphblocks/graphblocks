@@ -2035,6 +2035,43 @@ def test_callback_replay_guard_accepts_first_delivery_and_marks_exact_replay_dup
     assert duplicate.replay_record == first.replay_record
 
 
+def test_callback_replay_guard_bounds_retained_records() -> None:
+    def envelope(index: int) -> CallbackEnvelope:
+        return CallbackEnvelope(
+            delivery_id=f"del_{index:03d}",
+            subscription_id="sub_001",
+            event_id=f"evt_{index:04d}",
+            run_id="run_coding_001",
+            sequence=index,
+            cursor=f"evt_{index:04d}",
+            type="ReviewRequested",
+            payload={"subject": "changeset_abc"},
+            idempotency_key=f"sub_001:evt_{index:04d}",
+            occurred_at="2026-07-02T00:00:00Z",
+            delivered_at="2026-07-02T00:00:01Z",
+        )
+
+    guard = CallbackReplayGuard(max_records=2)
+    guard.record(envelope(1))
+    guard.record(envelope(2))
+    guard.record(envelope(3))
+
+    assert [record.delivery_id for record in guard.records()] == [
+        "del_002",
+        "del_003",
+    ]
+    assert guard.record(envelope(2)).status == "duplicate"
+    assert guard.record(envelope(1)).status == "accepted"
+    _assert_raises_value_error(
+        "max_records must be positive",
+        lambda: CallbackReplayGuard(max_records=0),
+    )
+    _assert_raises_value_error(
+        "max_records must be an integer",
+        lambda: CallbackReplayGuard(max_records=True),
+    )
+
+
 def test_callback_replay_guard_serializes_concurrent_first_delivery() -> None:
     envelope = CallbackEnvelope(
         delivery_id="del_concurrent",

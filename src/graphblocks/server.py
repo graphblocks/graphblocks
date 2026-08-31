@@ -8,6 +8,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
 import hashlib
+from hmac import compare_digest
 import json
 import math
 from threading import Condition, get_ident, Lock, TIMEOUT_MAX
@@ -3529,7 +3530,13 @@ class StaticBearerAuthHook:
         if scheme.casefold() != "bearer" or not separator:
             return ServerAuthDecision(False, reason_codes=("auth.missing_bearer_token",))
         token = token.strip()
-        principal = self.principals_by_token.get(token)
+        # Compare against every configured token without early exit so the
+        # response time does not reveal token prefixes or membership.
+        presented = token.encode("utf-8")
+        principal: PrincipalRef | None = None
+        for candidate_token, candidate_principal in self.principals_by_token.items():
+            if compare_digest(candidate_token.encode("utf-8"), presented):
+                principal = candidate_principal
         if principal is None:
             return ServerAuthDecision(False, reason_codes=("auth.invalid_bearer_token",))
         return ServerAuthDecision(True, principal=principal)

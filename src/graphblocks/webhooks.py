@@ -1241,9 +1241,22 @@ class CallbackReplayDecision:
             raise ValueError("conflict replay decision must set only conflict")
 
 
+DEFAULT_MAX_CALLBACK_REPLAY_RECORDS = 100_000
+
+
 class CallbackReplayGuard:
-    def __init__(self, records: Mapping[str, CallbackReplayRecord] | None = None) -> None:
+    def __init__(
+        self,
+        records: Mapping[str, CallbackReplayRecord] | None = None,
+        *,
+        max_records: int = DEFAULT_MAX_CALLBACK_REPLAY_RECORDS,
+    ) -> None:
+        if not isinstance(max_records, int) or isinstance(max_records, bool):
+            raise ValueError("max_records must be an integer")
+        if max_records < 1:
+            raise ValueError("max_records must be positive")
         self._lock = RLock()
+        self._max_records = max_records
         self._records_by_delivery_id: dict[str, CallbackReplayRecord] = {}
         self._records_by_subscription_event: dict[tuple[str, str], CallbackReplayRecord] = {}
         if records is None:
@@ -1269,6 +1282,21 @@ class CallbackReplayGuard:
                 raise ValueError("records contain conflicting subscription/event identity")
             self._records_by_delivery_id[record.delivery_id] = record
             self._records_by_subscription_event[(record.subscription_id, record.event_id)] = record
+        self._evict_oldest_locked()
+
+    def _evict_oldest_locked(self) -> None:
+        # Retention is bounded: once the guard is full, the oldest accepted
+        # records age out in insertion order, so replay protection covers a
+        # sliding window of the most recent max_records deliveries instead
+        # of growing without limit for the life of the process.
+        while len(self._records) > self._max_records:
+            oldest_key = next(iter(self._records))
+            oldest = self._records.pop(oldest_key)
+            if self._records_by_delivery_id.get(oldest.delivery_id) is oldest:
+                del self._records_by_delivery_id[oldest.delivery_id]
+            subscription_event = (oldest.subscription_id, oldest.event_id)
+            if self._records_by_subscription_event.get(subscription_event) is oldest:
+                del self._records_by_subscription_event[subscription_event]
 
     def record(self, envelope: CallbackEnvelope) -> CallbackReplayDecision:
         if not isinstance(envelope, CallbackEnvelope):
@@ -1293,6 +1321,7 @@ class CallbackReplayGuard:
                 self._records[envelope.idempotency_key] = record
                 self._records_by_delivery_id[envelope.delivery_id] = record
                 self._records_by_subscription_event[(envelope.subscription_id, envelope.event_id)] = record
+                self._evict_oldest_locked()
                 return CallbackReplayDecision(
                     status="accepted",
                     replay_record=record,
