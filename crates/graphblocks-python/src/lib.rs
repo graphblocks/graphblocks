@@ -370,6 +370,25 @@ fn finalize_tool_call_json(
 #[pyfunction]
 #[pyo3(signature = (document_json, block_catalog_json=None, *, allow_unknown_blocks=false))]
 fn compile_graph_json(
+    py: Python<'_>,
+    document_json: &str,
+    block_catalog_json: Option<&str>,
+    allow_unknown_blocks: bool,
+) -> PyResult<String> {
+    // Full compiles are long-running pure-Rust work: copy the borrowed
+    // arguments and release the GIL so other Python threads keep running.
+    let document_json = document_json.to_owned();
+    let block_catalog_json = block_catalog_json.map(str::to_owned);
+    py.detach(move || {
+        compile_graph_impl(
+            &document_json,
+            block_catalog_json.as_deref(),
+            allow_unknown_blocks,
+        )
+    })
+}
+
+fn compile_graph_impl(
     document_json: &str,
     block_catalog_json: Option<&str>,
     allow_unknown_blocks: bool,
@@ -7292,15 +7311,52 @@ fn serialize_runtime_result(
 
 #[pyfunction]
 fn run_test_graph_json(
+    py: Python<'_>,
     graph_json: &str,
     inputs_json: &str,
     node_outputs_json: &str,
 ) -> PyResult<String> {
-    run_test_graph_with_options_json(graph_json, inputs_json, node_outputs_json, "{}")
+    let graph_json = graph_json.to_owned();
+    let inputs_json = inputs_json.to_owned();
+    let node_outputs_json = node_outputs_json.to_owned();
+    py.detach(move || {
+        run_test_graph_with_options_impl(&graph_json, &inputs_json, &node_outputs_json, "{}")
+    })
 }
 
 #[pyfunction]
 fn run_test_graph_with_options_json(
+    py: Python<'_>,
+    graph_json: &str,
+    inputs_json: &str,
+    node_outputs_json: &str,
+    options_json: &str,
+) -> PyResult<String> {
+    // Whole-graph test execution and its SQLite evidence writes are
+    // long-running pure-Rust work; release the GIL for their duration.
+    let graph_json = graph_json.to_owned();
+    let inputs_json = inputs_json.to_owned();
+    let node_outputs_json = node_outputs_json.to_owned();
+    let options_json = options_json.to_owned();
+    py.detach(move || {
+        run_test_graph_with_options_impl(
+            &graph_json,
+            &inputs_json,
+            &node_outputs_json,
+            &options_json,
+        )
+    })
+}
+
+fn run_test_graph_impl(
+    graph_json: &str,
+    inputs_json: &str,
+    node_outputs_json: &str,
+) -> PyResult<String> {
+    run_test_graph_with_options_impl(graph_json, inputs_json, node_outputs_json, "{}")
+}
+
+fn run_test_graph_with_options_impl(
     graph_json: &str,
     inputs_json: &str,
     node_outputs_json: &str,
@@ -7380,13 +7436,31 @@ fn run_test_graph_with_options_json(
 }
 
 #[pyfunction]
-fn run_stdlib_graph_json(graph_json: &str, inputs_json: &str) -> PyResult<String> {
+fn run_stdlib_graph_json(py: Python<'_>, graph_json: &str, inputs_json: &str) -> PyResult<String> {
+    let graph_json = graph_json.to_owned();
+    let inputs_json = inputs_json.to_owned();
+    py.detach(move || run_stdlib_graph_impl(&graph_json, &inputs_json))
+}
+
+fn run_stdlib_graph_impl(graph_json: &str, inputs_json: &str) -> PyResult<String> {
     graphblocks_runtime_core::stdlib_runtime::run_stdlib_graph_json(graph_json, inputs_json)
         .map_err(|error| PyRuntimeError::new_err(error.to_string()))
 }
 
 #[pyfunction]
 fn run_stdlib_graph_with_options_json(
+    py: Python<'_>,
+    graph_json: &str,
+    inputs_json: &str,
+    options_json: &str,
+) -> PyResult<String> {
+    let graph_json = graph_json.to_owned();
+    let inputs_json = inputs_json.to_owned();
+    let options_json = options_json.to_owned();
+    py.detach(move || run_stdlib_graph_with_options_impl(&graph_json, &inputs_json, &options_json))
+}
+
+fn run_stdlib_graph_with_options_impl(
     graph_json: &str,
     inputs_json: &str,
     options_json: &str,
@@ -10128,7 +10202,7 @@ mod tests {
     use super::{
         ToolTerminalStoreError, admit_exhaustion_work_json, admit_worker_message_json,
         binding_contract_json, canonical_hash_json, canonicalize_json,
-        capture_telemetry_content_json, compile_graph_json, decide_agent_step_json,
+        capture_telemetry_content_json, compile_graph_impl, decide_agent_step_json,
         durable_tool_terminal_store_error_code, evaluate_application_event_stream_json,
         evaluate_application_event_tck_case_json, evaluate_application_protocol_log_json,
         evaluate_application_protocol_stream_json, evaluate_budget_ledger_json,
@@ -10147,8 +10221,8 @@ mod tests {
         negotiate_application_protocol_capabilities_json, parse_application_protocol_event_kind,
         parse_json_argument, parse_resolved_tool, parse_schema_id_json, parse_tool_call,
         prepare_tool_result_for_model_json, record_tool_effect_audit_event_json,
-        record_tool_effect_precondition_json, resource_schema_errors_json, run_stdlib_graph_json,
-        run_stdlib_graph_with_options_json, run_test_graph_json, run_test_graph_with_options_json,
+        record_tool_effect_precondition_json, resource_schema_errors_json, run_stdlib_graph_impl,
+        run_stdlib_graph_with_options_impl, run_test_graph_impl, run_test_graph_with_options_impl,
         serialize_application_protocol_log_error, validate_remote_payload_json,
         validate_worker_advertisement_json, validate_worker_protocol_message_json,
     };
@@ -10418,7 +10492,7 @@ mod tests {
         );
 
         let runtime_error =
-            run_test_graph_with_options_json("{}", "{}", "{}", r#"{"runId":"a","run_id":"b"}"#)
+            run_test_graph_with_options_impl("{}", "{}", "{}", r#"{"runId":"a","run_id":"b"}"#)
                 .expect_err("runtime aliases must fail closed");
         assert!(
             runtime_error
@@ -12304,7 +12378,7 @@ mod tests {
         let document_json = serde_json::to_string(&document).map_err(|error| error.to_string())?;
 
         let closed_json =
-            compile_graph_json(&document_json, None, false).map_err(|error| error.to_string())?;
+            compile_graph_impl(&document_json, None, false).map_err(|error| error.to_string())?;
         let closed =
             serde_json::from_str::<Value>(&closed_json).map_err(|error| error.to_string())?;
         assert_eq!(closed.get("ok"), Some(&json!(false)));
@@ -12315,7 +12389,7 @@ mod tests {
         }));
 
         let discovery_json =
-            compile_graph_json(&document_json, None, true).map_err(|error| error.to_string())?;
+            compile_graph_impl(&document_json, None, true).map_err(|error| error.to_string())?;
         let discovery =
             serde_json::from_str::<Value>(&discovery_json).map_err(|error| error.to_string())?;
         assert_eq!(discovery.get("ok"), Some(&json!(true)));
@@ -12327,7 +12401,7 @@ mod tests {
                 }))
         );
 
-        let catalog_closed_json = compile_graph_json(&document_json, Some("[]"), false)
+        let catalog_closed_json = compile_graph_impl(&document_json, Some("[]"), false)
             .map_err(|error| error.to_string())?;
         let catalog_closed = serde_json::from_str::<Value>(&catalog_closed_json)
             .map_err(|error| error.to_string())?;
@@ -12342,13 +12416,13 @@ mod tests {
         let template = r#"{"apiVersion":"graphblocks.ai/v1alpha3","kind":"Graph","metadata":{"name":"native-integer-limit"},"spec":{"nodes":{"configured":{"block":"test.unknown@1","config":{"value":"INTEGER_TOKEN"}}}}}"#;
         let accepted_digits = "9".repeat(MAX_CANONICAL_INTEGER_DIGITS);
         let accepted_document = template.replace("\"INTEGER_TOKEN\"", &accepted_digits);
-        let compiled = compile_graph_json(&accepted_document, Some("[]"), true)
+        let compiled = compile_graph_impl(&accepted_document, Some("[]"), true)
             .map_err(|error| error.to_string())?;
         assert!(compiled.contains(&accepted_digits));
 
         let oversized_digits = "9".repeat(MAX_CANONICAL_INTEGER_DIGITS + 1);
         let oversized_document = template.replace("\"INTEGER_TOKEN\"", &oversized_digits);
-        let error = compile_graph_json(&oversized_document, Some("[]"), true)
+        let error = compile_graph_impl(&oversized_document, Some("[]"), true)
             .expect_err("oversized canonical integer must fail before compilation");
         assert!(
             error.to_string().contains(
@@ -12406,7 +12480,7 @@ mod tests {
                 ),
                 None => (Some("[]".to_owned()), true),
             };
-            let compiled_json = compile_graph_json(
+            let compiled_json = compile_graph_impl(
                 &document_json,
                 block_catalog_json.as_deref(),
                 allow_unknown_blocks,
@@ -13048,7 +13122,7 @@ mod tests {
         let node_outputs_json =
             serde_json::to_string(&node_outputs).map_err(|error| error.to_string())?;
         let result_json =
-            run_test_graph_json(&graph_json, r#"{"message":"hello"}"#, &node_outputs_json)
+            run_test_graph_impl(&graph_json, r#"{"message":"hello"}"#, &node_outputs_json)
                 .map_err(|error| error.to_string())?;
         let result =
             serde_json::from_str::<Value>(&result_json).map_err(|error| error.to_string())?;
@@ -13119,7 +13193,7 @@ mod tests {
         let node_outputs_json =
             serde_json::to_string(&node_outputs).map_err(|error| error.to_string())?;
         let options_json = serde_json::to_string(&options).map_err(|error| error.to_string())?;
-        let result_json = run_test_graph_with_options_json(
+        let result_json = run_test_graph_with_options_impl(
             &graph_json,
             r#"{"message":"hello"}"#,
             &node_outputs_json,
@@ -13219,7 +13293,7 @@ mod tests {
 
         let graph_json = serde_json::to_string(&graph).map_err(|error| error.to_string())?;
         let options_json = serde_json::to_string(&options).map_err(|error| error.to_string())?;
-        let error = run_test_graph_with_options_json(
+        let error = run_test_graph_with_options_impl(
             &graph_json,
             r#"{"a":"must-not-leak"}"#,
             "{}",
@@ -13256,7 +13330,7 @@ mod tests {
         let graph_json = serde_json::to_string(&graph).map_err(|error| error.to_string())?;
         let node_outputs_json =
             serde_json::to_string(&node_outputs).map_err(|error| error.to_string())?;
-        let result_json = run_test_graph_with_options_json(
+        let result_json = run_test_graph_with_options_impl(
             &graph_json,
             r#"{"message":"hello"}"#,
             &node_outputs_json,
@@ -13323,7 +13397,7 @@ mod tests {
         let node_outputs_json =
             serde_json::to_string(&node_outputs).map_err(|error| error.to_string())?;
         let options_json = serde_json::to_string(&options).map_err(|error| error.to_string())?;
-        let result_json = run_test_graph_with_options_json(
+        let result_json = run_test_graph_with_options_impl(
             &graph_json,
             r#"{"message":{"text":"hello"}}"#,
             &node_outputs_json,
@@ -16526,7 +16600,7 @@ mod tests {
         let node_outputs_json =
             serde_json::to_string(&node_outputs).map_err(|error| error.to_string())?;
 
-        let result_json = run_test_graph_json(&graph_json, "{}", &node_outputs_json)
+        let result_json = run_test_graph_impl(&graph_json, "{}", &node_outputs_json)
             .map_err(|error| error.to_string())?;
         let result =
             serde_json::from_str::<Value>(&result_json).map_err(|error| error.to_string())?;
@@ -16580,7 +16654,7 @@ mod tests {
             }
         });
         let graph_json = serde_json::to_string(&graph).map_err(|error| error.to_string())?;
-        let result_json = run_stdlib_graph_json(&graph_json, r#"{"message":{"text":"Hello"}}"#)
+        let result_json = run_stdlib_graph_impl(&graph_json, r#"{"message":{"text":"Hello"}}"#)
             .map_err(|error| error.to_string())?;
         let result =
             serde_json::from_str::<Value>(&result_json).map_err(|error| error.to_string())?;
@@ -16639,7 +16713,7 @@ mod tests {
             }
         });
         let graph_json = serde_json::to_string(&graph).map_err(|error| error.to_string())?;
-        let result_json = run_stdlib_graph_with_options_json(
+        let result_json = run_stdlib_graph_with_options_impl(
             &graph_json,
             r#"{"message":{"text":"ok"}}"#,
             r#"{"runId":"run-native-requested-1"}"#,
@@ -16694,7 +16768,7 @@ mod tests {
             "runStorePath": run_store_path.to_string_lossy(),
             "journalStorePath": journal_store_path.to_string_lossy(),
         });
-        let result_json = run_stdlib_graph_with_options_json(
+        let result_json = run_stdlib_graph_with_options_impl(
             &serde_json::to_string(&graph).map_err(|error| error.to_string())?,
             &serde_json::to_string(&inputs).map_err(|error| error.to_string())?,
             &serde_json::to_string(&options).map_err(|error| error.to_string())?,
@@ -16955,7 +17029,7 @@ mod tests {
         let graph_json = serde_json::to_string(&graph).map_err(|error| error.to_string())?;
         let inputs_json = serde_json::to_string(&inputs).map_err(|error| error.to_string())?;
         let result_json =
-            run_stdlib_graph_json(&graph_json, &inputs_json).map_err(|error| error.to_string())?;
+            run_stdlib_graph_impl(&graph_json, &inputs_json).map_err(|error| error.to_string())?;
         let result =
             serde_json::from_str::<Value>(&result_json).map_err(|error| error.to_string())?;
 
@@ -17034,7 +17108,7 @@ mod tests {
         let graph_json = serde_json::to_string(&graph).map_err(|error| error.to_string())?;
         let inputs_json = serde_json::to_string(&inputs).map_err(|error| error.to_string())?;
         let result_json =
-            run_stdlib_graph_json(&graph_json, &inputs_json).map_err(|error| error.to_string())?;
+            run_stdlib_graph_impl(&graph_json, &inputs_json).map_err(|error| error.to_string())?;
         let result =
             serde_json::from_str::<Value>(&result_json).map_err(|error| error.to_string())?;
 
@@ -17134,7 +17208,7 @@ mod tests {
         let graph_json = serde_json::to_string(&graph).map_err(|error| error.to_string())?;
         let inputs_json = serde_json::to_string(&inputs).map_err(|error| error.to_string())?;
         let result_json =
-            run_stdlib_graph_json(&graph_json, &inputs_json).map_err(|error| error.to_string())?;
+            run_stdlib_graph_impl(&graph_json, &inputs_json).map_err(|error| error.to_string())?;
         let result =
             serde_json::from_str::<Value>(&result_json).map_err(|error| error.to_string())?;
 
@@ -17191,7 +17265,7 @@ mod tests {
         let graph_json = serde_json::to_string(&graph).map_err(|error| error.to_string())?;
         let inputs_json = serde_json::to_string(&inputs).map_err(|error| error.to_string())?;
         let result_json =
-            run_stdlib_graph_json(&graph_json, &inputs_json).map_err(|error| error.to_string())?;
+            run_stdlib_graph_impl(&graph_json, &inputs_json).map_err(|error| error.to_string())?;
         let result =
             serde_json::from_str::<Value>(&result_json).map_err(|error| error.to_string())?;
         let outcomes = result
@@ -17252,7 +17326,7 @@ mod tests {
         let graph_json = serde_json::to_string(&graph).map_err(|error| error.to_string())?;
         let inputs_json = serde_json::to_string(&inputs).map_err(|error| error.to_string())?;
         let result_json =
-            run_stdlib_graph_json(&graph_json, &inputs_json).map_err(|error| error.to_string())?;
+            run_stdlib_graph_impl(&graph_json, &inputs_json).map_err(|error| error.to_string())?;
         let result =
             serde_json::from_str::<Value>(&result_json).map_err(|error| error.to_string())?;
 
@@ -17307,7 +17381,7 @@ mod tests {
             }
         });
         let graph_json = serde_json::to_string(&graph).map_err(|error| error.to_string())?;
-        let result_json = run_stdlib_graph_json(&graph_json, r#"{"message":{"text":"Hello"}}"#)
+        let result_json = run_stdlib_graph_impl(&graph_json, r#"{"message":{"text":"Hello"}}"#)
             .map_err(|error| error.to_string())?;
         let result =
             serde_json::from_str::<Value>(&result_json).map_err(|error| error.to_string())?;
@@ -17363,7 +17437,7 @@ mod tests {
                 .and_then(Value::as_object)
                 .ok_or_else(|| format!("runtime TCK case {case_name} missing expected object"))?;
             let inputs = case.get("inputs").cloned().unwrap_or_else(|| json!({}));
-            let result_json = run_stdlib_graph_json(
+            let result_json = run_stdlib_graph_impl(
                 &serde_json::to_string(document).map_err(|error| error.to_string())?,
                 &serde_json::to_string(&inputs).map_err(|error| error.to_string())?,
             )

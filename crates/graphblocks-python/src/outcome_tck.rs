@@ -13,7 +13,7 @@ use graphblocks_runtime_core::test_runtime::{
 };
 use serde_json::{Map, Value, json};
 
-use crate::run_test_graph_json;
+use crate::run_test_graph_impl;
 
 const CONTRACT_VERSION: &str = "graphblocks.outcome.tck.v1";
 const MAX_JSON_DEPTH: usize = 64;
@@ -198,7 +198,7 @@ fn evaluate_output_projection(case: &Map<String, Value>) -> Result<Value, Decode
     let graph_json = serde_json::to_string(&graph).map_err(|_| DecodeCategory::InvalidOutcome)?;
     let node_outputs_json = serde_json::to_string(&json!({"generate": node_outputs}))
         .map_err(|_| DecodeCategory::InvalidOutcome)?;
-    let result_json = run_test_graph_json(&graph_json, "{}", &node_outputs_json)
+    let result_json = run_test_graph_impl(&graph_json, "{}", &node_outputs_json)
         .map_err(|_| DecodeCategory::InvalidOutcome)?;
     let result =
         serde_json::from_str::<Value>(&result_json).map_err(|_| DecodeCategory::InvalidOutcome)?;
