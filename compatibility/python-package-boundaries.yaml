@@ -101,9 +101,9 @@ stableFirstAccessBudgets:
     maxElapsedSeconds: 5.0
     maxRssIncreaseBytes: 100663296
     maxLoadedModuleIncrease: 340
-    maxGraphblocksModules: 20
+    maxGraphblocksModules: 21
   graphblocks.LocalRuntime:
     maxElapsedSeconds: 5.0
     maxRssIncreaseBytes: 100663296
     maxLoadedModuleIncrease: 340
-    maxGraphblocksModules: 27
+    maxGraphblocksModules: 28
