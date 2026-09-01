@@ -8942,9 +8942,8 @@ class GraphBlocksServerApp:
     ) -> ServerResponse:
         del request, route_match, auth_decision
         payload = self.health.to_payload()
-        if self._audit_hook_failures_by_hook:
-            checks = payload["checks"]
-            assert isinstance(checks, dict)
+        checks = payload.get("checks")
+        if self._audit_hook_failures_by_hook and isinstance(checks, dict):
             checks["audit_hooks"] = {
                 "status": "degraded",
                 "details": {

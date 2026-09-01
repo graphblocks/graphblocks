@@ -151,7 +151,7 @@
       {
         "path": "src/graphblocks/server.py",
         "count": 26,
-        "semanticDigest": "sha256:546f10266ec9c43d7767962d4d6af42fcb48c5ce006421a31b0d6b8af1557c3a",
+        "semanticDigest": "sha256:fb1fd580d07f7076197e910ed111e29f3441a50bb21e2ba9df4275d0288b57c1",
         "classifications": ["external-callback-boundary", "persistence-transaction-boundary", "input-normalization-boundary"],
         "rationale": "HTTP services isolate authenticators, repositories, executors, callbacks, and malformed boundary objects behind stable server errors."
       },
