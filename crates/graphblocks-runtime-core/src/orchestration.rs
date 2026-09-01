@@ -671,8 +671,13 @@ impl TaskPlan {
         for (resource_id, access_by_step) in access_by_resource {
             let mut step_access = access_by_step.into_iter().collect::<Vec<_>>();
             step_access.sort_by(|(left_step_id, _), (right_step_id, _)| {
-                positions[left_step_id]
-                    .cmp(&positions[right_step_id])
+                // A step id missing from the dependency order (possible only
+                // through direct field mutation bypassing validated()) sorts
+                // last instead of panicking.
+                let left_position = positions.get(left_step_id).copied().unwrap_or(usize::MAX);
+                let right_position = positions.get(right_step_id).copied().unwrap_or(usize::MAX);
+                left_position
+                    .cmp(&right_position)
                     .then_with(|| left_step_id.cmp(right_step_id))
             });
             for left_index in 0..step_access.len() {

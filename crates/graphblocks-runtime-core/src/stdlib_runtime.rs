@@ -4037,9 +4037,14 @@ fn resolved_inputs_to_json(inputs: &BTreeMap<String, ResolvedInput>) -> Result<V
                     false,
                 ));
             }
-            ResolvedInput::Outcome(Outcome::Skipped(_)) => unreachable!(
-                "skipped outcome inputs are handled before stdlib input materialization"
-            ),
+            ResolvedInput::Outcome(Outcome::Skipped(_)) => {
+                return Err(BlockError::new(
+                    "stdlib.internal_error",
+                    ErrorCategory::Permanent,
+                    "skipped outcome inputs must be handled before stdlib input materialization",
+                    false,
+                ));
+            }
         }
     }
     Ok(Value::Object(object))
@@ -4679,7 +4684,16 @@ fn execute_retrieval_fusion(inputs: &Value, config: &Value) -> Result<Value, Blo
                 "weighted_rank" => weight / candidate.rank.max(1) as f64,
                 "normalized_score" => weight * candidate.normalized_score,
                 "concatenate" | "interleave" => 0.0,
-                _ => unreachable!(),
+                // Guarded by the algorithm validation above; error instead of
+                // panicking if the two lists ever drift.
+                _ => {
+                    return Err(BlockError::new(
+                        "retrieve.fuse.invalid_algorithm",
+                        ErrorCategory::Configuration,
+                        format!("retrieve.fuse@1 fusion algorithm {algorithm:?} is not supported"),
+                        false,
+                    ));
+                }
             };
             groups
                 .entry(candidate.dedupe_key.clone())

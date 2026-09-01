@@ -1937,7 +1937,7 @@ fn sqlite_callback_delivery_claim_lease_and_generation_fence_live_workers() {
     let recovery = std::thread::spawn(move || {
         let queue = SqliteCallbackDeliveryQueue::open(recovery_path).expect("recovery queue opens");
         recovery_barrier.wait();
-        queue.recover_in_flight_deliveries(1_999)
+        queue.recover_in_flight_deliveries(1_999, CallbackRetryPolicy::new(3, 100, 1_000))
     });
     let completion_barrier = barrier.clone();
     let completion_path = path.clone();
@@ -1989,12 +1989,12 @@ fn sqlite_callback_delivery_claim_lease_and_generation_fence_live_workers() {
         .expect("first generation exists");
     assert_eq!(
         queue
-            .recover_in_flight_deliveries(4_000)
+            .recover_in_flight_deliveries(4_000, CallbackRetryPolicy::new(3, 100, 1_000))
             .expect("expired claim recovers"),
         1,
     );
     let current_claim = queue
-        .claim_due_deliveries(4_000, 1_000, 1)
+        .claim_due_deliveries(5_200, 1_000, 1)
         .expect("second generation claims")
         .into_iter()
         .next()
@@ -2014,10 +2014,10 @@ fn sqlite_callback_delivery_claim_lease_and_generation_fence_live_workers() {
     let current_completion = scheduler.record_response(
         current_claim.delivery.clone(),
         CallbackDeliveryResponse::Success,
-        4_500,
+        5_500,
     );
     queue
-        .complete_claimed_delivery(&current_claim, current_completion, 4_500)
+        .complete_claimed_delivery(&current_claim, current_completion, 5_500)
         .expect("current generation completes");
 }
 
@@ -2073,7 +2073,7 @@ fn sqlite_callback_delivery_rejects_completion_at_claim_expiration() {
     );
     assert_eq!(
         queue
-            .recover_in_flight_deliveries(1_100)
+            .recover_in_flight_deliveries(1_100, CallbackRetryPolicy::new(3, 100, 1_000))
             .expect("expired delivery recovers"),
         1,
     );
@@ -2725,21 +2725,65 @@ fn sqlite_callback_delivery_queue_recovers_in_flight_delivery_after_worker_resta
 
     let queue = SqliteCallbackDeliveryQueue::open(&path).expect("queue reopens");
     let recovered = queue
-        .recover_in_flight_deliveries(2_000)
+        .recover_in_flight_deliveries(2_000, CallbackRetryPolicy::new(3, 100, 1_000))
         .expect("in-flight delivery recovers");
-    let due = queue
-        .due_deliveries(2_000, 10)
-        .expect("recovered delivery is due");
 
     assert_eq!(recovered, 1);
+    assert!(
+        queue
+            .due_deliveries(2_000, 10)
+            .expect("recovered delivery reloads")
+            .is_empty(),
+        "recovery must apply the retry backoff, not schedule an immediate retry",
+    );
+    let due = queue
+        .due_deliveries(3_000, 10)
+        .expect("recovered delivery is due after the backoff");
     assert_eq!(due.len(), 1);
     assert_eq!(due[0].delivery_id, "del_sub-1_event-1");
     assert_eq!(due[0].status, CallbackDeliveryStatus::Pending);
-    assert_eq!(due[0].next_retry_at_unix_ms, Some(2_000));
+    assert_eq!(due[0].attempt, 2, "recovery counts the interrupted attempt");
+    let next_retry_at_unix_ms = due[0].next_retry_at_unix_ms.expect("retry is scheduled");
+    assert!((2_001..=3_000).contains(&next_retry_at_unix_ms));
     assert_eq!(
         due[0].last_error.as_deref(),
         Some("delivery_recovered_after_worker_restart")
     );
+}
+
+#[test]
+fn sqlite_callback_delivery_recovery_dead_letters_when_attempt_budget_is_exhausted() {
+    let scheduler = CallbackDeliveryScheduler::new(CallbackRetryPolicy::new(2, 100, 1_000));
+    let subscription = subscription(
+        EventFilter::new(),
+        CallbackFailurePolicy::RetryThenDeadLetter,
+    );
+    let event = protocol_event("event-1", ApplicationProtocolEventKind::ReviewRequested, 1);
+    let mut delivery = scheduler
+        .schedule_event(&subscription, &event)
+        .expect("delivery schedules");
+    delivery.attempt = 2;
+    let queue = SqliteCallbackDeliveryQueue::open_in_memory().expect("queue opens");
+    queue
+        .upsert_delivery(delivery)
+        .expect("pending delivery persists");
+    queue
+        .claim_due_deliveries(1_000, 500, 1)
+        .expect("delivery claims before simulated worker crash");
+
+    assert_eq!(
+        queue
+            .recover_in_flight_deliveries(2_000, CallbackRetryPolicy::new(2, 100, 1_000))
+            .expect("expired delivery recovers"),
+        1,
+    );
+    let recovered = queue
+        .get_delivery("del_sub-1_event-1")
+        .expect("delivery loads")
+        .expect("delivery exists");
+    assert_eq!(recovered.status, CallbackDeliveryStatus::DeadLettered);
+    assert_eq!(recovered.next_retry_at_unix_ms, None);
+    assert_eq!(recovered.attempt, 2);
 }
 
 #[test]
@@ -2773,7 +2817,7 @@ fn sqlite_callback_delivery_recovery_does_not_overwrite_concurrent_terminal_upda
     let recovery = std::thread::spawn(move || {
         let queue = SqliteCallbackDeliveryQueue::open(recovery_path).expect("recovery queue opens");
         recovery_barrier.wait();
-        queue.recover_in_flight_deliveries(3_000)
+        queue.recover_in_flight_deliveries(3_000, CallbackRetryPolicy::new(3, 100, 1_000))
     });
     let update_barrier = barrier.clone();
     let update_path = path.clone();

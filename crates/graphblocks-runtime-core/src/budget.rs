@@ -486,6 +486,12 @@ impl InMemoryBudgetLedger {
         Ok(reservation)
     }
 
+    /// Commits a reservation with the actual usage, which may exceed the
+    /// reserved amounts without limit: providers report true consumption
+    /// after the fact, and refusing the commit would lose the record of
+    /// spend that already happened. This deliberately matches the Python
+    /// reference ledger. Use [`Self::commit_with_overdraft_limit`] to bound
+    /// how far the actuals may overshoot the reservation.
     pub fn commit(
         &mut self,
         reservation_id: impl AsRef<str>,

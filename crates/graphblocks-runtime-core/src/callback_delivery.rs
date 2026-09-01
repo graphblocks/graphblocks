@@ -1488,6 +1488,7 @@ impl SqliteCallbackDeliveryQueue {
     pub fn recover_in_flight_deliveries(
         &self,
         now_unix_ms: u64,
+        retry_policy: CallbackRetryPolicy,
     ) -> Result<usize, CallbackDeliveryError> {
         let mut connection = lock_callback_connection(&self.connection);
         let transaction = connection
@@ -1541,9 +1542,34 @@ impl SqliteCallbackDeliveryQueue {
                     row_sequence,
                     callback_parse_json(&delivery_json)?,
                 )?;
-                delivery.status = CallbackDeliveryStatus::Pending;
-                delivery.next_retry_at_unix_ms = Some(now_unix_ms);
+                // An expired claim consumed its attempt without a response.
+                // Count it toward the retry budget and back off, so a delivery
+                // that repeatedly kills its worker cannot hot-loop through
+                // recovery with a fresh immediate retry every time.
                 delivery.last_error = Some("delivery_recovered_after_worker_restart".to_owned());
+                if delivery.failure_policy == CallbackFailurePolicy::BestEffort {
+                    delivery.status = CallbackDeliveryStatus::Failed;
+                    delivery.next_retry_at_unix_ms = None;
+                } else if delivery.attempt >= retry_policy.max_attempts {
+                    delivery.status = CallbackDeliveryStatus::DeadLettered;
+                    delivery.next_retry_at_unix_ms = None;
+                } else if let Some(next_attempt) = delivery.attempt.checked_add(1)
+                    && let Some(next_retry_at_unix_ms) = now_unix_ms.checked_add(
+                        retry_policy
+                            .delay_for_attempt_with_jitter(next_attempt - 1, &delivery.idempotency_key),
+                    )
+                {
+                    delivery.attempt = next_attempt;
+                    delivery.status = CallbackDeliveryStatus::Pending;
+                    delivery.next_retry_at_unix_ms = Some(next_retry_at_unix_ms);
+                } else {
+                    delivery.status = CallbackDeliveryStatus::DeadLettered;
+                    delivery.next_retry_at_unix_ms = None;
+                    delivery.last_error = Some(
+                        "delivery_recovered_after_worker_restart; retry schedule overflow"
+                            .to_owned(),
+                    );
+                }
                 deliveries.push((
                     delivery,
                     callback_i64_to_u64(claim_generation, "callback delivery claim generation")?,
