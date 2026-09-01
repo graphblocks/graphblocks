@@ -204,6 +204,14 @@ class FrozenJsonDict(dict):
     def __readonly(self, *args: object, **kwargs: object) -> None:
         raise TypeError("tool call arguments are immutable")
 
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        # dict.__init__ behaves like update(), so a second call would mutate
+        # an already-frozen instance in place.
+        if getattr(self, "_FrozenJsonDict__initialized", False):
+            self.__readonly()
+        super().__init__(*args, **kwargs)  # type: ignore[arg-type]
+        self.__initialized = True
+
     __setitem__ = __readonly
     __delitem__ = __readonly
     clear = __readonly
@@ -219,6 +227,8 @@ class FrozenJsonList(tuple):
         if isinstance(other, list):
             return tuple(self) == tuple(other)
         return super().__eq__(other)
+
+    __hash__ = tuple.__hash__
 
 
 def _freeze_json_value(value: object) -> object:

@@ -783,6 +783,8 @@ class _FrozenWorkerJsonArray(tuple[object, ...]):
             return tuple(self) == tuple(other)
         return super().__eq__(other)
 
+    __hash__ = tuple.__hash__
+
     def __deepcopy__(self, memo: dict[int, object]) -> list[object]:
         return [_worker_json_projection(value) for value in self]
 

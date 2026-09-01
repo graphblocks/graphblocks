@@ -63,6 +63,8 @@ class _FrozenJsonArray(tuple[object, ...]):
             return tuple(self) == tuple(other)
         return super().__eq__(other)
 
+    __hash__ = tuple.__hash__
+
     def __copy__(self) -> _FrozenJsonArray:
         return self
 

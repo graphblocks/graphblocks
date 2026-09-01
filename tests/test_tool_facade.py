@@ -2761,6 +2761,14 @@ def test_tool_call_arguments_are_immutable_after_digesting() -> None:
 
     assert call.arguments_digest == canonical_hash({"cmd": ["echo", "hello"], "env": {"SAFE": "1"}})
 
+    # dict.__init__ behaves like update(); re-invoking it must not mutate.
+    with pytest.raises(TypeError):
+        call.arguments["env"].__init__({"SAFE": "0"})  # type: ignore[index]
+    assert call.arguments["env"] == {"SAFE": "1"}
+    # frozen lists keep tuple hashability despite the list-comparing __eq__
+    assert hash(call.arguments["cmd"]) == hash(("echo", "hello"))
+    assert call.arguments["cmd"] in {("echo", "hello")}
+
 
 def test_tool_call_rejects_argument_digest_mismatch() -> None:
     call = (
