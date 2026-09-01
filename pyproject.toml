@@ -85,10 +85,15 @@ files = [
   "src/graphblocks/_version.py",
   "src/graphblocks/admission.py",
   "src/graphblocks/budget.py",
+  "src/graphblocks/canonical.py",
   "src/graphblocks/clocks.py",
   "src/graphblocks/conformance.py",
+  "src/graphblocks/diagnostics.py",
   "src/graphblocks/durable_registry.py",
   "src/graphblocks/leases.py",
+  "src/graphblocks/migration.py",
+  "src/graphblocks/plugins.py",
+  "src/graphblocks/schema.py",
   "src/graphblocks/provider_effects.py",
   "src/graphblocks/server_adapter.py",
   "src/graphblocks/server_storage.py",
@@ -97,6 +102,12 @@ files = [
   "src/graphblocks/typed.py",
   "tests/typing/valid_typed_graph.py",
 ]
+
+[[tool.mypy.overrides]]
+# Untyped third-party validation boundaries; their values are re-validated by
+# the callers, so missing stubs stay contained to these modules.
+module = ["jsonschema", "jsonschema.*", "yaml"]
+ignore_missing_imports = true
 
 [tool.ruff]
 target-version = "py311"

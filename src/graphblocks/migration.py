@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any
+from typing import Any, cast
 
 GRAPH_API_VERSION = "graphblocks.ai/v1"
 PLUGIN_API_VERSION = "graphblocks.ai/v1"
@@ -92,7 +92,8 @@ def _migrate_document(
     from ._canonical_reference import canonical_dumps, canonical_loads
 
     try:
-        migrated = canonical_loads(canonical_dumps(document))
+        # A canonical round-trip of a dict always yields a dict.
+        migrated = cast("dict[str, Any]", canonical_loads(canonical_dumps(document)))
     except (TypeError, ValueError, RuntimeError, LookupError) as error:
         raise ValueError(
             "migration document must contain canonical JSON values"

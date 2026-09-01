@@ -600,7 +600,8 @@ def load_resource_schema(
                         f"resource schema {relative_path} must be a regular "
                         "non-symlinked file"
                     )
-            resolved_candidate = candidate.resolve(strict=True)
+            # current has walked the same parts as candidate, as a Path.
+            resolved_candidate = current.resolve(strict=True)
             resolved_candidate.relative_to(resolved_root)
             if not candidate.is_file():
                 raise SchemaManifestError(
@@ -672,7 +673,7 @@ def _validation_message(error: ValidationError) -> str:
         if isinstance(declared, Mapping):
             unexpected = sorted(str(key) for key in error.instance if key not in declared)
             return f"unexpected properties are not allowed: {canonical_dumps(unexpected)}"
-    return error.message
+    return str(error.message)
 
 
 def _schema_violation(error: ValidationError) -> ResourceSchemaViolation:
@@ -855,7 +856,7 @@ def resource_schema_errors_reference(
                 message="kind must be a string",
             )
         )
-    if envelope_errors:
+    if not isinstance(api_version, str) or not isinstance(kind, str):
         return tuple(envelope_errors)
 
     if (api_version, kind) not in RESOURCE_SCHEMA_PATHS:

@@ -31,6 +31,7 @@ from .migration import (
     migrate_document_reference as migrate_document,
 )
 from .schema import (
+    ResourceSchemaViolation,
     SchemaId,
     SchemaIdError,
     resource_schema_errors_reference as resource_schema_errors,
@@ -1231,7 +1232,7 @@ def plugin_manifest_from_document(
 
 def validate_plugin_manifest(document: Any) -> DiagnosticSet:
     diagnostics: list[Diagnostic] = []
-    schema_violations = ()
+    schema_violations: tuple[ResourceSchemaViolation, ...] = ()
     if not isinstance(document, Mapping):
         return DiagnosticSet((Diagnostic("GB2001", "plugin manifest must be a mapping"),))
     domain_violations = tuple(
@@ -1677,14 +1678,17 @@ def discover_plugins(paths: list[str | Path] | None = None, include_installed: b
             for file in distribution.files or []:
                 relative = file.as_posix()
                 if relative in STATIC_MANIFEST_NAMES:
-                    located = Path(distribution.locate_file(file))
+                    located = Path(str(distribution.locate_file(file)))
                     try:
                         manifests.append(load_plugin_manifest(located))
                     except Exception as exc:
                         diagnostics.append(Diagnostic("GB2012", str(exc), str(located)))
         entry_points = importlib.metadata.entry_points()
         for entry_point in entry_points.select(group="graphblocks.manifests"):
-            located = Path(entry_point.dist.locate_file(entry_point.value))
+            entry_point_dist = entry_point.dist
+            if entry_point_dist is None:
+                continue
+            located = Path(str(entry_point_dist.locate_file(entry_point.value)))
             try:
                 manifests.append(load_plugin_manifest(located))
             except Exception as exc:

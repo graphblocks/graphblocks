@@ -178,9 +178,10 @@ def _canonical_snapshot(
     """Copy and validate one potentially stateful Python value exactly once."""
 
     root: list[Any] = [None]
-    pending: list[
-        tuple[Any, dict[str, Any] | list[Any], str | int, int, bool]
-    ] = [(value, root, 0, 0, False)]
+    # The parent slot is Any because the container/key pairing (dict with a
+    # str key, list with an int index) is an invariant of the traversal that
+    # would otherwise need per-node isinstance checks on this hot path.
+    pending: list[tuple[Any, Any, str | int, int, bool]] = [(value, root, 0, 0, False)]
     active_containers: set[int] = set()
     occupied_strings: set[str] = set()
     has_decimal = False
@@ -330,7 +331,8 @@ def _canonical_dumps(value: Any, *, reject_tuples: bool) -> str:
             raise _depth_error() from error
 
     root: list[Any] = [None]
-    pending_copies: list[tuple[Any, dict[str, Any] | list[Any], str | int]] = [
+    # Same Any parent slot as _canonical_snapshot's pending list above.
+    pending_copies: list[tuple[Any, Any, str | int]] = [
         (snapshot, root, 0)
     ]
     numeric_tokens: dict[str, str] = {}
