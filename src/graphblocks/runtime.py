@@ -1148,7 +1148,8 @@ class RuntimeCheckpoint:
             raise ValueError(
                 "runtime checkpoint operation kind must be a valid async operation kind"
             )
-        resume_token_hash = self.operation["resume_token_hash"]
+        # Validated as an exact non-empty string by the field loop above.
+        resume_token_hash = cast(str, self.operation["resume_token_hash"])
         if re.fullmatch(r"sha256:[0-9a-f]{64}", resume_token_hash) is None:
             raise ValueError(
                 "runtime checkpoint operation resume_token_hash must be a canonical sha256 digest"
@@ -1971,7 +1972,7 @@ class InProcessRuntime:
                         and edge["to"].startswith("$output.")
                     ):
                         continue
-                    value: Any = wait_result
+                    value = cast(Any, wait_result)
                     source_path = edge["from"].partition(".")[2]
                     if source_path:
                         for part in source_path.split("."):
@@ -2089,15 +2090,15 @@ class InProcessRuntime:
                     if not guard_ready:
                         continue
                     if not isinstance(guard_value, bool):
-                        error = (
+                        guard_error = (
                             f"node {node_name!r} when guard must resolve to a boolean"
                         )
                         journal.append(
                             "node_failed",
-                            {"node": node_name, "error": error, "attempt": 0},
+                            {"node": node_name, "error": guard_error, "attempt": 0},
                         )
                         journal.append_terminal(
-                            "run_failed", {"node": node_name, "error": error}
+                            "run_failed", {"node": node_name, "error": guard_error}
                         )
                         if self.run_store is not None:
                             self.run_store.set_status(run_id, "failed")
@@ -2133,7 +2134,7 @@ class InProcessRuntime:
                     source = edge["from"]
                     source_owner, _, source_path = source.partition(".")
                     if source_owner == "$input":
-                        value: Any = inputs
+                        value = cast(Any, inputs)
                         if source_path:
                             for part in source_path.split("."):
                                 if isinstance(value, dict) and part in value:
@@ -2305,7 +2306,10 @@ class InProcessRuntime:
                         timeout_reason = (
                             f"node {node_name!r} exceeded timeout {flow.get('timeout')}"
                         )
-                        run_token = context["cancellation_token"]
+                        # The runtime seeds context with its own token.
+                        run_token = cast(
+                            CancellationToken, context["cancellation_token"]
+                        )
                         attempt_token = (
                             run_token
                             if deadline is None
@@ -2446,6 +2450,8 @@ class InProcessRuntime:
                             self.lease_pool.release_all(run_id)
                         return RunResult(run_id, "failed", output_values, journal)
 
+                # The attempt loop either set result or returned/raised.
+                result = cast("dict[str, Any]", result)
                 wait_descriptor = result.get("wait")
                 if (
                     block_id == "async.await_callback@1"
@@ -2648,15 +2654,15 @@ class LocalRuntime:
             raise RuntimeError("LocalRuntime requires the in-memory execution journal")
         journal = LocalExecutionJournal(result.journal.run_id)
         for record in result.journal.records:
-            if record.kind in {"run_succeeded", "run_failed", "run_cancelled"}:
+            if record.kind in ("run_succeeded", "run_failed", "run_cancelled"):
                 journal.append_terminal(record.kind, _mutable_json_like(record.payload))
-            elif record.kind in {
+            elif record.kind in (
                 "run_started",
                 "node_started",
                 "node_retry",
                 "node_succeeded",
                 "node_failed",
-            }:
+            ):
                 journal.append(record.kind, _mutable_json_like(record.payload))
             else:
                 raise RuntimeError(

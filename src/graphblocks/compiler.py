@@ -152,9 +152,10 @@ def _config_error_message(error: ValidationError) -> str:
         return "value must match at least one allowed schema"
     if error.validator == "not":
         return "value matches a forbidden schema"
-    if len(error.message) > MAX_CONFIG_VALIDATION_ERROR_MESSAGE_CHARS:
-        return error.message[: MAX_CONFIG_VALIDATION_ERROR_MESSAGE_CHARS - 3] + "..."
-    return error.message
+    message = str(error.message)
+    if len(message) > MAX_CONFIG_VALIDATION_ERROR_MESSAGE_CHARS:
+        return message[: MAX_CONFIG_VALIDATION_ERROR_MESSAGE_CHARS - 3] + "..."
+    return message
 
 
 @dataclass(frozen=True, slots=True)
@@ -862,8 +863,10 @@ def _diagnose_callback_subscription_config(
         ),
     )
     delivery = config.get("delivery")
-    delivery_is_mapping = isinstance(delivery, dict)
-    if not delivery_is_mapping:
+    if isinstance(delivery, dict):
+        delivery_is_mapping = True
+    else:
+        delivery_is_mapping = False
         diagnostics.append(
             Diagnostic(
                 "GB1027",
@@ -3093,7 +3096,8 @@ def _analyze_graph_dependencies(analysis: _EdgeAnalysis) -> _TypecheckedGraph:
     normalized = context.normalized
     normalized_spec = context.normalized_spec
     normalized_nodes = context.normalized_nodes
-    edges = context.edges
+    edges_value = context.edges
+    edges = edges_value if isinstance(edges_value, list) else []
     block_catalog = context.block_catalog
     interface_inputs = context.interface_inputs
     allows_duplex_voice_feedback = context.allows_duplex_voice_feedback
@@ -3267,16 +3271,16 @@ def _analyze_graph_dependencies(analysis: _EdgeAnalysis) -> _TypecheckedGraph:
         dependency_states[root] = "visiting"
         path = [root]
         path_positions = {root: 0}
-        stack: list[tuple[str, Iterator[str]]] = [
+        visit_stack: list[tuple[str, Iterator[str]]] = [
             (root, iter(sorted(dependency_graph[root])))
         ]
-        while stack:
-            current, neighbors = stack[-1]
+        while visit_stack:
+            current, neighbors = visit_stack[-1]
             try:
                 neighbor = next(neighbors)
             except StopIteration:
                 dependency_states[current] = "done"
-                stack.pop()
+                visit_stack.pop()
                 path_positions.pop(current, None)
                 path.pop()
                 continue
@@ -3285,7 +3289,7 @@ def _analyze_graph_dependencies(analysis: _EdgeAnalysis) -> _TypecheckedGraph:
                 dependency_states[neighbor] = "visiting"
                 path_positions[neighbor] = len(path)
                 path.append(neighbor)
-                stack.append((neighbor, iter(sorted(dependency_graph[neighbor]))))
+                visit_stack.append((neighbor, iter(sorted(dependency_graph[neighbor]))))
             elif state == "visiting":
                 cycle_start = path_positions[neighbor]
                 dependency_cycle = [*path[cycle_start:], neighbor]
@@ -3493,10 +3497,15 @@ def compile_graph_native(
     native_allow_unknown_blocks = allow_unknown_blocks or (
         isinstance(block_catalog, BlockCatalog) and block_catalog.allow_unknown_blocks
     )
-    return native_compile_graph(
-        document,
-        block_catalog=native_block_catalog,
-        allow_unknown_blocks=native_allow_unknown_blocks,
+    # The dynamically resolved native entry point returns the result mapping
+    # that compile_graph contract-checks against the reference compiler.
+    return cast(
+        "dict[str, object]",
+        native_compile_graph(
+            document,
+            block_catalog=native_block_catalog,
+            allow_unknown_blocks=native_allow_unknown_blocks,
+        ),
     )
 
 
