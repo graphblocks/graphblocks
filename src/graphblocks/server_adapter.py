@@ -94,6 +94,13 @@ class _ServerAdapterDeadlineExceededError(TimeoutError):
         self.deadline_kind = deadline_kind
 
 
+class _ServerAdapterClockError(RuntimeError):
+    """Adapter-internal invariant failure; must surface as a 500, not a 400."""
+
+    def __init__(self) -> None:
+        super().__init__("server adapter clock must be finite and non-decreasing")
+
+
 @dataclass(slots=True)
 class ServerAdapterIngress:
     """Reference ingress boundary for framework and HTTP-server adapters.
@@ -388,7 +395,7 @@ class ServerAdapterIngress:
             nonlocal body_size_bytes, last_progress_at
             before_read = self.clock()
             if not math.isfinite(before_read):
-                raise ValueError("server adapter clock must return a finite number")
+                raise _ServerAdapterClockError()
             if before_read - started_at >= self.limits.request_total_timeout_seconds:
                 raise _ServerAdapterDeadlineExceededError("total")
             if before_read - last_progress_at >= self.limits.body_idle_timeout_seconds:
@@ -399,9 +406,7 @@ class ServerAdapterIngress:
             chunk = read_body(min(max_bytes, remaining_probe_bytes))
             after_read = self.clock()
             if not math.isfinite(after_read) or after_read < before_read:
-                raise ValueError(
-                    "server adapter clock must be finite and non-decreasing"
-                )
+                raise _ServerAdapterClockError()
             if after_read - started_at > self.limits.request_total_timeout_seconds:
                 raise _ServerAdapterDeadlineExceededError("total")
             if after_read - before_read > self.limits.body_idle_timeout_seconds:
@@ -422,9 +427,7 @@ class ServerAdapterIngress:
             )
             completed_at = self.clock()
             if not math.isfinite(completed_at) or completed_at < started_at:
-                raise ValueError(
-                    "server adapter clock must be finite and non-decreasing"
-                )
+                raise _ServerAdapterClockError()
             if completed_at - started_at > self.limits.request_total_timeout_seconds:
                 return self._response(
                     504,
@@ -442,6 +445,12 @@ class ServerAdapterIngress:
                 408,
                 f"server.adapter.{error.deadline_kind}_deadline_exceeded",
                 "The request body exceeded the server adapter deadline.",
+            )
+        except _ServerAdapterClockError:
+            return self._response(
+                500,
+                "server.adapter.internal_error",
+                "The server adapter encountered an internal error.",
             )
         except ValueError:
             return self._response(

@@ -387,6 +387,17 @@ def test_adapter_maps_invalid_stream_reader_output_without_leaking_details() -> 
     assert reader.abort_count == 1
 
 
+def test_adapter_reports_clock_regression_as_internal_error_not_client_error() -> None:
+    fixture = _HttpAdapterFixture(
+        clock=_SequenceClock([0.0, 1.0, 0.5, 2.0, 3.0, 4.0]),
+    )
+
+    response, _reader = fixture.request()
+
+    assert response.status_code == 500
+    assert _payload(response)["errorCode"] == "server.adapter.internal_error"
+
+
 def test_adapter_enforces_concurrency_for_the_entire_request() -> None:
     fixture = _HttpAdapterFixture(
         limits=ServerLimits(

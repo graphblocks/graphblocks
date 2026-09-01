@@ -1062,6 +1062,22 @@ def test_server_app_auth_audit_sink_failure_does_not_mask_auth_failure() -> None
         == "request-audit-sink-failure"
     )
 
+    health = app.handle(
+        ServerRequest(
+            method="GET",
+            path="/health",
+            headers={},
+            query={},
+            cookies={},
+        )
+    )
+    health_payload = json.loads(health.body.decode("utf-8"))
+    assert health_payload["status"] == "degraded"
+    assert health_payload["checks"]["audit_hooks"] == {
+        "status": "degraded",
+        "details": {"hook_failure_counts": {"auth_audit": 1}},
+    }
+
 
 def test_server_app_requires_callable_auth_audit_hook() -> None:
     with pytest.raises(
@@ -5109,6 +5125,139 @@ def test_server_app_requires_receipt_for_manual_resume_and_preserves_rejected_di
         "RunResuming",
         "RunSucceeded",
     ]
+
+
+def test_server_app_reports_deferred_resume_when_run_control_capacity_is_exhausted() -> None:
+    class AllowResume:
+        def admit(
+            self,
+            submission: ServerAsyncCallbackSubmission,
+            checkpoint: graphblocks.RuntimeCheckpoint,
+        ) -> dict[str, object]:
+            return {
+                "schema_validated": True,
+                "policy_reevaluated": True,
+                "budget_reserved": True,
+                "release_compatible": True,
+                "ownership_fenced": True,
+            }
+
+    app = GraphBlocksServerApp(
+        auth_hook=StaticBearerAuthHook(
+            {"token-1": PrincipalRef("callback-relay")}
+        ),
+        require_async_callback_authentication=True,
+        defer_accepted_runs=True,
+        allow_process_local_accepted_runs_dev=True,
+        async_callback_resume_admission_hook=AllowResume(),
+        max_run_control_history_bytes_per_run=1,
+    )
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "callback-resume-capacity"},
+        "spec": {
+            "nodes": {
+                "start": {
+                    "block": "async.start_operation@1",
+                    "config": {
+                        "operationId": "operation-deferred-resume-1",
+                        "runId": "run-deferred-resume-1",
+                        "nodeId": "start",
+                        "attemptId": "attempt-1",
+                        "kind": "ci_job",
+                        "providerOperationId": "provider-operation-1",
+                        "resumeTokenHash": "sha256:" + "a" * 64,
+                        "idempotencyKey": "operation-idem-deferred-1",
+                        "expectedSchema": "schemas/CICallback@1",
+                        "createdAtUnixMs": 1_750_000_000_000,
+                        "submittedAtUnixMs": 1_750_000_001_000,
+                        "timeoutMs": 100_000_000_000,
+                        "resume": {
+                            "requirePolicyReevaluation": True,
+                            "requireBudgetReservation": True,
+                            "requireReleaseCompatibility": True,
+                            "requireOwnershipFence": True,
+                        },
+                        "attemptFencing": True,
+                    },
+                },
+                "wait": {
+                    "block": "async.await_callback@1",
+                    "inputs": {"operation": "start.operation"},
+                    "config": {
+                        "checkpoint": True,
+                        "onTimeout": "fail",
+                        "timeoutMs": 100_000_000_000,
+                        "idempotencyKey": "operation-idem-deferred-1",
+                        "callback": {"schema": "schemas/CICallback@1"},
+                        "resume": {
+                            "requirePolicyReevaluation": True,
+                            "requireBudgetReservation": True,
+                            "requireReleaseCompatibility": True,
+                            "requireOwnershipFence": True,
+                        },
+                        "attemptFencing": True,
+                    },
+                },
+            }
+        },
+    }
+    accepted = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "graph": graph,
+                    "runId": "run-deferred-resume-1",
+                    "responseMode": "accepted",
+                    "occurredAt": "2026-07-10T00:00:00Z",
+                }
+            ).encode("utf-8"),
+        )
+    )
+    waiting = app.advance_accepted_run("run-deferred-resume-1")
+    waiting_occurred_at = app._events_by_run_id[
+        "run-deferred-resume-1"
+    ][-1]["metadata"]["occurredAt"]
+    assert isinstance(waiting_occurred_at, str)
+    callback = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/callbacks/operation-deferred-resume-1",
+            headers={
+                "Authorization": "Bearer token-1",
+                "GraphBlocks-Idempotency-Key": "delivery-deferred-1",
+            },
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "callbackId": "callback-deferred-resume-1",
+                    "runId": "run-deferred-resume-1",
+                    "nodeId": "start",
+                    "attemptId": "attempt-1",
+                    "providerOperationId": "provider-operation-1",
+                    "policySnapshotId": "local",
+                    "payload": {"status": "completed"},
+                }
+            ).encode("utf-8"),
+            requested_at=waiting_occurred_at,
+        )
+    )
+
+    assert accepted.status_code == 202
+    assert waiting["status"] == "waiting_callback"
+    assert callback.status_code == 202
+    payload = json.loads(callback.body.decode("utf-8"))
+    assert payload["status"] == "paused_callback_delivery"
+    assert payload["resumeDeferred"] is True
+    assert app.run_controls("run-deferred-resume-1") == ()
+    assert len(app.callback_submissions("operation-deferred-resume-1")) == 1
 
 
 def test_server_app_clears_callback_receipt_before_sequential_wait() -> None:

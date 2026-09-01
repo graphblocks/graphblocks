@@ -1442,7 +1442,10 @@ class RuntimeRegistry:
             raise ValueError(
                 f"runtime block {block_id!r} is not declared in the block catalog"
             )
-        return self.blocks[block_id]
+        block = self.blocks.get(block_id)
+        if block is None:
+            raise ValueError(f"runtime block {block_id!r} is not registered")
+        return block
 
 
 @dataclass(slots=True)

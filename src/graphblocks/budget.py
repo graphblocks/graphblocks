@@ -559,13 +559,10 @@ class BudgetPermit:
         return all(amount <= authorized.get(key, Decimal("0")) for key, amount in requested.items())
 
     def is_active_at(self, now: str) -> bool:
-        try:
-            return _parse_budget_permit_datetime("expires_at", self.expires_at) > _parse_budget_permit_datetime(
-                "now",
-                now,
-            )
-        except ValueError:
-            return False
+        # expires_at is validated at construction; a malformed ``now`` is a
+        # caller bug and must not be misreported as an expired permit.
+        now_at = _parse_budget_permit_datetime("now", now)
+        return _parse_budget_permit_datetime("expires_at", self.expires_at) > now_at
 
 
 @dataclass(frozen=True, slots=True)

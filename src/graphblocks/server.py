@@ -3785,6 +3785,11 @@ class GraphBlocksServerApp:
         init=False,
         repr=False,
     )
+    _audit_hook_failures_by_hook: dict[str, int] = field(
+        default_factory=dict,
+        init=False,
+        repr=False,
+    )
     _events_by_run_id: dict[str, tuple[Mapping[str, object], ...]] = field(default_factory=dict, init=False, repr=False)
     _run_authorization_by_run_id: dict[str, _ServerRunAuthorizationRecord] = field(
         default_factory=dict,
@@ -4487,8 +4492,16 @@ class GraphBlocksServerApp:
             try:
                 self.error_audit_hook(event)
             except Exception:
-                pass
+                self._record_audit_hook_failure("error_audit")
         return correlation_id
+
+    def _record_audit_hook_failure(self, hook_name: str) -> None:
+        # Hook failures must not fail the request (the in-memory deques still
+        # record the events), but a broken external audit pipeline has to be
+        # visible somewhere: the counts surface through the health endpoint.
+        self._audit_hook_failures_by_hook[hook_name] = (
+            self._audit_hook_failures_by_hook.get(hook_name, 0) + 1
+        )
 
     def _safe_error_response(
         self,
@@ -5292,7 +5305,7 @@ class GraphBlocksServerApp:
                     try:
                         self.auth_audit_hook(audit_event)
                     except Exception:
-                        pass
+                        self._record_audit_hook_failure("auth_audit")
                 return ServerResponse.json(
                     401,
                     {
@@ -5333,7 +5346,7 @@ class GraphBlocksServerApp:
                     try:
                         self.auth_audit_hook(audit_event)
                     except Exception:
-                        pass
+                        self._record_audit_hook_failure("auth_audit")
                 return ServerResponse.json(
                     401,
                     {
@@ -5645,7 +5658,7 @@ class GraphBlocksServerApp:
                     try:
                         self.auth_audit_hook(audit_event)
                     except Exception:
-                        pass
+                        self._record_audit_hook_failure("auth_audit")
                 return ServerResponse.json(
                     403,
                     {
@@ -5686,7 +5699,7 @@ class GraphBlocksServerApp:
                     try:
                         self.auth_audit_hook(audit_event)
                     except Exception:
-                        pass
+                        self._record_audit_hook_failure("auth_audit")
                 return ServerResponse.json(
                     403,
                     {
@@ -7943,21 +7956,27 @@ class GraphBlocksServerApp:
                             },
                         )
                         assert isinstance(paused_record, Mapping)
-                        capacity_response = (
+                        # The submission is already committed above; a 429
+                        # here would tell the client to retry a callback the
+                        # server has recorded. Report acceptance and only
+                        # skip the run-control record when capacity is gone.
+                        capacity_exhausted = (
                             self._run_control_capacity_response(
                                 submission.run_id,
                                 paused_record,
                             )
+                            is not None
                         )
-                        if capacity_response is not None:
-                            return capacity_response
-                        self._record_run_control(
-                            submission.run_id,
-                            paused_record,
-                        )
+                        if not capacity_exhausted:
+                            self._record_run_control(
+                                submission.run_id,
+                                paused_record,
+                            )
                         self._accepted_run_condition.notify_all()
                         paused_payload = submission.response_payload()
                         paused_payload["status"] = "paused_callback_delivery"
+                        if capacity_exhausted:
+                            paused_payload["resumeDeferred"] = True
                         return ServerResponse.json(202, paused_payload)
                     self._accepted_run_condition.notify_all()
                 elif (
@@ -7981,21 +8000,23 @@ class GraphBlocksServerApp:
                         },
                     )
                     assert isinstance(paused_record, Mapping)
-                    capacity_response = (
+                    capacity_exhausted = (
                         self._run_control_capacity_response(
                             submission.run_id,
                             paused_record,
                         )
+                        is not None
                     )
-                    if capacity_response is not None:
-                        return capacity_response
-                    self._record_run_control(
-                        submission.run_id,
-                        paused_record,
-                    )
+                    if not capacity_exhausted:
+                        self._record_run_control(
+                            submission.run_id,
+                            paused_record,
+                        )
                     self._accepted_run_condition.notify_all()
                     paused_payload = submission.response_payload()
                     paused_payload["status"] = "paused_callback_delivery"
+                    if capacity_exhausted:
+                        paused_payload["resumeDeferred"] = True
                     return ServerResponse.json(202, paused_payload)
                 return ServerResponse.json(202, submission.response_payload())
             except (TypeError, ValueError, json.JSONDecodeError) as error:
@@ -8920,7 +8941,21 @@ class GraphBlocksServerApp:
         auth_decision: ServerAuthDecision,
     ) -> ServerResponse:
         del request, route_match, auth_decision
-        return ServerResponse.json(200, self.health.to_payload())
+        payload = self.health.to_payload()
+        if self._audit_hook_failures_by_hook:
+            checks = payload["checks"]
+            assert isinstance(checks, dict)
+            checks["audit_hooks"] = {
+                "status": "degraded",
+                "details": {
+                    "hook_failure_counts": dict(
+                        sorted(self._audit_hook_failures_by_hook.items())
+                    ),
+                },
+            }
+            if payload["status"] == "healthy":
+                payload["status"] = "degraded"
+        return ServerResponse.json(200, payload)
 
     def _handle_run_lifecycle_operation(
         self,
