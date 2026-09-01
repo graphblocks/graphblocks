@@ -1833,6 +1833,23 @@ struct AsyncOperationStoreInner {
     events_by_operation: BTreeMap<String, Vec<AsyncOperationEvent>>,
 }
 
+pub const MAX_ASYNC_OPERATION_EVENTS_PER_OPERATION: usize = 10_000;
+
+impl AsyncOperationStoreInner {
+    /// Appends an operation event, evicting the oldest events beyond the
+    /// per-operation cap. Without the cap a misbehaving provider can flood an
+    /// operation with rejected callbacks and grow the event history (and the
+    /// SQLite store rewritten around it) without bound.
+    fn push_operation_event(&mut self, operation_id: String, event: AsyncOperationEvent) {
+        let events = self.events_by_operation.entry(operation_id).or_default();
+        events.push(event);
+        if events.len() > MAX_ASYNC_OPERATION_EVENTS_PER_OPERATION {
+            let excess = events.len() - MAX_ASYNC_OPERATION_EVENTS_PER_OPERATION;
+            events.drain(..excess);
+        }
+    }
+}
+
 fn lock_async_operation_store(
     inner: &Mutex<AsyncOperationStoreInner>,
 ) -> MutexGuard<'_, AsyncOperationStoreInner> {
@@ -2000,11 +2017,9 @@ impl AsyncOperationStore {
                     if record.expires_at_unix_ms <= operation_created_at_unix_ms {
                         let payload_digest = canonical_hash(&record.submission.payload)?;
                         let policy_snapshot_id = record.submission.policy_snapshot_id.clone();
-                        inner
-                            .events_by_operation
-                            .entry(operation_id.to_owned())
-                            .or_default()
-                            .push(AsyncOperationEvent::ExternalCallbackRejected {
+                        inner.push_operation_event(
+                            operation_id.to_owned(),
+                            AsyncOperationEvent::ExternalCallbackRejected {
                                 operation_id: record.submission.operation_id,
                                 callback_id: record.submission.callback_id,
                                 reason: "quarantined_callback_expired".to_owned(),
@@ -2012,7 +2027,8 @@ impl AsyncOperationStore {
                                 payload_digest,
                                 verified_by: record.submission.verified_by,
                                 policy_snapshot_id,
-                            });
+                            },
+                        );
                     } else {
                         submissions.push(record.submission);
                     }
@@ -2200,11 +2216,9 @@ impl AsyncOperationStore {
             .get(&receipt_key)
         {
             if let Some(field) = callback_idempotency_conflict_field(receipt, &submission)? {
-                inner
-                    .events_by_operation
-                    .entry(submission.operation_id.clone())
-                    .or_default()
-                    .push(AsyncOperationEvent::ExternalCallbackRejected {
+                inner.push_operation_event(
+                    submission.operation_id.clone(),
+                    AsyncOperationEvent::ExternalCallbackRejected {
                         operation_id: submission.operation_id.clone(),
                         callback_id: submission.callback_id,
                         reason: format!("idempotency_conflict:{field}"),
@@ -2212,7 +2226,8 @@ impl AsyncOperationStore {
                         payload_digest: rejected_payload_digest.clone(),
                         verified_by: rejected_verified_by.clone(),
                         policy_snapshot_id: rejected_policy_snapshot_id.clone(),
-                    });
+                    },
+                );
                 return Err(AsyncOperationError::CallbackIdempotencyConflict {
                     operation_id: receipt_key.0,
                     idempotency_key: receipt_key.1,
@@ -2229,11 +2244,9 @@ impl AsyncOperationStore {
         let operation = if let Some(operation) = inner.operations.get(&submission.operation_id) {
             operation.clone()
         } else {
-            inner
-                .events_by_operation
-                .entry(submission.operation_id.clone())
-                .or_default()
-                .push(AsyncOperationEvent::ExternalCallbackRejected {
+            inner.push_operation_event(
+                submission.operation_id.clone(),
+                AsyncOperationEvent::ExternalCallbackRejected {
                     operation_id: submission.operation_id.clone(),
                     callback_id: submission.callback_id,
                     reason: "operation_not_found".to_owned(),
@@ -2241,18 +2254,17 @@ impl AsyncOperationStore {
                     payload_digest: rejected_payload_digest.clone(),
                     verified_by: rejected_verified_by.clone(),
                     policy_snapshot_id: rejected_policy_snapshot_id.clone(),
-                });
+                },
+            );
             return Err(AsyncOperationError::OperationNotFound {
                 operation_id: submission.operation_id,
             });
         };
 
         if operation.run_id != submission.run_id {
-            inner
-                .events_by_operation
-                .entry(submission.operation_id.clone())
-                .or_default()
-                .push(AsyncOperationEvent::ExternalCallbackRejected {
+            inner.push_operation_event(
+                submission.operation_id.clone(),
+                AsyncOperationEvent::ExternalCallbackRejected {
                     operation_id: operation.operation_id.clone(),
                     callback_id: submission.callback_id,
                     reason: "identity_mismatch:run_id".to_owned(),
@@ -2260,7 +2272,8 @@ impl AsyncOperationStore {
                     payload_digest: rejected_payload_digest.clone(),
                     verified_by: rejected_verified_by.clone(),
                     policy_snapshot_id: rejected_policy_snapshot_id.clone(),
-                });
+                },
+            );
             return Err(AsyncOperationError::OperationIdentityMismatch {
                 operation_id: operation.operation_id,
                 field: "run_id".to_owned(),
@@ -2269,11 +2282,9 @@ impl AsyncOperationStore {
             });
         }
         if operation.node_id != submission.node_id {
-            inner
-                .events_by_operation
-                .entry(submission.operation_id.clone())
-                .or_default()
-                .push(AsyncOperationEvent::ExternalCallbackRejected {
+            inner.push_operation_event(
+                submission.operation_id.clone(),
+                AsyncOperationEvent::ExternalCallbackRejected {
                     operation_id: operation.operation_id.clone(),
                     callback_id: submission.callback_id,
                     reason: "identity_mismatch:node_id".to_owned(),
@@ -2281,7 +2292,8 @@ impl AsyncOperationStore {
                     payload_digest: rejected_payload_digest.clone(),
                     verified_by: rejected_verified_by.clone(),
                     policy_snapshot_id: rejected_policy_snapshot_id.clone(),
-                });
+                },
+            );
             return Err(AsyncOperationError::OperationIdentityMismatch {
                 operation_id: operation.operation_id,
                 field: "node_id".to_owned(),
@@ -2290,11 +2302,9 @@ impl AsyncOperationStore {
             });
         }
         if operation.attempt_id != submission.attempt_id {
-            inner
-                .events_by_operation
-                .entry(submission.operation_id.clone())
-                .or_default()
-                .push(AsyncOperationEvent::ExternalCallbackRejected {
+            inner.push_operation_event(
+                submission.operation_id.clone(),
+                AsyncOperationEvent::ExternalCallbackRejected {
                     operation_id: operation.operation_id.clone(),
                     callback_id: submission.callback_id,
                     reason: "stale_attempt".to_owned(),
@@ -2302,7 +2312,8 @@ impl AsyncOperationStore {
                     payload_digest: rejected_payload_digest.clone(),
                     verified_by: rejected_verified_by.clone(),
                     policy_snapshot_id: rejected_policy_snapshot_id.clone(),
-                });
+                },
+            );
             return Err(AsyncOperationError::StaleAttempt {
                 operation_id: operation.operation_id,
                 expected_attempt_id: operation.attempt_id,
@@ -2310,11 +2321,9 @@ impl AsyncOperationStore {
             });
         }
         if operation.provider_operation_id != submission.provider_operation_id {
-            inner
-                .events_by_operation
-                .entry(submission.operation_id.clone())
-                .or_default()
-                .push(AsyncOperationEvent::ExternalCallbackRejected {
+            inner.push_operation_event(
+                submission.operation_id.clone(),
+                AsyncOperationEvent::ExternalCallbackRejected {
                     operation_id: operation.operation_id.clone(),
                     callback_id: submission.callback_id,
                     reason: "identity_mismatch:provider_operation_id".to_owned(),
@@ -2322,7 +2331,8 @@ impl AsyncOperationStore {
                     payload_digest: rejected_payload_digest.clone(),
                     verified_by: rejected_verified_by.clone(),
                     policy_snapshot_id: rejected_policy_snapshot_id.clone(),
-                });
+                },
+            );
             return Err(AsyncOperationError::OperationIdentityMismatch {
                 operation_id: operation.operation_id,
                 field: "provider_operation_id".to_owned(),
@@ -2332,11 +2342,9 @@ impl AsyncOperationStore {
         }
 
         if let Err(error) = registry.validate(&operation.expected_schema, &submission.payload) {
-            inner
-                .events_by_operation
-                .entry(submission.operation_id.clone())
-                .or_default()
-                .push(AsyncOperationEvent::ExternalCallbackRejected {
+            inner.push_operation_event(
+                submission.operation_id.clone(),
+                AsyncOperationEvent::ExternalCallbackRejected {
                     operation_id: operation.operation_id.clone(),
                     callback_id: submission.callback_id,
                     reason: "schema_invalid".to_owned(),
@@ -2344,7 +2352,8 @@ impl AsyncOperationStore {
                     payload_digest: rejected_payload_digest.clone(),
                     verified_by: rejected_verified_by.clone(),
                     policy_snapshot_id: rejected_policy_snapshot_id.clone(),
-                });
+                },
+            );
             return Err(match error {
                 ToolSchemaValidationError::SchemaMissing { schema_id } => {
                     AsyncOperationError::CallbackSchemaMissing { schema_id }
@@ -2382,11 +2391,9 @@ impl AsyncOperationStore {
                 | AsyncOperationState::Cancelled
                 | AsyncOperationState::Expired
         ) {
-            inner
-                .events_by_operation
-                .entry(submission.operation_id.clone())
-                .or_default()
-                .push(AsyncOperationEvent::ExternalCallbackRejected {
+            inner.push_operation_event(
+                submission.operation_id.clone(),
+                AsyncOperationEvent::ExternalCallbackRejected {
                     operation_id: operation_id.clone(),
                     callback_id: submission.callback_id,
                     reason: format!(
@@ -2397,7 +2404,8 @@ impl AsyncOperationStore {
                     payload_digest: rejected_payload_digest.clone(),
                     verified_by: rejected_verified_by.clone(),
                     policy_snapshot_id: rejected_policy_snapshot_id.clone(),
-                });
+                },
+            );
             return Err(AsyncOperationError::OperationNotWaitingCallback {
                 operation_id,
                 state: operation_state,
@@ -2411,11 +2419,9 @@ impl AsyncOperationStore {
                     submission.received_at_unix_ms >= expires_at_unix_ms
                 })
         {
-            inner
-                .events_by_operation
-                .entry(submission.operation_id.clone())
-                .or_default()
-                .push(AsyncOperationEvent::ExternalCallbackRejected {
+            inner.push_operation_event(
+                submission.operation_id.clone(),
+                AsyncOperationEvent::ExternalCallbackRejected {
                     operation_id: operation_id.clone(),
                     callback_id: submission.callback_id,
                     reason: "callback_after_expiration".to_owned(),
@@ -2423,7 +2429,8 @@ impl AsyncOperationStore {
                     payload_digest: rejected_payload_digest.clone(),
                     verified_by: rejected_verified_by.clone(),
                     policy_snapshot_id: rejected_policy_snapshot_id.clone(),
-                });
+                },
+            );
             return Err(AsyncOperationError::InvalidOperation {
                 operation_id,
                 reason: "callback received after operation expiration".to_owned(),
@@ -2453,14 +2460,13 @@ impl AsyncOperationStore {
                 | AsyncOperationState::Cancelled
                 | AsyncOperationState::Expired
         ) {
-            inner
-                .events_by_operation
-                .entry(submission.operation_id.clone())
-                .or_default()
-                .push(AsyncOperationEvent::LateExternalCallbackReceived {
+            inner.push_operation_event(
+                submission.operation_id.clone(),
+                AsyncOperationEvent::LateExternalCallbackReceived {
                     receipt: receipt.clone(),
                     terminal_state: operation_state,
-                });
+                },
+            );
             inner
                 .receipts_by_operation_and_idempotency
                 .insert(receipt_key, receipt.clone());
@@ -2471,13 +2477,12 @@ impl AsyncOperationStore {
             });
         }
 
-        inner
-            .events_by_operation
-            .entry(submission.operation_id.clone())
-            .or_default()
-            .push(AsyncOperationEvent::ExternalCallbackReceived {
+        inner.push_operation_event(
+            submission.operation_id.clone(),
+            AsyncOperationEvent::ExternalCallbackReceived {
                 receipt: receipt.clone(),
-            });
+            },
+        );
 
         let operation = inner
             .operations
@@ -2487,16 +2492,15 @@ impl AsyncOperationStore {
             })?;
         let from = operation.state;
         operation.state = AsyncOperationState::CallbackReceived;
-        inner
-            .events_by_operation
-            .entry(submission.operation_id.clone())
-            .or_default()
-            .push(AsyncOperationEvent::StateChanged {
+        inner.push_operation_event(
+            submission.operation_id.clone(),
+            AsyncOperationEvent::StateChanged {
                 operation_id: submission.operation_id.clone(),
                 from,
                 to: AsyncOperationState::CallbackReceived,
                 occurred_at_unix_ms: submission.received_at_unix_ms,
-            });
+            },
+        );
         let should_resume = match resume_decision {
             AsyncCallbackResumeDecision::ResumeAuthorized {
                 authentication_verified,
@@ -2505,70 +2509,64 @@ impl AsyncOperationStore {
                 compatible_release_id,
                 ownership_fence_token,
             } if authentication_verified => {
-                inner
-                    .events_by_operation
-                    .entry(submission.operation_id.clone())
-                    .or_default()
-                    .push(AsyncOperationEvent::CallbackResumeAuthorized {
+                inner.push_operation_event(
+                    submission.operation_id.clone(),
+                    AsyncOperationEvent::CallbackResumeAuthorized {
                         operation_id: submission.operation_id.clone(),
                         policy_decision_id,
                         budget_reservation_id,
                         compatible_release_id,
                         ownership_fence_token,
                         occurred_at_unix_ms: submission.received_at_unix_ms,
-                    });
+                    },
+                );
                 true
             }
             AsyncCallbackResumeDecision::ResumeAuthorized { .. }
             | AsyncCallbackResumeDecision::PauseAuthorizationRequired => {
-                inner
-                    .events_by_operation
-                    .entry(submission.operation_id.clone())
-                    .or_default()
-                    .push(AsyncOperationEvent::CallbackResumePaused {
+                inner.push_operation_event(
+                    submission.operation_id.clone(),
+                    AsyncOperationEvent::CallbackResumePaused {
                         operation_id: submission.operation_id.clone(),
                         reason: "explicit callback resume authorization required".to_owned(),
                         occurred_at_unix_ms: submission.received_at_unix_ms,
-                    });
+                    },
+                );
                 false
             }
             AsyncCallbackResumeDecision::PauseBudget { reason } => {
-                inner
-                    .events_by_operation
-                    .entry(submission.operation_id.clone())
-                    .or_default()
-                    .push(AsyncOperationEvent::CallbackResumePaused {
+                inner.push_operation_event(
+                    submission.operation_id.clone(),
+                    AsyncOperationEvent::CallbackResumePaused {
                         operation_id: submission.operation_id.clone(),
                         reason,
                         occurred_at_unix_ms: submission.received_at_unix_ms,
-                    });
+                    },
+                );
                 false
             }
             AsyncCallbackResumeDecision::DenyPolicy {
                 decision_id,
                 reason,
             } => {
-                inner
-                    .events_by_operation
-                    .entry(submission.operation_id.clone())
-                    .or_default()
-                    .push(AsyncOperationEvent::CallbackResumeDenied {
+                inner.push_operation_event(
+                    submission.operation_id.clone(),
+                    AsyncOperationEvent::CallbackResumeDenied {
                         operation_id: submission.operation_id.clone(),
                         decision_id,
                         reason,
                         occurred_at_unix_ms: submission.received_at_unix_ms,
-                    });
+                    },
+                );
                 false
             }
             AsyncCallbackResumeDecision::PauseReleaseIncompatible {
                 required_release_id,
                 available_release_id,
             } => {
-                inner
-                    .events_by_operation
-                    .entry(submission.operation_id.clone())
-                    .or_default()
-                    .push(AsyncOperationEvent::CallbackResumePaused {
+                inner.push_operation_event(
+                    submission.operation_id.clone(),
+                    AsyncOperationEvent::CallbackResumePaused {
                         operation_id: submission.operation_id.clone(),
                         reason: format!(
                             "release incompatible: required {required_release_id}, available {available_release_id}"
@@ -2642,16 +2640,15 @@ impl AsyncOperationStore {
         let from = operation.state;
         operation.state = AsyncOperationState::Cancelled;
         operation.completed_at_unix_ms = Some(cancelled_at_unix_ms);
-        inner
-            .events_by_operation
-            .entry(operation_id.to_owned())
-            .or_default()
-            .push(AsyncOperationEvent::StateChanged {
+        inner.push_operation_event(
+            operation_id.to_owned(),
+            AsyncOperationEvent::StateChanged {
                 operation_id: operation_id.to_owned(),
                 from,
                 to: AsyncOperationState::Cancelled,
                 occurred_at_unix_ms: cancelled_at_unix_ms,
-            });
+            },
+        );
         Ok(())
     }
 
@@ -2699,16 +2696,15 @@ impl AsyncOperationStore {
         let from = operation.state;
         operation.state = AsyncOperationState::Expired;
         operation.completed_at_unix_ms = Some(expired_at_unix_ms);
-        inner
-            .events_by_operation
-            .entry(operation_id.to_owned())
-            .or_default()
-            .push(AsyncOperationEvent::StateChanged {
+        inner.push_operation_event(
+            operation_id.to_owned(),
+            AsyncOperationEvent::StateChanged {
                 operation_id: operation_id.to_owned(),
                 from,
                 to: AsyncOperationState::Expired,
                 occurred_at_unix_ms: expired_at_unix_ms,
-            });
+            },
+        );
         Ok(())
     }
 
@@ -2739,11 +2735,9 @@ impl AsyncOperationStore {
             return Ok(());
         }
         let payload_digest = canonical_hash(&submission.payload)?;
-        inner
-            .events_by_operation
-            .entry(submission.operation_id.clone())
-            .or_default()
-            .push(AsyncOperationEvent::ExternalCallbackRejected {
+        inner.push_operation_event(
+            submission.operation_id.clone(),
+            AsyncOperationEvent::ExternalCallbackRejected {
                 operation_id: submission.operation_id.clone(),
                 callback_id: submission.callback_id.clone(),
                 reason: reason.to_owned(),
@@ -2751,7 +2745,8 @@ impl AsyncOperationStore {
                 payload_digest,
                 verified_by: submission.verified_by.clone(),
                 policy_snapshot_id: submission.policy_snapshot_id.clone(),
-            });
+            },
+        );
         Ok(())
     }
 }
@@ -3338,11 +3333,7 @@ impl SqliteAsyncOperationStore {
                             .to_owned(),
                     });
                 }
-                inner
-                    .events_by_operation
-                    .entry(operation_id)
-                    .or_default()
-                    .push(event);
+                inner.push_operation_event(operation_id, event);
             }
         }
         drop(inner);
@@ -4417,5 +4408,31 @@ mod tests {
         assert!(poisoned.is_err());
         assert_eq!(store.try_operation_state("missing")?, None);
         Ok(())
+    }
+
+    #[test]
+    fn operation_event_history_is_bounded_with_oldest_first_eviction() {
+        let mut inner = AsyncOperationStoreInner::default();
+        for index in 0..(MAX_ASYNC_OPERATION_EVENTS_PER_OPERATION as u64 + 5) {
+            inner.push_operation_event(
+                "operation-1".to_owned(),
+                AsyncOperationEvent::ExternalCallbackRejected {
+                    operation_id: "operation-1".to_owned(),
+                    callback_id: format!("callback-{index}"),
+                    reason: "flood".to_owned(),
+                    occurred_at_unix_ms: index + 1,
+                    payload_digest: "sha256:".to_owned() + &"a".repeat(64),
+                    verified_by: "hmac".to_owned(),
+                    policy_snapshot_id: "policy-1".to_owned(),
+                },
+            );
+        }
+
+        let events = &inner.events_by_operation["operation-1"];
+        assert_eq!(events.len(), MAX_ASYNC_OPERATION_EVENTS_PER_OPERATION);
+        let AsyncOperationEvent::ExternalCallbackRejected { callback_id, .. } = &events[0] else {
+            panic!("expected a rejected-callback event");
+        };
+        assert_eq!(callback_id, "callback-5", "oldest events must be evicted");
     }
 }

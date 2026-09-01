@@ -1554,10 +1554,11 @@ impl SqliteCallbackDeliveryQueue {
                     delivery.status = CallbackDeliveryStatus::DeadLettered;
                     delivery.next_retry_at_unix_ms = None;
                 } else if let Some(next_attempt) = delivery.attempt.checked_add(1)
-                    && let Some(next_retry_at_unix_ms) = now_unix_ms.checked_add(
-                        retry_policy
-                            .delay_for_attempt_with_jitter(next_attempt - 1, &delivery.idempotency_key),
-                    )
+                    && let Some(next_retry_at_unix_ms) =
+                        now_unix_ms.checked_add(retry_policy.delay_for_attempt_with_jitter(
+                            next_attempt - 1,
+                            &delivery.idempotency_key,
+                        ))
                 {
                     delivery.attempt = next_attempt;
                     delivery.status = CallbackDeliveryStatus::Pending;

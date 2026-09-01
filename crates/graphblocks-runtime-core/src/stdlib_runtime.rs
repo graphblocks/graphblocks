@@ -3218,9 +3218,7 @@ fn append_resumed_segment_journal_records(
     let resumed_wait_node = waiting_records
         .iter()
         .rev()
-        .find(|record| {
-            record.get("kind").and_then(Value::as_str) == Some("run_waiting_callback")
-        })
+        .find(|record| record.get("kind").and_then(Value::as_str) == Some("run_waiting_callback"))
         .and_then(|record| record.pointer("/payload/waitNode"))
         .and_then(Value::as_str);
     for record in segment_records {
