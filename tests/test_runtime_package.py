@@ -2727,3 +2727,24 @@ def test_stable_runtime_wrapper_rejects_open_or_preview_results(
             {},
             run_id="stable-run-1",
         )
+
+
+def test_runtime_checkpoint_rejects_cyclic_json_values() -> None:
+    from graphblocks.runtime import RuntimeCheckpoint
+
+    cyclic_request: dict[str, object] = {}
+    cyclic_request["self"] = cyclic_request
+
+    with pytest.raises(ValueError, match="inputs must contain only JSON values"):
+        RuntimeCheckpoint(
+            checkpoint_id="checkpoint-1",
+            run_id="run-1",
+            graph_hash="sha256:" + "a" * 64,
+            wait_node="wait",
+            remaining_nodes=("wait",),
+            inputs={"request": cyclic_request},
+            node_outputs={},
+            output_values={},
+            operation={},
+            state_digest="sha256:" + "b" * 64,
+        )

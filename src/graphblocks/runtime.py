@@ -139,25 +139,47 @@ def _configured_retry_attempts(value: Any) -> int:
     return 1
 
 
-def _freeze_json_like(value: Any) -> Any:
+def _guard_json_cycle(value: Any, active_containers: set[int] | None) -> set[int]:
+    # A cyclic container would otherwise recurse until RecursionError escapes
+    # as an internal failure; reject it as invalid input instead.
+    active = set() if active_containers is None else active_containers
+    if id(value) in active:
+        raise ValueError("runtime JSON value must not contain cyclic values")
+    active.add(id(value))
+    return active
+
+
+def _freeze_json_like(value: Any, _active_containers: set[int] | None = None) -> Any:
     if isinstance(value, Mapping):
-        return FrozenDict(
-            {key: _freeze_json_like(nested) for key, nested in value.items()}
-        )
-    if isinstance(value, list):
-        return FrozenList(_freeze_json_like(nested) for nested in value)
-    if isinstance(value, tuple):
-        return FrozenList(_freeze_json_like(nested) for nested in value)
+        active = _guard_json_cycle(value, _active_containers)
+        try:
+            return FrozenDict(
+                {key: _freeze_json_like(nested, active) for key, nested in value.items()}
+            )
+        finally:
+            active.remove(id(value))
+    if isinstance(value, (list, tuple)):
+        active = _guard_json_cycle(value, _active_containers)
+        try:
+            return FrozenList(_freeze_json_like(nested, active) for nested in value)
+        finally:
+            active.remove(id(value))
     return value
 
 
-def _mutable_json_like(value: Any) -> Any:
+def _mutable_json_like(value: Any, _active_containers: set[int] | None = None) -> Any:
     if isinstance(value, Mapping):
-        return {key: _mutable_json_like(nested) for key, nested in value.items()}
-    if isinstance(value, tuple):
-        return [_mutable_json_like(nested) for nested in value]
-    if isinstance(value, list):
-        return [_mutable_json_like(nested) for nested in value]
+        active = _guard_json_cycle(value, _active_containers)
+        try:
+            return {key: _mutable_json_like(nested, active) for key, nested in value.items()}
+        finally:
+            active.remove(id(value))
+    if isinstance(value, (list, tuple)):
+        active = _guard_json_cycle(value, _active_containers)
+        try:
+            return [_mutable_json_like(nested, active) for nested in value]
+        finally:
+            active.remove(id(value))
     return value
 
 
