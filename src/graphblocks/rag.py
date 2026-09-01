@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field, replace
-from datetime import datetime, timezone
+from datetime import datetime
 from decimal import Decimal
 import json
 import math
@@ -10,6 +10,7 @@ import re
 from typing import Literal, TypeAlias
 
 from ._canonical_reference import canonical_dumps, canonical_hash
+from ._datetime import parse_utc_iso_datetime
 from .documents import (
     DocumentChunk,
     DocumentSpan,
@@ -148,39 +149,10 @@ def _copy_typed_list(owner: str, field_name: str, value: object, item_type: type
 def _parse_iso_datetime(value: str, *, field: str) -> datetime:
     if not isinstance(value, str) or not value.strip():
         raise ValueError(f"{field} must be a non-empty ISO datetime")
-    normalized = value
-    if normalized != normalized.strip() or len(normalized) <= 19 or normalized[10] != "T":
-        raise ValueError(f"{field} must be an ISO datetime")
-    timezone_start = 19
-    if normalized[timezone_start] == ".":
-        timezone_start += 1
-        while timezone_start < len(normalized) and normalized[timezone_start].isdigit():
-            timezone_start += 1
-        if timezone_start == 20:
-            raise ValueError(f"{field} must be an ISO datetime")
-    suffix = normalized[timezone_start:]
-    if normalized.endswith("Z"):
-        if suffix != "Z":
-            raise ValueError(f"{field} must be an ISO datetime")
-        normalized = f"{normalized[:timezone_start]}+00:00"
-    elif (
-        len(suffix) == 6
-        and suffix[0] in {"+", "-"}
-        and suffix[1:3].isdigit()
-        and suffix[3] == ":"
-        and suffix[4:6].isdigit()
-    ):
-        offset_hours = int(suffix[1:3])
-        offset_minutes = int(suffix[4:6])
-        if offset_hours > 23 or offset_minutes > 59:
-            raise ValueError(f"{field} must be an ISO datetime")
-    else:
-        raise ValueError(f"{field} must be an ISO datetime")
     try:
-        parsed = datetime.fromisoformat(normalized)
-    except ValueError as error:
-        raise ValueError(f"{field} must be an ISO datetime") from error
-    return parsed.astimezone(timezone.utc)
+        return parse_utc_iso_datetime(value)
+    except ValueError:
+        raise ValueError(f"{field} must be an ISO datetime") from None
 
 
 def _source_modified_at_satisfies(source_modified_at: object, minimum_source_modified_at: str) -> bool:

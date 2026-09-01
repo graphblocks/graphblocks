@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime
 from decimal import Decimal
 from typing import Literal
 
 from .budget import BudgetPermit, UsageAmount
 from .output_policy import OutputCutoff as OutputCutoff
+from ._datetime import parse_utc_iso_datetime
 
 
 ContinuationWork = Literal[
@@ -163,16 +164,10 @@ def _validate_exact_non_empty_string(
 
 def _parse_iso_datetime(owner: str, field_name: str, value: object) -> datetime:
     value = _validate_exact_non_empty_string(owner, field_name, value)
-    normalized = f"{value[:-1]}+00:00" if value.endswith("Z") else value
     try:
-        parsed = datetime.fromisoformat(normalized)
-    except ValueError as error:
-        raise ValueError(
-            f"{owner} {field_name} must be an ISO datetime"
-        ) from error
-    if parsed.tzinfo is None:
-        raise ValueError(f"{owner} {field_name} must include a timezone")
-    return parsed.astimezone(timezone.utc)
+        return parse_utc_iso_datetime(value)
+    except ValueError:
+        raise ValueError(f"{owner} {field_name} must be an ISO datetime") from None
 
 
 @dataclass(frozen=True, slots=True)

@@ -2,11 +2,12 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field, fields, is_dataclass, replace
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Literal, get_args
 
 from ._canonical_reference import MAX_CANONICAL_JSON_DEPTH, canonical_dumps, canonical_hash
 from .documents import FrozenDict
+from ._datetime import parse_utc_iso_datetime
 
 
 PolicyEffect = Literal["allow", "deny", "allow_with_obligations", "defer"]
@@ -1415,37 +1416,10 @@ def _validate_policy_datetime(owner: str, field_name: str, value: object) -> str
 def _parse_policy_datetime(value: str) -> datetime:
     if not isinstance(value, str) or not value.strip():
         raise ValueError("policy datetime must be a non-empty ISO datetime")
-    normalized = value.strip()
-    if normalized != value or len(normalized) <= 19 or normalized[10] != "T":
-        raise ValueError("policy datetime must be an ISO datetime")
-    suffix_start = 19
-    if normalized[suffix_start] == ".":
-        suffix_start += 1
-        fraction_start = suffix_start
-        while suffix_start < len(normalized) and normalized[suffix_start].isdigit():
-            suffix_start += 1
-        if suffix_start == fraction_start:
-            raise ValueError("policy datetime must be an ISO datetime")
-    timezone_suffix = normalized[suffix_start:]
-    if normalized.endswith("Z"):
-        normalized = f"{normalized[:-1]}+00:00"
-    elif (
-        len(timezone_suffix) != 6
-        or timezone_suffix[0] not in {"+", "-"}
-        or timezone_suffix[3] != ":"
-        or not timezone_suffix[1:3].isdigit()
-        or not timezone_suffix[4:6].isdigit()
-        or int(timezone_suffix[1:3]) > 23
-        or int(timezone_suffix[4:6]) > 59
-    ):
-        raise ValueError("policy datetime must be an ISO datetime")
     try:
-        parsed = datetime.fromisoformat(normalized)
-    except ValueError as error:
-        raise ValueError("policy datetime must be an ISO datetime") from error
-    if parsed.tzinfo is None:
-        raise ValueError("policy datetime must be an ISO datetime")
-    return parsed.astimezone(timezone.utc)
+        return parse_utc_iso_datetime(value)
+    except ValueError:
+        raise ValueError("policy datetime must be an ISO datetime") from None
 
 
 def evaluate_native_output_gate(

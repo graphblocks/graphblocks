@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from ._datetime import parse_utc_iso_datetime
+
 from collections.abc import Callable, Iterable, Iterator, Mapping
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
@@ -2639,49 +2641,10 @@ def _validate_resolved_tool_capability(
 def _parse_iso_datetime(value: str, *, owner: str, field: str) -> datetime:
     if not isinstance(value, str) or not value.strip():
         raise RemoteToolAdapterError(f"{owner} tool invocation {field} must be a non-empty ISO datetime")
-    normalized = value.strip()
-    if normalized != value or len(normalized) <= 10 or normalized[10] != "T":
-        raise RemoteToolAdapterError(f"{owner} tool invocation {field} must be an ISO datetime")
-    suffix = normalized[19:]
-    suffix_valid = False
-    if suffix.startswith("."):
-        offset_start = min(
-            (
-                position
-                for position in (
-                    suffix.find("Z"),
-                    suffix.find("+"),
-                    suffix.find("-"),
-                )
-                if position >= 0
-            ),
-            default=-1,
-        )
-        if offset_start > 1 and suffix[1:offset_start].isdigit():
-            suffix = suffix[offset_start:]
-    if suffix == "Z":
-        suffix_valid = True
-    elif (
-        len(suffix) == 6
-        and suffix[0] in "+-"
-        and suffix[1:3].isdigit()
-        and suffix[3] == ":"
-        and suffix[4:6].isdigit()
-        and 0 <= int(suffix[1:3]) <= 23
-        and 0 <= int(suffix[4:6]) <= 59
-    ):
-        suffix_valid = True
-    if not suffix_valid:
-        raise RemoteToolAdapterError(f"{owner} tool invocation {field} must be an ISO datetime")
-    if normalized.endswith("Z"):
-        normalized = f"{normalized[:-1]}+00:00"
     try:
-        parsed = datetime.fromisoformat(normalized)
-    except ValueError as error:
-        raise RemoteToolAdapterError(f"{owner} tool invocation {field} must be an ISO datetime") from error
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
-    return parsed.astimezone(timezone.utc)
+        return parse_utc_iso_datetime(value)
+    except ValueError:
+        raise RemoteToolAdapterError(f"{owner} tool invocation {field} must be an ISO datetime") from None
 
 
 def _application_events_from_payloads(event_payloads: object) -> tuple[ApplicationEvent, ...]:

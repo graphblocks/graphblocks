@@ -2,10 +2,11 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Literal
 
 from .application_event import ApplicationEvent, ApplicationProtocolEvent
+from ._datetime import parse_utc_iso_datetime
 
 
 CallbackSubscriptionScope = Literal["run", "conversation", "project", "tenant", "deployment"]
@@ -118,40 +119,10 @@ def _validate_positive_int(
 
 
 def _parse_iso_datetime(owner: str, field_name: str, value: object) -> datetime:
-    if not isinstance(value, str) or not value.strip() or value != value.strip():
-        raise ValueError(f"{owner} {field_name} must be an ISO datetime")
-    if len(value) <= 19 or value[10] != "T":
-        raise ValueError(f"{owner} {field_name} must be an ISO datetime")
-    suffix_start = 19
-    if value[suffix_start] == ".":
-        suffix_start += 1
-        fraction_start = suffix_start
-        while suffix_start < len(value) and value[suffix_start].isdigit():
-            suffix_start += 1
-        if suffix_start == fraction_start:
-            raise ValueError(f"{owner} {field_name} must be an ISO datetime")
-    timezone_suffix = value[suffix_start:]
-    if value.endswith("Z"):
-        normalized = f"{value[:-1]}+00:00"
-    elif (
-        len(timezone_suffix) != 6
-        or timezone_suffix[0] not in {"+", "-"}
-        or timezone_suffix[3] != ":"
-        or not timezone_suffix[1:3].isdigit()
-        or not timezone_suffix[4:6].isdigit()
-        or int(timezone_suffix[1:3]) > 23
-        or int(timezone_suffix[4:6]) > 59
-    ):
-        raise ValueError(f"{owner} {field_name} must be an ISO datetime")
-    else:
-        normalized = value
     try:
-        parsed = datetime.fromisoformat(normalized)
+        return parse_utc_iso_datetime(value)
     except ValueError:
         raise ValueError(f"{owner} {field_name} must be an ISO datetime") from None
-    if parsed.tzinfo is None:
-        raise ValueError(f"{owner} {field_name} must be an ISO datetime")
-    return parsed.astimezone(timezone.utc)
 
 
 def _normalize_iso_datetime(owner: str, field_name: str, value: object) -> str:

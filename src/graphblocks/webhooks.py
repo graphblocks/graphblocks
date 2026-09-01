@@ -17,6 +17,7 @@ from ._canonical_reference import MAX_CANONICAL_JSON_DEPTH, canonical_dumps, can
 from .documents import ArtifactRef
 from .server import ServerCallbackDeliveryResult, ServerCallbackRegistration
 from .url_validation import validate_webhook_url
+from ._datetime import parse_utc_iso_datetime
 
 
 REQUIRED_WEBHOOK_HEADERS = (
@@ -127,49 +128,10 @@ def _format_utc_timestamp(value: datetime) -> str:
 
 def _parse_utc_timestamp(value: str) -> datetime:
     _require_non_empty_string("timestamp", value)
-    timestamp = value.strip()
-    if timestamp != value or len(timestamp) <= 10 or timestamp[10] != "T":
-        raise ValueError("timestamp must be an ISO-8601 datetime")
-    suffix = timestamp[19:]
-    suffix_valid = False
-    if suffix.startswith("."):
-        offset_start = min(
-            (
-                position
-                for position in (
-                    suffix.find("Z"),
-                    suffix.find("+"),
-                    suffix.find("-"),
-                )
-                if position >= 0
-            ),
-            default=-1,
-        )
-        if offset_start > 1 and suffix[1:offset_start].isdigit():
-            suffix = suffix[offset_start:]
-    if suffix == "Z":
-        suffix_valid = True
-    elif (
-        len(suffix) == 6
-        and suffix[0] in "+-"
-        and suffix[1:3].isdigit()
-        and suffix[3] == ":"
-        and suffix[4:6].isdigit()
-        and 0 <= int(suffix[1:3]) <= 23
-        and 0 <= int(suffix[4:6]) <= 59
-    ):
-        suffix_valid = True
-    if not suffix_valid:
-        raise ValueError("timestamp must be an ISO-8601 datetime")
     try:
-        parsed = datetime.fromisoformat(
-            timestamp.replace("Z", "+00:00") if timestamp.endswith("Z") else timestamp
-        )
+        return parse_utc_iso_datetime(value)
     except ValueError:
         raise ValueError("timestamp must be an ISO-8601 datetime") from None
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
-    return parsed.astimezone(timezone.utc)
 
 
 def _add_milliseconds(

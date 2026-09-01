@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
-from datetime import datetime, timezone
+from datetime import datetime
 from functools import wraps
 from threading import RLock
 from typing import ParamSpec, Protocol, TypeVar, cast
@@ -11,6 +11,7 @@ from ._immutability import freeze_json_mapping, thaw_json_value
 from ._canonical_reference import canonical_hash
 from .evaluation import ResourceSnapshotRef, ReviewDecision, ReviewRecord
 from .policy import PrincipalRef
+from ._datetime import parse_utc_iso_datetime
 
 
 _P = ParamSpec("_P")
@@ -86,37 +87,10 @@ def _parse_review_datetime(value: object, *, owner: str, field_name: str) -> dat
         raise ValueError(f"{owner} {field_name} must be a string")
     if not value.strip():
         raise ValueError(f"{owner} {field_name} must not be empty")
-    normalized = value
-    if normalized != normalized.strip() or len(normalized) <= 19 or normalized[10] != "T":
-        raise ValueError(f"{owner} {field_name} must be an ISO datetime")
-    timezone_start = 19
-    if normalized[timezone_start] == ".":
-        timezone_start += 1
-        while timezone_start < len(normalized) and normalized[timezone_start].isdigit():
-            timezone_start += 1
-        if timezone_start == 20:
-            raise ValueError(f"{owner} {field_name} must be an ISO datetime")
-    suffix = normalized[timezone_start:]
-    if suffix == "Z":
-        normalized = f"{normalized[:timezone_start]}+00:00"
-    elif (
-        len(suffix) == 6
-        and suffix[0] in {"+", "-"}
-        and suffix[1:3].isdigit()
-        and suffix[3] == ":"
-        and suffix[4:6].isdigit()
-    ):
-        offset_hours = int(suffix[1:3])
-        offset_minutes = int(suffix[4:6])
-        if offset_hours > 23 or offset_minutes > 59:
-            raise ValueError(f"{owner} {field_name} must be an ISO datetime")
-    else:
-        raise ValueError(f"{owner} {field_name} must be an ISO datetime")
     try:
-        parsed = datetime.fromisoformat(normalized)
-    except ValueError as error:
-        raise ValueError(f"{owner} {field_name} must be an ISO datetime") from error
-    return parsed.astimezone(timezone.utc)
+        return parse_utc_iso_datetime(value)
+    except ValueError:
+        raise ValueError(f"{owner} {field_name} must be an ISO datetime") from None
 
 
 def _validate_optional_review_datetime(owner: str, field_name: str, value: object | None) -> None:
