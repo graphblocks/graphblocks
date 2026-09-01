@@ -414,6 +414,48 @@ def test_compile_rejects_unenforced_holdback_duration_bound() -> None:
     ]
 
 
+def test_compile_reports_output_policy_delivery_paths_with_document_aliases() -> None:
+    graph = {
+        "apiVersion": "graphblocks.ai/v1",
+        "kind": "Graph",
+        "metadata": {"name": "snake-output-policy-paths"},
+        "spec": {
+            "output_policy": {
+                "delivery": {
+                    "mode": "stream",
+                    "on_violation": "pause",
+                },
+                "evaluation": {
+                    "enforcementPoints": [
+                        "on_generation_chunk",
+                        "before_client_delivery",
+                        "before_output_commit",
+                    ],
+                },
+            },
+            "nodes": {},
+        },
+    }
+
+    assert _error_diagnostics(graph) == [
+        (
+            "GB0014",
+            'unexpected properties are not allowed: ["output_policy"]',
+            "$.spec",
+        ),
+        (
+            "GB1030",
+            "invalid output delivery mode stream",
+            "$.spec.output_policy.delivery.mode",
+        ),
+        (
+            "GB1044",
+            "invalid violation action pause",
+            "$.spec.output_policy.delivery.on_violation",
+        ),
+    ]
+
+
 def test_compile_rejects_explicit_numeric_nested_source_path() -> None:
     graph = {
         "apiVersion": "graphblocks.ai/v1",

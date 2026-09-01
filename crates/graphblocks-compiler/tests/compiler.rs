@@ -5376,6 +5376,59 @@ fn compile_graph_preserves_nested_closed_schema_diagnostics() {
 }
 
 #[test]
+fn compile_graph_reports_output_policy_delivery_paths_with_document_aliases() {
+    let graph = json!({
+        "apiVersion": GRAPH_API_VERSION,
+        "kind": "Graph",
+        "metadata": {"name": "snake-output-policy-paths"},
+        "spec": {
+            "nodes": {},
+            "output_policy": {
+                "delivery": {
+                    "mode": "stream",
+                    "on_violation": "pause"
+                },
+                "evaluation": {
+                    "enforcementPoints": [
+                        "on_generation_chunk",
+                        "before_client_delivery",
+                        "before_output_commit"
+                    ]
+                }
+            }
+        }
+    });
+
+    let errors = compile_graph_for_discovery(&graph)
+        .diagnostics
+        .into_iter()
+        .filter(|diagnostic| diagnostic.severity == Severity::Error)
+        .map(|diagnostic| (diagnostic.code, diagnostic.message, diagnostic.path))
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        errors,
+        vec![
+            (
+                "GB0014".to_owned(),
+                "unexpected properties are not allowed: [\"output_policy\"]".to_owned(),
+                "$.spec".to_owned(),
+            ),
+            (
+                "GB1030".to_owned(),
+                "invalid output delivery mode stream".to_owned(),
+                "$.spec.output_policy.delivery.mode".to_owned(),
+            ),
+            (
+                "GB1044".to_owned(),
+                "invalid violation action pause".to_owned(),
+                "$.spec.output_policy.delivery.on_violation".to_owned(),
+            ),
+        ]
+    );
+}
+
+#[test]
 fn compile_graph_rejects_overlapping_nested_edge_targets() {
     for (first_target, second_target) in [
         ("sink.value", "sink.value.deep"),

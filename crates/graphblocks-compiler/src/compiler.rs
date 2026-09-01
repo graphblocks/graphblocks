@@ -2532,7 +2532,7 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
     let delivery = output_policy.and_then(|(output_policy_key, output_policy)| match output_policy
         .get("delivery")
     {
-        Some(Value::Object(delivery)) => Some(delivery),
+        Some(Value::Object(delivery)) => Some((output_policy_key, delivery)),
         Some(_) => {
             diagnostics.push(Diagnostic::error(
                 "GB1034",
@@ -2544,7 +2544,8 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
         None => None,
     });
 
-    if let Some(delivery) = delivery {
+    if let Some((output_policy_key, delivery)) = delivery {
+        let delivery_path = format!("$.spec.{output_policy_key}.delivery");
         let mode = delivery.get("mode").and_then(Value::as_str);
         if let Some(mode) = delivery.get("mode")
             && !mode.as_str().is_some_and(|mode| {
@@ -2560,13 +2561,19 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
                     "invalid output delivery mode {}",
                     python_diagnostic_value(mode)
                 ),
-                "$.spec.outputPolicy.delivery.mode",
+                format!("{delivery_path}.mode"),
             ));
         }
 
-        if let Some(on_violation) = delivery
+        let delivery_on_violation = delivery
             .get("onViolation")
-            .or_else(|| delivery.get("on_violation"))
+            .map(|value| ("onViolation", value))
+            .or_else(|| {
+                delivery
+                    .get("on_violation")
+                    .map(|value| ("on_violation", value))
+            });
+        if let Some((path_key, on_violation)) = delivery_on_violation
             && !on_violation.as_str().is_some_and(|on_violation| {
                 matches!(
                     on_violation,
@@ -2580,7 +2587,7 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
                     "invalid violation action {}",
                     python_diagnostic_value(on_violation)
                 ),
-                "$.spec.outputPolicy.delivery.onViolation",
+                format!("{delivery_path}.{path_key}"),
             ));
         }
 
@@ -2605,7 +2612,7 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
                     "invalid draft disposition {}",
                     python_diagnostic_value(delivered_draft_disposition)
                 ),
-                format!("$.spec.outputPolicy.delivery.{path_key}"),
+                format!("{delivery_path}.{path_key}"),
             ));
         }
 
@@ -2637,7 +2644,7 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
                                 "invalid flush boundary {}",
                                 python_diagnostic_value(boundary)
                             ),
-                            format!("$.spec.outputPolicy.delivery.{path_key}[{boundary_index}]"),
+                            format!("{delivery_path}.{path_key}[{boundary_index}]"),
                         ));
                     }
                 }
@@ -2645,7 +2652,7 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
                 diagnostics.push(Diagnostic::error(
                     "GB1029",
                     "flush boundaries must be a list of strings",
-                    format!("$.spec.outputPolicy.delivery.{path_key}"),
+                    format!("{delivery_path}.{path_key}"),
                 ));
             }
         }
@@ -2691,13 +2698,13 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
                 diagnostics.push(Diagnostic::error(
                     "GB1051",
                     "holdback duration bounds are not supported by the local runtime",
-                    "$.spec.outputPolicy.delivery",
+                    delivery_path.clone(),
                 ));
             } else if !has_token_bound && !has_byte_bound {
                 diagnostics.push(Diagnostic::error(
                     "GB1051",
                     "bounded_holdback output delivery requires a token or byte bound",
-                    "$.spec.outputPolicy.delivery",
+                    delivery_path.clone(),
                 ));
             }
         } else if matches!(mode, Some("buffer_until_commit" | "immediate_draft"))
@@ -2706,23 +2713,19 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
             diagnostics.push(Diagnostic::error(
                 "GB1054",
                 "holdback limits require bounded_holdback output delivery mode",
-                "$.spec.outputPolicy.delivery",
+                delivery_path.clone(),
             ));
         }
 
-        if mode == Some("immediate_draft") {
-            let delivered_draft_disposition = delivery
-                .get("deliveredDraftDisposition")
-                .or_else(|| delivery.get("delivered_draft_disposition"))
-                .and_then(Value::as_str)
-                .unwrap_or("retract");
-            if delivered_draft_disposition == "keep" {
-                diagnostics.push(Diagnostic::error(
-                    "GB1025",
-                    "immediate_draft output delivery requires incomplete or retracted draft semantics",
-                    "$.spec.outputPolicy.delivery.deliveredDraftDisposition",
-                ));
-            }
+        if mode == Some("immediate_draft")
+            && let Some((path_key, disposition)) = delivered_draft_disposition
+            && disposition.as_str() == Some("keep")
+        {
+            diagnostics.push(Diagnostic::error(
+                "GB1025",
+                "immediate_draft output delivery requires incomplete or retracted draft semantics",
+                format!("{delivery_path}.{path_key}"),
+            ));
         }
     }
 

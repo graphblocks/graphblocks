@@ -1608,6 +1608,7 @@ def _validate_output_policy(context: _ValidationContext) -> _ValidationContext:
             )
             delivery = None
         if delivery is not None:
+            delivery_path = f"$.spec.{output_policy_key}.delivery"
             mode = delivery.get("mode")
             if mode is not None and (
                 not isinstance(mode, str) or mode not in VALID_OUTPUT_DELIVERY_MODES
@@ -1616,12 +1617,15 @@ def _validate_output_policy(context: _ValidationContext) -> _ValidationContext:
                     Diagnostic(
                         "GB1030",
                         f"invalid output delivery mode {_diagnostic_value(mode)}",
-                        "$.spec.outputPolicy.delivery.mode",
+                        f"{delivery_path}.mode",
                     )
                 )
-            delivery_on_violation = delivery.get(
-                "onViolation", delivery.get("on_violation")
-            )
+            if "onViolation" in delivery:
+                delivery_on_violation = delivery.get("onViolation")
+                delivery_on_violation_path = f"{delivery_path}.onViolation"
+            else:
+                delivery_on_violation = delivery.get("on_violation")
+                delivery_on_violation_path = f"{delivery_path}.on_violation"
             if delivery_on_violation is not None and (
                 not isinstance(delivery_on_violation, str)
                 or delivery_on_violation not in VALID_VIOLATION_ACTIONS
@@ -1630,20 +1634,20 @@ def _validate_output_policy(context: _ValidationContext) -> _ValidationContext:
                     Diagnostic(
                         "GB1044",
                         f"invalid violation action {_diagnostic_value(delivery_on_violation)}",
-                        "$.spec.outputPolicy.delivery.onViolation",
+                        delivery_on_violation_path,
                     )
                 )
             if "deliveredDraftDisposition" in delivery:
                 delivered_draft_disposition = delivery.get("deliveredDraftDisposition")
                 delivered_draft_path = (
-                    "$.spec.outputPolicy.delivery.deliveredDraftDisposition"
+                    f"{delivery_path}.deliveredDraftDisposition"
                 )
             else:
                 delivered_draft_disposition = delivery.get(
                     "delivered_draft_disposition"
                 )
                 delivered_draft_path = (
-                    "$.spec.outputPolicy.delivery.delivered_draft_disposition"
+                    f"{delivery_path}.delivered_draft_disposition"
                 )
             if delivered_draft_disposition is not None and (
                 not isinstance(delivered_draft_disposition, str)
@@ -1659,10 +1663,10 @@ def _validate_output_policy(context: _ValidationContext) -> _ValidationContext:
                 )
             if "flushBoundaries" in delivery:
                 flush_boundaries = delivery.get("flushBoundaries")
-                flush_boundaries_path = "$.spec.outputPolicy.delivery.flushBoundaries"
+                flush_boundaries_path = f"{delivery_path}.flushBoundaries"
             else:
                 flush_boundaries = delivery.get("flush_boundaries")
-                flush_boundaries_path = "$.spec.outputPolicy.delivery.flush_boundaries"
+                flush_boundaries_path = f"{delivery_path}.flush_boundaries"
             if flush_boundaries is not None:
                 if isinstance(flush_boundaries, list):
                     for boundary_index, boundary in enumerate(flush_boundaries):
@@ -1708,7 +1712,7 @@ def _validate_output_policy(context: _ValidationContext) -> _ValidationContext:
                         Diagnostic(
                             "GB1051",
                             "holdback duration bounds are not supported by the local runtime",
-                            "$.spec.outputPolicy.delivery",
+                            delivery_path,
                         )
                     )
                 elif not has_token_bound and not has_byte_bound:
@@ -1716,7 +1720,7 @@ def _validate_output_policy(context: _ValidationContext) -> _ValidationContext:
                         Diagnostic(
                             "GB1051",
                             "bounded_holdback output delivery requires a token or byte bound",
-                            "$.spec.outputPolicy.delivery",
+                            delivery_path,
                         )
                     )
             elif mode in {"buffer_until_commit", "immediate_draft"} and (
@@ -1726,23 +1730,18 @@ def _validate_output_policy(context: _ValidationContext) -> _ValidationContext:
                     Diagnostic(
                         "GB1054",
                         "holdback limits require bounded_holdback output delivery mode",
-                        "$.spec.outputPolicy.delivery",
+                        delivery_path,
                     )
                 )
 
-            if mode == "immediate_draft":
-                delivered_draft_disposition = delivery.get(
-                    "deliveredDraftDisposition",
-                    delivery.get("delivered_draft_disposition", "retract"),
-                )
-                if delivered_draft_disposition == "keep":
-                    diagnostics.append(
-                        Diagnostic(
-                            "GB1025",
-                            "immediate_draft output delivery requires incomplete or retracted draft semantics",
-                            "$.spec.outputPolicy.delivery.deliveredDraftDisposition",
-                        )
+            if mode == "immediate_draft" and delivered_draft_disposition == "keep":
+                diagnostics.append(
+                    Diagnostic(
+                        "GB1025",
+                        "immediate_draft output delivery requires incomplete or retracted draft semantics",
+                        delivered_draft_path,
                     )
+                )
 
         evaluation = (
             output_policy.get("evaluation")
