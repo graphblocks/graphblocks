@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
@@ -8,7 +8,7 @@ from functools import wraps
 from pathlib import Path
 import sqlite3
 from threading import RLock
-from typing import TYPE_CHECKING, Literal, ParamSpec, TypeVar, cast, get_args
+from typing import TYPE_CHECKING, Any, Literal, ParamSpec, TypeVar, cast, get_args
 
 from ._lazy_exports import resolve_lazy_export as _resolve_lazy_export
 from ._canonical_reference import canonical_dumps, canonical_loads
@@ -265,12 +265,15 @@ def _validate_usage_amounts(owner: str, field_name: str, values: object) -> _Fro
     if isinstance(values, str):
         raise ValueError(f"{owner} {field_name} must be a collection of UsageAmount")
     try:
-        amounts = list(values)  # type: ignore[arg-type]
+        amounts = list(cast("Iterable[object]", values))
     except Exception as error:
         raise ValueError(f"{owner} {field_name} must be a collection of UsageAmount") from error
-    if any(not isinstance(amount, UsageAmount) for amount in amounts):
-        raise ValueError(f"{owner} {field_name} must contain UsageAmount records")
-    return _FrozenUsageAmounts(amounts)
+    checked_amounts: list[UsageAmount] = []
+    for amount in amounts:
+        if not isinstance(amount, UsageAmount):
+            raise ValueError(f"{owner} {field_name} must contain UsageAmount records")
+        checked_amounts.append(amount)
+    return _FrozenUsageAmounts(checked_amounts)
 
 
 def _loads_strict_json(field_name: str, value: str) -> object:
@@ -291,12 +294,13 @@ def _validate_string_tuple(owner: str, field_name: str, values: object) -> tuple
     if isinstance(values, str):
         raise ValueError(f"{owner} {field_name} must be a collection of strings")
     try:
-        normalized = tuple(values)  # type: ignore[arg-type]
+        normalized = tuple(cast("Iterable[object]", values))
     except Exception as error:
         raise ValueError(f"{owner} {field_name} must be a collection of strings") from error
+    checked_items: list[str] = []
     for item in normalized:
-        _validate_non_empty_string(owner, f"{field_name} item", item)
-    return normalized
+        checked_items.append(_validate_non_empty_string(owner, f"{field_name} item", item))
+    return tuple(checked_items)
 
 
 @dataclass(frozen=True, slots=True)
@@ -643,63 +647,51 @@ def _copy_resource_ref(resource: ResourceRef) -> ResourceRef:
 
 def _copy_budget_record(record: BudgetRecord) -> BudgetRecord:
     if isinstance(record, BudgetAccount):
-        return cast(
-            BudgetRecord,
-            BudgetAccount(
-                budget_id=record.budget_id,
-                scope=_copy_resource_ref(record.scope),
-                allocated=_copy_usage_amounts(record.allocated),
-                parent_budget_id=record.parent_budget_id,
-                status=record.status,
-                policy_ref=record.policy_ref,
-                revision=record.revision,
-            ),
+        return BudgetAccount(
+            budget_id=record.budget_id,
+            scope=_copy_resource_ref(record.scope),
+            allocated=_copy_usage_amounts(record.allocated),
+            parent_budget_id=record.parent_budget_id,
+            status=record.status,
+            policy_ref=record.policy_ref,
+            revision=record.revision,
         )
     if isinstance(record, BudgetReservation):
-        return cast(
-            BudgetRecord,
-            BudgetReservation(
-                reservation_id=record.reservation_id,
-                budget_id=record.budget_id,
-                owner=_copy_resource_ref(record.owner),
-                amounts=_copy_usage_amounts(record.amounts),
-                purpose=record.purpose,
-                expires_at=record.expires_at,
-                fencing_token=record.fencing_token,
-                status=record.status,
-            ),
+        return BudgetReservation(
+            reservation_id=record.reservation_id,
+            budget_id=record.budget_id,
+            owner=_copy_resource_ref(record.owner),
+            amounts=_copy_usage_amounts(record.amounts),
+            purpose=record.purpose,
+            expires_at=record.expires_at,
+            fencing_token=record.fencing_token,
+            status=record.status,
         )
     if isinstance(record, BudgetPermit):
-        return cast(
-            BudgetRecord,
-            BudgetPermit(
-                permit_id=record.permit_id,
-                reservation_refs=tuple(record.reservation_refs),
-                owner=_copy_resource_ref(record.owner),
-                atomic_unit=_copy_resource_ref(record.atomic_unit),
-                admission_epoch=record.admission_epoch,
-                authorized_amounts=_copy_usage_amounts(record.authorized_amounts),
-                continuation_profile=record.continuation_profile,
-                policy_snapshot_digest=record.policy_snapshot_digest,
-                expires_at=record.expires_at,
-                low_watermark=_copy_usage_amounts(record.low_watermark),
-                fencing_tokens=dict(record.fencing_tokens),
-            ),
+        return BudgetPermit(
+            permit_id=record.permit_id,
+            reservation_refs=tuple(record.reservation_refs),
+            owner=_copy_resource_ref(record.owner),
+            atomic_unit=_copy_resource_ref(record.atomic_unit),
+            admission_epoch=record.admission_epoch,
+            authorized_amounts=_copy_usage_amounts(record.authorized_amounts),
+            continuation_profile=record.continuation_profile,
+            policy_snapshot_digest=record.policy_snapshot_digest,
+            expires_at=record.expires_at,
+            low_watermark=_copy_usage_amounts(record.low_watermark),
+            fencing_tokens=dict(record.fencing_tokens),
         )
     if isinstance(record, CompletionReserve):
-        return cast(
-            BudgetRecord,
-            CompletionReserve(
-                reserve_id=record.reserve_id,
-                budget_id=record.budget_id,
-                purpose=record.purpose,
-                amounts=_copy_usage_amounts(record.amounts),
-                spendable_by=frozenset(record.spendable_by),
-                expires_at=record.expires_at,
-                status=record.status,
-                reservation_id=record.reservation_id,
-                fencing_token=record.fencing_token,
-            ),
+        return CompletionReserve(
+            reserve_id=record.reserve_id,
+            budget_id=record.budget_id,
+            purpose=record.purpose,
+            amounts=_copy_usage_amounts(record.amounts),
+            spendable_by=frozenset(record.spendable_by),
+            expires_at=record.expires_at,
+            status=record.status,
+            reservation_id=record.reservation_id,
+            fencing_token=record.fencing_token,
         )
     raise TypeError(f"unsupported budget record {type(record).__name__}")
 
@@ -1468,7 +1460,8 @@ def _canonical_decimal_string(value: Decimal) -> str:
     if value == 0:
         return "0"
     normalized = value.normalize()
-    if normalized.as_tuple().exponent > 0:
+    exponent = normalized.as_tuple().exponent
+    if isinstance(exponent, int) and exponent > 0:
         normalized = normalized.quantize(Decimal(1))
     return str(normalized)
 
@@ -1485,7 +1478,8 @@ def _usage_amount_to_json(amount: UsageAmount) -> dict[str, object]:
 def _usage_amount_from_json(data: dict[str, object]) -> UsageAmount:
     if not isinstance(data, Mapping):
         raise ValueError("budget ledger usage amounts must be objects")
-    raw_amount = data.get("amount")
+    values = cast(Any, data)
+    raw_amount = values.get("amount")
     if not isinstance(raw_amount, str):
         raise ValueError("budget ledger usage amount values must be decimal strings")
     try:
@@ -1493,10 +1487,10 @@ def _usage_amount_from_json(data: dict[str, object]) -> UsageAmount:
     except InvalidOperation as error:
         raise ValueError("budget ledger usage amount values must be decimal strings") from error
     return UsageAmount(
-        kind=data.get("kind"),  # type: ignore[arg-type]
+        kind=values.get("kind"),
         amount=amount,
-        unit=data.get("unit"),  # type: ignore[arg-type]
-        dimensions=data.get("dimensions", {}),  # type: ignore[arg-type]
+        unit=values.get("unit"),
+        dimensions=values.get("dimensions", {}),
     )
 
 
@@ -1512,11 +1506,12 @@ def _resource_ref_to_json(resource: ResourceRef) -> dict[str, object]:
 def _resource_ref_from_json(data: dict[str, object]) -> ResourceRef:
     if not isinstance(data, Mapping):
         raise ValueError("budget ledger resource references must be objects")
+    values = cast(Any, data)
     return ResourceRef(
-        resource_id=data.get("resource_id"),  # type: ignore[arg-type]
-        resource_kind=data.get("resource_kind"),
-        tenant_id=data.get("tenant_id"),
-        attributes=data.get("attributes", {}),  # type: ignore[arg-type]
+        resource_id=values.get("resource_id"),
+        resource_kind=values.get("resource_kind"),
+        tenant_id=values.get("tenant_id"),
+        attributes=values.get("attributes", {}),
     )
 
 
@@ -1607,17 +1602,18 @@ def _account_to_json(account: BudgetAccount) -> dict[str, object]:
 def _account_from_json(data: dict[str, object]) -> BudgetAccount:
     if not isinstance(data, Mapping):
         raise ValueError("budget ledger accounts must be objects")
-    raw_allocated = data.get("allocated", [])
+    values = cast(Any, data)
+    raw_allocated = values.get("allocated", [])
     if not isinstance(raw_allocated, list):
         raise ValueError("budget ledger account allocated values must be arrays")
     return BudgetAccount(
-        budget_id=data.get("budget_id"),  # type: ignore[arg-type]
-        scope=_resource_ref_from_json(data.get("scope")),  # type: ignore[arg-type]
-        allocated=[_usage_amount_from_json(entry) for entry in raw_allocated],  # type: ignore[arg-type]
-        parent_budget_id=data.get("parent_budget_id"),
-        status=data.get("status", "active"),
-        policy_ref=data.get("policy_ref", ""),  # type: ignore[arg-type]
-        revision=data.get("revision", 0),  # type: ignore[arg-type]
+        budget_id=values.get("budget_id"),
+        scope=_resource_ref_from_json(values.get("scope")),
+        allocated=[_usage_amount_from_json(entry) for entry in raw_allocated],
+        parent_budget_id=values.get("parent_budget_id"),
+        status=values.get("status", "active"),
+        policy_ref=values.get("policy_ref", ""),
+        revision=values.get("revision", 0),
     )
 
 
@@ -1637,18 +1633,19 @@ def _reservation_to_json(reservation: BudgetReservation) -> dict[str, object]:
 def _reservation_from_json(data: dict[str, object]) -> BudgetReservation:
     if not isinstance(data, Mapping):
         raise ValueError("budget ledger reservations must be objects")
-    raw_amounts = data.get("amounts", [])
+    values = cast(Any, data)
+    raw_amounts = values.get("amounts", [])
     if not isinstance(raw_amounts, list):
         raise ValueError("budget ledger reservation amounts must be arrays")
     return BudgetReservation(
-        reservation_id=data.get("reservation_id"),  # type: ignore[arg-type]
-        budget_id=data.get("budget_id"),  # type: ignore[arg-type]
-        owner=_resource_ref_from_json(data.get("owner")),  # type: ignore[arg-type]
-        amounts=[_usage_amount_from_json(entry) for entry in raw_amounts],  # type: ignore[arg-type]
-        purpose=data.get("purpose"),  # type: ignore[arg-type]
-        expires_at=data.get("expires_at"),  # type: ignore[arg-type]
-        fencing_token=data.get("fencing_token", 0),  # type: ignore[arg-type]
-        status=data.get("status", "reserved"),
+        reservation_id=values.get("reservation_id"),
+        budget_id=values.get("budget_id"),
+        owner=_resource_ref_from_json(values.get("owner")),
+        amounts=[_usage_amount_from_json(entry) for entry in raw_amounts],
+        purpose=values.get("purpose"),
+        expires_at=values.get("expires_at"),
+        fencing_token=values.get("fencing_token", 0),
+        status=values.get("status", "reserved"),
     )
 
 
@@ -1671,10 +1668,11 @@ def _permit_to_json(permit: BudgetPermit) -> dict[str, object]:
 def _permit_from_json(data: dict[str, object]) -> BudgetPermit:
     if not isinstance(data, Mapping):
         raise ValueError("budget ledger permits must be objects")
-    reservation_refs = data.get("reservation_refs", [])
-    authorized_amounts = data.get("authorized_amounts", [])
-    low_watermark = data.get("low_watermark", [])
-    fencing_tokens = data.get("fencing_tokens", {})
+    values = cast(Any, data)
+    reservation_refs = values.get("reservation_refs", [])
+    authorized_amounts = values.get("authorized_amounts", [])
+    low_watermark = values.get("low_watermark", [])
+    fencing_tokens = values.get("fencing_tokens", {})
     if not isinstance(reservation_refs, list):
         raise ValueError("budget ledger permit reservation_refs must be arrays")
     if not isinstance(authorized_amounts, list):
@@ -1684,17 +1682,17 @@ def _permit_from_json(data: dict[str, object]) -> BudgetPermit:
     if not isinstance(fencing_tokens, Mapping):
         raise ValueError("budget ledger permit fencing_tokens must be objects")
     return BudgetPermit(
-        permit_id=data.get("permit_id"),  # type: ignore[arg-type]
-        reservation_refs=tuple(reservation_refs),  # type: ignore[arg-type]
-        owner=_resource_ref_from_json(data.get("owner")),  # type: ignore[arg-type]
-        atomic_unit=_resource_ref_from_json(data.get("atomic_unit")),  # type: ignore[arg-type]
-        admission_epoch=data.get("admission_epoch"),  # type: ignore[arg-type]
-        authorized_amounts=[_usage_amount_from_json(entry) for entry in authorized_amounts],  # type: ignore[arg-type]
-        continuation_profile=data.get("continuation_profile"),  # type: ignore[arg-type]
-        policy_snapshot_digest=data.get("policy_snapshot_digest"),  # type: ignore[arg-type]
-        expires_at=data.get("expires_at"),  # type: ignore[arg-type]
-        low_watermark=[_usage_amount_from_json(entry) for entry in low_watermark],  # type: ignore[arg-type]
-        fencing_tokens=dict(fencing_tokens),  # type: ignore[arg-type]
+        permit_id=values.get("permit_id"),
+        reservation_refs=tuple(reservation_refs),
+        owner=_resource_ref_from_json(values.get("owner")),
+        atomic_unit=_resource_ref_from_json(values.get("atomic_unit")),
+        admission_epoch=values.get("admission_epoch"),
+        authorized_amounts=[_usage_amount_from_json(entry) for entry in authorized_amounts],
+        continuation_profile=values.get("continuation_profile"),
+        policy_snapshot_digest=values.get("policy_snapshot_digest"),
+        expires_at=values.get("expires_at"),
+        low_watermark=[_usage_amount_from_json(entry) for entry in low_watermark],
+        fencing_tokens=dict(fencing_tokens),
     )
 
 
@@ -1715,22 +1713,23 @@ def _completion_reserve_to_json(reserve: CompletionReserve) -> dict[str, object]
 def _completion_reserve_from_json(data: dict[str, object]) -> CompletionReserve:
     if not isinstance(data, Mapping):
         raise ValueError("budget ledger completion reserves must be objects")
-    raw_amounts = data.get("amounts", [])
-    spendable_by = data.get("spendable_by", [])
+    values = cast(Any, data)
+    raw_amounts = values.get("amounts", [])
+    spendable_by = values.get("spendable_by", [])
     if not isinstance(raw_amounts, list):
         raise ValueError("budget ledger completion reserve amounts must be arrays")
     if not isinstance(spendable_by, list):
         raise ValueError("budget ledger completion reserve spendable_by must be arrays")
     return CompletionReserve(
-        reserve_id=data.get("reserve_id"),  # type: ignore[arg-type]
-        budget_id=data.get("budget_id"),  # type: ignore[arg-type]
-        purpose=data.get("purpose"),  # type: ignore[arg-type]
-        amounts=[_usage_amount_from_json(entry) for entry in raw_amounts],  # type: ignore[arg-type]
-        spendable_by=frozenset(spendable_by),  # type: ignore[arg-type]
-        expires_at=data.get("expires_at"),
-        status=data.get("status", "available"),
-        reservation_id=data.get("reservation_id"),
-        fencing_token=data.get("fencing_token", 0),  # type: ignore[arg-type]
+        reserve_id=values.get("reserve_id"),
+        budget_id=values.get("budget_id"),
+        purpose=values.get("purpose"),
+        amounts=[_usage_amount_from_json(entry) for entry in raw_amounts],
+        spendable_by=frozenset(spendable_by),
+        expires_at=values.get("expires_at"),
+        status=values.get("status", "available"),
+        reservation_id=values.get("reservation_id"),
+        fencing_token=values.get("fencing_token", 0),
     )
 
 
