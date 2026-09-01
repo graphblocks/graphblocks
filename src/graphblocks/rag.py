@@ -836,6 +836,13 @@ def build_context_pack(
     minimum_source_modified_at: str | None = None,
     metadata: dict[str, object] | None = None,
 ) -> ContextPack:
+    """Select hits into a context pack under ``token_budget``.
+
+    ``token_budget`` is accounted in whitespace-delimited words, not model
+    tokens. Real tokenizers commonly produce ~1.3x or more tokens per word, so
+    callers targeting a hard model limit should pass a budget scaled down
+    accordingly.
+    """
     validated_token_budget = _validate_non_negative_int(
         "context builder",
         "token_budget",
@@ -1407,7 +1414,13 @@ def fuse_search_hits(
         source_hits = grouped_hits[dedupe_key]
         representative = source_hits[0]
         source_hit_ids = [hit.hit_id for hit in source_hits]
-        source_ranks = {hit.retriever: hit.rank for hit in source_hits}
+        # A retriever can contribute several hits to one dedupe group; report
+        # its best (lowest) rank rather than whichever hit iterated last.
+        source_ranks: dict[str, int] = {}
+        for hit in source_hits:
+            existing_rank = source_ranks.get(hit.retriever)
+            if existing_rank is None or hit.rank < existing_rank:
+                source_ranks[hit.retriever] = hit.rank
         highlights: list[SourceRef] = []
         seen_source_ids: set[str] = set()
         for hit in source_hits:

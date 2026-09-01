@@ -1835,8 +1835,38 @@ def test_callback_delivery_projection_applies_non_retryable_webhook_response() -
     )
 
     assert failed.status == "failed"
-    assert failed.delivered_at == "2026-07-02T00:00:00Z"
+    assert failed.delivered_at is None
     assert failed.last_error == "non_retryable"
+
+
+def test_callback_delivery_projection_terminal_failures_do_not_set_delivered_at() -> None:
+    delivery = CallbackDeliveryProjection(
+        delivery_id="del_001",
+        subscription_id="sub_001",
+        event_id="evt_1042",
+        run_id="run_coding_001",
+        sequence=1042,
+        cursor="evt_1042",
+        attempt=4,
+        idempotency_key="sub_001:evt_1042",
+        status="delivering",
+    )
+
+    gone = delivery.apply_webhook_response(
+        classify_webhook_response(410),
+        received_at="2026-07-02T00:00:00Z",
+        policy=CallbackRetryPolicy(max_attempts=4),
+    )
+    exhausted = delivery.apply_webhook_response(
+        classify_webhook_response(503),
+        received_at="2026-07-02T00:00:00Z",
+        policy=CallbackRetryPolicy(max_attempts=4),
+    )
+
+    assert gone.status == "cancelled"
+    assert gone.delivered_at is None
+    assert exhausted.status == "failed"
+    assert exhausted.delivered_at is None
 
 
 def test_callback_delivery_failure_action_maps_mandatory_failure_policies() -> None:
@@ -1945,7 +1975,7 @@ def test_callback_delivery_projection_stops_retry_after_max_attempts() -> None:
     assert exhausted.status == "failed"
     assert exhausted.attempt == 2
     assert exhausted.next_retry_at is None
-    assert exhausted.delivered_at == "2026-07-02T00:00:00Z"
+    assert exhausted.delivered_at is None
     assert exhausted.last_error == "receiver_error"
 
 

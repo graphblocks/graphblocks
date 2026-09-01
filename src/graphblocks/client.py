@@ -1733,6 +1733,15 @@ class HttpGraphBlocksClient:
         )
 
     def run_stream(self, run_id: str) -> RunStreamSnapshot:
+        """Fetch the run's application-stream snapshot.
+
+        The reference server gates ``/runs/{run_id}/stream`` behind the
+        websocket negotiation headers (responding 426 without them) but then
+        answers with a plain JSON snapshot rather than completing an upgrade —
+        urllib cannot switch protocols. Intermediaries that strip hop-by-hop
+        ``Connection`` headers may not forward the negotiation; use a real
+        websocket client against servers that complete the upgrade.
+        """
         requested_run_id = _http_non_empty_string("run_id", run_id)
         run_id = quote(requested_run_id, safe="")
         headers = {

@@ -885,7 +885,6 @@ class CallbackDeliveryProjection:
                 attempt=self.attempt,
                 idempotency_key=self.idempotency_key,
                 status="cancelled",
-                delivered_at=received_at,
                 last_error=decision.reason,
             )
         if decision.retry:
@@ -901,7 +900,6 @@ class CallbackDeliveryProjection:
                     attempt=failed.attempt,
                     idempotency_key=failed.idempotency_key,
                     status="failed",
-                    delivered_at=received_at,
                     last_error=decision.reason,
                 )
             if decision.retry_after is not None:
@@ -941,7 +939,6 @@ class CallbackDeliveryProjection:
             attempt=self.attempt,
             idempotency_key=self.idempotency_key,
             status="failed",
-            delivered_at=received_at,
             last_error=decision.reason,
         )
 

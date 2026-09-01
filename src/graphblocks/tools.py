@@ -661,7 +661,9 @@ class GraphToolImplementation:
 
 @dataclass(frozen=True, slots=True)
 class RemoteToolImplementation:
-    connection: ResourceRef
+    # A string resource id, not a policy.ResourceRef — validation rejects the
+    # rich type rather than silently dropping its tenant/kind/attributes.
+    connection: str
     operation: str
     kind: Literal["remote"] = field(default="remote", init=False)
 
@@ -679,7 +681,7 @@ class RemoteToolImplementation:
 
 @dataclass(frozen=True, slots=True)
 class McpToolImplementation:
-    server: ResourceRef
+    server: str
     remote_name: str
     kind: Literal["mcp"] = field(default="mcp", init=False)
 
@@ -697,7 +699,7 @@ class McpToolImplementation:
 
 @dataclass(frozen=True, slots=True)
 class OpenApiToolImplementation:
-    connection: ResourceRef
+    connection: str
     operation_id: str
     kind: Literal["openapi"] = field(default="openapi", init=False)
 

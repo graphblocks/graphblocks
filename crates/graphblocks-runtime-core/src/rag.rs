@@ -2014,11 +2014,12 @@ pub fn fuse_search_hits(
                 .first()
                 .and_then(|dedupe_key| fusion_scores.get(dedupe_key))
                 .copied();
+            // Concatenate/Interleave are handled by the outer match arms, so
+            // only the three scored strategies can bind the wildcard here.
             let score_kind = match options.strategy {
-                FusionStrategy::ReciprocalRankFusion => "reciprocal_rank_fusion",
                 FusionStrategy::WeightedRank => "weighted_rank",
                 FusionStrategy::NormalizedScore => "normalized_score",
-                FusionStrategy::Concatenate | FusionStrategy::Interleave => unreachable!(),
+                _ => "reciprocal_rank_fusion",
             };
             (keys, score_kind, max_score)
         }
@@ -2026,8 +2027,12 @@ pub fn fuse_search_hits(
 
     let mut fused_hits = Vec::new();
     for (rank, dedupe_key) in ordered_keys.iter().enumerate() {
-        let source_hits = &grouped_hits[dedupe_key];
-        let representative = &source_hits[0];
+        let Some(source_hits) = grouped_hits.get(dedupe_key) else {
+            continue;
+        };
+        let Some(representative) = source_hits.first() else {
+            continue;
+        };
         let mut metadata = representative.metadata.clone();
         metadata.insert(
             "source_hit_ids".to_owned(),
@@ -2038,9 +2043,20 @@ pub fn fuse_search_hits(
                     .collect::<Vec<_>>()
             ),
         );
-        let mut source_ranks = Map::new();
+        // A retriever can contribute several hits to one dedupe group; report
+        // its best (lowest) rank rather than whichever hit iterated last.
+        let mut best_source_ranks: BTreeMap<&str, usize> = BTreeMap::new();
         for hit in source_hits {
-            source_ranks.insert(hit.retriever.clone(), json!(hit.rank));
+            let entry = best_source_ranks
+                .entry(hit.retriever.as_str())
+                .or_insert(hit.rank);
+            if hit.rank < *entry {
+                *entry = hit.rank;
+            }
+        }
+        let mut source_ranks = Map::new();
+        for (retriever, best_rank) in best_source_ranks {
+            source_ranks.insert(retriever.to_owned(), json!(best_rank));
         }
         metadata.insert("source_ranks".to_owned(), Value::Object(source_ranks));
         metadata.insert(

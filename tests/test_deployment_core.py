@@ -447,6 +447,7 @@ def test_canary_metric_evaluator_enforces_minimums_and_max_regression() -> None:
             "baseline": 1.0,
             "minimum": None,
             "maxRegression": 0.1,
+            "direction": "minimize",
             "regression": 0.09,
             "passed": True,
             "reason": "within_threshold",
@@ -457,6 +458,7 @@ def test_canary_metric_evaluator_enforces_minimums_and_max_regression() -> None:
             "baseline": None,
             "minimum": 0.98,
             "maxRegression": None,
+            "direction": "minimize",
             "regression": None,
             "passed": True,
             "reason": "within_threshold",
@@ -467,6 +469,7 @@ def test_canary_metric_evaluator_enforces_minimums_and_max_regression() -> None:
             "baseline": None,
             "minimum": 0.995,
             "maxRegression": None,
+            "direction": "minimize",
             "regression": None,
             "passed": True,
             "reason": "within_threshold",
@@ -479,6 +482,46 @@ def test_canary_metric_evaluator_enforces_minimums_and_max_regression() -> None:
     )
     assert missing_baseline.passed is False
     assert missing_baseline.violations == ("average_cost_per_turn:baseline_missing",)
+
+
+def test_canary_metric_evaluator_detects_maximize_metric_drops_and_accumulates_reasons() -> None:
+    dropped = evaluate_canary_metrics(
+        (CanaryMetricThreshold("turn_success_rate", max_regression=0.01, direction="maximize"),),
+        candidate_metrics={"turn_success_rate": 0.90},
+        baseline_metrics={"turn_success_rate": 0.99},
+    )
+    assert dropped.passed is False
+    assert dropped.violations == ("turn_success_rate:max_regression_exceeded",)
+    (observation,) = dropped.evidence_contract()["metrics"]
+    assert observation["direction"] == "maximize"
+    assert observation["regression"] == pytest.approx(0.0909, abs=0.0001)
+
+    improved = evaluate_canary_metrics(
+        (CanaryMetricThreshold("turn_success_rate", max_regression=0.01, direction="maximize"),),
+        candidate_metrics={"turn_success_rate": 0.999},
+        baseline_metrics={"turn_success_rate": 0.99},
+    )
+    assert improved.passed is True
+
+    multi_reason = evaluate_canary_metrics(
+        (
+            CanaryMetricThreshold(
+                "turn_success_rate",
+                minimum=0.995,
+                max_regression=0.01,
+                direction="maximize",
+            ),
+        ),
+        candidate_metrics={"turn_success_rate": 0.90},
+        baseline_metrics={},
+    )
+    assert multi_reason.violations == (
+        "turn_success_rate:minimum_not_met",
+        "turn_success_rate:baseline_missing",
+    )
+
+    with pytest.raises(RolloutError, match="direction must be"):
+        CanaryMetricThreshold("turn_success_rate", minimum=0.9, direction="up")  # type: ignore[arg-type]
 
 
 def test_rollback_and_drain_evidence_is_deterministic_and_fail_closed() -> None:

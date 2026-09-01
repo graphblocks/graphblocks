@@ -1237,6 +1237,7 @@ class CanaryMetricThreshold:
     metric: str
     minimum: float | None = None
     max_regression: float | None = None
+    direction: Literal["minimize", "maximize"] = "minimize"
 
     def __post_init__(self) -> None:
         _require_non_empty_string(
@@ -1247,6 +1248,10 @@ class CanaryMetricThreshold:
         )
         if self.minimum is None and self.max_regression is None:
             raise RolloutError("canary metric threshold requires minimum or max_regression")
+        if self.direction not in {"minimize", "maximize"}:
+            raise RolloutError(
+                "canary metric direction must be 'minimize' or 'maximize'"
+            )
         if self.minimum is not None:
             object.__setattr__(self, "minimum", _finite_canary_metric(self.minimum, "minimum"))
         if self.max_regression is not None:
@@ -1302,35 +1307,32 @@ def evaluate_canary_metrics(
         observed: float | None = None
         baseline: float | None = None
         regression: float | None = None
-        passed = True
-        reason = "within_threshold"
+        reasons: list[str] = []
         if threshold.metric not in candidate_metrics:
-            passed = False
-            reason = "metric_missing"
+            reasons.append("metric_missing")
         else:
             observed = _finite_canary_metric(candidate_metrics[threshold.metric], threshold.metric)
             if threshold.minimum is not None and observed < threshold.minimum:
-                passed = False
-                reason = "minimum_not_met"
+                reasons.append("minimum_not_met")
             if threshold.max_regression is not None:
                 if threshold.metric not in baselines:
-                    passed = False
-                    reason = "baseline_missing"
+                    reasons.append("baseline_missing")
                 else:
                     baseline = _finite_canary_metric(baselines[threshold.metric], f"{threshold.metric} baseline")
                     if baseline == 0:
-                        passed = False
-                        reason = "baseline_zero"
+                        reasons.append("baseline_zero")
                     else:
-                        regression = float(
-                            (Decimal(str(observed)) - Decimal(str(baseline)))
-                            / abs(Decimal(str(baseline)))
-                        )
+                        # Regression is the relative movement in the harmful
+                        # direction: an increase for minimize metrics, a drop
+                        # for maximize metrics (e.g. success rates).
+                        delta = Decimal(str(observed)) - Decimal(str(baseline))
+                        if threshold.direction == "maximize":
+                            delta = -delta
+                        regression = float(delta / abs(Decimal(str(baseline))))
                         if regression > threshold.max_regression:
-                            passed = False
-                            reason = "max_regression_exceeded"
-        if not passed:
-            violations.append(f"{threshold.metric}:{reason}")
+                            reasons.append("max_regression_exceeded")
+        passed = not reasons
+        violations.extend(f"{threshold.metric}:{reason}" for reason in reasons)
         observations.append(
             {
                 "metric": threshold.metric,
@@ -1338,9 +1340,10 @@ def evaluate_canary_metrics(
                 "baseline": baseline,
                 "minimum": threshold.minimum,
                 "maxRegression": threshold.max_regression,
+                "direction": threshold.direction,
                 "regression": regression,
                 "passed": passed,
-                "reason": reason,
+                "reason": reasons[0] if reasons else "within_threshold",
             }
         )
     return CanaryMetricEvaluation(
