@@ -224,6 +224,13 @@
     "total": 97,
     "files": [
       {
+        "path": "src/graphblocks/_server_callbacks.py",
+        "count": 4,
+        "semanticDigest": "sha256:f37bdbbd3e2ddfb006b7a96c3ce97c5fb8d3bb661ac89631e389e59655e97acc",
+        "classifications": ["validated-type-narrowing"],
+        "rationale": "Subscription and registration filters assert only the mapping shape returned by the internal JSON freezer after validation."
+      },
+      {
         "path": "src/graphblocks/admission.py",
         "count": 2,
         "semanticDigest": "sha256:23d476530d0affbfb2e81faddda90febe11ec59236fd45e8edaf4295ce9cd59c",
@@ -344,8 +351,8 @@
       },
       {
         "path": "src/graphblocks/server.py",
-        "count": 34,
-        "semanticDigest": "sha256:e484a710b15ef14cb3f70f3ae00a1d28a6d786677055cd310113d24e20e0412c",
+        "count": 30,
+        "semanticDigest": "sha256:f3838cdee6056f5dba667e573349e8718a4a2de5c4c47f2553df84c1841532dd",
         "classifications": ["validated-type-narrowing", "internal-state-invariant"],
         "rationale": "Request and repository projections are explicitly validated, while run lifecycle identities follow guarded state transitions; the optimized shard exercises these boundaries."
       },
