@@ -75,6 +75,8 @@ warn_unused_ignores = true
 follow_imports = "silent"
 files = [
   "src/graphblocks/_canonical_reference.py",
+  "src/graphblocks/_datetime.py",
+  "src/graphblocks/_frozen_json.py",
   "src/graphblocks/_immutability.py",
   "src/graphblocks/_json.py",
   "src/graphblocks/_lazy_exports.py",

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator, Mapping
-from copy import deepcopy
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
@@ -14,6 +13,7 @@ from typing import Protocol
 from urllib.parse import urlparse
 
 from ._canonical_reference import MAX_CANONICAL_JSON_DEPTH, canonical_dumps, canonical_hash
+from ._frozen_json import FrozenJsonArray, FrozenJsonObject, thaw_json_container
 from .documents import ArtifactRef
 from .server import ServerCallbackDeliveryResult, ServerCallbackRegistration
 from .url_validation import validate_webhook_url
@@ -58,64 +58,9 @@ VALID_CALLBACK_FAILURE_POLICIES = frozenset({
 VALID_CALLBACK_AUTH_KINDS = frozenset({"bearer", "hmac", "mtls", "oidc"})
 
 
-class _FrozenJsonArray(tuple[object, ...]):
-    def __eq__(self, other: object) -> bool:
-        if isinstance(other, list):
-            return tuple(self) == tuple(other)
-        return super().__eq__(other)
-
-    __hash__ = tuple.__hash__
-
-    def __copy__(self) -> _FrozenJsonArray:
-        return self
-
-    def __deepcopy__(self, memo: dict[int, object]) -> list[object]:
-        return [_thaw_json_value(item) for item in self]
-
-    def __reduce_ex__(
-        self,
-        protocol: int,
-    ) -> tuple[type[_FrozenJsonArray], tuple[tuple[object, ...]]]:
-        del protocol
-        return type(self), (tuple(self),)
-
-
-class _FrozenJsonObject(Mapping[str, object]):
-    __slots__ = ("__values",)
-
-    def __init__(self, values: Mapping[str, object]) -> None:
-        self.__values = MappingProxyType(dict(values))
-
-    def __getitem__(self, key: str) -> object:
-        return self.__values[key]
-
-    def __iter__(self) -> Iterator[str]:
-        return iter(self.__values)
-
-    def __len__(self) -> int:
-        return len(self.__values)
-
-    def __repr__(self) -> str:
-        return repr(dict(self.__values))
-
-    def __eq__(self, other: object) -> bool:
-        return isinstance(other, Mapping) and dict(self.__values) == dict(other)
-
-    def __copy__(self) -> _FrozenJsonObject:
-        return self
-
-    def __deepcopy__(self, memo: dict[int, object]) -> dict[str, object]:
-        return {
-            key: _thaw_json_value(item)
-            for key, item in self.__values.items()
-        }
-
-    def __reduce_ex__(
-        self,
-        protocol: int,
-    ) -> tuple[type[_FrozenJsonObject], tuple[dict[str, object]]]:
-        del protocol
-        return type(self), (dict(self.__values),)
+_FrozenJsonArray = FrozenJsonArray
+_FrozenJsonObject = FrozenJsonObject
+_thaw_json_value = thaw_json_container
 
 
 def _utc_now_iso() -> str:
@@ -345,14 +290,6 @@ def _freeze_json_value(
         finally:
             _active_containers.remove(container_id)
     raise ValueError("payload must contain only JSON values")
-
-
-def _thaw_json_value(value: object) -> object:
-    if isinstance(value, _FrozenJsonArray):
-        return [_thaw_json_value(item) for item in value]
-    if isinstance(value, Mapping):
-        return {key: _thaw_json_value(item) for key, item in value.items()}
-    return deepcopy(value)
 
 
 def _deterministic_jitter_ms(seed: str, jitter_ms: int) -> int:

@@ -1,8 +1,14 @@
 from __future__ import annotations
 
 from ._datetime import parse_utc_iso_datetime
+from ._frozen_json import (
+    FrozenJsonArray,
+    FrozenJsonObject,
+    freeze_json_container,
+    thaw_json_container,
+)
 
-from collections.abc import Callable, Iterable, Iterator, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
@@ -10,7 +16,6 @@ import json
 import math
 from threading import TIMEOUT_MAX
 from time import monotonic
-from types import MappingProxyType
 from urllib.error import HTTPError
 from urllib.parse import quote, urlencode, urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
@@ -86,85 +91,10 @@ def _strict_json_loads(value: str | bytes) -> object:
     return decoded
 
 
-class _FrozenJsonArray(tuple[object, ...]):
-    def __eq__(self, other: object) -> bool:
-        if isinstance(other, list):
-            return tuple(self) == tuple(other)
-        return super().__eq__(other)
-
-    __hash__ = tuple.__hash__
-
-    def __copy__(self) -> _FrozenJsonArray:
-        return self
-
-    def __deepcopy__(self, memo: dict[int, object]) -> list[object]:
-        return [_thaw_json_snapshot(item) for item in self]
-
-    def __reduce_ex__(
-        self,
-        protocol: int,
-    ) -> tuple[type[_FrozenJsonArray], tuple[tuple[object, ...]]]:
-        del protocol
-        return type(self), (tuple(self),)
-
-
-class _FrozenJsonObject(Mapping[str, object]):
-    __slots__ = ("__values",)
-
-    def __init__(self, values: Mapping[str, object]) -> None:
-        self.__values = MappingProxyType(dict(values))
-
-    def __getitem__(self, key: str) -> object:
-        return self.__values[key]
-
-    def __iter__(self) -> Iterator[str]:
-        return iter(self.__values)
-
-    def __len__(self) -> int:
-        return len(self.__values)
-
-    def __repr__(self) -> str:
-        return repr(dict(self.__values))
-
-    def __eq__(self, other: object) -> bool:
-        return isinstance(other, Mapping) and dict(self.__values) == dict(other)
-
-    def __copy__(self) -> _FrozenJsonObject:
-        return self
-
-    def __deepcopy__(self, memo: dict[int, object]) -> dict[str, object]:
-        return {
-            key: _thaw_json_snapshot(item)
-            for key, item in self.__values.items()
-        }
-
-    def __reduce_ex__(
-        self,
-        protocol: int,
-    ) -> tuple[type[_FrozenJsonObject], tuple[dict[str, object]]]:
-        del protocol
-        return type(self), (dict(self.__values),)
-
-
-def _freeze_json_snapshot(value: object) -> object:
-    if isinstance(value, dict):
-        return _FrozenJsonObject(
-            {key: _freeze_json_snapshot(item) for key, item in value.items()}
-        )
-    if isinstance(value, list):
-        return _FrozenJsonArray(_freeze_json_snapshot(item) for item in value)
-    return value
-
-
-def _thaw_json_snapshot(value: object) -> object:
-    if isinstance(value, Mapping):
-        return {
-            key: _thaw_json_snapshot(item)
-            for key, item in value.items()
-        }
-    if isinstance(value, tuple):
-        return [_thaw_json_snapshot(item) for item in value]
-    return value
+_FrozenJsonArray = FrozenJsonArray
+_FrozenJsonObject = FrozenJsonObject
+_freeze_json_snapshot = freeze_json_container
+_thaw_json_snapshot = thaw_json_container
 
 
 def _stable_non_empty_string(label: str, field_name: str, value: object) -> str:

@@ -1,12 +1,17 @@
 from __future__ import annotations
 
-from collections.abc import Iterator, Mapping
+from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 import hashlib
-from types import MappingProxyType
 from typing import Literal
 
 from ._canonical_reference import canonical_dumps, canonical_loads
+from ._frozen_json import (
+    FrozenJsonArray,
+    FrozenJsonObject,
+    freeze_json_container,
+    thaw_json_container,
+)
 
 
 WORKER_PROTOCOL_VERSION = 1
@@ -724,90 +729,10 @@ def _validate_worker_string_attributes(owner: str, value: object) -> Mapping[str
     return _FrozenWorkerJsonObject(attributes)
 
 
-def _freeze_worker_json_value(value: object) -> object:
-    if isinstance(value, dict):
-        return _FrozenWorkerJsonObject(
-            {
-                key: _freeze_worker_json_value(item)
-                for key, item in value.items()
-            }
-        )
-    if isinstance(value, list):
-        return _FrozenWorkerJsonArray(
-            _freeze_worker_json_value(item) for item in value
-        )
-    return value
-
-
-class _FrozenWorkerJsonObject(Mapping[str, object]):
-    __slots__ = ("__values",)
-
-    def __init__(self, values: Mapping[str, object]) -> None:
-        self.__values = MappingProxyType(dict(values))
-
-    def __getitem__(self, key: str) -> object:
-        return self.__values[key]
-
-    def __iter__(self) -> Iterator[str]:
-        return iter(self.__values)
-
-    def __len__(self) -> int:
-        return len(self.__values)
-
-    def __repr__(self) -> str:
-        return repr(self.__values)
-
-    def __eq__(self, other: object) -> bool:
-        return isinstance(other, Mapping) and self.__values == dict(other)
-
-    def __copy__(self) -> _FrozenWorkerJsonObject:
-        return self
-
-    def __deepcopy__(self, memo: dict[int, object]) -> dict[str, object]:
-        return {
-            key: _worker_json_projection(value)
-            for key, value in self.__values.items()
-        }
-
-    def __reduce_ex__(
-        self,
-        protocol: int,
-    ) -> tuple[type[_FrozenWorkerJsonObject], tuple[dict[str, object]]]:
-        del protocol
-        return type(self), (dict(self.__values),)
-
-
-class _FrozenWorkerJsonArray(tuple[object, ...]):
-    def __eq__(self, other: object) -> bool:
-        if isinstance(other, list):
-            return tuple(self) == tuple(other)
-        return super().__eq__(other)
-
-    __hash__ = tuple.__hash__
-
-    def __deepcopy__(self, memo: dict[int, object]) -> list[object]:
-        return [_worker_json_projection(value) for value in self]
-
-    def __copy__(self) -> _FrozenWorkerJsonArray:
-        return self
-
-    def __reduce_ex__(
-        self,
-        protocol: int,
-    ) -> tuple[type[_FrozenWorkerJsonArray], tuple[tuple[object, ...]]]:
-        del protocol
-        return type(self), (tuple(self),)
-
-
-def _worker_json_projection(value: object) -> object:
-    if isinstance(value, Mapping):
-        return {
-            key: _worker_json_projection(item)
-            for key, item in value.items()
-        }
-    if isinstance(value, (list, tuple)):
-        return [_worker_json_projection(item) for item in value]
-    return value
+_FrozenWorkerJsonObject = FrozenJsonObject
+_FrozenWorkerJsonArray = FrozenJsonArray
+_freeze_worker_json_value = freeze_json_container
+_worker_json_projection = thaw_json_container
 
 
 def _snapshot_worker_json_value(owner: str, value: object) -> object:
