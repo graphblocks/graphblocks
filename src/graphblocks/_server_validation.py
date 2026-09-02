@@ -26,7 +26,7 @@ from .policy import PrincipalRef
 from .url_validation import validate_webhook_url
 
 if TYPE_CHECKING:
-    from .server import ServerRequest
+    from ._server_transport import ServerRequest
 
 ServerTransport = Literal["http", "sse", "websocket"]
 ServerHealthStatus = Literal["healthy", "degraded", "unhealthy"]
