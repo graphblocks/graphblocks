@@ -16,6 +16,13 @@
         "rationale": "Adversarial Mapping implementations may fail during bounded schema traversal and are normalized to the schema policy error contract."
       },
       {
+        "path": "src/graphblocks/_server_ingress.py",
+        "count": 2,
+        "semanticDigest": "sha256:a4696038665abcd1aae598dd9ae474f04114f9858c8ce961c73f72a9195735b7",
+        "classifications": ["external-callback-boundary"],
+        "rationale": "The async-callback ingress handler isolates resume-admission hook denials and accepted-run executor dispatch failures behind stable callback responses."
+      },
+      {
         "path": "src/graphblocks/audit.py",
         "count": 6,
         "semanticDigest": "sha256:10ece0594b3de9d956d4e986f88bc2ee9cc49182dff9c0c6a060e4b565bf63a1",
@@ -150,8 +157,8 @@
       },
       {
         "path": "src/graphblocks/server.py",
-        "count": 26,
-        "semanticDigest": "sha256:fb1fd580d07f7076197e910ed111e29f3441a50bb21e2ba9df4275d0288b57c1",
+        "count": 24,
+        "semanticDigest": "sha256:1c5392b77ab40c8de915790f093a9b5ef41e8f68bce794d893d089b9390d45e6",
         "classifications": ["external-callback-boundary", "persistence-transaction-boundary", "input-normalization-boundary"],
         "rationale": "HTTP services isolate authenticators, repositories, executors, callbacks, and malformed boundary objects behind stable server errors."
       },
@@ -229,6 +236,13 @@
         "semanticDigest": "sha256:f37bdbbd3e2ddfb006b7a96c3ce97c5fb8d3bb661ac89631e389e59655e97acc",
         "classifications": ["validated-type-narrowing"],
         "rationale": "Subscription and registration filters assert only the mapping shape returned by the internal JSON freezer after validation."
+      },
+      {
+        "path": "src/graphblocks/_server_ingress.py",
+        "count": 3,
+        "semanticDigest": "sha256:6a2fc81053e5cc23df834b35959c452a2497e4be4058fec343d14d0417f90352",
+        "classifications": ["validated-type-narrowing"],
+        "rationale": "Callback receipts and run-control records assert only the mapping shape returned by the internal JSON freezer after validation."
       },
       {
         "path": "src/graphblocks/admission.py",
@@ -351,8 +365,8 @@
       },
       {
         "path": "src/graphblocks/server.py",
-        "count": 30,
-        "semanticDigest": "sha256:f3838cdee6056f5dba667e573349e8718a4a2de5c4c47f2553df84c1841532dd",
+        "count": 27,
+        "semanticDigest": "sha256:070e73cbc85c66b03b6564c02038ef0513e213469df85b8648ffeb94cb3d253b",
         "classifications": ["validated-type-narrowing", "internal-state-invariant"],
         "rationale": "Request and repository projections are explicitly validated, while run lifecycle identities follow guarded state transitions; the optimized shard exercises these boundaries."
       },
