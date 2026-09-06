@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from bisect import bisect_left, bisect_right, insort
+from bisect import bisect_left, insort
 from collections import deque
 from collections.abc import Callable, Mapping
 from concurrent.futures import Executor, Future
@@ -70,19 +70,15 @@ from .runtime import (
 
 from ._server_validation import (
     _canonical_json_size_bytes,
-    _decode_run_list_cursor,
-    _encode_run_list_cursor,
     _event_visible_to_principal,
     _freeze_json_value,
     _principal_matches_owner,
     _principal_response_payload,
     _response_json_object,
-    _run_list_scope,
     _server_alias_value,
     _SERVER_AUTHORIZATION_RESOURCE_POLICIES,
     _SERVER_BEARER_CHALLENGE,
     _SERVER_OPERATION_REGISTRY,
-    _server_request_json_body,
     _ServerOperationHandlerKey,
     _thaw_json_value,
     _utc_now_iso,
@@ -145,14 +141,18 @@ from ._server_validation import (
     _authorized_callback_visibility,  # noqa: F401
     _compact_server_field_name,  # noqa: F401
     _constrain_event_filter_visibility,  # noqa: F401
+    _decode_run_list_cursor,  # noqa: F401
     _DURABLE_ACCEPTED_RUN_REQUIRED_ERROR,  # noqa: F401
     _DURABLE_ACCEPTED_RUN_REQUIRED_REASON_CODE,  # noqa: F401
+    _encode_run_list_cursor,  # noqa: F401
     _event_visibility,  # noqa: F401
     _has_callback_dead_letter_config,  # noqa: F401
+    _run_list_scope,  # noqa: F401
     _run_list_scope_digest,  # noqa: F401
     _server_field_uses_identifier_policy,  # noqa: F401
     _server_field_uses_timestamp_policy,  # noqa: F401
     _SERVER_REQUEST_BODY_READ_CHUNK_BYTES,  # noqa: F401
+    _server_request_json_body,  # noqa: F401
     _ServerOperationSpec,  # noqa: F401
     _validate_callback_delivery_target,  # noqa: F401
     _validate_callback_failure_policy,  # noqa: F401
@@ -258,22 +258,33 @@ from ._server_application import (
     _handle_application_events_operation,
     _handle_application_stream_operation,
 )
-from ._server_execution import (
-    _handle_execution_operation,
-    _install_compile_graph_seam,
-)
+from ._server_execution import _handle_execution_operation
+from ._server_seams import install_server_seam
 from ._server_ingress import _handle_async_callback_ingress_operation
+from ._server_lifecycle import (
+    _handle_run_lifecycle_operation,
+    _handle_system_operation,
+)
 from ._server_registration import (
     _handle_callback_delivery_control_operation,
     _handle_callback_registration_operation,
 )
 from ._server_subscriptions import _handle_subscription_operation
 
-# The execution handler resolves compilation through this seam so that
-# monkeypatching graphblocks.server.compile_graph keeps reaching it; the
-# closure reads this module's attribute on every call.
-_install_compile_graph_seam(
-    lambda *args, **kwargs: compile_graph(*args, **kwargs)
+# The extracted handler modules resolve these helpers through _server_seams
+# so that monkeypatching them on graphblocks.server keeps reaching every
+# handler; each closure reads this module's attribute on every call.
+install_server_seam(
+    "compile_graph",
+    lambda *args, **kwargs: compile_graph(*args, **kwargs),
+)
+install_server_seam(
+    "_server_request_json_body",
+    lambda request, owner: _server_request_json_body(request, owner),
+)
+install_server_seam(
+    "_canonical_json_size_bytes",
+    lambda value: _canonical_json_size_bytes(value),
 )
 
 
@@ -2357,366 +2368,6 @@ class GraphBlocksServerApp:
                     },
                 )
         return None
-
-    def _handle_system_operation(
-        self,
-        request: ServerRequest,
-        route_match: ServerRouteMatch,
-        auth_decision: ServerAuthDecision,
-    ) -> ServerResponse:
-        del request, route_match, auth_decision
-        payload = self.health.to_payload()
-        checks = payload.get("checks")
-        if self._audit_hook_failures_by_hook and isinstance(checks, dict):
-            checks["audit_hooks"] = {
-                "status": "degraded",
-                "details": {
-                    "hook_failure_counts": dict(
-                        sorted(self._audit_hook_failures_by_hook.items())
-                    ),
-                },
-            }
-            if payload["status"] == "healthy":
-                payload["status"] = "degraded"
-        return ServerResponse.json(200, payload)
-
-    def _handle_run_lifecycle_operation(
-        self,
-        request: ServerRequest,
-        route_match: ServerRouteMatch,
-        auth_decision: ServerAuthDecision,
-    ) -> ServerResponse:
-        route = route_match.endpoint
-        if route.operation == "list_runs":
-            try:
-                scope = _run_list_scope(auth_decision.principal)
-                cursor = request.query.get("cursor")
-                after_run_id = (
-                    _decode_run_list_cursor(cursor, scope)
-                    if cursor is not None
-                    else None
-                )
-                page_limit = self.max_run_list_page_runs
-                requested_limit = request.query.get("limit")
-                if requested_limit is not None:
-                    if requested_limit != requested_limit.strip():
-                        raise ValueError(
-                            "server run list limit must not contain "
-                            "surrounding whitespace"
-                        )
-                    if (
-                        not requested_limit.isascii()
-                        or not requested_limit.isdecimal()
-                    ):
-                        raise ValueError(
-                            "server run list limit must be a positive "
-                            "ASCII integer"
-                        )
-                    if len(requested_limit) > len(
-                        str(self.max_run_list_page_runs)
-                    ):
-                        raise ValueError(
-                            "server run list limit must be at most "
-                            f"{self.max_run_list_page_runs}"
-                        )
-                    page_limit = int(requested_limit)
-                    if page_limit < 1:
-                        raise ValueError(
-                            "server run list limit must be a positive "
-                            "ASCII integer"
-                        )
-                    if page_limit > self.max_run_list_page_runs:
-                        raise ValueError(
-                            "server run list limit must be at most "
-                            f"{self.max_run_list_page_runs}"
-                        )
-                scope_kind, tenant_id, owner_principal_id = scope
-                with self._accepted_run_condition:
-                    if scope_kind == "tenant":
-                        indexed_run_ids = self._run_ids_by_tenant.get(
-                            tenant_id,
-                            (),
-                        )
-                    else:
-                        indexed_run_ids = self._run_ids_by_owner.get(
-                            (tenant_id, owner_principal_id),
-                            (),
-                        )
-                    page_start = (
-                        bisect_right(indexed_run_ids, after_run_id)
-                        if after_run_id is not None
-                        else 0
-                    )
-                    page_run_ids = tuple(
-                        indexed_run_ids[
-                            page_start : page_start + page_limit + 1
-                        ]
-                    )
-                    has_more = len(page_run_ids) > page_limit
-                    page_run_ids = page_run_ids[:page_limit]
-                    page_records = tuple(
-                        (run_id, self._events_by_run_id[run_id])
-                        for run_id in page_run_ids
-                        if (
-                            run_id in self._events_by_run_id
-                            and self._principal_can_access_run(
-                                run_id,
-                                auth_decision.principal,
-                            )
-                        )
-                    )
-                runs = [
-                    self._run_status_payload(
-                        run_id,
-                        events,
-                        include_ok=False,
-                    )
-                    for run_id, events in page_records
-                ]
-                next_cursor = (
-                    _encode_run_list_cursor(scope, page_run_ids[-1])
-                    if has_more and page_run_ids
-                    else None
-                )
-            except (TypeError, ValueError) as error:
-                return self._safe_error_response(
-                    request,
-                    route_match,
-                    status_code=400,
-                    error_code="server.run_list.invalid_request",
-                    message="The run-list request is invalid.",
-                    error=error,
-                )
-            return ServerResponse.json(
-                200,
-                {
-                    "ok": True,
-                    "runs": runs,
-                    "nextCursor": next_cursor,
-                },
-            )
-        if route.operation == "delete_run":
-            run_id = route_match.path_params.get("run_id", "")
-            try:
-                payload = self.delete_terminal_run(
-                    run_id,
-                    principal=auth_decision.principal,
-                    deleted_at=request.requested_at or _utc_now_iso(),
-                )
-            except KeyError:
-                return ServerResponse.json(
-                    404,
-                    {
-                        "ok": False,
-                        "error": f"run {run_id!r} was not found",
-                    },
-                )
-            except _ServerRunDeletionConflictError as error:
-                return self._safe_error_response(
-                    request,
-                    route_match,
-                    status_code=409,
-                    error_code="server.run.delete_conflict",
-                    message="The run cannot be deleted in its current state.",
-                    error=error,
-                )
-            except ValueError as error:
-                return self._safe_error_response(
-                    request,
-                    route_match,
-                    status_code=400,
-                    error_code="server.run_delete.invalid_request",
-                    message="The run deletion request is invalid.",
-                    error=error,
-                )
-            return ServerResponse.json(
-                200 if payload["duplicate"] else 202,
-                payload,
-            )
-        if route.operation in {"cancel_run", "pause_run", "resume_run", "expire_run"}:
-            try:
-                run_id = route_match.path_params.get("run_id", "")
-                with self._accepted_run_condition:
-                    events = self._events_by_run_id.get(run_id)
-                    if events is None or not self._principal_can_access_run(
-                        run_id,
-                        auth_decision.principal,
-                    ):
-                        return ServerResponse.json(
-                            404,
-                            {
-                                "ok": False,
-                                "error": f"run control stream not found for run {run_id!r}",
-                            },
-                        )
-                payload = _server_request_json_body(request, "run control request")
-                if not isinstance(payload, Mapping):
-                    raise ValueError("run control request body must be a JSON object")
-                with self._accepted_run_condition:
-                    events = self._events_by_run_id.get(run_id)
-                    if events is None or not self._principal_can_access_run(
-                        run_id,
-                        auth_decision.principal,
-                    ):
-                        return ServerResponse.json(
-                            404,
-                            {
-                                "ok": False,
-                                "error": f"run control stream not found for run {run_id!r}",
-                            },
-                        )
-                    return self._run_control_response(
-                        run_id,
-                        route.operation,
-                        events,
-                        payload,
-                        request.requested_at or _utc_now_iso(),
-                        auth_decision.principal,
-                    )
-            except (TypeError, ValueError, json.JSONDecodeError) as error:
-                return self._safe_error_response(
-                    request,
-                    route_match,
-                    status_code=400,
-                    error_code="server.run_control.invalid_request",
-                    message="The run control request is invalid.",
-                    error=error,
-                )
-        if route.operation == "get_run_status":
-            run_id = route_match.path_params.get("run_id", "")
-            if not self._principal_can_access_run(run_id, auth_decision.principal):
-                return ServerResponse.json(
-                    404,
-                    {
-                        "ok": False,
-                        "error": f"run status not found for run {run_id!r}",
-                    },
-                )
-            events = self._events_by_run_id.get(run_id)
-            if events is None:
-                return ServerResponse.json(
-                    404,
-                    {
-                        "ok": False,
-                        "error": f"run status not found for run {run_id!r}",
-                    },
-                )
-            try:
-                return ServerResponse.json(200, self._run_status_payload(run_id, events))
-            except (TypeError, ValueError) as error:
-                return self._safe_error_response(
-                    request,
-                    route_match,
-                    status_code=500,
-                    error_code="server.run_status.projection_failed",
-                    message="The run status is temporarily unavailable.",
-                    error=error,
-                )
-        if route.operation == "attach_to_run":
-            try:
-                run_id = route_match.path_params.get("run_id", "")
-                if not self._principal_can_access_run(
-                    run_id,
-                    auth_decision.principal,
-                ):
-                    return ServerResponse.json(
-                        404,
-                        {
-                            "ok": False,
-                            "error": f"run attach stream not found for run {run_id!r}",
-                        },
-                    )
-                events = self._events_by_run_id.get(run_id)
-                if events is None:
-                    return ServerResponse.json(
-                        404,
-                        {
-                            "ok": False,
-                            "error": f"run attach stream not found for run {run_id!r}",
-                        },
-                    )
-                payload = _server_request_json_body(request, "attach request")
-                if not isinstance(payload, Mapping):
-                    raise ValueError("attach request body must be a JSON object")
-                return self._attach_to_run_response(run_id, events, payload, auth_decision.principal)
-            except (TypeError, ValueError, json.JSONDecodeError) as error:
-                return self._safe_error_response(
-                    request,
-                    route_match,
-                    status_code=400,
-                    error_code="server.run_attach.invalid_request",
-                    message="The run attach request is invalid.",
-                    error=error,
-                )
-        if route.operation == "detach_from_run":
-            try:
-                run_id = route_match.path_params.get("run_id", "")
-                if not self._principal_can_access_run(
-                    run_id,
-                    auth_decision.principal,
-                ):
-                    return ServerResponse.json(
-                        404,
-                        {
-                            "ok": False,
-                            "error": f"run detach stream not found for run {run_id!r}",
-                        },
-                    )
-                events = self._events_by_run_id.get(run_id)
-                if events is None:
-                    return ServerResponse.json(
-                        404,
-                        {
-                            "ok": False,
-                            "error": f"run detach stream not found for run {run_id!r}",
-                        },
-                    )
-                payload = _server_request_json_body(request, "detach request")
-                if not isinstance(payload, Mapping):
-                    raise ValueError("detach request body must be a JSON object")
-                with self._accepted_run_condition:
-                    events = self._events_by_run_id.get(run_id)
-                    if (
-                        events is None
-                        or not self._principal_can_access_run(
-                            run_id,
-                            auth_decision.principal,
-                        )
-                    ):
-                        return ServerResponse.json(
-                            404,
-                            {
-                                "ok": False,
-                                "error": (
-                                    "run detach stream not found for run "
-                                    f"{run_id!r}"
-                                ),
-                            },
-                        )
-                    return self._detach_from_run_response(
-                        run_id,
-                        events,
-                        payload,
-                        request.requested_at or _utc_now_iso(),
-                    )
-            except (TypeError, ValueError, json.JSONDecodeError) as error:
-                return self._safe_error_response(
-                    request,
-                    route_match,
-                    status_code=400,
-                    error_code="server.run_detach.invalid_request",
-                    message="The run detach request is invalid.",
-                    error=error,
-                )
-        return ServerResponse.json(
-            501,
-            {
-                "ok": False,
-                "error": (
-                    f"server operation {route.operation!r} is not implemented"
-                ),
-            },
-        )
 
     def pending_accepted_run_ids(self) -> tuple[str, ...]:
         with self._accepted_run_condition:
@@ -5796,9 +5447,9 @@ _SERVER_OPERATION_HANDLERS: Mapping[
     _ServerOperationHandler,
 ] = MappingProxyType(
     {
-        "system": GraphBlocksServerApp._handle_system_operation,
+        "system": _handle_system_operation,
         "run_lifecycle": (
-            GraphBlocksServerApp._handle_run_lifecycle_operation
+            _handle_run_lifecycle_operation
         ),
         "subscriptions": (
             _handle_subscription_operation

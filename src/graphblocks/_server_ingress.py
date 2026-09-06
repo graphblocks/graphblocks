@@ -30,10 +30,10 @@ from ._server_transport import (
     ServerResponse,
     ServerRouteMatch,
 )
+from ._server_seams import _server_request_json_body
 from ._server_validation import (
     _freeze_json_value,
     _SERVER_BEARER_CHALLENGE,
-    _server_request_json_body,
     _thaw_json_value,
     _utc_now_iso,
     _validate_exact_non_empty_string,

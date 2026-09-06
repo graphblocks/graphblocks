@@ -15,12 +15,14 @@ from threading import Lock
 from typing import TYPE_CHECKING, Protocol
 
 from ._canonical_reference import canonical_hash
-from ._server_validation import (
+from ._server_seams import (
     _canonical_json_size_bytes,
+    _server_request_json_body,
+)
+from ._server_validation import (
     _freeze_json_value,
     _principal_response_payload,
     _server_alias_value,
-    _server_request_json_body,
     _thaw_json_value,
     _utc_now_iso,
     _validate_callback_delivery_target,

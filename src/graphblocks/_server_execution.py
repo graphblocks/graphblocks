@@ -8,7 +8,7 @@ entry now points at the free function below, whose body is the former
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from datetime import datetime, timedelta, timezone
 import json
 from threading import get_ident
@@ -27,12 +27,15 @@ from ._server_transport import (
     ServerResponse,
     ServerRouteMatch,
 )
+from ._server_seams import (
+    _server_request_json_body,
+    compile_graph,
+)
 from ._server_validation import (
     _DURABLE_ACCEPTED_RUN_REQUIRED_ERROR,
     _DURABLE_ACCEPTED_RUN_REQUIRED_REASON_CODE,
     _freeze_json_value,
     _server_alias_value,
-    _server_request_json_body,
     _utc_now_iso,
     _validate_exact_non_empty_string,
     _validate_iso_datetime,
@@ -55,33 +58,6 @@ from .runtime import (
 
 if TYPE_CHECKING:
     from .server import GraphBlocksServerApp
-
-
-_compile_graph_seam: Callable[..., object] | None = None
-
-
-def _install_compile_graph_seam(seam: Callable[..., object]) -> None:
-    """Install the call-time compile resolver.
-
-    ``graphblocks.server`` installs a closure over its own ``compile_graph``
-    module attribute when it imports this handler. Tests monkeypatch
-    ``compile_graph`` on the ``graphblocks.server`` module to stub run
-    compilation; resolving through the installed seam on every call keeps
-    that working now that the execution handler lives here, without this
-    module ever importing ``graphblocks.server`` (the internal import graph
-    must stay acyclic).
-    """
-    global _compile_graph_seam
-    _compile_graph_seam = seam
-
-
-def compile_graph(*args: object, **kwargs: object) -> object:
-    seam = _compile_graph_seam
-    if seam is None:
-        from .compiler import compile_graph as direct_compile_graph
-
-        return direct_compile_graph(*args, **kwargs)
-    return seam(*args, **kwargs)
 
 
 def _handle_execution_operation(

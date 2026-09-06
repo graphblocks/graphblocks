@@ -20,11 +20,13 @@ from ._server_transport import (
     ServerResponse,
     ServerRouteMatch,
 )
-from ._server_validation import (
+from ._server_seams import (
     _canonical_json_size_bytes,
+    _server_request_json_body,
+)
+from ._server_validation import (
     _constrain_event_filter_visibility,
     _principal_matches_owner,
-    _server_request_json_body,
     _utc_now_iso,
 )
 
