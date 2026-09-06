@@ -16,6 +16,13 @@
         "rationale": "Adversarial Mapping implementations may fail during bounded schema traversal and are normalized to the schema policy error contract."
       },
       {
+        "path": "src/graphblocks/_server_execution.py",
+        "count": 7,
+        "semanticDigest": "sha256:f0c9d9daff88c0d5d78e2b3ee4a4a3bbee2fdcb27a52632189aaec74693d10b5",
+        "classifications": ["external-callback-boundary", "persistence-transaction-boundary"],
+        "rationale": "The execution handler isolates compiler invocation, accepted-run executor dispatch, and run-authorization persistence failures behind stable execution responses."
+      },
+      {
         "path": "src/graphblocks/_server_ingress.py",
         "count": 2,
         "semanticDigest": "sha256:a4696038665abcd1aae598dd9ae474f04114f9858c8ce961c73f72a9195735b7",
@@ -157,8 +164,8 @@
       },
       {
         "path": "src/graphblocks/server.py",
-        "count": 24,
-        "semanticDigest": "sha256:1c5392b77ab40c8de915790f093a9b5ef41e8f68bce794d893d089b9390d45e6",
+        "count": 17,
+        "semanticDigest": "sha256:fce262370aae30c5b50a43a79b31e0ea630e72f55ed1cfd923e03ca0d4e0b16a",
         "classifications": ["external-callback-boundary", "persistence-transaction-boundary", "input-normalization-boundary"],
         "rationale": "HTTP services isolate authenticators, repositories, executors, callbacks, and malformed boundary objects behind stable server errors."
       },
@@ -236,6 +243,13 @@
         "semanticDigest": "sha256:f37bdbbd3e2ddfb006b7a96c3ce97c5fb8d3bb661ac89631e389e59655e97acc",
         "classifications": ["validated-type-narrowing"],
         "rationale": "Subscription and registration filters assert only the mapping shape returned by the internal JSON freezer after validation."
+      },
+      {
+        "path": "src/graphblocks/_server_execution.py",
+        "count": 7,
+        "semanticDigest": "sha256:3a82d31a6394638456a309bfe68abfdd009893340c1bda6c65f9d748983b6122",
+        "classifications": ["validated-type-narrowing", "internal-state-invariant"],
+        "rationale": "Frozen run payloads narrow validated JSON shapes, and admission reservations, ticket queues, start events, and completions are asserted after the guarded state transitions that establish them."
       },
       {
         "path": "src/graphblocks/_server_ingress.py",
@@ -365,8 +379,8 @@
       },
       {
         "path": "src/graphblocks/server.py",
-        "count": 27,
-        "semanticDigest": "sha256:070e73cbc85c66b03b6564c02038ef0513e213469df85b8648ffeb94cb3d253b",
+        "count": 20,
+        "semanticDigest": "sha256:4c3c33114563c85da380c442d1958ffd6e0b747e8742ddec3b0affc89914de27",
         "classifications": ["validated-type-narrowing", "internal-state-invariant"],
         "rationale": "Request and repository projections are explicitly validated, while run lifecycle identities follow guarded state transitions; the optimized shard exercises these boundaries."
       },
