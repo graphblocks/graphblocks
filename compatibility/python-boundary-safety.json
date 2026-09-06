@@ -30,6 +30,13 @@
         "rationale": "The async-callback ingress handler isolates resume-admission hook denials and accepted-run executor dispatch failures behind stable callback responses."
       },
       {
+        "path": "src/graphblocks/_server_registration.py",
+        "count": 1,
+        "semanticDigest": "sha256:59d110f78bf711c7f7e75469cb6dc106df96c12342b011842770de5dcb65d044",
+        "classifications": ["external-callback-boundary"],
+        "rationale": "The registration handler isolates pluggable callback delivery hook failures and fails closed with a stable delivery error."
+      },
+      {
         "path": "src/graphblocks/audit.py",
         "count": 6,
         "semanticDigest": "sha256:10ece0594b3de9d956d4e986f88bc2ee9cc49182dff9c0c6a060e4b565bf63a1",
@@ -164,8 +171,8 @@
       },
       {
         "path": "src/graphblocks/server.py",
-        "count": 17,
-        "semanticDigest": "sha256:fce262370aae30c5b50a43a79b31e0ea630e72f55ed1cfd923e03ca0d4e0b16a",
+        "count": 16,
+        "semanticDigest": "sha256:6de301e9548c9d9ed4e67abd6285f6748f3492b3dc19981f3b5add105117a8b4",
         "classifications": ["external-callback-boundary", "persistence-transaction-boundary", "input-normalization-boundary"],
         "rationale": "HTTP services isolate authenticators, repositories, executors, callbacks, and malformed boundary objects behind stable server errors."
       },
