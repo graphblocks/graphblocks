@@ -70,7 +70,6 @@ from .runtime import (
 
 from ._server_validation import (
     _canonical_json_size_bytes,
-    _constrain_event_filter_visibility,
     _decode_run_list_cursor,
     _encode_run_list_cursor,
     _event_visible_to_principal,
@@ -145,6 +144,7 @@ from ._server_validation import (
 from ._server_validation import (
     _authorized_callback_visibility,  # noqa: F401
     _compact_server_field_name,  # noqa: F401
+    _constrain_event_filter_visibility,  # noqa: F401
     _DURABLE_ACCEPTED_RUN_REQUIRED_ERROR,  # noqa: F401
     _DURABLE_ACCEPTED_RUN_REQUIRED_REASON_CODE,  # noqa: F401
     _event_visibility,  # noqa: F401
@@ -267,6 +267,7 @@ from ._server_registration import (
     _handle_callback_delivery_control_operation,
     _handle_callback_registration_operation,
 )
+from ._server_subscriptions import _handle_subscription_operation
 
 # The execution handler resolves compilation through this seam so that
 # monkeypatching graphblocks.server.compile_graph keeps reaching it; the
@@ -2356,336 +2357,6 @@ class GraphBlocksServerApp:
                     },
                 )
         return None
-
-    def _handle_subscription_operation(
-        self,
-        request: ServerRequest,
-        route_match: ServerRouteMatch,
-        auth_decision: ServerAuthDecision,
-    ) -> ServerResponse:
-        route = route_match.endpoint
-        if route.operation == "subscribe_events":
-            try:
-                run_id = route_match.path_params.get("run_id", "")
-                if not self._principal_can_access_run(
-                    run_id,
-                    auth_decision.principal,
-                ):
-                    return ServerResponse.json(
-                        404,
-                        {
-                            "ok": False,
-                            "error": (
-                                "run event stream not found for subscription "
-                                f"run {run_id!r}"
-                            ),
-                        },
-                    )
-                events = self._events_by_run_id.get(run_id)
-                if events is None:
-                    return ServerResponse.json(
-                        404,
-                        {
-                            "ok": False,
-                            "error": f"run event stream not found for subscription run {run_id!r}",
-                        },
-                    )
-                with self._subscription_registration_condition:
-                    current_events = self._events_by_run_id.get(run_id)
-                    if (
-                        current_events is None
-                        or not self._principal_can_access_run(
-                            run_id,
-                            auth_decision.principal,
-                        )
-                    ):
-                        return ServerResponse.json(
-                            404,
-                            {
-                                "ok": False,
-                                "error": (
-                                    "run event stream not found for subscription "
-                                    f"run {run_id!r}"
-                                ),
-                            },
-                        )
-                    events = current_events
-                    existing = self._subscriptions_by_run_id.get(run_id, ())
-                    subscription = ServerEventSubscription.from_request(
-                        run_id=run_id,
-                        request=request,
-                        ordinal=len(existing) + 1,
-                        owner=auth_decision.principal,
-                    )
-                    subscription = replace(
-                        subscription,
-                        event_filter=_constrain_event_filter_visibility(
-                            subscription.event_filter,
-                            auth_decision.principal,
-                        ),
-                    )
-                    existing_subscription = self._subscription_for(run_id, subscription.subscription_id)
-                    if existing_subscription is not None:
-                        return ServerResponse.json(
-                            409,
-                            {
-                                "ok": False,
-                                "runId": run_id,
-                                "subscriptionId": subscription.subscription_id,
-                                "state": existing_subscription.status,
-                                "error": (
-                                    f"subscription {subscription.subscription_id!r} "
-                                    f"already exists for run {run_id!r}"
-                                ),
-                            },
-                        )
-                    retained_subscription_bytes = (
-                        self._subscription_history_bytes_by_run_id.get(
-                            run_id
-                        )
-                    )
-                    if retained_subscription_bytes is None:
-                        retained_subscription_bytes = 0
-                        for retained_subscription in existing:
-                            retained_value = (
-                                retained_subscription.response_payload(
-                                    [],
-                                    f"{run_id}:0",
-                                )
-                            )
-                            retained_value["createdAt"] = (
-                                retained_subscription.created_at
-                            )
-                            retained_value["status"] = "revoked"
-                            retained_subscription_bytes += (
-                                _canonical_json_size_bytes(retained_value)
-                            )
-                        self._subscription_history_bytes_by_run_id[
-                            run_id
-                        ] = retained_subscription_bytes
-                    candidate_value = subscription.response_payload(
-                        [],
-                        f"{run_id}:0",
-                    )
-                    candidate_value["createdAt"] = subscription.created_at
-                    candidate_value["status"] = "revoked"
-                    candidate_bytes = _canonical_json_size_bytes(
-                        candidate_value
-                    )
-                    if (
-                        len(existing) >= self.max_subscriptions_per_run
-                        or (
-                            retained_subscription_bytes
-                            + candidate_bytes
-                            > self.max_subscription_history_bytes_per_run
-                        )
-                    ):
-                        return ServerResponse.json(
-                            429,
-                            {
-                                "ok": False,
-                                "runId": run_id,
-                                "reasonCode": (
-                                    "server.run_subscription_capacity_exhausted"
-                                ),
-                                "maxSubscriptionsPerRun": (
-                                    self.max_subscriptions_per_run
-                                ),
-                                "maxSubscriptionHistoryBytesPerRun": (
-                                    self.max_subscription_history_bytes_per_run
-                                ),
-                                "error": (
-                                    "server run subscription history capacity "
-                                    "is exhausted"
-                                ),
-                            },
-                        )
-                    replay = self._subscription_replay(subscription, events)
-                    if isinstance(replay, ServerResponse):
-                        return replay
-                    self._subscriptions_by_run_id.setdefault(
-                        run_id,
-                        [],
-                    ).append(subscription)
-                    self._subscription_history_bytes_by_run_id[run_id] = (
-                        retained_subscription_bytes + candidate_bytes
-                    )
-                return ServerResponse.json(
-                    201,
-                    subscription.response_payload(replay, f"{run_id}:{self._last_event_sequence(events)}"),
-                )
-            except (TypeError, ValueError, json.JSONDecodeError) as error:
-                return self._safe_error_response(
-                    request,
-                    route_match,
-                    status_code=400,
-                    error_code="server.subscription.invalid_request",
-                    message="The subscription request is invalid.",
-                    error=error,
-                )
-        if route.operation == "unsubscribe_events":
-            run_id = route_match.path_params.get("run_id", "")
-            subscription_id = route_match.path_params.get("subscription_id", "")
-            if not self._principal_can_access_run(
-                run_id,
-                auth_decision.principal,
-            ):
-                return ServerResponse.json(
-                    404,
-                    {
-                        "ok": False,
-                        "error": f"run subscriptions not found for run {run_id!r}",
-                    },
-                )
-            with self._subscription_registration_condition:
-                subscriptions = self._subscriptions_by_run_id.get(run_id)
-                if subscriptions is None:
-                    return ServerResponse.json(
-                        404,
-                        {
-                            "ok": False,
-                            "error": f"run subscriptions not found for run {run_id!r}",
-                        },
-                    )
-                for index, subscription in enumerate(subscriptions):
-                    if subscription.subscription_id == subscription_id:
-                        if subscription.owner is not None and not _principal_matches_owner(
-                            auth_decision.principal,
-                            subscription.owner,
-                        ):
-                            return ServerResponse.json(
-                                403,
-                                {
-                                    "ok": False,
-                                    "error": (
-                                        f"subscription {subscription_id!r} for run {run_id!r} "
-                                        "belongs to a different principal"
-                                    ),
-                                },
-                            )
-                        if subscription.status == "revoked":
-                            return ServerResponse.json(
-                                200,
-                                {
-                                    "ok": True,
-                                    "runId": run_id,
-                                    "subscriptionId": subscription_id,
-                                    "status": "revoked",
-                                    "duplicate": True,
-                                },
-                            )
-                        revoked = replace(subscription, status="revoked")
-                        subscriptions[index] = revoked
-                        return ServerResponse.json(
-                            202,
-                            {
-                                "ok": True,
-                                "runId": run_id,
-                                "subscriptionId": subscription_id,
-                                "status": "revoked",
-                            },
-                        )
-                return ServerResponse.json(
-                    404,
-                    {
-                        "ok": False,
-                        "error": f"subscription {subscription_id!r} not found for run {run_id!r}",
-                    },
-                )
-        if route.operation == "ack_event":
-            try:
-                run_id = route_match.path_params.get("run_id", "")
-                subscription_id = route_match.path_params.get("subscription_id", "")
-                if not self._principal_can_access_run(
-                    run_id,
-                    auth_decision.principal,
-                ):
-                    return ServerResponse.json(
-                        404,
-                        {
-                            "ok": False,
-                            "error": (
-                                "run event stream not found for ack "
-                                f"run {run_id!r}"
-                            ),
-                        },
-                    )
-                events = self._events_by_run_id.get(run_id)
-                if events is None:
-                    return ServerResponse.json(
-                        404,
-                        {
-                            "ok": False,
-                            "error": f"run event stream not found for ack run {run_id!r}",
-                        },
-                    )
-                with self._subscription_registration_condition:
-                    subscription = self._subscription_for(run_id, subscription_id)
-                    if subscription is None:
-                        return ServerResponse.json(
-                            404,
-                            {
-                                "ok": False,
-                                "error": f"subscription {subscription_id!r} not found for run {run_id!r}",
-                            },
-                        )
-                    if subscription.owner is not None and not _principal_matches_owner(
-                        auth_decision.principal,
-                        subscription.owner,
-                    ):
-                        return ServerResponse.json(
-                            403,
-                            {
-                                "ok": False,
-                                "error": (
-                                    f"subscription {subscription_id!r} for run {run_id!r} "
-                                    "belongs to a different principal"
-                                ),
-                            },
-                        )
-                    if subscription.status != "active":
-                        return ServerResponse.json(
-                            409,
-                            {
-                                "ok": False,
-                                "runId": run_id,
-                                "subscriptionId": subscription_id,
-                                "state": subscription.status,
-                                "error": (
-                                    f"subscription {subscription_id!r} for run {run_id!r} "
-                                    f"is {subscription.status}"
-                                ),
-                            },
-                        )
-                    payload = _server_request_json_body(request, "ack request")
-                    if not isinstance(payload, Mapping):
-                        raise ValueError("ack request body must be a JSON object")
-                    return self._ack_event_response(
-                        run_id,
-                        subscription_id,
-                        subscription,
-                        events,
-                        payload,
-                        request.requested_at or _utc_now_iso(),
-                    )
-            except (TypeError, ValueError, json.JSONDecodeError) as error:
-                return self._safe_error_response(
-                    request,
-                    route_match,
-                    status_code=400,
-                    error_code="server.subscription_ack.invalid_request",
-                    message="The subscription acknowledgement request is invalid.",
-                    error=error,
-                )
-        return ServerResponse.json(
-            501,
-            {
-                "ok": False,
-                "error": (
-                    f"server operation {route.operation!r} is not implemented"
-                ),
-            },
-        )
 
     def _handle_system_operation(
         self,
@@ -6130,7 +5801,7 @@ _SERVER_OPERATION_HANDLERS: Mapping[
             GraphBlocksServerApp._handle_run_lifecycle_operation
         ),
         "subscriptions": (
-            GraphBlocksServerApp._handle_subscription_operation
+            _handle_subscription_operation
         ),
         "callback_registration": (
             _handle_callback_registration_operation

@@ -81,7 +81,7 @@ def test_repository_mypy_scope_silences_only_transitive_diagnostics() -> None:
                 "distribution": "graphblocks",
                 "sourceRoot": "src/graphblocks",
                 "minimumStrictModuleCount": 18,
-                "maximumDebtModuleCount": 91,
+                "maximumDebtModuleCount": 92,
                 "maximumDiagnosticCount": 728,
                 "maximumTypeIgnoreCommentCount": 145,
                 "maximumUncodedTypeIgnoreCommentCount": 0,
