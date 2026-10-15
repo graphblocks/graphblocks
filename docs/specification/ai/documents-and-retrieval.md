@@ -16,6 +16,19 @@ a rejected key cannot leave a partial blob behind.
 When sidecar metadata records a content checksum and size, local `head` and
 `get` operations MUST verify the stored bytes against both values. Malformed
 sidecars or mismatched content MUST fail closed as blob-store errors.
+
+The Python local store writes version 2 sidecars beneath the reserved sibling
+directory `.graphblocks-metadata-v2`, sharded by the SHA-256 digest of the exact
+UTF-8 object key. Sidecars retain the original key in `artifact.artifact_id` and
+MUST verify that identity against the requested key. Object path prefixes such as
+`alpha` and `alpha.json/child` therefore do not create sidecar file/directory
+collisions. The directory has a `.format` marker; an existing nonempty directory
+without that marker MUST be rejected without changing its contents. Both
+`.graphblocks-metadata` and `.graphblocks-metadata-v2` are reserved object-key
+namespaces. The Python store still reads version 1 sidecars and recovers matching
+version 1 pending metadata; new writes use version 2. This is a Python storage
+format, not a promise that native stores share an on-disk layout.
+
 Numeric cursors emitted or accepted by a local blob store MUST use canonical
 unsigned decimal syntax. Advancing a valid cursor MUST NOT overflow, including
 when a caller supplies the platform's largest representable cursor.

@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Iterator, Mapping
 from concurrent.futures import ThreadPoolExecutor
 import gc
+import hashlib
 import json
 from threading import Barrier, Lock
 from weakref import ref
@@ -52,6 +53,101 @@ def test_local_blob_store_put_head_and_get_round_trip(tmp_path) -> None:
     assert metadata.artifact == artifact
     assert metadata.etag == artifact.checksum
     assert store.get(BlobKey("docs/policy.txt")) == b"alpha policy"
+
+
+@pytest.mark.parametrize("keys", [("alpha", "alpha.json/child"), ("alpha.json/child", "alpha")])
+def test_local_blob_store_metadata_does_not_introduce_key_path_collisions(tmp_path, keys) -> None:
+    store = LocalBlobStore(tmp_path)
+    for name in keys:
+        store.put(BlobKey(name), name.encode(), PutOptions(metadata={"name": name}))
+
+    reopened = LocalBlobStore(tmp_path)
+    assert [item.key.key for item in reopened.list().items] == sorted(keys)
+    for name in keys:
+        key = BlobKey(name)
+        assert reopened.get(key) == name.encode()
+        assert reopened.head(key).artifact.metadata == {"name": name}
+        digest = hashlib.sha256(name.encode()).hexdigest()
+        assert reopened._metadata_path_for(key) == (
+            tmp_path / ".graphblocks-metadata-v2" / digest[:2] / (digest[2:] + ".json")
+        )
+    reopened.delete(BlobKey(keys[0]))
+    assert reopened.get(BlobKey(keys[1])) == keys[1].encode()
+
+
+@pytest.mark.parametrize("pending", [False, True])
+def test_local_blob_store_reads_and_recovers_legacy_sidecars(tmp_path, pending) -> None:
+    store = LocalBlobStore(tmp_path)
+    key = BlobKey("docs/policy.txt")
+    artifact = store.put(key, b"legacy body", PutOptions(media_type="text/plain"))
+    legacy_path = store._legacy_metadata_path_for(key)
+    legacy_path.parent.mkdir(parents=True)
+    if pending:
+        legacy_path = legacy_path.with_name(legacy_path.name + ".pending")
+    store._metadata_path_for(key).replace(legacy_path)
+
+    reopened = LocalBlobStore(tmp_path)
+    assert reopened.head(key).artifact == artifact
+    assert reopened.get(key) == b"legacy body"
+    assert reopened._legacy_metadata_path_for(key).is_file()
+    reopened.delete(key)
+    assert not legacy_path.exists()
+    assert not reopened._legacy_metadata_path_for(key).exists()
+
+
+def test_local_blob_store_preserves_legacy_metadata_before_body_commit(tmp_path, monkeypatch) -> None:
+    store = LocalBlobStore(tmp_path)
+    key = BlobKey("docs/policy.txt")
+    artifact = store.put(key, b"legacy body", PutOptions(media_type="text/plain"))
+    legacy_path = store._legacy_metadata_path_for(key)
+    legacy_path.parent.mkdir(parents=True)
+    store._metadata_path_for(key).replace(legacy_path)
+    pending_body_path, _ = store._pending_paths_for(key)
+    original_replace = type(pending_body_path).replace
+
+    def interrupt_body_replace(path, target):
+        if path == pending_body_path:
+            raise OSError("simulated interruption")
+        return original_replace(path, target)
+
+    monkeypatch.setattr(type(pending_body_path), "replace", interrupt_body_replace)
+    with pytest.raises(OSError, match="simulated interruption"):
+        store.put(key, b"new body", PutOptions(media_type="text/markdown"))
+    monkeypatch.undo()
+
+    assert store.head(key).artifact == artifact
+    assert store.get(key) == b"legacy body"
+
+
+def test_local_blob_store_refuses_unmarked_metadata_directory_without_touching_data(tmp_path) -> None:
+    body = tmp_path / ".graphblocks-metadata-v2" / "existing-object"
+    body.parent.mkdir()
+    body.write_bytes(b"user data")
+
+    with pytest.raises(BlobStoreError, match="nonempty unmarked"):
+        LocalBlobStore(tmp_path)
+
+    assert body.read_bytes() == b"user data"
+    assert not (body.parent / ".format").exists()
+
+
+@pytest.mark.parametrize("legacy_name,new_name", [("alpha", "alpha.json/child"), ("alpha.json/child", "alpha")])
+def test_local_blob_store_new_sidecars_coexist_with_legacy_path_collisions(
+    tmp_path, legacy_name, new_name
+) -> None:
+    store = LocalBlobStore(tmp_path)
+    legacy_key = BlobKey(legacy_name)
+    legacy_artifact = store.put(legacy_key, b"legacy", PutOptions(media_type="text/plain"))
+    legacy_path = store._legacy_metadata_path_for(legacy_key)
+    legacy_path.parent.mkdir(parents=True, exist_ok=True)
+    store._metadata_path_for(legacy_key).replace(legacy_path)
+
+    new_key = BlobKey(new_name)
+    store.put(new_key, b"new", PutOptions(media_type="text/markdown"))
+    assert store.get(new_key) == b"new"
+    assert store.head(legacy_key).artifact == legacy_artifact
+    store.delete(new_key)
+    assert store.get(legacy_key) == b"legacy"
 
 
 def test_local_blob_store_rejects_non_standard_metadata_json_constants(tmp_path) -> None:
@@ -320,7 +416,10 @@ def test_local_blob_store_rejects_path_traversal(tmp_path) -> None:
 
 @pytest.mark.parametrize(
     "reserved_directory",
-    (".graphblocks-metadata", ".GraphBlocks-Metadata", ".GRAPHBLOCKS-METADATA"),
+    (
+        ".graphblocks-metadata", ".GraphBlocks-Metadata", ".GRAPHBLOCKS-METADATA",
+        ".graphblocks-metadata-v2", ".GraphBlocks-Metadata-V2",
+    ),
 )
 def test_local_blob_store_rejects_reserved_metadata_namespace(
     tmp_path,
@@ -450,14 +549,15 @@ def test_local_blob_store_rejects_metadata_symlink_escape(tmp_path, symlink_or_s
     outside = tmp_path / "outside"
     outside.mkdir()
     store = LocalBlobStore(root)
-    metadata_parent = root / ".graphblocks-metadata" / "docs"
+    key = BlobKey("docs/policy.txt")
+    metadata_parent = store._metadata_path_for(key).parent
     symlink_or_skip(metadata_parent, outside, target_is_directory=True)
 
     with pytest.raises(InvalidBlobKeyError, match="invalid blob key"):
-        store.put(BlobKey("docs/policy.txt"), b"alpha policy", PutOptions())
+        store.put(key, b"alpha policy", PutOptions())
 
     assert not (root / "docs" / "policy.txt").exists()
-    assert not (outside / "policy.txt.json").exists()
+    assert list(outside.iterdir()) == []
 
 
 def test_blob_metadata_and_list_page_validate_record_types() -> None:

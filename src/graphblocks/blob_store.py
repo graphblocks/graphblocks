@@ -199,6 +199,8 @@ class ListPage:
 _GRAPHBLOCKS_CHECKSUM_METADATA = "graphblocks-checksum"
 _GRAPHBLOCKS_FILENAME_METADATA = "graphblocks-filename"
 _LOCAL_METADATA_DIRECTORY = ".graphblocks-metadata"
+_LOCAL_METADATA_V2_DIRECTORY = ".graphblocks-metadata-v2"
+_LOCAL_METADATA_V2_FORMAT = "graphblocks-python-local-blob-metadata-v2\n"
 _LOCAL_ROOT_LOCKS_GUARD = Lock()
 _LOCAL_ROOT_LOCKS: WeakValueDictionary[Path, Any] = WeakValueDictionary()
 _RESERVED_METADATA_KEYS = {
@@ -279,6 +281,7 @@ def _is_not_found_error(error: BaseException) -> bool:
 class LocalBlobStore:
     root: str | Path
     _metadata_root: Path = field(init=False, repr=False)
+    _legacy_metadata_root: Path = field(init=False, repr=False)
     _root_lock: Any = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
@@ -291,20 +294,38 @@ class LocalBlobStore:
             self._root_lock = root_lock
         with self._root_lock:
             self.root.mkdir(parents=True, exist_ok=True)
-            metadata_root = self.root / _LOCAL_METADATA_DIRECTORY
-            metadata_root.mkdir(parents=True, exist_ok=True)
-            self._metadata_root = metadata_root.resolve()
-            try:
-                self._metadata_root.relative_to(self.root)
-            except ValueError as error:
-                raise BlobStoreError(
-                    "local blob metadata root must remain within blob root"
-                ) from error
+            for name in (_LOCAL_METADATA_DIRECTORY, _LOCAL_METADATA_V2_DIRECTORY):
+                metadata_root = self.root / name
+                metadata_root.mkdir(parents=True, exist_ok=True)
+                resolved = metadata_root.resolve()
+                try:
+                    resolved.relative_to(self.root)
+                except ValueError as error:
+                    raise BlobStoreError(
+                        "local blob metadata root must remain within blob root"
+                    ) from error
+                if name == _LOCAL_METADATA_DIRECTORY:
+                    self._legacy_metadata_root = resolved
+                else:
+                    self._metadata_root = resolved
+            marker = self._metadata_root / ".format"
+            if marker.is_symlink():
+                raise BlobStoreError("local blob metadata format marker must not be a symlink")
+            if marker.exists():
+                if marker.read_text(encoding="utf-8") != _LOCAL_METADATA_V2_FORMAT:
+                    raise BlobStoreError("unrecognized local blob metadata format")
+            elif any(self._metadata_root.iterdir()):
+                raise BlobStoreError("refusing nonempty unmarked local blob metadata directory")
+            else:
+                marker.write_text(_LOCAL_METADATA_V2_FORMAT, encoding="utf-8")
 
     def _path_for(self, key: BlobKey) -> Path:
         _validate_blob_key(key)
         parsed = PurePosixPath(key.key)
-        if parsed.parts[0].casefold() == _LOCAL_METADATA_DIRECTORY.casefold():
+        if parsed.parts[0].casefold() in {
+            _LOCAL_METADATA_DIRECTORY.casefold(),
+            _LOCAL_METADATA_V2_DIRECTORY.casefold(),
+        }:
             raise InvalidBlobKeyError(
                 f"blob key {key.key!r} uses the reserved local metadata namespace"
             )
@@ -316,18 +337,24 @@ class LocalBlobStore:
         return path
 
     def _metadata_path_for(self, key: BlobKey) -> Path:
+        self._path_for(key)
+        digest = hashlib.sha256(key.key.encode("utf-8")).hexdigest()
+        path = (self._metadata_root / digest[:2] / (digest[2:] + ".json")).resolve()
+        try:
+            path.relative_to(self._metadata_root)
+        except ValueError as error:
+            raise InvalidBlobKeyError(f"invalid blob key {key.key!r}") from error
+        return path
+
+    def _legacy_metadata_path_for(self, key: BlobKey) -> Path:
         _validate_blob_key(key)
         parsed = PurePosixPath(key.key)
-        if parsed.parts[0].casefold() == _LOCAL_METADATA_DIRECTORY.casefold():
-            raise InvalidBlobKeyError(
-                f"blob key {key.key!r} uses the reserved local metadata namespace"
-            )
-        path = (self._metadata_root / Path(*parsed.parts)).with_suffix(
+        path = (self._legacy_metadata_root / Path(*parsed.parts)).with_suffix(
             Path(parsed.name).suffix + ".json"
         )
         path = path.resolve()
         try:
-            path.relative_to(self._metadata_root)
+            path.relative_to(self._legacy_metadata_root)
         except ValueError as error:
             raise InvalidBlobKeyError(f"invalid blob key {key.key!r}") from error
         return path
@@ -345,8 +372,29 @@ class LocalBlobStore:
             raise BlobNotFoundError(f"blob {key.key!r} does not exist")
         if data is None:
             data = path.read_bytes()
-        metadata_path = self._metadata_path_for(key)
-        _, pending_metadata_path = self._pending_paths_for(key)
+        for metadata_path in (self._metadata_path_for(key), None):
+            if metadata_path is None:
+                metadata_path = self._legacy_metadata_path_for(key)
+                if metadata_path.is_dir():
+                    continue
+            metadata = self._metadata_at(key, path, data, metadata_path)
+            if metadata is not None:
+                return metadata
+        checksum = "sha256:" + hashlib.sha256(data).hexdigest()
+        artifact = ArtifactRef(
+            artifact_id=f"blob:{key.key}",
+            uri=path.as_uri(),
+            size_bytes=len(data),
+            checksum=checksum,
+            etag=checksum,
+            filename=path.name,
+        )
+        return BlobMetadata(key=key, artifact=artifact, etag=checksum)
+
+    def _metadata_at(
+        self, key: BlobKey, path: Path, data: bytes, metadata_path: Path
+    ) -> BlobMetadata | None:
+        pending_metadata_path = metadata_path.with_name(metadata_path.name + ".pending")
         metadata: BlobMetadata | None = None
         if pending_metadata_path.exists() and not pending_metadata_path.is_symlink():
             try:
@@ -413,18 +461,7 @@ class LocalBlobStore:
                     f"blob {key.key!r} metadata identity does not match local blob"
                 )
             return metadata
-        if metadata is not None:
-            return metadata
-        checksum = "sha256:" + hashlib.sha256(data).hexdigest()
-        artifact = ArtifactRef(
-            artifact_id=f"blob:{key.key}",
-            uri=path.as_uri(),
-            size_bytes=len(data),
-            checksum=checksum,
-            etag=checksum,
-            filename=path.name,
-        )
-        return BlobMetadata(key=key, artifact=artifact, etag=checksum)
+        return metadata
 
     def put(self, key: BlobKey, body: bytes, options: PutOptions) -> ArtifactRef:
         with self._root_lock:
@@ -481,12 +518,15 @@ class LocalBlobStore:
             path = self._path_for(key)
             if not path.exists():
                 raise BlobNotFoundError(f"blob {key.key!r} does not exist")
+            metadata_paths = (self._metadata_path_for(key), self._legacy_metadata_path_for(key))
             path.unlink()
-            metadata_path = self._metadata_path_for(key)
-            if metadata_path.exists():
-                metadata_path.unlink()
-            for pending_path in self._pending_paths_for(key):
-                pending_path.unlink(missing_ok=True)
+            for metadata_path in metadata_paths:
+                if metadata_path.is_file():
+                    metadata_path.unlink()
+                for suffix in (".body.pending", ".pending"):
+                    pending_path = metadata_path.with_name(metadata_path.name + suffix)
+                    if pending_path.is_file() or pending_path.is_symlink():
+                        pending_path.unlink()
 
     def list(self, prefix: str = "", cursor: str | None = None, limit: int = 100) -> ListPage:
         limit = _validate_list_limit(limit)
@@ -522,7 +562,10 @@ class LocalBlobStore:
                 relative = path.relative_to(self.root)
                 if (
                     relative.parts
-                    and relative.parts[0] == _LOCAL_METADATA_DIRECTORY
+                    and relative.parts[0] in {
+                        _LOCAL_METADATA_DIRECTORY,
+                        _LOCAL_METADATA_V2_DIRECTORY,
+                    }
                 ):
                     continue
                 key = relative.as_posix()
