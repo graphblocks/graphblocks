@@ -214,7 +214,7 @@ def durable_intent_registry() -> RuntimeRegistry:
                     "durable intent-only handler builder is not declared for "
                     f"{block_id}"
                 )
-            handler = _control_map_handler(registry.resolve)
+            handler = _control_map_handler(registry._resolve_invocation)
         registry.register(block_id, handler)
 
     registry._profile_marker = _DURABLE_INTENT_REGISTRY_MARKER

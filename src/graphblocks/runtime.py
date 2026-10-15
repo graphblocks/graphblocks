@@ -12,6 +12,7 @@ from typing import Any, Callable, Literal, ParamSpec, Protocol, TypeVar, cast
 
 from .async_operation import VALID_ASYNC_OPERATION_KINDS
 from ._canonical_reference import canonical_dumps, canonical_hash, canonical_loads
+from ._invocation import _invoke_block
 from .compiler import (
     MAX_NODE_RETRY_ATTEMPTS,
     STATE_CHANGING_TOOL_EFFECTS,
@@ -1444,6 +1445,19 @@ class RuntimeRegistry:
             )
         return self.blocks[block_id]
 
+    def _resolve_invocation(self, block_id: str) -> BlockCallable:
+        block = self.resolve(block_id)
+        descriptor = self.block_catalog.get(block_id)
+
+        def invoke(
+            inputs: dict[str, Any],
+            config: dict[str, Any],
+            context: dict[str, Any],
+        ) -> dict[str, Any]:
+            return _invoke_block(block_id, block, descriptor, inputs, config, context)
+
+        return invoke
+
 
 @dataclass(slots=True)
 class InProcessRuntime:
@@ -2216,15 +2230,8 @@ class InProcessRuntime:
                         started_payload["idempotencyKey"] = str(idempotency_key)
                     journal.append("node_started", started_payload)
                     try:
-                        block = self.registry.resolve(block_id)
-                        merged_inputs = canonical_loads(
-                            _dumps_strict_json(
-                                f"{block_id} input",
-                                {**node_inputs[node_name], **resolved_inputs},
-                            )
-                        )
-                        if not isinstance(merged_inputs, dict):
-                            raise TypeError("block received non-mapping input")
+                        block = self.registry._resolve_invocation(block_id)
+                        merged_inputs = {**node_inputs[node_name], **resolved_inputs}
                         started_at = time.perf_counter()
                         deadline = (
                             None
@@ -2250,6 +2257,7 @@ class InProcessRuntime:
                             "node_id": node_name,
                             "attempt": attempt,
                             "attempt_id": f"attempt-{attempt}",
+                            "invocation_id": f"{node_name}/attempt-{attempt}",
                             "deadline_monotonic": deadline,
                             "cancellation_token": attempt_token,
                         }
@@ -2278,45 +2286,6 @@ class InProcessRuntime:
                             return RunResult(
                                 run_id, "cancelled", output_values, journal
                             )
-                        if deadline is not None and time.perf_counter() >= deadline:
-                            raise TimeoutError(timeout_reason)
-                        if not isinstance(attempt_result, dict):
-                            raise TypeError("block returned non-mapping output")
-                        attempt_result = canonical_loads(
-                            _dumps_strict_json(
-                                f"{block_id} output",
-                                attempt_result,
-                            )
-                        )
-                        if not isinstance(attempt_result, dict):
-                            raise TypeError("block returned non-mapping output")
-                        descriptor = self.registry.block_catalog.get(block_id)
-                        if descriptor is not None:
-                            declared_outputs = {
-                                port.name for port in descriptor.outputs
-                            }
-                            unexpected_outputs = sorted(
-                                set(attempt_result) - declared_outputs
-                            )
-                            if unexpected_outputs:
-                                raise TypeError(
-                                    f"{block_id} returned undeclared output(s): "
-                                    + ", ".join(unexpected_outputs)
-                                )
-                            missing_outputs = sorted(
-                                port.name
-                                for port in descriptor.outputs
-                                if port.required_for(
-                                    node.get("config", {}),
-                                    phase="initial",
-                                )
-                                and port.name not in attempt_result
-                            )
-                            if missing_outputs:
-                                raise TypeError(
-                                    f"{block_id} omitted required output(s): "
-                                    + ", ".join(missing_outputs)
-                                )
                         if block_id == "async.await_callback@1":
                             wait_descriptor = attempt_result.get("wait")
                             if (
@@ -2615,7 +2584,7 @@ def _stdlib_registry(
     )
     implementation_handlers: dict[str, BlockCallable] = {}
     for source in (
-        core_stdlib_implementations(registry.resolve),
+        core_stdlib_implementations(registry._resolve_invocation),
         RAG_IMPLEMENTATIONS,
         GOVERNANCE_IMPLEMENTATIONS,
     ):

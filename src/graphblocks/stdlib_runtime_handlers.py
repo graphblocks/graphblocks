@@ -5,6 +5,11 @@ import re
 from types import MappingProxyType
 from typing import Any
 
+from ._invocation import (
+    _InvocationInterrupted,
+    _check_invocation_active,
+    _snapshot_object,
+)
 from .duration import parse_duration_milliseconds, parse_duration_seconds
 from .evaluation import ModelVisibleToolRef
 from .tools import (
@@ -617,22 +622,35 @@ def _control_map_handler(
         outcomes: list[dict[str, Any]] = []
         values: list[Any] = []
         for index, item in enumerate(items):
+            _check_invocation_active(context)
             try:
+                invocation_id = str(context.get("invocation_id", "map"))
                 result = block(
-                    {input_name: item}, block_config, {**context, "map_index": index}
+                    {input_name: item},
+                    block_config,
+                    {
+                        **context,
+                        "map_index": index,
+                        "invocation_id": f"{invocation_id}/map-{index}",
+                    },
                 )
                 if not isinstance(result, dict):
                     raise TypeError("mapped block returned non-mapping output")
                 value = result if output_name is None else result[str(output_name)]
                 values.append(value)
                 outcomes.append({"status": "succeeded", "value": value})
+            except _InvocationInterrupted:
+                raise
             except Exception as exc:
+                _check_invocation_active(context)
                 if config.get("onError") != "collect":
                     raise
                 outcomes.append({"status": "failed", "error": str(exc)})
         if config.get("onError") == "collect":
-            return {"outcomes": outcomes, "values": values}
-        return {"values": values}
+            return _snapshot_object(
+                "control.map@2 output", {"outcomes": outcomes, "values": values}
+            )
+        return _snapshot_object("control.map@2 output", {"values": values})
 
     return control_map
 

@@ -193,7 +193,7 @@
       {
         "path": "src/graphblocks/stdlib_runtime_handlers.py",
         "count": 1,
-        "semanticDigest": "sha256:42509651737b8f7815a2b678a62ba396724596123847d6422f17af5b2b10eff4",
+        "semanticDigest": "sha256:1d89871cae473e0dc62610a677b2b9bea89092ccb4a6bb159afe0ee5ff1c854c",
         "classifications": ["external-callback-boundary"],
         "rationale": "Runtime handler invocation isolates user-provided block implementations."
       },

@@ -16,6 +16,15 @@ from tools import check_mutation_coverage
 ROOT = Path(__file__).parents[1]
 MANIFEST = ROOT / "compatibility" / "stable-mutation-budget.yaml"
 CHECKER = ROOT / "tools" / "check_mutation_coverage.py"
+EXPECTED_MUTANT_IDS = [
+    "invocation-config-authority-isolation",
+    "invocation-output-deep-snapshot",
+    "invocation-cancellation-before-next-item",
+    "canonical-sha256-digest",
+    "policy-explicit-deny-precedence",
+    "compiler-graph-hash-binds-normalized-ir",
+    "durable-source-replay-events",
+]
 
 
 def test_mutation_budget_covers_the_stable_seed_categories() -> None:
@@ -30,8 +39,9 @@ def test_mutation_budget_covers_the_stable_seed_categories() -> None:
         "compiler",
         "policy",
         "durable-handler",
+        "runtime",
     }
-    assert len(budget.mutants) == 4
+    assert [mutant.mutant_id for mutant in budget.mutants] == EXPECTED_MUTANT_IDS
     check_mutation_coverage.validate_mutation_sources(budget)
 
 
@@ -52,21 +62,20 @@ def test_mutation_budget_cli_validates_and_lists_without_running_tests() -> None
     )
 
     assert validated.returncode == 0
-    assert validated.stdout == "validated 4 stable mutation seeds\n"
+    assert validated.stdout == f"validated {len(EXPECTED_MUTANT_IDS)} stable mutation seeds\n"
     assert validated.stderr == ""
     assert listed.returncode == 0
-    assert listed.stdout.splitlines() == [
-        "canonical-sha256-digest",
-        "policy-explicit-deny-precedence",
-        "compiler-graph-hash-binds-normalized-ir",
-        "durable-source-replay-events",
-    ]
+    assert listed.stdout.splitlines() == EXPECTED_MUTANT_IDS
 
 
 @pytest.mark.parametrize(
     ("mutation", "message"),
     (
         (lambda payload: payload.update({"unknown": True}), "unknown fields"),
+        (
+            lambda payload: payload["mutants"][0].update({"category": "unknown"}),
+            "category is unsupported",
+        ),
         (
             lambda payload: payload["thresholds"].update(
                 {"minimumMutationScorePercent": True}
@@ -171,8 +180,8 @@ def test_mutation_campaign_kills_all_checked_in_seeds_and_writes_evidence(
     report = json.loads(report_path.read_text(encoding="utf-8"))
     assert report["passed"] is True
     assert report["summary"] == {
-        "total": 4,
-        "killed": 4,
+        "total": len(EXPECTED_MUTANT_IDS),
+        "killed": len(EXPECTED_MUTANT_IDS),
         "survived": 0,
         "inconclusive": 0,
         "mutationScorePercent": 100.0,
@@ -199,18 +208,13 @@ def test_mutation_campaign_reports_surviving_mutants(
 
     assert report["passed"] is False
     assert report["summary"] == {
-        "total": 4,
+        "total": len(EXPECTED_MUTANT_IDS),
         "killed": 0,
-        "survived": 4,
+        "survived": len(EXPECTED_MUTANT_IDS),
         "inconclusive": 0,
         "mutationScorePercent": 0.0,
     }
-    assert report["survivingMutants"] == [
-        "canonical-sha256-digest",
-        "policy-explicit-deny-precedence",
-        "compiler-graph-hash-binds-normalized-ir",
-        "durable-source-replay-events",
-    ]
+    assert report["survivingMutants"] == EXPECTED_MUTANT_IDS
 
 
 def test_mutation_campaign_rejects_a_broken_baseline(
@@ -230,10 +234,10 @@ def test_mutation_campaign_rejects_a_broken_baseline(
 
     assert report["passed"] is False
     assert report["summary"] == {
-        "total": 4,
+        "total": len(EXPECTED_MUTANT_IDS),
         "killed": 0,
         "survived": 0,
-        "inconclusive": 4,
+        "inconclusive": len(EXPECTED_MUTANT_IDS),
         "mutationScorePercent": 0.0,
     }
     mutants = cast(list[dict[str, object]], report["mutants"])
@@ -264,12 +268,7 @@ def test_mutation_campaign_treats_mutant_timeouts_as_inconclusive(
     )
 
     assert report["passed"] is False
-    assert report["inconclusiveMutants"] == [
-        "canonical-sha256-digest",
-        "policy-explicit-deny-precedence",
-        "compiler-graph-hash-binds-normalized-ir",
-        "durable-source-replay-events",
-    ]
+    assert report["inconclusiveMutants"] == EXPECTED_MUTANT_IDS
     mutants = cast(list[dict[str, object]], report["mutants"])
     assert {item.get("reason") for item in mutants} == {"mutant-timeout"}
 

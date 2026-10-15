@@ -14,6 +14,11 @@ each initial stable category:
 - explicit policy deny precedence; and
 - a durable TCK case-handler branch.
 
+Three additional runtime seeds cover immutable configuration authority,
+deep snapshots of nested results, and cancellation before another map item
+starts. They run the same regression cases against top-level and nested calls,
+including collected item errors.
+
 Run the gate locally with:
 
 ```bash
