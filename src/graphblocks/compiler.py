@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import dataclass, replace
 from collections.abc import Iterator, Mapping
 from typing import Any, Literal, cast
@@ -163,14 +164,24 @@ class Plan:
     graph_hash: str
     diagnostics: DiagnosticSet
 
+    def __post_init__(self) -> None:
+        encoded = canonical_dumps(object.__getattribute__(self, "normalized"))
+        snapshot = canonical_loads(encoded)
+        if not isinstance(snapshot, dict):
+            raise TypeError("normalized graph must be a canonical JSON object")
+        object.__setattr__(self, "normalized", snapshot)
+
+    def __getattribute__(self, name: str) -> Any:
+        # Own a canonical snapshot and expose detached mutable projections.
+        value = object.__getattribute__(self, name)
+        return deepcopy(value) if name == "normalized" else value
+
     @property
     def ok(self) -> bool:
         return self.diagnostics.ok
 
     def to_dict(self) -> dict[str, Any]:
-        graph = canonical_loads(canonical_dumps(self.normalized))
-        if not isinstance(graph, dict):
-            raise TypeError("normalized graph must be a canonical JSON object")
+        graph = self.normalized
         return {
             "hash": self.graph_hash,
             "ok": self.ok,
