@@ -273,6 +273,24 @@ def test_local_blob_store_lists_sorted_prefix_with_cursor(tmp_path) -> None:
         first_page.items.append(second_page.items[0])
 
 
+def test_local_blob_store_cleanup_restarts_pagination_after_deleting_a_page(tmp_path) -> None:
+    store = LocalBlobStore(tmp_path)
+    for name in ("docs/a", "docs/b", "docs/c", "other/retained"):
+        store.put(BlobKey(name), name.encode(), PutOptions())
+
+    deleted = []
+    for _ in range(3):
+        page = store.list("docs/", limit=1)
+        assert len(page.items) == 1
+        for item in page.items:
+            deleted.append(item.key.key)
+            store.delete(item.key)
+
+    assert deleted == ["docs/a", "docs/b", "docs/c"]
+    assert store.list("docs/", limit=1).items == ()
+    assert store.get(BlobKey("other/retained")) == b"other/retained"
+
+
 @pytest.mark.parametrize("cursor", [True, "", "-1", "+1", "01", "1.0", "one"])
 def test_local_blob_store_rejects_non_canonical_list_cursors(tmp_path, cursor: object) -> None:
     store = LocalBlobStore(tmp_path)
