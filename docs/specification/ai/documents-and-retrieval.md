@@ -19,6 +19,11 @@ sidecars or mismatched content MUST fail closed as blob-store errors.
 Numeric cursors emitted or accepted by a local blob store MUST use canonical
 unsigned decimal syntax. Advancing a valid cursor MUST NOT overflow, including
 when a caller supplies the platform's largest representable cursor.
+Local pagination uses a numeric offset into the current sorted keys, not a
+snapshot. Callers that require complete traversal MUST keep the key set stable
+between pages; insertions or deletions can otherwise repeat or skip keys. A
+cleanup loop that deletes listed objects SHOULD repeatedly read the first page
+without carrying an offset cursor forward.
 
 A zero-length blob byte-range read MUST verify that the blob exists and return
 empty bytes without issuing an invalid transport range whose end precedes its
