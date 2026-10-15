@@ -6,6 +6,31 @@ from graphblocks.url_validation import validate_webhook_url
 from graphblocks.callbacks import CallbackEndpointAuth, CallbackEndpointRef
 
 
+@pytest.mark.parametrize("component", ("0x-1", "0-1", "0x-0", "0-0"))
+@pytest.mark.parametrize("position", range(4))
+@pytest.mark.parametrize("allow_private", (False, True))
+def test_webhook_url_rejects_signed_legacy_ipv4_components(
+    component: str, position: int, allow_private: bool
+) -> None:
+    parts = ["1"] * position + [component]
+    result = validate_webhook_url(
+        f"https://{'.'.join(parts)}/callback", allow_private=allow_private
+    )
+
+    assert result.allowed is False
+    assert result.reason == "invalid_host"
+
+
+@pytest.mark.parametrize(
+    "host",
+    ("0example.com", "0-1.example.com", "0xff.example.com", "example.com"),
+)
+def test_webhook_url_keeps_numeric_prefixed_dns_names(host: str) -> None:
+    result = validate_webhook_url(f"https://{host}/callback")
+
+    assert result.allowed is True
+
+
 def test_webhook_url_validation_rejects_malformed_authorities() -> None:
     for url in (
         "https://hooks example.com/events",
