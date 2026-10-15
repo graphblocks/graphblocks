@@ -589,6 +589,83 @@ fn compile_graph_bounds_config_validation_message_size() -> Result<(), String> {
 }
 
 #[test]
+fn compile_graph_bounds_all_normalized_config_messages() -> Result<(), String> {
+    let large = "😀".repeat(5_000);
+    for (schema, config) in [
+        (json!({"const": large}), json!({})),
+        (json!({"enum": [large]}), json!({})),
+        (json!({"type": "object", "required": [large]}), json!({})),
+        (
+            json!({"type": "object", "properties": {"allowed": {}}, "additionalProperties": false}),
+            json!({large.clone(): true}),
+        ),
+    ] {
+        let catalog = BlockCatalog::from_blocks(&json!([{
+            "typeId": "test.bounded",
+            "version": 1,
+            "configSchema": schema
+        }]))?;
+        let graph = json!({
+            "apiVersion": GRAPH_API_VERSION,
+            "kind": "Graph",
+            "metadata": {"name": "bounded-normalized-config-message"},
+            "spec": {"nodes": {"node": {"block": "test.bounded@1", "config": config}}}
+        });
+        let errors = compile_graph_with_catalog(&graph, &catalog)
+            .diagnostics
+            .into_iter()
+            .filter(|diagnostic| diagnostic.code == "GB2019")
+            .collect::<Vec<_>>();
+        assert_eq!(errors.len(), 1);
+        let message = errors[0]
+            .message
+            .strip_prefix("node config does not satisfy test.bounded@1 configSchema: ")
+            .expect("config validation diagnostic prefix");
+        assert_eq!(message.chars().count(), 1_024, "{message}");
+        assert!(message.len() <= 4 * 1_024);
+        assert!(message.ends_with("..."));
+    }
+    Ok(())
+}
+
+#[test]
+fn compile_graph_config_diagnostics_preserve_pattern_properties() -> Result<(), String> {
+    for pattern in ["^x-", "allowed$"] {
+        let catalog = BlockCatalog::from_blocks(&json!([{
+            "typeId": "test.patterns",
+            "version": 1,
+            "configSchema": {
+                "type": "object",
+                "properties": {"explicit": {}},
+                "patternProperties": {pattern: {"type": "string"}},
+                "additionalProperties": false
+            }
+        }]))?;
+        let graph = json!({
+            "apiVersion": GRAPH_API_VERSION,
+            "kind": "Graph",
+            "metadata": {"name": "pattern-properties-diagnostic"},
+            "spec": {"nodes": {"node": {
+                "block": "test.patterns@1",
+                "config": {"explicit": 1, "bad": 2, "x-allowed": "ok"}
+            }}}
+        });
+        let errors = compile_graph_with_catalog(&graph, &catalog)
+            .diagnostics
+            .into_iter()
+            .filter(|diagnostic| diagnostic.code == "GB2019")
+            .collect::<Vec<_>>();
+        assert_eq!(errors.len(), 1);
+        assert!(
+            errors[0]
+                .message
+                .ends_with("unexpected properties are not allowed: [\"bad\"]")
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn compile_graph_orders_config_errors_by_rendered_diagnostic_path() -> Result<(), String> {
     let catalog = BlockCatalog::from_blocks(&json!([{
         "typeId": "test.error-order",

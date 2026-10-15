@@ -3,6 +3,7 @@ from __future__ import annotations
 from copy import deepcopy
 from dataclasses import dataclass, replace
 from collections.abc import Iterator, Mapping
+import re
 from typing import Any, Literal, cast
 
 from jsonschema import Draft202012Validator
@@ -119,9 +120,10 @@ def _config_error_path(base: str, error: ValidationError) -> str:
 
 
 def _config_error_message(error: ValidationError) -> str:
+    message = error.message
     if error.validator == "type":
-        return f"value must have JSON type {canonical_dumps(error.validator_value)}"
-    if error.validator == "required" and isinstance(error.instance, Mapping):
+        message = f"value must have JSON type {canonical_dumps(error.validator_value)}"
+    elif error.validator == "required" and isinstance(error.instance, Mapping):
         required = error.validator_value
         if isinstance(required, list):
             missing = sorted(
@@ -129,33 +131,37 @@ def _config_error_message(error: ValidationError) -> str:
                 for item in required
                 if isinstance(item, str) and item not in error.instance
             )
-            return f"required properties are missing: {canonical_dumps(missing)}"
-    if error.validator == "additionalProperties" and isinstance(
+            message = f"required properties are missing: {canonical_dumps(missing)}"
+    elif error.validator == "additionalProperties" and isinstance(
         error.instance, Mapping
     ):
         declared = error.schema.get("properties", {})
-        if isinstance(declared, Mapping):
+        patterns = error.schema.get("patternProperties", {})
+        if isinstance(declared, Mapping) and isinstance(patterns, Mapping):
             unexpected = sorted(
-                str(key) for key in error.instance if key not in declared
+                str(key)
+                for key in error.instance
+                if key not in declared
+                and not any(re.search(pattern, key) for pattern in patterns)
             )
-            return (
+            message = (
                 f"unexpected properties are not allowed: {canonical_dumps(unexpected)}"
             )
-    if error.validator == "const":
-        return f"value must equal {canonical_dumps(error.validator_value)}"
-    if error.validator == "enum":
-        return f"value must be one of {canonical_dumps(error.validator_value)}"
-    if error.validator == "uniqueItems":
-        return "array items must be unique"
-    if error.validator == "oneOf":
-        return "value must match exactly one allowed schema"
-    if error.validator == "anyOf":
-        return "value must match at least one allowed schema"
-    if error.validator == "not":
-        return "value matches a forbidden schema"
-    if len(error.message) > MAX_CONFIG_VALIDATION_ERROR_MESSAGE_CHARS:
-        return error.message[: MAX_CONFIG_VALIDATION_ERROR_MESSAGE_CHARS - 3] + "..."
-    return error.message
+    elif error.validator == "const":
+        message = f"value must equal {canonical_dumps(error.validator_value)}"
+    elif error.validator == "enum":
+        message = f"value must be one of {canonical_dumps(error.validator_value)}"
+    elif error.validator == "uniqueItems":
+        message = "array items must be unique"
+    elif error.validator == "oneOf":
+        message = "value must match exactly one allowed schema"
+    elif error.validator == "anyOf":
+        message = "value must match at least one allowed schema"
+    elif error.validator == "not":
+        message = "value matches a forbidden schema"
+    if len(message) > MAX_CONFIG_VALIDATION_ERROR_MESSAGE_CHARS:
+        message = message[: MAX_CONFIG_VALIDATION_ERROR_MESSAGE_CHARS - 3] + "..."
+    return message
 
 
 @dataclass(frozen=True, slots=True)
