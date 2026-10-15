@@ -10,6 +10,7 @@ from ._invocation import (
     _check_invocation_active,
     _snapshot_object,
 )
+from ._error_message import _bounded_error_message
 from .duration import parse_duration_milliseconds, parse_duration_seconds
 from .evaluation import ModelVisibleToolRef
 from .tools import (
@@ -645,7 +646,7 @@ def _control_map_handler(
                 _check_invocation_active(context)
                 if config.get("onError") != "collect":
                     raise
-                outcomes.append({"status": "failed", "error": str(exc)})
+                outcomes.append({"status": "failed", "error": _bounded_error_message(exc)})
         if config.get("onError") == "collect":
             return _snapshot_object(
                 "control.map@2 output", {"outcomes": outcomes, "values": values}
