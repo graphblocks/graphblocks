@@ -4053,7 +4053,7 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
                     omitted_config_error_count += 1;
                     continue;
                 }
-                let message = match error.kind() {
+                let mut message = match error.kind() {
                     ValidationErrorKind::Type { kind } => {
                         let expected = descriptor
                             .config_schema
@@ -4153,18 +4153,15 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
                     ValidationErrorKind::Not { .. } => {
                         "value matches a forbidden schema".to_owned()
                     }
-                    _ => {
-                        let mut message = error.to_string();
-                        if message.chars().count() > MAX_CONFIG_VALIDATION_ERROR_MESSAGE_CHARS {
-                            message = message
-                                .chars()
-                                .take(MAX_CONFIG_VALIDATION_ERROR_MESSAGE_CHARS - 3)
-                                .collect();
-                            message.push_str("...");
-                        }
-                        message
-                    }
+                    _ => error.to_string(),
                 };
+                if message.chars().count() > MAX_CONFIG_VALIDATION_ERROR_MESSAGE_CHARS {
+                    message = message
+                        .chars()
+                        .take(MAX_CONFIG_VALIDATION_ERROR_MESSAGE_CHARS - 3)
+                        .collect();
+                    message.push_str("...");
+                }
                 config_errors.push((
                     config_diagnostic_path(node_name, error.instance_path().as_str()),
                     error.schema_path().as_str().to_owned(),
