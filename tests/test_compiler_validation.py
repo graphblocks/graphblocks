@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 from collections.abc import Iterator, Mapping
+from dataclasses import asdict, replace
+import pickle
 
 import pytest
 
-from graphblocks.compiler import compile_graph
+from graphblocks.canonical import canonical_hash_reference
+from graphblocks.compiler import Plan, compile_graph, compile_graph_reference
+from graphblocks.diagnostics import Diagnostic, DiagnosticSet
 from graphblocks.plugins import BlockCatalog
 
 
@@ -163,6 +167,68 @@ def test_plan_dictionary_projection_does_not_mutate_the_compiled_plan() -> None:
     assert plan.normalized["metadata"]["name"] == "detached-plan"
     assert plan.to_dict()["graph"]["metadata"]["name"] == "detached-plan"
 
+
+
+@pytest.mark.parametrize("compiler", [compile_graph_reference, compile_graph])
+def test_plan_normalized_is_a_detached_authoring_projection(compiler) -> None:
+    document = {
+        "apiVersion": "graphblocks.ai/v1",
+        "kind": "Graph",
+        "metadata": {"name": "plan-authority"},
+        "spec": {"nodes": {"unknown": {"block": "test.unknown@1"}}},
+    }
+    plan = compiler(document)
+    expected = plan.to_dict()
+    assert not plan.ok
+
+    document["metadata"]["name"] = "changed original"
+    projected = plan.normalized
+    projected["metadata"]["name"] = "changed projection"
+    projected["spec"]["nodes"].clear()
+    projected["spec"]["edges"].append({"from": "invalid", "to": "invalid"})
+    exported = plan.to_dict()
+    exported["graph"]["spec"]["nodes"].clear()
+    exported["diagnostics"].clear()
+
+    assert plan.to_dict() == expected
+    assert plan.normalized == expected["graph"]
+    assert canonical_hash_reference(plan.normalized) == plan.graph_hash
+    assert not plan.ok
+
+
+def test_plan_construction_replace_and_dataclass_projections_are_detached() -> None:
+    graph = {"nested": {"values": [1, {"count": 2}]}}
+    diagnostics = DiagnosticSet((Diagnostic("TEST", "test diagnostic"),))
+    plan = Plan(graph, canonical_hash_reference(graph), diagnostics)
+    expected = plan.to_dict()
+    graph["nested"]["values"][1]["count"] = 3
+
+    restored = pickle.loads(pickle.dumps(plan))
+    copied = replace(plan)
+    replaced = replace(plan, diagnostics=DiagnosticSet(()))
+    assert restored.to_dict() == copied.to_dict() == expected
+    assert replaced.normalized == expected["graph"]
+    assert replaced.graph_hash == plan.graph_hash
+    assert replaced.ok
+
+    for candidate in (plan, restored, copied, replaced):
+        projected = asdict(candidate)
+        assert set(projected) == {"normalized", "graph_hash", "diagnostics"}
+        projected["normalized"]["nested"]["values"].clear()
+        candidate.normalized["nested"]["values"].clear()
+        assert candidate.normalized == expected["graph"]
+        assert canonical_hash_reference(candidate.normalized) == candidate.graph_hash
+
+    modified = {"nested": {"values": [4]}}
+    recompiled = replace(
+        plan,
+        normalized=modified,
+        graph_hash=canonical_hash_reference(modified),
+        diagnostics=DiagnosticSet(()),
+    )
+    modified["nested"]["values"].clear()
+    assert recompiled.normalized == {"nested": {"values": [4]}}
+    assert recompiled.ok
 
 def test_compile_reports_oversized_schema_version_as_diagnostic() -> None:
     graph = {
