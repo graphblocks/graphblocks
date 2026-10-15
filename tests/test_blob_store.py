@@ -520,6 +520,39 @@ def test_s3_compatible_blob_store_uses_injected_client_without_sdk_dependency() 
     }
 
 
+@pytest.mark.parametrize(
+    "key_text",
+    (
+        "docs/part#one.txt",
+        "docs/part?version=1.txt",
+        "docs/literal%2Fslash.txt",
+        "docs/percent%.txt",
+        "docs/with space.txt",
+        "docs/한글.txt",
+        "docs/plus+semicolon;colon:at@.txt",
+        "docs/tab\tnewline\n.txt",
+    ),
+)
+def test_s3_artifact_uris_round_trip_object_keys(key_text: str) -> None:
+    from urllib.parse import unquote, urlsplit
+
+    client = _FakeS3Client()
+    store = S3CompatibleBlobStore(bucket="kb-artifacts", client=client)
+    key = BlobKey(key_text)
+
+    artifact = store.put(key, b"object body", PutOptions())
+    parsed = urlsplit(artifact.uri)
+
+    assert parsed.scheme == "s3"
+    assert parsed.netloc == "kb-artifacts"
+    assert parsed.query == parsed.fragment == ""
+    assert unquote(parsed.path.removeprefix("/")) == key_text
+    assert store.head(key).artifact == artifact
+    assert store.list().items[0].metadata.artifact == artifact
+    assert ("kb-artifacts", key_text) in client.objects
+    assert store.get(key) == b"object body"
+
+
 def test_s3_compatible_blob_store_rejects_full_body_checksum_drift() -> None:
     client = _FakeS3Client()
     store = S3CompatibleBlobStore(bucket="kb-artifacts", client=client)

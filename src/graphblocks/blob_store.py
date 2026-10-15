@@ -9,6 +9,7 @@ from threading import Lock, RLock
 from types import MappingProxyType
 from typing import Any
 from weakref import WeakValueDictionary
+from urllib.parse import quote
 
 from ._json import reject_duplicate_json_keys as _reject_duplicate_json_keys
 from .documents import ArtifactRef
@@ -770,7 +771,7 @@ class S3CompatibleBlobStore:
         return f"{self.uri_scheme}:{self.bucket}:{key.key}"
 
     def _uri(self, key: BlobKey) -> str:
-        return f"{self.uri_scheme}://{self.bucket}/{key.key}"
+        return f"{self.uri_scheme}://{self.bucket}/{quote(key.key, safe='/')}"
 
     def _invoke(self, method_name: str, **kwargs: object) -> object:
         method = getattr(self.client, method_name)
