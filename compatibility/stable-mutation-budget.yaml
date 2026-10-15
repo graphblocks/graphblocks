@@ -5,6 +5,36 @@ thresholds:
   maximumSurvivingMutants: 0
   timeoutSecondsPerMutant: 30
 mutants:
+  - id: invocation-config-authority-isolation
+    category: runtime
+    source: src/graphblocks/_invocation.py
+    description: handler configuration must not mutate required-output authority
+    find: |
+          handler_config = canonical_loads(canonical_dumps(approved_config))
+    replace: |
+          handler_config = approved_config
+    tests:
+      - tests/test_invocation_contracts.py::test_required_outputs_use_approved_config_after_handler_mutation[True]
+  - id: invocation-output-deep-snapshot
+    category: runtime
+    source: src/graphblocks/_invocation.py
+    description: nested calls must snapshot reused result buffers before the next item
+    find: |
+          result = _snapshot_object(f"{block_id} output", result)
+    replace: |
+          result = dict(result)
+    tests:
+      - tests/test_invocation_contracts.py::test_map_snapshots_reused_nested_result_buffers[True]
+  - id: invocation-cancellation-before-next-item
+    category: runtime
+    source: src/graphblocks/_invocation.py
+    description: cancellation must stop new nested calls even in collect mode
+    find: |
+          if token is not None and token.cancelled:
+    replace: |
+          if False and token is not None and token.cancelled:
+    tests:
+      - tests/test_invocation_contracts.py::test_map_cancellation_stops_new_calls_including_collect_and_nested_maps[False-True-2]
   - id: canonical-sha256-digest
     category: canonical
     source: src/graphblocks/canonical.py

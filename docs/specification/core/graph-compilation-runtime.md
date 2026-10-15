@@ -98,6 +98,17 @@ non-mapping result, any output key absent from the descriptor, and omission of
 any output required by the descriptor for the node's immutable configuration
 and current execution phase.
 
+The Python local invocation boundary applies to top-level nodes and nested
+`control.map@2` calls. It retains an authoritative configuration snapshot and
+passes handlers independent canonical input and configuration copies for every
+attempt and map item. Handler results are canonical snapshots before output
+contract validation and projection, so reused result buffers cannot change
+previous items. Map `values` and collected `outcomes` have independent ownership.
+Each nested call receives a distinct `invocation_id` in its context, preserving
+the parent node and attempt identity. Cancellation and monotonic deadlines are
+checked before and after each call; interruption escapes `onError: collect` and
+prevents another item from starting. Handlers remain cooperatively cancellable.
+
 ### Preview callback continuation
 
 Ordinary invocation uses `initial`; an admitted callback continuation uses

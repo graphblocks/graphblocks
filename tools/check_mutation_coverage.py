@@ -18,6 +18,7 @@ import yaml  # type: ignore[import-untyped]
 ROOT = Path(__file__).parents[1]
 DEFAULT_MANIFEST = ROOT / "compatibility" / "stable-mutation-budget.yaml"
 _REQUIRED_CATEGORIES = frozenset({"canonical", "compiler", "policy", "durable-handler"})
+_SUPPORTED_CATEGORIES = _REQUIRED_CATEGORIES | {"runtime"}
 _SOURCE_ROOTS = (
     PurePosixPath("src/graphblocks"),
     PurePosixPath("packages/graphblocks-testing/src/graphblocks_testing"),
@@ -173,7 +174,7 @@ def load_mutation_budget(path: Path = DEFAULT_MANIFEST) -> MutationBudget:
             raise MutationCoverageError(
                 f"{owner}.category must be a non-empty string without surrounding whitespace"
             )
-        if category not in _REQUIRED_CATEGORIES:
+        if category not in _SUPPORTED_CATEGORIES:
             raise MutationCoverageError(f"{owner}.category is unsupported")
         raw_source = item["source"]
         if (
