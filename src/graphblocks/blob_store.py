@@ -3,11 +3,13 @@ from __future__ import annotations
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
+import errno
 import hashlib
 import json
 import os
 from pathlib import Path, PurePosixPath
 from threading import Lock, RLock
+from time import sleep
 from types import MappingProxyType
 from typing import Any, BinaryIO
 from weakref import WeakValueDictionary
@@ -279,6 +281,26 @@ def _is_not_found_error(error: BaseException) -> bool:
     return str(code) in {"404", "NoSuchKey", "NotFound", "NotFoundException"}
 
 
+def _acquire_windows_metadata_lock(stream: BinaryIO) -> None:
+    import msvcrt
+
+    stream.seek(0)
+    while True:
+        try:
+            msvcrt.locking(stream.fileno(), msvcrt.LK_NBLCK, 1)
+            return
+        except OSError as error:
+            winerror = getattr(error, "winerror", None)
+            contended = (
+                winerror == 33  # ERROR_LOCK_VIOLATION
+                if winerror is not None
+                else error.errno in {errno.EACCES, errno.EAGAIN}
+            )
+            if not contended:
+                raise
+            sleep(0.05)
+
+
 @contextmanager
 def _local_metadata_lock(marker: Path, *, initialize: bool = False) -> Iterator[BinaryIO]:
     if marker.is_symlink():
@@ -287,8 +309,7 @@ def _local_metadata_lock(marker: Path, *, initialize: bool = False) -> Iterator[
         if os.name == "nt":
             import msvcrt
 
-            stream.seek(0)
-            msvcrt.locking(stream.fileno(), msvcrt.LK_LOCK, 1)
+            _acquire_windows_metadata_lock(stream)
         else:
             import fcntl
 

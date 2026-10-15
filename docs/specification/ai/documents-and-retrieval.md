@@ -33,8 +33,10 @@ Python version 2 store instances sharing a root serialize complete operations
 with a process-local lock and an operating-system advisory lock on `.format`
 (POSIX file lock or Windows byte-range lock). This includes reads, pending
 metadata recovery, and listing, so another cooperating process cannot observe
-or replace an in-progress writer's pending files. The operating system releases
-the lock when a process exits. An empty marker left by interrupted initialization
+or replace an in-progress writer's pending files. Both platforms wait through
+lock contention without an implicit timeout; unrelated operating-system errors
+still propagate. The operating system releases the lock when a process exits.
+An empty marker left by interrupted initialization
 may be initialized only when the directory has no other entries. Older Python
 implementations, native stores, and direct filesystem writers do not participate
 in this protocol and MUST NOT write concurrently to the same root.

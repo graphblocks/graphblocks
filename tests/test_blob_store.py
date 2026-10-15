@@ -3,12 +3,15 @@ from __future__ import annotations
 from collections.abc import Iterator, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
+import errno
 import gc
 import hashlib
 import json
 import multiprocessing
 import os
+import sys
 from threading import Barrier, Lock
+from types import SimpleNamespace
 from weakref import ref
 
 import pytest
@@ -588,6 +591,61 @@ def test_local_blob_store_serializes_concurrent_same_key_puts_across_instances(
     assert first_store.get(key) == expected_body
     assert metadata.artifact.media_type == expected_media_type
     assert not any(path.exists() for path in first_store._pending_paths_for(key))
+
+
+
+@pytest.mark.parametrize("error_number,winerror", [(errno.EACCES, None), (errno.EAGAIN, None), (None, 33)])
+def test_windows_metadata_lock_waits_beyond_ten_contention_attempts(
+    tmp_path, monkeypatch, error_number, winerror
+) -> None:
+    attempts = []
+    pauses = []
+    with (tmp_path / "marker").open("w+b") as stream:
+        def locking(descriptor, mode, count):
+            attempts.append((descriptor, mode, count))
+            assert stream.tell() == 0
+            if len(attempts) <= 12:
+                error = OSError(error_number, "lock is held by another process")
+                if winerror is not None:
+                    error.winerror = winerror
+                raise error
+
+        monkeypatch.setitem(sys.modules, "msvcrt", SimpleNamespace(LK_NBLCK=2, locking=locking))
+        monkeypatch.setattr(blob_store_module, "sleep", pauses.append)
+        blob_store_module._acquire_windows_metadata_lock(stream)
+
+        assert attempts == [(stream.fileno(), 2, 1)] * 13
+        assert pauses == [0.05] * 12
+
+
+@pytest.mark.parametrize(
+    "error_number,winerror",
+    [(errno.EBADF, None), (errno.EIO, None), (errno.EINVAL, None), (errno.EACCES, 5)],
+)
+def test_windows_metadata_lock_propagates_noncontention_errors(
+    tmp_path, monkeypatch, error_number, winerror
+) -> None:
+    error = OSError(error_number, "not a lock contention error")
+    if winerror is not None:
+        error.winerror = winerror
+    attempts = []
+    pauses = []
+
+    def locking(*args):
+        attempts.append(args)
+        if len(attempts) > 1:
+            raise AssertionError("noncontention errors must not be retried")
+        raise error
+
+    monkeypatch.setitem(sys.modules, "msvcrt", SimpleNamespace(LK_NBLCK=2, locking=locking))
+    monkeypatch.setattr(blob_store_module, "sleep", pauses.append)
+    with (tmp_path / "marker").open("w+b") as stream:
+        with pytest.raises(OSError) as caught:
+            blob_store_module._acquire_windows_metadata_lock(stream)
+
+    assert caught.value is error
+    assert len(attempts) == 1
+    assert pauses == []
 
 
 @pytest.mark.parametrize("operation", ["put", "get"])
