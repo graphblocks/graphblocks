@@ -640,6 +640,74 @@ def test_blob_store_normalizes_hostile_metadata_and_stream_failures() -> None:
         store.get(key)
 
 
+@pytest.mark.parametrize("read_result", (b"abc", bytearray(b"abc"), "invalid", None))
+@pytest.mark.parametrize("close_fails", (False, True))
+def test_s3_get_closes_owned_body_and_preserves_read_failure(
+    read_result: object, close_fails: bool
+) -> None:
+    read_error = RuntimeError("failed after consuming a partial response")
+
+    class OwnedBody:
+        close_calls = 0
+        consumed = 0
+
+        def read(self) -> object:
+            self.consumed = 1
+            if read_result is None:
+                raise read_error
+            return read_result
+
+        def close(self) -> None:
+            self.close_calls += 1
+            if close_fails:
+                raise RuntimeError("close failed")
+
+    body = OwnedBody()
+
+    class Client:
+        def get_object(self, **kwargs: object) -> dict[str, object]:
+            return {"Body": body, "ContentLength": 3}
+
+    store = S3CompatibleBlobStore(bucket="artifacts", client=Client())
+    if read_result is None:
+        with pytest.raises(BlobStoreError, match="could not be read") as caught:
+            store.get(BlobKey("data"))
+        assert caught.value.__cause__ is read_error
+    elif isinstance(read_result, str):
+        with pytest.raises(BlobStoreError, match="must be bytes or a readable stream"):
+            store.get(BlobKey("data"))
+    elif close_fails:
+        with pytest.raises(BlobStoreError, match="could not be closed"):
+            store.get(BlobKey("data"))
+    else:
+        assert store.get(BlobKey("data")) == b"abc"
+
+    assert body.consumed == 1
+    assert body.close_calls == 1
+
+
+def test_s3_get_closes_body_before_response_validation() -> None:
+    class OwnedBody:
+        closed = False
+
+        def read(self) -> bytes:
+            return b"abc"
+
+        def close(self) -> None:
+            self.closed = True
+
+    body = OwnedBody()
+
+    class Client:
+        def get_object(self, **kwargs: object) -> dict[str, object]:
+            return {"Body": body, "ContentLength": 100}
+
+    store = S3CompatibleBlobStore(bucket="artifacts", client=Client())
+    with pytest.raises(BlobStoreError, match="ContentLength"):
+        store.get(BlobKey("data"))
+    assert body.closed is True
+
+
 def test_s3_list_rejects_duplicate_keys_and_nonadvancing_cursor() -> None:
     class InvalidListClient(_FakeS3Client):
         response: dict[str, object]

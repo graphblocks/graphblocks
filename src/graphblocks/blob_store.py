@@ -830,20 +830,35 @@ class S3CompatibleBlobStore:
         return f"bytes={byte_range.offset}-{end}"
 
     def _read_body(self, body: object) -> bytes:
+        """Consume and close an owned response stream, including on failure."""
         if isinstance(body, bytes):
             return body
         if isinstance(body, bytearray):
             return bytes(body)
         read = getattr(body, "read", None)
         if callable(read):
+            completed = False
             try:
-                data = read()
-            except Exception as error:
-                raise BlobStoreError(
-                    "s3 response Body stream could not be read"
-                ) from error
-            if isinstance(data, bytes):
-                return data
-            if isinstance(data, bytearray):
+                try:
+                    data = read()
+                except Exception as error:
+                    raise BlobStoreError(
+                        "s3 response Body stream could not be read"
+                    ) from error
+                if not isinstance(data, (bytes, bytearray)):
+                    raise BlobStoreError(
+                        "s3 response Body must be bytes or a readable stream"
+                    )
+                completed = True
                 return bytes(data)
+            finally:
+                try:
+                    close = getattr(body, "close", None)
+                    if callable(close):
+                        close()
+                except Exception as error:
+                    if completed:
+                        raise BlobStoreError(
+                            "s3 response Body stream could not be closed"
+                        ) from error
         raise BlobStoreError("s3 response Body must be bytes or a readable stream")

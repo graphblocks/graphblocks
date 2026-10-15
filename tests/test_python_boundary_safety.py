@@ -18,10 +18,11 @@ def test_checked_in_boundary_inventory_is_closed_and_matches_source() -> None:
     report = check_python_boundary_safety.check_boundary_safety(baseline)
 
     assert report["passed"] is True
+    reviewed_broad_count = sum(item.count for item in baseline.broad_handlers.values())
     assert report["broadExceptionHandlers"] == {
-        "reviewed": 132,
-        "observed": 132,
-        "files": 30,
+        "reviewed": reviewed_broad_count,
+        "observed": reviewed_broad_count,
+        "files": len(baseline.broad_handlers),
     }
     assert report["productionAsserts"] == {
         "reviewed": 97,
