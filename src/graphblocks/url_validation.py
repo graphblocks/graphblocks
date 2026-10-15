@@ -119,6 +119,7 @@ def validate_webhook_url(
         ):
             return WebhookUrlValidation(False, "invalid_host", host)
         parsed_numeric_parts: list[int] = []
+        signed_numeric_component = False
         for component in host.split("."):
             if component.lower().startswith("0x") and len(component) > 2:
                 base = 16
@@ -132,26 +133,34 @@ def validate_webhook_url(
             else:
                 parsed_numeric_parts = []
                 break
+            # int() accepts signs even for octal/hexadecimal input. They are
+            # not part of a legacy IPv4 component, and negative values can
+            # otherwise reach ip_address() outside its guarded parse above.
+            if digits.startswith(("-", "+")):
+                signed_numeric_component = True
             try:
                 parsed_numeric_parts.append(int(digits, base))
             except ValueError:
                 parsed_numeric_parts = []
                 break
 
+        if parsed_numeric_parts and signed_numeric_component:
+            return WebhookUrlValidation(False, "invalid_host", host)
+
         numeric_ipv4 = None
-        if len(parsed_numeric_parts) == 1 and parsed_numeric_parts[0] <= 0xFFFFFFFF:
+        if len(parsed_numeric_parts) == 1 and 0 <= parsed_numeric_parts[0] <= 0xFFFFFFFF:
             numeric_ipv4 = parsed_numeric_parts[0]
         elif (
             len(parsed_numeric_parts) == 2
-            and parsed_numeric_parts[0] <= 0xFF
-            and parsed_numeric_parts[1] <= 0xFFFFFF
+            and 0 <= parsed_numeric_parts[0] <= 0xFF
+            and 0 <= parsed_numeric_parts[1] <= 0xFFFFFF
         ):
             numeric_ipv4 = (parsed_numeric_parts[0] << 24) | parsed_numeric_parts[1]
         elif (
             len(parsed_numeric_parts) == 3
-            and parsed_numeric_parts[0] <= 0xFF
-            and parsed_numeric_parts[1] <= 0xFF
-            and parsed_numeric_parts[2] <= 0xFFFF
+            and 0 <= parsed_numeric_parts[0] <= 0xFF
+            and 0 <= parsed_numeric_parts[1] <= 0xFF
+            and 0 <= parsed_numeric_parts[2] <= 0xFFFF
         ):
             numeric_ipv4 = (
                 (parsed_numeric_parts[0] << 24)
@@ -159,7 +168,7 @@ def validate_webhook_url(
                 | parsed_numeric_parts[2]
             )
         elif len(parsed_numeric_parts) == 4 and all(
-            component <= 0xFF for component in parsed_numeric_parts
+            0 <= component <= 0xFF for component in parsed_numeric_parts
         ):
             numeric_ipv4 = (
                 (parsed_numeric_parts[0] << 24)
