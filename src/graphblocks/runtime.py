@@ -13,6 +13,7 @@ from typing import Any, Callable, Literal, ParamSpec, Protocol, TypeVar, cast
 from .async_operation import VALID_ASYNC_OPERATION_KINDS
 from ._canonical_reference import canonical_dumps, canonical_hash, canonical_loads
 from ._invocation import _invoke_block
+from ._error_message import _bounded_error_message
 from .compiler import (
     MAX_NODE_RETRY_ATTEMPTS,
     STATE_CHANGING_TOOL_EFFECTS,
@@ -1656,7 +1657,8 @@ class InProcessRuntime:
                     current[parts[-1]] = value
                 output_values = projected_output_values
             except Exception as exc:
-                journal.append_terminal("run_failed", {"error": str(exc)})
+                error_message = _bounded_error_message(exc)
+                journal.append_terminal("run_failed", {"error": error_message})
                 if self.run_store is not None:
                     self.run_store.set_status(run_id, "failed")
                 if self.lease_pool is not None:
@@ -1973,17 +1975,18 @@ class InProcessRuntime:
                 node_outputs[checkpoint.wait_node] = wait_result
                 output_values = projected_output_values
             except Exception as exc:
+                error_message = _bounded_error_message(exc)
                 journal.append(
                     "node_failed",
                     {
                         "node": checkpoint.wait_node,
-                        "error": str(exc),
+                        "error": error_message,
                         "attempt": 1,
                     },
                 )
                 journal.append_terminal(
                     "run_failed",
-                    {"node": checkpoint.wait_node, "error": str(exc)},
+                    {"node": checkpoint.wait_node, "error": error_message},
                 )
                 if self.run_store is not None:
                     self.run_store.set_status(run_id, "failed")
@@ -2317,12 +2320,13 @@ class InProcessRuntime:
                             return RunResult(
                                 run_id, "cancelled", output_values, journal
                             )
+                        error_message = _bounded_error_message(exc)
                         if attempt < max_attempts:
                             retry_payload: dict[str, Any] = {
                                 "node": node_name,
                                 "block": block_id,
                                 "attempt": attempt,
-                                "error": str(exc),
+                                "error": error_message,
                             }
                             if idempotency_key is not None:
                                 retry_payload["idempotencyKey"] = str(idempotency_key)
@@ -2333,10 +2337,10 @@ class InProcessRuntime:
                             continue
                         journal.append(
                             "node_failed",
-                            {"node": node_name, "error": str(exc), "attempt": attempt},
+                            {"node": node_name, "error": error_message, "attempt": attempt},
                         )
                         journal.append_terminal(
-                            "run_failed", {"node": node_name, "error": str(exc)}
+                            "run_failed", {"node": node_name, "error": error_message}
                         )
                         if self.run_store is not None:
                             self.run_store.set_status(run_id, "failed")
@@ -2420,16 +2424,17 @@ class InProcessRuntime:
                             runtime_checkpoint,
                         )
                     except Exception as exc:
+                        error_message = _bounded_error_message(exc)
                         if checkpoint_id is not None:
                             with self._checkpoint_lock:
                                 self._checkpoint_state_digests.pop(checkpoint_id, None)
                         journal.append(
                             "node_failed",
-                            {"node": node_name, "error": str(exc), "attempt": attempt},
+                            {"node": node_name, "error": error_message, "attempt": attempt},
                         )
                         journal.append_terminal(
                             "run_failed",
-                            {"node": node_name, "error": str(exc)},
+                            {"node": node_name, "error": error_message},
                         )
                         if self.run_store is not None:
                             self.run_store.set_status(run_id, "failed")
@@ -2476,13 +2481,14 @@ class InProcessRuntime:
                         },
                     )
                 except Exception as exc:
+                    error_message = _bounded_error_message(exc)
                     journal.append(
                         "node_failed",
-                        {"node": node_name, "error": str(exc), "attempt": attempt},
+                        {"node": node_name, "error": error_message, "attempt": attempt},
                     )
                     journal.append_terminal(
                         "run_failed",
-                        {"node": node_name, "error": str(exc)},
+                        {"node": node_name, "error": error_message},
                     )
                     if self.run_store is not None:
                         self.run_store.set_status(run_id, "failed")

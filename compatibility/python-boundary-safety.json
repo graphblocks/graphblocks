@@ -6,8 +6,15 @@
     "productionAsserts": "Production asserts are reviewed only as side-effect-free internal invariants, exhaustive branch proofs, or type narrowing after explicit validation. Public boundary behavior must also pass the optimized-mode shard with asserts disabled."
   },
   "broadExceptionHandlers": {
-    "total": 133,
+    "total": 134,
     "files": [
+      {
+        "path": "src/graphblocks/_error_message.py",
+        "count": 1,
+        "semanticDigest": "sha256:0e5a1d3c9cbaea69270b32fd475e926684741ef8a008dad13b9a3dcc494cc523",
+        "classifications": ["external-callback-boundary"],
+        "rationale": "Plugin exception string conversion may fail; normalize it once into bounded Unicode-scalar text before strict JSON journal or map outcome recording."
+      },
       {
         "path": "src/graphblocks/_schema_execution.py",
         "count": 2,
@@ -137,7 +144,7 @@
       {
         "path": "src/graphblocks/runtime.py",
         "count": 10,
-        "semanticDigest": "sha256:06e4fc8e6456199b4c31135c00dcb34753beeeb5bfbb55ef73f4aec3627a5991",
+        "semanticDigest": "sha256:2a1501a9ed5f7a6c61fd6c0ecf164fae9c86cef6ecec7a36634fcd95c8324241",
         "classifications": ["external-callback-boundary", "best-effort-cleanup"],
         "rationale": "Runtime blocks, handlers, compensations, and transactional output projections isolate pluggable or shape-dependent failures as deterministic runtime events without committing partial outputs."
       },
@@ -193,7 +200,7 @@
       {
         "path": "src/graphblocks/stdlib_runtime_handlers.py",
         "count": 1,
-        "semanticDigest": "sha256:1d89871cae473e0dc62610a677b2b9bea89092ccb4a6bb159afe0ee5ff1c854c",
+        "semanticDigest": "sha256:d8442dd0b7311cdf65f7eba0945652d9f38b1a667b5d46178794159129a86431",
         "classifications": ["external-callback-boundary"],
         "rationale": "Runtime handler invocation isolates user-provided block implementations."
       },
