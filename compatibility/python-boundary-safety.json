@@ -6,7 +6,7 @@
     "productionAsserts": "Production asserts are reviewed only as side-effect-free internal invariants, exhaustive branch proofs, or type narrowing after explicit validation. Public boundary behavior must also pass the optimized-mode shard with asserts disabled."
   },
   "broadExceptionHandlers": {
-    "total": 132,
+    "total": 133,
     "files": [
       {
         "path": "src/graphblocks/_schema_execution.py",
@@ -24,8 +24,8 @@
       },
       {
         "path": "src/graphblocks/blob_store.py",
-        "count": 2,
-        "semanticDigest": "sha256:c1f811c8b7d43913c767ca00f753cfe05dfd2941977ba652a99949a72f5e0566",
+        "count": 3,
+        "semanticDigest": "sha256:925239d4f06c71c7b0eea63da60f04669490cc3c988bc9db3bcdbb6fc434f7d5",
         "classifications": ["persistence-transaction-boundary", "external-callback-boundary"],
         "rationale": "Blob storage implementations are pluggable persistence boundaries whose failures are converted to stable storage errors."
       },
