@@ -2,10 +2,16 @@ from __future__ import annotations
 
 from collections.abc import Iterator, Mapping
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
+import errno
 import gc
 import hashlib
 import json
+import multiprocessing
+import os
+import sys
 from threading import Barrier, Lock
+from types import SimpleNamespace
 from weakref import ref
 
 import pytest
@@ -25,6 +31,63 @@ from graphblocks.blob_store import (
     S3CompatibleBlobStore,
 )
 from graphblocks.documents import ArtifactRef
+
+
+def _local_blob_process_operation(
+    root, body, *, paused=None, release=None, attempting=None, ready=None, begin=None, operation="put"
+) -> None:
+    store = LocalBlobStore(root)
+    if attempting is not None:
+        original_lock = blob_store_module._local_metadata_lock
+
+        @contextmanager
+        def observed_lock(*args, **kwargs):
+            attempting.set()
+            with original_lock(*args, **kwargs) as stream:
+                yield stream
+
+        blob_store_module._local_metadata_lock = observed_lock
+    if ready is not None:
+        ready.set()
+        assert begin.wait(15), "parent did not start the operation"
+    key = BlobKey("docs/policy.txt")
+    if paused is not None:
+        pending_body_path, _ = store._pending_paths_for(key)
+        original_write = type(pending_body_path).write_bytes
+
+        def pause_after_pending_body(path, data):
+            result = original_write(path, data)
+            if path == pending_body_path:
+                paused.set()
+                assert release.wait(15), "parent did not release writer"
+            return result
+
+        type(pending_body_path).write_bytes = pause_after_pending_body
+    if operation == "get":
+        assert store.get(key) == b"first"
+    else:
+        store.put(key, body, PutOptions(metadata={"writer": body.decode()}))
+
+
+def _local_blob_process_crash_after_body_commit(root) -> None:
+    store = LocalBlobStore(root)
+    key = BlobKey("docs/policy.txt")
+    _, pending_metadata_path = store._pending_paths_for(key)
+    original_replace = type(pending_metadata_path).replace
+
+    def crash_before_metadata_commit(path, target):
+        if path == pending_metadata_path:
+            os._exit(17)
+        return original_replace(path, target)
+
+    type(pending_metadata_path).replace = crash_before_metadata_commit
+    store.put(key, b"new policy", PutOptions(media_type="text/markdown"))
+
+
+def _local_blob_process_initialize(root, barrier, name) -> None:
+    barrier.wait(15)
+    store = LocalBlobStore(root)
+    store.put(BlobKey(name), name.encode(), PutOptions())
 
 
 def test_local_blob_store_put_head_and_get_round_trip(tmp_path) -> None:
@@ -546,6 +609,145 @@ def test_local_blob_store_serializes_concurrent_same_key_puts_across_instances(
     assert first_store.get(key) == expected_body
     assert metadata.artifact.media_type == expected_media_type
     assert not any(path.exists() for path in first_store._pending_paths_for(key))
+
+
+
+@pytest.mark.parametrize("error_number,winerror", [(errno.EACCES, None), (errno.EAGAIN, None), (None, 33)])
+def test_windows_metadata_lock_waits_beyond_ten_contention_attempts(
+    tmp_path, monkeypatch, error_number, winerror
+) -> None:
+    attempts = []
+    pauses = []
+    with (tmp_path / "marker").open("w+b") as stream:
+        def locking(descriptor, mode, count):
+            attempts.append((descriptor, mode, count))
+            assert stream.tell() == 0
+            if len(attempts) <= 12:
+                error = OSError(error_number, "lock is held by another process")
+                if winerror is not None:
+                    error.winerror = winerror
+                raise error
+
+        monkeypatch.setitem(sys.modules, "msvcrt", SimpleNamespace(LK_NBLCK=2, locking=locking))
+        monkeypatch.setattr(blob_store_module, "sleep", pauses.append)
+        blob_store_module._acquire_windows_metadata_lock(stream)
+
+        assert attempts == [(stream.fileno(), 2, 1)] * 13
+        assert pauses == [0.05] * 12
+
+
+@pytest.mark.parametrize(
+    "error_number,winerror",
+    [(errno.EBADF, None), (errno.EIO, None), (errno.EINVAL, None), (errno.EACCES, 5)],
+)
+def test_windows_metadata_lock_propagates_noncontention_errors(
+    tmp_path, monkeypatch, error_number, winerror
+) -> None:
+    error = OSError(error_number, "not a lock contention error")
+    if winerror is not None:
+        error.winerror = winerror
+    attempts = []
+    pauses = []
+
+    def locking(*args):
+        attempts.append(args)
+        if len(attempts) > 1:
+            raise AssertionError("noncontention errors must not be retried")
+        raise error
+
+    monkeypatch.setitem(sys.modules, "msvcrt", SimpleNamespace(LK_NBLCK=2, locking=locking))
+    monkeypatch.setattr(blob_store_module, "sleep", pauses.append)
+    with (tmp_path / "marker").open("w+b") as stream:
+        with pytest.raises(OSError) as caught:
+            blob_store_module._acquire_windows_metadata_lock(stream)
+
+    assert caught.value is error
+    assert len(attempts) == 1
+    assert pauses == []
+
+
+@pytest.mark.parametrize("operation", ["put", "get"])
+def test_local_blob_store_serializes_pending_files_across_spawned_processes(tmp_path, operation) -> None:
+    store = LocalBlobStore(tmp_path)
+    context = multiprocessing.get_context("spawn")
+    paused, release, attempting, ready, begin = (context.Event() for _ in range(5))
+    first = context.Process(
+        target=_local_blob_process_operation,
+        args=(str(tmp_path), b"first"),
+        kwargs={"paused": paused, "release": release},
+    )
+    second = context.Process(
+        target=_local_blob_process_operation,
+        args=(str(tmp_path), b"second"),
+        kwargs={"attempting": attempting, "ready": ready, "begin": begin, "operation": operation},
+    )
+    second.start()
+    try:
+        assert ready.wait(15), "second process did not initialize"
+        first.start()
+        assert paused.wait(15), "first writer did not reach pending body"
+        begin.set()
+        assert attempting.wait(15), "second writer did not attempt the process lock"
+        second.join(0.2)
+        assert second.is_alive(), "second writer entered while the first held the lock"
+        pending_body_path, _ = store._pending_paths_for(BlobKey("docs/policy.txt"))
+        assert pending_body_path.read_bytes() == b"first"
+        release.set()
+        begin.set()
+        first.join(15)
+        second.join(15)
+        assert first.exitcode == second.exitcode == 0
+    finally:
+        release.set()
+        for process in (first, second):
+            if process.is_alive():
+                process.terminate()
+                process.join(15)
+
+    expected_writer = "first" if operation == "get" else "second"
+    assert store.get(BlobKey("docs/policy.txt")) == expected_writer.encode()
+    assert store.head(BlobKey("docs/policy.txt")).artifact.metadata == {"writer": expected_writer}
+    assert not any(path.exists() for path in store._pending_paths_for(BlobKey("docs/policy.txt")))
+
+
+def test_local_blob_store_releases_process_lock_and_recovers_after_writer_exit(tmp_path) -> None:
+    store = LocalBlobStore(tmp_path)
+    key = BlobKey("docs/policy.txt")
+    store.put(key, b"old policy", PutOptions(media_type="text/plain"))
+    context = multiprocessing.get_context("spawn")
+    writer = context.Process(target=_local_blob_process_crash_after_body_commit, args=(str(tmp_path),))
+    writer.start()
+    writer.join(15)
+    try:
+        assert writer.exitcode == 17
+        assert store.get(key) == b"new policy"
+        assert store.head(key).artifact.media_type == "text/markdown"
+        assert not any(path.exists() for path in store._pending_paths_for(key))
+    finally:
+        if writer.is_alive():
+            writer.terminate()
+            writer.join(15)
+
+
+def test_local_blob_store_initializes_one_format_across_spawned_processes(tmp_path) -> None:
+    context = multiprocessing.get_context("spawn")
+    barrier = context.Barrier(2)
+    processes = [
+        context.Process(target=_local_blob_process_initialize, args=(str(tmp_path), barrier, name))
+        for name in ("first", "second")
+    ]
+    for process in processes:
+        process.start()
+    try:
+        for process in processes:
+            process.join(15)
+            assert process.exitcode == 0
+    finally:
+        for process in processes:
+            if process.is_alive():
+                process.terminate()
+                process.join(15)
+    assert [item.key.key for item in LocalBlobStore(tmp_path).list().items] == ["first", "second"]
 
 
 def test_local_blob_store_does_not_retain_unused_root_locks(tmp_path) -> None:

@@ -29,6 +29,22 @@ namespaces. The Python store still reads version 1 sidecars and recovers matchin
 version 1 pending metadata; new writes use version 2. This is a Python storage
 format, not a promise that native stores share an on-disk layout.
 
+Python version 2 store instances sharing a root serialize complete operations
+with a process-local lock and an operating-system advisory lock on `.format`
+(POSIX file lock or Windows byte-range lock). This includes reads, pending
+metadata recovery, and listing, so another cooperating process cannot observe
+or replace an in-progress writer's pending files. Both platforms wait through
+lock contention without an implicit timeout; unrelated operating-system errors
+still propagate. The operating system releases the lock when a process exits.
+An empty marker left by interrupted initialization
+may be initialized only when the directory has no other entries. Older Python
+implementations, native stores, and direct filesystem writers do not participate
+in this protocol and MUST NOT write concurrently to the same root.
+
+The Python rename/pending protocol supports recovery after process interruption.
+It does not promise persistence across an operating-system crash or power loss:
+files and parent directories are not flushed with `fsync`.
+
 Numeric cursors emitted or accepted by a local blob store MUST use canonical
 unsigned decimal syntax. Advancing a valid cursor MUST NOT overflow, including
 when a caller supplies the platform's largest representable cursor.

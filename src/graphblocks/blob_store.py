@@ -1,13 +1,17 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
+import errno
 import hashlib
 import json
+import os
 from pathlib import Path, PurePosixPath
 from threading import Lock, RLock
+from time import sleep
 from types import MappingProxyType
-from typing import Any
+from typing import Any, BinaryIO
 from weakref import WeakValueDictionary
 from urllib.parse import quote
 
@@ -278,6 +282,49 @@ def _is_not_found_error(error: BaseException) -> bool:
     return str(code) in {"404", "NoSuchKey", "NotFound", "NotFoundException"}
 
 
+def _acquire_windows_metadata_lock(stream: BinaryIO) -> None:
+    import msvcrt
+
+    stream.seek(0)
+    while True:
+        try:
+            msvcrt.locking(stream.fileno(), msvcrt.LK_NBLCK, 1)
+            return
+        except OSError as error:
+            winerror = getattr(error, "winerror", None)
+            contended = (
+                winerror == 33  # ERROR_LOCK_VIOLATION
+                if winerror is not None
+                else error.errno in {errno.EACCES, errno.EAGAIN}
+            )
+            if not contended:
+                raise
+            sleep(0.05)
+
+
+@contextmanager
+def _local_metadata_lock(marker: Path, *, initialize: bool = False) -> Iterator[BinaryIO]:
+    if marker.is_symlink():
+        raise BlobStoreError("local blob metadata format marker must not be a symlink")
+    with marker.open("a+b" if initialize else "r+b") as stream:
+        if os.name == "nt":
+            import msvcrt
+
+            _acquire_windows_metadata_lock(stream)
+        else:
+            import fcntl
+
+            fcntl.flock(stream.fileno(), fcntl.LOCK_EX)
+        try:
+            yield stream
+        finally:
+            if os.name == "nt":
+                stream.seek(0)
+                msvcrt.locking(stream.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
+
+
 @dataclass(slots=True)
 class LocalBlobStore:
     root: str | Path
@@ -310,15 +357,28 @@ class LocalBlobStore:
                 else:
                     self._metadata_root = resolved
             marker = self._metadata_root / ".format"
-            if marker.is_symlink():
-                raise BlobStoreError("local blob metadata format marker must not be a symlink")
-            if marker.exists():
-                if marker.read_text(encoding="utf-8") != _LOCAL_METADATA_V2_FORMAT:
-                    raise BlobStoreError("unrecognized local blob metadata format")
-            elif any(self._metadata_root.iterdir()):
+            if not marker.exists() and any(
+                path != marker for path in self._metadata_root.iterdir()
+            ):
                 raise BlobStoreError("refusing nonempty unmarked local blob metadata directory")
-            else:
-                marker.write_text(_LOCAL_METADATA_V2_FORMAT, encoding="utf-8")
+            with _local_metadata_lock(marker, initialize=True) as stream:
+                stream.seek(0)
+                recorded_format = stream.read()
+                if recorded_format == _LOCAL_METADATA_V2_FORMAT.encode("utf-8"):
+                    pass
+                elif recorded_format:
+                    raise BlobStoreError("unrecognized local blob metadata format")
+                elif any(path != marker for path in self._metadata_root.iterdir()):
+                    raise BlobStoreError("refusing nonempty unmarked local blob metadata directory")
+                else:
+                    stream.write(_LOCAL_METADATA_V2_FORMAT.encode("utf-8"))
+                    stream.flush()
+
+    @contextmanager
+    def _operation_lock(self) -> Iterator[None]:
+        with self._root_lock:
+            with _local_metadata_lock(self._metadata_root / ".format"):
+                yield
 
     def _path_for(self, key: BlobKey) -> Path:
         _validate_blob_key(key)
@@ -465,7 +525,7 @@ class LocalBlobStore:
         return metadata
 
     def put(self, key: BlobKey, body: bytes, options: PutOptions) -> ArtifactRef:
-        with self._root_lock:
+        with self._operation_lock():
             path = self._path_for(key)
             metadata_path = self._metadata_path_for(key)
             pending_body_path, pending_metadata_path = self._pending_paths_for(key)
@@ -498,7 +558,7 @@ class LocalBlobStore:
             return artifact
 
     def get(self, key: BlobKey, byte_range: ByteRange | None = None) -> bytes:
-        with self._root_lock:
+        with self._operation_lock():
             path = self._path_for(key)
             if not path.exists():
                 raise BlobNotFoundError(f"blob {key.key!r} does not exist")
@@ -511,11 +571,11 @@ class LocalBlobStore:
             return data[byte_range.offset : byte_range.offset + byte_range.length]
 
     def head(self, key: BlobKey) -> BlobMetadata:
-        with self._root_lock:
+        with self._operation_lock():
             return self._metadata_for(key)
 
     def delete(self, key: BlobKey) -> None:
-        with self._root_lock:
+        with self._operation_lock():
             path = self._path_for(key)
             if not path.exists():
                 raise BlobNotFoundError(f"blob {key.key!r} does not exist")
@@ -555,7 +615,7 @@ class LocalBlobStore:
                     f"cursor must not exceed {_MAX_U64}"
                 )
             start = int(cursor)
-        with self._root_lock:
+        with self._operation_lock():
             keys: list[str] = []
             for path in self.root.rglob("*"):
                 if not path.is_file():
@@ -581,7 +641,7 @@ class LocalBlobStore:
                 items=[
                     BlobListItem(
                         key=BlobKey(key),
-                        metadata=self.head(BlobKey(key)),
+                        metadata=self._metadata_for(BlobKey(key)),
                     )
                     for key in page_keys
                 ],
